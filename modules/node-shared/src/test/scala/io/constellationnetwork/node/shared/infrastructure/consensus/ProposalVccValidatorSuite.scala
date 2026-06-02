@@ -69,6 +69,28 @@ object ProposalVccValidatorSuite extends FunSuite {
   ): ViewChangeCertificate =
     ViewChangeCertificate(fromView, toView, fac, votes)
 
+  private def timeoutVote(
+    fromView: Long,
+    toView: Long,
+    fac: Hash = facHash,
+    lastSnapshot: Hash = lastSnap,
+    highestQc: Option[ProposalQC] = None,
+    sigTag: String
+  ): Signed[TimeoutVote] =
+    Signed(
+      TimeoutVote(fromView, toView, fac, lastSnapshot, highestQc, TimeoutReason.NoProgress),
+      NonEmptySet.of(signerProof(sigTag))
+    )
+
+  private def timeoutCertificate(
+    fromView: Long,
+    toView: Long,
+    fac: Hash = facHash,
+    lastSnapshot: Hash = lastSnap,
+    votes: NonEmptySet[Signed[TimeoutVote]]
+  ): TimeoutCertificate =
+    TimeoutCertificate(fromView, toView, fac, lastSnapshot, TimeoutReason.NoProgress, votes)
+
   // ----------------------------------------------------------------------------
   // alpha.90 positive case: initialViewNumber > 0 (round STARTS at the seed view),
   // no VCC stored, proposal at view == initialViewNumber MUST be accepted.
@@ -98,7 +120,7 @@ object ProposalVccValidatorSuite extends FunSuite {
   // transition, which must be rejected with the existing `view{N}_proposal_missing_vcc` code.
   // Operator dashboards grep on this prefix.
   // ----------------------------------------------------------------------------
-  test("post-seed view > initialViewNumber, no VCC: rejected with view{N}_proposal_missing_vcc") {
+  test("post-seed view > initialViewNumber, no view certificate: rejected with view{N}_proposal_missing_view_cert") {
     val result = ProposalVccValidator.validate(
       proposalView = 3L,
       proposalHash = proposalHash,
@@ -113,8 +135,8 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view3_proposal_missing_vcc")),
-      s"post-seed no-VCC must be rejected, got $result"
+      result == Left(ProposalRejection("view3_proposal_missing_view_cert")),
+      s"post-seed no-cert must be rejected, got $result"
     )
   }
 
@@ -139,8 +161,8 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view1_proposal_missing_vcc")),
-      s"view-1 no-VCC at initialView=0 must be rejected, got $result"
+      result == Left(ProposalRejection("view1_proposal_missing_view_cert")),
+      s"view-1 no-cert at initialView=0 must be rejected, got $result"
     )
   }
 
@@ -204,11 +226,38 @@ object ProposalVccValidatorSuite extends FunSuite {
     expect(result.isRight, s"matching VCC on view-2 proposal must be accepted, got $result")
   }
 
+  test("matching TimeoutCertificate: fromView=1 toView=2 on a view=2 proposal -- accepted") {
+    val matchingTc = timeoutCertificate(
+      fromView = 1L,
+      toView = 2L,
+      votes = NonEmptySet.of(
+        timeoutVote(1L, 2L, sigTag = signerA),
+        timeoutVote(1L, 2L, sigTag = signerB),
+        timeoutVote(1L, 2L, sigTag = signerC)
+      )
+    )
+    val result = ProposalVccValidator.validate(
+      proposalView = 2L,
+      proposalHash = proposalHash,
+      proposalVcc = None,
+      proposalTimeoutCertificate = Some(matchingTc),
+      initialViewNumber = 0,
+      coreSize = 3,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      eligibleFacilitators = poolABC,
+      peerQuality = Map.empty,
+      quorumThresholdFraction = quorum,
+      minParticipationObservations = minObs
+    )
+    expect(result.isRight, s"matching TC on view-2 proposal must be accepted, got $result")
+  }
+
   // ----------------------------------------------------------------------------
   // view 0 must NEVER carry a VCC: protects against an adversarial leader embedding
   // an arbitrary VCC on a fresh round.
   // ----------------------------------------------------------------------------
-  test("view 0 with VCC: rejected with view0_proposal_must_not_carry_vcc") {
+  test("view 0 with VCC: rejected with view0_proposal_must_not_carry_view_cert") {
     val anyVcc = vcc(
       fromView = 0L,
       toView = 1L,
@@ -228,7 +277,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view0_proposal_must_not_carry_vcc")),
+      result == Left(ProposalRejection("view0_proposal_must_not_carry_view_cert")),
       s"view-0 with VCC must be rejected, got $result"
     )
   }
@@ -408,6 +457,49 @@ object ProposalVccValidatorSuite extends FunSuite {
     expect(
       result.swap.exists(_.code.startsWith("highest_qc_carry_forward_violation")),
       s"rejection code must start with highest_qc_carry_forward_violation, got $result"
+    )
+  }
+
+  test("TC divergent highest-QC at max view: rejected with tc_divergent_highest_qc") {
+    val qcA = ProposalQC(
+      view = 1L,
+      proposalHash = proposalHash,
+      facilitatorsHash = facHash,
+      signatures = NonEmptySet.of(signerProof(signerA))
+    )
+    val qcB = ProposalQC(
+      view = 1L,
+      proposalHash = divergentHash,
+      facilitatorsHash = facHash,
+      signatures = NonEmptySet.of(signerProof(signerB))
+    )
+    val divergentTc = timeoutCertificate(
+      fromView = 1L,
+      toView = 2L,
+      votes = NonEmptySet.of(
+        timeoutVote(1L, 2L, highestQc = Some(qcA), sigTag = signerA),
+        timeoutVote(1L, 2L, highestQc = Some(qcB), sigTag = signerB),
+        timeoutVote(1L, 2L, highestQc = Some(qcA), sigTag = signerC)
+      )
+    )
+    val result = ProposalVccValidator.validate(
+      proposalView = 2L,
+      proposalHash = proposalHash,
+      proposalVcc = None,
+      proposalTimeoutCertificate = Some(divergentTc),
+      initialViewNumber = 0,
+      coreSize = 3,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      eligibleFacilitators = poolABC,
+      peerQuality = Map.empty,
+      quorumThresholdFraction = quorum,
+      minParticipationObservations = minObs
+    )
+    expect(result.isLeft, s"divergent TC highest-QC must be rejected, got $result")
+    expect(
+      result.swap.exists(_.code.startsWith("tc_divergent_highest_qc")),
+      s"rejection code must start with tc_divergent_highest_qc, got $result"
     )
   }
 

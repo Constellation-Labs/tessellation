@@ -87,10 +87,12 @@ class ConsensusFSM[F[
           case CheckViewChangeAssembly(key)         => transitions.checkViewChangeAssembly(key)
           case CheckViewChangeApply(key, from, to)  => transitions.checkViewChangeApply(key, from, to)
           case CheckTimeoutCertificateAssembly(key) => transitions.checkTimeoutCertificateAssembly(key)
-          case CheckEvictionAssembly(key, target)   => transitions.checkEvictionAssembly(key, target)
-          case CheckAdmissionAssembly(key, target)  => transitions.checkAdmissionAssembly(key, target)
-          case InternalScheduled(inner)             => handle(inner)
-          case PeerObserved(peer)                   => transitions.registerPeer(peer)
+          case CheckTimeoutCertificateApply(key, from, to) =>
+            transitions.checkTimeoutCertificateApply(key, from, to)
+          case CheckEvictionAssembly(key, target)  => transitions.checkEvictionAssembly(key, target)
+          case CheckAdmissionAssembly(key, target) => transitions.checkAdmissionAssembly(key, target)
+          case InternalScheduled(inner)            => handle(inner)
+          case PeerObserved(peer)                  => transitions.registerPeer(peer)
 
           case _ if running => handleWhileBusy(cmd)
           case _            => handleWhileIdle(cmd)

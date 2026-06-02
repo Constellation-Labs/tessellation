@@ -40,6 +40,24 @@ object ViewChangeCertificateSuite extends FunSuite {
       NonEmptySet.of(dummyProof(proofTag))
     )
 
+  private def timeoutVote(
+    fromView: Long,
+    highestKnownQc: Option[ProposalQC],
+    proofTag: String,
+    reason: TimeoutReason = TimeoutReason.NoProgress
+  ): Signed[TimeoutVote] =
+    Signed(
+      TimeoutVote(
+        fromView = fromView,
+        toView = fromView + 1,
+        facilitatorsHash = facHash,
+        lastSnapshotHash = lastSnap,
+        highestKnownQc = highestKnownQc,
+        reason = reason
+      ),
+      NonEmptySet.of(dummyProof(proofTag))
+    )
+
   test("highestQcInVcc returns the single highest-view QC") {
     val vcc = ViewChangeCertificate(
       fromView = 3L,
@@ -151,6 +169,55 @@ object ViewChangeCertificateSuite extends FunSuite {
     val decl = ConsensusPeerDeclaration[Long, Proposal](
       key = 24L,
       declaration = Proposal(hashA, facHash, lastSnap, view = 1L, vcc = vcc.some)
+    )
+    val json = decl.asJson
+    expect(json.isObject, s"encoded wire payload must be a JSON object, got: $json")
+  }
+
+  test("JSON round-trip: Proposal with Some(timeoutCertificate) encodes without throwing and decodes back equal") {
+    val tc = TimeoutCertificate(
+      fromView = 0L,
+      toView = 1L,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      reason = TimeoutReason.NoProgress,
+      votes = NonEmptySet.of(
+        timeoutVote(0L, None, "t1"),
+        timeoutVote(0L, qc(view = 0L, hashA).some, "t2"),
+        timeoutVote(0L, None, "t3")
+      )
+    )
+    val proposal = Proposal(
+      hash = hashA,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      view = 1L,
+      vcc = None,
+      timeoutCertificate = tc.some
+    )
+    val json = proposal.asJson
+    val roundTripped = decode[Proposal](json.noSpaces)
+
+    expect(roundTripped.exists(_ === proposal), s"round-trip must preserve Proposal, got: $roundTripped").and(
+      expect(
+        json.hcursor.downField("timeoutCertificate").as[Option[TimeoutCertificate]].exists(_.exists(_.votes.length === 3)),
+        "serialized JSON must carry the TC with all 3 signed votes intact"
+      )
+    )
+  }
+
+  test("JSON round-trip: ConsensusPeerDeclaration wrapping Proposal-with-TC encodes via the spreadProposal path") {
+    val tc = TimeoutCertificate(
+      fromView = 0L,
+      toView = 1L,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      reason = TimeoutReason.NoProgress,
+      votes = NonEmptySet.of(timeoutVote(0L, None, "ta"), timeoutVote(0L, None, "tb"))
+    )
+    val decl = ConsensusPeerDeclaration[Long, Proposal](
+      key = 25L,
+      declaration = Proposal(hashA, facHash, lastSnap, view = 1L, vcc = None, timeoutCertificate = tc.some)
     )
     val json = decl.asJson
     expect(json.isObject, s"encoded wire payload must be a JSON object, got: $json")

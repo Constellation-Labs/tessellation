@@ -589,14 +589,32 @@ object CurrencySnapshotConsensusStateAdvancer {
             maybeAssembledVcc <-
               if (state.viewNumber > state.initialViewNumber) consensusStorage.getAssembledVcc(state.key)
               else none[ViewChangeCertificate].pure[F]
+            maybeTimeoutCertificate <-
+              if (state.viewNumber > state.initialViewNumber)
+                consensusStorage
+                  .getResources(state.key)
+                  .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
+              else none[TimeoutCertificate].pure[F]
             vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
+            tcHighestQc = maybeTimeoutCertificate.flatMap { tc =>
+              val qcs = tc.votes.toNonEmptyList.toList.flatMap(_.value.highestKnownQc)
+              qcs.groupBy(_.view).toList.sortBy(_._1).lastOption.flatMap {
+                case (_, atView) =>
+                  val hashes = atView.map(_.proposalHash).toSet
+                  if (hashes.size === 1) atView.headOption else None
+              }
+            }
             vccMismatch = isLeader && state.viewNumber > state.initialViewNumber && vccHighestQc.exists(_.proposalHash =!= hash)
+            tcMismatch = isLeader && state.viewNumber > state.initialViewNumber && tcHighestQc.exists(_.proposalHash =!= hash)
             // v19 alpha.89: solo-mode bypass -- see dag-l0 mirror for full rationale.
             isSoloCore = state.coreFacilitators.value.size <= 1
             // alpha.90 P0 #1: round-start seed-view bypass -- see dag-l0 mirror.
             isRoundStartView = state.viewNumber === state.initialViewNumber
-            vccMissing = isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && !isSoloCore && !isRoundStartView
-            aborted = (isLeader && leaderLock.flatMap(_.lockedQc).exists(_.proposalHash =!= hash)) || vccMismatch || vccMissing
+            viewCertMissing =
+              isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && maybeTimeoutCertificate.isEmpty && !isSoloCore && !isRoundStartView
+            aborted = (isLeader && leaderLock
+              .flatMap(_.lockedQc)
+              .exists(_.proposalHash =!= hash)) || vccMismatch || tcMismatch || viewCertMissing
             _ <- logger
               .warn(
                 s"[CONSENSUS:$role] Leader locked on different QC key=${state.key.show} lockedQcHash=${leaderLock
@@ -613,8 +631,15 @@ object CurrencySnapshotConsensusStateAdvancer {
               )
               .whenA(vccMismatch)
             _ <- logger
-              .warn(s"[CONSENSUS:$role] Leader VCC missing for view>0 key=${state.key.show} view=${state.viewNumber}")
-              .whenA(vccMissing)
+              .warn(
+                s"[CONSENSUS:$role] Leader TC highest-QC mismatch key=${state.key.show} view=${state.viewNumber} " +
+                  s"qcHash=${tcHighestQc.map(_.proposalHash.show.take(8)).getOrElse("none")} " +
+                  s"proposingHash=${hash.show.take(8)}"
+              )
+              .whenA(tcMismatch)
+            _ <- logger
+              .warn(s"[CONSENSUS:$role] Leader view certificate missing for view>0 key=${state.key.show} view=${state.viewNumber}")
+              .whenA(viewCertMissing)
           } yield
             if (aborted) none[Transition]
             else
@@ -650,6 +675,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                           state.lastOutcome.finished.snapshotHash,
                           state.viewNumber.toLong,
                           maybeAssembledVcc,
+                          maybeTimeoutCertificate,
                           ecs.toList,
                           acs.toList,
                           observedResponders,
@@ -720,14 +746,20 @@ object CurrencySnapshotConsensusStateAdvancer {
                   maybeVcc <-
                     if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
                     else none[ViewChangeCertificate].pure[F]
+                  maybeTc <-
+                    if (state.viewNumber > state.initialViewNumber)
+                      consensusStorage
+                        .getResources(state.key)
+                        .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
+                    else none[TimeoutCertificate].pure[F]
                   ecs <-
                     if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                     else consensusStorage.getAssembledEvictionCertificates(state.key)
                   acs <-
                     if (isInBootstrap(state)) Set.empty[AdmissionCertificate].pure[F]
                     else consensusStorage.getAssembledAdmissionCertificates(state.key)
-                } yield (maybeVcc, ecs, acs)).flatMap {
-                  case (maybeVcc, ecs, acs) =>
+                } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
+                  case (maybeVcc, maybeTc, ecs, acs) =>
                     logger.info(
                       s"[CONSENSUS:LEADER] Re-spreading proposal key=${state.key.show} hash=${status.proposalArtifactInfo.hash.show.take(8)}... " +
                         s"targets=${state.facilitators.value.size} view=${state.viewNumber}"
@@ -741,6 +773,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                         status.lastSnapshotHash,
                         state.viewNumber.toLong,
                         maybeVcc,
+                        maybeTc,
                         ecs.toList,
                         acs.toList,
                         // v7 codex turn 2 fix #2: re-spread reads observedResponders from the
@@ -769,6 +802,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           proposalView = proposal.view,
           proposalHash = proposal.hash,
           proposalVcc = proposal.vcc,
+          proposalTimeoutCertificate = proposal.timeoutCertificate,
           initialViewNumber = state.initialViewNumber,
           coreSize = state.coreFacilitators.value.size,
           facilitatorsHash = facilitatorsHash,
@@ -1013,6 +1047,18 @@ object CurrencySnapshotConsensusStateAdvancer {
           else Left(ProposalRejection(s"vcc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
         }
 
+      private def verifyTcSignatures(tc: TimeoutCertificate)(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
+        tc.votes.toNonEmptyList.traverse { signedVote =>
+          signedVote.hasValidSignature[F].map {
+            case true  => Right(()): Either[ProposalRejection, Unit]
+            case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
+          }
+        }.map { results =>
+          val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
+          if (invalidPeers.isEmpty) Right(())
+          else Left(ProposalRejection(s"tc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
+        }
+
       private def resolveLeaderProposal(
         state: CurrencySnapshotConsensusState,
         status: CollectingProposals,
@@ -1027,8 +1073,9 @@ object CurrencySnapshotConsensusStateAdvancer {
           val isStaleSlotPattern =
             leaderProposal.view < state.initialViewNumber.toLong &&
               leaderProposal.vcc.isEmpty &&
+              leaderProposal.timeoutCertificate.isEmpty &&
               rejection.code.startsWith("view") &&
-              rejection.code.endsWith("_proposal_missing_vcc")
+              rejection.code.endsWith("_proposal_missing_view_cert")
           val maybePruneAndMeter =
             if (isStaleSlotPattern)
               Metrics[F].incrementCounter(
@@ -1060,15 +1107,23 @@ object CurrencySnapshotConsensusStateAdvancer {
                 }
               case None => resolveLeaderProposalInner(state, status, resources, leaderProposal)
             }
+            val afterViewCertSig: F[Option[Transition]] = leaderProposal.timeoutCertificate match {
+              case Some(tc) =>
+                verifyTcSignatures(tc).flatMap {
+                  case Left(reason) => logVccReject(reason)
+                  case Right(_)     => afterVccSig
+                }
+              case None => afterVccSig
+            }
             val afterEcs: F[Option[Transition]] =
               validateProposalEcs(state, leaderProposal, status.facilitatorsHash) match {
                 case Left(reason) => logEcsReject(reason)
                 case Right(_) =>
-                  if (leaderProposal.evictionCertificates.isEmpty) afterVccSig
+                  if (leaderProposal.evictionCertificates.isEmpty) afterViewCertSig
                   else
                     verifyEcsSignatures(leaderProposal).flatMap {
                       case Left(reason) => logEcsReject(reason)
-                      case Right(_)     => afterVccSig
+                      case Right(_)     => afterViewCertSig
                     }
               }
             val afterAcs: F[Option[Transition]] =
@@ -1595,6 +1650,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         lastSnapshotHash: Hash,
         view: Long = 0L,
         vcc: Option[ViewChangeCertificate] = None,
+        timeoutCertificate: Option[TimeoutCertificate] = None,
         evictionCertificates: List[EvictionCertificate] = List.empty,
         admissionCertificates: List[AdmissionCertificate] = List.empty,
         observedResponders: List[PeerId] = List.empty,
@@ -1606,7 +1662,18 @@ object CurrencySnapshotConsensusStateAdvancer {
         val declaration =
           ConsensusPeerDeclaration(
             key,
-            Proposal(hash, facilitatorsHash, lastSnapshotHash, view, vcc, sortedEcs, sortedAcs, sortedObs, observedSelfHealth)
+            Proposal(
+              hash = hash,
+              facilitatorsHash = facilitatorsHash,
+              lastSnapshotHash = lastSnapshotHash,
+              view = view,
+              vcc = vcc,
+              timeoutCertificate = timeoutCertificate,
+              evictionCertificates = sortedEcs,
+              admissionCertificates = sortedAcs,
+              observedResponders = sortedObs,
+              observedSelfHealth = observedSelfHealth
+            )
           )
         val targets = state.facilitators.value.toSet
 

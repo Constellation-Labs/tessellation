@@ -57,6 +57,8 @@ object ConsensusCommand {
   final case class CheckViewChangeApply[Key](key: Key, fromView: Long, toView: Long)
       extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class CheckTimeoutCertificateAssembly[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class CheckTimeoutCertificateApply[Key](key: Key, fromView: Long, toView: Long)
+      extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   // EvictionVote assembly is per-target: different targets accumulate quorums independently,
   // so this command carries both the round key and the target peer whose votes should be
   // checked. Dispatched from the event loop to StateTransitions.checkEvictionAssembly.

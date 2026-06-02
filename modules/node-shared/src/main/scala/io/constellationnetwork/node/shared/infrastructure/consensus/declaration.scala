@@ -162,7 +162,7 @@ object declaration {
     }
   }
 
-  @derive(eqv, show, encoder, decoder)
+  @derive(eqv, show)
   sealed trait TimeoutReason
 
   object TimeoutReason {
@@ -170,9 +170,21 @@ object declaration {
     case object QuorumInfeasible extends TimeoutReason
 
     implicit val ordering: Ordering[TimeoutReason] = Ordering.by(_.toString)
+
+    implicit val timeoutReasonEncoder: Encoder[TimeoutReason] =
+      Encoder.encodeString.contramap {
+        case TimeoutReason.NoProgress       => "NoProgress"
+        case TimeoutReason.QuorumInfeasible => "QuorumInfeasible"
+      }
+    implicit val timeoutReasonDecoder: Decoder[TimeoutReason] =
+      Decoder.decodeString.emap {
+        case "NoProgress"       => Right(TimeoutReason.NoProgress)
+        case "QuorumInfeasible" => Right(TimeoutReason.QuorumInfeasible)
+        case other              => Left(s"Invalid TimeoutReason: $other")
+      }
   }
 
-  @derive(eqv, show, encoder, decoder)
+  @derive(eqv, show)
   case class TimeoutVote(
     fromView: Long,
     toView: Long,
@@ -191,16 +203,38 @@ object declaration {
         (v.fromView, v.toView, v.facilitatorsHash.value, v.lastSnapshotHash.value, qcPart, v.reason.toString)
       }
     implicit val order: cats.kernel.Order[TimeoutVote] = cats.kernel.Order.fromOrdering(ordering)
+
+    implicit val timeoutVoteEncoder: Encoder[TimeoutVote] =
+      Encoder.instance { v =>
+        Json.obj(
+          "fromView" -> v.fromView.asJson,
+          "toView" -> v.toView.asJson,
+          "facilitatorsHash" -> v.facilitatorsHash.asJson,
+          "lastSnapshotHash" -> v.lastSnapshotHash.asJson,
+          "highestKnownQc" -> v.highestKnownQc.asJson,
+          "reason" -> TimeoutReason.timeoutReasonEncoder(v.reason)
+        )
+      }
+    implicit val timeoutVoteDecoder: Decoder[TimeoutVote] =
+      (c: HCursor) =>
+        for {
+          fromView <- c.downField("fromView").as[Long]
+          toView <- c.downField("toView").as[Long]
+          facilitatorsHash <- c.downField("facilitatorsHash").as[Hash]
+          lastSnapshotHash <- c.downField("lastSnapshotHash").as[Hash]
+          highestKnownQc <- c.downField("highestKnownQc").as[Option[ProposalQC]]
+          reason <- c.downField("reason").as(TimeoutReason.timeoutReasonDecoder)
+        } yield TimeoutVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc, reason)
   }
 
   implicit val signedTimeoutVoteEncoder: Encoder[Signed[TimeoutVote]] =
     Encoder.instance { sv =>
-      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
+      Json.obj("value" -> TimeoutVote.timeoutVoteEncoder(sv.value), "proofs" -> sv.proofs.asJson)
     }
   implicit val signedTimeoutVoteDecoder: Decoder[Signed[TimeoutVote]] =
     (c: HCursor) =>
       for {
-        value <- c.downField("value").as[TimeoutVote]
+        value <- c.downField("value").as(TimeoutVote.timeoutVoteDecoder)
         proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
       } yield Signed(value, proofs)
 
@@ -385,6 +419,7 @@ object declaration {
     lastSnapshotHash: Hash,
     view: Long,
     vcc: Option[ViewChangeCertificate],
+    timeoutCertificate: Option[TimeoutCertificate] = None,
     // Phase B1 facilitator shrinkage: quorum-certified eviction votes for persistently-absent
     // peers, accumulated and certified before this proposal. Must be sorted for deterministic
     // proposal-hash agreement across nodes (enforced at the proposer call site via

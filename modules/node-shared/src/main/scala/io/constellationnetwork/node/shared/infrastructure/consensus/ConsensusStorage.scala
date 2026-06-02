@@ -88,6 +88,8 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def storeTimeoutCertificate(key: Key, cert: TimeoutCertificate): F[Option[ConsensusResources[Artifact, Kind]]]
 
+  private[consensus] def markTimeoutCertificateApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean]
+
   private[consensus] def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
 
   /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(VoteRejection) if the
@@ -374,6 +376,7 @@ object ConsensusStorage {
       assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
       assembledVccApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
       assembledVccReceiptsR <- MapRef.ofConcurrentHashMap[F, Key, Set[(PeerId, Hash, Long, Long, Set[PeerId])]]()
+      timeoutCertificateApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
       assembledEvictionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[EvictionCertificate]]()
       assembledAdmissionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[AdmissionCertificate]]()
       // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
@@ -540,6 +543,14 @@ object ConsensusStorage {
             val transitionKey = (cert.fromView, cert.toView)
             if (resources.timeoutCertificates.contains(transitionKey)) resources
             else resources.copy(timeoutCertificates = resources.timeoutCertificates.updated(transitionKey, cert))
+          }
+
+        def markTimeoutCertificateApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean] =
+          timeoutCertificateApplyScheduledR(key).modify { maybeScheduled =>
+            val transition = (lastSnapshotHash, fromView, toView)
+            val scheduled = maybeScheduled.getOrElse(Set.empty[(Hash, Long, Long)])
+            if (scheduled.contains(transition)) (maybeScheduled, false)
+            else (scheduled.incl(transition).some, true)
           }
 
         def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]] =
