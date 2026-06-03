@@ -9,12 +9,12 @@ import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
+import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.TimeoutReason
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ConsensusStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
@@ -717,9 +717,37 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   )
                 )
             case Right(_) =>
-              val leaderPool = StateTransitions.viewChangeLeaderPool(
+              val shrinkFloor = q
+              val currentActive = StateTransitions.viewChangeLeaderPool(
                 state.coreFacilitators.value,
                 state.facilitators.value
+              )
+              val shouldEvaluateShrink = fromView > state.initialViewNumber.toLong
+              val certifiedShrink =
+                if (shouldEvaluateShrink)
+                  ActiveFacilitatorAdmission.fromCertifiedTimeout(
+                    selected = currentActive,
+                    // StateTransitions is generic over Outcome and cannot inspect recentSigners
+                    // without a new ConsensusEngineContext hook. Keep this first certified-shrink
+                    // slice protocol-wide by retaining TC voters only; the helper supports
+                    // recent-signer fill for a later typed hook if we need it.
+                    recentSigners = scala.collection.immutable.SortedMap.empty,
+                    timeoutVoters = reasonVotes.keySet,
+                    minActiveSize = shrinkFloor
+                  )
+                else
+                  ActiveFacilitatorAdmission.Result(
+                    active = currentActive,
+                    exclusions = List.empty,
+                    recentSignerPoolSize = 0,
+                    recentWindowSize = 0,
+                    recentFilterApplied = false
+                  )
+              val effectiveCore = certifiedShrink.active
+              val shrunk = shouldEvaluateShrink && certifiedShrink.recentFilterApplied
+              val leaderPool = StateTransitions.viewChangeLeaderPool(
+                effectiveCore,
+                effectiveCore
               )
               val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
@@ -730,16 +758,24 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                     maybeState match {
                       case Some(s) if s.viewNumber.toLong === fromView =>
+                        val shrinkState =
+                          if (shrunk)
+                            s.copy(
+                              facilitators = Facilitators(effectiveCore),
+                              coreFacilitators = CoreFacilitators(effectiveCore)
+                            )
+                          else
+                            s
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
-                            s.copy(
+                            shrinkState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               status = fresh,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
                             )
                           case None =>
-                            s.copy(
+                            shrinkState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
@@ -767,12 +803,38 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "toView" -> toView.toString,
                     "votes" -> reasonVotes.size.toString,
                     "quorum" -> q.toString,
-                    "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                    "leaderPool" -> (if (shrunk) "certified_shrink"
+                                     else if (leaderPool == state.coreFacilitators.value) "core"
+                                     else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
-                    "statusReset" -> resetStatus.isDefined.toString
+                    "statusReset" -> resetStatus.isDefined.toString,
+                    "certifiedShrink" -> shrunk.toString,
+                    "shrinkFrom" -> currentActive.size.toString,
+                    "shrinkTo" -> effectiveCore.size.toString,
+                    "timeoutVoters" -> reasonVotes.size.toString,
+                    "shrinkExclusions" -> certifiedShrink.exclusions.size.toString
                   )
                   .whenA(didAdvance)
+                _ <- ConsensusLog
+                  .info(
+                    log,
+                    Category.Phase,
+                    key.show,
+                    "n/a",
+                    LogEvent.ViewChange,
+                    "assembly" -> "timeout_certified_shrink",
+                    "timeoutReason" -> reason.toString,
+                    "fromView" -> fromView.toString,
+                    "toView" -> toView.toString,
+                    "fromSize" -> currentActive.size.toString,
+                    "toSize" -> effectiveCore.size.toString,
+                    "floor" -> shrinkFloor.toString,
+                    "timeoutVoters" -> reasonVotes.size.toString,
+                    "recentSignerPool" -> certifiedShrink.recentSignerPoolSize.toString,
+                    "excluded" -> certifiedShrink.exclusions.size.toString
+                  )
+                  .whenA(didAdvance && shrunk)
                 _ <- Metrics[F]
                   .incrementCounter(
                     "dag_consensus_timeout_certificate_apply_total",
@@ -791,6 +853,21 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     )
                   )
                   .unlessA(didAdvance)
+                _ <- Metrics[F]
+                  .incrementCounter(
+                    "dag_consensus_certified_shrink_total",
+                    Seq(
+                      unsafeLabelName("outcome") -> (if (shrunk) "applied"
+                                                     else if (shouldEvaluateShrink) "not_needed"
+                                                     else "first_timeout"),
+                      unsafeLabelName("reason") -> reason.toString
+                    )
+                  )
+                  .whenA(didAdvance)
+                _ <- Metrics[F].updateGauge("dag_consensus_certified_shrink_retained_size", effectiveCore.size.toLong).whenA(didAdvance)
+                _ <- Metrics[F]
+                  .updateGauge("dag_consensus_certified_shrink_missing_size", certifiedShrink.exclusions.size.toLong)
+                  .whenA(didAdvance)
                 _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
                 _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
               } yield ()
