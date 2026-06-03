@@ -308,17 +308,20 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
             }
           }
 
-        case GET -> Root / "latest" / "combined" =>
+        case req @ GET -> Root / "latest" / "combined" =>
           whenNodeReady {
-            headWithFallback.flatMap {
-              case Some((snapshot, state)) =>
-                cachedCombinedResponse.get(snapshot.ordinal, snapshot, state).flatMap { bytes =>
-                  Ok(
-                    fs2.Stream.chunk[F, Byte](fs2.Chunk.array(bytes)),
-                    `Content-Type`(MediaType.application.json)
-                  )
-                }
-              case _ => NotFound()
+            withHeavyRoutePermit(req, "latest_combined") {
+              headWithFallback.flatMap {
+                case Some((snapshot, state)) =>
+                  cachedCombinedResponse.get(snapshot.ordinal, snapshot, state).flatMap { bytes =>
+                    Ok(
+                      fs2.Stream.chunk[F, Byte](fs2.Chunk.array(bytes)),
+                      `Content-Type`(MediaType.application.json),
+                      `Content-Length`.unsafeFromLong(bytes.length.toLong)
+                    )
+                  }
+                case _ => NotFound()
+              }
             }
           }
 
@@ -530,6 +533,8 @@ object SnapshotRoutes {
             windowDuration = cfg.perIpWindow,
             maxBytesPerLongWindow = cfg.perIpMaxBytesPerLongWindow,
             longWindowDuration = cfg.perIpLongWindow,
+            maxBytesPerAggregateLongWindow = cfg.maxBytesPerLongWindow,
+            aggregateLongWindowDuration = cfg.longWindow,
             retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
             appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req),
             allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,
@@ -539,11 +544,12 @@ object SnapshotRoutes {
             // handler builds the response body. Other routes get `None` and fall through to
             // the legacy post-response Content-Length path (defense in depth).
             routeSizeEstimator = Some(combinedStreamRouteSizeEstimator[F, S, SI](combinedSnapshotCheckpointFileSystemStorage)),
-            onReject = Some { (req, _, _, _) =>
+            onReject = Some { (req, scope, _, _) =>
+              val limiter = if (scope === "aggregate") "aggregate_bandwidth" else "bandwidth"
               heavyweightEndpoint(req).traverse_ { endpoint =>
                 Metrics[F].incrementCounter(
                   "dag_snapshot_stream_limit_total",
-                  snapshotStreamLimitTags(endpoint, "bandwidth", snapshotStreamCaller(req))
+                  snapshotStreamLimitTags(endpoint, limiter, snapshotStreamCaller(req))
                 )
               }
             }
@@ -575,6 +581,7 @@ object SnapshotRoutes {
   def heavyweightEndpoint[F[_]](req: Request[F]): Option[String] = {
     val path = req.uri.path.segments.map(_.encoded).toList
     path match {
+      case "latest" :: "combined" :: Nil                                         => Some("latest_combined")
       case "latest" :: "combined" :: "stream" :: Nil                             => Some("latest_combined_stream")
       case "latest" :: "combined" :: "checkpoint" :: ord :: Nil if ord != "info" => Some("combined_checkpoint")
       case ord :: Nil if ord.toLongOption.flatMap(SnapshotOrdinal(_)).isDefined && req.params.contains("full") =>
@@ -589,13 +596,18 @@ object SnapshotRoutes {
     * very probes a well-behaved client should use to back off.
     */
   def isHeavyweightSnapshotRoute[F[_]](req: Request[F]): Boolean =
-    heavyweightEndpoint(req).exists(endpoint => endpoint === "latest_combined_stream" || endpoint === "combined_checkpoint")
+    heavyweightEndpoint(req).exists(endpoint =>
+      endpoint === "latest_combined" || endpoint === "latest_combined_stream" || endpoint === "combined_checkpoint"
+    )
 
   /** Pre-flight size estimator for the per-IP bandwidth limiter. Maps the combined-snapshot routes to their on-disk byte size so the
     * limiter can refuse over-budget requests BEFORE the heavy route handler builds the ~100 MB response. Returns `None` for any other route
     * (including the lightweight probes) so they fall through to the legacy post-response Content-Length accounting.
     *
     * Resolution:
+    *   - `/latest/combined`: resolve latest ordinal via the checkpoint storage, then ask for its on-disk size. The in-memory cached route
+    *     should match that checkpoint size, and the route still sets Content-Length from the actual cached bytes for post-check defense in
+    *     depth.
     *   - `/latest/combined/stream`: resolve latest ordinal via the checkpoint storage, then ask for its on-disk size.
     *   - `/latest/combined/checkpoint/{ord}`: parse the ordinal from the path, look up its on-disk size.
     *
@@ -608,6 +620,11 @@ object SnapshotRoutes {
   ): Request[F] => F[Option[Long]] = { req =>
     val path = req.uri.path.segments.map(_.encoded).toList
     path match {
+      case "latest" :: "combined" :: Nil =>
+        storage.getLatestOrdinal.flatMap {
+          case Some(ord) => storage.getCheckpointSize(ord)
+          case None      => Option.empty[Long].pure[F]
+        }
       case "latest" :: "combined" :: "stream" :: Nil =>
         storage.getLatestOrdinal.flatMap {
           case Some(ord) => storage.getCheckpointSize(ord)
