@@ -193,8 +193,11 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // active LIVENESS quorum -- the quorum threshold across the round is computed against
   // `coreFacilitators.value.size`, NOT `facilitators.value.size` / `roundStartFacilitators.value.size`.
   // `tier1Facilitators` covers witness-eligible peers for B1/B2/VCC certs that are NOT in
-  // the active quorum. Both are frozen at round creation (set by `CommitteeBuilder.build`)
-  // and never mutate during the round. Defaulted to empty so all pre-v19 ConsensusState
+  // the active quorum. Both are set at round creation by `CommitteeBuilder.build`.
+  // `roundStartFacilitators` remains the canonical immutable set used for hashes/outcomes.
+  // `coreFacilitators` may be narrowed only by a quorum-signed TimeoutCertificate in
+  // StateTransitions as a round-local certified shrink/yield; that does not mutate the
+  // committed committee or tier state. Defaulted to empty so all pre-v19 ConsensusState
   // construction sites continue to compile; the new state-creator wiring populates them.
   coreFacilitators: CoreFacilitators = CoreFacilitators.empty,
   tier1Facilitators: Tier1Facilitators = Tier1Facilitators.empty,

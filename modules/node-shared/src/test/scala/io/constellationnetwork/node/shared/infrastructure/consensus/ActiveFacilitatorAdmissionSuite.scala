@@ -79,4 +79,55 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
 
     expect.same(List(c, a, b), result.active)
   }
+
+  pureTest("certified timeout shrink retains timeout voters when floor is satisfied") {
+    val result = ActiveFacilitatorAdmission.fromCertifiedTimeout(
+      selected = List(a, b, c),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      timeoutVoters = Set(a, c),
+      minActiveSize = 2
+    )
+
+    expect.same(List(a, c), result.active) &&
+    expect.same(Set(b), result.exclusions.collect { case e if e.reason == ExclusionReason.CertifiedTimeoutMissing => e.peerId }.toSet) &&
+    expect(result.recentFilterApplied)
+  }
+
+  pureTest("certified timeout shrink fills from recent signers to preserve floor") {
+    val result = ActiveFacilitatorAdmission.fromCertifiedTimeout(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      timeoutVoters = Set(c),
+      minActiveSize = 3
+    )
+
+    expect.same(List(c, a, b), result.active) &&
+    expect.same(Set(d), result.exclusions.collect { case e if e.reason == ExclusionReason.CertifiedTimeoutMissing => e.peerId }.toSet) &&
+    expect(result.recentFilterApplied)
+  }
+
+  pureTest("certified timeout shrink is bypassed when retained set cannot satisfy floor") {
+    val result = ActiveFacilitatorAdmission.fromCertifiedTimeout(
+      selected = List(a, b, c),
+      recentSigners = window(
+        10L -> Set(a),
+        11L -> Set(a),
+        12L -> Set(a)
+      ),
+      timeoutVoters = Set(a),
+      minActiveSize = 2
+    )
+
+    expect.same(List(a, b, c), result.active) &&
+    expect(result.exclusions.isEmpty) &&
+    expect(!result.recentFilterApplied)
+  }
 }
