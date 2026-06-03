@@ -856,6 +856,11 @@ object types {
     // behavior, while the long window caps aggregate egress over several minutes. 0 disables.
     perIpMaxBytesPerLongWindow: Long = 0L,
     perIpLongWindow: FiniteDuration = 5.minutes,
+    // Optional node-wide long-window byte budget for heavyweight snapshot routes. Unlike the
+    // per-IP budget, this caps aggregate egress from the node and is not bypassed by the per-IP
+    // allowlist. 0 disables.
+    maxBytesPerLongWindow: Long = 0L,
+    longWindow: FiniteDuration = 5.minutes,
     perIpBandwidthRetryAfterSeconds: Long = 5,
     // Route-scoped bound on simultaneous heavy snapshot serves (currently
     // `/latest/combined/stream` + `/{ordinal}?full=true`). Layered INSIDE the existing

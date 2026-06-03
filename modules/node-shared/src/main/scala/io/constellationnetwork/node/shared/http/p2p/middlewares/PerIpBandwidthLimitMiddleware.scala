@@ -38,8 +38,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *     requests for the same ordinal, which is the common case.
   *   - When `Content-Length` is missing (chunked routes that don't pre-compute size), the request passes through with `0` cost accounted.
   *     Use this middleware only on routes that set `Content-Length`.
-  *   - Like `PerIpRateLimitMiddleware`, the per-IP map is keyed by client IP and not actively GC'd. Stale entries are pruned on the next
-  *     request from the same IP. Bounded under the small-distinct-callers assumption.
+  *   - Like `PerIpRateLimitMiddleware`, the per-IP map is keyed by client IP and not actively GC'd. Stale entries are pruned on heavyweight
+  *     snapshot requests. Bounded under the small-distinct-callers assumption.
   *
   * Composition order recommendation when stacked with the others:
   *
@@ -66,7 +66,10 @@ object PerIpBandwidthLimitMiddleware {
     Async[F].pure(Option.empty[Long])
   }
 
-  private final case class IpState(timestampedBytesDesc: List[(Long, Long)])
+  private final case class BandwidthState(
+    perIp: Map[String, List[(Long, Long)]],
+    aggregateTimestampedBytesDesc: List[(Long, Long)]
+  )
 
   /** Build the middleware.
     *
@@ -80,10 +83,10 @@ object PerIpBandwidthLimitMiddleware {
     *   predicate selecting which requests this middleware enforces on. Requests for which this returns `false` are passed through without
     *   any bandwidth accounting. Defaults to "all requests."
     * @param allowlist
-    *   client IPs that bypass the bandwidth check entirely. Used for trusted infra (snapshot streaming, monitoring, peer-to-peer recovery)
-    *   that legitimately exceeds the per-IP byte cap. Match is exact-string against the resolved IP (X-Forwarded-For first hop or remote
-    *   address). Mirrors [[PerIpRateLimitMiddleware]]'s allowlist so a single `CL_SNAPSHOT_PER_IP_ALLOWLIST` env value bypasses both
-    *   limiters in lockstep.
+    *   client IPs that bypass the per-IP bandwidth check. Used for trusted infra (snapshot streaming, monitoring, peer-to-peer recovery)
+    *   that legitimately exceeds the per-IP byte cap. The aggregate node-wide budget, when configured, still applies. Match is exact-string
+    *   against the resolved IP (X-Forwarded-For first hop or remote address). Mirrors [[PerIpRateLimitMiddleware]]'s allowlist so a single
+    *   `CL_SNAPSHOT_PER_IP_ALLOWLIST` env value bypasses both per-IP limiters in lockstep.
     * @param selfExternalIp
     *   the local node's external IP. When provided, the middleware detects the XFF-self-injection case (LB injected our own IP into
     *   `X-Forwarded-For`) and falls back to the TCP remote address. Mirrors [[PerIpRateLimitMiddleware]]'s guard; see that header doc for
@@ -100,6 +103,8 @@ object PerIpBandwidthLimitMiddleware {
     windowDuration: FiniteDuration,
     maxBytesPerLongWindow: Long = 0L,
     longWindowDuration: FiniteDuration = 0.seconds,
+    maxBytesPerAggregateLongWindow: Long = 0L,
+    aggregateLongWindowDuration: FiniteDuration = 0.seconds,
     retryAfterSeconds: Long = 5,
     appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
     allowlist: Set[String] = Set.empty,
@@ -111,14 +116,21 @@ object PerIpBandwidthLimitMiddleware {
     val windowMillis = windowDuration.toMillis
     val longWindowMillis = longWindowDuration.toMillis
     val longWindowEnabled = maxBytesPerLongWindow > 0L && longWindowMillis > 0L
-    val retentionWindowMillis = if (longWindowEnabled) math.max(windowMillis, longWindowMillis) else windowMillis
+    val aggregateWindowMillis = aggregateLongWindowDuration.toMillis
+    val aggregateEnabled = maxBytesPerAggregateLongWindow > 0L && aggregateWindowMillis > 0L
+    val retentionWindowMillis =
+      List(
+        Some(windowMillis),
+        Option.when(longWindowEnabled)(longWindowMillis),
+        Option.when(aggregateEnabled)(aggregateWindowMillis)
+      ).flatten.max
     val effectiveEstimator: Request[F] => F[Option[Long]] =
       routeSizeEstimator.getOrElse(noRouteSizeEstimator[F] _)
 
     def trimSamples(samples: List[(Long, Long)], nowMs: Long): List[(Long, Long)] =
       samples.takeWhile(_._1 >= nowMs - retentionWindowMillis)
 
-    def exceededBudget(samples: List[(Long, Long)], nowMs: Long, nextBytes: Long): Option[(Long, Long)] = {
+    def exceededPerIpBudget(samples: List[(Long, Long)], nowMs: Long, nextBytes: Long): Option[(Long, Long)] = {
       val shortSum = samples.iterator.collect { case (ts, bytes) if ts >= nowMs - windowMillis => bytes }.sum
       val shortObserved = shortSum + nextBytes
       if (shortObserved > maxBytesPerWindow || (nextBytes === 0L && shortSum >= maxBytesPerWindow))
@@ -134,11 +146,65 @@ object PerIpBandwidthLimitMiddleware {
         None
     }
 
+    def exceededAggregateBudget(samples: List[(Long, Long)], nowMs: Long, nextBytes: Long): Option[(Long, Long)] =
+      if (aggregateEnabled) {
+        val aggregateSum = samples.iterator.collect { case (ts, bytes) if ts >= nowMs - aggregateWindowMillis => bytes }.sum
+        val aggregateObserved = aggregateSum + nextBytes
+        if (aggregateObserved > maxBytesPerAggregateLongWindow || (nextBytes === 0L && aggregateSum >= maxBytesPerAggregateLongWindow))
+          Some((aggregateObserved, maxBytesPerAggregateLongWindow))
+        else
+          None
+      } else
+        None
+
+    def exceededBudget(
+      state: BandwidthState,
+      ipOpt: Option[String],
+      nowMs: Long,
+      nextBytes: Long
+    ): Option[(String, Long, Long)] = {
+      val aggregateKept = trimSamples(state.aggregateTimestampedBytesDesc, nowMs)
+      exceededAggregateBudget(aggregateKept, nowMs, nextBytes).map {
+        case (observed, cap) => ("aggregate", observed, cap)
+      }.orElse {
+        ipOpt.flatMap { ip =>
+          val kept = state.perIp.get(ip).map(trimSamples(_, nowMs)).getOrElse(Nil)
+          exceededPerIpBudget(kept, nowMs, nextBytes).map {
+            case (observed, cap) => (ip, observed, cap)
+          }
+        }
+      }
+    }
+
+    def trimState(state: BandwidthState, nowMs: Long): BandwidthState =
+      BandwidthState(
+        perIp = state.perIp.view.mapValues(trimSamples(_, nowMs)).toMap,
+        aggregateTimestampedBytesDesc = trimSamples(state.aggregateTimestampedBytesDesc, nowMs)
+      )
+
+    def reserveBytes(
+      state: BandwidthState,
+      ipOpt: Option[String],
+      nowMs: Long,
+      bytes: Long
+    ): BandwidthState = {
+      val trimmed = trimState(state, nowMs)
+      val withAggregate =
+        if (aggregateEnabled) trimmed.copy(aggregateTimestampedBytesDesc = (nowMs, bytes) :: trimmed.aggregateTimestampedBytesDesc)
+        else trimmed
+      ipOpt match {
+        case Some(ip) =>
+          val prior = withAggregate.perIp.getOrElse(ip, Nil)
+          withAggregate.copy(perIp = withAggregate.perIp.updated(ip, (nowMs, bytes) :: prior))
+        case None => withAggregate
+      }
+    }
+
     def runInnerWithPostCheck(
       routes: HttpRoutes[F],
       req: Request[F],
-      ip: String,
-      stateRef: Ref[F, Map[String, IpState]],
+      ipOpt: Option[String],
+      stateRef: Ref[F, BandwidthState],
       retryAfterSeconds: Long,
       logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F],
       onReject: Option[(Request[F], String, Long, Long) => F[Unit]]
@@ -154,29 +220,25 @@ object PerIpBandwidthLimitMiddleware {
           // Keeps the observed value out of the modify closure so the post-modify branches can
           // report the right window in the rejection log.
           stateRef
-            .modify[Option[(Long, Long)]] { m =>
-              val prev = m.getOrElse(ip, IpState(Nil))
-              val keptNow = trimSamples(prev.timestampedBytesDesc, nowMs2)
-              exceededBudget(keptNow, nowMs2, nextBytes = responseBytes) match {
-                case Some(rejected) =>
-                  // Don't record - we're rejecting. Trimmed list is preserved.
-                  (m.updated(ip, IpState(keptNow)), Some(rejected))
-                case None =>
-                  (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
+            .modify[Option[(String, Long, Long)]] { state =>
+              val trimmed = trimState(state, nowMs2)
+              exceededBudget(trimmed, ipOpt, nowMs2, nextBytes = responseBytes) match {
+                case Some(rejected) => (trimmed, Some(rejected))
+                case None           => (reserveBytes(trimmed, ipOpt, nowMs2, responseBytes), None)
               }
             }
             .flatMap {
-              case None                  => resp.pure[F]
-              case Some((observed, cap)) =>
+              case None                         => resp.pure[F]
+              case Some((scope, observed, cap)) =>
                 // Drain the unused inner body so any held resources release. Then return 429.
                 resp.body.compile.drain.attempt.void >>
-                  onReject.traverse_(_(req, ip, observed, cap)) >>
-                  rejectFast(ip, cap, observed, retryAfterSeconds, logger)
+                  onReject.traverse_(_(req, scope, observed, cap)) >>
+                  rejectFast(scope, cap, observed, retryAfterSeconds, logger)
             }
         }
       }
 
-    Ref.of[F, Map[String, IpState]](Map.empty).map { stateRef => routes: HttpRoutes[F] =>
+    Ref.of[F, BandwidthState](BandwidthState(Map.empty, Nil)).map { stateRef => routes: HttpRoutes[F] =>
       Kleisli { req =>
         if (!appliesTo(req)) routes(req)
         else {
@@ -198,23 +260,22 @@ object PerIpBandwidthLimitMiddleware {
             xffFirstHop
               .filterNot(_ => xffIsSelfInjection)
               .orElse(req.remote.map(_.host.toString))
+          val perIpBudgetIpOpt: Option[String] = clientIpOpt.filterNot(allowlist.contains)
 
           clientIpOpt match {
-            case None                               => routes(req)
-            case Some(ip) if allowlist.contains(ip) => routes(req) // trusted infra bypasses bandwidth
-            case Some(ip)                           =>
+            case _ =>
               // Cheap pre-check: if this IP is ALREADY at the cap (sum of in-window kept bytes
               // already >= cap), reject without invoking the inner route. This avoids the heap-
               // allocation cost for every excess request from a freeloader once they're throttled.
               OptionT.liftF(Async[F].realTime).flatMap { now =>
                 val nowMs = now.toMillis
                 OptionT.liftF(stateRef.get).flatMap { snap =>
-                  val kept = snap.get(ip).map(s => trimSamples(s.timestampedBytesDesc, nowMs)).getOrElse(Nil)
-                  exceededBudget(kept, nowMs, nextBytes = 0L) match {
-                    case Some((observed, cap)) =>
+                  val trimmed = trimState(snap, nowMs)
+                  exceededBudget(trimmed, perIpBudgetIpOpt, nowMs, nextBytes = 0L) match {
+                    case Some((scope, observed, cap)) =>
                       OptionT.liftF(
-                        onReject.traverse_(_(req, ip, observed, cap)) >>
-                          rejectFast(ip, cap, observed, retryAfterSeconds, logger)
+                        onReject.traverse_(_(req, scope, observed, cap)) >>
+                          rejectFast(scope, cap, observed, retryAfterSeconds, logger)
                       )
                     case None =>
                       // Pre-flight estimator check: if a route-specific estimator can predict the
@@ -225,17 +286,17 @@ object PerIpBandwidthLimitMiddleware {
                       // routes without estimators preserve legacy behavior.
                       OptionT.liftF(effectiveEstimator(req)).flatMap {
                         case Some(estimated) =>
-                          exceededBudget(kept, nowMs, nextBytes = estimated) match {
-                            case Some((observed, cap)) =>
+                          exceededBudget(trimmed, perIpBudgetIpOpt, nowMs, nextBytes = estimated) match {
+                            case Some((scope, observed, cap)) =>
                               OptionT.liftF(
-                                onReject.traverse_(_(req, ip, observed, cap)) >>
-                                  rejectFast(ip, cap, observed, retryAfterSeconds, logger)
+                                onReject.traverse_(_(req, scope, observed, cap)) >>
+                                  rejectFast(scope, cap, observed, retryAfterSeconds, logger)
                               )
                             case None =>
-                              runInnerWithPostCheck(routes, req, ip, stateRef, retryAfterSeconds, logger, onReject)
+                              runInnerWithPostCheck(routes, req, perIpBudgetIpOpt, stateRef, retryAfterSeconds, logger, onReject)
                           }
                         case _ =>
-                          runInnerWithPostCheck(routes, req, ip, stateRef, retryAfterSeconds, logger, onReject)
+                          runInnerWithPostCheck(routes, req, perIpBudgetIpOpt, stateRef, retryAfterSeconds, logger, onReject)
                       }
                   }
                 }
