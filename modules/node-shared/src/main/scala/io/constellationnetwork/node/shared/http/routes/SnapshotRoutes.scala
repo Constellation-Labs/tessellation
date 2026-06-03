@@ -528,6 +528,8 @@ object SnapshotRoutes {
           PerIpBandwidthLimitMiddleware[F](
             maxBytesPerWindow = cfg.perIpMaxBytesPerWindow,
             windowDuration = cfg.perIpWindow,
+            maxBytesPerLongWindow = cfg.perIpMaxBytesPerLongWindow,
+            longWindowDuration = cfg.perIpLongWindow,
             retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
             appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req),
             allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,

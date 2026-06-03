@@ -851,6 +851,11 @@ object types {
     //
     // See PerIpBandwidthLimitMiddleware for mechanism + caveats.
     perIpMaxBytesPerWindow: Long = 0L,
+    // Optional longer-window byte budget for sustained-poller control. This is an integral
+    // term layered on top of `perIpMaxBytesPerWindow`: the short window permits normal burst
+    // behavior, while the long window caps aggregate egress over several minutes. 0 disables.
+    perIpMaxBytesPerLongWindow: Long = 0L,
+    perIpLongWindow: FiniteDuration = 5.minutes,
     perIpBandwidthRetryAfterSeconds: Long = 5,
     // Route-scoped bound on simultaneous heavy snapshot serves (currently
     // `/latest/combined/stream` + `/{ordinal}?full=true`). Layered INSIDE the existing

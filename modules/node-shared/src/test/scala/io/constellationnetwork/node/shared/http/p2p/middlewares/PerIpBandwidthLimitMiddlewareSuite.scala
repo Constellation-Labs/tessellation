@@ -73,6 +73,25 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
         )
   }
 
+  test("long-window budget rejects sustained poller even when each short window request is under cap") {
+    val shortCap = 1024L * 1024L * 1024L
+    val longCap = 150L * 1024L * 1024L
+    val responseSize = 80L * 1024L * 1024L
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](
+        maxBytesPerWindow = shortCap,
+        windowDuration = 1.minute,
+        maxBytesPerLongWindow = longCap,
+        longWindowDuration = 5.minutes
+      )
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp("203.0.113.32")).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp("203.0.113.32")).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "first request fits both short and long budgets")
+        .and(expect(r2.status == Status.TooManyRequests, "second request fits short cap but exceeds long cap"))
+  }
+
   test("allowlist: matching IP bypasses the bandwidth cap, never gets 429") {
     val streaming = "13.57.169.30"
     val cap = 100L * 1024L * 1024L

@@ -98,6 +98,8 @@ object PerIpBandwidthLimitMiddleware {
   def apply[F[_]: Async](
     maxBytesPerWindow: Long,
     windowDuration: FiniteDuration,
+    maxBytesPerLongWindow: Long = 0L,
+    longWindowDuration: FiniteDuration = 0.seconds,
     retryAfterSeconds: Long = 5,
     appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
     allowlist: Set[String] = Set.empty,
@@ -107,8 +109,72 @@ object PerIpBandwidthLimitMiddleware {
   ): F[HttpRoutes[F] => HttpRoutes[F]] = {
     val logger = Slf4jLogger.getLogger[F]
     val windowMillis = windowDuration.toMillis
+    val longWindowMillis = longWindowDuration.toMillis
+    val longWindowEnabled = maxBytesPerLongWindow > 0L && longWindowMillis > 0L
+    val retentionWindowMillis = if (longWindowEnabled) math.max(windowMillis, longWindowMillis) else windowMillis
     val effectiveEstimator: Request[F] => F[Option[Long]] =
       routeSizeEstimator.getOrElse(noRouteSizeEstimator[F] _)
+
+    def trimSamples(samples: List[(Long, Long)], nowMs: Long): List[(Long, Long)] =
+      samples.takeWhile(_._1 >= nowMs - retentionWindowMillis)
+
+    def exceededBudget(samples: List[(Long, Long)], nowMs: Long, nextBytes: Long): Option[(Long, Long)] = {
+      val shortSum = samples.iterator.collect { case (ts, bytes) if ts >= nowMs - windowMillis => bytes }.sum
+      val shortObserved = shortSum + nextBytes
+      if (shortObserved > maxBytesPerWindow || (nextBytes === 0L && shortSum >= maxBytesPerWindow))
+        Some((shortObserved, maxBytesPerWindow))
+      else if (longWindowEnabled) {
+        val longSum = samples.iterator.collect { case (ts, bytes) if ts >= nowMs - longWindowMillis => bytes }.sum
+        val longObserved = longSum + nextBytes
+        if (longObserved > maxBytesPerLongWindow || (nextBytes === 0L && longSum >= maxBytesPerLongWindow))
+          Some((longObserved, maxBytesPerLongWindow))
+        else
+          None
+      } else
+        None
+    }
+
+    def runInnerWithPostCheck(
+      routes: HttpRoutes[F],
+      req: Request[F],
+      ip: String,
+      stateRef: Ref[F, Map[String, IpState]],
+      retryAfterSeconds: Long,
+      logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F],
+      onReject: Option[(Request[F], String, Long, Long) => F[Unit]]
+    ): OptionT[F, Response[F]] =
+      // Run inner route, then check Content-Length and reserve atomically.
+      // This second check stays even when the estimator accepted, so an
+      // under-reporting estimator can't silently bypass the cap (defense in depth).
+      routes(req).semiflatMap { resp =>
+        val responseBytes = resp.contentLength.getOrElse(0L)
+        Async[F].realTime.flatMap { now2 =>
+          val nowMs2 = now2.toMillis
+          // Return type encodes the decision: None = accepted, Some(observed, cap) = rejected.
+          // Keeps the observed value out of the modify closure so the post-modify branches can
+          // report the right window in the rejection log.
+          stateRef
+            .modify[Option[(Long, Long)]] { m =>
+              val prev = m.getOrElse(ip, IpState(Nil))
+              val keptNow = trimSamples(prev.timestampedBytesDesc, nowMs2)
+              exceededBudget(keptNow, nowMs2, nextBytes = responseBytes) match {
+                case Some(rejected) =>
+                  // Don't record - we're rejecting. Trimmed list is preserved.
+                  (m.updated(ip, IpState(keptNow)), Some(rejected))
+                case None =>
+                  (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
+              }
+            }
+            .flatMap {
+              case None                  => resp.pure[F]
+              case Some((observed, cap)) =>
+                // Drain the unused inner body so any held resources release. Then return 429.
+                resp.body.compile.drain.attempt.void >>
+                  onReject.traverse_(_(req, ip, observed, cap)) >>
+                  rejectFast(ip, cap, observed, retryAfterSeconds, logger)
+            }
+        }
+      }
 
     Ref.of[F, Map[String, IpState]](Map.empty).map { stateRef => routes: HttpRoutes[F] =>
       Kleisli { req =>
@@ -142,66 +208,35 @@ object PerIpBandwidthLimitMiddleware {
               // allocation cost for every excess request from a freeloader once they're throttled.
               OptionT.liftF(Async[F].realTime).flatMap { now =>
                 val nowMs = now.toMillis
-                val cutoff = nowMs - windowMillis
                 OptionT.liftF(stateRef.get).flatMap { snap =>
-                  val kept = snap
-                    .get(ip)
-                    .map(_.timestampedBytesDesc.takeWhile(_._1 >= cutoff))
-                    .getOrElse(Nil)
-                  val sumKept = kept.iterator.map(_._2).sum
-                  if (sumKept >= maxBytesPerWindow) {
-                    OptionT.liftF(
-                      onReject.traverse_(_(req, ip, sumKept, maxBytesPerWindow)) >>
-                        rejectFast(ip, maxBytesPerWindow, sumKept, retryAfterSeconds, logger)
-                    )
-                  } else {
-                    // Pre-flight estimator check: if a route-specific estimator can predict the
-                    // response size, reject before the route executes. The key win is avoiding
-                    // the ~100 MB response-body construction (and resource acquire/drain) for the
-                    // combined-stream routes when the IP would be over the cap anyway. Estimators
-                    // returning None fall through to the post-response Content-Length path so
-                    // routes without estimators preserve legacy behavior.
-                    OptionT.liftF(effectiveEstimator(req)).flatMap {
-                      case Some(estimated) if sumKept + estimated > maxBytesPerWindow =>
-                        OptionT.liftF(
-                          onReject.traverse_(_(req, ip, sumKept + estimated, maxBytesPerWindow)) >>
-                            rejectFast(ip, maxBytesPerWindow, sumKept + estimated, retryAfterSeconds, logger)
-                        )
-                      case _ =>
-                        // Run inner route, then check Content-Length and reserve atomically.
-                        // This second check stays even when the estimator accepted, so an
-                        // under-reporting estimator can't silently bypass the cap (defense in depth).
-                        routes(req).semiflatMap { resp =>
-                          val responseBytes = resp.contentLength.getOrElse(0L)
-                          Async[F].realTime.flatMap { now2 =>
-                            val nowMs2 = now2.toMillis
-                            val cutoff2 = nowMs2 - windowMillis
-                            // Return type encodes the decision: None = accepted, Some(observed) = rejected.
-                            // Keeps the `sumNow` value out of the modify closure so the post-modify
-                            // branches can report the observed total in the rejection log.
-                            stateRef
-                              .modify[Option[Long]] { m =>
-                                val prev = m.getOrElse(ip, IpState(Nil))
-                                val keptNow = prev.timestampedBytesDesc.takeWhile(_._1 >= cutoff2)
-                                val sumNow = keptNow.iterator.map(_._2).sum
-                                if (sumNow + responseBytes > maxBytesPerWindow) {
-                                  // Don't record - we're rejecting. Trimmed list is preserved.
-                                  (m.updated(ip, IpState(keptNow)), Some(sumNow + responseBytes))
-                                } else {
-                                  (m.updated(ip, IpState((nowMs2, responseBytes) :: keptNow)), None)
-                                }
-                              }
-                              .flatMap {
-                                case None           => resp.pure[F]
-                                case Some(observed) =>
-                                  // Drain the unused inner body so any held resources release. Then return 429.
-                                  resp.body.compile.drain.attempt.void >>
-                                    onReject.traverse_(_(req, ip, observed, maxBytesPerWindow)) >>
-                                    rejectFast(ip, maxBytesPerWindow, observed, retryAfterSeconds, logger)
-                              }
+                  val kept = snap.get(ip).map(s => trimSamples(s.timestampedBytesDesc, nowMs)).getOrElse(Nil)
+                  exceededBudget(kept, nowMs, nextBytes = 0L) match {
+                    case Some((observed, cap)) =>
+                      OptionT.liftF(
+                        onReject.traverse_(_(req, ip, observed, cap)) >>
+                          rejectFast(ip, cap, observed, retryAfterSeconds, logger)
+                      )
+                    case None =>
+                      // Pre-flight estimator check: if a route-specific estimator can predict the
+                      // response size, reject before the route executes. The key win is avoiding
+                      // the ~100 MB response-body construction (and resource acquire/drain) for the
+                      // combined-stream routes when the IP would be over the cap anyway. Estimators
+                      // returning None fall through to the post-response Content-Length path so
+                      // routes without estimators preserve legacy behavior.
+                      OptionT.liftF(effectiveEstimator(req)).flatMap {
+                        case Some(estimated) =>
+                          exceededBudget(kept, nowMs, nextBytes = estimated) match {
+                            case Some((observed, cap)) =>
+                              OptionT.liftF(
+                                onReject.traverse_(_(req, ip, observed, cap)) >>
+                                  rejectFast(ip, cap, observed, retryAfterSeconds, logger)
+                              )
+                            case None =>
+                              runInnerWithPostCheck(routes, req, ip, stateRef, retryAfterSeconds, logger, onReject)
                           }
-                        }
-                    }
+                        case _ =>
+                          runInnerWithPostCheck(routes, req, ip, stateRef, retryAfterSeconds, logger, onReject)
+                      }
                   }
                 }
               }
