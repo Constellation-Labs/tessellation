@@ -451,6 +451,9 @@ abstract class CurrencyL0App(
                       seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
                         case (pid, r) => r.tier.map(t => pid -> t)
                       })
+                      seedActiveAdmissionScores = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                        case (pid, r) => r.activeAdmissionScore.filter(_ > 0).map(score => pid -> score)
+                      })
                       // v19 phase 2: view-from-time window unwrap mirror of dag-l0 Main.scala.
                       seedRecentRoundEndTimes =
                         seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
@@ -480,6 +483,7 @@ abstract class CurrencyL0App(
                           peerViewChanges = seedPeerViewChanges,
                           recentSigners = seedRecentSigners,
                           peerTiers = seedPeerTiers,
+                          activeAdmissionScores = seedActiveAdmissionScores,
                           recentRoundEndTimes = seedRecentRoundEndTimes
                         )
                       )

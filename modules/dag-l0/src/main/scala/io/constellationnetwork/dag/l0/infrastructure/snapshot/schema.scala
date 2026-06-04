@@ -192,6 +192,16 @@ object schema {
     // original "everyone defaults to Core" bootstrap that let unclassified peers wedge the
     // cluster.
     peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v27 consensus peer controller score: bounded integral state for admitting peers into
+    // rewards-affecting active roles. Updated only from finalized evidence and persisted via
+    // peerHistory so a restart cannot promote a no-evidence peer.
+    activeAdmissionScores: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v28 controller evidence: voters from the TimeoutCertificate embedded in the
+    // accepted proposal for the just-finalized round. This field is not a long-lived
+    // history window; the bounded integral `activeAdmissionScores` is the durable
+    // controller state. Persisting this one-round set makes the -D timeout-missing
+    // penalty an outcome-derived fact instead of a local timeout-cache observation.
+    lastTimeoutCertificateVoters: SortedSet[PeerId] = SortedSet.empty,
     // v19 phase 2 view-from-time anchor: sliding window of (ordinal -> consensusEndTime).
     // `consensusEndTime` = `max(median(Facility.proposerClockMs), parent.consensusEndTime + 1)`,
     // computed from the consensus-agreed Facility set at outcome finalization. Bounded by
@@ -216,20 +226,20 @@ object schema {
     // testnet proposal validation. recentProofSizes / recentSigners stay in the signed
     // artifact (fully sorted, byte-identical across honest nodes).
     //
-    // v21 layout: peer-keyed dimensions collapsed into a single map keyed by
-    // PeerId so each id appears once. The union of keys across the seven peer-keyed
-    // source maps (quality, removalPenalty, cumulativeMissCount, readmissionCountdown,
-    // deferralCountdown, peerViewChanges, peerTiers) becomes the per-peer map's key set;
+    // v21/v27 layout: peer-keyed dimensions collapsed into a single map keyed by
+    // PeerId so each id appears once. The union of keys across the peer-keyed
+    // source maps becomes the per-peer map's key set;
     // absent peers contribute `PerPeerOperationalRecord.empty` semantics on the consumer side.
     def toOperationalState: ConsensusOperationalState = {
       val keys: Set[PeerId] =
-        (peerQuality.keysIterator ++
-          removalPenalties.keysIterator ++
-          cumulativeMissCounts.keysIterator ++
-          readmissionCountdown.keysIterator ++
-          deferralCountdown.keysIterator ++
-          peerViewChanges.keysIterator ++
-          peerTiers.keysIterator).toSet
+        peerQuality.keySet |
+          removalPenalties.keySet |
+          cumulativeMissCounts.keySet |
+          readmissionCountdown.keySet |
+          deferralCountdown.keySet |
+          peerViewChanges.keySet |
+          peerTiers.keySet |
+          activeAdmissionScores.keySet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
@@ -246,7 +256,8 @@ object schema {
               // v19: only emit Some when there is an actual tier classification on this
               // peer. Absent peers / no-history readers see no key under dropNullValues=true,
               // and CommitteeBuilder defaults `None` to bootstrap-Tier-2 at consume time.
-              tier = peerTiers.get(pid)
+              tier = peerTiers.get(pid),
+              activeAdmissionScore = activeAdmissionScores.get(pid).filter(_ > 0)
             )
           }
         )

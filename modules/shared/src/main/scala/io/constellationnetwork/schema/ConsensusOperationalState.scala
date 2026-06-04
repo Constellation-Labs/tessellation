@@ -74,7 +74,15 @@ final case class PerPeerOperationalRecord(
   // NOT in deterministicConfigHash: the tier value is per-peer-derived, not a
   // cluster-wide config knob. Operators do not configure tiers; the round-finalize
   // pure function computes them.
-  tier: Option[Int] = None
+  tier: Option[Int] = None,
+  // Bounded integral controller score for admitting peers into rewards-affecting
+  // active consensus roles. Updated only from finalized, consensus-agreed evidence
+  // (completed signer, accepted responder set, evictions, and finalized self-health
+  // hints) and persisted so restarts do not reset a peer from no-evidence to active.
+  //
+  // MUST remain optional for the same derevo back-compat reason as viewChangesCaused:
+  // snapshots written before this controller existed have no key here.
+  activeAdmissionScore: Option[Int] = None
 )
 
 object PerPeerOperationalRecord {
@@ -86,7 +94,8 @@ object PerPeerOperationalRecord {
       readmissionCountdown = 0,
       deferralCountdown = 0,
       viewChangesCaused = None,
-      tier = None
+      tier = None,
+      activeAdmissionScore = None
     )
 }
 

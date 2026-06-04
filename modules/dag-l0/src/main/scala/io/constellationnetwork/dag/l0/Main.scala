@@ -456,6 +456,9 @@ object Main
                   seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
                     case (pid, r) => r.tier.map(t => pid -> t)
                   })
+                  seedActiveAdmissionScores = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                    case (pid, r) => r.activeAdmissionScore.filter(_ > 0).map(score => pid -> score)
+                  })
                   // v19 phase 2: view-from-time window unwrapped from the Option. Snapshots
                   // written before the field existed decode None -> empty map; the next
                   // round's view derivation falls back to phase 1 `viewChangeVotes.maxToView`
@@ -516,6 +519,7 @@ object Main
                       peerViewChanges = seedPeerViewChanges,
                       recentSigners = seedRecentSigners,
                       peerTiers = seedPeerTiers,
+                      activeAdmissionScores = seedActiveAdmissionScores,
                       recentRoundEndTimes = seedRecentRoundEndTimes
                     ),
                     deferFirstRound = true

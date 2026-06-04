@@ -252,15 +252,33 @@ object CurrencySnapshotConsensusStateCreator {
         selectedFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
         targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize)
         maxActiveSize = config.activeFacilitatorMax.getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedFacilitators.size))
-        activeAdmission = ActiveFacilitatorAdmission.fromRecentSigners(
-          selected = selectedFacilitators,
-          recentSigners = lastOutcome.recentSigners,
-          peerQuality = lastOutcome.peerQuality.toMap,
-          minActiveSize = coreCommitteeSize,
-          targetActiveSize = targetActiveSize,
-          maxActiveSize = maxActiveSize,
-          minParticipationObservations = config.minParticipationObservations,
-          minParticipationRatio = config.minParticipationRatio
+        activeAdmission = ConsensusPeerController.chooseActive(
+          ConsensusPeerController.AdmissionInput(
+            selected = selectedFacilitators,
+            recentSigners = lastOutcome.recentSigners,
+            peerQuality = lastOutcome.peerQuality.toMap,
+            activeScores = lastOutcome.activeAdmissionScores.toMap,
+            minActiveSize = coreCommitteeSize,
+            targetActiveSize = targetActiveSize,
+            maxActiveSize = maxActiveSize,
+            minParticipationObservations = config.minParticipationObservations,
+            minParticipationRatio = config.minParticipationRatio,
+            config = ConsensusPeerController.Config(
+              promoteThreshold = config.activeAdmissionPromoteThreshold,
+              retainThreshold = config.activeAdmissionRetainThreshold,
+              demoteThreshold = config.activeAdmissionDemoteThreshold,
+              maxScore = config.activeAdmissionMaxScore,
+              signatureReward = config.activeAdmissionSignatureReward,
+              responderReward = config.activeAdmissionResponderReward,
+              missedActivePenalty = config.activeAdmissionMissedActivePenalty,
+              timeoutMissingPenalty = config.activeAdmissionTimeoutMissingPenalty,
+              evictedPenalty = config.activeAdmissionEvictedPenalty,
+              degradedPenalty = config.activeAdmissionDegradedPenalty,
+              criticalPenalty = config.activeAdmissionCriticalPenalty,
+              passiveDecay = config.activeAdmissionPassiveDecay,
+              maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
+            )
+          )
         )
         activeFacilitators = activeAdmission.active
 
