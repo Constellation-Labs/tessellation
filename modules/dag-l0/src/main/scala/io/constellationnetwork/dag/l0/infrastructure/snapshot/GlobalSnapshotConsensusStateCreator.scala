@@ -303,6 +303,8 @@ object GlobalSnapshotConsensusStateCreator {
             "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
             "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
             "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
+            "recentSignerMinCount" -> activeAdmission.recentSignerMinCount.toString,
+            "recentSignerMaxCount" -> activeAdmission.recentSignerMaxCount.toString,
             "recentSignerFilterApplied" -> activeAdmission.recentFilterApplied.toString,
             "recentSignerExclusions" -> activeAdmission.exclusions.size.toString
           )
@@ -353,6 +355,8 @@ object GlobalSnapshotConsensusStateCreator {
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_min_count", activeAdmission.recentSignerMinCount.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_max_count", activeAdmission.recentSignerMaxCount.toLong)
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)

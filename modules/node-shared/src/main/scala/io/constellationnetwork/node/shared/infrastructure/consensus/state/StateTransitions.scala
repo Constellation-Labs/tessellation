@@ -743,6 +743,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     candidateSize = currentActive.size,
                     targetSize = currentActive.size,
                     expansionAdmittedSize = 0,
+                    recentSignerMinCount = 0,
+                    recentSignerMaxCount = 0,
                     recentWindowSize = 0,
                     recentFilterApplied = false
                   )

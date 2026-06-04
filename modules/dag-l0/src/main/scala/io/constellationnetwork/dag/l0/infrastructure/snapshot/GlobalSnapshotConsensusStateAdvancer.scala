@@ -983,7 +983,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           // gating the fetch, a seed view > 0 round could embed/consult a stale cert from a prior
           // attempt. The alpha.90 P0 #1 self-wedge fix stamps `initialViewNumber` on the state at
           // creation; this gate uses that stamp instead of bare `viewNumber > 0`.
-          maybeAssembledVcc <-
+          maybeAssembledVccRaw <-
             if (state.viewNumber > state.initialViewNumber) consensusStorage.getAssembledVcc(state.key)
             else none[ViewChangeCertificate].pure[F]
           maybeTimeoutCertificate <-
@@ -992,6 +992,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                 .getResources(state.key)
                 .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
             else none[TimeoutCertificate].pure[F]
+          maybeAssembledVcc = maybeTimeoutCertificate.fold {
+            maybeAssembledVccRaw.filter(vcc => vcc.fromView === (state.viewNumber.toLong - 1L) && vcc.toView === state.viewNumber.toLong)
+          }(_ => none[ViewChangeCertificate])
           vccHighestQc = maybeAssembledVcc.flatMap(_.highestQcInVcc)
           tcHighestQc = maybeTimeoutCertificate.flatMap { tc =>
             val qcs = tc.votes.toNonEmptyList.toList.flatMap(_.value.highestKnownQc)
@@ -1195,8 +1198,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                     // assembled AdmissionCertificates so probation peers ready at tip get
                     // re-admitted (Phase B2).
                     (for {
-                      maybeVcc <-
-                        if (state.viewNumber > 0) consensusStorage.getAssembledVcc(state.key)
+                      maybeVccRaw <-
+                        if (state.viewNumber > state.initialViewNumber) consensusStorage.getAssembledVcc(state.key)
                         else none[ViewChangeCertificate].pure[F]
                       maybeTc <-
                         if (state.viewNumber > state.initialViewNumber)
@@ -1204,6 +1207,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                             .getResources(state.key)
                             .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
                         else none[TimeoutCertificate].pure[F]
+                      maybeVcc = maybeTc.fold {
+                        maybeVccRaw.filter(vcc => vcc.fromView === (state.viewNumber.toLong - 1L) && vcc.toView === state.viewNumber.toLong)
+                      }(_ => none[ViewChangeCertificate])
                       ecs <-
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)

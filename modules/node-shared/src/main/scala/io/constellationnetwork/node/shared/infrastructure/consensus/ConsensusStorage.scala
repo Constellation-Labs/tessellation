@@ -201,12 +201,12 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   private[consensus] def clearResourcesPreservingDeclarations(key: Key): F[Unit]
 
-  /** Drop entries in `peerDeclarationsMap[*].proposal` where the stored proposal's view is below `minViewToKeep` AND has no VCC.
+  /** Drop entries in `peerDeclarationsMap[*].proposal` where the stored proposal's view is below `minViewToKeep` AND has no view cert.
     *
     * These slots are guaranteed never to validate: `ProposalVccValidator` only bypasses the missing-VCC check at exact match `proposalView
     * \== initialViewNumber` (alpha.90 seed-view) or in solo-core mode. Once `initialViewNumber` has advanced past the stored view, the slot
     * will be rejected on every CollectingProposals re-evaluation forever -- and `addProposal`'s first-write-wins for
-    * higher-view-without-VCC means a fresh broadcast cannot replace it. This is the alpha.92 stale-proposal deadlock (see
+    * higher-view-without-cert means a fresh broadcast cannot replace it. This is the alpha.92 stale-proposal deadlock (see
     * `project_alpha92_wedge_may21.md`): cluster wedged at ord 3127095 for ~9h with .193 logging 10,333 `view16_proposal_missing_vcc`
     * rejections against its own frozen slot, no path to self-heal short of operator restart.
     *
@@ -490,8 +490,9 @@ object ConsensusStorage {
                   if (existing.hash === proposal.hash) existing.some
                   else existing.some // conflicting same-view: reject (log at caller site)
                 } else {
-                  // higher view replaces if VCC requirement holds (view 0 = none, view > 0 = VCC present)
-                  if (proposal.view > 0L && proposal.vcc.isEmpty) existing.some
+                  // Higher view replaces only if the view-certificate requirement holds:
+                  // view 0 carries no cert, view > 0 carries either VCC or TC.
+                  if (proposal.view > 0L && proposal.vcc.isEmpty && proposal.timeoutCertificate.isEmpty) existing.some
                   else proposal.some
                 }
             }
@@ -828,7 +829,7 @@ object ConsensusStorage {
               peerDeclarationsMap = resources.peerDeclarationsMap.map {
                 case (peerId, decl) =>
                   val updated = decl.proposal match {
-                    case Some(p) if p.view < minViewToKeep && p.vcc.isEmpty =>
+                    case Some(p) if p.view < minViewToKeep && p.vcc.isEmpty && p.timeoutCertificate.isEmpty =>
                       decl.focus(_.proposal).replace(none)
                     case _ => decl
                   }
