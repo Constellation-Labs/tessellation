@@ -279,6 +279,16 @@ object types {
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
+    // Deterministic active-facilitator expansion. Recent signers are preferred, but when
+    // the recent-signer pool is below this target the StateCreator admits additional selected
+    // facilitators ranked by consensus-agreed peerQuality and stable peer id. This is a target,
+    // not a cap: if more recent signers exist, they remain active up to activeFacilitatorMax.
+    // Consensus-critical because it changes the active facilitator set.
+    activeFacilitatorTarget: Option[Int] = None,
+    // Hard cap for deterministic active-facilitator admission. None preserves the legacy
+    // maxFacilitatorCount-selected pool size; testnet sets this lower to avoid re-opening the
+    // full selected denominator while still letting healthy community peers prove themselves.
+    activeFacilitatorMax: Option[Int] = None,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     qualityDecayThreshold: Int = 100,
@@ -683,7 +693,12 @@ object types {
     //     coordinated cold L0 restart. As always the jar/config-hash mismatch at handshake is the
     //     real gate; this bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
     //     rehydration.
-    consensusSchemaVersion: Int = 25,
+    //     v26: active-facilitator expansion. The recent-signer-only admission filter now keeps
+    //     recent signers first, then fills toward `activeFacilitatorTarget` with deterministic
+    //     peerQuality-ranked candidates, capped by `activeFacilitatorMax`. This changes the
+    //     active facilitator set and therefore quorum/signature behavior, so it is
+    //     consensus-critical and requires a coordinated cold L0 restart.
+    consensusSchemaVersion: Int = 26,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -742,6 +757,7 @@ object types {
       *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
       *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
       *   - `activeFacilitatorFloor`: floor read by the rollback / ready-participation gates
+      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: active facilitator expansion and cap
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
@@ -799,6 +815,8 @@ object types {
           s"tighteningWindow=$tighteningWindow," +
           s"minParticipationInWindow=$minParticipationInWindow," +
           s"activeFacilitatorFloor=$activeFacilitatorFloor," +
+          s"activeFacilitatorTarget=${activeFacilitatorTarget.getOrElse(coreCommitteeSize.getOrElse(3))}," +
+          s"activeFacilitatorMax=${activeFacilitatorMax.map(_.toString).getOrElse("none")}," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
