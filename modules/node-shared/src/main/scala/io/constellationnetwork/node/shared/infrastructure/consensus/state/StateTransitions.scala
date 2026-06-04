@@ -740,6 +740,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     active = currentActive,
                     exclusions = List.empty,
                     recentSignerPoolSize = 0,
+                    candidateSize = currentActive.size,
+                    targetSize = currentActive.size,
+                    expansionAdmittedSize = 0,
                     recentWindowSize = 0,
                     recentFilterApplied = false
                   )
@@ -1230,6 +1233,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 Metrics[F].incrementCounter(
                   "dag_consensus_outcome_signer_count_total",
                   Seq(unsafeLabelName("signer_count") -> signerCount.toString)
+                ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_outcome_signer_vs_active_total",
+                  Seq(
+                    unsafeLabelName("signer_count") -> signerCount.toString,
+                    unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
+                  )
                 )
             } >> {
               // Per-peer observed_responders accounting: for each canonical committee member,

@@ -273,10 +273,17 @@ object GlobalSnapshotConsensusStateCreator {
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
         selectedFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
+        targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize)
+        maxActiveSize = config.activeFacilitatorMax.getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedFacilitators.size))
         activeAdmission = ActiveFacilitatorAdmission.fromRecentSigners(
           selected = selectedFacilitators,
           recentSigners = lastOutcome.recentSigners,
-          minActiveSize = coreCommitteeSize
+          peerQuality = lastOutcome.peerQuality.toMap,
+          minActiveSize = coreCommitteeSize,
+          targetActiveSize = targetActiveSize,
+          maxActiveSize = maxActiveSize,
+          minParticipationObservations = config.minParticipationObservations,
+          minParticipationRatio = config.minParticipationRatio
         )
         activeFacilitators = activeAdmission.active
 
@@ -291,7 +298,10 @@ object GlobalSnapshotConsensusStateCreator {
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "selected" -> selectedFacilitators.size.toString,
             "active" -> activeFacilitators.size.toString,
+            "activeTarget" -> activeAdmission.targetSize.toString,
+            "activeCandidates" -> activeAdmission.candidateSize.toString,
             "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
+            "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
             "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
             "recentSignerFilterApplied" -> activeAdmission.recentFilterApplied.toString,
             "recentSignerExclusions" -> activeAdmission.exclusions.size.toString
@@ -315,6 +325,22 @@ object GlobalSnapshotConsensusStateCreator {
               )
           }
         _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_active_facilitator_expansion_admitted_total",
+          activeAdmission.expansionAdmittedSize,
+          Seq.empty
+        )
+        _ <- activeAdmission.exclusions
+          .groupBy(_.reason.label)
+          .toList
+          .traverse_ {
+            case (reason, exclusions) =>
+              Metrics[F].incrementCounterBy(
+                "dag_consensus_active_facilitator_expansion_excluded_total",
+                exclusions.size,
+                Seq(admissionReasonLabel -> reason)
+              )
+          }
+        _ <- Metrics[F].incrementCounterBy(
           "dag_consensus_active_facilitator_admission_total",
           activeFacilitators.size,
           Seq(
@@ -323,6 +349,8 @@ object GlobalSnapshotConsensusStateCreator {
           )
         )
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_selected_size", selectedFacilitators.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_target_size", activeAdmission.targetSize.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
 
