@@ -153,6 +153,11 @@ object schema {
     // `TierTransitions.computeNextTiers` round-finalize derivation (Core peers absent from
     // the most-recent `DemotionConsecutiveMisses` signer sets demote to Tier 1).
     peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v27 consensus peer controller score, mirror of dag-l0 schema.
+    activeAdmissionScores: SortedMap[PeerId, Int] = SortedMap.empty,
+    // v28 controller evidence: voters from the accepted proposal's TimeoutCertificate
+    // for the just-finalized round. Mirror of dag-l0 schema.
+    lastTimeoutCertificateVoters: SortedSet[PeerId] = SortedSet.empty,
     // v19 phase 2 view-from-time anchor mirror of dag-l0 schema. Sliding window of
     // (ordinal -> consensusEndTime) computed as the median of Facility.proposerClockMs
     // clamped against the parent. See dag-l0 mirror and docs/consensus/view-from-time-anchor.md.
@@ -165,13 +170,14 @@ object schema {
     // Mirror of GlobalConsensusOutcome.toOperationalState. See dag-l0 schema.
     def toOperationalState: ConsensusOperationalState = {
       val keys: Set[PeerId] =
-        (peerQuality.keysIterator ++
-          removalPenalties.keysIterator ++
-          cumulativeMissCounts.keysIterator ++
-          readmissionCountdown.keysIterator ++
-          deferralCountdown.keysIterator ++
-          peerViewChanges.keysIterator ++
-          peerTiers.keysIterator).toSet
+        peerQuality.keySet |
+          removalPenalties.keySet |
+          cumulativeMissCounts.keySet |
+          readmissionCountdown.keySet |
+          deferralCountdown.keySet |
+          peerViewChanges.keySet |
+          peerTiers.keySet |
+          activeAdmissionScores.keySet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
@@ -185,7 +191,8 @@ object schema {
               // dropNullValues=true. Mirror of dag-l0 schema.
               viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L),
               // v19: only emit Some when there is an actual tier classification.
-              tier = peerTiers.get(pid)
+              tier = peerTiers.get(pid),
+              activeAdmissionScore = activeAdmissionScores.get(pid).filter(_ > 0)
             )
           }
         )

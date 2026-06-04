@@ -40,9 +40,9 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   SomeBlocksWereNotAccepted
 }
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
-import io.constellationnetwork.schema.{ConsensusOperationalState, GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -247,6 +247,33 @@ object CurrencySnapshotConsensusStateAdvancer {
                 case None =>
                   state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
               }
+            val newActiveAdmissionScores: SortedMap[PeerId, Int] =
+              ConsensusPeerController.advanceScores(
+                prior = state.lastOutcome.activeAdmissionScores,
+                evidence = ConsensusPeerController.RoundEvidence(
+                  roundStart = state.roundStartFacilitators.value.toSet,
+                  completed = completedFacilitators,
+                  responders = responderSet,
+                  timeoutVoters = state.acceptedTimeoutCertificateVoters.toSet,
+                  evicted = evictedPeers,
+                  observedSelfHealth = state.observedSelfHealth.value
+                ),
+                config = ConsensusPeerController.Config(
+                  promoteThreshold = config.activeAdmissionPromoteThreshold,
+                  retainThreshold = config.activeAdmissionRetainThreshold,
+                  demoteThreshold = config.activeAdmissionDemoteThreshold,
+                  maxScore = config.activeAdmissionMaxScore,
+                  signatureReward = config.activeAdmissionSignatureReward,
+                  responderReward = config.activeAdmissionResponderReward,
+                  missedActivePenalty = config.activeAdmissionMissedActivePenalty,
+                  timeoutMissingPenalty = config.activeAdmissionTimeoutMissingPenalty,
+                  evictedPenalty = config.activeAdmissionEvictedPenalty,
+                  degradedPenalty = config.activeAdmissionDegradedPenalty,
+                  criticalPenalty = config.activeAdmissionCriticalPenalty,
+                  passiveDecay = config.activeAdmissionPassiveDecay,
+                  maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
+                )
+              )
 
             // B2 readmissionCountdown maintenance (v12 sticky-probation, see dag-l0 mirror for
             // full rationale). decrement (clamped at 0) → seed justUnpenalized → clear admitted.
@@ -324,6 +351,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               recentSigners = newRecentSigners,
               // v19 multi-committee tier classification carried forward, mirror of dag-l0.
               peerTiers = newPeerTiers,
+              activeAdmissionScores = newActiveAdmissionScores,
+              lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
               // v19 phase 2 view-from-time anchor window, mirror of dag-l0.
               recentRoundEndTimes = newRecentRoundEndTimes
             )
@@ -1054,15 +1083,23 @@ object CurrencySnapshotConsensusStateAdvancer {
         }
 
       private def verifyTcSignatures(tc: TimeoutCertificate)(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
-        tc.votes.toNonEmptyList.traverse { signedVote =>
-          signedVote.hasValidSignature[F].map {
-            case true  => Right(()): Either[ProposalRejection, Unit]
-            case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
-          }
-        }.map { results =>
-          val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
-          if (invalidPeers.isEmpty) Right(())
-          else Left(ProposalRejection(s"tc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
+        tc.votes.toNonEmptyList.toList.collect {
+          case signedVote if signedVote.proofs.size != 1 =>
+            signedVote.proofs.head.id.show.take(8)
+        } match {
+          case invalidProofCounts if invalidProofCounts.nonEmpty =>
+            Applicative[F].pure(Left(ProposalRejection(s"tc_invalid_proof_count peers=${invalidProofCounts.mkString(",")}")))
+          case _ =>
+            tc.votes.toNonEmptyList.traverse { signedVote =>
+              signedVote.hasValidSignature[F].map {
+                case true  => Right(()): Either[ProposalRejection, Unit]
+                case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
+              }
+            }.map { results =>
+              val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
+              if (invalidPeers.isEmpty) Right(())
+              else Left(ProposalRejection(s"tc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
+            }
         }
 
       private def resolveLeaderProposal(
@@ -1180,6 +1217,7 @@ object CurrencySnapshotConsensusStateAdvancer {
               status.proposalArtifactInfo,
               List(leaderProposal.hash),
               leaderProposal.vcc,
+              leaderProposal.timeoutCertificate,
               leaderProposal.evictionCertificates,
               leaderProposal.admissionCertificates,
               leaderProposal.observedResponders,
@@ -1203,6 +1241,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                       leaderInfo,
                       List(leaderProposal.hash),
                       leaderProposal.vcc,
+                      leaderProposal.timeoutCertificate,
                       leaderProposal.evictionCertificates,
                       leaderProposal.admissionCertificates,
                       leaderProposal.observedResponders,
@@ -1291,6 +1330,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         majorityInfo: ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext],
         proposalHashes: List[Hash],
         leaderVcc: Option[ViewChangeCertificate] = None,
+        leaderTimeoutCertificate: Option[TimeoutCertificate] = None,
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
         leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
         leaderObservedResponders: List[PeerId] = List.empty,
@@ -1311,6 +1351,10 @@ object CurrencySnapshotConsensusStateAdvancer {
         val postAdmissionAdmitted =
           if (admittedTargets.isEmpty) state.admittedFacilitators
           else AdmittedFacilitators(state.admittedFacilitators.value ++ admittedTargets)
+        val acceptedTimeoutVoters: SortedSet[PeerId] =
+          leaderTimeoutCertificate
+            .map(tc => SortedSet.from(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)))
+            .getOrElse(SortedSet.empty[PeerId])
         for {
           facilitatorsHash <- postEvictionFacilitators.value.hash
           view = state.viewNumber.toLong
@@ -1368,6 +1412,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                     observedResponders = ObservedResponders(leaderObservedResponders.toSet),
                     // v15: REPLACE on accept; see dag-l0 mirror.
                     observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
+                    acceptedTimeoutCertificateVoters = acceptedTimeoutVoters,
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -1634,15 +1679,22 @@ object CurrencySnapshotConsensusStateAdvancer {
           Some(signedArtifactPeerHistory(state.lastOutcome))
         )
 
-      private def signedArtifactPeerHistory(outcome: CurrencyConsensusOutcome): ConsensusOperationalState =
-        // TODO(v20 cleanup): recentRoundEndTimes and perPeer are intentionally omitted from
-        // signed artifacts. See the dag-l0 mirror for the determinism rationale and remove or
-        // certify these fields in the next schema cleanup before putting them back in
-        // proposal-critical bytes.
-        outcome.toOperationalState.copy(
-          perPeer = SortedMap.empty,
+      private def signedArtifactPeerHistory(outcome: CurrencyConsensusOutcome): ConsensusOperationalState = {
+        // TODO(v20 cleanup): mirror of dag-l0. Keep only v27's deterministic
+        // activeAdmissionScore in signed peerHistory; omit the older locally-divergent perPeer
+        // dimensions and recentRoundEndTimes.
+        val operational = outcome.toOperationalState
+        val signedControllerScores = SortedMap.from(
+          operational.perPeer.iterator.flatMap {
+            case (pid, record) =>
+              record.activeAdmissionScore.map(score => pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(score)))
+          }
+        )
+        operational.copy(
+          perPeer = signedControllerScores,
           recentRoundEndTimes = None
         )
+      }
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 

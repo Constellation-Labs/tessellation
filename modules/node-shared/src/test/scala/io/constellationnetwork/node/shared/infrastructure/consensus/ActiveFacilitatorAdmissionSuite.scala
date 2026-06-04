@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ActiveFacilitatorAdmission.ExclusionReason
+import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
@@ -26,21 +27,25 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     selected: List[PeerId],
     recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
     peerQuality: Map[PeerId, (Int, Int)] = Map.empty,
+    activeScores: Map[PeerId, Int] = Map.empty,
     minActiveSize: Int = 2,
     targetActiveSize: Int = 3,
     maxActiveSize: Int = 4,
     minParticipationObservations: Int = 3,
-    minParticipationRatio: Double = 0.5
+    minParticipationRatio: Double = 0.5,
+    maxExpansionPerRound: Int = Int.MaxValue
   ): ActiveFacilitatorAdmission.Result =
     ActiveFacilitatorAdmission.fromRecentSigners(
       selected = selected,
       recentSigners = recentSigners,
       peerQuality = peerQuality,
+      activeScores = activeScores,
       minActiveSize = minActiveSize,
       targetActiveSize = targetActiveSize,
       maxActiveSize = maxActiveSize,
       minParticipationObservations = minParticipationObservations,
-      minParticipationRatio = minParticipationRatio
+      minParticipationRatio = minParticipationRatio,
+      maxExpansionPerRound = maxExpansionPerRound
     )
 
   pureTest("does not filter when recent signer window is not deep enough") {
@@ -134,6 +139,80 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
 
     expect.same(List(a, b, c, d), result.active) &&
     expect.same(4, result.targetSize)
+  }
+
+  pureTest("expansion candidates require promoted controller score when score history exists") {
+    val result = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b),
+        11L -> Set(a, b),
+        12L -> Set(a, b)
+      ),
+      peerQuality = Map(c -> (5, 5), d -> (5, 5)),
+      activeScores = Map(a -> 80, b -> 80, c -> 99, d -> 100),
+      targetActiveSize = 4
+    )
+
+    expect.same(List(a, b, d), result.active) &&
+    expect.same(Set(c), result.exclusions.collect { case e if e.reason == ExclusionReason.ScoreBelowPromoteThreshold => e.peerId }.toSet) &&
+    expect.same(1, result.expansionAdmittedSize)
+  }
+
+  pureTest("controller limits expansion rate even with multiple promoted candidates") {
+    val result = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b),
+        11L -> Set(a, b),
+        12L -> Set(a, b)
+      ),
+      peerQuality = Map(c -> (5, 5), d -> (5, 5)),
+      activeScores = Map(a -> 80, b -> 80, c -> 130, d -> 120),
+      targetActiveSize = 4,
+      maxExpansionPerRound = 1
+    )
+
+    expect.same(List(a, b, c), result.active) &&
+    expect.same(Set(d), result.exclusions.collect { case e if e.reason == ExclusionReason.BeyondTarget => e.peerId }.toSet) &&
+    expect.same(1, result.expansionAdmittedSize)
+  }
+
+  pureTest("controller score integrates finalized participation and self-health") {
+    val scores = ConsensusPeerController.advanceScores(
+      prior = SortedMap(a -> 80, b -> 80, c -> 80),
+      evidence = ConsensusPeerController.RoundEvidence(
+        roundStart = Set(a, b, c),
+        completed = Set(a, b),
+        responders = Set(a),
+        evicted = Set(c),
+        observedSelfHealth = SortedMap(b -> SelfHealthHint.Degraded)
+      ),
+      config = ConsensusPeerController.Config.default
+    )
+
+    expect.same(Some(104), scores.get(a)) &&
+    expect.same(Some(79), scores.get(b)) &&
+    expect.same(Some(24), scores.get(c))
+  }
+
+  pureTest("controller penalizes active peers missing from finalized timeout certificate voters") {
+    val scores = ConsensusPeerController.advanceScores(
+      prior = SortedMap(a -> 80, b -> 80, c -> 80),
+      evidence = ConsensusPeerController.RoundEvidence(
+        roundStart = Set(a, b, c),
+        completed = Set(a, b, c),
+        responders = Set(a, b, c),
+        timeoutVoters = Set(a, c),
+        evicted = Set.empty,
+        observedSelfHealth = SortedMap.empty
+      ),
+      config = ConsensusPeerController.Config.default
+    )
+
+    expect.same(Some(104), scores.get(a)) &&
+    expect.same(Some(94), scores.get(b)) &&
+    expect.same(Some(104), scores.get(c))
   }
 
   pureTest("certified timeout shrink retains timeout voters when floor is satisfied") {

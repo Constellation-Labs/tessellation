@@ -453,6 +453,33 @@ object GlobalSnapshotConsensusStateAdvancer {
                 case None =>
                   state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
               }
+            val newActiveAdmissionScores: SortedMap[PeerId, Int] =
+              ConsensusPeerController.advanceScores(
+                prior = state.lastOutcome.activeAdmissionScores,
+                evidence = ConsensusPeerController.RoundEvidence(
+                  roundStart = state.roundStartFacilitators.value.toSet,
+                  completed = completedFacilitators,
+                  responders = responderSet,
+                  timeoutVoters = state.acceptedTimeoutCertificateVoters.toSet,
+                  evicted = evictedPeers,
+                  observedSelfHealth = state.observedSelfHealth.value
+                ),
+                config = ConsensusPeerController.Config(
+                  promoteThreshold = config.activeAdmissionPromoteThreshold,
+                  retainThreshold = config.activeAdmissionRetainThreshold,
+                  demoteThreshold = config.activeAdmissionDemoteThreshold,
+                  maxScore = config.activeAdmissionMaxScore,
+                  signatureReward = config.activeAdmissionSignatureReward,
+                  responderReward = config.activeAdmissionResponderReward,
+                  missedActivePenalty = config.activeAdmissionMissedActivePenalty,
+                  timeoutMissingPenalty = config.activeAdmissionTimeoutMissingPenalty,
+                  evictedPenalty = config.activeAdmissionEvictedPenalty,
+                  degradedPenalty = config.activeAdmissionDegradedPenalty,
+                  criticalPenalty = config.activeAdmissionCriticalPenalty,
+                  passiveDecay = config.activeAdmissionPassiveDecay,
+                  maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
+                )
+              )
             // B2 readmissionCountdown maintenance (sticky-probation):
             //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
             //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
@@ -573,6 +600,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               // v19: carried-forward multi-committee tier classification computed from this
               // round's signer participation (above).
               peerTiers = newPeerTiers,
+              activeAdmissionScores = newActiveAdmissionScores,
+              lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
               // v19 phase 2: view-from-time anchor for the next round's view derivation.
               recentRoundEndTimes = newRecentRoundEndTimes
             )
@@ -1502,15 +1531,23 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       private def verifyTcSignatures(tc: TimeoutCertificate)(implicit hasher: Hasher[F]): F[Either[ProposalRejection, Unit]] =
-        tc.votes.toNonEmptyList.traverse { signedVote =>
-          signedVote.hasValidSignature[F].map {
-            case true  => Right(()): Either[ProposalRejection, Unit]
-            case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
-          }
-        }.map { results =>
-          val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
-          if (invalidPeers.isEmpty) Right(())
-          else Left(ProposalRejection(s"tc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
+        tc.votes.toNonEmptyList.toList.collect {
+          case signedVote if signedVote.proofs.size != 1 =>
+            signedVote.proofs.head.id.show.take(8)
+        } match {
+          case invalidProofCounts if invalidProofCounts.nonEmpty =>
+            Applicative[F].pure(Left(ProposalRejection(s"tc_invalid_proof_count peers=${invalidProofCounts.mkString(",")}")))
+          case _ =>
+            tc.votes.toNonEmptyList.traverse { signedVote =>
+              signedVote.hasValidSignature[F].map {
+                case true  => Right(()): Either[ProposalRejection, Unit]
+                case false => Left(ProposalRejection(signedVote.proofs.head.id.show.take(8)))
+              }
+            }.map { results =>
+              val invalidPeers = results.toList.collect { case Left(pid) => pid.code }
+              if (invalidPeers.isEmpty) Right(())
+              else Left(ProposalRejection(s"tc_invalid_signatures peers=${invalidPeers.mkString(",")}"))
+            }
         }
 
       // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
@@ -2025,6 +2062,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               status.proposalArtifactInfo,
               List(leaderProposal.hash),
               leaderProposal.vcc,
+              leaderProposal.timeoutCertificate,
               leaderProposal.evictionCertificates,
               leaderProposal.admissionCertificates,
               leaderProposal.observedResponders,
@@ -2094,6 +2132,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                               leaderInfo,
                               List(leaderProposal.hash),
                               leaderProposal.vcc,
+                              leaderProposal.timeoutCertificate,
                               leaderProposal.evictionCertificates,
                               leaderProposal.admissionCertificates,
                               leaderProposal.observedResponders,
@@ -2579,6 +2618,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
         proposalHashes: List[Hash],
         leaderVcc: Option[ViewChangeCertificate] = None,
+        leaderTimeoutCertificate: Option[TimeoutCertificate] = None,
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
         leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
         leaderObservedResponders: List[PeerId] = List.empty,
@@ -2615,6 +2655,10 @@ object GlobalSnapshotConsensusStateAdvancer {
         val postAdmissionAdmitted =
           if (admittedTargets.isEmpty) state.admittedFacilitators
           else AdmittedFacilitators(state.admittedFacilitators.value ++ admittedTargets)
+        val acceptedTimeoutVoters: SortedSet[PeerId] =
+          leaderTimeoutCertificate
+            .map(tc => SortedSet.from(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)))
+            .getOrElse(SortedSet.empty[PeerId])
         for {
           facilitatorsHash <- postEvictionFacilitators.value.hash
           view = state.viewNumber.toLong
@@ -2704,6 +2748,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                     observedResponders = ObservedResponders(leaderObservedResponders.toSet),
                     // v15: REPLACE on accept, same rationale as observedResponders.
                     observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
+                    acceptedTimeoutCertificateVoters = acceptedTimeoutVoters,
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
@@ -2977,16 +3022,24 @@ object GlobalSnapshotConsensusStateAdvancer {
           }
         }
 
-      private def signedArtifactPeerHistory(outcome: GlobalConsensusOutcome): ConsensusOperationalState =
-        // TODO(v20 cleanup): recentRoundEndTimes and perPeer are intentionally omitted from
-        // signed artifacts because they have both proven locally divergent in live testnet
-        // proposal validation. The full operational history is still written to
-        // PeerHistorySidecarStorage after finalization; remove or certify these fields in the
-        // next schema cleanup before putting them back in proposal-critical bytes.
-        outcome.toOperationalState.copy(
-          perPeer = SortedMap.empty,
+      private def signedArtifactPeerHistory(outcome: GlobalConsensusOutcome): ConsensusOperationalState = {
+        // TODO(v20 cleanup): recentRoundEndTimes and most perPeer dimensions are intentionally
+        // omitted from signed artifacts because they have proven locally divergent in live
+        // testnet proposal validation. v27 keeps only activeAdmissionScore in signed
+        // peerHistory: it is a bounded controller state derived from finalized evidence and
+        // needed for deterministic restart/download replay of active-role admission.
+        val operational = outcome.toOperationalState
+        val signedControllerScores = SortedMap.from(
+          operational.perPeer.iterator.flatMap {
+            case (pid, record) =>
+              record.activeAdmissionScore.map(score => pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(score)))
+          }
+        )
+        operational.copy(
+          perPeer = signedControllerScores,
           recentRoundEndTimes = None
         )
+      }
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 

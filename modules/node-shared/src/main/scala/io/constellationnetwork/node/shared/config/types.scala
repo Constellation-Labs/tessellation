@@ -289,6 +289,22 @@ object types {
     // maxFacilitatorCount-selected pool size; testnet sets this lower to avoid re-opening the
     // full selected denominator while still letting healthy community peers prove themselves.
     activeFacilitatorMax: Option[Int] = None,
+    // v27 consensus peer controller: bounded integral score used for active role
+    // admission. All fields below are consensus-critical because they change which
+    // peers can enter the rewards-affecting active set from the same parent state.
+    activeAdmissionPromoteThreshold: Int = 100,
+    activeAdmissionRetainThreshold: Int = 70,
+    activeAdmissionDemoteThreshold: Int = 40,
+    activeAdmissionMaxScore: Int = 150,
+    activeAdmissionSignatureReward: Int = 20,
+    activeAdmissionResponderReward: Int = 5,
+    activeAdmissionMissedActivePenalty: Int = 15,
+    activeAdmissionTimeoutMissingPenalty: Int = 10,
+    activeAdmissionEvictedPenalty: Int = 40,
+    activeAdmissionDegradedPenalty: Int = 5,
+    activeAdmissionCriticalPenalty: Int = 20,
+    activeAdmissionPassiveDecay: Int = 1,
+    activeAdmissionMaxExpansionPerRound: Int = 1,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     qualityDecayThreshold: Int = 100,
@@ -698,7 +714,15 @@ object types {
     //     peerQuality-ranked candidates, capped by `activeFacilitatorMax`. This changes the
     //     active facilitator set and therefore quorum/signature behavior, so it is
     //     consensus-critical and requires a coordinated cold L0 restart.
-    consensusSchemaVersion: Int = 26,
+    //     v27: bounded integral consensus peer controller. Active admission scores are
+    //     updated from finalized signer/responder/self-health evidence and persisted in
+    //     peerHistory so peers cannot jump into rewards-affecting roles from a one-round
+    //     Ready blip.
+    //     v28: controller adds accepted-TC voter evidence. A peer active in a round that
+    //     finalized with a TimeoutCertificate but absent from that accepted/finalized TC
+    //     voter set receives `activeAdmissionTimeoutMissingPenalty`. The voter set is
+    //     carried through round state/outcome, never read from local timeout caches.
+    consensusSchemaVersion: Int = 28,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -817,6 +841,19 @@ object types {
           s"activeFacilitatorFloor=$activeFacilitatorFloor," +
           s"activeFacilitatorTarget=${activeFacilitatorTarget.getOrElse(coreCommitteeSize.getOrElse(3))}," +
           s"activeFacilitatorMax=${activeFacilitatorMax.map(_.toString).getOrElse("none")}," +
+          s"activeAdmissionPromoteThreshold=$activeAdmissionPromoteThreshold," +
+          s"activeAdmissionRetainThreshold=$activeAdmissionRetainThreshold," +
+          s"activeAdmissionDemoteThreshold=$activeAdmissionDemoteThreshold," +
+          s"activeAdmissionMaxScore=$activeAdmissionMaxScore," +
+          s"activeAdmissionSignatureReward=$activeAdmissionSignatureReward," +
+          s"activeAdmissionResponderReward=$activeAdmissionResponderReward," +
+          s"activeAdmissionMissedActivePenalty=$activeAdmissionMissedActivePenalty," +
+          s"activeAdmissionTimeoutMissingPenalty=$activeAdmissionTimeoutMissingPenalty," +
+          s"activeAdmissionEvictedPenalty=$activeAdmissionEvictedPenalty," +
+          s"activeAdmissionDegradedPenalty=$activeAdmissionDegradedPenalty," +
+          s"activeAdmissionCriticalPenalty=$activeAdmissionCriticalPenalty," +
+          s"activeAdmissionPassiveDecay=$activeAdmissionPassiveDecay," +
+          s"activeAdmissionMaxExpansionPerRound=$activeAdmissionMaxExpansionPerRound," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +

@@ -3,7 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 import cats.Show
 import cats.syntax.show._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
@@ -189,6 +189,11 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   admittedFacilitators: AdmittedFacilitators = AdmittedFacilitators.empty,
   observedResponders: ObservedResponders = ObservedResponders.empty,
   observedSelfHealth: ObservedSelfHealth = ObservedSelfHealth.empty,
+  // V28 controller evidence: voters from the TimeoutCertificate carried by the
+  // accepted proposal. Set only after proposal validation/signature verification,
+  // then consumed at round finalization to penalize active peers that were missing
+  // from finalized timeout evidence. Never populated from local TC caches.
+  acceptedTimeoutCertificateVoters: SortedSet[PeerId] = SortedSet.empty,
   // v19 multi-committee partition of `roundStartFacilitators`. `coreFacilitators` is the
   // active LIVENESS quorum -- the quorum threshold across the round is computed against
   // `coreFacilitators.value.size`, NOT `facilitators.value.size` / `roundStartFacilitators.value.size`.
