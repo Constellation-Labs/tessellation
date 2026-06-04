@@ -89,18 +89,35 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect(!result.recentFilterApplied)
   }
 
-  pureTest("preserves selected facilitator order after filtering") {
+  pureTest("ranks recent signers by window count before selected order") {
     val result = fromRecent(
       selected = List(c, a, d, b),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b),
+        12L -> Set(a, b)
+      ),
+      minActiveSize = 2
+    )
+
+    expect.same(List(a, b, c), result.active) &&
+    expect.same(1, result.recentSignerMinCount) &&
+    expect.same(3, result.recentSignerMaxCount)
+  }
+
+  pureTest("uses quality and stable peer id as tie-breakers among equally recent signers") {
+    val result = fromRecent(
+      selected = List(c, a, b),
       recentSigners = window(
         10L -> Set(a, b, c),
         11L -> Set(a, b, c),
         12L -> Set(a, b, c)
       ),
+      peerQuality = Map(a -> (3, 3), b -> (2, 3), c -> (3, 6)),
       minActiveSize = 2
     )
 
-    expect.same(List(c, a, b), result.active)
+    expect.same(List(a, b, c), result.active)
   }
 
   pureTest("target is not a cap for recent signers") {

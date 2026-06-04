@@ -24,6 +24,8 @@ object ActiveFacilitatorAdmission {
     candidateSize: Int,
     targetSize: Int,
     expansionAdmittedSize: Int,
+    recentSignerMinCount: Int,
+    recentSignerMaxCount: Int,
     recentWindowSize: Int,
     recentFilterApplied: Boolean
   )
@@ -61,10 +63,16 @@ object ActiveFacilitatorAdmission {
       }
 
     val recentSets = recentSigners.values.toList.takeRight(TierTransitions.DemotionConsecutiveMisses)
+    def recentSignerCount(pid: PeerId): Int = recentSets.count(_.contains(pid))
+    def recentSignerRank(pid: PeerId): (Int, Int, Int, Int, String) = {
+      val (qualityClass, ratioRank, completedRank, peerIdRank) = qualityRank(pid)
+      (-recentSignerCount(pid), qualityClass, ratioRank, completedRank, peerIdRank)
+    }
+
     val recentWindowDeepEnough = recentSets.sizeIs >= TierTransitions.DemotionConsecutiveMisses
     val uncappedRecentSignerPool =
       if (recentWindowDeepEnough)
-        selected.filter(pid => recentSets.exists(_.contains(pid)))
+        selected.filter(pid => recentSets.exists(_.contains(pid))).sortBy(recentSignerRank)
       else
         selected
     val configuredMax = math.max(minActiveSize, maxActiveSize)
@@ -75,6 +83,9 @@ object ActiveFacilitatorAdmission {
       )
     val recentSignerPool = uncappedRecentSignerPool.take(target)
     val recentSignerSet = recentSignerPool.toSet
+    val admittedRecentSignerCounts = recentSignerPool.map(recentSignerCount)
+    val recentSignerMinCount = admittedRecentSignerCounts.minOption.getOrElse(0)
+    val recentSignerMaxCount = admittedRecentSignerCounts.maxOption.getOrElse(0)
     val excludedRecentOverflow =
       if (uncappedRecentSignerPool.size > recentSignerPool.size)
         uncappedRecentSignerPool.drop(recentSignerPool.size).map(Exclusion(_, ExclusionReason.BeyondTarget))
@@ -114,6 +125,8 @@ object ActiveFacilitatorAdmission {
       candidateSize = recentSignerPool.size + expansionCandidates.size,
       targetSize = target,
       expansionAdmittedSize = expansionAdmitted.size,
+      recentSignerMinCount = recentSignerMinCount,
+      recentSignerMaxCount = recentSignerMaxCount,
       recentWindowSize = recentSets.size,
       recentFilterApplied = useRecentSignerPool
     )
@@ -148,6 +161,8 @@ object ActiveFacilitatorAdmission {
       candidateSize = retained.size,
       targetSize = minActiveSize,
       expansionAdmittedSize = 0,
+      recentSignerMinCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).minOption.getOrElse(0),
+      recentSignerMaxCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).maxOption.getOrElse(0),
       recentWindowSize = recentSets.size,
       recentFilterApplied = useCertifiedShrink
     )

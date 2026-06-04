@@ -20,12 +20,12 @@ import weaver.FunSuite
   * peers BEFORE they entered the round under that leader; once the round advanced past view 16, the cached slot was guaranteed to fail
   * validation forever (`view16_proposal_missing_vcc` -- 10,333 rejections in 9h on .193) because `ProposalVccValidator` only bypasses the
   * missing-VCC check when `proposalView == initialViewNumber` (certified seed-view) or in solo-core mode. `ConsensusStorage.addProposal`
-  * first-write-wins for higher-view-without-VCC also blocked replacement.
+  * first-write-wins for higher-view-without-cert also blocked replacement.
   *
-  * The fix in `ConsensusStorage.pruneStaleProposalSlots` drops slots where `proposal.view < minViewToKeep && proposal.vcc.isEmpty`. This
-  * suite drives the same predicate against an in-memory map shaped identically to `peerDeclarationsMap` so we cover every cell of the truth
-  * table without instantiating the full storage -- the storage itself requires many typeclass witnesses to construct (mirrors the
-  * `ConsensusStoragePruneSuite` pattern for `pruneStaleResources`).
+  * The fix in `ConsensusStorage.pruneStaleProposalSlots` drops slots where `proposal.view < minViewToKeep` and no view certificate is
+  * present. This suite drives the same predicate against an in-memory map shaped identically to `peerDeclarationsMap` so we cover every
+  * cell of the truth table without instantiating the full storage -- the storage itself requires many typeclass witnesses to construct
+  * (mirrors the `ConsensusStoragePruneSuite` pattern for `pruneStaleResources`).
   */
 object ConsensusStorageStaleProposalSlotSuite extends FunSuite {
 
@@ -52,13 +52,36 @@ object ConsensusStorageStaleProposalSlotSuite extends FunSuite {
     )
   }
 
-  private def proposal(view: Long, hasVcc: Boolean): Proposal =
+  private val sentinelTc: TimeoutCertificate = {
+    val signedVote = Signed(
+      TimeoutVote(
+        fromView = 0L,
+        toView = 1L,
+        facilitatorsHash = facHash,
+        lastSnapshotHash = lastSnap,
+        highestKnownQc = None,
+        reason = TimeoutReason.NoProgress
+      ),
+      NonEmptySet.one(SignatureProof(Id(Hex("bb" * 32)), Signature(Hex("00"))))
+    )
+    TimeoutCertificate(
+      fromView = 0L,
+      toView = 1L,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      reason = TimeoutReason.NoProgress,
+      votes = NonEmptySet.one(signedVote)
+    )
+  }
+
+  private def proposal(view: Long, hasVcc: Boolean, hasTc: Boolean = false): Proposal =
     Proposal(
       hash = anyHash,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       view = view,
       vcc = if (hasVcc) Some(sentinelVcc) else None,
+      timeoutCertificate = if (hasTc) Some(sentinelTc) else None,
       evictionCertificates = List.empty,
       admissionCertificates = List.empty,
       observedResponders = List.empty,
@@ -73,7 +96,7 @@ object ConsensusStorageStaleProposalSlotSuite extends FunSuite {
     declMap.map {
       case (peerId, decl) =>
         val updated = decl.proposal match {
-          case Some(p) if p.view < minViewToKeep && p.vcc.isEmpty =>
+          case Some(p) if p.view < minViewToKeep && p.vcc.isEmpty && p.timeoutCertificate.isEmpty =>
             decl.copy(proposal = None)
           case _ => decl
         }
@@ -83,7 +106,7 @@ object ConsensusStorageStaleProposalSlotSuite extends FunSuite {
   private def declWithProposal(p: Proposal): PeerDeclarations =
     PeerDeclarations.empty.copy(proposal = Some(p))
 
-  test("drops a stored proposal with view < minViewToKeep AND empty VCC -- the alpha.92 wedge pattern") {
+  test("drops a stored proposal with view < minViewToKeep AND no view cert -- the alpha.92 wedge pattern") {
     val before = Map(leaderA -> declWithProposal(proposal(view = 16L, hasVcc = false)))
     val after = applyPrune(before, minViewToKeep = 18L)
     expect(after(leaderA).proposal.isEmpty)
@@ -97,6 +120,12 @@ object ConsensusStorageStaleProposalSlotSuite extends FunSuite {
 
   test("keeps a stored proposal that DOES carry a VCC, even if view < minViewToKeep") {
     val before = Map(leaderA -> declWithProposal(proposal(view = 16L, hasVcc = true)))
+    val after = applyPrune(before, minViewToKeep = 18L)
+    expect(after(leaderA).proposal.isDefined)
+  }
+
+  test("keeps a stored proposal that DOES carry a TC, even if view < minViewToKeep") {
+    val before = Map(leaderA -> declWithProposal(proposal(view = 16L, hasVcc = false, hasTc = true)))
     val after = applyPrune(before, minViewToKeep = 18L)
     expect(after(leaderA).proposal.isDefined)
   }

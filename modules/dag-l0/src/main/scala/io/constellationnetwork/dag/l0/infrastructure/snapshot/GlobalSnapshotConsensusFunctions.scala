@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.RewardsInfoStorage
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{RewardsInput, _}
 import io.constellationnetwork.schema.ID.Id
@@ -69,7 +70,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: SecurityProvider: JsonSerializer](
+  def make[F[_]: Async: SecurityProvider: JsonSerializer: Metrics](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewardsService: RewardsService[F],
@@ -84,6 +85,8 @@ object GlobalSnapshotConsensusFunctions {
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
+    private val balanceEventStageLabel: Metrics.LabelName = Metrics.unsafeLabelName("stage")
+    private val balanceEventTypeLabel: Metrics.LabelName = Metrics.unsafeLabelName("event_type")
 
     def getRequiredCollateral: Amount = collateral
 
@@ -308,6 +311,25 @@ object GlobalSnapshotConsensusFunctions {
         case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
       }
 
+      def balanceEventMetric(stage: String, eventType: String, count: Long): F[Unit] = {
+        val tags = Seq(
+          balanceEventStageLabel -> stage,
+          balanceEventTypeLabel -> eventType
+        )
+
+        Metrics[F].updateGauge("dag_global_snapshot_balance_event_count", count.toLong, tags) >>
+          Metrics[F].incrementCounterBy("dag_global_snapshot_balance_event_total", count, tags)
+      }
+
+      def emitBalanceEventMetrics(stage: String, counts: (String, Long)*): F[Unit] =
+        counts.toList.traverse_ { case (eventType, count) => balanceEventMetric(stage, eventType, count) }
+
+      final case class BalanceEventDiagnostics(
+        accepted: List[(String, Long)],
+        rejected: List[(String, Long)],
+        logFields: List[(String, String)]
+      )
+
       for {
         lastArtifactHash <- getLastArtifactHash
         currentOrdinal = lastArtifact.ordinal.next
@@ -357,6 +379,37 @@ object GlobalSnapshotConsensusFunctions {
         sortedWncEvents = wncEventsForAcceptance.toList
           .map(_.value)
           .sorted(Signed.ordering(Order[UpdateNodeCollateral.Withdraw].toOrdering))
+        dagTxForAcceptanceCount = blocksForAcceptance.map(_.value).map(_.transactions.size.toLong).sum
+        allowSpendTxForAcceptanceCount = sortedAllowSpendEvents.map(_.transactions.size.toLong).sum
+        tokenLockTxForAcceptanceCount = sortedTokenLockEvents.map(_.tokenLocks.size.toLong).sum
+
+        _ <- emitBalanceEventMetrics(
+          "input",
+          "dag_block" -> dagEventsBeforeCut.size.toLong,
+          "state_channel" -> scEventsBeforeCut.size.toLong,
+          "allow_spend_block" -> allowSpendEventsForAcceptance.size.toLong,
+          "token_lock_block" -> tokenLockEventsForAcceptance.size.toLong,
+          "delegated_stake_create" -> cdsEventsForAcceptance.size.toLong,
+          "delegated_stake_withdraw" -> wdsEventsForAcceptance.size.toLong,
+          "node_collateral_create" -> cncEventsForAcceptance.size.toLong,
+          "node_collateral_withdraw" -> wncEventsForAcceptance.size.toLong,
+          "update_node_parameters" -> unpEventsBeforeCut.size.toLong
+        )
+        _ <- emitBalanceEventMetrics(
+          "cut",
+          "dag_block" -> blocksForAcceptance.size.toLong,
+          "dag_spend" -> dagTxForAcceptanceCount,
+          "state_channel" -> scEvents.size.toLong,
+          "allow_spend_block" -> sortedAllowSpendEvents.size.toLong,
+          "allow_spend" -> allowSpendTxForAcceptanceCount,
+          "token_lock_block" -> sortedTokenLockEvents.size.toLong,
+          "token_lock" -> tokenLockTxForAcceptanceCount,
+          "delegated_stake_create" -> sortedCdsEvents.size.toLong,
+          "delegated_stake_withdraw" -> sortedWdsEvents.size.toLong,
+          "node_collateral_create" -> sortedCncEvents.size.toLong,
+          "node_collateral_withdraw" -> sortedWncEvents.size.toLong,
+          "update_node_parameters" -> unpEventsForAcceptance.size.toLong
+        )
 
         _ <- ConsensusLog.info(
           logger,
@@ -367,9 +420,12 @@ object GlobalSnapshotConsensusFunctions {
           "trigger" -> trigger.toString,
           "events.total" -> events.size.toString,
           "dag" -> blocksForAcceptance.size.toString,
+          "dagTx" -> dagTxForAcceptanceCount.toString,
           "sc" -> scEvents.size.toString,
           "allowSpend" -> sortedAllowSpendEvents.size.toString,
+          "allowSpendTx" -> allowSpendTxForAcceptanceCount.toString,
           "tokenLock" -> sortedTokenLockEvents.size.toString,
+          "tokenLockTx" -> tokenLockTxForAcceptanceCount.toString,
           "unp" -> unpEventsForAcceptance.size.toString,
           "delegStakeCreate" -> sortedCdsEvents.size.toString,
           "delegStakeWithdraw" -> sortedWdsEvents.size.toString,
@@ -415,6 +471,99 @@ object GlobalSnapshotConsensusFunctions {
               getGlobalSnapshotByOrdinal
             )
         acceptEndMs <- Async[F].monotonic.map(_.toMillis)
+        balanceDiagnostics = {
+          val blocksRejectedCount = acceptanceResult.notAccepted.size.toLong
+          val dagTxAcceptedCount = acceptanceResult.accepted.toList.map { case (block, _) => block.transactions.size.toLong }.sum
+          val dagTxRejectedCount = acceptanceResult.notAccepted.toList.map { case (block, _) => block.transactions.size.toLong }.sum
+          val allowSpendAcceptedBlockCount = allowSpendBlockAcceptanceResult.accepted.size.toLong
+          val allowSpendAcceptedTxCount = allowSpendBlockAcceptanceResult.accepted.toList.map(_.transactions.size.toLong).sum
+          val allowSpendRejectedBlockCount = allowSpendBlockAcceptanceResult.notAccepted.size.toLong
+          val allowSpendRejectedTxCount = allowSpendBlockAcceptanceResult.notAccepted.toList.map {
+            case (block, _) => block.transactions.size.toLong
+          }.sum
+          val tokenLockAcceptedBlockCount = tokenLockBlockAcceptanceResult.accepted.size.toLong
+          val tokenLockAcceptedTxCount = tokenLockBlockAcceptanceResult.accepted.toList.map(_.tokenLocks.size.toLong).sum
+          val tokenLockRejectedBlockCount = tokenLockBlockAcceptanceResult.notAccepted.size.toLong
+          val tokenLockRejectedTxCount = tokenLockBlockAcceptanceResult.notAccepted.toList.map {
+            case (block, _) => block.tokenLocks.size.toLong
+          }.sum
+          val delegatedStakeCreateAcceptedCount = delegatedStakeAcceptanceResult.acceptedCreates.values.map(_.size.toLong).sum
+          val delegatedStakeCreateRejectedCount = delegatedStakeAcceptanceResult.notAcceptedCreates.size.toLong
+          val delegatedStakeWithdrawAcceptedCount = delegatedStakeAcceptanceResult.acceptedWithdrawals.values.map(_.size.toLong).sum
+          val delegatedStakeWithdrawRejectedCount = delegatedStakeAcceptanceResult.notAcceptedWithdrawals.size.toLong
+          val nodeCollateralCreateAcceptedCount = nodeCollateralAcceptanceResult.acceptedCreates.values.map(_.size.toLong).sum
+          val nodeCollateralCreateRejectedCount = nodeCollateralAcceptanceResult.notAcceptedCreates.size.toLong
+          val nodeCollateralWithdrawAcceptedCount = nodeCollateralAcceptanceResult.acceptedWithdrawals.values.map(_.size.toLong).sum
+          val nodeCollateralWithdrawRejectedCount = nodeCollateralAcceptanceResult.notAcceptedWithdrawals.size.toLong
+          val stateChannelAcceptedCount = scSnapshots.values.map(_.size.toLong).sum
+          val stateChannelRejectedCount = returnedSCEvents.size.toLong
+          val spendActionsCount = spendActions.values.map(_.size.toLong).sum
+          val updateNodeParametersCount = updateNodeParameters.size.toLong
+          val sharedArtifactsCount = sharedArtifacts.size.toLong
+          val delegateRewardsCount = delegatorRewardsMap.values.map(_.size.toLong).sum
+
+          BalanceEventDiagnostics(
+            accepted = List(
+              "dag_block" -> acceptanceResult.accepted.size.toLong,
+              "dag_spend" -> dagTxAcceptedCount,
+              "state_channel" -> stateChannelAcceptedCount,
+              "allow_spend_block" -> allowSpendAcceptedBlockCount,
+              "allow_spend" -> allowSpendAcceptedTxCount,
+              "token_lock_block" -> tokenLockAcceptedBlockCount,
+              "token_lock" -> tokenLockAcceptedTxCount,
+              "delegated_stake_create" -> delegatedStakeCreateAcceptedCount,
+              "delegated_stake_withdraw" -> delegatedStakeWithdrawAcceptedCount,
+              "node_collateral_create" -> nodeCollateralCreateAcceptedCount,
+              "node_collateral_withdraw" -> nodeCollateralWithdrawAcceptedCount,
+              "spend_action" -> spendActionsCount,
+              "update_node_parameters" -> updateNodeParametersCount,
+              "artifact" -> sharedArtifactsCount,
+              "reward" -> acceptedRewardTxs.size.toLong,
+              "delegate_reward" -> delegateRewardsCount
+            ),
+            rejected = List(
+              "dag_block" -> blocksRejectedCount,
+              "dag_spend" -> dagTxRejectedCount,
+              "state_channel" -> stateChannelRejectedCount,
+              "allow_spend_block" -> allowSpendRejectedBlockCount,
+              "allow_spend" -> allowSpendRejectedTxCount,
+              "token_lock_block" -> tokenLockRejectedBlockCount,
+              "token_lock" -> tokenLockRejectedTxCount,
+              "delegated_stake_create" -> delegatedStakeCreateRejectedCount,
+              "delegated_stake_withdraw" -> delegatedStakeWithdrawRejectedCount,
+              "node_collateral_create" -> nodeCollateralCreateRejectedCount,
+              "node_collateral_withdraw" -> nodeCollateralWithdrawRejectedCount
+            ),
+            logFields = List(
+              "tx.accepted" -> dagTxAcceptedCount.toString,
+              "tx.rejected" -> dagTxRejectedCount.toString,
+              "allowSpendBlocks.accepted" -> allowSpendAcceptedBlockCount.toString,
+              "allowSpendBlocks.rejected" -> allowSpendRejectedBlockCount.toString,
+              "allowSpend.accepted" -> allowSpendAcceptedTxCount.toString,
+              "allowSpend.rejected" -> allowSpendRejectedTxCount.toString,
+              "tokenLockBlocks.accepted" -> tokenLockAcceptedBlockCount.toString,
+              "tokenLockBlocks.rejected" -> tokenLockRejectedBlockCount.toString,
+              "tokenLock.accepted" -> tokenLockAcceptedTxCount.toString,
+              "tokenLock.rejected" -> tokenLockRejectedTxCount.toString,
+              "delegStakeCreate.accepted" -> delegatedStakeCreateAcceptedCount.toString,
+              "delegStakeCreate.rejected" -> delegatedStakeCreateRejectedCount.toString,
+              "delegStakeWithdraw.accepted" -> delegatedStakeWithdrawAcceptedCount.toString,
+              "delegStakeWithdraw.rejected" -> delegatedStakeWithdrawRejectedCount.toString,
+              "nodeCollCreate.accepted" -> nodeCollateralCreateAcceptedCount.toString,
+              "nodeCollCreate.rejected" -> nodeCollateralCreateRejectedCount.toString,
+              "nodeCollWithdraw.accepted" -> nodeCollateralWithdrawAcceptedCount.toString,
+              "nodeCollWithdraw.rejected" -> nodeCollateralWithdrawRejectedCount.toString,
+              "spendActions" -> spendActionsCount.toString,
+              "scSnapshots" -> stateChannelAcceptedCount.toString,
+              "scReturned" -> stateChannelRejectedCount.toString,
+              "rewards" -> acceptedRewardTxs.size.toString,
+              "delegateRewards" -> delegateRewardsCount.toString
+            )
+          )
+        }
+
+        _ <- emitBalanceEventMetrics("accepted", balanceDiagnostics.accepted: _*)
+        _ <- emitBalanceEventMetrics("rejected", balanceDiagnostics.rejected: _*)
         _ <- ConsensusLog.info(
           logger,
           Category.Proposal,
@@ -429,20 +578,9 @@ object GlobalSnapshotConsensusFunctions {
           currentOrdinal.show,
           "n/a",
           Event.AcceptanceResults,
-          "blocks.accepted" -> acceptanceResult.accepted.size.toString,
-          "blocks.notAccepted" -> acceptanceResult.notAccepted.size.toString,
-          "allowSpend.accepted" -> allowSpendBlockAcceptanceResult.accepted.size.toString,
-          "tokenLock.accepted" -> tokenLockBlockAcceptanceResult.accepted.size.toString,
-          "delegStakeCreate.accepted" -> delegatedStakeAcceptanceResult.acceptedCreates.size.toString,
-          "delegStakeCreate.rejected" -> delegatedStakeAcceptanceResult.notAcceptedCreates.size.toString,
-          "delegStakeWithdraw.accepted" -> delegatedStakeAcceptanceResult.acceptedWithdrawals.size.toString,
-          "delegStakeWithdraw.rejected" -> delegatedStakeAcceptanceResult.notAcceptedWithdrawals.size.toString,
-          "nodeCollCreate.accepted" -> nodeCollateralAcceptanceResult.acceptedCreates.size.toString,
-          "nodeCollCreate.rejected" -> nodeCollateralAcceptanceResult.notAcceptedCreates.size.toString,
-          "nodeCollWithdraw.accepted" -> nodeCollateralAcceptanceResult.acceptedWithdrawals.size.toString,
-          "nodeCollWithdraw.rejected" -> nodeCollateralAcceptanceResult.notAcceptedWithdrawals.size.toString,
-          "scSnapshots" -> scSnapshots.size.toString,
-          "rewards" -> acceptedRewardTxs.size.toString
+          ("blocks.accepted" -> acceptanceResult.accepted.size.toString) ::
+            ("blocks.notAccepted" -> acceptanceResult.notAccepted.size.toString) ::
+            balanceDiagnostics.logFields: _*
         )
 
         (deprecated, remainedActive, accepted) = getUpdatedTips(
@@ -487,6 +625,25 @@ object GlobalSnapshotConsensusFunctions {
           acceptedNnodeCollateralCreates.some,
           acceptedNnodeCollateralWithdrawals.some,
           peerHistory
+        )
+        _ <- emitBalanceEventMetrics(
+          "artifact",
+          "dag_block" -> globalSnapshot.blocks.size.toLong,
+          "dag_spend" -> globalSnapshot.blocks.toList.map(_.block.transactions.size.toLong).sum,
+          "state_channel" -> globalSnapshot.stateChannelSnapshots.values.map(_.size.toLong).sum,
+          "allow_spend_block" -> globalSnapshot.allowSpendBlocks.fold(0L)(_.size.toLong),
+          "allow_spend" -> globalSnapshot.allowSpendBlocks.fold(0L)(_.toList.map(_.transactions.size.toLong).sum),
+          "token_lock_block" -> globalSnapshot.tokenLockBlocks.fold(0L)(_.size.toLong),
+          "token_lock" -> globalSnapshot.tokenLockBlocks.fold(0L)(_.toList.map(_.tokenLocks.size.toLong).sum),
+          "delegated_stake_create" -> globalSnapshot.activeDelegatedStakes.fold(0L)(_.values.map(_.size.toLong).sum),
+          "delegated_stake_withdraw" -> globalSnapshot.delegatedStakesWithdrawals.fold(0L)(_.values.map(_.size.toLong).sum),
+          "node_collateral_create" -> globalSnapshot.activeNodeCollaterals.fold(0L)(_.values.map(_.size.toLong).sum),
+          "node_collateral_withdraw" -> globalSnapshot.nodeCollateralWithdrawals.fold(0L)(_.values.map(_.size.toLong).sum),
+          "spend_action" -> globalSnapshot.spendActions.fold(0L)(_.values.map(_.size.toLong).sum),
+          "update_node_parameters" -> globalSnapshot.updateNodeParameters.fold(0L)(_.size.toLong),
+          "artifact" -> globalSnapshot.artifacts.fold(0L)(_.size.toLong),
+          "reward" -> globalSnapshot.rewards.size.toLong,
+          "delegate_reward" -> globalSnapshot.delegateRewards.fold(0L)(_.values.map(_.size.toLong).sum)
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
         _ <- ConsensusLog.info(
