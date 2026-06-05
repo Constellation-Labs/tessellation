@@ -228,7 +228,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     HasherSelector[F].withCurrent { implicit hasher =>
       StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot, sharedConfig.snapshotBinarySenderTimeouts)
     }
-  private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
+  private val dagRoutes = DAGBlockRoutes[F](mkDagCell, storages.globalSnapshot)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
   private val tokenLockBlockRoutes = TokenLockBlockRoutes[F](queues.l1TokenLockOutput)
   private val nodeParametersRoutes = HasherSelector[F].withCurrent { implicit hasher =>
