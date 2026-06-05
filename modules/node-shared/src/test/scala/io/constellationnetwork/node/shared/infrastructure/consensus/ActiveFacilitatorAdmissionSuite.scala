@@ -141,7 +141,7 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect.same(4, result.targetSize)
   }
 
-  pureTest("expansion candidates require promoted controller score when score history exists") {
+  pureTest("promoted expansion candidates rank before bounded probation candidates") {
     val result = fromRecent(
       selected = List(a, b, c, d),
       recentSigners = window(
@@ -154,9 +154,30 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
       targetActiveSize = 4
     )
 
-    expect.same(List(a, b, d), result.active) &&
-    expect.same(Set(c), result.exclusions.collect { case e if e.reason == ExclusionReason.ScoreBelowPromoteThreshold => e.peerId }.toSet) &&
-    expect.same(1, result.expansionAdmittedSize)
+    expect.same(List(a, b, d, c), result.active) &&
+    expect(result.exclusions.isEmpty) &&
+    expect.same(2, result.expansionAdmittedSize) &&
+    expect.same(1, result.probationAdmittedSize)
+  }
+
+  pureTest("probation candidates remain bounded by expansion rate") {
+    val result = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b),
+        11L -> Set(a, b),
+        12L -> Set(a, b)
+      ),
+      peerQuality = Map(c -> (1, 1), d -> (1, 1)),
+      activeScores = Map(a -> 80, b -> 80),
+      targetActiveSize = 4,
+      maxExpansionPerRound = 1
+    )
+
+    expect.same(List(a, b, c), result.active) &&
+    expect.same(Set(d), result.exclusions.collect { case e if e.reason == ExclusionReason.ScoreBelowPromoteThreshold => e.peerId }.toSet) &&
+    expect.same(1, result.expansionAdmittedSize) &&
+    expect.same(1, result.probationAdmittedSize)
   }
 
   pureTest("controller limits expansion rate even with multiple promoted candidates") {

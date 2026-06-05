@@ -32,8 +32,8 @@ import weaver.MutableIOSuite
   * rather than canonical (sorted) order. Two honest nodes building the same LOGICAL content in different orders then produce DIFFERENT
   * bytes -> DIFFERENT hash -> `GlobalArtifactMismatch` -> wedge. Two such offenders were found reactively in production on
   * `ConsensusOperationalState`: `recentRoundEndTimes` and `perPeer` (the `signedArtifactPeerHistory` helper in
-  * `GlobalSnapshotConsensusStateAdvancer` now strips both out of the signed bytes, and the schema since pins every field to `SortedMap` /
-  * `SortedSet`).
+  * `GlobalSnapshotConsensusStateAdvancer` now strips round times and keeps only canonical score records in `perPeer`, and the schema since
+  * pins every field to `SortedMap` / `SortedSet`).
   *
   * '''Why this is not the trivial test''': we do NOT serialize one object twice. We build each collection-bearing structure TWO INDEPENDENT
   * WAYS with identical logical content but reversed / shuffled input order on every collection field, push BOTH through the EXACT
@@ -234,12 +234,18 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
       peerHistory = peerHistory
     )
 
-  // The signed peerHistory carried in a real proposal: perPeer and recentRoundEndTimes are nulled
-  // by `signedArtifactPeerHistory` before signing, so the artifact only carries recentProofSizes +
-  // recentSigners. We mirror that exact shape here so the snapshot fixture reflects the bytes that
-  // actually go over the wire.
+  // The signed peerHistory carried in a real proposal: recentRoundEndTimes is nulled and perPeer is
+  // reduced to explicit activeAdmissionScore records by `signedArtifactPeerHistory` before signing.
+  // We mirror that exact shape here so the snapshot fixture reflects the bytes that go over the wire.
   private def signedShapePeerHistory(src: ConsensusOperationalState): ConsensusOperationalState =
-    src.copy(perPeer = SortedMap.empty, recentRoundEndTimes = None)
+    src.copy(
+      perPeer = SortedMap.from(
+        src.perPeer.keysIterator.map { peerId =>
+          peerId -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(0))
+        }
+      ),
+      recentRoundEndTimes = None
+    )
 
   private val snapshotForward: GlobalIncrementalSnapshot =
     buildSnapshot(rewardPairs, delegateRewardPairs, nextFacilitatorsList, Some(signedShapePeerHistory(operationalForward)))
@@ -319,15 +325,15 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
   //      peerHistory                 Option[ConsensusOperationalState]                           see below
   //
   //    ConsensusOperationalState (peerHistory):
-  //      perPeer                     SortedMap[PeerId, PerPeerOperationalRecord]                 SORTED  (safe; was an offender, now sorted + stripped from signed bytes)
+  //      perPeer                     SortedMap[PeerId, PerPeerOperationalRecord]                 SORTED  (safe; signed bytes keep canonical score-only records)
   //      recentProofSizes            SortedMap[SnapshotOrdinal, Int]                             SORTED  (safe, exercised)
   //      recentSigners               Option[SortedMap[SnapshotOrdinal, SortedSet[PeerId]]]       SORTED  (safe, exercised, nested)
   //      recentRoundEndTimes         Option[SortedMap[SnapshotOrdinal, Long]]                    SORTED  (safe; was an offender, now sorted + stripped from signed bytes)
   //
   //    RESULT: NO third plain-Map/plain-Set offender was found. Every collection in the reachable
   //    artifact tree is Sorted (or an intentionally ordered NonEmptyList). The two historical
-  //    offenders are both Sorted now AND additionally stripped from the signed bytes by
-  //    `signedArtifactPeerHistory`. If a future schema change introduces a plain `Map`/`Set` in a
+  //    offenders are Sorted now; recentRoundEndTimes is stripped and perPeer is reduced to canonical
+  //    score-only records by `signedArtifactPeerHistory`. If a future schema change introduces a plain `Map`/`Set` in a
   //    value position, the relevant per-field assertion below (and tests 1-2) will start failing.
   // ============================================================================================
 
@@ -449,7 +455,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
 
   test("golden anchor: GlobalIncrementalSnapshot serialized hash is pinned") { res =>
     implicit val (j, h) = res
-    val expected = Hash("9116486cc83aa7b48771e33cf877f976a7103a9508eb6ced93dc14a1d6aed565")
+    val expected = Hash("f09f1a3c42721dd70da6fd6791c066434657a918b9d2bb909826e0b9858b82dd")
     h.hash(snapshotForward).map { actual =>
       expect.same(expected, actual)
     }

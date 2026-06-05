@@ -37,6 +37,7 @@ object ActiveFacilitatorAdmission {
     candidateSize: Int,
     targetSize: Int,
     expansionAdmittedSize: Int,
+    probationAdmittedSize: Int,
     recentSignerMinCount: Int,
     recentSignerMaxCount: Int,
     recentWindowSize: Int,
@@ -129,16 +130,25 @@ object ActiveFacilitatorAdmission {
       else
         List.empty
     val (qualityExcluded, qualityExpansionCandidates) = expansionBase.partition(isQualityExcluded)
-    val (scoreExcluded, expansionCandidates) = qualityExpansionCandidates.partition(pid => scoreOf(pid) < promoteThreshold)
+    val (scoreExcluded, promotedExpansionCandidates) = qualityExpansionCandidates.partition(pid => scoreOf(pid) < promoteThreshold)
     def expansionRank(pid: PeerId): (Int, Int, Long, Int, String) = {
       val (qualityClass, ratioRank, completedRank, peerIdRank) = qualityRank(pid)
       (-scoreOf(pid), qualityClass, ratioRank, completedRank, peerIdRank)
     }
-    val sortedExpansionCandidates = expansionCandidates.sortBy(expansionRank)
+    def probationRank(pid: PeerId): (Int, Long, Int, String) = {
+      val (qualityClass, ratioRank, completedRank, peerIdRank) = qualityRank(pid)
+      (qualityClass, ratioRank, completedRank, peerIdRank)
+    }
+    val sortedPromotedExpansionCandidates = promotedExpansionCandidates.sortBy(expansionRank)
     val expansionSlots = math.max(0, target - recentSignerPool.size)
-    val expansionAdmitted = sortedExpansionCandidates.take(math.min(expansionSlots, maxExpansionPerRound))
+    val expansionLimit = math.min(expansionSlots, maxExpansionPerRound)
+    val promotedAdmitted = sortedPromotedExpansionCandidates.take(expansionLimit)
+    val probationSlots = math.max(0, expansionLimit - promotedAdmitted.size)
+    val probationAdmitted = scoreExcluded.sortBy(probationRank).take(probationSlots)
+    val expansionAdmitted = promotedAdmitted ++ probationAdmitted
     val expansionAdmittedSet = expansionAdmitted.toSet
-    val beyondTarget = sortedExpansionCandidates.filterNot(expansionAdmittedSet.contains)
+    val beyondTarget = sortedPromotedExpansionCandidates.filterNot(expansionAdmittedSet.contains)
+    val probationRejected = scoreExcluded.filterNot(expansionAdmittedSet.contains)
 
     val useRecentSignerPool = recentWindowDeepEnough && uncappedRecentSignerPool.size >= minActiveSize
     val active =
@@ -151,7 +161,7 @@ object ActiveFacilitatorAdmission {
         demotedRecentSigners.map(Exclusion(_, ExclusionReason.ScoreBelowDemoteThreshold)) ++
           excludedRecentOverflow ++
           qualityExcluded.map(Exclusion(_, ExclusionReason.QualityBelowThreshold)) ++
-          scoreExcluded.map(Exclusion(_, ExclusionReason.ScoreBelowPromoteThreshold)) ++
+          probationRejected.map(Exclusion(_, ExclusionReason.ScoreBelowPromoteThreshold)) ++
           beyondTarget.map(Exclusion(_, ExclusionReason.BeyondTarget))
       else
         List.empty
@@ -160,9 +170,10 @@ object ActiveFacilitatorAdmission {
       active = active,
       exclusions = exclusions,
       recentSignerPoolSize = uncappedRecentSignerPool.size,
-      candidateSize = recentSignerPool.size + expansionCandidates.size,
+      candidateSize = recentSignerPool.size + promotedExpansionCandidates.size + scoreExcluded.size,
       targetSize = target,
       expansionAdmittedSize = expansionAdmitted.size,
+      probationAdmittedSize = probationAdmitted.size,
       recentSignerMinCount = recentSignerMinCount,
       recentSignerMaxCount = recentSignerMaxCount,
       recentWindowSize = recentSets.size,
@@ -199,6 +210,7 @@ object ActiveFacilitatorAdmission {
       candidateSize = retained.size,
       targetSize = minActiveSize,
       expansionAdmittedSize = 0,
+      probationAdmittedSize = 0,
       recentSignerMinCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).minOption.getOrElse(0),
       recentSignerMaxCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).maxOption.getOrElse(0),
       recentWindowSize = recentSets.size,

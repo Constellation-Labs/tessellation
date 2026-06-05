@@ -722,7 +722,12 @@ object types {
     //     finalized with a TimeoutCertificate but absent from that accepted/finalized TC
     //     voter set receives `activeAdmissionTimeoutMissingPenalty`. The voter set is
     //     carried through round state/outcome, never read from local timeout caches.
-    consensusSchemaVersion: Int = 28,
+    //     v29: signed controller score records are emitted over a canonical key set with
+    //     explicit zero scores, eliminating absent-vs-zero peerHistory.perPeer byte drift.
+    //     Active admission also adds a bounded probation lane that fills unused expansion
+    //     slots with deterministic, non-disqualified candidates so unknown peers can earn
+    //     finalized score evidence.
+    consensusSchemaVersion: Int = 29,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
