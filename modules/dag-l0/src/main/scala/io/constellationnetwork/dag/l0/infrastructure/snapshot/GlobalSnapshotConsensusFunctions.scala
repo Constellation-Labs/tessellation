@@ -39,7 +39,7 @@ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.transaction.Transaction
+import io.constellationnetwork.schema.transaction.{Transaction, TransactionReference}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
@@ -330,6 +330,57 @@ object GlobalSnapshotConsensusFunctions {
         logFields: List[(String, String)]
       )
 
+      final case class DagParentFilterResult(
+        accepted: List[Signed[Block]],
+        held: List[DAGEvent],
+        maxGap: Long
+      )
+
+      def filterDagBlocksWithMissingParents(blocks: List[Signed[Block]]): F[DagParentFilterResult] = {
+        def chainBySource(block: Signed[Block]): List[(Address, List[Signed[Transaction]])] =
+          block.value.transactions.toNonEmptyList
+            .groupBy(_.value.source)
+            .toList
+            .map { case (address, txs) => address -> txs.sortBy(_.ordinal).toList }
+
+        def evaluateBlock(
+          projectedRefs: SortedMap[Address, TransactionReference],
+          block: Signed[Block]
+        ): F[(Boolean, Long, SortedMap[Address, TransactionReference])] =
+          chainBySource(block).foldLeftM((false, 0L, projectedRefs)) {
+            case ((awaitingParent, maxGap, refs), (address, txChain)) =>
+              val lastTxRef = refs.getOrElse(address, TransactionReference.empty)
+              val head = txChain.head
+              val parentOrdinal = head.value.parent.ordinal.value.value
+              val lastOrdinal = lastTxRef.ordinal.value.value
+              val gap = math.max(0L, parentOrdinal - lastOrdinal)
+
+              if (parentOrdinal > lastOrdinal)
+                (true, math.max(maxGap, gap), refs).pure[F]
+              else if (parentOrdinal === lastOrdinal && head.value.parent.hash === lastTxRef.hash)
+                TransactionReference.of(txChain.last).map { lastRef =>
+                  (awaitingParent, maxGap, refs.updated(address, lastRef))
+                }
+              else
+                (awaitingParent, maxGap, refs).pure[F]
+          }
+
+        blocks.sorted
+          .foldLeftM((List.empty[Signed[Block]], List.empty[DAGEvent], 0L, snapshotContext.lastTxRefs)) {
+            case ((accepted, held, maxGap, projectedRefs), block) =>
+              evaluateBlock(projectedRefs, block).map {
+                case (true, blockMaxGap, _) =>
+                  (accepted, DAGEvent(block) :: held, math.max(maxGap, blockMaxGap), projectedRefs)
+                case (false, blockMaxGap, updatedRefs) =>
+                  (block :: accepted, held, math.max(maxGap, blockMaxGap), updatedRefs)
+              }
+          }
+          .map {
+            case (accepted, held, maxGap, _) =>
+              DagParentFilterResult(accepted.reverse, held.reverse, maxGap)
+          }
+      }
+
       for {
         lastArtifactHash <- getLastArtifactHash
         currentOrdinal = lastArtifact.ordinal.next
@@ -338,12 +389,17 @@ object GlobalSnapshotConsensusFunctions {
           case TimeTrigger  => lastArtifact.epochProgress.next
         }
 
-        (scEvents, blocksForAcceptance) <- eventCutter.cut(
+        (scEvents, rawBlocksForAcceptance) <- eventCutter.cut(
           scEventsBeforeCut.toList.sortBy(_.value.address),
           dagEvents.toList,
           snapshotContext,
           currentOrdinal
         )
+        dagParentFilter <- filterDagBlocksWithMissingParents(rawBlocksForAcceptance.map(_.value))
+        blocksForAcceptance = dagParentFilter.accepted
+        heldDagEvents = dagParentFilter.held.toSet
+        rawDagTxForAcceptanceCount = rawBlocksForAcceptance.map(_.value.value).map(_.transactions.size.toLong).sum
+        heldDagTxCount = dagParentFilter.held.map(_.value.value.transactions.size.toLong).sum
 
         unpEventsForAcceptance <- updateNodeParametersCutter.cut(unpEventsBeforeCut.toList, snapshotContext, currentOrdinal)
 
@@ -397,8 +453,12 @@ object GlobalSnapshotConsensusFunctions {
         )
         _ <- emitBalanceEventMetrics(
           "cut",
-          "dag_block" -> blocksForAcceptance.size.toLong,
-          "dag_spend" -> dagTxForAcceptanceCount,
+          "dag_block" -> rawBlocksForAcceptance.size.toLong,
+          "dag_block_admitted" -> blocksForAcceptance.size.toLong,
+          "dag_block_held_missing_parent" -> dagParentFilter.held.size.toLong,
+          "dag_spend" -> rawDagTxForAcceptanceCount,
+          "dag_spend_admitted" -> dagTxForAcceptanceCount,
+          "dag_spend_held_missing_parent" -> heldDagTxCount,
           "state_channel" -> scEvents.size.toLong,
           "allow_spend_block" -> sortedAllowSpendEvents.size.toLong,
           "allow_spend" -> allowSpendTxForAcceptanceCount,
@@ -410,6 +470,25 @@ object GlobalSnapshotConsensusFunctions {
           "node_collateral_withdraw" -> sortedWncEvents.size.toLong,
           "update_node_parameters" -> unpEventsForAcceptance.size.toLong
         )
+        parentFilterDecisionLabel = Metrics.unsafeLabelName("decision")
+        parentFilterReasonLabel = Metrics.unsafeLabelName("reason")
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_global_snapshot_dag_tx_parent_filter_total",
+          blocksForAcceptance.size,
+          Seq(parentFilterDecisionLabel -> "admitted", parentFilterReasonLabel -> "none")
+        )
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_global_snapshot_dag_tx_parent_filter_total",
+          dagParentFilter.held.size,
+          Seq(parentFilterDecisionLabel -> "held", parentFilterReasonLabel -> "parent_ordinal_above_last")
+        )
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_global_snapshot_dag_tx_parent_ordinal_above_last_total",
+          dagParentFilter.held.size,
+          Seq(parentFilterReasonLabel -> "proposal_filter")
+        )
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_dag_tx_awaiting_parent_backlog", dagParentFilter.held.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_dag_tx_awaiting_parent_max_gap", dagParentFilter.maxGap)
 
         _ <- ConsensusLog.info(
           logger,
@@ -420,7 +499,10 @@ object GlobalSnapshotConsensusFunctions {
           "trigger" -> trigger.toString,
           "events.total" -> events.size.toString,
           "dag" -> blocksForAcceptance.size.toString,
+          "dagHeldMissingParent" -> dagParentFilter.held.size.toString,
           "dagTx" -> dagTxForAcceptanceCount.toString,
+          "dagTxHeldMissingParent" -> heldDagTxCount.toString,
+          "dagTxMissingParentMaxGap" -> dagParentFilter.maxGap.toString,
           "sc" -> scEvents.size.toString,
           "allowSpend" -> sortedAllowSpendEvents.size.toString,
           "allowSpendTx" -> allowSpendTxForAcceptanceCount.toString,
@@ -454,7 +536,7 @@ object GlobalSnapshotConsensusFunctions {
             .accept(
               currentOrdinal,
               currentEpochProgress,
-              blocksForAcceptance.map(_.value),
+              blocksForAcceptance,
               sortedAllowSpendEvents,
               sortedTokenLockEvents,
               scEvents.map(_.value),
@@ -475,6 +557,14 @@ object GlobalSnapshotConsensusFunctions {
           val blocksRejectedCount = acceptanceResult.notAccepted.size.toLong
           val dagTxAcceptedCount = acceptanceResult.accepted.toList.map { case (block, _) => block.transactions.size.toLong }.sum
           val dagTxRejectedCount = acceptanceResult.notAccepted.toList.map { case (block, _) => block.transactions.size.toLong }.sum
+          val dagParentOrdinalAboveLastCount = acceptanceResult.notAccepted.count {
+            case (_, AwaitingTransaction(_, ParentOrdinalAboveLastTxOrdinal(_, _))) => true
+            case _                                                                  => false
+          }.toLong
+          val dagParentOrdinalAboveLastMaxGap = acceptanceResult.notAccepted.collect {
+            case (_, AwaitingTransaction(_, ParentOrdinalAboveLastTxOrdinal(parentOrdinal, lastTxOrdinal))) =>
+              math.max(0L, parentOrdinal.value.value - lastTxOrdinal.value.value)
+          }.maxOption.getOrElse(0L)
           val allowSpendAcceptedBlockCount = allowSpendBlockAcceptanceResult.accepted.size.toLong
           val allowSpendAcceptedTxCount = allowSpendBlockAcceptanceResult.accepted.toList.map(_.transactions.size.toLong).sum
           val allowSpendRejectedBlockCount = allowSpendBlockAcceptanceResult.notAccepted.size.toLong
@@ -523,6 +613,7 @@ object GlobalSnapshotConsensusFunctions {
             ),
             rejected = List(
               "dag_block" -> blocksRejectedCount,
+              "dag_block_parent_ordinal_above_last" -> dagParentOrdinalAboveLastCount,
               "dag_spend" -> dagTxRejectedCount,
               "state_channel" -> stateChannelRejectedCount,
               "allow_spend_block" -> allowSpendRejectedBlockCount,
@@ -537,6 +628,8 @@ object GlobalSnapshotConsensusFunctions {
             logFields = List(
               "tx.accepted" -> dagTxAcceptedCount.toString,
               "tx.rejected" -> dagTxRejectedCount.toString,
+              "tx.parentOrdinalAboveLast" -> dagParentOrdinalAboveLastCount.toString,
+              "tx.parentOrdinalAboveLastMaxGap" -> dagParentOrdinalAboveLastMaxGap.toString,
               "allowSpendBlocks.accepted" -> allowSpendAcceptedBlockCount.toString,
               "allowSpendBlocks.rejected" -> allowSpendRejectedBlockCount.toString,
               "allowSpend.accepted" -> allowSpendAcceptedTxCount.toString,
@@ -564,6 +657,11 @@ object GlobalSnapshotConsensusFunctions {
 
         _ <- emitBalanceEventMetrics("accepted", balanceDiagnostics.accepted: _*)
         _ <- emitBalanceEventMetrics("rejected", balanceDiagnostics.rejected: _*)
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_global_snapshot_dag_tx_parent_ordinal_above_last_total",
+          balanceDiagnostics.rejected.toMap.getOrElse("dag_block_parent_ordinal_above_last", 0L),
+          Seq(parentFilterReasonLabel -> "acceptance")
+        )
         _ <- ConsensusLog.info(
           logger,
           Category.Proposal,
@@ -645,7 +743,7 @@ object GlobalSnapshotConsensusFunctions {
           "reward" -> globalSnapshot.rewards.size.toLong,
           "delegate_reward" -> globalSnapshot.delegateRewards.fold(0L)(_.values.map(_.size.toLong).sum)
         )
-        returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
+        returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents ++ heldDagEvents
         _ <- ConsensusLog.info(
           logger,
           Category.Proposal,
