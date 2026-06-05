@@ -3025,14 +3025,16 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def signedArtifactPeerHistory(outcome: GlobalConsensusOutcome): ConsensusOperationalState = {
         // TODO(v20 cleanup): recentRoundEndTimes and most perPeer dimensions are intentionally
         // omitted from signed artifacts because they have proven locally divergent in live
-        // testnet proposal validation. v27 keeps only activeAdmissionScore in signed
-        // peerHistory: it is a bounded controller state derived from finalized evidence and
-        // needed for deterministic restart/download replay of active-role admission.
+        // testnet proposal validation. v29 keeps only activeAdmissionScore in signed
+        // peerHistory and writes it over a canonical key set with explicit zero scores:
+        // absent-vs-zero score records are operationally equivalent, but they are different
+        // signed bytes under dropNullValues. Canonical zeros keep restart/download replay
+        // while removing the small perPeer key-set drift seen on alpha.129.
         val operational = outcome.toOperationalState
+        val signedScoreKeys = outcome.eligibleOrFacilitators.toSet | outcome.activeAdmissionScores.keySet
         val signedControllerScores = SortedMap.from(
-          operational.perPeer.iterator.flatMap {
-            case (pid, record) =>
-              record.activeAdmissionScore.map(score => pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(score)))
+          signedScoreKeys.iterator.map { pid =>
+            pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(outcome.activeAdmissionScores.getOrElse(pid, 0)))
           }
         )
         operational.copy(

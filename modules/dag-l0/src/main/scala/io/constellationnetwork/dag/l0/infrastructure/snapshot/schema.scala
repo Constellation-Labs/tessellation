@@ -221,10 +221,10 @@ object schema {
     //
     // This is the FULL operational state (written to the snapshot / PeerHistorySidecar
     // after finalization). The signed-artifact path is narrower: `signedArtifactPeerHistory`
-    // in the advancer strips `perPeer` and `recentRoundEndTimes` before they enter the
-    // proposal-critical bytes, because those two fields proved locally divergent in live
-    // testnet proposal validation. recentProofSizes / recentSigners stay in the signed
-    // artifact (fully sorted, byte-identical across honest nodes).
+    // in the advancer strips `recentRoundEndTimes` and reduces `perPeer` to canonical
+    // explicit activeAdmissionScore records before they enter the proposal-critical bytes.
+    // recentProofSizes / recentSigners stay in the signed artifact (fully sorted,
+    // byte-identical across honest nodes).
     //
     // v21/v27 layout: peer-keyed dimensions collapsed into a single map keyed by
     // PeerId so each id appears once. The union of keys across the peer-keyed
