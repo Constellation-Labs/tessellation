@@ -175,6 +175,7 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     )
 
     expect.same(List(a, b, c), result.active) &&
+    expect.same(List(c), result.probationAdmitted) &&
     expect.same(Set(d), result.exclusions.collect { case e if e.reason == ExclusionReason.ScoreBelowPromoteThreshold => e.peerId }.toSet) &&
     expect.same(1, result.expansionAdmittedSize) &&
     expect.same(1, result.probationAdmittedSize)

@@ -733,7 +733,10 @@ object types {
     //     reduce a stuck 4-active round to the TC voters when the old quorum floor is still
     //     preserved. Active expansion also becomes cadence-limited by finalized ordinal so
     //     testnet can keep growing without adding a new active denominator every round.
-    consensusSchemaVersion: Int = 30,
+    //     v31: probationary active expansion is forced non-Core for the round. Probation
+    //     peers can receive facilities and sign as Tier 1, but cannot carry a prior Core
+    //     tier or satisfy Core-floor promotion until the integral controller graduates them.
+    consensusSchemaVersion: Int = 31,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with

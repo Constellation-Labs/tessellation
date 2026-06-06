@@ -94,6 +94,10 @@ object CommitteeBuilder {
     *   fall through to the default. Reuses `config.minParticipationObservations`.
     * @param minRatio
     *   Minimum `completed/participated` ratio for Core eligibility. Reuses `config.minParticipationRatio`.
+    * @param nonCorePeers
+    *   Peers allowed into the round as non-Core participants only. They are forced to Tier 1 unless they were already Witness, and they are
+    *   skipped by Core-floor promotion. This is used for probationary expansion: the peer can receive facilities and produce signer
+    *   evidence, but cannot raise the liveness quorum denominator before the integral controller graduates it.
     */
   def build(
     candidates: List[PeerId],
@@ -101,7 +105,8 @@ object CommitteeBuilder {
     peerQuality: Map[PeerId, (Int, Int)],
     coreFloor: Int,
     minObservations: Int,
-    minRatio: Double
+    minRatio: Double,
+    nonCorePeers: Set[PeerId] = Set.empty
   ): Committees = {
     def hasSufficientHistory(pid: PeerId): Option[Double] =
       peerQuality.get(pid).flatMap {
@@ -117,7 +122,9 @@ object CommitteeBuilder {
       hasSufficientHistory(pid).exists(_ >= minRatio)
 
     val effectiveTier: PeerId => Int = pid =>
-      if (isQualityDegraded(pid)) Tier1
+      if (nonCorePeers.contains(pid))
+        priorTiers.get(pid).filter(_ == Witness).getOrElse(Tier1)
+      else if (isQualityDegraded(pid)) Tier1
       else
         priorTiers.get(pid) match {
           case Some(tier) => tier
@@ -147,7 +154,7 @@ object CommitteeBuilder {
         }
       rawTier1.sortBy(rank)
     }
-    val (promoted, _) = sortedTier1ForPromotion.splitAt(promotionDeficit)
+    val (promoted, _) = sortedTier1ForPromotion.filterNot(nonCorePeers.contains).splitAt(promotionDeficit)
     // Preserve original ordering for the un-promoted tier1 set so the StateCreator's
     // upstream candidate order (FacilitatorSelector.select output) is respected.
     val promotedSet = promoted.toSet
