@@ -277,8 +277,23 @@ object TransactionSender {
                   (if (ms > 800) IO.println(s"  [SLOW-tx] $host ord=${newRef.ordinal.value} post=${ms}ms") else IO.unit).as(true)
               }
             case Right(Left(err)) =>
+              // Optimistic-chain resync: a HasNoMatchingParent means the node dropped its unfinalized
+              // backlog (rolled the L1 tip back to the last finalized ref) and our optimistic local nonce
+              // is now orphaned -- every further tx would 400 the same way. Re-read the node's last-reference
+              // and reset the local chain to it so the next tx chains from the confirmed tip instead of
+              // flooding rejections. No-op in strict mode (it never runs ahead of the node).
+              val resync =
+                if (opt && err.contains("HasNoMatchingParent"))
+                  getLastReference(client, endpoint, senderAddr).attempt.flatMap {
+                    case Right(nodeRef) =>
+                      refRef.set(nodeRef) *>
+                        IO.println(s"  [RESYNC] $host orphaned at ord ${newRef.ordinal.value} -> node last-ref ${nodeRef.ordinal.value}")
+                    case Left(_) => IO.unit
+                  }
+                else IO.unit
               shared.errors.update(_ + 1) *> bump(shared, host, ok = false) *>
-                IO.println(s"  [REJECTED] $host ord=${newRef.ordinal.value} post=${ms}ms: ${err.take(55)}").as(false)
+                IO.println(s"  [REJECTED] $host ord=${newRef.ordinal.value} post=${ms}ms: ${err.take(55)}") *>
+                resync.as(false)
             case Left(e) =>
               shared.errors.update(_ + 1) *> bump(shared, host, ok = false) *>
                 IO.println(s"  [ERROR] $host post=${ms}ms: ${Option(e.getMessage).getOrElse("").take(55)}").as(false)
