@@ -536,6 +536,14 @@ object SnapshotRoutes {
             maxBytesPerAggregateLongWindow = cfg.maxBytesPerLongWindow,
             aggregateLongWindowDuration = cfg.longWindow,
             retryAfterSeconds = cfg.perIpBandwidthRetryAfterSeconds,
+            adaptiveBackoffEnabled = cfg.adaptiveBackoffEnabled,
+            adaptiveBackoffMaxRequestsPerWindow = cfg.adaptiveBackoffMaxRequestsPerWindow,
+            adaptiveBackoffMaxBytesPerWindow = cfg.adaptiveBackoffMaxBytesPerWindow,
+            adaptiveBackoffWindowDuration = cfg.adaptiveBackoffWindow,
+            adaptiveBackoffBaseRetryAfterSeconds = cfg.adaptiveBackoffBaseRetryAfterSeconds,
+            adaptiveBackoffMaxRetryAfterSeconds = cfg.adaptiveBackoffMaxRetryAfterSeconds,
+            adaptiveBackoffPenaltyDecay = cfg.adaptiveBackoffPenaltyDecay,
+            adaptiveBackoffApplyToAllowlist = cfg.adaptiveBackoffApplyToAllowlist,
             appliesTo = (req: Request[F]) => isHeavyweightSnapshotRoute(req),
             allowlist = cfg.perIpAllowlist.split(",").iterator.map(_.trim).filter(_.nonEmpty).toSet,
             selfExternalIp = selfExternalIp,
@@ -545,7 +553,10 @@ object SnapshotRoutes {
             // the legacy post-response Content-Length path (defense in depth).
             routeSizeEstimator = Some(combinedStreamRouteSizeEstimator[F, S, SI](combinedSnapshotCheckpointFileSystemStorage)),
             onReject = Some { (req, scope, _, _) =>
-              val limiter = if (scope === "aggregate") "aggregate_bandwidth" else "bandwidth"
+              val limiter =
+                if (scope === "aggregate") "aggregate_bandwidth"
+                else if (scope.startsWith("adaptive_")) "adaptive_backoff"
+                else "bandwidth"
               heavyweightEndpoint(req).traverse_ { endpoint =>
                 Metrics[F].incrementCounter(
                   "dag_snapshot_stream_limit_total",
