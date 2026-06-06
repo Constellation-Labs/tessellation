@@ -722,7 +722,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 state.coreFacilitators.value,
                 state.facilitators.value
               )
-              val shouldEvaluateShrink = fromView > state.initialViewNumber.toLong
+              // Evaluate shrink on the first certified timeout too. Live alpha.129 data showed
+              // view-0 TCs with quorum evidence advancing the view but preserving a 4-of-4 active
+              // set where only two peers kept responding, causing the next view to wedge again.
+              val shouldEvaluateShrink = true
               val certifiedShrink =
                 if (shouldEvaluateShrink)
                   ActiveFacilitatorAdmission.fromCertifiedTimeout(
