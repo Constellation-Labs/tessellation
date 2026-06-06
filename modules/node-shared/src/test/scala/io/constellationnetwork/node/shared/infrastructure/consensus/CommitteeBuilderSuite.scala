@@ -57,6 +57,44 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
     expect.same(List(p1), result.core).and(expect.same(List(p2), result.tier1)).and(expect.same(List(p3), result.witness))
   }
 
+  pureTest("non-core probation peer cannot carry prior Core tier into quorum") {
+    val pCore = pid("core")
+    val pProbation = pid("prob")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pProbation -> Core)
+    val result = CommitteeBuilder.build(
+      candidates = List(pCore, pProbation),
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      nonCorePeers = Set(pProbation)
+    )
+
+    expect.same(List(pCore), result.core) &&
+    expect.same(List(pProbation), result.tier1) &&
+    expect.same(Some(Tier1), result.effectiveTiers.get(pProbation))
+  }
+
+  pureTest("non-core probation peer is skipped by Core-floor promotion") {
+    val pCore = pid("core")
+    val pProbation = pid("prob")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pProbation -> Tier1)
+    val result = CommitteeBuilder.build(
+      candidates = List(pCore, pProbation),
+      priorTiers = priorTiers,
+      peerQuality = Map(pProbation -> (10, 10)),
+      coreFloor = 2,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      nonCorePeers = Set(pProbation)
+    )
+
+    expect.same(List(pCore), result.core) &&
+    expect.same(List(pProbation), result.tier1) &&
+    expect.same(Some(Tier1), result.effectiveTiers.get(pProbation))
+  }
+
   pureTest("Core-floor promotion at genesis falls back to lex order when peerQuality is empty") {
     val pA = pid("0001")
     val pB = pid("0002")

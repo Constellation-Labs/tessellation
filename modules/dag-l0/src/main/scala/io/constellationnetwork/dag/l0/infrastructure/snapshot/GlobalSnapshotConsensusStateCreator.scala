@@ -459,7 +459,8 @@ object GlobalSnapshotConsensusStateCreator {
           peerQuality = lastOutcome.peerQuality,
           coreFloor = coreCommitteeSize,
           minObservations = config.minParticipationObservations,
-          minRatio = config.minParticipationRatio
+          minRatio = config.minParticipationRatio,
+          nonCorePeers = activeAdmission.probationAdmitted.toSet
         )
 
         _ <- ConsensusLog.info(
