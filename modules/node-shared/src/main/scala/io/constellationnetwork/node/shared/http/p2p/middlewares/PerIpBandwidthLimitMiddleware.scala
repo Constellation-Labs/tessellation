@@ -68,8 +68,17 @@ object PerIpBandwidthLimitMiddleware {
 
   private final case class BandwidthState(
     perIp: Map[String, List[(Long, Long)]],
-    aggregateTimestampedBytesDesc: List[(Long, Long)]
+    aggregateTimestampedBytesDesc: List[(Long, Long)],
+    adaptive: Map[String, AdaptiveClientState]
   )
+
+  private final case class AdaptiveClientState(
+    timestampedBytesDesc: List[(Long, Long)],
+    penaltyLevel: Int,
+    lastPenaltyMs: Long
+  )
+
+  private final case class Rejection(scope: String, observed: Long, cap: Long, retryAfterSeconds: Long)
 
   /** Build the middleware.
     *
@@ -106,6 +115,14 @@ object PerIpBandwidthLimitMiddleware {
     maxBytesPerAggregateLongWindow: Long = 0L,
     aggregateLongWindowDuration: FiniteDuration = 0.seconds,
     retryAfterSeconds: Long = 5,
+    adaptiveBackoffEnabled: Boolean = false,
+    adaptiveBackoffMaxRequestsPerWindow: Int = 0,
+    adaptiveBackoffMaxBytesPerWindow: Long = 0L,
+    adaptiveBackoffWindowDuration: FiniteDuration = 0.seconds,
+    adaptiveBackoffBaseRetryAfterSeconds: Long = 3,
+    adaptiveBackoffMaxRetryAfterSeconds: Long = 300,
+    adaptiveBackoffPenaltyDecay: FiniteDuration = 5.minutes,
+    adaptiveBackoffApplyToAllowlist: Boolean = false,
     appliesTo: Request[F] => Boolean = (_: Request[F]) => true,
     allowlist: Set[String] = Set.empty,
     selfExternalIp: Option[String] = None,
@@ -118,11 +135,18 @@ object PerIpBandwidthLimitMiddleware {
     val longWindowEnabled = maxBytesPerLongWindow > 0L && longWindowMillis > 0L
     val aggregateWindowMillis = aggregateLongWindowDuration.toMillis
     val aggregateEnabled = maxBytesPerAggregateLongWindow > 0L && aggregateWindowMillis > 0L
+    val adaptiveWindowMillis = adaptiveBackoffWindowDuration.toMillis
+    val adaptivePenaltyDecayMillis = math.max(1L, adaptiveBackoffPenaltyDecay.toMillis)
+    val adaptiveEnabled =
+      adaptiveBackoffEnabled &&
+        adaptiveWindowMillis > 0L &&
+        (adaptiveBackoffMaxRequestsPerWindow > 0 || adaptiveBackoffMaxBytesPerWindow > 0L)
     val retentionWindowMillis =
       List(
         Some(windowMillis),
         Option.when(longWindowEnabled)(longWindowMillis),
-        Option.when(aggregateEnabled)(aggregateWindowMillis)
+        Option.when(aggregateEnabled)(aggregateWindowMillis),
+        Option.when(adaptiveEnabled)(adaptiveWindowMillis)
       ).flatten.max
     val effectiveEstimator: Request[F] => F[Option[Long]] =
       routeSizeEstimator.getOrElse(noRouteSizeEstimator[F] _)
@@ -157,34 +181,125 @@ object PerIpBandwidthLimitMiddleware {
       } else
         None
 
-    def exceededBudget(
+    def decayedPenaltyLevel(state: AdaptiveClientState, nowMs: Long): Int = {
+      val decaySteps = ((nowMs - state.lastPenaltyMs).max(0L) / adaptivePenaltyDecayMillis).toInt
+      (state.penaltyLevel - decaySteps).max(0)
+    }
+
+    def adaptiveRetryAfterSeconds(level: Int): Long = {
+      val boundedLevel = level.max(0).min(20)
+      val multiplier = 1L << (boundedLevel - 1).max(0).min(10)
+      (adaptiveBackoffBaseRetryAfterSeconds.max(1L) * multiplier).min(adaptiveBackoffMaxRetryAfterSeconds.max(1L))
+    }
+
+    def exceededAdaptiveBudget(
       state: BandwidthState,
       ipOpt: Option[String],
       nowMs: Long,
       nextBytes: Long
-    ): Option[(String, Long, Long)] = {
+    ): Option[(String, Long, Long)] =
+      if (adaptiveEnabled)
+        ipOpt.flatMap { ip =>
+          val clientState = state.adaptive.getOrElse(ip, AdaptiveClientState(Nil, 0, nowMs))
+          val samples = clientState.timestampedBytesDesc.takeWhile(_._1 >= nowMs - adaptiveWindowMillis)
+          val requestCount = samples.size.toLong
+          val byteSum = samples.iterator.map(_._2).sum
+          val observedRequests = requestCount + 1L
+          val observedBytes = byteSum + nextBytes
+          val byRequests =
+            Option.when(adaptiveBackoffMaxRequestsPerWindow > 0 && observedRequests > adaptiveBackoffMaxRequestsPerWindow.toLong)(
+              ("adaptive_request", observedRequests, adaptiveBackoffMaxRequestsPerWindow.toLong)
+            )
+          val byBytes =
+            Option.when(adaptiveBackoffMaxBytesPerWindow > 0L && observedBytes > adaptiveBackoffMaxBytesPerWindow)(
+              ("adaptive_bandwidth", observedBytes, adaptiveBackoffMaxBytesPerWindow)
+            )
+
+          byBytes.orElse(byRequests)
+        }
+      else
+        None
+
+    def exceededBudget(
+      state: BandwidthState,
+      ipOpt: Option[String],
+      adaptiveIpOpt: Option[String],
+      nowMs: Long,
+      nextBytes: Long
+    ): Option[Rejection] = {
       val aggregateKept = trimSamples(state.aggregateTimestampedBytesDesc, nowMs)
       exceededAggregateBudget(aggregateKept, nowMs, nextBytes).map {
-        case (observed, cap) => ("aggregate", observed, cap)
+        case (observed, cap) => Rejection("aggregate", observed, cap, retryAfterSeconds)
       }.orElse {
         ipOpt.flatMap { ip =>
           val kept = state.perIp.get(ip).map(trimSamples(_, nowMs)).getOrElse(Nil)
           exceededPerIpBudget(kept, nowMs, nextBytes).map {
-            case (observed, cap) => (ip, observed, cap)
+            case (observed, cap) => Rejection(ip, observed, cap, retryAfterSeconds)
           }
+        }
+      }.orElse {
+        exceededAdaptiveBudget(state, adaptiveIpOpt, nowMs, nextBytes).map {
+          case (scope, observed, cap) =>
+            val clientState = adaptiveIpOpt.flatMap(state.adaptive.get).getOrElse(AdaptiveClientState(Nil, 0, nowMs))
+            val level = decayedPenaltyLevel(clientState, nowMs) + 1
+            Rejection(scope, observed, cap, adaptiveRetryAfterSeconds(level))
         }
       }
     }
 
     def trimState(state: BandwidthState, nowMs: Long): BandwidthState =
       BandwidthState(
-        perIp = state.perIp.view.mapValues(trimSamples(_, nowMs)).toMap,
-        aggregateTimestampedBytesDesc = trimSamples(state.aggregateTimestampedBytesDesc, nowMs)
+        perIp = state.perIp.view.mapValues(trimSamples(_, nowMs)).filter(_._2.nonEmpty).toMap,
+        aggregateTimestampedBytesDesc = trimSamples(state.aggregateTimestampedBytesDesc, nowMs),
+        adaptive = state.adaptive.view.mapValues { clientState =>
+          clientState.copy(
+            timestampedBytesDesc = clientState.timestampedBytesDesc.takeWhile(_._1 >= nowMs - adaptiveWindowMillis),
+            penaltyLevel = decayedPenaltyLevel(clientState, nowMs)
+          )
+        }.filter { case (_, clientState) => clientState.timestampedBytesDesc.nonEmpty || clientState.penaltyLevel > 0 }.toMap
       )
+
+    def recordAdaptive(
+      state: BandwidthState,
+      ipOpt: Option[String],
+      nowMs: Long,
+      bytes: Long
+    ): BandwidthState =
+      if (!adaptiveEnabled)
+        state
+      else
+        ipOpt match {
+          case Some(ip) =>
+            val prior = state.adaptive.getOrElse(ip, AdaptiveClientState(Nil, 0, nowMs))
+            val kept = prior.timestampedBytesDesc.takeWhile(_._1 >= nowMs - adaptiveWindowMillis)
+            state.copy(adaptive =
+              state.adaptive
+                .updated(ip, prior.copy(timestampedBytesDesc = (nowMs, bytes) :: kept, penaltyLevel = decayedPenaltyLevel(prior, nowMs)))
+            )
+          case None => state
+        }
+
+    def penalizeAdaptive(
+      state: BandwidthState,
+      ipOpt: Option[String],
+      nowMs: Long
+    ): BandwidthState =
+      if (!adaptiveEnabled)
+        state
+      else
+        ipOpt match {
+          case Some(ip) =>
+            val prior = state.adaptive.getOrElse(ip, AdaptiveClientState(Nil, 0, nowMs))
+            val kept = prior.timestampedBytesDesc.takeWhile(_._1 >= nowMs - adaptiveWindowMillis)
+            val nextLevel = (decayedPenaltyLevel(prior, nowMs) + 1).min(20)
+            state.copy(adaptive = state.adaptive.updated(ip, AdaptiveClientState(kept, nextLevel, nowMs)))
+          case None => state
+        }
 
     def reserveBytes(
       state: BandwidthState,
       ipOpt: Option[String],
+      adaptiveIpOpt: Option[String],
       nowMs: Long,
       bytes: Long
     ): BandwidthState = {
@@ -192,20 +307,21 @@ object PerIpBandwidthLimitMiddleware {
       val withAggregate =
         if (aggregateEnabled) trimmed.copy(aggregateTimestampedBytesDesc = (nowMs, bytes) :: trimmed.aggregateTimestampedBytesDesc)
         else trimmed
-      ipOpt match {
+      val withPerIp = ipOpt match {
         case Some(ip) =>
           val prior = withAggregate.perIp.getOrElse(ip, Nil)
           withAggregate.copy(perIp = withAggregate.perIp.updated(ip, (nowMs, bytes) :: prior))
         case None => withAggregate
       }
+      recordAdaptive(withPerIp, adaptiveIpOpt, nowMs, bytes)
     }
 
     def runInnerWithPostCheck(
       routes: HttpRoutes[F],
       req: Request[F],
       ipOpt: Option[String],
+      adaptiveIpOpt: Option[String],
       stateRef: Ref[F, BandwidthState],
-      retryAfterSeconds: Long,
       logger: org.typelevel.log4cats.SelfAwareStructuredLogger[F],
       onReject: Option[(Request[F], String, Long, Long) => F[Unit]]
     ): OptionT[F, Response[F]] =
@@ -220,25 +336,27 @@ object PerIpBandwidthLimitMiddleware {
           // Keeps the observed value out of the modify closure so the post-modify branches can
           // report the right window in the rejection log.
           stateRef
-            .modify[Option[(String, Long, Long)]] { state =>
+            .modify[Option[(String, Long, Long, Long)]] { state =>
               val trimmed = trimState(state, nowMs2)
-              exceededBudget(trimmed, ipOpt, nowMs2, nextBytes = responseBytes) match {
-                case Some(rejected) => (trimmed, Some(rejected))
-                case None           => (reserveBytes(trimmed, ipOpt, nowMs2, responseBytes), None)
+              exceededBudget(trimmed, ipOpt, adaptiveIpOpt, nowMs2, nextBytes = responseBytes) match {
+                case Some(rejected) =>
+                  val next = if (rejected.scope.startsWith("adaptive_")) penalizeAdaptive(trimmed, adaptiveIpOpt, nowMs2) else trimmed
+                  (next, Some((rejected.scope, rejected.observed, rejected.cap, rejected.retryAfterSeconds)))
+                case None => (reserveBytes(trimmed, ipOpt, adaptiveIpOpt, nowMs2, responseBytes), None)
               }
             }
             .flatMap {
-              case None                         => resp.pure[F]
-              case Some((scope, observed, cap)) =>
+              case None                                     => resp.pure[F]
+              case Some((scope, observed, cap, retryAfter)) =>
                 // Drain the unused inner body so any held resources release. Then return 429.
                 resp.body.compile.drain.attempt.void >>
                   onReject.traverse_(_(req, scope, observed, cap)) >>
-                  rejectFast(scope, cap, observed, retryAfterSeconds, logger)
+                  rejectFast(scope, cap, observed, retryAfter, logger)
             }
         }
       }
 
-    Ref.of[F, BandwidthState](BandwidthState(Map.empty, Nil)).map { stateRef => routes: HttpRoutes[F] =>
+    Ref.of[F, BandwidthState](BandwidthState(Map.empty, Nil, Map.empty)).map { stateRef => routes: HttpRoutes[F] =>
       Kleisli { req =>
         if (!appliesTo(req)) routes(req)
         else {
@@ -261,6 +379,9 @@ object PerIpBandwidthLimitMiddleware {
               .filterNot(_ => xffIsSelfInjection)
               .orElse(req.remote.map(_.host.toString))
           val perIpBudgetIpOpt: Option[String] = clientIpOpt.filterNot(allowlist.contains)
+          val adaptiveIpOpt: Option[String] =
+            if (adaptiveBackoffApplyToAllowlist) clientIpOpt
+            else clientIpOpt.filterNot(allowlist.contains)
 
           clientIpOpt match {
             case _ =>
@@ -271,11 +392,15 @@ object PerIpBandwidthLimitMiddleware {
                 val nowMs = now.toMillis
                 OptionT.liftF(stateRef.get).flatMap { snap =>
                   val trimmed = trimState(snap, nowMs)
-                  exceededBudget(trimmed, perIpBudgetIpOpt, nowMs, nextBytes = 0L) match {
-                    case Some((scope, observed, cap)) =>
+                  exceededBudget(trimmed, perIpBudgetIpOpt, adaptiveIpOpt, nowMs, nextBytes = 0L) match {
+                    case Some(rejected) =>
                       OptionT.liftF(
-                        onReject.traverse_(_(req, scope, observed, cap)) >>
-                          rejectFast(scope, cap, observed, retryAfterSeconds, logger)
+                        stateRef.update(state =>
+                          if (rejected.scope.startsWith("adaptive_")) penalizeAdaptive(trimState(state, nowMs), adaptiveIpOpt, nowMs)
+                          else trimState(state, nowMs)
+                        ) >>
+                          onReject.traverse_(_(req, rejected.scope, rejected.observed, rejected.cap)) >>
+                          rejectFast(rejected.scope, rejected.cap, rejected.observed, rejected.retryAfterSeconds, logger)
                       )
                     case None =>
                       // Pre-flight estimator check: if a route-specific estimator can predict the
@@ -286,17 +411,30 @@ object PerIpBandwidthLimitMiddleware {
                       // routes without estimators preserve legacy behavior.
                       OptionT.liftF(effectiveEstimator(req)).flatMap {
                         case Some(estimated) =>
-                          exceededBudget(trimmed, perIpBudgetIpOpt, nowMs, nextBytes = estimated) match {
-                            case Some((scope, observed, cap)) =>
+                          exceededBudget(trimmed, perIpBudgetIpOpt, adaptiveIpOpt, nowMs, nextBytes = estimated) match {
+                            case Some(rejected) =>
                               OptionT.liftF(
-                                onReject.traverse_(_(req, scope, observed, cap)) >>
-                                  rejectFast(scope, cap, observed, retryAfterSeconds, logger)
+                                stateRef.update(state =>
+                                  if (rejected.scope.startsWith("adaptive_"))
+                                    penalizeAdaptive(trimState(state, nowMs), adaptiveIpOpt, nowMs)
+                                  else trimState(state, nowMs)
+                                ) >>
+                                  onReject.traverse_(_(req, rejected.scope, rejected.observed, rejected.cap)) >>
+                                  rejectFast(rejected.scope, rejected.cap, rejected.observed, rejected.retryAfterSeconds, logger)
                               )
                             case None =>
-                              runInnerWithPostCheck(routes, req, perIpBudgetIpOpt, stateRef, retryAfterSeconds, logger, onReject)
+                              runInnerWithPostCheck(
+                                routes,
+                                req,
+                                perIpBudgetIpOpt,
+                                adaptiveIpOpt,
+                                stateRef,
+                                logger,
+                                onReject
+                              )
                           }
                         case _ =>
-                          runInnerWithPostCheck(routes, req, perIpBudgetIpOpt, stateRef, retryAfterSeconds, logger, onReject)
+                          runInnerWithPostCheck(routes, req, perIpBudgetIpOpt, adaptiveIpOpt, stateRef, logger, onReject)
                       }
                   }
                 }

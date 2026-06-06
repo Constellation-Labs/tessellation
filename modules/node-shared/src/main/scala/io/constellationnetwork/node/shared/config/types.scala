@@ -212,7 +212,7 @@ object types {
     // snapshotHash (the artifact hash, not the signed-artifact hash, is used
     // canonically — see buildFinishedTransition). Tune down if round throughput
     // becomes a bottleneck; tune up if network jitter routinely drops late signers.
-    signatureGracePeriod: FiniteDuration = FiniteDuration(500, "ms"),
+    signatureGracePeriod: FiniteDuration = 3.seconds,
     // Delay between assembling/receiving a certified view-change and locally applying it
     // to reset the round into the next view. The VCC is still stored and gossiped immediately;
     // this only gives ordinary proposal/signature traffic time to arrive before a timeout
@@ -932,6 +932,18 @@ object types {
     maxBytesPerLongWindow: Long = 0L,
     longWindow: FiniteDuration = 5.minutes,
     perIpBandwidthRetryAfterSeconds: Long = 5,
+    // Optional adaptive backoff for heavyweight snapshot routes. Unlike the hard per-IP byte
+    // cap, this can also apply to allowlisted clients: trusted consumers are not exempt from
+    // receiving a Retry-After hint when they poll too aggressively. Disabled by default so
+    // networks opt in per environment.
+    adaptiveBackoffEnabled: Boolean = false,
+    adaptiveBackoffMaxRequestsPerWindow: Int = 0,
+    adaptiveBackoffMaxBytesPerWindow: Long = 0L,
+    adaptiveBackoffWindow: FiniteDuration = 5.minutes,
+    adaptiveBackoffBaseRetryAfterSeconds: Long = 3,
+    adaptiveBackoffMaxRetryAfterSeconds: Long = 300,
+    adaptiveBackoffPenaltyDecay: FiniteDuration = 5.minutes,
+    adaptiveBackoffApplyToAllowlist: Boolean = false,
     // Route-scoped bound on simultaneous heavy snapshot serves (currently
     // `/latest/combined/stream` + `/{ordinal}?full=true`). Layered INSIDE the existing
     // public-middleware chain so it applies regardless of whether the request is anonymous

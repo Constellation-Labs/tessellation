@@ -160,7 +160,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       // growth is bounded by the active round cone since abandoned rounds shed
       // entries on the next finalize at or past their key (and resources are
       // otherwise reset on round cleanup).
-      private val signatureQuorumFirstSeenRef: Ref[F, Map[GlobalSnapshotKey, FiniteDuration]] = Ref.unsafe(Map.empty)
+      private val signatureQuorumFirstSeenRef: Ref[F, Map[GlobalSnapshotKey, (FiniteDuration, Int)]] = Ref.unsafe(Map.empty)
 
       /** Tracks consecutive validation failures (stateProofDiffers) at the same ordinal. When a node's local state diverges (e.g., after
         * network isolation), every validation attempt fails with the same MPT root mismatch. Neither consensus fork detection (requires
@@ -2784,6 +2784,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 .as(none[Transition])
             case Right(_) =>
               for {
+                acceptedAt <- Async[F].monotonic
                 // Sign the proposal artifact hash directly. The Signed[artifact] downstream expects proofs to
                 // verify against the artifact hash (not a domain-widened canonical byte sequence); widening
                 // breaks toFinishedPhase -> verifySignatureProof(hash, proof). Safety against double-signing
@@ -2808,6 +2809,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                   majorityInfo.hash
                 )
                 _ <- consensusStorage.addSignature(selfId, state.key, selfMajoritySig).void
+                signatureEmittedAt <- Async[F].monotonic
+                _ <- Metrics[F].recordTimeHistogram(
+                  "dag_consensus_proposal_accept_to_signature_time",
+                  signatureEmittedAt - acceptedAt
+                )
                 _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
                 // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
                 _ <- proposalSavepointRef.set(none)
@@ -3022,21 +3028,42 @@ object GlobalSnapshotConsensusStateAdvancer {
               // missing 1-2 signers that arrive a few ms later — noisy signer sets,
               // missed rewards, divergent peerQuality on downstream rounds.
               now <- Async[F].monotonic
-              waitMore <-
-                if (validSignatures.size < quorumThreshold) false.pure[F]
+              quorumSeen <-
+                if (validSignatures.size < quorumThreshold) (now, 0, false, false).pure[F]
                 else if (validSignatures.size >= fullCommittee) {
                   // Full committee signed — no reason to wait; clear tracker and commit.
-                  signatureQuorumFirstSeenRef.update(_ - state.key).as(false)
+                  signatureQuorumFirstSeenRef.update(_ - state.key).as((now, validSignatures.size, true, false))
                 } else {
                   // Quorum met but not full — stamp first-seen time and evaluate grace.
                   signatureQuorumFirstSeenRef.modify { m =>
                     m.get(state.key) match {
-                      case Some(t) => (m, t)
-                      case None    => (m + (state.key -> now), now)
+                      case Some((t, firstCount)) => (m, (t, firstCount, false))
+                      case None                  => (m + (state.key -> (now, validSignatures.size)), (now, validSignatures.size, true))
                     }
+                  }.map {
+                    case (firstSeen, firstCount, firstObserved) =>
+                      (firstSeen, firstCount, firstObserved, (now - firstSeen) < config.signatureGracePeriod)
                   }
-                    .map(firstSeen => (now - firstSeen) < config.signatureGracePeriod)
                 }
+              firstSeen = quorumSeen._1
+              firstQuorumCount = quorumSeen._2
+              firstObserved = quorumSeen._3
+              waitMore = quorumSeen._4
+              graceElapsed = now - firstSeen
+              _ <-
+                if (validSignatures.size >= quorumThreshold && firstObserved)
+                  Metrics[F].incrementCounter("dag_consensus_signature_quorum_reached_total") >>
+                    Metrics[F].recordDistribution("dag_consensus_signature_first_quorum_count", firstQuorumCount) >>
+                    Metrics[F].recordDistribution("dag_consensus_signature_committee_size", fullCommittee) >>
+                    Metrics[F].recordDistribution("dag_consensus_signature_required_count", quorumThreshold)
+                else Applicative[F].unit
+              _ <-
+                if (waitMore)
+                  Metrics[F].incrementCounter("dag_consensus_signature_grace_wait_total") >>
+                    Metrics[F].recordTimeHistogram("dag_consensus_signature_grace_wait_time", graceElapsed) >>
+                    Metrics[F].updateGauge("dag_consensus_signature_grace_current_valid_count", validSignatures.size.toLong) >>
+                    Metrics[F].updateGauge("dag_consensus_signature_grace_committee_size", fullCommittee.toLong)
+                else Applicative[F].unit
               _ <- ConsensusLog
                 .debug(
                   logger,
@@ -3053,7 +3080,11 @@ object GlobalSnapshotConsensusStateAdvancer {
               result <-
                 if (waitMore) none[Transition].pure[F]
                 else if (validSignatures.size >= quorumThreshold) {
+                  val lateAdded = (validSignatures.size - firstQuorumCount).max(0)
                   signatureQuorumFirstSeenRef.update(_ - state.key) >>
+                    Metrics[F].recordDistribution("dag_consensus_signature_final_count", validSignatures.size) >>
+                    Metrics[F].recordDistribution("dag_consensus_signature_late_added_count", lateAdded) >>
+                    Metrics[F].recordTimeHistogram("dag_consensus_signature_grace_final_wait_time", graceElapsed) >>
                     NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
                       val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
                       // Use the artifact hash (agreed upon during Proposals phase) instead of signedArtifact.hash.

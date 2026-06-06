@@ -6,7 +6,7 @@ import cats.effect.IO
 import scala.concurrent.duration._
 
 import org.http4s._
-import org.http4s.headers.`Content-Length`
+import org.http4s.headers.{`Content-Length`, `Retry-After`}
 import org.typelevel.ci.CIString
 import weaver.SimpleIOSuite
 
@@ -26,6 +26,9 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
       uri = Uri.unsafeFromString(path),
       headers = Headers(Header.Raw(CIString("X-Forwarded-For"), ipStr))
     )
+
+  private def retryAfterSeconds(resp: Response[IO]): Option[Long] =
+    resp.headers.get[`Retry-After`].flatMap(_.retry.toOption.map(_.asInstanceOf[Long]))
 
   test("first request under cap is accepted (200)") {
     val cap = 100L * 1024L * 1024L // 100 MB
@@ -147,6 +150,84 @@ object PerIpBandwidthLimitMiddlewareSuite extends SimpleIOSuite {
     } yield
       expect(r1.status == Status.Ok, "allowlisted IP bypasses per-IP cap")
         .and(expect(r2.status == Status.TooManyRequests, "allowlisted IP is still subject to aggregate cap"))
+  }
+
+  test("adaptive backoff rejects sustained non-allowlisted heavy-route pollers with dynamic Retry-After") {
+    val perIpCap = 1024L * 1024L * 1024L
+    val responseSize = 80L * 1024L * 1024L
+    val estimator = (_: Request[IO]) => IO.pure(Option(responseSize))
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](
+        maxBytesPerWindow = perIpCap,
+        windowDuration = 1.minute,
+        adaptiveBackoffEnabled = true,
+        adaptiveBackoffMaxRequestsPerWindow = 1,
+        adaptiveBackoffWindowDuration = 5.minutes,
+        adaptiveBackoffBaseRetryAfterSeconds = 3,
+        adaptiveBackoffMaxRetryAfterSeconds = 300,
+        routeSizeEstimator = Some(estimator)
+      )
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp("65.108.135.25")).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp("65.108.135.25")).getOrElse(Response.notFound[IO])
+      r3 <- wrapped(reqFromIp("65.108.135.25")).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "first heavy request establishes adaptive history")
+        .and(expect(r2.status == Status.TooManyRequests, "second heavy request exceeds adaptive request budget"))
+        .and(
+          expect(retryAfterSeconds(r2).contains(3L), "first adaptive rejection uses base backoff")
+        )
+        .and(expect(r3.status == Status.TooManyRequests, "continued polling stays rejected"))
+        .and(expect(retryAfterSeconds(r3).contains(6L), "second adaptive rejection escalates"))
+  }
+
+  test("adaptive backoff is bypassed for allowlisted snapshot-streaming IPs by default") {
+    val streaming = "13.57.169.30"
+    val perIpCap = 1024L * 1024L * 1024L
+    val responseSize = 80L * 1024L * 1024L
+    val estimator = (_: Request[IO]) => IO.pure(Option(responseSize))
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](
+        maxBytesPerWindow = perIpCap,
+        windowDuration = 1.minute,
+        adaptiveBackoffEnabled = true,
+        adaptiveBackoffMaxRequestsPerWindow = 1,
+        adaptiveBackoffWindowDuration = 5.minutes,
+        allowlist = Set(streaming),
+        routeSizeEstimator = Some(estimator)
+      )
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+      r3 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "allowlisted r1 accepted")
+        .and(expect(r2.status == Status.Ok, "allowlisted r2 bypasses adaptive backoff"))
+        .and(expect(r3.status == Status.Ok, "allowlisted r3 bypasses adaptive backoff"))
+  }
+
+  test("adaptive backoff can be configured to apply even to allowlisted IPs") {
+    val streaming = "13.57.169.30"
+    val perIpCap = 1024L * 1024L * 1024L
+    val responseSize = 80L * 1024L * 1024L
+    val estimator = (_: Request[IO]) => IO.pure(Option(responseSize))
+    for {
+      mw <- PerIpBandwidthLimitMiddleware[IO](
+        maxBytesPerWindow = perIpCap,
+        windowDuration = 1.minute,
+        adaptiveBackoffEnabled = true,
+        adaptiveBackoffMaxRequestsPerWindow = 1,
+        adaptiveBackoffWindowDuration = 5.minutes,
+        adaptiveBackoffApplyToAllowlist = true,
+        allowlist = Set(streaming),
+        routeSizeEstimator = Some(estimator)
+      )
+      wrapped = mw(fixedSizeRoute(responseSize))
+      r1 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+      r2 <- wrapped(reqFromIp(streaming)).getOrElse(Response.notFound[IO])
+    } yield
+      expect(r1.status == Status.Ok, "allowlisted r1 accepted")
+        .and(expect(r2.status == Status.TooManyRequests, "config can opt allowlisted IPs into adaptive backoff"))
   }
 
   test("allowlist: non-matching IP still rate-limited normally") {
