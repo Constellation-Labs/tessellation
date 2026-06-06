@@ -305,6 +305,7 @@ object types {
     activeAdmissionCriticalPenalty: Int = 20,
     activeAdmissionPassiveDecay: Int = 1,
     activeAdmissionMaxExpansionPerRound: Int = 1,
+    activeAdmissionExpansionIntervalRounds: Int = 1,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     qualityDecayThreshold: Int = 100,
@@ -727,7 +728,12 @@ object types {
     //     Active admission also adds a bounded probation lane that fills unused expansion
     //     slots with deterministic, non-disqualified candidates so unknown peers can earn
     //     finalized score evidence.
-    consensusSchemaVersion: Int = 29,
+    //     v30: alpha.129 liveness hardening. Certified timeout shrink now evaluates on the
+    //     first timeout certificate instead of only later views, allowing a quorum TC to
+    //     reduce a stuck 4-active round to the TC voters when the old quorum floor is still
+    //     preserved. Active expansion also becomes cadence-limited by finalized ordinal so
+    //     testnet can keep growing without adding a new active denominator every round.
+    consensusSchemaVersion: Int = 30,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -859,6 +865,7 @@ object types {
           s"activeAdmissionCriticalPenalty=$activeAdmissionCriticalPenalty," +
           s"activeAdmissionPassiveDecay=$activeAdmissionPassiveDecay," +
           s"activeAdmissionMaxExpansionPerRound=$activeAdmissionMaxExpansionPerRound," +
+          s"activeAdmissionExpansionIntervalRounds=$activeAdmissionExpansionIntervalRounds," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +

@@ -252,6 +252,11 @@ object CurrencySnapshotConsensusStateCreator {
         selectedFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
         targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize)
         maxActiveSize = config.activeFacilitatorMax.getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedFacilitators.size))
+        expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
+        expansionAllowedThisRound = key.value.value % expansionIntervalRounds.toLong === 0L
+        maxExpansionThisRound =
+          if (expansionAllowedThisRound) config.activeAdmissionMaxExpansionPerRound
+          else 0
         activeAdmission = ConsensusPeerController.chooseActive(
           ConsensusPeerController.AdmissionInput(
             selected = selectedFacilitators,
@@ -276,7 +281,7 @@ object CurrencySnapshotConsensusStateCreator {
               degradedPenalty = config.activeAdmissionDegradedPenalty,
               criticalPenalty = config.activeAdmissionCriticalPenalty,
               passiveDecay = config.activeAdmissionPassiveDecay,
-              maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
+              maxExpansionPerRound = maxExpansionThisRound
             )
           )
         )
@@ -297,6 +302,8 @@ object CurrencySnapshotConsensusStateCreator {
             "activeCandidates" -> activeAdmission.candidateSize.toString,
             "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
             "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
+            "expansionIntervalRounds" -> expansionIntervalRounds.toString,
+            "expansionAllowed" -> expansionAllowedThisRound.toString,
             "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
             "recentSignerFilterApplied" -> activeAdmission.recentFilterApplied.toString,
             "recentSignerExclusions" -> activeAdmission.exclusions.size.toString
