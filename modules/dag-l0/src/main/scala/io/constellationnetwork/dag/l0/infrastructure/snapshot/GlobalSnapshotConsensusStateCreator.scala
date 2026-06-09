@@ -117,15 +117,15 @@ object GlobalSnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Full base. Removed peers stay in this set so they can re-enter in future rounds;
-        // the multi-round penalty filter (penalizedPeers below) is the only behavioural gate
-        // that suppresses them. selfId is NOT unconditionally added: each node adding its own
-        // selfId creates a divergent facilitator set per node, causing fork detection
-        // (facilitatorsHash mismatch) and permanent divergence. Instead, nodes join via the
-        // candidate registration mechanism (filteredCandidates above). Genesis ordinal 1 (empty
-        // previousEligible + empty candidates) is handled by the allEligible fallback below:
-        // `if (list.isEmpty) List(selfId)`.
-        fullBase = (filteredPreviousEligible ++ filteredCandidates).distinct
+        // Full base. This must be derived from the parent round's canonical facilitator set.
+        // `eligibleFacilitators` and `finished.candidates` are useful diagnostics, but after a
+        // cold restart they can be reconstructed from locally observed declarations. Feeding
+        // those local sets into the next round changes `facilitatorsHash` across honest nodes
+        // before any proposal can certify the difference. Candidate growth must therefore enter
+        // through a finalized facilitator set, not through local sidecar/candidate replay.
+        fullBase = lastOutcome.facilitators.value
+          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
+          .distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
