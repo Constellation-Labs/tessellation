@@ -163,14 +163,22 @@ object TransactionSender {
       // 1. FAN-OUT: seed funds each pool address (seed's own ordered chain, rotating nodes)
       seedRef0 <- getLastReference(client, endpoints.head, seedAddress)
       seedRefRef <- Ref.of[IO, TransactionReference](seedRef0)
-      _ <- IO.println(s"\nFan-out: funding $poolSize addresses from seed (ordered)...")
-      _ <- poolAddrs.traverse_ { addr =>
-        sendOneTx(client, config, endpoints, rotateEvery, timeout, shared, seedKeyPair, seedAddress, seedRefRef, addr, fundPerAddress)
-          .flatMap(ok => IO.println(s"  fund -> ${addr.value.value.take(10)}.. ${if (ok) "ok" else "FAILED"}"))
-      }
-      // 2. wait for pool balances to finalize so they can spend
-      _ <- IO.println("\nWaiting for pool balances to finalize on L0...")
-      _ <- waitForBalances(client, l0Url, poolAddrs, fundPerAddress * 9 / 10, 240.seconds)
+      // Meter the fan-out: firing the funding txs back-to-back trips the L1 rate limiter so only the
+      // first finalizes. Spacing them at the steady interval keeps them under the limit and they land.
+      _ <- IO.println(s"\nFan-out: funding $poolSize addresses from seed, 1 every ${config.steadyIntervalSeconds.max(3)}s...")
+      _ <- Stream
+        .emits(poolAddrs)
+        .covary[IO]
+        .metered(config.steadyIntervalSeconds.max(3).seconds)
+        .evalMap { addr =>
+          sendOneTx(client, config, endpoints, rotateEvery, timeout, shared, seedKeyPair, seedAddress, seedRefRef, addr, fundPerAddress)
+            .flatMap(ok => IO.println(s"  fund -> ${addr.value.value.take(10)}.. ${if (ok) "ok" else "FAILED"}"))
+        }
+        .compile
+        .drain
+      // 2. Each worker waits for ITS OWN funding to finalize before circulating (below), so a slow or
+      //    sparse funding-finalization no longer drops the whole pool to fail-fast.
+      _ <- IO.println("\nWorkers each wait for their own funding to finalize, then circulate...")
       // 3. CIRCULATION: N parallel ordered chains, each sending to the other pool addresses
       _ <- IO.println(s"\nCirculation: $poolSize parallel workers. Press Ctrl+C to stop.\n")
       start <- Clock[IO].monotonic
@@ -180,6 +188,7 @@ object TransactionSender {
           val addr = kp.getPublic.toAddress
           val others = poolAddrs.zipWithIndex.filter(_._2 != idx).map(_._1)
           for {
+            _ <- waitForBalances(client, l0Url, List(addr), fundPerAddress * 9 / 10, 1800.seconds)
             ref0 <- getLastReference(client, endpoints.head, addr)
             refRef <- Ref.of[IO, TransactionReference](ref0)
             kRef <- Ref.of[IO, Int](0)
