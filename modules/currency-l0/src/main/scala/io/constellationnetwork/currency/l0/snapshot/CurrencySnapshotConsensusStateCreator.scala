@@ -116,12 +116,13 @@ object CurrencySnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Full base. Removed peers stay in this set so they can re-enter in future rounds;
-        // the multi-round penalty filter (penalizedPeers below) is the only behavioural gate
-        // that suppresses them. See dag-l0 mirror for selfId-omission rationale. Genesis
-        // ordinal 1 (empty previousEligible + empty candidates) is handled by the allEligible
-        // fallback below: `if (list.isEmpty) List(selfId)`.
-        fullBase = (filteredPreviousEligible ++ filteredCandidates).distinct
+        // Full base. This mirrors dag-l0: derive from the parent round's canonical facilitator
+        // set only. `eligibleFacilitators` and `finished.candidates` may be locally reconstructed
+        // during cold restart, so they must not influence proposal-critical facilitator hashes
+        // until candidate growth is carried by finalized facilitator state.
+        fullBase = lastOutcome.facilitators.value
+          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
+          .distinct
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
