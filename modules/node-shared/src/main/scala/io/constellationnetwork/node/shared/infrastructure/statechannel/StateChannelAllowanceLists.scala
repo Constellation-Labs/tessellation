@@ -117,6 +117,13 @@ object StateChannelAllowanceLists {
               "b090ca464abd2d1dbd219ff6c801ec8913d88ccc1b28cb1f1acacd83e040e41e41d8d57127ee8991339dd055844bbc3659e1001e6498a9e174c6b3917b4378d5",
               "67060feccf1c407db4d46b156203e4b6eabc6c3dde196af1e64bb4f53d86a72420e701fc069d86635506e34c0d4cdea6089addb62213512e5b4de7fff41319c0",
               "1391276cd637be03331ae5914a5a063c549fbcc6515b140d1ccc0af7c67631804991ba0dae4c1d95b84f77dc812dd71ed2a1817e50c92b722e9b8182683366ed"
+            ),
+          // BioFi
+          Address("DAG8ZnY1voFrENbSfwe8eT9WC6EeKTUejw7JYek4") ->
+            NonEmptySet.of(
+              "9002807a99139d207c7b20d3065f72dbf77c8563e1a2e6d2969f64928c6082dbacfb399d67bacbc62a7997fc69b8dd5c035e3acf6ed696da7f4cebee5f76cdc8",
+              "866d3c60d9ea2ed7b3db2a04ba736ae8b00a0c20e98e270ddda3c73602f348ef4ce5d65e55daa52221310ebb25b826b1de495664917a3f510f6b82226d12ffe7",
+              "772fc1a0d588df58d4378c1f029b64eaac8dae8584b1d8b7db846076c92fe21813370f0114c7c927f9ae970beeb119fd2a08284bbf412ce3c83efa6186dfd687"
             )
         ).some
     }
