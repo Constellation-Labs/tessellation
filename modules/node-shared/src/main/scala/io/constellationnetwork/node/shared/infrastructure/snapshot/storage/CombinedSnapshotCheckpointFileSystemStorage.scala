@@ -102,23 +102,25 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
     Files[F].exists(file).flatMap {
       case false => Concurrent[F].pure(None)
       case true =>
-        Files[F].size(file).flatMap { size =>
-          val fileStream: Stream[F, Byte] = Files[F].readAll(file, 64 * 1024, Flags.Read)
-          val bodyWithPermit: Stream[F, Byte] =
-            Stream.resource(concurrentStreams.permit).flatMap { _ =>
-              fileStream
-            }
+        val fileStream: Stream[F, Byte] = Files[F].readAll(file, 64 * 1024, Flags.Read)
+        val bodyWithPermit: Stream[F, Byte] =
+          Stream.resource(concurrentStreams.permit).flatMap { _ =>
+            fileStream
+          }
 
-          Response[F](
-            status = Status.Ok,
-            headers = Headers(
-              `Content-Type`(MediaType.application.json),
-              `Transfer-Encoding`(TransferCoding.chunked),
-              `Content-Length`(size)
-            ),
-            body = bodyWithPermit
-          ).some.pure[F]
-        }
+        // Chunked/streamed response: intentionally no Content-Length. The body is
+        // streamed lazily from disk and clients rarely drain the whole file, so a
+        // full-file Content-Length both violated RFC 7230 (must not accompany
+        // Transfer-Encoding) and made the response-size metric attribute the entire
+        // file per connection.
+        Response[F](
+          status = Status.Ok,
+          headers = Headers(
+            `Content-Type`(MediaType.application.json),
+            `Transfer-Encoding`(TransferCoding.chunked)
+          ),
+          body = bodyWithPermit
+        ).some.pure[F]
     }
   }
 
