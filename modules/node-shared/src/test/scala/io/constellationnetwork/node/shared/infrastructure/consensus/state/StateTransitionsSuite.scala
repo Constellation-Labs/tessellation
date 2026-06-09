@@ -47,11 +47,15 @@ object StateTransitionsSuite extends SimpleIOSuite {
     expect(!StateTransitions.readyPromotionAllowed(readyCandidates = 0, externalAligned = 0, required = 2))
   }
 
-  pureTest("ready promotion rejects mixed Ready witnesses") {
-    expect(!StateTransitions.readyPromotionAllowed(readyCandidates = 2, externalAligned = 1, required = 2))
+  pureTest("ready promotion allows quorum without unanimity across Ready witnesses") {
+    expect(StateTransitions.readyPromotionAllowed(readyCandidates = 3, externalAligned = 2, required = 3))
   }
 
-  pureTest("ready promotion allows multiple Ready witnesses only when all visible Ready peers agree") {
+  pureTest("ready promotion rejects multiple Ready witnesses below quorum") {
+    expect(!StateTransitions.readyPromotionAllowed(readyCandidates = 3, externalAligned = 1, required = 3))
+  }
+
+  pureTest("ready promotion allows multiple Ready witnesses when all visible Ready peers agree") {
     expect(StateTransitions.readyPromotionAllowed(readyCandidates = 2, externalAligned = 2, required = 2))
   }
 
