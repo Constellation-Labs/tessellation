@@ -184,6 +184,7 @@ object EventMempoolSuite extends SimpleIOSuite {
       activeSnap <- mempool.snapshot(limit = 10)
       heldSnap <- mempool.suspendedSnapshot(limit = 10)
       declaredHashes <- mempool.getEventHashes
+      activeSize <- mempool.size
       stillRetrievable <- mempool.get(held.hashed.hash)
       _ <- mempool.reactivate(Set(held.hashed.hash))
       reactivatedSnap <- mempool.snapshot(limit = 10)
@@ -193,6 +194,7 @@ object EventMempoolSuite extends SimpleIOSuite {
         !activeSnap.hashes.contains(held.hashed.hash),
         heldSnap.hashes.contains(held.hashed.hash),
         !declaredHashes.contains(held.hashed.hash),
+        activeSize == 1,
         stillRetrievable.isDefined,
         reactivatedSnap.hashes.contains(held.hashed.hash)
       )

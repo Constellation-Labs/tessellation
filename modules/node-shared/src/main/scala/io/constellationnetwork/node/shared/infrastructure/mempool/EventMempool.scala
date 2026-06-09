@@ -113,10 +113,10 @@ trait EventMempool[F[_], Event, Key] {
     */
   def reactivate(hashes: Set[Hash]): F[Unit]
 
-  /** Get the current size of the mempool.
+  /** Get the current proposal-eligible size of the mempool.
     *
     * @return
-    *   Number of events in the mempool
+    *   Number of active, non-suspended events in the mempool
     */
   def size: F[Int]
 
@@ -279,7 +279,7 @@ object EventMempool {
         }
 
       def size: F[Int] =
-        storage.get.map(_.entries.size)
+        storage.get.map(state => state.entries.keySet.diff(state.suspended).size)
 
       def addBatch(events: List[Signed[Event]]): F[List[Either[MempoolRejectionReason, MempoolEntry[Event, Key]]]] =
         events.traverse(add)

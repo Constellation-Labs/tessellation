@@ -25,6 +25,8 @@ import io.constellationnetwork.security.signature.Signed
 import eu.timepit.refined.auto._
 import io.circe.Encoder
 import monocle.Lens
+import org.http4s.client.UnexpectedStatus
+import org.http4s.{Status => HttpStatus}
 import retry.RetryDetails
 import retry.RetryPolicies.{constantDelay, limitRetries}
 import retry.syntax.all._
@@ -1683,17 +1685,23 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     val expectedContext = outcomeContext.get(outcome)
     val outcomeHash = ctx.lastSnapshotHashOf(outcome)
 
-    def alignedWithDownloaded(peer: Peer): F[Boolean] =
+    def alignmentWithDownloaded(peer: Peer): F[StateTransitions.ReadyPromotionPeerAlignment] =
       ctx.consensusClient
         .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(outcomeConsensusKey))
         .run(peer)
-        .map {
+        .map[StateTransitions.ReadyPromotionPeerAlignment] {
           case Some(peerOutcome) =>
-            outcomeKey.get(peerOutcome) === outcomeConsensusKey &&
-            outcomeArtifact.get(peerOutcome) === expectedArtifact &&
-            outcomeContext.get(peerOutcome) === expectedContext &&
-            ctx.lastSnapshotHashOf(peerOutcome) === outcomeHash
-          case None => false
+            val aligned = outcomeKey.get(peerOutcome) === outcomeConsensusKey &&
+              outcomeArtifact.get(peerOutcome) === expectedArtifact &&
+              outcomeContext.get(peerOutcome) === expectedContext &&
+              ctx.lastSnapshotHashOf(peerOutcome) === outcomeHash
+            if (aligned) StateTransitions.ReadyPromotionPeerAlignment.Aligned
+            else StateTransitions.ReadyPromotionPeerAlignment.Mismatched
+          case None => StateTransitions.ReadyPromotionPeerAlignment.Missing
+        }
+        .recover {
+          case UnexpectedStatus(HttpStatus.Conflict, _, _) =>
+            StateTransitions.ReadyPromotionPeerAlignment.Ahead
         }
         .handleErrorWith { err =>
           ConsensusLog
@@ -1707,7 +1715,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               "result" -> "peer_check_failed",
               "error" -> Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
             )
-            .as(false)
+            .as(StateTransitions.ReadyPromotionPeerAlignment.Failed)
         }
 
     ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
@@ -1715,10 +1723,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       val required = StateTransitions.readyPromotionQuorum(readyCandidates.size + 1, config.quorumThresholdFraction)
       val requiredExternalReady = StateTransitions.readyPromotionExternalReadyFloor
 
-      readyCandidates.traverse(alignedWithDownloaded).flatMap { results =>
-        val externalAligned = results.count(identity)
+      readyCandidates.traverse(alignmentWithDownloaded).flatMap { results =>
+        val externalAligned = results.count(_ == StateTransitions.ReadyPromotionPeerAlignment.Aligned)
+        val missing = results.count(_ == StateTransitions.ReadyPromotionPeerAlignment.Missing)
+        val ahead = results.count(_ == StateTransitions.ReadyPromotionPeerAlignment.Ahead)
+        val mismatched = results.count(_ == StateTransitions.ReadyPromotionPeerAlignment.Mismatched)
+        val failed = results.count(_ == StateTransitions.ReadyPromotionPeerAlignment.Failed)
         val alignedWithSelf = externalAligned + 1
-        val promote = StateTransitions.readyPromotionAllowed(
+        val promote = mismatched === 0 && StateTransitions.readyPromotionAllowed(
           readyCandidates.size,
           externalAligned,
           required
@@ -1727,8 +1739,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           if (promote) "aligned_quorum"
           else if (readyCandidates.isEmpty) "no_ready_candidates"
           else if (externalAligned === 0) "no_aligned_ready_candidates"
-          else if (externalAligned < readyCandidates.size) "mixed_ready_outcomes"
           else if (alignedWithSelf < required) "below_quorum"
+          else if (mismatched > 0) "mismatched_ready_outcomes"
+          else if (missing + ahead + failed > 0) "unavailable_ready_outcomes"
           else "not_allowed"
         ConsensusLog.info(
           log,
@@ -1742,6 +1755,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           "externalAligned" -> externalAligned.toString,
           "alignedWithSelf" -> alignedWithSelf.toString,
           "readyCandidates" -> readyCandidates.size.toString,
+          "missing" -> missing.toString,
+          "ahead" -> ahead.toString,
+          "mismatched" -> mismatched.toString,
+          "failed" -> failed.toString,
           "requiredExternalReady" -> requiredExternalReady.toString,
           "required" -> required.toString
         ) >> {
@@ -1756,6 +1773,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           ) >>
             Metrics[F].updateGauge("dag_consensus_init_download_ready_candidates", readyCandidates.size.toLong) >>
             Metrics[F].updateGauge("dag_consensus_init_download_external_aligned", externalAligned.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_external_missing", missing.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_external_ahead", ahead.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_external_mismatched", mismatched.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_init_download_external_failed", failed.toLong) >>
             Metrics[F].updateGauge("dag_consensus_init_download_promotion_required", required.toLong)
         } >>
           promote.pure[F]
@@ -1779,6 +1800,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
 object StateTransitions {
 
+  private[consensus] sealed trait ReadyPromotionPeerAlignment
+
+  private[consensus] object ReadyPromotionPeerAlignment {
+    case object Aligned extends ReadyPromotionPeerAlignment
+    case object Missing extends ReadyPromotionPeerAlignment
+    case object Ahead extends ReadyPromotionPeerAlignment
+    case object Mismatched extends ReadyPromotionPeerAlignment
+    case object Failed extends ReadyPromotionPeerAlignment
+  }
+
   private[consensus] final case class RollbackFirstRoundQuorumStatus(
     selfReady: Boolean,
     externalReadyPeers: Int,
@@ -1801,7 +1832,7 @@ object StateTransitions {
 
   private[consensus] def readyPromotionAllowed(readyCandidates: Int, externalAligned: Int, required: Int): Boolean =
     if (readyCandidates === 1) externalAligned === 1
-    else readyCandidates > 1 && externalAligned === readyCandidates && externalAligned + 1 >= required
+    else readyCandidates > 1 && externalAligned + 1 >= required
 
   private[consensus] def rollbackFirstRoundQuorumStatus(
     selfReady: Boolean,

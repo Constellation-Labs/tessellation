@@ -132,7 +132,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     }
   }
 
-  test("pull should take transactions in correct order minding the fees - large amount of transactions") {
+  test("pull should take parent-closed transactions before higher-fee children") {
     testResources.use {
       case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, key3, address3) =>
         implicit val securityProvider = sp
@@ -167,7 +167,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
 
           pulled <- transactionStorage.pull(50L)
-        } yield expect.same(NonEmptyList.fromList(txsA.toList ::: txsBHigherFee.toList ::: txsB.take(48)), pulled)
+        } yield expect.same(NonEmptyList.fromList(txsA.toList ::: txsB.take(49)), pulled)
     }
   }
 
