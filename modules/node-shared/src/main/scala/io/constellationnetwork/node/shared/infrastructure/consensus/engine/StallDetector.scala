@@ -12,6 +12,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ViewFromTime}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{PeerId, PeerResponsiveness, Unresponsive}
 import io.constellationnetwork.security.hash.Hash
@@ -66,6 +67,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
   private def selfRole(state: ConsensusState[Key, Status, Outcome, Kind]): String =
     ConsensusLog.role(selfId, state.leader)
+
+  private val admissionTipOrdinalLagTolerance: Long = 2L
 
   private case class MonitorState(
     lastResourcesHash: Int,
@@ -1205,14 +1208,17 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     }
 
   /** Admission emission trigger. For each probation peer (those in `readmissionCountdown`), if their gossiped chain tip in the mesh matches
-    * the committee's expected tip, emit an `AdmissionVote` for them and queue certificate assembly. Also emits bounded votes for
-    * non-committee candidates that are independently advertised by a quorum of current facilities and are observed at the committed tip.
+    * the committee's expected tip or is within a small ordinal lag tolerance, emit an `AdmissionVote` for them and queue certificate
+    * assembly. Also emits bounded votes for non-committee candidates that are independently advertised by a quorum of current facilities
+    * and are observed at the committed tip.
     *
     * '''Witness channel''': probation peers are excluded from `state.facilitators` by the state-creator filter, so they never send Facility
     * declarations for the active round. The committee cannot witness them via `resources.peerDeclarationsMap`. Instead, every peer —
     * including probation peers — gossips its local chain tip via `EventGossipDaemon` IHave messages on the heartbeat+pull loops. Those tips
     * land in `MeshState.getChainTips`, exposed here through the `getPeerChainTips` thunk. A probation peer whose mesh-reported
-    * `snapshotHash` matches `lastOutcome.finished.snapshotHash` is treated as a witnessed candidate for re-admission.
+    * `snapshotHash` matches `lastOutcome.finished.snapshotHash` or whose ordinal is within tolerance of the committed ordinal is treated as
+    * a witnessed candidate for re-admission. Exact hash matching was too strict on a live chain: Ready followers commonly advertise N while
+    * the committee has just finalized N+1.
     *
     * Safety: storage is first-write-wins per `(voter, target)`, so re-invocations within a round are idempotent. We gate the crypto work on
     * `resourcesChanged` in `runMonitorCycle` to avoid re-emission on every tick.
@@ -1231,6 +1237,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       case (target, voters) if voters.contains(selfId) => target
     }.toSet
     val expectedTip: Hash = lastSnapshotHashOf(state.lastOutcome)
+    val expectedOrdinal = ctx.lastOutcomeKeyOf(state.lastOutcome) match {
+      case ordinal: SnapshotOrdinal => ordinal.some
+      case _                        => none[SnapshotOrdinal]
+    }
+    def isAdmissionReadyTip(tip: ChainTip): Boolean =
+      tip.snapshotHash === expectedTip ||
+        expectedOrdinal.exists { ordinal =>
+          tip.ordinal.value.value + admissionTipOrdinalLagTolerance >= ordinal.value.value
+        }
     val committee = state.roundStartFacilitators.value.toSet
     val coreSize = math.max(1, state.coreFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
@@ -1270,7 +1285,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           else
             b2AtTipStreakRef.modify { prev =>
               val updated: Map[PeerId, Int] = probation.iterator.map { pid =>
-                val atTip = chainTips.get(pid).exists(_.snapshotHash === expectedTip)
+                val atTip = chainTips.get(pid).exists(isAdmissionReadyTip)
                 val next = if (atTip) prev.getOrElse(pid, 0) + 1 else 0
                 pid -> next
               }.toMap
@@ -1299,13 +1314,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             streaks.getOrElse(pid, 0) >= minStreak
           }
           val readyCandidatesAtTip: List[PeerId] =
-            quorumObservedCandidates.filter(pid => chainTips.get(pid).exists(_.snapshotHash === expectedTip))
+            quorumObservedCandidates.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
           // Admission-gate diagnostic log per probation peer per tick.
           // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
           // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
           // or already-voted-by-self. One INFO line per call when probation is non-empty.
           val atTipPerPeer = probation.iterator.map { pid =>
-            val atTip = chainTips.get(pid).exists(_.snapshotHash === expectedTip)
+            val atTip = chainTips.get(pid).exists(isAdmissionReadyTip)
             val streak = streaks.getOrElse(pid, 0)
             val voted = alreadyVotedBySelf.contains(pid)
             (pid, atTip, streak, voted)
@@ -1332,6 +1347,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               "candidateReady" -> readyCandidatesAtTip.size.toString,
               "candidateVoteQuorum" -> voteQuorum.toString,
               "minStreak" -> minStreak.toString,
+              "tipLagTolerance" -> admissionTipOrdinalLagTolerance.toString,
+              "expectedOrdinal" -> expectedOrdinal.map(_.value.value.toString).getOrElse("none"),
+              "candidateTipOrdinals" -> quorumObservedCandidates
+                .flatMap(pid => chainTips.get(pid).map(tip => s"${pid.show.take(8)}:${tip.ordinal.value.value}"))
+                .mkString(","),
               "details" -> details
             ) >> (readyAtTip.toList ++ readyCandidatesAtTip).distinct.traverse_ { target =>
             admissionVoter.emitAdmissionVote(key, target, AdmissionReason.ReadyAtTip) >>
