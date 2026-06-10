@@ -27,6 +27,7 @@ export PURGE_CONFIG=${PURGE_CONFIG:-true}
 export ROLLBACK_MODE=${ROLLBACK_MODE:-false}
 export ROLLBACK_HASH=${ROLLBACK_HASH:-""}
 export SKIP_ASSEMBLY=${SKIP_ASSEMBLY:-false}
+export SKIP_NODES=${SKIP_NODES:-false}
 export NET_PREFIX=${NET_PREFIX:-"172.32.0"}
 export TESSELLATION_DOCKER_VERSION=${TESSELLATION_DOCKER_VERSION:-"test"}
 export CLEANUP_DOCKER_AT_END=${CLEANUP_DOCKER_AT_END:-false}
@@ -109,6 +110,15 @@ for arg in "$@"; do
       ;;
     --skip-assembly)
       export SKIP_ASSEMBLY=true
+      ;;
+    --skip-streaming)
+      export SKIP_STREAMING=true
+      ;;
+    --skip-nodes)
+      # Skip the node build/ship/start phases in remote-deploy.sh so snapshot-streaming
+      # (or monitoring) can be (re)deployed without restarting node containers — which would
+      # trip node-0's genesis guard on a live chain. Pair with a pre-built SNAPSHOT_STREAMING_JAR.
+      export SKIP_NODES=true
       ;;
     --net-prefix=*)
       export NET_PREFIX="${arg#*=}"

@@ -1,0 +1,179 @@
+name: Publish node + snapshot-streaming images
+
+# Builds two Docker images and pushes them to public GHCR:
+#  - ghcr.io/constellation-labs/tessellation   (node image, per branch — build-push job)
+#  - ghcr.io/constellation-labs/snapshot-streaming  (release/testnet only — build-push-ss job)
+# so the deploy can pull prebuilt images instead of building locally.
+#
+# Node channel tag = branch name with "release/" stripped (develop, testnet, integrationnet,
+# mainnet) — the SAME rule deploy/deploy-cluster.sh uses to derive which tag to pull.
+# The snapshot-streaming image is built from release/testnet (tessellation SDK + SS source)
+# and tagged with the SAME version as the tessellation node image.
+#
+# ONE-TIME SETUP: the first push creates each package as PRIVATE. Make BOTH packages
+# (tessellation, snapshot-streaming) PUBLIC once via the org's Packages settings, otherwise
+# nodes need `docker login` to pull.
+
+on:
+  # DISABLED: superseded by testnet-release.yml (builds + publishes the images as part
+  # of the release). Uncomment to re-enable automatic per-branch builds.
+  # push:
+  #   branches: [develop, release/testnet, release/integrationnet, release/mainnet]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-node-image-${{ github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-22.04
+    env:
+      IMAGE: ghcr.io/constellation-labs/tessellation
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0 # full history for sbt-dynver version derivation
+
+      - name: Setup Java and scala
+        uses: ./.github/templates/actions/setup_java_and_scala
+        with:
+          JAVA_VERSION: 21
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute channel + version
+        id: meta
+        run: |
+          CHANNEL="${GITHUB_REF_NAME#release/}"   # develop | testnet | integrationnet | mainnet
+          VER="$(git describe --tags --always | sed 's/^v//')"
+          echo "CHANNEL=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "VER=$VER" >> "$GITHUB_OUTPUT"
+          echo "SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Building $IMAGE channel=$CHANNEL version=$VER"
+
+      - name: Assemble jars + stage docker/jars
+        run: |
+          sbt -batch "set ThisBuild / version := \"${{ steps.meta.outputs.VER }}\"" \
+            dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly tools/assembly
+          rm -f docker/jars/*.jar
+          mkdir -p docker/jars
+          for m in dag-l0 dag-l1 keytool wallet tools; do
+            src="$(ls -1t modules/$m/target/scala-2.13/*assembly*.jar | head -1)"
+            case "$m" in dag-l0) dst=gl0 ;; dag-l1) dst=gl1 ;; *) dst="$m" ;; esac
+            cp -f "$src" "docker/jars/$dst.jar"
+          done
+          # Empty placeholders for the metagraph jars the Dockerfile COPYs but a
+          # hypergraph node never runs.
+          touch docker/jars/ml0.jar docker/jars/cl1.jar docker/jars/dl1.jar
+
+      - name: Set up Docker Buildx
+        # docker-container driver — required for gha cache export (the default docker
+        # driver can't export a build cache) and for multi-platform builds.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.CHANNEL }}
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.VER }}
+            ${{ env.IMAGE }}:sha-${{ steps.meta.outputs.SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-push-ss:
+    # Snapshot-streaming image, built from release/testnet (both the tessellation SDK and
+    # the SS source), tagged with the SAME version as the tessellation node image.
+    if: ${{ github.ref_name == 'release/testnet' }}
+    runs-on: ubuntu-22.04
+    env:
+      IMAGE: ghcr.io/constellation-labs/snapshot-streaming
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/testnet            # tessellation SDK source for the SS build
+          fetch-depth: 0
+
+      - name: Setup Java and scala
+        uses: ./.github/templates/actions/setup_java_and_scala
+        with:
+          JAVA_VERSION: 21
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute version
+        id: meta
+        run: |
+          VER="$(git describe --tags --always | sed 's/^v//')"
+          echo "VER=$VER" >> "$GITHUB_OUTPUT"
+          echo "SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Building $IMAGE version=$VER"
+
+      - name: Publish tessellation SDK locally (release/testnet @ VER)
+        run: |
+          sbt -batch "set ThisBuild / version := \"${{ steps.meta.outputs.VER }}\"" \
+            "set sdk / Compile / doc / scalacOptions += \"-no-link-warnings\"" \
+            sdk/publishLocal
+
+      - name: Build snapshot-streaming jar (SS branch release/testnet @ VER)
+        env:
+          SNAPSHOT_STREAMING_BRANCH: release/testnet
+          TESSELLATION_VERSION: ${{ steps.meta.outputs.VER }}
+          # snapshot-streaming's build uses the sbt-github-packages plugin, which requires a
+          # token in the environment to initialize (resolves deps from GitHub Packages).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash docker/snapshot-streaming/build-snapshot-streaming.sh
+
+      - name: Write snapshot-streaming Dockerfile
+        # The SS job checks out release/testnet, which does not yet carry this repo's new
+        # docker/snapshot-streaming/Dockerfile — generate it here so the build context has it.
+        run: |
+          cat > docker/snapshot-streaming/Dockerfile <<'DOCKEREOF'
+          FROM eclipse-temurin:21-jre
+          WORKDIR /app
+          RUN mkdir -p /app/data
+          COPY docker/snapshot-streaming/snapshot-streaming.jar /app/snapshot-streaming.jar
+          ENTRYPOINT ["java", "-Xmx1g", "-Xms256m", "--add-opens", "java.base/java.util=ALL-UNNAMED", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED", "--add-opens", "java.base/java.security=ALL-UNNAMED", "-Dconfig.file=/app/application.conf", "-cp", "/app/snapshot-streaming.jar", "org.constellation.snapshotstreaming.App"]
+          DOCKEREOF
+          echo "--- generated Dockerfile ---"; cat docker/snapshot-streaming/Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/snapshot-streaming/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.VER }}
+            ${{ env.IMAGE }}:testnet
+            ${{ env.IMAGE }}:sha-${{ steps.meta.outputs.SHA }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

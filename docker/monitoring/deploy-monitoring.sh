@@ -32,7 +32,7 @@ CH_PASS="${CLICKHOUSE_PASSWORD:-clickhouse}"
 log "Deploying to $SERVER_NODE ($SERVER_IP)"
 
 # --- Create directories ---
-ssh "$SERVER_NODE" "mkdir -p $REMOTE_DIR/{prometheus,grafana/provisioning/datasources,grafana/provisioning/dashboards,clickhouse}"
+ssh "$SERVER_NODE" "sudo mkdir -p $REMOTE_DIR/{prometheus,grafana/provisioning/datasources,grafana/provisioning/dashboards,clickhouse} && sudo chown -R \$(id -un):\$(id -gn) $REMOTE_DIR"
 
 # --- Transfer compose file ---
 scp -q "$SCRIPT_DIR/docker-compose.remote.yaml" "$SERVER_NODE:$REMOTE_DIR/docker-compose.yaml"
@@ -108,15 +108,64 @@ for i in $(seq 1 30); do
   fi
   sleep 2
 done
-if [ "$ch_ready" != "true" ]; then
-  log "ERROR: ClickHouse failed to start within 60 seconds"
-  exit 1
+
+if [ "$ALL_RUNNING" = "true" ]; then
+  log "All monitoring services already running — reloading configs"
+  # Prometheus supports config reload via SIGHUP
+  ssh "$SERVER_NODE" "docker kill --signal=SIGHUP prometheus" 2>/dev/null || true
+  # Grafana auto-reloads provisioned dashboards on file change
+else
+  log "Starting monitoring services"
+  ssh "$SERVER_NODE" "cd $REMOTE_DIR && docker compose pull -q && docker compose up -d"
+
+  # --- Wait for ClickHouse to be ready ---
+  log "Waiting for ClickHouse"
+  CLICKHOUSE_READY=false
+  for i in $(seq 1 30); do
+    if ssh "$SERVER_NODE" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q 'SELECT 1'" >/dev/null 2>&1; then
+      log "  ClickHouse ready"
+      CLICKHOUSE_READY=true
+      break
+    fi
+    sleep 2
+  done
+  if [ "$CLICKHOUSE_READY" != "true" ]; then
+    log "ERROR: ClickHouse did not become ready within 60 seconds"
+    exit 1
+  fi
+
+  # --- Initialize ClickHouse tables (idempotent) ---
+  log "Initializing ClickHouse tables"
+  ssh "$SERVER_NODE" "docker exec -i clickhouse clickhouse-client --password '$CH_PASS'" \
+    < "$SCRIPT_DIR/clickhouse/init.sql"
+  # Best-effort TTL removal (kept out of init.sql so a no-TTL table can't abort it).
+  # `REMOVE TTL` errors if the table has no TTL — tolerate that.
+  for t in nightly_logs nightly_logs_consensus; do
+    ssh "$SERVER_NODE" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q 'ALTER TABLE $t REMOVE TTL'" 2>/dev/null || true
+  done
 fi
 
-# --- Initialize ClickHouse tables (idempotent) ---
-log "Initializing ClickHouse tables"
-ssh "$SERVER_NODE" "docker exec -i clickhouse clickhouse-client --password '$CH_PASS'" \
-  < "$SCRIPT_DIR/clickhouse/init.sql" 2>&1
+# --- Deploy process-exporter on each tessellation node ---
+# ncabatoff/process-exporter exposes per-process CPU/memory/IO metrics on :9256.
+# Prometheus scrapes these via the process-exporter job in prometheus.yaml.
+PE_IMAGE="ncabatoff/process-exporter:0.8.7"
+PE_REMOTE_DIR="/opt/process-exporter"
+for h in "${NODES[@]}"; do
+  log "Deploying process-exporter on $h"
+  ssh "$h" "sudo mkdir -p $PE_REMOTE_DIR && sudo chown -R \$(id -un):\$(id -gn) $PE_REMOTE_DIR"
+  scp -q "$SCRIPT_DIR/process-exporter/process-exporter.yml" "$h:$PE_REMOTE_DIR/process-exporter.yml"
+  ssh "$h" "docker rm -f process-exporter >/dev/null 2>&1 || true; \
+            docker run -d --name process-exporter --restart unless-stopped \
+              --network host \
+              -v /proc:/host/proc:ro \
+              -v $PE_REMOTE_DIR/process-exporter.yml:/config/process-exporter.yml:ro \
+              $PE_IMAGE \
+              --procfs /host/proc \
+              --config.path /config/process-exporter.yml \
+              --web.listen-address=:9256 >/dev/null" \
+    && log "  $h: process-exporter running on :9256" \
+    || log "  $h: process-exporter failed to start (non-fatal)"
+done
 
 # --- Deploy network_process_exporter on each tessellation node ---
 # Custom eBPF (BCC) exporter that emits per-PID TCP/UDP send/recv byte counters
@@ -129,16 +178,18 @@ ssh "$SERVER_NODE" "docker exec -i clickhouse clickhouse-client --password '$CH_
 # Prometheus scrapes these via the network-process-exporter job in prometheus.yaml.
 for h in "${NODES[@]}"; do
   log "Deploying network_process_exporter on $h"
-  ssh "$h" "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+  ssh "$h" "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
               bpfcc-tools python3-bpfcc python3-prometheus-client \
               linux-headers-\$(uname -r) >/dev/null" \
     || { log "  $h: header/BCC install failed (running kernel may need a reboot); skipping service start"; continue; }
-  scp -q "$SCRIPT_DIR/network-process-exporter/network_process_exporter.py" \
-         "$h:/usr/local/bin/network_process_exporter.py"
-  ssh "$h" "chmod +x /usr/local/bin/network_process_exporter.py"
-  scp -q "$SCRIPT_DIR/network-process-exporter/network-process-exporter.service" \
-         "$h:/etc/systemd/system/network-process-exporter.service"
-  ssh "$h" "systemctl daemon-reload && systemctl enable --now network-process-exporter.service" \
+  # scp to the login user's home (writable), then sudo-install into root-owned dirs —
+  # works whether the SSH user is root (nightly) or an unprivileged sudoer (e.g. admin).
+  scp -q "$SCRIPT_DIR/network-process-exporter/network_process_exporter.py" "$h:network_process_exporter.py"
+  scp -q "$SCRIPT_DIR/network-process-exporter/network-process-exporter.service" "$h:network-process-exporter.service"
+  ssh "$h" "sudo install -m 0755 network_process_exporter.py /usr/local/bin/network_process_exporter.py \
+    && sudo install -m 0644 network-process-exporter.service /etc/systemd/system/network-process-exporter.service \
+    && rm -f network_process_exporter.py network-process-exporter.service \
+    && sudo systemctl daemon-reload && sudo systemctl enable --now network-process-exporter.service" \
     && log "  $h: network-process-exporter running on :9435" \
     || log "  $h: network-process-exporter failed to start (non-fatal)"
 done

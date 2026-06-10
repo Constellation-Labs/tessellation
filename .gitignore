@@ -52,3 +52,5 @@ docker/snapshot-streaming/*.conf
 docker/snapshot-streaming/data/
 docker/snapshot-streaming/.build/
 docker/snapshot-streaming/block-explorer/
+.migrate-transfer-key*
+.tn-migration-keys/
