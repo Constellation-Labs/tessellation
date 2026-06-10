@@ -199,6 +199,42 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect.same(1, result.probationAdmittedSize)
   }
 
+  pureTest("recent signers below retain threshold yield active slots to promoted candidates") {
+    val result = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (5, 5)),
+      activeScores = Map(a -> 80, b -> 80, c -> 60, d -> 120),
+      targetActiveSize = 3
+    )
+
+    expect.same(List(a, b, d), result.active) &&
+    expect.same(Set(c), result.exclusions.collect { case e if e.reason == ExclusionReason.ScoreBelowRetainThreshold => e.peerId }.toSet) &&
+    expect.same(1, result.expansionAdmittedSize)
+  }
+
+  pureTest("below-retain recent signers stay active when filtering would break active floor") {
+    val result = fromRecent(
+      selected = List(a, b),
+      recentSigners = window(
+        10L -> Set(a, b),
+        11L -> Set(a, b),
+        12L -> Set(a, b)
+      ),
+      activeScores = Map(a -> 80, b -> 60),
+      minActiveSize = 2,
+      targetActiveSize = 3
+    )
+
+    expect.same(List(a, b), result.active) &&
+    expect(result.exclusions.isEmpty) &&
+    expect(!result.recentFilterApplied)
+  }
+
   pureTest("controller limits expansion rate even with multiple promoted candidates") {
     val result = fromRecent(
       selected = List(a, b, c, d),

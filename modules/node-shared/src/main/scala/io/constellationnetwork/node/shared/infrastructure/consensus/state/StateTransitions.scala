@@ -1210,9 +1210,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               // nodes completing "same" ordinal with different signer sets is a fork — this
               // exposes it in logs rather than leaving it invisible.
               val signedArtifact = outcomeArtifact.get(outcome)
-              val signerIds = signedArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
-              val facilitatorIds = newState.facilitators.value.toList.map(ConsensusLog.pid).sorted.mkString(",")
+              val signerSet = signedArtifact.proofs.toList.map(_.id.toPeerId).toSet
+              val activeSet = newState.facilitators.value.toSet
+              val signerIds = signerSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
+              val facilitatorIds = activeSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
+              val missingActiveSigners = (activeSet -- signerSet).toList.sorted
+              val missingActiveSignerIds = missingActiveSigners.map(ConsensusLog.pid).mkString(",")
               val signerCount = signedArtifact.proofs.size
+              val missingActiveSignerCount = missingActiveSigners.size
+              val missingActiveSignerRatio =
+                if (activeSet.nonEmpty) missingActiveSignerCount.toDouble / activeSet.size.toDouble else 0.0
 
               ConsensusLog.info(
                 log,
@@ -1227,6 +1234,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   "facilitatorIds" -> facilitatorIds,
                   "signerCount" -> signerCount.toString,
                   "signerIds" -> signerIds,
+                  "missingActiveSignerCount" -> missingActiveSignerCount.toString,
+                  "missingActiveSignerIds" -> missingActiveSignerIds,
                   "leader" -> ConsensusLog.pid(newState.leader),
                   "leaderScore" -> f"$leaderScore%.2f",
                   "view" -> newState.viewNumber.toString
@@ -1235,6 +1244,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
               ) >>
                 Metrics[F].updateGauge("dag_consensus_last_signer_count", signerCount.toLong) >>
+                Metrics[F].updateGauge("dag_consensus_missing_active_signer_count", missingActiveSignerCount.toLong) >>
+                Metrics[F].updateGauge("dag_consensus_missing_active_signer_ratio", missingActiveSignerRatio) >>
                 Metrics[F].incrementCounter(
                   "dag_consensus_outcome_signer_count_total",
                   Seq(unsafeLabelName("signer_count") -> signerCount.toString)
