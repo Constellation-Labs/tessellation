@@ -102,11 +102,16 @@ object ActiveFacilitatorAdmission {
     }
 
     val recentWindowDeepEnough = recentSets.sizeIs >= TierTransitions.DemotionConsecutiveMisses
-    val (demotedRecentSigners, retainedRecentSignerCandidates) =
+    val (demotedRecentSigners, retainedOrSoftExcludedRecentSigners) =
       if (recentWindowDeepEnough)
         selected.filter(pid => recentSets.exists(_.contains(pid))).partition(pid => scoreHistoryAvailable && scoreOf(pid) < demoteThreshold)
       else
         (List.empty[PeerId], selected)
+    val (belowRetainRecentSigners, retainedRecentSignerCandidates) =
+      if (recentWindowDeepEnough)
+        retainedOrSoftExcludedRecentSigners.partition(pid => scoreHistoryAvailable && scoreOf(pid) < retainThreshold)
+      else
+        (List.empty[PeerId], retainedOrSoftExcludedRecentSigners)
     val uncappedRecentSignerPool = retainedRecentSignerCandidates.sortBy(recentSignerRank)
     val configuredMax = math.max(minActiveSize, maxActiveSize)
     val target =
@@ -116,6 +121,7 @@ object ActiveFacilitatorAdmission {
       )
     val recentSignerPool = uncappedRecentSignerPool.take(target)
     val recentSignerSet = recentSignerPool.toSet
+    val recentScoreExcludedSet = (demotedRecentSigners ++ belowRetainRecentSigners).toSet
     val admittedRecentSignerCounts = recentSignerPool.map(recentSignerCount)
     val recentSignerMinCount = admittedRecentSignerCounts.minOption.getOrElse(0)
     val recentSignerMaxCount = admittedRecentSignerCounts.maxOption.getOrElse(0)
@@ -127,7 +133,7 @@ object ActiveFacilitatorAdmission {
 
     val expansionBase =
       if (recentWindowDeepEnough)
-        selected.filterNot(recentSignerSet.contains)
+        selected.filterNot(pid => recentSignerSet.contains(pid) || recentScoreExcludedSet.contains(pid))
       else
         List.empty
     val (qualityExcluded, qualityExpansionCandidates) = expansionBase.partition(isQualityExcluded)
@@ -160,6 +166,7 @@ object ActiveFacilitatorAdmission {
     val exclusions =
       if (useRecentSignerPool)
         demotedRecentSigners.map(Exclusion(_, ExclusionReason.ScoreBelowDemoteThreshold)) ++
+          belowRetainRecentSigners.map(Exclusion(_, ExclusionReason.ScoreBelowRetainThreshold)) ++
           excludedRecentOverflow ++
           qualityExcluded.map(Exclusion(_, ExclusionReason.QualityBelowThreshold)) ++
           probationRejected.map(Exclusion(_, ExclusionReason.ScoreBelowPromoteThreshold)) ++
