@@ -11,7 +11,7 @@ import cats.{Applicative, MonadThrow, Parallel}
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.{FiniteDuration, _}
 
-import io.constellationnetwork.dag.l0.infrastructure.mempool.{DagAwaitingParent, DagAwaitingParentConfig}
+import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{DAGEvent, GlobalSnapshotEvent}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
@@ -935,85 +935,20 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       private val dagAwaitingParentConfig = DagAwaitingParentConfig.default
       private val dagAwaitingParentOutcomeLabel = Metrics.unsafeLabelName("outcome")
+      private val maxAwaitingParentReactivationPerRound = 128
 
       private def maintainDagAwaitingParentQueue(context: GlobalSnapshotContext): F[Unit] =
-        for {
-          now <- Async[F].realTimeInstant
-          suspended <- eventMempool.suspendedSnapshot(dagAwaitingParentConfig.maxAwaitingParentTxs + 1024)
-          dagEntries = suspended.entries.toList.collect {
-            case (hash, entry) if entry.hashed.signed.value.isInstanceOf[DAGEvent] =>
-              val event = entry.hashed.signed.value.asInstanceOf[DAGEvent]
-              val status = DagAwaitingParent.status(event.value, context.lastTxRefs)
-              (hash, entry.receivedAt, event, status)
-          }
-          expired = dagEntries.collect {
-            case (hash, receivedAt, _, _) if java.time.Duration.between(receivedAt, now).toMillis > dagAwaitingParentConfig.ttl.toMillis =>
-              hash
-          }.toSet
-          gapTooLarge = dagEntries.collect {
-            case (hash, _, _, status) if status.maxParentOrdinalGap > dagAwaitingParentConfig.maxParentOrdinalGap =>
-              hash
-          }.toSet
-          eligible = dagEntries.collect {
-            case (hash, _, _, status) if !expired.contains(hash) && !gapTooLarge.contains(hash) && !status.awaitingParent =>
-              hash
-          }.toSet
-          remaining = dagEntries.filterNot {
-            case (hash, _, _, _) => expired.contains(hash) || gapTooLarge.contains(hash) || eligible.contains(hash)
-          }
-          overflow = remaining.sortBy(_._2).drop(dagAwaitingParentConfig.maxAwaitingParentTxs).map(_._1).toSet
-          perAddressOverflow = {
-            val addressToEntries = remaining.flatMap {
-              case (hash, receivedAt, event, _) =>
-                event.value.value.transactions.toNonEmptyList
-                  .map(_.value.source)
-                  .toList
-                  .distinct
-                  .map(_ -> (hash, receivedAt))
-            }.groupMap(_._1)(_._2)
-
-            addressToEntries.values.toList
-              .flatMap(_.sortBy(_._2).drop(dagAwaitingParentConfig.maxAwaitingParentPerAddress).map(_._1))
-              .toSet
-          }
-          rejected = gapTooLarge ++ overflow ++ perAddressOverflow
-          toRemove = expired ++ rejected
-          retained = remaining.filterNot { case (hash, _, _, _) => toRemove.contains(hash) }
-          backlogAfter = retained.size
-          maxGapAfter = retained.map(_._4.maxParentOrdinalGap).maxOption.getOrElse(0L)
-          _ <- eventMempool.reactivate(eligible).whenA(eligible.nonEmpty)
-          _ <- eventMempool.remove(toRemove).whenA(toRemove.nonEmpty)
-          _ <- Metrics[F].updateGauge("dag_global_snapshot_dag_tx_awaiting_parent_backlog", backlogAfter.toLong)
-          _ <- Metrics[F].updateGauge("dag_global_snapshot_dag_tx_awaiting_parent_max_gap", maxGapAfter)
-          _ <- Metrics[F]
-            .incrementCounterBy(
-              "dag_global_snapshot_dag_tx_awaiting_parent_total",
-              eligible.size.toLong,
-              Seq(dagAwaitingParentOutcomeLabel -> "reactivated")
+        HasherSelector[F].withCurrent { implicit hasher =>
+          DagAwaitingParentQueue
+            .maintain(
+              eventMempool,
+              context,
+              dagAwaitingParentConfig,
+              maxAwaitingParentReactivationPerRound,
+              logger
             )
-            .whenA(eligible.nonEmpty)
-          _ <- Metrics[F]
-            .incrementCounterBy(
-              "dag_global_snapshot_dag_tx_awaiting_parent_total",
-              expired.size.toLong,
-              Seq(dagAwaitingParentOutcomeLabel -> "expired")
-            )
-            .whenA(expired.nonEmpty)
-          _ <- Metrics[F]
-            .incrementCounterBy(
-              "dag_global_snapshot_dag_tx_awaiting_parent_total",
-              gapTooLarge.size.toLong,
-              Seq(dagAwaitingParentOutcomeLabel -> "rejected_gap_too_large")
-            )
-            .whenA(gapTooLarge.nonEmpty)
-          _ <- Metrics[F]
-            .incrementCounterBy(
-              "dag_global_snapshot_dag_tx_awaiting_parent_total",
-              (overflow ++ perAddressOverflow).size.toLong,
-              Seq(dagAwaitingParentOutcomeLabel -> "rejected_backlog_full")
-            )
-            .whenA((overflow ++ perAddressOverflow).nonEmpty)
-        } yield ()
+            .void
+        }
 
       private def buildProposalTransition(
         state: GlobalSnapshotConsensusState,
@@ -3215,12 +3150,14 @@ object GlobalSnapshotConsensusStateAdvancer {
         // TODO(v20 cleanup): recentRoundEndTimes and most perPeer dimensions are intentionally
         // omitted from signed artifacts because they have proven locally divergent in live
         // testnet proposal validation. v29 keeps only activeAdmissionScore in signed
-        // peerHistory and writes it over a canonical key set with explicit zero scores:
+        // peerHistory and writes it over a canonical committee key set with explicit zero scores:
         // absent-vs-zero score records are operationally equivalent, but they are different
         // signed bytes under dropNullValues. Canonical zeros keep restart/download replay
-        // while removing the small perPeer key-set drift seen on alpha.129.
+        // while removing the small perPeer key-set drift seen on alpha.129. Do not widen this
+        // key set with activeAdmissionScores.keySet: that map can retain local-only historical
+        // peers that are not part of the proposal-critical committee.
         val operational = outcome.toOperationalState
-        val signedScoreKeys = outcome.eligibleOrFacilitators.toSet | outcome.activeAdmissionScores.keySet
+        val signedScoreKeys = outcome.eligibleOrFacilitators.toSet
         val signedControllerScores = SortedMap.from(
           signedScoreKeys.iterator.map { pid =>
             pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(outcome.activeAdmissionScores.getOrElse(pid, 0)))

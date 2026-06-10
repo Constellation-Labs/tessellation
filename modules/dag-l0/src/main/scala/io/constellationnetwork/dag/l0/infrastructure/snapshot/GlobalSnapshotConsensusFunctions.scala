@@ -324,6 +324,15 @@ object GlobalSnapshotConsensusFunctions {
       def emitBalanceEventMetrics(stage: String, counts: (String, Long)*): F[Unit] =
         counts.toList.traverse_ { case (eventType, count) => balanceEventMetric(stage, eventType, count) }
 
+      def dagProposalMetric(stage: String, blockCount: Long, txCount: Long): F[Unit] = {
+        val tags = Seq(balanceEventStageLabel -> stage)
+
+        Metrics[F].updateGauge("dag_global_snapshot_dag_tx_proposal_block_count", blockCount, tags) >>
+          Metrics[F].incrementCounterBy("dag_global_snapshot_dag_tx_proposal_block_total", blockCount, tags) >>
+          Metrics[F].updateGauge("dag_global_snapshot_dag_tx_proposal_tx_count", txCount, tags) >>
+          Metrics[F].incrementCounterBy("dag_global_snapshot_dag_tx_proposal_tx_total", txCount, tags)
+      }
+
       final case class BalanceEventDiagnostics(
         accepted: List[(String, Long)],
         rejected: List[(String, Long)],
@@ -438,6 +447,7 @@ object GlobalSnapshotConsensusFunctions {
         dagTxForAcceptanceCount = blocksForAcceptance.map(_.value).map(_.transactions.size.toLong).sum
         allowSpendTxForAcceptanceCount = sortedAllowSpendEvents.map(_.transactions.size.toLong).sum
         tokenLockTxForAcceptanceCount = sortedTokenLockEvents.map(_.tokenLocks.size.toLong).sum
+        dagTxAvailableBeforeCutCount = dagEventsBeforeCut.toList.map(_.value.value.transactions.size.toLong).sum
 
         _ <- emitBalanceEventMetrics(
           "input",
@@ -470,6 +480,10 @@ object GlobalSnapshotConsensusFunctions {
           "node_collateral_withdraw" -> sortedWncEvents.size.toLong,
           "update_node_parameters" -> unpEventsForAcceptance.size.toLong
         )
+        _ <- dagProposalMetric("available_before_cut", dagEventsBeforeCut.size.toLong, dagTxAvailableBeforeCutCount)
+        _ <- dagProposalMetric("cut", rawBlocksForAcceptance.size.toLong, rawDagTxForAcceptanceCount)
+        _ <- dagProposalMetric("included_after_parent_filter", blocksForAcceptance.size.toLong, dagTxForAcceptanceCount)
+        _ <- dagProposalMetric("held_after_parent_filter", dagParentFilter.held.size.toLong, heldDagTxCount)
         parentFilterDecisionLabel = Metrics.unsafeLabelName("decision")
         parentFilterReasonLabel = Metrics.unsafeLabelName("reason")
         _ <- Metrics[F].incrementCounterBy(
