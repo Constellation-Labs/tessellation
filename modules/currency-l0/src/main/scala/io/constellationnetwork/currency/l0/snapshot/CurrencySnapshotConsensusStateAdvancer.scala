@@ -327,10 +327,16 @@ object CurrencySnapshotConsensusStateAdvancer {
                 })
                 .filter { case (_, v) => v > 0L }
             }
+            val nextOutcomeFacilitators = Facilitators(
+              ConsensusPeerController.applyCertifiedAdmissions(
+                state.roundStartFacilitators.value,
+                state.admittedFacilitators.value
+              )
+            )
             val outcome = CurrencyConsensusOutcome(
               state.key,
               // Canonical committee persists in lastOutcome — see dag-l0 mirror.
-              state.roundStartFacilitators,
+              nextOutcomeFacilitators,
               state.removedFacilitators,
               state.withdrawnFacilitators,
               state.eligibleFacilitators,
@@ -963,6 +969,13 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
           return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
+        val maxAdmissionCertificates = math.max(0, config.activeAdmissionMaxExpansionPerRound)
+        if (proposal.admissionCertificates.size > maxAdmissionCertificates)
+          return Left(
+            ProposalRejection(
+              s"acs_too_many count=${proposal.admissionCertificates.size} max=$maxAdmissionCertificates"
+            )
+          )
         // v19: quorum threshold computed against the Core committee; target membership
         // remains the full round-start view. Mirror of dag-l0. Integer math via
         // `QuorumPolicy.fromFraction`.

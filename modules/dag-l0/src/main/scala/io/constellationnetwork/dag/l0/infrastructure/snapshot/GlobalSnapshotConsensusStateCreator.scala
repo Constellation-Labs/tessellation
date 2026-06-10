@@ -112,20 +112,18 @@ object GlobalSnapshotConsensusStateCreator {
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
 
         filteredPreviousEligible = previousEligible
-          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
+          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
 
         filteredCandidates = approvedCandidates
-          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
+          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Full base. This must be derived from the parent round's canonical facilitator set.
-        // `eligibleFacilitators` and `finished.candidates` are useful diagnostics, but after a
-        // cold restart they can be reconstructed from locally observed declarations. Feeding
-        // those local sets into the next round changes `facilitatorsHash` across honest nodes
-        // before any proposal can certify the difference. Candidate growth must therefore enter
-        // through a finalized facilitator set, not through local sidecar/candidate replay.
-        fullBase = lastOutcome.facilitators.value
-          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
-          .distinct
+        // Full base. Use only the parent round's canonical facilitator set. `finished.candidates`
+        // is local-observation-dependent until candidate admission is carried by a certified path;
+        // feeding it into this value can diverge `facilitatorsHash` across honest nodes.
+        fullBase = ConsensusPeerController.canonicalFacilitatorBase(
+          parentFacilitators = lastOutcome.facilitators.value,
+          seedlistPeerIds = seedlistPeerIds
+        )
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
