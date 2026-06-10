@@ -1204,8 +1204,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           .debug(logger, Category.Facilitator, key.toString, role, LogEvent.PeerQuality, "trackedPeers" -> "0")
     }
 
-  /** B2 admission emission trigger. For each probation peer (those in `readmissionCountdown`), if their gossiped chain tip in the mesh
-    * matches the committee's expected tip, emit an `AdmissionVote` for them and queue certificate assembly.
+  /** Admission emission trigger. For each probation peer (those in `readmissionCountdown`), if their gossiped chain tip in the mesh matches
+    * the committee's expected tip, emit an `AdmissionVote` for them and queue certificate assembly. Also emits bounded votes for
+    * non-committee candidates that are independently advertised by a quorum of current facilities and are observed at the committed tip.
     *
     * '''Witness channel''': probation peers are excluded from `state.facilitators` by the state-creator filter, so they never send Facility
     * declarations for the active round. The committee cannot witness them via `resources.peerDeclarationsMap`. Instead, every peer —
@@ -1216,9 +1217,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     * Safety: storage is first-write-wins per `(voter, target)`, so re-invocations within a round are idempotent. We gate the crypto work on
     * `resourcesChanged` in `runMonitorCycle` to avoid re-emission on every tick.
     *
-    * Determinism: all inputs — `readmissionCountdown` keys from `lastOutcome`, `lastOutcome.finished.snapshotHash`, and the peer's gossiped
-    * chain tip — are observable by every committee member. Two honest nodes seeing the same mesh tip will emit matching signed
-    * `AdmissionVote`s; certificate assembly enforces hash agreement before quorum.
+    * Determinism: all inputs — `readmissionCountdown` keys from `lastOutcome`, `lastOutcome.finished.snapshotHash`, signed
+    * `Facility.candidates`, and the peer's gossiped chain tip — are observable by committee members. Emission itself is local timing
+    * dependent, but committee mutation only occurs after quorum-certified AdmissionCertificates are embedded in an accepted proposal.
     */
   private def maybeEmitAdmissionVotes(
     key: Key,
@@ -1226,24 +1227,57 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     resources: ConsensusResources[Artifact, Kind]
   ): F[Unit] = {
     val probation = probationPeersOf(state.lastOutcome)
-    if (probation.isEmpty) b2AtTipStreakRef.set(Map.empty)
-    else {
-      val alreadyVotedBySelf: Set[PeerId] = resources.admissionVotes.collect {
-        case (target, voters) if voters.contains(selfId) => target
-      }.toSet
-      val expectedTip: Hash = lastSnapshotHashOf(state.lastOutcome)
-      getPeerChainTips.flatMap { chainTips =>
+    val alreadyVotedBySelf: Set[PeerId] = resources.admissionVotes.collect {
+      case (target, voters) if voters.contains(selfId) => target
+    }.toSet
+    val expectedTip: Hash = lastSnapshotHashOf(state.lastOutcome)
+    val committee = state.roundStartFacilitators.value.toSet
+    val coreSize = math.max(1, state.coreFacilitators.value.size)
+    val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
+    val maxOpenAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
+    val candidateSupport =
+      resources.peerDeclarationsMap.toList.collect { case (peerId, declarations) if committee.contains(peerId) => declarations }
+        .flatMap(_.facility.toList)
+        .flatMap(_.candidates.value)
+        .filterNot(committee.contains)
+        .filterNot(probation.contains)
+        .toList
+        .groupBy(identity)
+        .view
+        .mapValues(_.size)
+        .toMap
+    val quorumObservedCandidates =
+      if (maxOpenAdmissions <= 0) List.empty[PeerId]
+      else
+        candidateSupport.toList.collect {
+          case (pid, support) if support >= voteQuorum && !alreadyVotedBySelf.contains(pid) => (pid, support)
+        }.sortBy { case (pid, support) => (-support, pid.value.value) }
+          .take(maxOpenAdmissions)
+          .map(_._1)
+
+    val clearStreaks =
+      if (probation.isEmpty) b2AtTipStreakRef.set(Map.empty)
+      else Async[F].unit
+
+    if (probation.isEmpty && quorumObservedCandidates.isEmpty) clearStreaks
+    else
+      clearStreaks >> getPeerChainTips.flatMap { chainTips =>
         // Per-tick stability bookkeeping. Increment the streak for any probation peer whose
         // mesh-reported tip matches the committed tip; reset to 0 otherwise. Drop entries for
         // peers no longer in probation so the map can't grow unbounded.
-        b2AtTipStreakRef.modify { prev =>
-          val updated: Map[PeerId, Int] = probation.iterator.map { pid =>
-            val atTip = chainTips.get(pid).exists(_.snapshotHash === expectedTip)
-            val next = if (atTip) prev.getOrElse(pid, 0) + 1 else 0
-            pid -> next
-          }.toMap
-          (updated, updated)
-        }.flatMap { streaks =>
+        val updateStreaks =
+          if (probation.isEmpty) Map.empty[PeerId, Int].pure[F]
+          else
+            b2AtTipStreakRef.modify { prev =>
+              val updated: Map[PeerId, Int] = probation.iterator.map { pid =>
+                val atTip = chainTips.get(pid).exists(_.snapshotHash === expectedTip)
+                val next = if (atTip) prev.getOrElse(pid, 0) + 1 else 0
+                pid -> next
+              }.toMap
+              (updated, updated)
+            }
+
+        updateStreaks.flatMap { streaks =>
           // Require multiple consecutive at-tip observations before emitting. A single tick of
           // match is insufficient evidence that the peer has stably caught up — observed
           // in E2E: B1 evicted gl0-2 while it was still downloading, then B2 re-admitted
@@ -1264,6 +1298,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             !alreadyVotedBySelf.contains(pid) &&
             streaks.getOrElse(pid, 0) >= minStreak
           }
+          val readyCandidatesAtTip: List[PeerId] =
+            quorumObservedCandidates.filter(pid => chainTips.get(pid).exists(_.snapshotHash === expectedTip))
           // Admission-gate diagnostic log per probation peer per tick.
           // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
           // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
@@ -1291,15 +1327,18 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               "probation" -> probation.size.toString,
               "atTip" -> atTipCount.toString,
               "ready" -> readyAtTip.size.toString,
+              "candidateSupport" -> candidateSupport.size.toString,
+              "candidateQuorumObserved" -> quorumObservedCandidates.size.toString,
+              "candidateReady" -> readyCandidatesAtTip.size.toString,
+              "candidateVoteQuorum" -> voteQuorum.toString,
               "minStreak" -> minStreak.toString,
               "details" -> details
-            ) >> readyAtTip.toList.traverse_ { target =>
+            ) >> (readyAtTip.toList ++ readyCandidatesAtTip).distinct.traverse_ { target =>
             admissionVoter.emitAdmissionVote(key, target, AdmissionReason.ReadyAtTip) >>
               queue.offer(ConsensusCommand.CheckAdmissionAssembly(key, target))
           }
         }
       }
-    }
   }
 }
 
