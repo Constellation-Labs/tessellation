@@ -111,18 +111,18 @@ object CurrencySnapshotConsensusStateCreator {
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
 
         filteredPreviousEligible = previousEligible
-          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
+          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
 
         filteredCandidates = approvedCandidates
-          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
+          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Full base. This mirrors dag-l0: derive from the parent round's canonical facilitator
-        // set only. `eligibleFacilitators` and `finished.candidates` may be locally reconstructed
-        // during cold restart, so they must not influence proposal-critical facilitator hashes
-        // until candidate growth is carried by finalized facilitator state.
-        fullBase = lastOutcome.facilitators.value
-          .filter(peerId => seedlist.isEmpty || seedlistPeerIds.contains(peerId))
-          .distinct
+        // Full base. Use only the parent round's canonical facilitator set. `finished.candidates`
+        // is local-observation-dependent until candidate admission is carried by a certified path;
+        // feeding it into this value can diverge `facilitatorsHash` across honest nodes.
+        fullBase = ConsensusPeerController.canonicalFacilitatorBase(
+          parentFacilitators = lastOutcome.facilitators.value,
+          seedlistPeerIds = seedlistPeerIds
+        )
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +

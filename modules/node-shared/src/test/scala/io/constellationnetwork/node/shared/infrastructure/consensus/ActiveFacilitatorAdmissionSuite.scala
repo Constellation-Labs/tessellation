@@ -48,6 +48,24 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
       maxExpansionPerRound = maxExpansionPerRound
     )
 
+  pureTest("canonical facilitator base uses only parent facilitators") {
+    val result = ConsensusPeerController.canonicalFacilitatorBase(
+      parentFacilitators = List(a, b, a),
+      seedlistPeerIds = List(a, b, c, d)
+    )
+
+    expect.same(List(a, b), result)
+  }
+
+  pureTest("certified admissions append to parent facilitators deterministically") {
+    val result = ConsensusPeerController.applyCertifiedAdmissions(
+      parentFacilitators = List(b, a, b),
+      admittedPeers = Set(d, c, a)
+    )
+
+    expect.same(List(b, a, c, d), result)
+  }
+
   pureTest("does not filter when recent signer window is not deep enough") {
     val result = fromRecent(
       selected = List(a, b, c),

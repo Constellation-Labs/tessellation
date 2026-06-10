@@ -133,6 +133,25 @@ object ConsensusPeerController {
     )
   }
 
+  def canonicalFacilitatorBase(
+    parentFacilitators: List[PeerId],
+    seedlistPeerIds: List[PeerId]
+  ): List[PeerId] = {
+    val allowed = (peerId: PeerId) => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId)
+
+    parentFacilitators.filter(allowed).distinct
+  }
+
+  def applyCertifiedAdmissions(parentFacilitators: List[PeerId], admittedPeers: Iterable[PeerId]): List[PeerId] = {
+    val parent = parentFacilitators.distinct
+    val parentSet = parent.toSet
+    // Preserve parent order for committee stability; append only newly certified admissions in
+    // stable PeerId order so Set-backed certificate collections cannot perturb the next base.
+    val admitted = admittedPeers.toList.distinct.sorted.filterNot(parentSet.contains)
+
+    parent ++ admitted
+  }
+
   private def selfHealthPenalty(hint: Option[SelfHealthHint], config: Config): Int =
     hint match {
       case Some(SelfHealthHint.Critical) => config.criticalPenalty

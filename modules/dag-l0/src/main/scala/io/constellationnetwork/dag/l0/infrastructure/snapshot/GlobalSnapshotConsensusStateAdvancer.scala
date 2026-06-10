@@ -568,14 +568,18 @@ object GlobalSnapshotConsensusStateAdvancer {
                 })
                 .filter { case (_, v) => v > 0L }
             }
+            val nextOutcomeFacilitators = Facilitators(
+              ConsensusPeerController.applyCertifiedAdmissions(
+                state.roundStartFacilitators.value,
+                state.admittedFacilitators.value
+              )
+            )
             val outcome = GlobalConsensusOutcome(
               state.key,
-              // Canonical committee in the persisted outcome — not post-withdrawal
-              // state.facilitators — so every node writes the same lastOutcome and
-              // next-round committee derivation (eligibleOrFacilitators,
-              // deferralCountdown derivation via completedFacilitators above) stays
-              // deterministic across the cluster.
-              state.roundStartFacilitators,
+              // Canonical committee in the persisted outcome: the round-start committee plus
+              // accepted AdmissionCertificate targets. This is not post-withdrawal
+              // state.facilitators, and it does not include local candidate replay.
+              nextOutcomeFacilitators,
               state.removedFacilitators,
               state.withdrawnFacilitators,
               state.eligibleFacilitators,
@@ -1796,6 +1800,13 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): Either[ProposalRejection, Unit] = {
         if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
           return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
+        val maxAdmissionCertificates = math.max(0, config.activeAdmissionMaxExpansionPerRound)
+        if (proposal.admissionCertificates.size > maxAdmissionCertificates)
+          return Left(
+            ProposalRejection(
+              s"acs_too_many count=${proposal.admissionCertificates.size} max=$maxAdmissionCertificates"
+            )
+          )
         // v19: quorum threshold computed against the Core committee only -- see
         // validateProposalEcs for the full decoupled-threshold-vs-membership rationale.
         // Integer math via `QuorumPolicy.fromFraction`.
