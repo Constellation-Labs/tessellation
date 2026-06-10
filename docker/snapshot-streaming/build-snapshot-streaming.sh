@@ -21,7 +21,9 @@ BE_DIR="$SS_DIR/block-explorer"
 
 # --- Obtain JAR ---
 
-if [ -n "$SNAPSHOT_STREAMING_JAR" ] && [ -f "$SNAPSHOT_STREAMING_JAR" ]; then
+if [ "${SKIP_SS_JAR:-false}" = "true" ]; then
+  echo "SKIP_SS_JAR=true — skipping snapshot-streaming jar build (image pulled from registry); block_explorer still cloned for DB migrations"
+elif [ -n "$SNAPSHOT_STREAMING_JAR" ] && [ -f "$SNAPSHOT_STREAMING_JAR" ]; then
   echo "Using pre-built snapshot-streaming JAR: $SNAPSHOT_STREAMING_JAR"
   cp "$SNAPSHOT_STREAMING_JAR" "$JAR_DEST"
 elif [ -f "$JAR_DEST" ] && [ -s "$JAR_DEST" ] && [ "$SKIP_ASSEMBLY" = "true" ]; then
@@ -39,48 +41,40 @@ else
       "$BUILD_DIR/project/Dependencies.scala"
   fi
 
-  # Apply compatibility patches if present (break circular dependency with tessellation).
-  # Each patch down-adapts the snapshot-streaming `testing` branch source — which is
-  # written against the newest tessellation API — to an OLDER tessellation API. Whether
-  # a given patch is needed depends on the LOCAL tessellation tree, not on the
-  # snapshot-streaming source (which always carries the newer call), so each patch is
-  # guarded by a grep against the local tree and applied only when the local API lacks
-  # the corresponding symbol. `git apply --check` then skips gracefully if the source
-  # already differs (e.g. the change landed upstream).
+  # Apply compatibility patch if present (breaks circular dependency with tessellation)
+  # Uses --check first to skip gracefully if already applied upstream.
+  # The patch adapts snapshot-streaming (release/testnet) to the tessellation v4.1.0 API:
+  #   - drops the obsolete tessellation3Migration arg from CurrencySnapshotValidator.make
+  #   - passes the whole FieldsAddedOrdinals + environment to GlobalSnapshotStateChannelEventsProcessor.make
+  #     (v4.1.0 resolves scFeeBalanceFromContext internally instead of taking a pre-resolved ordinal).
+  # release/testnet's SharedConfig already has forkInfoStorage removed; on a local tessellation
+  # that still carries forkInfoStorage (develop, feature branches),
+  # applying it leaves the constructor one arg short — detect and skip in that case.
+  PATCH_FILE="$SS_DIR/snapshot-streaming.patch"
   TYPES_FILE="$SCRIPT_DIR/../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/config/types.scala"
-
-  # apply_ss_patch <patch_file> <skip_marker> <marker_file> <label>
-  # Skips when <marker_file> contains <skip_marker> (local tessellation already has the
-  # newer API, so the testing-branch source already matches and must not be down-adapted).
-  apply_ss_patch() {
-    local patch_file="$1" skip_marker="$2" marker_file="$3" label="$4"
-    [ -f "$patch_file" ] && [ -s "$patch_file" ] || return 0
-    if [ -f "$marker_file" ] && grep -q "$skip_marker" "$marker_file"; then
-      echo "Local tessellation already has '$skip_marker' — skipping patch ($label)"
-      return 0
-    fi
-    (
+  if [ -f "$PATCH_FILE" ] && [ -s "$PATCH_FILE" ]; then
+    if [ -f "$TYPES_FILE" ] && grep -q "forkInfoStorage: ForkInfoStorageConfig" "$TYPES_FILE"; then
+      echo "Local SharedConfig still has forkInfoStorage — skipping snapshot-streaming patch"
+    else
       cd "$BUILD_DIR"
-      if git apply --check "$patch_file" 2>/dev/null; then
-        echo "Applying snapshot-streaming compatibility patch ($label)..."
-        git apply "$patch_file"
+      if git apply --reverse --check "$PATCH_FILE" 2>/dev/null; then
+        echo "snapshot-streaming patch already applied upstream — skipping."
+      elif git apply --check "$PATCH_FILE" 2>/dev/null; then
+        echo "Applying snapshot-streaming compatibility patch..."
+        git apply "$PATCH_FILE"
+      elif patch -p1 --fuzz=3 --forward --dry-run < "$PATCH_FILE" >/dev/null 2>&1; then
+        echo "git apply rejected the patch (context drift); applying with fuzz via GNU patch..."
+        patch -p1 --fuzz=3 --forward < "$PATCH_FILE"
       else
-        echo "Patch already applied or not needed, skipping ($label)..."
+        # Either already applied upstream (harmless) or a stale/drifted patch that no longer
+        # matches this snapshot-streaming branch. --forward stops GNU patch from REVERSE-applying
+        # an already-applied patch (which would re-add forkInfoStorage and break compilation).
+        echo "WARNING: snapshot-streaming.patch did not apply (already applied, or stale vs this SS branch)." >&2
+        echo "         If stale, regenerate it (see testnet-hetzner-migration/snapshot-streaming-blocker.md)." >&2
       fi
-    )
-  }
-
-  # Strip c.forkInfoStorage so positional args line up against a SharedConfig where
-  # forkInfoStorage has been removed (release/testnet). On branches that still carry it
-  # (develop, feature branches) the source already matches, so skip.
-  apply_ss_patch "$SS_DIR/snapshot-streaming.patch" \
-    "forkInfoStorage: ForkInfoStorageConfig" "$TYPES_FILE" "forkInfoStorage"
-
-  # Drop the scFeeBalanceFromContext arg from GlobalSnapshotStateChannelEventsProcessor.make
-  # so the call lines up with tessellation versions whose make takes 5 args (no
-  # state-channel-fee-from-context feature). Skip once that field lands in FieldsAddedOrdinals.
-  apply_ss_patch "$SS_DIR/snapshot-streaming-scfee.patch" \
-    "scFeeBalanceFromContext" "$TYPES_FILE" "scFeeBalanceFromContext"
+      cd "$SCRIPT_DIR"
+    fi
+  fi
 
   cd "$BUILD_DIR"
   sbt --error assembly
@@ -103,22 +97,27 @@ else
 fi
 
 # --- Clone block_explorer for database migrations ---
-
-if [ -d "$BE_DIR/.git" ]; then
-  echo "Reusing existing block_explorer clone: $BE_DIR"
-  git -C "$BE_DIR" fetch --depth 1 origin "$BE_BRANCH"
-  git -C "$BE_DIR" checkout FETCH_HEAD --quiet
+# Not needed with an external SS database (SKIP_BE_CLONE=true): schema/migrations are
+# owned by the existing block-explorer deployment, and the BE app isn't run on-cluster.
+if [ "${SKIP_BE_CLONE:-false}" = "true" ]; then
+  echo "SKIP_BE_CLONE=true — skipping block_explorer clone (external SS database)"
 else
-  echo "Cloning block_explorer (branch: $BE_BRANCH)..."
-  rm -rf "$BE_DIR"
-  git clone --depth 1 --branch "$BE_BRANCH" "$BE_REPO" "$BE_DIR"
-fi
+  if [ -d "$BE_DIR/.git" ]; then
+    echo "Reusing existing block_explorer clone: $BE_DIR"
+    git -C "$BE_DIR" fetch --depth 1 origin "$BE_BRANCH"
+    git -C "$BE_DIR" checkout FETCH_HEAD --quiet
+  else
+    echo "Cloning block_explorer (branch: $BE_BRANCH)..."
+    rm -rf "$BE_DIR"
+    git clone --depth 1 --branch "$BE_BRANCH" "$BE_REPO" "$BE_DIR"
+  fi
 
-if [ ! -d "$BE_DIR/prisma/migrations" ]; then
-  echo "ERROR: block_explorer prisma/migrations not found"
-  exit 1
+  if [ ! -d "$BE_DIR/prisma/migrations" ]; then
+    echo "ERROR: block_explorer prisma/migrations not found"
+    exit 1
+  fi
+  echo "block_explorer migrations ready: $BE_DIR/prisma/migrations"
 fi
-echo "block_explorer migrations ready: $BE_DIR/prisma/migrations"
 
 echo "snapshot-streaming JAR: $JAR_DEST"
 
