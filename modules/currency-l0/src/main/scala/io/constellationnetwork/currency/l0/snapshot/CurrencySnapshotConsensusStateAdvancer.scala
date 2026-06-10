@@ -8,7 +8,7 @@ import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{FiniteDuration, _}
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.snapshot.schema._
@@ -455,9 +455,58 @@ object CurrencySnapshotConsensusStateAdvancer {
                   removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ forkEvictedPeers)
                 )
               else state
-            toProposalsPhase(updatedState, facilities)
+            maybeWaitForAdmissionCertificates(updatedState, resources, facilities).flatMap { waitForAcs =>
+              if (waitForAcs)
+                ConsensusLog
+                  .info(
+                    logger,
+                    Category.Phase,
+                    state.key.show,
+                    "n/a",
+                    Event.Admission,
+                    "stage" -> "pre_proposal_grace",
+                    "active" -> updatedState.roundStartFacilitators.value.size.toString,
+                    "target" -> activeAdmissionTarget(updatedState).toString,
+                    "candidates" -> openAdmissionCandidates(updatedState, facilities).size.toString,
+                    "admissionVoteTargets" -> resources.admissionVotes.size.toString
+                  )
+                  .as(none[Transition])
+              else toProposalsPhase(updatedState, facilities)
+            }
           }
         } yield result
+
+      private val AdmissionPreProposalGrace: FiniteDuration = 1500.millis
+
+      private def activeAdmissionTarget(state: CurrencySnapshotConsensusState): Int =
+        config.activeFacilitatorTarget.getOrElse(state.coreFacilitators.value.size)
+
+      private def openAdmissionCandidates(
+        state: CurrencySnapshotConsensusState,
+        facilities: SortedMap[PeerId, Facility]
+      ): Set[PeerId] = {
+        val committee = state.roundStartFacilitators.value.toSet
+        facilities.values.flatMap(_.candidates.value).filterNot(committee.contains).toSet
+      }
+
+      private def maybeWaitForAdmissionCertificates(
+        state: CurrencySnapshotConsensusState,
+        resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
+        facilities: SortedMap[PeerId, Facility]
+      ): F[Boolean] =
+        for {
+          now <- Async[F].monotonic
+          acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
+          target = activeAdmissionTarget(state)
+          activeBelowTarget = state.roundStartFacilitators.value.size < target
+          hasAdmissionEvidence = openAdmissionCandidates(state, facilities).nonEmpty || resources.admissionVotes.nonEmpty
+          graceOpen = now - state.createdAt < AdmissionPreProposalGrace
+        } yield
+          activeBelowTarget &&
+            config.activeAdmissionMaxExpansionPerRound > 0 &&
+            hasAdmissionEvidence &&
+            acs.isEmpty &&
+            graceOpen
 
       private def toProposalsPhase(
         state: CurrencySnapshotConsensusState,

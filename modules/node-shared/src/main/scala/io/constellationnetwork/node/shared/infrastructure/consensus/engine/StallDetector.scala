@@ -195,11 +195,6 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // (100-1000ms) while in the at-risk phase so the grace check re-evaluates
       // naturally; checkUpdate is a no-op on unchanged state, so the overhead is
       // trivial. Observed in E2E: single round wedged 14.7s without this.
-      inSignaturesPhase = ops.isSignaturesPhase(state.status)
-      _ <- queue
-        .offer(ConsensusCommand.CheckUpdate(key))
-        .whenA(resourcesChanged || statusChanged || inSignaturesPhase)
-
       // B2 admission emission: when a peer currently in `readmissionCountdown` has a
       // matching chain tip in the mesh-gossip table, emit an `AdmissionVote` for them.
       //
@@ -219,6 +214,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // vote on later ticks is a no-op at the storage level. The crypto work per tick is
       // O(k) where k = probation peers at tip (typically 0-2 in practice).
       _ <- maybeEmitAdmissionVotes(key, state, resources)
+
+      inFacilitiesPhase = ops.phaseIndex(state.status) == 0
+      inSignaturesPhase = ops.isSignaturesPhase(state.status)
+      _ <- queue
+        .offer(ConsensusCommand.CheckUpdate(key))
+        .whenA(resourcesChanged || statusChanged || inFacilitiesPhase || inSignaturesPhase)
 
       // --- Timeout calculation ---
       effectiveTimeout <- calculateTimeout(ms.stallCount, info, state)

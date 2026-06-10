@@ -1104,6 +1104,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                         )
                       case Right(cert) =>
                         storage.storeAssembledAdmissionCertificate(key, cert) >>
+                          queue.offer(ConsensusCommand.CheckUpdate(key)) >>
                           ConsensusLog.info(
                             log,
                             Category.Phase,
