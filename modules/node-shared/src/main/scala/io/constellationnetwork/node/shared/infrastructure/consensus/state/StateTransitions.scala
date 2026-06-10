@@ -1063,16 +1063,6 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
   def checkAdmissionAssembly(key: Key, target: PeerId): F[Unit] =
     storage.getState(key).flatMap {
       case None => Async[F].unit
-      case Some(state) if ctx.isInBootstrap(state.lastOutcome) =>
-        ConsensusLog.debug(
-          log,
-          Category.Phase,
-          key.show,
-          "n/a",
-          LogEvent.Admission,
-          "assembly" -> "skipped_in_bootstrap",
-          "target" -> ConsensusLog.pid(target)
-        )
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
           val votes = resources.admissionVotes.getOrElse(target, Map.empty)
@@ -1124,7 +1114,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                             "target" -> ConsensusLog.pid(target),
                             "votes" -> matchingVotes.size.toString,
                             "quorum" -> q.toString,
-                            "reason" -> singleReason.toString
+                            "reason" -> singleReason.toString,
+                            "bootstrap" -> ctx.isInBootstrap(state.lastOutcome).toString
                           )
                     }
                   case multiReasons =>

@@ -699,9 +699,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                       ecs <-
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
-                      acs <-
-                        if (isInBootstrap(state)) Set.empty[AdmissionCertificate].pure[F]
-                        else consensusStorage.getAssembledAdmissionCertificates(state.key)
+                      acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
                     } yield (ecs, acs)).flatMap {
                       case (ecs, acs) =>
                         spreadProposal(
@@ -796,9 +794,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                   ecs <-
                     if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                     else consensusStorage.getAssembledEvictionCertificates(state.key)
-                  acs <-
-                    if (isInBootstrap(state)) Set.empty[AdmissionCertificate].pure[F]
-                    else consensusStorage.getAssembledAdmissionCertificates(state.key)
+                  acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
                 } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
                   case (maybeVcc, maybeTc, ecs, acs) =>
                     logger.info(
@@ -969,8 +965,6 @@ object CurrencySnapshotConsensusStateAdvancer {
         proposal: Proposal,
         facilitatorsHash: Hash
       ): Either[ProposalRejection, Unit] = {
-        if (isInBootstrap(state) && proposal.admissionCertificates.nonEmpty)
-          return Left(ProposalRejection(s"acs_rejected_in_bootstrap count=${proposal.admissionCertificates.size}"))
         val maxAdmissionCertificates = math.max(0, config.activeAdmissionMaxExpansionPerRound)
         if (proposal.admissionCertificates.size > maxAdmissionCertificates)
           return Left(
@@ -1364,8 +1358,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           if (evictedTargets.isEmpty) state.removedFacilitators
           else RemovedFacilitators(state.removedFacilitators.value ++ evictedTargets)
         val admittedTargets: Set[PeerId] =
-          if (isInBootstrap(state)) Set.empty
-          else leaderAdmissionCerts.map(_.targetPeer).toSet
+          leaderAdmissionCerts.map(_.targetPeer).toSet
         val postAdmissionAdmitted =
           if (admittedTargets.isEmpty) state.admittedFacilitators
           else AdmittedFacilitators(state.admittedFacilitators.value ++ admittedTargets)
