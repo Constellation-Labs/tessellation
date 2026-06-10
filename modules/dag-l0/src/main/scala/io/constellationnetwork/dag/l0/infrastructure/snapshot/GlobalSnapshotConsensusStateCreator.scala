@@ -22,6 +22,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
 
 import eu.timepit.refined.auto._
@@ -40,7 +41,7 @@ abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]
     ]
 
 object GlobalSnapshotConsensusStateCreator {
-  def make[F[_]: Async: Metrics](
+  def make[F[_]: Async: Metrics: HasherSelector](
     consensusFns: GlobalSnapshotConsensusFunctions[F],
     consensusStorage: GlobalConsensusStorage[F],
     gossip: Gossip[F],
@@ -63,6 +64,9 @@ object GlobalSnapshotConsensusStateCreator {
     val config: ConsensusConfig = consensusConfig
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
+    private val dagAwaitingParentConfig = io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig.default
+    private val maxAwaitingParentReactivationPerRound = 128
 
     def tryFacilitateConsensus(
       key: GlobalSnapshotKey,
@@ -411,6 +415,15 @@ object GlobalSnapshotConsensusStateCreator {
         // hint (Healthy/Degraded/Critical) rides on the outgoing Facility -- the leader aggregates
         // these across the committee into `Proposal.observedSelfHealth`.
         effect = for {
+          _ <- HasherSelector[F].withCurrent { implicit hasher =>
+            DagAwaitingParentQueue.maintain(
+              eventMempool,
+              lastOutcome.finished.context,
+              dagAwaitingParentConfig,
+              maxAwaitingParentReactivationPerRound,
+              logger
+            )
+          }
           eventHashes <- eventMempool.getEventHashes
           selfHealth <- localHealthMonitor.current
           // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the

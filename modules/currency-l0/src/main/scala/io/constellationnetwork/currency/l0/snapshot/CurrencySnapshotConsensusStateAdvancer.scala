@@ -1741,13 +1741,13 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       private def signedArtifactPeerHistory(outcome: CurrencyConsensusOutcome): ConsensusOperationalState = {
         // TODO(v20 cleanup): mirror of dag-l0. Keep only v27's deterministic
-        // activeAdmissionScore in signed peerHistory; omit the older locally-divergent perPeer
-        // dimensions and recentRoundEndTimes.
+        // activeAdmissionScore in signed peerHistory, over the canonical committee key set with
+        // explicit zeros. Omit the older locally-divergent perPeer dimensions and
+        // recentRoundEndTimes.
         val operational = outcome.toOperationalState
         val signedControllerScores = SortedMap.from(
-          operational.perPeer.iterator.flatMap {
-            case (pid, record) =>
-              record.activeAdmissionScore.map(score => pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(score)))
+          outcome.eligibleOrFacilitators.iterator.map { pid =>
+            pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(outcome.activeAdmissionScores.getOrElse(pid, 0)))
           }
         )
         operational.copy(
