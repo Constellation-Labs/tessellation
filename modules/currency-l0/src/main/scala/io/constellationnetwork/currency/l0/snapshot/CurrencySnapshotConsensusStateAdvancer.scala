@@ -919,12 +919,14 @@ object CurrencySnapshotConsensusStateAdvancer {
                     // `eligibleFacilitators` and historical participants in `lastOutcome.peerQuality`.
                     // See dag-l0 mirror for the full determinism analysis; both sides of the round
                     // derive the byte-identical pool via the shared WitnessPool helper.
-                    val witnessPool = WitnessPool.forTarget(
-                      state.eligibleFacilitators.value.toSet,
-                      state.lastOutcome.peerQuality.toMap,
-                      config.minParticipationObservations,
-                      cert.targetPeer
-                    )
+                    val witnessPool = WitnessPool
+                      .forTarget(
+                        state.eligibleFacilitators.value.toSet,
+                        state.lastOutcome.peerQuality.toMap,
+                        config.minParticipationObservations,
+                        cert.targetPeer
+                      )
+                      .union(state.roundStartFacilitators.value.toSet - cert.targetPeer)
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>

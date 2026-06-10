@@ -1740,12 +1740,14 @@ object GlobalSnapshotConsensusStateAdvancer {
                     // StateTransitions.checkEvictionAssembly and follower here) compute the
                     // byte-identical pool via the shared WitnessPool helper. The quorum denominator
                     // stays committee-sized -- only the set of valid witness signers widens.
-                    val witnessPool = WitnessPool.forTarget(
-                      state.eligibleFacilitators.value.toSet,
-                      state.lastOutcome.peerQuality.toMap,
-                      config.minParticipationObservations,
-                      cert.targetPeer
-                    )
+                    val witnessPool = WitnessPool
+                      .forTarget(
+                        state.eligibleFacilitators.value.toSet,
+                        state.lastOutcome.peerQuality.toMap,
+                        config.minParticipationObservations,
+                        cert.targetPeer
+                      )
+                      .union(state.roundStartFacilitators.value.toSet - cert.targetPeer)
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>

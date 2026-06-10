@@ -98,12 +98,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
   /** Deterministic witness pool for B1/B2/VCC certificate assembly.
     *
-    * The pool unions two consensus-agreed sets, then removes `target`:
+    * The pool unions consensus-agreed sets, then removes `target`:
     *
-    *   1. `state.eligibleFacilitators` -- peers eligible to facilitate THIS round (chronic-filtered subset of the previous outcome's
-    *      participants). Always non-empty for active rounds. 2. Peers in `lastOutcome.peerQuality` with `participated >=
-    *      minParticipationObservations` -- anyone who has actually voted in at least the observation-floor number of past rounds,
-    *      regardless of whether they're currently in the chronic-excluded set.
+    *   1. `state.roundStartFacilitators` -- the frozen committee for this round. 2. `state.eligibleFacilitators` -- peers eligible to
+    *      facilitate THIS round (chronic-filtered subset of the previous outcome's participants). Always non-empty for active rounds. 3.
+    *      Peers in `lastOutcome.peerQuality` with `participated >= minParticipationObservations` -- anyone who has actually voted in at
+    *      least the observation-floor number of past rounds, regardless of whether they're currently in the chronic-excluded set.
     *
     * Determinism guarantees: both inputs are projections of `lastOutcome` which is signed and propagated as part of the previous snapshot.
     * `minParticipationObservations` is in `ConsensusConfig.deterministicConfigHash`. Every honest node therefore computes the
@@ -123,20 +123,24 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     * Returns the EXCLUSIVE pool (target removed). Callers do not need to filter again.
     */
   private[state] def widerWitnessPool(state: ConsensusState[Key, Status, Outcome, Kind], target: PeerId): Set[PeerId] =
-    WitnessPool.forTarget(
-      state.eligibleFacilitators.value.toSet,
-      peerQualityOf(state.lastOutcome),
-      config.minParticipationObservations,
-      target
-    )
+    WitnessPool
+      .forTarget(
+        state.eligibleFacilitators.value.toSet,
+        peerQualityOf(state.lastOutcome),
+        config.minParticipationObservations,
+        target
+      )
+      .union(state.roundStartFacilitators.value.toSet - target)
 
   /** Same as [[widerWitnessPool]] without target removal. Used for callers like VCC that aren't keyed by a specific target peer. */
   private[state] def widerWitnessPoolAll(state: ConsensusState[Key, Status, Outcome, Kind]): Set[PeerId] =
-    WitnessPool.all(
-      state.eligibleFacilitators.value.toSet,
-      peerQualityOf(state.lastOutcome),
-      config.minParticipationObservations
-    )
+    WitnessPool
+      .all(
+        state.eligibleFacilitators.value.toSet,
+        peerQualityOf(state.lastOutcome),
+        config.minParticipationObservations
+      )
+      .union(state.roundStartFacilitators.value.toSet)
 
   def checkUpdate(key: Key): F[Unit] =
     for {
