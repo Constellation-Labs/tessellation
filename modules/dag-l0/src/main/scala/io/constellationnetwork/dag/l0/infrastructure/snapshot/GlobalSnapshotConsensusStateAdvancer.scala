@@ -1788,8 +1788,9 @@ object GlobalSnapshotConsensusStateAdvancer {
         *   - at least `q` votes (quorum at this round's committee)
         *   - all votes within a cert agree on (targetPeer, reason, facilitatorsHash)
         *   - cert's facilitatorsHash matches the round's facilitatorsHash
-        *   - target peer is currently in `readmissionCountdown` (the only legitimate B2 re-admission target)
+        *   - target peer is either in `readmissionCountdown` or quorum-certified as a new ReadyAtTip candidate
         *   - target peer is NOT currently in the committee (re-admitting an active facilitator is nonsensical)
+        *   - target peer is not under an active removal penalty
         *   - voters are all members of the current committee
         *   - no duplicate certs for the same target within a proposal
         */
@@ -1814,6 +1815,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val probation = state.lastOutcome.readmissionCountdown.keySet
+        val penalized = state.lastOutcome.removalPenalties.filter(_._2 > 0).keySet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
         @scala.annotation.tailrec
@@ -1839,8 +1841,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
               else if (committee.contains(cert.targetPeer))
                 Left(ProposalRejection(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}"))
-              else if (!probation.contains(cert.targetPeer))
-                Left(ProposalRejection(s"acs_target_not_in_probation target=${cert.targetPeer.show.take(8)}"))
+              else if (penalized.contains(cert.targetPeer))
+                Left(ProposalRejection(s"acs_target_penalized target=${cert.targetPeer.show.take(8)}"))
+              else if (!probation.contains(cert.targetPeer) && cert.reason =!= AdmissionReason.ReadyAtTip)
+                Left(ProposalRejection(s"acs_target_not_admissible target=${cert.targetPeer.show.take(8)} reason=${cert.reason.show}"))
               else if (cert.votes.size < q)
                 Left(ProposalRejection(s"acs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q"))
               else {

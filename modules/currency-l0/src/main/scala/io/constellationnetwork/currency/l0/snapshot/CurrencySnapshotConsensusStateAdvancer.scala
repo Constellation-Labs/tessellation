@@ -983,6 +983,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val probation = state.lastOutcome.readmissionCountdown.keySet
+        val penalized = state.lastOutcome.removalPenalties.filter(_._2 > 0).keySet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
         @scala.annotation.tailrec
@@ -1008,8 +1009,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                 )
               else if (committee.contains(cert.targetPeer))
                 Left(ProposalRejection(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}"))
-              else if (!probation.contains(cert.targetPeer))
-                Left(ProposalRejection(s"acs_target_not_in_probation target=${cert.targetPeer.show.take(8)}"))
+              else if (penalized.contains(cert.targetPeer))
+                Left(ProposalRejection(s"acs_target_penalized target=${cert.targetPeer.show.take(8)}"))
+              else if (!probation.contains(cert.targetPeer) && cert.reason =!= AdmissionReason.ReadyAtTip)
+                Left(ProposalRejection(s"acs_target_not_admissible target=${cert.targetPeer.show.take(8)} reason=${cert.reason.show}"))
               else if (cert.votes.size < q)
                 Left(ProposalRejection(s"acs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q"))
               else {
