@@ -18,10 +18,13 @@ import cats.syntax.traverseFilter._
 import scala.concurrent.duration.DurationInt
 
 import io.constellationnetwork.dag.l1.config.types.AppConfig
+import io.constellationnetwork.dag.l1.domain.block.BlockStorage._
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput._
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock, NoData}
 import io.constellationnetwork.dag.l1.domain.consensus.block.Validator.{canStartInspectionTrigger, canStartOwnConsensus, isPeerInputValid}
 import io.constellationnetwork.dag.l1.domain.consensus.block._
+import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult
+import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult.{Accepted, ParentOrdinalGapTooLarge, Rejected}
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.fs2.StreamOps
@@ -181,21 +184,100 @@ class StateChannel[
 
   // Maximum number of undelivered blocks retained for re-send. Bounds memory if L0 is unreachable.
   private val maxL0ResendBuffer: Int = 1024
+  private val maxL0BackfillBlocksPerGap: Int = 256
 
-  /** Attempt a single delivery of a block to a collateralized L0 peer. Returns true on a 2xx, false on any non-2xx (e.g. 400
-    * ParentOrdinalGapTooLarge while L0 finalization lags) or transport error.
+  /** Attempt a single delivery of a block to a collateralized L0 peer. Returns the classified response so the L1 can distinguish
+    * gap-rejections from generic transport/non-2xx failures.
     */
-  private def trySendToL0(block: Signed[Block]): F[Boolean] =
+  private def trySendToL0(block: Signed[Block]): F[L1OutputSubmissionResult] =
     storages.l0Cluster.getPeers
-      .map(_.toNonEmptyList.toList)
-      .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
+      .flatMap(_.toNonEmptyList.toList.filterA(p => services.collateral.hasCollateral(p.id)))
       .flatMap(peers => Random[F].shuffleList(peers))
       .map(_.headOption)
       .flatMap {
-        case None         => logger.warn("No available L0 peer").as(false)
-        case Some(l0Peer) => p2PClient.l0BlockOutputClient.sendL1Output(block)(l0Peer)
+        case None         => logger.warn("No available L0 peer").as(Rejected(0, "NoAvailableL0Peer", ""): L1OutputSubmissionResult)
+        case Some(l0Peer) => p2PClient.l0BlockOutputClient.sendL1OutputDetailed(block)(l0Peer)
       }
-      .handleErrorWith(err => logger.error(err)("Error sending block to L0").as(false))
+      .handleErrorWith(err =>
+        logger.error(err)("Error sending block to L0").as(Rejected(0, "TransportError", err.getMessage): L1OutputSubmissionResult)
+      )
+
+  private def txParentOrdinals(block: Signed[Block]): List[Long] =
+    block.value.transactions.toNonEmptyList.toList.map(_.value.parent.ordinal.value.value)
+
+  private def lowestParentOrdinal(block: Signed[Block]): Long =
+    txParentOrdinals(block).minOption.getOrElse(Long.MaxValue)
+
+  private def storedSignedBlock(stored: StoredBlock): Option[Signed[Block]] =
+    stored match {
+      case WaitingBlock(block)   => Some(block)
+      case PostponedBlock(block) => Some(block)
+      case AcceptedBlock(block)  => Some(block.signed)
+      case _: MajorityBlock      => None
+    }
+
+  private def appendToL0ResendBuffer(blocks: List[Signed[Block]], reason: String): F[Unit] =
+    if (blocks.isEmpty) Async[F].unit
+    else
+      l0ResendBuffer.modify { buf =>
+        val merged = (buf ++ blocks).distinct.sortBy(lowestParentOrdinal)
+        val overflow = (merged.size - maxL0ResendBuffer).max(0)
+
+        (merged.take(maxL0ResendBuffer), overflow)
+      }.flatMap { dropped =>
+        logger
+          .warn(
+            s"L0 re-send buffer full ($maxL0ResendBuffer): dropped $dropped furthest-ahead undelivered block(s). " +
+              "GL0 is likely badly unhealthy (deep finalization stall) and may need a restart."
+          )
+          .whenA(dropped > 0) >>
+          logger.debug(s"Buffered ${blocks.size} block(s) for L0 re-send; reason=$reason")
+      }
+
+  private def bufferBackfillForGap(failedBlock: Signed[Block], gap: ParentOrdinalGapTooLarge): F[Unit] = {
+    val lower = gap.currentLastTxOrdinal
+    val upper = math.min(gap.parentOrdinal - 1L, gap.currentLastTxOrdinal + gap.maxAcceptedParentOrdinalGap)
+    val gapSources = failedBlock.value.transactions.toNonEmptyList.toList
+      .filter(_.value.parent.ordinal.value.value === gap.parentOrdinal)
+      .map(_.value.source)
+      .toSet
+
+    storages.block
+      .getState()
+      .map(_.values.toList.flatMap(storedSignedBlock))
+      .map { blocks =>
+        blocks.filter { block =>
+          block.value.transactions.toNonEmptyList.toList.exists { tx =>
+            val ordinal = tx.value.parent.ordinal.value.value
+            val sourceMatches = gapSources.isEmpty || gapSources.contains(tx.value.source)
+
+            sourceMatches && ordinal > lower && ordinal <= upper
+          }
+        }
+          .sortBy(lowestParentOrdinal)
+          .take(maxL0BackfillBlocksPerGap)
+      }
+      .flatMap { backfill =>
+        val toBuffer = (backfill :+ failedBlock).distinct.sortBy(lowestParentOrdinal)
+
+        logger.info(
+          s"L0 rejected DAG block with ParentOrdinalGapTooLarge: currentLastTxOrdinal=${gap.currentLastTxOrdinal} " +
+            s"parentOrdinal=${gap.parentOrdinal} gap=${gap.parentOrdinalGap} maxAcceptedGap=${gap.maxAcceptedParentOrdinalGap}. " +
+            s"Buffered ${backfill.size} locally stored bridge block(s) plus failed block; scanWindow=(${lower + 1}..$upper) " +
+            s"sourceScoped=${gapSources.nonEmpty} backfillCap=$maxL0BackfillBlocksPerGap."
+        ) >>
+          appendToL0ResendBuffer(toBuffer, "parent_gap_backfill")
+      }
+  }
+
+  private def bufferFailedL0Delivery(block: Signed[Block], result: L1OutputSubmissionResult): F[Unit] =
+    result match {
+      case Accepted => Async[F].unit
+      case gap: ParentOrdinalGapTooLarge =>
+        bufferBackfillForGap(block, gap)
+      case _: Rejected =>
+        appendToL0ResendBuffer(List(block), "delivery_failed")
+    }
 
   // Send each finalized block to L0 once. On failure the block is NOT dropped -- dropping leaves a
   // permanent ordinal gap that L0 can never advance past once its finalization falls behind -- but is
@@ -204,20 +286,8 @@ class StateChannel[
     _.evalTap { fb =>
       val block = fb.hashedBlock.signed
       trySendToL0(block).flatMap {
-        case true => Async[F].unit
-        case false =>
-          l0ResendBuffer.modify { buf =>
-            val overflow = buf.size >= maxL0ResendBuffer
-            ((if (overflow) buf.drop(1) else buf) :+ block, overflow)
-          }.flatMap { droppedOldest =>
-            logger
-              .warn(
-                s"L0 re-send buffer full ($maxL0ResendBuffer): dropped oldest undelivered block. " +
-                  "GL0 is likely badly unhealthy (deep finalization stall) and may need a restart."
-              )
-              .whenA(droppedOldest) >>
-              logger.debug("Sending block to L0 failed; buffered for re-send.")
-          }
+        case Accepted => Async[F].unit
+        case result   => bufferFailedL0Delivery(block, result)
       }
     }
 
@@ -234,7 +304,7 @@ class StateChannel[
             case None => Async[F].unit
             case Some(block) =>
               trySendToL0(block).flatMap {
-                case true =>
+                case Accepted =>
                   // Remove the just-delivered block only if it is still the head, so a concurrent
                   // overflow drop+append on the failure path cannot make us delete a different,
                   // not-yet-sent block.
@@ -242,7 +312,7 @@ class StateChannel[
                     case buf if buf.headOption.contains(block) => buf.drop(1)
                     case buf                                   => buf
                   } >> loop(remaining - 1)
-                case false => Async[F].unit
+                case result => bufferFailedL0Delivery(block, result)
               }
           }
       loop(64)

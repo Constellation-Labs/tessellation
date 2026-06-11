@@ -12,7 +12,8 @@ import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security.signature.Signed
 
-import io.circe.Encoder
+import io.circe.parser.decode
+import io.circe.{Decoder, Encoder}
 import org.http4s.Method.POST
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.client.Client
@@ -21,6 +22,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait L0BlockOutputClient[F[_]] {
   def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean]
+  def sendL1OutputDetailed(output: Signed[Block]): PeerResponse[F, L0BlockOutputClient.L1OutputSubmissionResult]
   def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(
     implicit encoder: Encoder[DataTransaction]
   ): PeerResponse[F, Boolean]
@@ -30,12 +32,78 @@ trait L0BlockOutputClient[F[_]] {
 
 object L0BlockOutputClient {
 
+  sealed trait L1OutputSubmissionResult {
+    def accepted: Boolean
+  }
+
+  object L1OutputSubmissionResult {
+    case object Accepted extends L1OutputSubmissionResult {
+      val accepted: Boolean = true
+    }
+
+    case class ParentOrdinalGapTooLarge(
+      currentLastTxOrdinal: Long,
+      parentOrdinal: Long,
+      parentOrdinalGap: Long,
+      maxAcceptedParentOrdinalGap: Long,
+      awaitingParentTtlSeconds: Long
+    ) extends L1OutputSubmissionResult {
+      val accepted: Boolean = false
+    }
+
+    case class Rejected(statusCode: Int, reason: String, body: String) extends L1OutputSubmissionResult {
+      val accepted: Boolean = false
+    }
+
+    private case class AwaitingParentResponse(
+      status: String,
+      currentLastTxOrdinal: Long,
+      parentOrdinal: Long,
+      parentOrdinalGap: Long,
+      maxAcceptedParentOrdinalGap: Long,
+      awaitingParentTtlSeconds: Long
+    )
+
+    private implicit val awaitingParentResponseDecoder: Decoder[AwaitingParentResponse] =
+      Decoder.forProduct6(
+        "status",
+        "currentLastTxOrdinal",
+        "parentOrdinal",
+        "parentOrdinalGap",
+        "maxAcceptedParentOrdinalGap",
+        "awaitingParentTtlSeconds"
+      )(AwaitingParentResponse.apply)
+
+    def rejected(statusCode: Int, reason: String, body: String): L1OutputSubmissionResult =
+      decode[AwaitingParentResponse](body).toOption.collect {
+        case AwaitingParentResponse(
+              "ParentOrdinalGapTooLarge",
+              currentLastTxOrdinal,
+              parentOrdinal,
+              parentOrdinalGap,
+              maxAcceptedParentOrdinalGap,
+              awaitingParentTtlSeconds
+            ) =>
+          ParentOrdinalGapTooLarge(
+            currentLastTxOrdinal,
+            parentOrdinal,
+            parentOrdinalGap,
+            maxAcceptedParentOrdinalGap,
+            awaitingParentTtlSeconds
+          )
+      }
+        .getOrElse(Rejected(statusCode, reason, body))
+  }
+
   def make[F[_]: Async](pathPrefix: String, client: Client[F]): L0BlockOutputClient[F] =
     new L0BlockOutputClient[F] {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
       def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean] =
+        sendL1OutputDetailed(output).map(_.accepted)
+
+      def sendL1OutputDetailed(output: Signed[Block]): PeerResponse[F, L1OutputSubmissionResult] =
         PeerResponse(s"$pathPrefix/l1-output", POST)(client) { (req, c) =>
           // Instrumentation (Part 0): the block-submission path is NOT behind the snapshot 503
           // concurrency limiter, so when `Sending block to L0 failed.` fires it is a non-2xx
@@ -45,15 +113,17 @@ object L0BlockOutputClient {
           // Surface the actual status + body so the real failure mode is diagnosable.
           c.run(req.withEntity(output)).use { resp =>
             if (resp.status.isSuccess)
-              Async[F].pure(true)
+              Async[F].pure(L1OutputSubmissionResult.Accepted)
             else
               resp.bodyText.compile.string.flatMap { body =>
+                val result = L1OutputSubmissionResult.rejected(resp.status.code, resp.status.reason, body)
+
                 logger
                   .warn(
                     s"[L1-OUTPUT] L0 rejected block: status=${resp.status.code} ${resp.status.reason} " +
                       s"body=${body.take(800)}"
                   )
-                  .as(false)
+                  .as(result)
               }
           }
         }
