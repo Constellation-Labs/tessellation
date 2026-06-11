@@ -199,6 +199,27 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect.same(1, result.probationAdmittedSize)
   }
 
+  pureTest("promoted reserves maintain active target when expansion cadence is closed") {
+    val result = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (5, 5)),
+      activeScores = Map(a -> 80, b -> 80, c -> 80, d -> 120),
+      targetActiveSize = 4,
+      maxExpansionPerRound = 0
+    )
+
+    expect.same(List(a, b, c, d), result.active) &&
+    expect.same(0, result.expansionAdmittedSize) &&
+    expect.same(1, result.reserveAdmittedSize) &&
+    expect.same(List(d), result.reserveAdmitted) &&
+    expect(result.exclusions.isEmpty)
+  }
+
   pureTest("recent signers below retain threshold yield active slots to promoted candidates") {
     val result = fromRecent(
       selected = List(a, b, c, d),
@@ -235,7 +256,7 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect(!result.recentFilterApplied)
   }
 
-  pureTest("controller limits expansion rate even with multiple promoted candidates") {
+  pureTest("controller separates cadence expansion from promoted reserve maintenance") {
     val result = fromRecent(
       selected = List(a, b, c, d),
       recentSigners = window(
@@ -249,9 +270,11 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
       maxExpansionPerRound = 1
     )
 
-    expect.same(List(a, b, c), result.active) &&
-    expect.same(Set(d), result.exclusions.collect { case e if e.reason == ExclusionReason.BeyondTarget => e.peerId }.toSet) &&
-    expect.same(1, result.expansionAdmittedSize)
+    expect.same(List(a, b, c, d), result.active) &&
+    expect(result.exclusions.isEmpty) &&
+    expect.same(1, result.expansionAdmittedSize) &&
+    expect.same(1, result.reserveAdmittedSize) &&
+    expect.same(List(d), result.reserveAdmitted)
   }
 
   pureTest("controller score integrates finalized participation and self-health") {
@@ -305,6 +328,19 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
 
     expect.same(List(a, c), result.active) &&
     expect.same(Set(b), result.exclusions.collect { case e if e.reason == ExclusionReason.CertifiedTimeoutMissing => e.peerId }.toSet) &&
+    expect(result.recentFilterApplied)
+  }
+
+  pureTest("certified timeout shrink can retain reserve voters from selected pool") {
+    val result = ActiveFacilitatorAdmission.fromCertifiedTimeout(
+      selected = List(a, b, c, d),
+      recentSigners = SortedMap.empty,
+      timeoutVoters = Set(a, d),
+      minActiveSize = 2
+    )
+
+    expect.same(List(a, d), result.active) &&
+    expect.same(Set(b, c), result.exclusions.collect { case e if e.reason == ExclusionReason.CertifiedTimeoutMissing => e.peerId }.toSet) &&
     expect(result.recentFilterApplied)
   }
 

@@ -37,6 +37,8 @@ object ActiveFacilitatorAdmission {
     candidateSize: Int,
     targetSize: Int,
     expansionAdmittedSize: Int,
+    reserveAdmitted: List[PeerId],
+    reserveAdmittedSize: Int,
     probationAdmitted: List[PeerId],
     probationAdmittedSize: Int,
     recentSignerMinCount: Int,
@@ -130,9 +132,10 @@ object ActiveFacilitatorAdmission {
         uncappedRecentSignerPool.drop(recentSignerPool.size).map(Exclusion(_, ExclusionReason.BeyondTarget))
       else
         List.empty
+    val useRecentSignerPool = recentWindowDeepEnough && uncappedRecentSignerPool.size >= minActiveSize
 
     val expansionBase =
-      if (recentWindowDeepEnough)
+      if (useRecentSignerPool)
         selected.filterNot(pid => recentSignerSet.contains(pid) || recentScoreExcludedSet.contains(pid))
       else
         List.empty
@@ -154,13 +157,16 @@ object ActiveFacilitatorAdmission {
     val probationAdmitted = scoreExcluded.sortBy(probationRank).take(probationSlots)
     val expansionAdmitted = promotedAdmitted ++ probationAdmitted
     val expansionAdmittedSet = expansionAdmitted.toSet
-    val beyondTarget = sortedPromotedExpansionCandidates.filterNot(expansionAdmittedSet.contains)
+    val reserveSlots = math.max(0, target - recentSignerPool.size - expansionAdmitted.size)
+    val reserveAdmitted = sortedPromotedExpansionCandidates.filterNot(expansionAdmittedSet.contains).take(reserveSlots)
+    val reserveAdmittedSet = reserveAdmitted.toSet
+    val beyondTarget =
+      sortedPromotedExpansionCandidates.filterNot(pid => expansionAdmittedSet.contains(pid) || reserveAdmittedSet.contains(pid))
     val probationRejected = scoreExcluded.filterNot(expansionAdmittedSet.contains)
 
-    val useRecentSignerPool = recentWindowDeepEnough && uncappedRecentSignerPool.size >= minActiveSize
     val active =
       if (useRecentSignerPool)
-        recentSignerPool ++ expansionAdmitted
+        recentSignerPool ++ expansionAdmitted ++ reserveAdmitted
       else
         selected.take(target)
     val exclusions =
@@ -181,6 +187,8 @@ object ActiveFacilitatorAdmission {
       candidateSize = recentSignerPool.size + promotedExpansionCandidates.size + scoreExcluded.size,
       targetSize = target,
       expansionAdmittedSize = expansionAdmitted.size,
+      reserveAdmitted = reserveAdmitted,
+      reserveAdmittedSize = reserveAdmitted.size,
       probationAdmitted = probationAdmitted,
       probationAdmittedSize = probationAdmitted.size,
       recentSignerMinCount = recentSignerMinCount,
@@ -219,6 +227,8 @@ object ActiveFacilitatorAdmission {
       candidateSize = retained.size,
       targetSize = minActiveSize,
       expansionAdmittedSize = 0,
+      reserveAdmitted = List.empty,
+      reserveAdmittedSize = 0,
       probationAdmitted = List.empty,
       probationAdmittedSize = 0,
       recentSignerMinCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).minOption.getOrElse(0),
