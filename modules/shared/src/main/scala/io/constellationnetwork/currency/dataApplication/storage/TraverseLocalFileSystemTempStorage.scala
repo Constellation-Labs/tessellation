@@ -13,26 +13,29 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.storage.SerializableLocalFileSystemStorage
 
 import fs2.Stream
 import fs2.io.file.{Files, Path}
 
 final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: JsonSerializer] private (path: Path)
-    extends SerializableLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
+    extends SerializableLocalFileSystemStorage[F, Signed[CurrencyIncrementalSnapshot]](path) {
 
-  def deserializeFallback(bytes: Array[Byte]): Either[Throwable, CurrencyIncrementalSnapshot] =
-    KryoSerializer[F].deserialize[CurrencyIncrementalSnapshotV1](bytes).map(_.toCurrencyIncrementalSnapshot)
+  def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[CurrencyIncrementalSnapshot]] =
+    KryoSerializer[F]
+      .deserialize[Signed[CurrencyIncrementalSnapshotV1]](bytes)
+      .map(signed => Signed(signed.value.toCurrencyIncrementalSnapshot, signed.proofs))
 
   def read(
     ordinal: SnapshotOrdinal
-  ): F[CurrencyIncrementalSnapshot] =
+  ): F[Signed[CurrencyIncrementalSnapshot]] =
     read(toOrdinalName(ordinal)).flatMap {
       case Some(snapshot) => snapshot.pure[F]
-      case None           => SnapshotNotFoundInTempStorage(ordinal).raiseError[F, CurrencyIncrementalSnapshot]
+      case None           => SnapshotNotFoundInTempStorage(ordinal).raiseError[F, Signed[CurrencyIncrementalSnapshot]]
     }
 
-  def write(ordinal: SnapshotOrdinal, snapshot: CurrencyIncrementalSnapshot): F[Unit] = {
+  def write(ordinal: SnapshotOrdinal, snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit] = {
     val name = toOrdinalName(ordinal)
 
     exists(name).flatMap {
