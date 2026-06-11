@@ -206,13 +206,25 @@ class StateChannel[
       trySendToL0(block).flatMap {
         case true => Async[F].unit
         case false =>
-          l0ResendBuffer.update(buf => (if (buf.size >= maxL0ResendBuffer) buf.drop(1) else buf) :+ block) >>
-            logger.debug("Sending block to L0 failed; buffered for re-send.")
+          l0ResendBuffer.modify { buf =>
+            val overflow = buf.size >= maxL0ResendBuffer
+            ((if (overflow) buf.drop(1) else buf) :+ block, overflow)
+          }.flatMap { droppedOldest =>
+            logger
+              .warn(
+                s"L0 re-send buffer full ($maxL0ResendBuffer): dropped oldest undelivered block. " +
+                  "GL0 is likely badly unhealthy (deep finalization stall) and may need a restart."
+              )
+              .whenA(droppedOldest) >>
+              logger.debug("Sending block to L0 failed; buffered for re-send.")
+          }
       }
     }
 
   // Re-deliver buffered blocks oldest-first as L0's finalization frontier catches up. Stops at the
-  // first failure each tick (later blocks are even further ahead) and caps per-tick work.
+  // first failure each tick -- for the observed ParentOrdinalGapTooLarge wedge the head is the binding
+  // block, so this paces re-delivery to the frontier. (Classifying the failure to stop only on a gap
+  // reject, and trying another L0 peer on transport errors, is a follow-up.) Caps per-tick work.
   private val resendToL0: Stream[F, Unit] =
     Stream.awakeEvery(2.seconds).evalMap { _ =>
       def loop(remaining: Int): F[Unit] =
@@ -222,7 +234,14 @@ class StateChannel[
             case None => Async[F].unit
             case Some(block) =>
               trySendToL0(block).flatMap {
-                case true  => l0ResendBuffer.update(_.drop(1)) >> loop(remaining - 1)
+                case true =>
+                  // Remove the just-delivered block only if it is still the head, so a concurrent
+                  // overflow drop+append on the failure path cannot make us delete a different,
+                  // not-yet-sent block.
+                  l0ResendBuffer.update {
+                    case buf if buf.headOption.contains(block) => buf.drop(1)
+                    case buf                                   => buf
+                  } >> loop(remaining - 1)
                 case false => Async[F].unit
               }
           }
