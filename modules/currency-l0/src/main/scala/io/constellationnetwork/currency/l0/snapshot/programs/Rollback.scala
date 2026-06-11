@@ -59,7 +59,8 @@ object Rollback {
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F],
-    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F]
+    globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
@@ -106,6 +107,15 @@ object Rollback {
       _ <- collateral
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
+
+      _ <- snapshotStorage.prepend(lastIncremental, lastInfo).flatMap { prepended =>
+        if (prepended)
+          logger.info(s"Prepended last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage before loadChain")
+        else
+          logger.warn(
+            s"Could not prepend last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage (already at different head); loadChain may diverge"
+          )
+      }
 
       _ <- dataApplication.map {
         case (da, cs) =>

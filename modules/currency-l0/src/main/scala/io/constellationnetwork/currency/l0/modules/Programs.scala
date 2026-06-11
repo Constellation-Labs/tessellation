@@ -87,7 +87,8 @@ object Programs {
       storages.currencySnapshotCleanup,
       storages.globalSnapshotsWithStateFileStorage,
       storages.globalSnapshotsWithStateDeltasFileStorage,
-      services.globalSnapshotContextFunctions
+      services.globalSnapshotContextFunctions,
+      storages.snapshot
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}
