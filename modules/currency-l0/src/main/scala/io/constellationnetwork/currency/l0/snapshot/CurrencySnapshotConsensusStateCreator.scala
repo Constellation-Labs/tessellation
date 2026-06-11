@@ -303,6 +303,8 @@ object CurrencySnapshotConsensusStateCreator {
             "activeCandidates" -> activeAdmission.candidateSize.toString,
             "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
             "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
+            "reserveAdmitted" -> activeAdmission.reserveAdmittedSize.toString,
+            "probationAdmitted" -> activeAdmission.probationAdmittedSize.toString,
             "expansionIntervalRounds" -> expansionIntervalRounds.toString,
             "expansionAllowed" -> expansionAllowedThisRound.toString,
             "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
@@ -332,6 +334,19 @@ object CurrencySnapshotConsensusStateCreator {
           activeAdmission.expansionAdmittedSize,
           Seq.empty
         )
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_active_facilitator_reserve_admitted_total",
+          activeAdmission.reserveAdmittedSize,
+          Seq.empty
+        )
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_active_facilitator_admission_total",
+          activeAdmission.probationAdmittedSize,
+          Seq(
+            admissionDecisionLabel -> "admitted",
+            admissionReasonLabel -> "probation"
+          )
+        )
         _ <- activeAdmission.exclusions
           .groupBy(_.reason.label)
           .toList
@@ -355,6 +370,10 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_target_size", activeAdmission.targetSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
+        _ <- Metrics[F]
+          .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
+        _ <- Metrics[F]
+          .updateGauge("dag_consensus_active_facilitator_reserve_admitted_size", activeAdmission.reserveAdmittedSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
