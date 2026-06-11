@@ -2,10 +2,9 @@ package io.constellationnetwork.dag.l1
 
 import java.security.KeyPair
 
-import cats.Applicative
 import cats.data.OptionT
-import cats.effect.Async
 import cats.effect.std.{Random, Semaphore}
+import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -29,10 +28,12 @@ import io.constellationnetwork.ext.fs2.StreamOps
 import io.constellationnetwork.kernel.CellError
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.signature.Signed
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -49,6 +50,7 @@ class StateChannel[
   blockAcceptanceS: Semaphore[F],
   blockCreationS: Semaphore[F],
   blockStoringS: Semaphore[F],
+  l0ResendBuffer: Ref[F, Vector[Signed[Block]]],
   keyPair: KeyPair,
   p2PClient: P2PClient[F],
   programs: Programs[F, P, S, SI],
@@ -177,23 +179,54 @@ class StateChannel[
       }
     }
 
+  // Maximum number of undelivered blocks retained for re-send. Bounds memory if L0 is unreachable.
+  private val maxL0ResendBuffer: Int = 1024
+
+  /** Attempt a single delivery of a block to a collateralized L0 peer. Returns true on a 2xx, false on any non-2xx (e.g. 400
+    * ParentOrdinalGapTooLarge while L0 finalization lags) or transport error.
+    */
+  private def trySendToL0(block: Signed[Block]): F[Boolean] =
+    storages.l0Cluster.getPeers
+      .map(_.toNonEmptyList.toList)
+      .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
+      .flatMap(peers => Random[F].shuffleList(peers))
+      .map(_.headOption)
+      .flatMap {
+        case None         => logger.warn("No available L0 peer").as(false)
+        case Some(l0Peer) => p2PClient.l0BlockOutputClient.sendL1Output(block)(l0Peer)
+      }
+      .handleErrorWith(err => logger.error(err)("Error sending block to L0").as(false))
+
+  // Send each finalized block to L0 once. On failure the block is NOT dropped -- dropping leaves a
+  // permanent ordinal gap that L0 can never advance past once its finalization falls behind -- but is
+  // retained for ordered re-send by `resendToL0`. Local storage downstream is unaffected.
   private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
     _.evalTap { fb =>
-      storages.l0Cluster.getPeers
-        .map(_.toNonEmptyList.toList)
-        .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
-        .flatMap(peers => Random[F].shuffleList(peers))
-        .map(peers => peers.headOption)
-        .flatMap { maybeL0Peer =>
-          maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
-            p2PClient.l0BlockOutputClient
-              .sendL1Output(fb.hashedBlock.signed)(l0Peer)
-              .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+      val block = fb.hashedBlock.signed
+      trySendToL0(block).flatMap {
+        case true => Async[F].unit
+        case false =>
+          l0ResendBuffer.update(buf => (if (buf.size >= maxL0ResendBuffer) buf.drop(1) else buf) :+ block) >>
+            logger.debug("Sending block to L0 failed; buffered for re-send.")
+      }
+    }
+
+  // Re-deliver buffered blocks oldest-first as L0's finalization frontier catches up. Stops at the
+  // first failure each tick (later blocks are even further ahead) and caps per-tick work.
+  private val resendToL0: Stream[F, Unit] =
+    Stream.awakeEvery(2.seconds).evalMap { _ =>
+      def loop(remaining: Int): F[Unit] =
+        if (remaining <= 0) Async[F].unit
+        else
+          l0ResendBuffer.get.map(_.headOption).flatMap {
+            case None => Async[F].unit
+            case Some(block) =>
+              trySendToL0(block).flatMap {
+                case true  => l0ResendBuffer.update(_.drop(1)) >> loop(remaining - 1)
+                case false => Async[F].unit
+              }
           }
-        }
-        .handleErrorWith { err =>
-          logger.error(err)("Error sending block to L0")
-        }
+      loop(64)
     }
 
   private val blockAcceptance: Stream[F, Unit] = Stream
@@ -236,6 +269,7 @@ class StateChannel[
   val runtime: Stream[F, Unit] =
     blockConsensus
       .merge(blockAcceptance)
+      .merge(resendToL0)
 
 }
 
@@ -263,12 +297,14 @@ object StateChannel {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
+      l0ResendBuffer <- Ref.of[F, Vector[Signed[Block]]](Vector.empty)
     } yield
       new StateChannel[F, P, S, SI, R](
         appConfig,
         blockAcceptanceS,
         blockCreationS,
         blockStoringS,
+        l0ResendBuffer,
         keyPair,
         p2PClient,
         programs,
