@@ -557,10 +557,17 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
   // the global snapshot for N needs to reach L1, and L1 needs to process it.
   // Two progressions guarantees the lock's snapshot has been accepted and L1 is current.
   logWorkflow.info('Waiting for 2 ordinal progressions before sequential replacements...')
+  // Compare against a FIXED baseline (first observed ordinal), not the previous
+  // poll: on slow networks the ordinal advances by exactly 1 between polls, so
+  // a consecutive-poll delta of 2 is unsatisfiable even though rounds progress.
+  let baselineOrdinal = null
   await withRetryOrdinal(
-    async ({ ordinal, prevOrdinal }) => {
-      if (!prevOrdinal) throw new Error('Waiting for first ordinal')
-      if (ordinal - prevOrdinal < 2) throw new Error(`Waiting for 2 ordinal progressions: ${ordinal}`)
+    async ({ ordinal }) => {
+      if (baselineOrdinal === null) {
+        baselineOrdinal = ordinal
+        throw new Error('Waiting for first ordinal')
+      }
+      if (ordinal - baselineOrdinal < 2) throw new Error(`Waiting for 2 ordinal progressions: ${ordinal}`)
       return true
     },
     { globalL0Url: urls.globalL0Url, name: 'waitForLockPropagation', maxOrdinalMisses: 10, maxStalledChecks: 60 }
