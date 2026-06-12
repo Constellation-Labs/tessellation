@@ -539,6 +539,32 @@ object CurrencySnapshotConsensusStateAdvancer {
             acs.isEmpty &&
             graceOpen
 
+      /** Caps the assembled admission certificates attached to an outgoing proposal at the validation limit (`acs_too_many` in
+        * `validateProposalAcs`). Selection is delegated to the shared `AdmissionCertificateSelector` -- see its scaladoc for the
+        * determinism + wedge rationale. Logs + counts only when the cap actually drops certificates. Mirrored verbatim in
+        * `GlobalSnapshotConsensusStateAdvancer.capAssembledAdmissionCertificates` (keep in sync).
+        */
+      private def capAssembledAdmissionCertificates(
+        key: CurrencySnapshotKey,
+        assembled: Set[AdmissionCertificate]
+      ): F[List[AdmissionCertificate]] = {
+        val selection = AdmissionCertificateSelector.select(assembled, config.activeAdmissionMaxExpansionPerRound)
+        ConsensusLog
+          .info(
+            logger,
+            Category.Phase,
+            key.show,
+            "Leader",
+            Event.Admission,
+            "stage" -> "proposal_cap",
+            "kept" -> selection.kept.map(c => ConsensusLog.pid(c.targetPeer)).mkString(","),
+            "dropped" -> selection.dropped.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
+          )
+          .productR(Metrics[F].incrementCounter("dag_consensus_admission_cert_capped_total"))
+          .whenA(selection.dropped.nonEmpty)
+          .as(selection.kept)
+      }
+
       private def toProposalsPhase(
         state: CurrencySnapshotConsensusState,
         facilities: SortedMap[PeerId, Facility]
@@ -779,7 +805,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                       ecs <-
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
-                      acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
+                      acs <- consensusStorage
+                        .getAssembledAdmissionCertificates(state.key)
+                        .flatMap(capAssembledAdmissionCertificates(state.key, _))
                     } yield (ecs, acs)).flatMap {
                       case (ecs, acs) =>
                         spreadProposal(
@@ -793,7 +821,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                           maybeAssembledVcc,
                           maybeTimeoutCertificate,
                           ecs.toList,
-                          acs.toList,
+                          acs,
                           observedResponders,
                           observedSelfHealth
                         )
@@ -874,7 +902,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                   ecs <-
                     if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                     else consensusStorage.getAssembledEvictionCertificates(state.key)
-                  acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
+                  acs <- consensusStorage
+                    .getAssembledAdmissionCertificates(state.key)
+                    .flatMap(capAssembledAdmissionCertificates(state.key, _))
                 } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
                   case (maybeVcc, maybeTc, ecs, acs) =>
                     logger.info(
@@ -892,7 +922,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                         maybeVcc,
                         maybeTc,
                         ecs.toList,
-                        acs.toList,
+                        acs,
                         // v7 codex turn 2 fix #2: re-spread reads observedResponders from the
                         // immutable status, not recomputed from current resources.
                         // v15: same rationale for observedSelfHealth.
@@ -1437,8 +1467,15 @@ object CurrencySnapshotConsensusStateAdvancer {
         val postEvictionRemoved =
           if (evictedTargets.isEmpty) state.removedFacilitators
           else RemovedFacilitators(state.removedFacilitators.value ++ evictedTargets)
+        // Defense in depth (mirrors dag-l0): validateProposalAcs already rejected any proposal
+        // carrying more than the cap (`acs_too_many`), so this selection is a no-op on every
+        // honest path. Applying the SAME shared deterministic selection here guarantees that
+        // even if a future refactor ever lets an over-cap proposal through validation, every
+        // node still admits the same capped subset.
+        val admissionSelection =
+          AdmissionCertificateSelector.select(leaderAdmissionCerts, config.activeAdmissionMaxExpansionPerRound)
         val admittedTargets: Set[PeerId] =
-          leaderAdmissionCerts.map(_.targetPeer).toSet
+          admissionSelection.kept.map(_.targetPeer).toSet
         val postAdmissionAdmitted =
           if (admittedTargets.isEmpty) state.admittedFacilitators
           else AdmittedFacilitators(state.admittedFacilitators.value ++ admittedTargets)
@@ -1493,6 +1530,20 @@ object CurrencySnapshotConsensusStateAdvancer {
                       s"targets=${admittedTargets.toList.map(_.show.take(8)).mkString(",")}"
                   )
                   .whenA(admittedTargets.nonEmpty)
+                // Should never fire (validation rejects over-cap proposals); a hit means an
+                // over-cap proposal slipped past validateProposalAcs.
+                _ <- (ConsensusLog
+                  .info(
+                    logger,
+                    Category.Phase,
+                    state.key.show,
+                    "n/a",
+                    Event.Admission,
+                    "stage" -> "apply_cap",
+                    "kept" -> admissionSelection.kept.map(c => ConsensusLog.pid(c.targetPeer)).mkString(","),
+                    "dropped" -> admissionSelection.dropped.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
+                  ) >> Metrics[F].incrementCounter("dag_consensus_admission_cert_capped_total"))
+                  .whenA(admissionSelection.dropped.nonEmpty)
               } yield
                 Transition(
                   newState = state.copy(
