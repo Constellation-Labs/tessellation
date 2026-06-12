@@ -531,6 +531,11 @@ object GlobalSnapshotConsensusStateCreator {
         // pool on `peerQuality` (descending ratio, descending completed, then PeerId lex).
         // At genesis (empty `peerQuality`) ranking collapses to pure lex order so the cluster
         // bootstraps deterministically from scratch.
+        // Chronic-core replacement ladder: `chronicMisses` (evidence-derived trailing miss
+        // streaks, empty in the fallback regime) bars chronically-missing peers from Core,
+        // swaps them for the highest-scored non-chronic reserves, prefers a smaller Core over
+        // chronic padding when supply is short, and re-admits the least-bad chronic peers only
+        // below MinViableCoreSize. See the CommitteeBuilder scaladoc for the full ladder.
         committees = CommitteeBuilder.build(
           candidates = active,
           priorTiers = controllerInputs.peerTiers,
@@ -538,8 +543,25 @@ object GlobalSnapshotConsensusStateCreator {
           coreFloor = coreCommitteeSize,
           minObservations = config.minParticipationObservations,
           minRatio = config.minParticipationRatio,
-          nonCorePeers = activeAdmission.probationAdmitted.toSet
+          nonCorePeers = activeAdmission.probationAdmitted.toSet,
+          chronicMisses = controllerInputs.chronicMisses,
+          activeScores = controllerInputs.activeScores
         )
+
+        _ <- logger
+          .info(
+            s"Chronic core replacement at key=$key: " +
+              s"excluded=${committees.chronicExcluded.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")} " +
+              s"replacements=${committees.chronicReplacements.map(_.value.value.take(8)).mkString(",")} " +
+              s"readmitted=${committees.chronicReadmitted.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")}"
+          )
+          .whenA(committees.chronicExcluded.nonEmpty || committees.chronicReadmitted.nonEmpty)
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_chronic_core_replacement_total",
+          committees.chronicReplacements.size,
+          Seq.empty
+        )
+        _ <- Metrics[F].updateGauge("dag_consensus_chronic_core_excluded_size", committees.chronicExcluded.size.toLong)
 
         _ <- ConsensusLog.info(
           logger,

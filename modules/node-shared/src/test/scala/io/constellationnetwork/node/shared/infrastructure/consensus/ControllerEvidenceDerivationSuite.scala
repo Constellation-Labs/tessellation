@@ -157,6 +157,71 @@ object ControllerEvidenceDerivationSuite extends SimpleIOSuite {
     expect.same(TierTransitions.Core, derived(b).derivedTier)
   }
 
+  // ===========================================================================
+  // consecutiveMisses / chronicMisses (chronic-core replacement inputs)
+  // ===========================================================================
+
+  pureTest("consecutiveMisses counts the trailing asked-but-silent streak") {
+    val evidence = window(
+      1L -> entry(Set(a, b), Set(a, b)),
+      2L -> entry(Set(a, b), Set(a)),
+      3L -> entry(Set(a, b), Set(a)),
+      4L -> entry(Set(a, b), Set(a))
+    )
+
+    expect.same(3, ControllerEvidenceDerivation.consecutiveMisses(evidence, b)) &&
+    expect.same(0, ControllerEvidenceDerivation.consecutiveMisses(evidence, a))
+  }
+
+  pureTest("consecutiveMisses resets to zero when the peer signs the latest entry") {
+    val evidence = window(
+      1L -> entry(Set(a, b), Set(a)),
+      2L -> entry(Set(a, b), Set(a)),
+      3L -> entry(Set(a, b), Set(a, b))
+    )
+
+    expect.same(0, ControllerEvidenceDerivation.consecutiveMisses(evidence, b))
+  }
+
+  pureTest("consecutiveMisses: absence from roundStart breaks the streak rather than extending it") {
+    // b misses at 1 and 2, is NOT asked to sign at 3 (absent from roundStart), then
+    // misses again at 4. The documented choice: absence breaks the streak (the peer
+    // was not asked to sign, so the entry is no evidence of unresponsiveness), so only
+    // the trailing miss at 4 counts.
+    val evidence = window(
+      1L -> entry(Set(a, b), Set(a)),
+      2L -> entry(Set(a, b), Set(a)),
+      3L -> entry(Set(a), Set(a)),
+      4L -> entry(Set(a, b), Set(a))
+    )
+
+    expect.same(1, ControllerEvidenceDerivation.consecutiveMisses(evidence, b))
+  }
+
+  pureTest("consecutiveMisses is zero on empty evidence and for peers never in roundStart") {
+    val evidence = window(1L -> entry(Set(a), Set(a)))
+
+    expect.same(0, ControllerEvidenceDerivation.consecutiveMisses(SortedMap.empty, b)) &&
+    expect.same(0, ControllerEvidenceDerivation.consecutiveMisses(evidence, b))
+  }
+
+  pureTest("chronicMisses flags only peers at or above ChronicMissThreshold") {
+    // b: 3 trailing misses (chronic at threshold 3); c: 2 trailing misses (not chronic);
+    // a: signs everything.
+    val evidence = window(
+      1L -> entry(Set(a, b), Set(a, b)),
+      2L -> entry(Set(a, b), Set(a)),
+      3L -> entry(Set(a, b, c), Set(a)),
+      4L -> entry(Set(a, b, c), Set(a))
+    )
+
+    expect.same(SortedMap(b -> 3), ControllerEvidenceDerivation.chronicMisses(evidence))
+  }
+
+  pureTest("chronicMisses is empty on an empty window") {
+    expect.same(SortedMap.empty[PeerId, Int], ControllerEvidenceDerivation.chronicMisses(SortedMap.empty))
+  }
+
   pureTest("appendBounded appends the entry and trims to the tightening window") {
     val prior = fullWindow(10, Set(a), Set(a))
     val next = ControllerEvidenceDerivation.appendBounded(prior, ord(11L), entry(Set(a, b), Set(b)), tighteningWindow = 10)
@@ -259,7 +324,31 @@ object ControllerEvidenceDerivationSuite extends SimpleIOSuite {
     expect.same(carriedQuality, inputs.peerQuality) &&
     expect.same(carriedTiers, inputs.peerTiers) &&
     expect.same(carriedViewChanges, inputs.viewChanges) &&
-    expect.same(carriedSelfHealth, inputs.selfHealth)
+    expect.same(carriedSelfHealth, inputs.selfHealth) &&
+    expect.same(SortedMap.empty[PeerId, Int], inputs.chronicMisses) &&
+    expect.same(Set.empty[PeerId], inputs.chronicallyMissing)
+  }
+
+  pureTest("controllerInputsWithFallback exposes evidence-derived chronicMisses in the evidence regime") {
+    // b misses the trailing 4 entries (chronic); a signs everything.
+    val evidence = window(
+      1L -> entry(Set(a, b), Set(a, b)),
+      2L -> entry(Set(a, b), Set(a)),
+      3L -> entry(Set(a, b), Set(a)),
+      4L -> entry(Set(a, b), Set(a)),
+      5L -> entry(Set(a, b), Set(a))
+    )
+    val inputs = ControllerEvidenceDerivation.controllerInputsWithFallback(
+      evidence = evidence,
+      carriedScores = carriedScores,
+      carriedQuality = carriedQuality,
+      carriedTiers = carriedTiers,
+      carriedViewChanges = carriedViewChanges,
+      carriedSelfHealth = carriedSelfHealth
+    )
+
+    expect.same(SortedMap(b -> 4), inputs.chronicMisses) &&
+    expect.same(Set(b), inputs.chronicallyMissing)
   }
 
   pureTest("controllerInputsWithFallback derives from evidence and ignores the carried maps when the window has entries") {

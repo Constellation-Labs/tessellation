@@ -459,7 +459,9 @@ object CurrencySnapshotConsensusStateCreator {
           _ <- gossip.spreadDirect(declaration, active.toSet)
         } yield ()
 
-        // v19 multi-committee derivation. Mirror of dag-l0.
+        // v19 multi-committee derivation, including the chronic-core replacement ladder
+        // (evidence-derived `chronicMisses` bars chronic peers from Core and swaps them for
+        // healthy reserves). Mirror of dag-l0; see CommitteeBuilder scaladoc for the ladder.
         committees = CommitteeBuilder.build(
           candidates = active,
           priorTiers = controllerInputs.peerTiers,
@@ -467,8 +469,25 @@ object CurrencySnapshotConsensusStateCreator {
           coreFloor = coreCommitteeSize,
           minObservations = config.minParticipationObservations,
           minRatio = config.minParticipationRatio,
-          nonCorePeers = activeAdmission.probationAdmitted.toSet
+          nonCorePeers = activeAdmission.probationAdmitted.toSet,
+          chronicMisses = controllerInputs.chronicMisses,
+          activeScores = controllerInputs.activeScores
         )
+
+        _ <- logger
+          .info(
+            s"Chronic core replacement at key=$key: " +
+              s"excluded=${committees.chronicExcluded.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")} " +
+              s"replacements=${committees.chronicReplacements.map(_.value.value.take(8)).mkString(",")} " +
+              s"readmitted=${committees.chronicReadmitted.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")}"
+          )
+          .whenA(committees.chronicExcluded.nonEmpty || committees.chronicReadmitted.nonEmpty)
+        _ <- Metrics[F].incrementCounterBy(
+          "dag_consensus_chronic_core_replacement_total",
+          committees.chronicReplacements.size,
+          Seq.empty
+        )
+        _ <- Metrics[F].updateGauge("dag_consensus_chronic_core_excluded_size", committees.chronicExcluded.size.toLong)
 
         _ <- ConsensusLog.info(
           logger,
