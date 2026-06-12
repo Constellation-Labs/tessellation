@@ -91,7 +91,9 @@ object ControllerEvidenceDivergenceSuite extends SimpleIOSuite {
 
   private val selected = List(a, b, c, d)
 
-  private def recentSignersOf(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): SortedMap[SnapshotOrdinal, SortedSet[PeerId]] =
+  private def recentSignersOf(
+    evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]
+  ): SortedMap[SnapshotOrdinal, SortedSet[PeerId]] =
     evidence.map { case (o, en) => o -> en.completedSigners }
 
   private def admissionFromDerived(fixture: OutcomeFixture): ActiveFacilitatorAdmission.Result = {
@@ -188,8 +190,8 @@ object ControllerEvidenceDivergenceSuite extends SimpleIOSuite {
 
   /** Mirror of the StateCreators' stage-4 pipeline: `controllerInputsWithFallback` -> `chooseActive` -> `CommitteeBuilder.build` ->
     * `LeaderEligibility.fromRecentSigners` -> `selectLeaderWeighted`, with the same input-to-call-site mapping as
-    * GlobalSnapshotConsensusStateCreator / CurrencySnapshotConsensusStateCreator. Entropy and viewNumber are fixed
-    * (`Hash.empty` / `0`) so the leader comparison is deterministic -- `selectLeaderWeighted` is a pure function of its arguments.
+    * GlobalSnapshotConsensusStateCreator / CurrencySnapshotConsensusStateCreator. Entropy and viewNumber are fixed (`Hash.empty` / `0`) so
+    * the leader comparison is deterministic -- `selectLeaderWeighted` is a pure function of its arguments.
     */
   private def deriveRound(fixture: OutcomeFixture): RoundDerivation = {
     val inputs = ControllerEvidenceDerivation.controllerInputsWithFallback(
