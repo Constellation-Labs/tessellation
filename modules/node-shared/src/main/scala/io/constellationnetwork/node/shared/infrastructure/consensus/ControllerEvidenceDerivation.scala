@@ -138,8 +138,8 @@ object ControllerEvidenceDerivation {
     *   carrying the locally-mutated map would reintroduce the seed-split divergence the evidence closes. The carried map is used only in
     *   the empty-window fallback regime, so pre-warm-up behavior is unchanged. Stage-5 evidence-gap item.
     * @param selfHealth
-    *   per-peer self-health hints for leader selection. Same contract as `viewChanges`: empty when evidence is present, carried only in
-    *   the fallback regime. Stage-5 evidence-gap item.
+    *   per-peer self-health hints for leader selection. Same contract as `viewChanges`: empty when evidence is present, carried only in the
+    *   fallback regime. Stage-5 evidence-gap item.
     * @param evidenceRounds
     *   number of evidence entries the derivation consumed; `0` means the carried fallback was taken.
     */
@@ -155,11 +155,11 @@ object ControllerEvidenceDerivation {
   /** Stage-4 read-side switch with bootstrap fallback.
     *
     * When the evidence window holds at least one entry, the controller inputs are derived purely from the signed evidence (a function of
-    * finalized chain facts -- two honest nodes holding the same window MUST compute identical inputs, regardless of carried or seeded
-    * local state); `viewChanges` / `selfHealth` have no evidence-derived counterpart yet and are emitted EMPTY in that regime (see
+    * finalized chain facts -- two honest nodes holding the same window MUST compute identical inputs, regardless of carried or seeded local
+    * state); `viewChanges` / `selfHealth` have no evidence-derived counterpart yet and are emitted EMPTY in that regime (see
     * `ControllerInputs`). When the window is EMPTY (first deploy / bootstrap / rollback to a pre-deploy snapshot) ALL carried maps are
-    * returned unchanged so behavior matches the pre-stage-4 read until the window fills. Callers log the taken branch via
-    * `evidenceRounds` (`0` => `controller_evidence=empty fallback=carried`).
+    * returned unchanged so behavior matches the pre-stage-4 read until the window fills. Callers log the taken branch via `evidenceRounds`
+    * (`0` => `controller_evidence=empty fallback=carried`).
     */
   def controllerInputsWithFallback(
     evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry],
@@ -218,8 +218,8 @@ object ControllerEvidenceDerivation {
 
   /** Append the just-finalized round's entry and trim to the rolling window.
     *
-    * Same window arithmetic the `recentSigners` / `recentProofSizes` / `recentRoundEndTimes` windows use: entries older than
-    * `key - tighteningWindow + 1` are dropped. Shared between the dag-l0 and currency-l0 StateAdvancers so the trim logic cannot drift.
+    * Same window arithmetic the `recentSigners` / `recentProofSizes` / `recentRoundEndTimes` windows use: entries older than `key -
+    * tighteningWindow + 1` are dropped. Shared between the dag-l0 and currency-l0 StateAdvancers so the trim logic cannot drift.
     */
   def appendBounded(
     prior: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry],

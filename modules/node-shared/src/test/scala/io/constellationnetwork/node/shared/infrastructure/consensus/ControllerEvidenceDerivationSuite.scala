@@ -42,7 +42,10 @@ object ControllerEvidenceDerivationSuite extends SimpleIOSuite {
     window((1L to size.toLong).map(o => o -> entry(roundStart, signers)): _*)
 
   pureTest("empty evidence derives an empty map") {
-    expect.same(SortedMap.empty[PeerId, ControllerEvidenceDerivation.DerivedPeerState], ControllerEvidenceDerivation.derive(SortedMap.empty))
+    expect.same(
+      SortedMap.empty[PeerId, ControllerEvidenceDerivation.DerivedPeerState],
+      ControllerEvidenceDerivation.derive(SortedMap.empty)
+    )
   }
 
   pureTest("a fully participating peer saturates above the promote threshold within one window") {
