@@ -306,6 +306,14 @@ object types {
     activeAdmissionPassiveDecay: Int = 1,
     activeAdmissionMaxExpansionPerRound: Int = 1,
     activeAdmissionExpansionIntervalRounds: Int = 1,
+    // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
+    // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
+    // AdmissionCertificate clears the entry. Pure ordinal comparisons, no per-round countdown.
+    // Stage 4 (v32) activates the read side: `penaltyUntil` joins the eligibility filtering
+    // in both StateCreators, so divergent operator values would change committee derivation.
+    // Consensus-critical: included in `deterministicConfigHash` since v32 so divergent values
+    // are rejected at the Facility handshake instead of silently forking.
+    penaltyDurationOrdinals: Int = 100,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
     qualityDecayThreshold: Int = 100,
@@ -736,7 +744,16 @@ object types {
     //     v31: probationary active expansion is forced non-Core for the round. Probation
     //     peers can receive facilities and sign as Tier 1, but cannot carry a prior Core
     //     tier or satisfy Core-floor promotion until the integral controller graduates them.
-    consensusSchemaVersion: Int = 31,
+    //     v32: controller-evidence read side activates (stage 4). Active-admission scores and
+    //     quality derive from the signed `controllerEvidence` window (carried maps remain only
+    //     as the bootstrap fallback while the window is empty); cert-anchored `penaltyUntil`
+    //     joins eligibility filtering; `penaltyDurationOrdinals` enters
+    //     `deterministicConfigHash`. Signed-bytes shape changed: peerHistory reinstated with
+    //     an evidence-only payload (perPeer empty, recentRoundEndTimes omitted,
+    //     controllerEvidence + penaltyUntil signed), so deploy as a coordinated cold L0
+    //     restart. As always the jar/config-hash mismatch at handshake is the real gate; this
+    //     bump is the audit anchor.
+    consensusSchemaVersion: Int = 32,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -882,6 +899,10 @@ object types {
           // `3` when absent (matches the pre-v20 `SnapshotConfig.coreCommitteeSize.get(env)
           // .map(_.value).getOrElse(3)` resolution at the consensus construction site).
           s"coreCommitteeSize=${coreCommitteeSize.getOrElse(3)}," +
+          // v32 (stage 4): cert-anchored penalty duration. Read by the StateCreators'
+          // penaltyUntil eligibility filtering and the advancers' penaltyUntil writes;
+          // divergent operator values would derive divergent committees and silently fork.
+          s"penaltyDurationOrdinals=$penaltyDurationOrdinals," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))

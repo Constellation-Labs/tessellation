@@ -38,12 +38,13 @@ import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StatePro
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[
-  F[_]: Async: HasherSelector: SecurityProvider: Random,
+  F[_]: Async: HasherSelector: SecurityProvider: Random: Metrics,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P],
@@ -185,6 +186,26 @@ class StateChannel[
   // Maximum number of undelivered blocks retained for re-send. Bounds memory if L0 is unreachable.
   private val maxL0ResendBuffer: Int = 1024
   private val maxL0BackfillBlocksPerGap: Int = 256
+  private val l0OutputOutcomeLabel = Metrics.unsafeLabelName("outcome")
+  private val l0OutputReasonLabel = Metrics.unsafeLabelName("reason")
+  private val l0OutputSourceLabel = Metrics.unsafeLabelName("source")
+
+  private def submissionOutcome(result: L1OutputSubmissionResult): String =
+    result match {
+      case Accepted                    => "accepted"
+      case _: ParentOrdinalGapTooLarge => "parent_ordinal_gap_too_large"
+      case _: Rejected                 => "rejected"
+    }
+
+  private def recordL0Submission(result: L1OutputSubmissionResult, source: String): F[Unit] =
+    Metrics[F].incrementCounterBy(
+      "dag_l1_l0_output_submission_total",
+      1L,
+      Seq(
+        l0OutputOutcomeLabel -> submissionOutcome(result),
+        l0OutputSourceLabel -> source
+      )
+    )
 
   /** Attempt a single delivery of a block to a collateralized L0 peer. Returns the classified response so the L1 can distinguish
     * gap-rejections from generic transport/non-2xx failures.
@@ -222,16 +243,31 @@ class StateChannel[
       l0ResendBuffer.modify { buf =>
         val merged = (buf ++ blocks).distinct.sortBy(lowestParentOrdinal)
         val overflow = (merged.size - maxL0ResendBuffer).max(0)
+        val retained = merged.take(maxL0ResendBuffer)
 
-        (merged.take(maxL0ResendBuffer), overflow)
-      }.flatMap { dropped =>
-        logger
-          .warn(
-            s"L0 re-send buffer full ($maxL0ResendBuffer): dropped $dropped furthest-ahead undelivered block(s). " +
-              "GL0 is likely badly unhealthy (deep finalization stall) and may need a restart."
-          )
-          .whenA(dropped > 0) >>
-          logger.debug(s"Buffered ${blocks.size} block(s) for L0 re-send; reason=$reason")
+        (retained, (overflow, retained.size))
+      }.flatMap {
+        case (dropped, retainedSize) =>
+          logger
+            .warn(
+              s"L0 re-send buffer full ($maxL0ResendBuffer): dropped $dropped furthest-ahead undelivered block(s). " +
+                "GL0 is likely badly unhealthy (deep finalization stall) and may need a restart."
+            )
+            .whenA(dropped > 0) >>
+            Metrics[F].incrementCounterBy(
+              "dag_l1_l0_output_buffered_total",
+              blocks.size.toLong,
+              Seq(l0OutputReasonLabel -> reason)
+            ) >>
+            Metrics[F]
+              .incrementCounterBy(
+                "dag_l1_l0_output_buffer_overflow_dropped_total",
+                dropped.toLong,
+                Seq(l0OutputReasonLabel -> reason)
+              )
+              .whenA(dropped > 0) >>
+            Metrics[F].updateGauge("dag_l1_l0_output_resend_buffer_size", retainedSize.toLong) >>
+            logger.debug(s"Buffered ${blocks.size} block(s) for L0 re-send; reason=$reason")
       }
 
   private def bufferBackfillForGap(failedBlock: Signed[Block], gap: ParentOrdinalGapTooLarge): F[Unit] = {
@@ -266,6 +302,13 @@ class StateChannel[
             s"Buffered ${backfill.size} locally stored bridge block(s) plus failed block; scanWindow=(${lower + 1}..$upper) " +
             s"sourceScoped=${gapSources.nonEmpty} backfillCap=$maxL0BackfillBlocksPerGap."
         ) >>
+          Metrics[F].incrementCounterBy(
+            "dag_l1_l0_output_backfill_blocks_total",
+            backfill.size.toLong,
+            Seq(l0OutputReasonLabel -> "parent_ordinal_gap_too_large")
+          ) >>
+          Metrics[F].updateGauge("dag_l1_l0_output_parent_gap", gap.parentOrdinalGap.toLong) >>
+          Metrics[F].updateGauge("dag_l1_l0_output_backfill_scan_window_size", math.max(0L, upper - lower)) >>
           appendToL0ResendBuffer(toBuffer, "parent_gap_backfill")
       }
   }
@@ -286,8 +329,8 @@ class StateChannel[
     _.evalTap { fb =>
       val block = fb.hashedBlock.signed
       trySendToL0(block).flatMap {
-        case Accepted => Async[F].unit
-        case result   => bufferFailedL0Delivery(block, result)
+        case Accepted => recordL0Submission(Accepted, "initial")
+        case result   => recordL0Submission(result, "initial") >> bufferFailedL0Delivery(block, result)
       }
     }
 
@@ -308,11 +351,14 @@ class StateChannel[
                   // Remove the just-delivered block only if it is still the head, so a concurrent
                   // overflow drop+append on the failure path cannot make us delete a different,
                   // not-yet-sent block.
-                  l0ResendBuffer.update {
-                    case buf if buf.headOption.contains(block) => buf.drop(1)
-                    case buf                                   => buf
-                  } >> loop(remaining - 1)
-                case result => bufferFailedL0Delivery(block, result)
+                  recordL0Submission(Accepted, "resend") >>
+                    l0ResendBuffer.update {
+                      case buf if buf.headOption.contains(block) => buf.drop(1)
+                      case buf                                   => buf
+                    } >>
+                    l0ResendBuffer.get.flatMap(buf => Metrics[F].updateGauge("dag_l1_l0_output_resend_buffer_size", buf.size.toLong)) >>
+                    loop(remaining - 1)
+                case result => recordL0Submission(result, "resend") >> bufferFailedL0Delivery(block, result)
               }
           }
       loop(64)
@@ -365,7 +411,7 @@ class StateChannel[
 object StateChannel {
 
   def make[
-    F[_]: Async: HasherSelector: SecurityProvider: Random,
+    F[_]: Async: HasherSelector: SecurityProvider: Random: Metrics,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P],

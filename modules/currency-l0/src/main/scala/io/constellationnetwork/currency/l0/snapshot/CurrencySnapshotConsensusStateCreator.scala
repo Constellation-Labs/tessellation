@@ -4,6 +4,8 @@ import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.currency.l0.snapshot.schema.{CollectingFacilities, CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
@@ -181,7 +183,13 @@ object CurrencySnapshotConsensusStateCreator {
         // tier partition handles chronic non-signers, prior-round-missing, tightening
         // window, and candidate deferral at CommitteeBuilder. Penalty remains the
         // post-fork-eviction gate. Deterministic: derived from consensus-agreed lastOutcome.
-        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
+        // Stage 4 cert-anchored penalties: pure ordinal comparison against the consensus-agreed
+        // key, unioned into `penalizedPeers`. Mirror of dag-l0; see there for full rationale.
+        certPenalizedPeers = lastOutcome.penaltyUntil
+          .getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal])
+          .filter { case (_, until) => until.value.value > key.value.value }
+          .keySet
+        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet ++ certPenalizedPeers
 
         // B2 re-admission probation. Non-bypassable; see dag-l0 mirror.
         probationPeers = lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
@@ -258,12 +266,30 @@ object CurrencySnapshotConsensusStateCreator {
         maxExpansionThisRound =
           if (expansionAllowedThisRound) config.activeAdmissionMaxExpansionPerRound
           else 0
+        // Stage 4 read-side switch with carried-map fallback while the evidence window is
+        // empty. Mirror of dag-l0; see there for full rationale. The evidence-vs-carried
+        // decision (including empty viewChanges / selfHealth in the evidence regime) lives
+        // entirely inside controllerInputsWithFallback -- no conditional logic here.
+        controllerInputs = ControllerEvidenceDerivation.controllerInputsWithFallback(
+          evidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+          carriedScores = lastOutcome.activeAdmissionScores.toMap,
+          carriedQuality = lastOutcome.peerQuality.toMap,
+          carriedTiers = lastOutcome.peerTiers,
+          carriedViewChanges = lastOutcome.peerViewChanges.toMap,
+          carriedSelfHealth = lastOutcome.peerSelfHealth.toMap
+        )
+        _ <- logger.info(
+          s"Controller inputs for key=$key: " + (
+            if (controllerInputs.evidenceRounds === 0) "controller_evidence=empty fallback=carried"
+            else s"controller_evidence=${controllerInputs.evidenceRounds} rounds"
+          )
+        )
         activeAdmission = ConsensusPeerController.chooseActive(
           ConsensusPeerController.AdmissionInput(
             selected = selectedFacilitators,
             recentSigners = lastOutcome.recentSigners,
-            peerQuality = lastOutcome.peerQuality.toMap,
-            activeScores = lastOutcome.activeAdmissionScores.toMap,
+            peerQuality = controllerInputs.peerQuality,
+            activeScores = controllerInputs.activeScores,
             minActiveSize = coreCommitteeSize,
             targetActiveSize = targetActiveSize,
             maxActiveSize = maxActiveSize,
@@ -301,6 +327,11 @@ object CurrencySnapshotConsensusStateCreator {
             "active" -> activeFacilitators.size.toString,
             "activeTarget" -> activeAdmission.targetSize.toString,
             "activeCandidates" -> activeAdmission.candidateSize.toString,
+            "promotedCandidates" -> activeAdmission.promotedCandidateSize.toString,
+            "scoreExcluded" -> activeAdmission.scoreExcludedSize.toString,
+            "qualityExcluded" -> activeAdmission.qualityExcludedSize.toString,
+            "demotedRecentSigners" -> activeAdmission.demotedRecentSignerSize.toString,
+            "belowRetainRecentSigners" -> activeAdmission.belowRetainRecentSignerSize.toString,
             "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
             "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
             "reserveAdmitted" -> activeAdmission.reserveAdmittedSize.toString,
@@ -369,12 +400,29 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_selected_size", selectedFacilitators.size.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_target_size", activeAdmission.targetSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_active_facilitator_promoted_candidate_size",
+          activeAdmission.promotedCandidateSize.toLong
+        )
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_reserve_admitted_size", activeAdmission.reserveAdmittedSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
+        _ <- List(
+          ActiveFacilitatorAdmission.ExclusionReason.QualityBelowThreshold.label -> activeAdmission.qualityExcludedSize,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowPromoteThreshold.label -> activeAdmission.scoreExcludedSize,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowDemoteThreshold.label -> activeAdmission.demotedRecentSignerSize,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowRetainThreshold.label -> activeAdmission.belowRetainRecentSignerSize
+        ).traverse_ {
+          case (reason, count) =>
+            Metrics[F].updateGauge(
+              "dag_consensus_active_facilitator_blocker_size",
+              count.toLong,
+              Seq(admissionReasonLabel -> reason)
+            )
+        }
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(CurrencyConsensusKind.Facility)
@@ -414,8 +462,8 @@ object CurrencySnapshotConsensusStateCreator {
         // v19 multi-committee derivation. Mirror of dag-l0.
         committees = CommitteeBuilder.build(
           candidates = active,
-          priorTiers = lastOutcome.peerTiers,
-          peerQuality = lastOutcome.peerQuality,
+          priorTiers = controllerInputs.peerTiers,
+          peerQuality = controllerInputs.peerQuality,
           coreFloor = coreCommitteeSize,
           minObservations = config.minParticipationObservations,
           minRatio = config.minParticipationRatio,
@@ -439,7 +487,7 @@ object CurrencySnapshotConsensusStateCreator {
         coreList = committees.core
         leaderEligibility = LeaderEligibility.fromRecentSigners(
           core = coreList,
-          peerQuality = lastOutcome.peerQuality,
+          peerQuality = controllerInputs.peerQuality,
           recentSigners = lastOutcome.recentSigners,
           minParticipationObservations = config.minParticipationObservations,
           minLeaderPoolSize = config.minLeaderPoolSize
@@ -479,9 +527,9 @@ object CurrencySnapshotConsensusStateCreator {
           leaderPool,
           entropy,
           viewNumber = initialView,
-          qualityScores = lastOutcome.peerQuality,
-          selfHealthHints = lastOutcome.peerSelfHealth,
-          peerViewChanges = lastOutcome.peerViewChanges.toMap,
+          qualityScores = controllerInputs.peerQuality,
+          selfHealthHints = controllerInputs.selfHealth,
+          peerViewChanges = controllerInputs.viewChanges,
           minLeaderRatioPct = config.leaderRotationMinRatioPct,
           hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
           minLeaderPoolSize = config.minLeaderPoolSize
