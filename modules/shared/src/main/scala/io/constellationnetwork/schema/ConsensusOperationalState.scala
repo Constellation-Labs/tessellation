@@ -157,7 +157,31 @@ final case class ConsensusOperationalState(
   // / rollback to a pre-v19 snapshot / partial-deploy with <n/2+1 facilities carrying
   // proposerClockMs) and the round continues to derive view from `viewChangeVotes.maxToView`
   // (phase 1) until the median becomes computable across the cluster.
-  recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]] = None
+  recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]] = None,
+  // Controller evidence stage 4: bounded window of (ordinal -> ControllerEvidenceEntry)
+  // recording the canonical facts of each finalized round (round-start committee,
+  // completed signer set, certified timeout voters, certified admissions, certified
+  // evictions). Persisting it here lets a cold restart re-seed the outcome's
+  // `controllerEvidence` window from the sidecar / `snapshot.peerHistory`, so the
+  // evidence-derived controller state (scores / tiers / quality via
+  // `ControllerEvidenceDerivation`) survives the restart boundary as a pure function of
+  // signed chain facts -- the replacement for the locally-divergent carried-map seeds
+  // behind the alpha.92/129/147 wedges.
+  //
+  // MUST be Option-wrapped: same derevo-decoder caveat as `recentSigners` above. Older
+  // snapshots have no key under `peerHistory`; with `dropNullValues=true` a `None` is
+  // dropped from JSON entirely so pre-deploy encodings stay byte-stable. `None` at read
+  // time means the evidence window is empty (bootstrap / pre-deploy snapshot) and
+  // consumers fall back to the carried maps until the window fills.
+  controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]] = None,
+  // Controller evidence stage 4: cert-anchored absolute penalty horizon per peer. An
+  // EvictionCertificate applied at ordinal N writes `target -> N + penaltyDurationOrdinals`;
+  // an AdmissionCertificate clears the entry; expired entries are dropped at finalization.
+  // Persisted so penalties survive cold-restart as pure ordinal comparisons -- no per-round
+  // countdown a restart could observe half-decremented.
+  //
+  // MUST be Option-wrapped: same derevo-decoder back-compat caveat as `controllerEvidence`.
+  penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
 )
 
 object ConsensusOperationalState {
@@ -166,6 +190,8 @@ object ConsensusOperationalState {
       perPeer = SortedMap.empty,
       recentProofSizes = SortedMap.empty,
       recentSigners = None,
-      recentRoundEndTimes = None
+      recentRoundEndTimes = None,
+      controllerEvidence = None,
+      penaltyUntil = None
     )
 }

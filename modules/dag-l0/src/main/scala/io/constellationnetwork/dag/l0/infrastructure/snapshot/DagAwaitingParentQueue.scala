@@ -96,20 +96,23 @@ private[snapshot] object DagAwaitingParentQueue {
         backlogAfter = backlogAfter,
         maxGapAfter = maxGapAfter
       )
-      _ <- logger.info(
-        s"[DAG_AWAITING_PARENT_DRAIN] candidates=${available.size} reactivated=${eligible.size} " +
-          s"expired=${expired.size} rejectedGapTooLarge=${gapTooLarge.size} " +
-          s"rejectedBacklogFull=${(overflow ++ perAddressOverflow).size} backlogAfter=$backlogAfter maxGapAfter=$maxGapAfter"
-      ).whenA(available.nonEmpty || eligible.nonEmpty || toRemove.nonEmpty)
-    } yield DrainResult(
-      candidates = available.size,
-      reactivated = eligible.size,
-      expired = expired.size,
-      rejectedGapTooLarge = gapTooLarge.size,
-      rejectedBacklogFull = (overflow ++ perAddressOverflow).size,
-      backlogAfter = backlogAfter,
-      maxGapAfter = maxGapAfter
-    )
+      _ <- logger
+        .info(
+          s"[DAG_AWAITING_PARENT_DRAIN] candidates=${available.size} reactivated=${eligible.size} " +
+            s"expired=${expired.size} rejectedGapTooLarge=${gapTooLarge.size} " +
+            s"rejectedBacklogFull=${(overflow ++ perAddressOverflow).size} backlogAfter=$backlogAfter maxGapAfter=$maxGapAfter"
+        )
+        .whenA(available.nonEmpty || eligible.nonEmpty || toRemove.nonEmpty)
+    } yield
+      DrainResult(
+        candidates = available.size,
+        reactivated = eligible.size,
+        expired = expired.size,
+        rejectedGapTooLarge = gapTooLarge.size,
+        rejectedBacklogFull = (overflow ++ perAddressOverflow).size,
+        backlogAfter = backlogAfter,
+        maxGapAfter = maxGapAfter
+      )
 
   private def selectDrainable[F[_]: Async: Hasher](
     entries: List[Entry],

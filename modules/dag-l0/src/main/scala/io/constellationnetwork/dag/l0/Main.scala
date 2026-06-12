@@ -465,6 +465,13 @@ object Main
                   // until the window populates.
                   seedRecentRoundEndTimes =
                     seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
+                  // Stage 4: controller-evidence window + cert-anchored penalty horizons,
+                  // kept Option-shaped end to end (the outcome fields are Option too).
+                  // Pre-deploy snapshots decode None -> the evidence read side stays in its
+                  // carried-map fallback regime until the window refills; `filter(_.nonEmpty)`
+                  // normalizes a defensive Some(empty) back to None.
+                  seedControllerEvidence = seedOperational.controllerEvidence.filter(_.nonEmpty)
+                  seedPenaltyUntil = seedOperational.penaltyUntil.filter(_.nonEmpty)
                   recentCoreDiagnostic <- reconstructRecentCoreFacilitatorsDiagnostic(
                     peerHistorySidecar,
                     snapshot.value.ordinal,
@@ -520,7 +527,9 @@ object Main
                       recentSigners = seedRecentSigners,
                       peerTiers = seedPeerTiers,
                       activeAdmissionScores = seedActiveAdmissionScores,
-                      recentRoundEndTimes = seedRecentRoundEndTimes
+                      recentRoundEndTimes = seedRecentRoundEndTimes,
+                      controllerEvidence = seedControllerEvidence,
+                      penaltyUntil = seedPenaltyUntil
                     ),
                     deferFirstRound = true
                   )

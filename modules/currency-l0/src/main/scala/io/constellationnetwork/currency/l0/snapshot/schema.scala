@@ -11,8 +11,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{ConsensusOperationalState, PerPeerOperationalRecord, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
@@ -161,7 +161,14 @@ object schema {
     // v19 phase 2 view-from-time anchor mirror of dag-l0 schema. Sliding window of
     // (ordinal -> consensusEndTime) computed as the median of Facility.proposerClockMs
     // clamped against the parent. See dag-l0 mirror and docs/consensus/view-from-time-anchor.md.
-    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty
+    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty,
+    // Controller evidence stage 1 (write-only, no consumer yet), mirror of dag-l0 schema:
+    // bounded window of canonical per-round facts (`tighteningWindow` entries) feeding
+    // `ControllerEvidenceDerivation`. See dag-l0 mirror for the full rationale.
+    controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]] = None,
+    // Controller evidence stage 3 (write-only, no consumer yet), mirror of dag-l0 schema:
+    // cert-anchored absolute penalty horizon per peer. See dag-l0 mirror.
+    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -202,9 +209,23 @@ object schema {
         recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None,
         // v19 phase 2: mirror of dag-l0 schema -- None at the snapshot boundary keeps
         // pre-v19 encodings byte-stable; populated only once the median is computable.
-        recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None
+        recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None,
+        // Stage 4: persist the evidence window + cert-anchored penalties across the
+        // restart boundary. Mirror of dag-l0 schema.
+        controllerEvidence = controllerEvidence.filter(_.nonEmpty),
+        penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
     }
+
+    // Stage 4: evidence-only signed-artifact peerHistory payload. Mirror of dag-l0 schema;
+    // both delegate to the shared helper so the signed subsets cannot drift.
+    def signedArtifactPeerHistory: ConsensusOperationalState =
+      ControllerEvidenceDerivation.signedArtifactOperationalState(
+        recentProofSizes = recentProofSizes,
+        recentSigners = recentSigners,
+        controllerEvidence = controllerEvidence,
+        penaltyUntil = penaltyUntil
+      )
   }
 
   object CurrencyConsensusOutcome {

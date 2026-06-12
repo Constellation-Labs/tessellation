@@ -481,6 +481,39 @@ object GlobalSnapshotConsensusStateAdvancer {
                   maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
                 )
               )
+            // Controller evidence stage 1: append the just-finalized round's canonical facts to
+            // the bounded evidence window. Every input is consensus-agreed at this site:
+            // roundStartFacilitators is the frozen canonical committee, completedFacilitators is
+            // the same canonical signer-set derivation recentSigners uses (NOT the local-observed
+            // proofs set), acceptedTimeoutCertificateVoters comes from the accepted proposal's
+            // embedded TC, and admitted/certifiedEvicted are certificate-applied targets stashed
+            // at buildSignatureTransition. Write-only for now -- no consumer reads this window yet.
+            val controllerEvidenceEntry = ControllerEvidenceEntry(
+              roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+              completedSigners = SortedSet.from(completedFacilitators),
+              timeoutVoters = state.acceptedTimeoutCertificateVoters,
+              admittedPeers = SortedSet.from(state.admittedFacilitators.value),
+              evictedPeers = state.certifiedEvictionTargets
+            )
+            val newControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] =
+              ControllerEvidenceDerivation.appendBounded(
+                prior = state.lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+                key = state.key,
+                entry = controllerEvidenceEntry,
+                tighteningWindow = config.tighteningWindow
+              )
+            // Controller evidence stage 3: cert-anchored penalty horizons. Entries are written
+            // only for certificate-applied evictions (N + penaltyDurationOrdinals), cleared by
+            // certificate-applied admissions, and expired by pure ordinal comparison. Write-only
+            // for now -- no consumer reads penaltyUntil yet.
+            val newPenaltyUntil: SortedMap[PeerId, SnapshotOrdinal] =
+              ControllerEvidenceDerivation.nextPenaltyUntil(
+                prior = state.lastOutcome.penaltyUntil.getOrElse(SortedMap.empty),
+                certifiedEvictions = state.certifiedEvictionTargets,
+                certifiedAdmissions = state.admittedFacilitators.value,
+                currentOrdinal = state.key,
+                penaltyDurationOrdinals = config.penaltyDurationOrdinals
+              )
             // B2 readmissionCountdown maintenance (sticky-probation):
             //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
             //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
@@ -608,7 +641,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               activeAdmissionScores = newActiveAdmissionScores,
               lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
               // v19 phase 2: view-from-time anchor for the next round's view derivation.
-              recentRoundEndTimes = newRecentRoundEndTimes
+              recentRoundEndTimes = newRecentRoundEndTimes,
+              // Controller evidence stages 1+3 (write-only). Option-wrap follows the
+              // recentSigners-at-snapshot-boundary convention: None while empty so
+              // pre-deploy encodings stay byte-stable under dropNullValues.
+              controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
+              penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -2384,10 +2422,9 @@ object GlobalSnapshotConsensusStateAdvancer {
               artifact,
               state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
-              // v20: re-pack from validator's own lastOutcome, but keep local time anchors out
-              // of the signed artifact. They are useful pacemaker hints, not quorum-certified
-              // artifact input.
-              Some(signedArtifactPeerHistory(state.lastOutcome))
+              // v32 (stage 4): re-pack the evidence-only peerHistory from the validator's own
+              // lastOutcome -- must match the leader's createArtifact packing byte-identically.
+              Some(state.lastOutcome.signedArtifactPeerHistory)
             )
             .map {
               case Right((validatedArtifact, context)) =>
@@ -2553,8 +2590,45 @@ object GlobalSnapshotConsensusStateAdvancer {
           Option.when(leader.map(_.recentProofSizes) =!= own.map(_.recentProofSizes))("peerHistory.recentProofSizesDiffer"),
           Option.when(leader.flatMap(_.recentRoundEndTimes) =!= own.flatMap(_.recentRoundEndTimes))(
             "peerHistory.recentRoundEndTimesDiffer"
-          )
-        ).flatten
+          ),
+          Option.when(leader.flatMap(_.controllerEvidence) =!= own.flatMap(_.controllerEvidence))(
+            "peerHistory.controllerEvidenceDiffer"
+          ),
+          Option.when(leader.flatMap(_.penaltyUntil) =!= own.flatMap(_.penaltyUntil))("peerHistory.penaltyUntilDiffer")
+        ).flatten ++ peerHistoryPerPeerDiff(leader, own)
+
+      private def peerHistoryPerPeerDiff(
+        leader: Option[ConsensusOperationalState],
+        own: Option[ConsensusOperationalState]
+      ): List[String] = {
+        val leaderPerPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
+          leader.map(_.perPeer).getOrElse(SortedMap.empty[PeerId, PerPeerOperationalRecord])
+        val ownPerPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
+          own.map(_.perPeer).getOrElse(SortedMap.empty[PeerId, PerPeerOperationalRecord])
+
+        if (leaderPerPeer === ownPerPeer) Nil
+        else {
+          val leaderKeys = leaderPerPeer.keySet
+          val ownKeys = ownPerPeer.keySet
+          val onlyLeader = (leaderKeys -- ownKeys).toList.sorted
+          val onlyOwn = (ownKeys -- leaderKeys).toList.sorted
+          val valueDiffs = leaderKeys.intersect(ownKeys).toList.sorted.filter(pid => leaderPerPeer.get(pid) =!= ownPerPeer.get(pid))
+
+          List(
+            Some(
+              s"peerHistory.perPeerDetail(leaderKeys=${leaderKeys.size},ownKeys=${ownKeys.size},onlyLeader=${onlyLeader.size},onlyOwn=${onlyOwn.size},valueDiffs=${valueDiffs.size})"
+            ),
+            Option.when(onlyLeader.nonEmpty)(s"peerHistory.perPeerOnlyLeader=[${compactPeerIds(onlyLeader)}]"),
+            Option.when(onlyOwn.nonEmpty)(s"peerHistory.perPeerOnlyOwn=[${compactPeerIds(onlyOwn)}]"),
+            Option.when(valueDiffs.nonEmpty)(s"peerHistory.perPeerValueDiffs=[${compactPeerIds(valueDiffs)}]")
+          ).flatten
+        }
+      }
+
+      private def compactPeerIds(peerIds: List[PeerId], limit: Int = 10): String = {
+        val shown = peerIds.take(limit).map(_.show.take(8)).mkString(",")
+        if (peerIds.size > limit) s"$shown,+${peerIds.size - limit}" else shown
+      }
 
       /** Bounded artifact-mismatch diagnostics for the next failure. The existing field-level diff can report "no diff" when the semantic
         * fields compare equal but the canonical artifact hash still differs. These fields give us enough to decide whether the mismatch is
@@ -2635,6 +2709,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           "peerHistory.recentSigners" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.recentSigners)),
           "peerHistory.recentProofSizes" -> serializedFieldDigest(artifact.peerHistory.map(_.recentProofSizes)),
           "peerHistory.recentRoundEndTimes" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.recentRoundEndTimes)),
+          "peerHistory.controllerEvidence" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.controllerEvidence)),
+          "peerHistory.penaltyUntil" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.penaltyUntil)),
           "version" -> serializedFieldDigest(artifact.version)
         ).traverse { case (name, digest) => digest.map(value => s"$name=$value") }.map(_.mkString(" "))
 
@@ -2841,6 +2917,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                     facilitators = postEvictionFacilitators,
                     removedFacilitators = postEvictionRemoved,
                     admittedFacilitators = postAdmissionAdmitted,
+                    // Controller evidence stage 1: certificate-applied eviction targets only
+                    // (removedFacilitators also carries facility-phase fork-evictions, which
+                    // the cert-anchored controllerEvidence / penaltyUntil fields must exclude).
+                    certifiedEvictionTargets = state.certifiedEvictionTargets ++ evictedTargets,
                     // v7 codex turn 2 fix #5: REPLACE on accept (not union). Each accepted
                     // proposal canonically replaces state.observedResponders. View-N's set
                     // does NOT bleed into view-N+1 accounting after an honest view change.
@@ -3138,36 +3218,15 @@ object GlobalSnapshotConsensusStateAdvancer {
               // and validators build/accept against the same facilitator set.
               state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
-              // v20: snapshot the prev-round outcome's peer-behavior counters for persistence,
-              // but do not sign local time anchors into the artifact. Those anchors are derived
-              // from locally accepted facilities and can diverge during view-change startup.
-              Some(signedArtifactPeerHistory(state.lastOutcome))
+              // v32 (stage 4): sign ONLY the deterministic chain-derived windows
+              // (recentProofSizes, recentSigners, controllerEvidence, penaltyUntil).
+              // perPeer / recentRoundEndTimes are locally divergent (the alpha.92/129/147
+              // wedge class) and stay out of the signed bytes; see
+              // GlobalConsensusOutcome.signedArtifactPeerHistory.
+              Some(state.lastOutcome.signedArtifactPeerHistory)
             )
           }
         }
-
-      private def signedArtifactPeerHistory(outcome: GlobalConsensusOutcome): ConsensusOperationalState = {
-        // TODO(v20 cleanup): recentRoundEndTimes and most perPeer dimensions are intentionally
-        // omitted from signed artifacts because they have proven locally divergent in live
-        // testnet proposal validation. v29 keeps only activeAdmissionScore in signed
-        // peerHistory and writes it over a canonical committee key set with explicit zero scores:
-        // absent-vs-zero score records are operationally equivalent, but they are different
-        // signed bytes under dropNullValues. Canonical zeros keep restart/download replay
-        // while removing the small perPeer key-set drift seen on alpha.129. Do not widen this
-        // key set with activeAdmissionScores.keySet: that map can retain local-only historical
-        // peers that are not part of the proposal-critical committee.
-        val operational = outcome.toOperationalState
-        val signedScoreKeys = outcome.eligibleOrFacilitators.toSet
-        val signedControllerScores = SortedMap.from(
-          signedScoreKeys.iterator.map { pid =>
-            pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(outcome.activeAdmissionScores.getOrElse(pid, 0)))
-          }
-        )
-        operational.copy(
-          perPeer = signedControllerScores,
-          recentRoundEndTimes = None
-        )
-      }
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 

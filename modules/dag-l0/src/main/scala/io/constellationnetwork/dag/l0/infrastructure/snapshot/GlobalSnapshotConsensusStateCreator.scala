@@ -4,6 +4,9 @@ import cats.effect.Async
 import cats.effect.kernel.{Clock, Sync}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
+import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{CollectingFacilities, GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -65,7 +68,7 @@ object GlobalSnapshotConsensusStateCreator {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
-    private val dagAwaitingParentConfig = io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig.default
+    private val dagAwaitingParentConfig = DagAwaitingParentConfig.default
     private val maxAwaitingParentReactivationPerRound = 128
 
     def tryFacilitateConsensus(
@@ -197,7 +200,17 @@ object GlobalSnapshotConsensusStateCreator {
         // candidate-deferral filters were retired in favour of CommitteeBuilder's tier-aware
         // partition (peers with degraded peerQuality land in Tier 1, still sign, no longer
         // gate the liveness quorum). Deterministic: derived from consensus-agreed lastOutcome.
-        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet
+        // Stage 4 cert-anchored penalties: a peer with `penaltyUntil(peer) > key` is excluded
+        // by pure ordinal comparison against the consensus-agreed key -- no per-round countdown
+        // that a restart could observe half-decremented. Unioned into `penalizedPeers` so the
+        // fallback ladder below treats both penalty families identically (bypassable on the
+        // last liveness rung, unlike non-bypassable probation). Empty until the first
+        // EvictionCertificate is applied post-deploy, so pre-deploy behavior is unchanged.
+        certPenalizedPeers = lastOutcome.penaltyUntil
+          .getOrElse(SortedMap.empty[PeerId, GlobalSnapshotKey])
+          .filter { case (_, until) => until.value.value > key.value.value }
+          .keySet
+        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet ++ certPenalizedPeers
 
         // B2 re-admission probation: peers whose `removalPenalty` just expired sit in
         // `readmissionCountdown` for `readmissionProbationRounds` before they can re-enter
@@ -282,12 +295,35 @@ object GlobalSnapshotConsensusStateCreator {
         maxExpansionThisRound =
           if (expansionAllowedThisRound) config.activeAdmissionMaxExpansionPerRound
           else 0
+        // Stage 4 read-side switch: active-admission scores, quality, and tiers derive from
+        // the SIGNED controllerEvidence window (a pure function of finalized chain facts --
+        // no restart seed or sidecar can diverge it). While the window is empty (first
+        // deploy / bootstrap / rollback to a pre-deploy snapshot) the carried maps are used
+        // unchanged, so behavior matches pre-stage-4 until the window fills. viewChanges /
+        // selfHealth have no evidence-derived counterpart yet: they are emitted EMPTY in the
+        // evidence regime and carried only in the fallback (see ControllerInputs). The
+        // evidence-vs-carried decision lives entirely inside controllerInputsWithFallback --
+        // no conditional logic here, so dag-l0 and currency-l0 cannot drift.
+        controllerInputs = ControllerEvidenceDerivation.controllerInputsWithFallback(
+          evidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+          carriedScores = lastOutcome.activeAdmissionScores.toMap,
+          carriedQuality = lastOutcome.peerQuality.toMap,
+          carriedTiers = lastOutcome.peerTiers,
+          carriedViewChanges = lastOutcome.peerViewChanges.toMap,
+          carriedSelfHealth = lastOutcome.peerSelfHealth.toMap
+        )
+        _ <- logger.info(
+          s"Controller inputs for key=$key: " + (
+            if (controllerInputs.evidenceRounds === 0) "controller_evidence=empty fallback=carried"
+            else s"controller_evidence=${controllerInputs.evidenceRounds} rounds"
+          )
+        )
         activeAdmission = ConsensusPeerController.chooseActive(
           ConsensusPeerController.AdmissionInput(
             selected = selectedFacilitators,
             recentSigners = lastOutcome.recentSigners,
-            peerQuality = lastOutcome.peerQuality.toMap,
-            activeScores = lastOutcome.activeAdmissionScores.toMap,
+            peerQuality = controllerInputs.peerQuality,
+            activeScores = controllerInputs.activeScores,
             minActiveSize = coreCommitteeSize,
             targetActiveSize = targetActiveSize,
             maxActiveSize = maxActiveSize,
@@ -325,6 +361,11 @@ object GlobalSnapshotConsensusStateCreator {
             "active" -> activeFacilitators.size.toString,
             "activeTarget" -> activeAdmission.targetSize.toString,
             "activeCandidates" -> activeAdmission.candidateSize.toString,
+            "promotedCandidates" -> activeAdmission.promotedCandidateSize.toString,
+            "scoreExcluded" -> activeAdmission.scoreExcludedSize.toString,
+            "qualityExcluded" -> activeAdmission.qualityExcludedSize.toString,
+            "demotedRecentSigners" -> activeAdmission.demotedRecentSignerSize.toString,
+            "belowRetainRecentSigners" -> activeAdmission.belowRetainRecentSignerSize.toString,
             "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
             "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
             "reserveAdmitted" -> activeAdmission.reserveAdmittedSize.toString,
@@ -395,6 +436,10 @@ object GlobalSnapshotConsensusStateCreator {
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_selected_size", selectedFacilitators.size.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_target_size", activeAdmission.targetSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_active_facilitator_promoted_candidate_size",
+          activeAdmission.promotedCandidateSize.toLong
+        )
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
@@ -403,6 +448,19 @@ object GlobalSnapshotConsensusStateCreator {
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_min_count", activeAdmission.recentSignerMinCount.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_max_count", activeAdmission.recentSignerMaxCount.toLong)
+        _ <- List(
+          ActiveFacilitatorAdmission.ExclusionReason.QualityBelowThreshold.label -> activeAdmission.qualityExcludedSize,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowPromoteThreshold.label -> activeAdmission.scoreExcludedSize,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowDemoteThreshold.label -> activeAdmission.demotedRecentSignerSize,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowRetainThreshold.label -> activeAdmission.belowRetainRecentSignerSize
+        ).traverse_ {
+          case (reason, count) =>
+            Metrics[F].updateGauge(
+              "dag_consensus_active_facilitator_blocker_size",
+              count.toLong,
+              Seq(admissionReasonLabel -> reason)
+            )
+        }
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility)
@@ -455,8 +513,9 @@ object GlobalSnapshotConsensusStateCreator {
         } yield ()
 
         // v19 multi-committee derivation. Partition `active` into Core / Tier 1 / Witness
-        // using the carried-forward `lastOutcome.peerTiers` plus the consensus-agreed
-        // `lastOutcome.peerQuality` history. Tier assignment rule (re-derived every round):
+        // using the stage-4 controller inputs (evidence-derived tiers + quality when the
+        // signed controllerEvidence window has entries; the carried-forward lastOutcome maps
+        // only in the empty-window fallback). Tier assignment rule (re-derived every round):
         //   1. Quality-degradation override -- any peer with observed `participated >=
         //      minParticipationObservations` AND `completed/participated < minParticipationRatio`
         //      is forced to Tier 1, even if `priorTiers` says Core. Structural protection so a
@@ -474,8 +533,8 @@ object GlobalSnapshotConsensusStateCreator {
         // bootstraps deterministically from scratch.
         committees = CommitteeBuilder.build(
           candidates = active,
-          priorTiers = lastOutcome.peerTiers,
-          peerQuality = lastOutcome.peerQuality,
+          priorTiers = controllerInputs.peerTiers,
+          peerQuality = controllerInputs.peerQuality,
           coreFloor = coreCommitteeSize,
           minObservations = config.minParticipationObservations,
           minRatio = config.minParticipationRatio,
@@ -532,7 +591,7 @@ object GlobalSnapshotConsensusStateCreator {
         coreList = committees.core
         leaderEligibility = LeaderEligibility.fromRecentSigners(
           core = coreList,
-          peerQuality = lastOutcome.peerQuality,
+          peerQuality = controllerInputs.peerQuality,
           recentSigners = lastOutcome.recentSigners,
           minParticipationObservations = config.minParticipationObservations,
           minLeaderPoolSize = config.minLeaderPoolSize
@@ -578,9 +637,9 @@ object GlobalSnapshotConsensusStateCreator {
           leaderPool,
           entropy,
           viewNumber = initialView,
-          qualityScores = lastOutcome.peerQuality,
-          selfHealthHints = lastOutcome.peerSelfHealth,
-          peerViewChanges = lastOutcome.peerViewChanges.toMap,
+          qualityScores = controllerInputs.peerQuality,
+          selfHealthHints = controllerInputs.selfHealth,
+          peerViewChanges = controllerInputs.viewChanges,
           minLeaderRatioPct = config.leaderRotationMinRatioPct,
           hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
           minLeaderPoolSize = config.minLeaderPoolSize

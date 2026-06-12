@@ -5,11 +5,12 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.ControllerEvidenceDerivation
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{ConsensusOperationalState, PerPeerOperationalRecord, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -210,7 +211,24 @@ object schema {
     // snapshot boundary for derevo back-compat with pre-v19 snapshots). Default empty:
     // window has not yet been populated; view derivation falls back to phase 1
     // `viewChangeVotes.maxToView`.
-    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty
+    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty,
+    // Controller evidence stage 1 (write-only, no consumer yet): bounded window of
+    // (ordinal -> ControllerEvidenceEntry) recording the canonical facts of each finalized
+    // round -- round-start committee, completed signer set, certified timeout voters,
+    // certified admissions, certified evictions. Bounded by the same `tighteningWindow`
+    // as `recentSigners`. This is the signed-chain evidence that
+    // `ControllerEvidenceDerivation` recomputes per-peer scores / tiers / quality from,
+    // replacing (at stage 4) the carried maps above that a divergent restart seed can
+    // poison (the alpha.92/129/147 wedge class). Option-wrapped for circe back-compat:
+    // outcomes written before this field decode the missing key to None.
+    controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]] = None,
+    // Controller evidence stage 3 (write-only, no consumer yet): cert-anchored absolute
+    // penalty horizon per peer. An EvictionCertificate applied at ordinal N writes
+    // `target -> N + penaltyDurationOrdinals`; an AdmissionCertificate clears the entry;
+    // expired entries (<= current key) are dropped at finalization. Pure ordinal
+    // comparisons only -- no per-round countdown mutation that a restart could observe
+    // half-applied. Option-wrapped for circe back-compat like `controllerEvidence`.
+    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -221,10 +239,10 @@ object schema {
     //
     // This is the FULL operational state (written to the snapshot / PeerHistorySidecar
     // after finalization). The signed-artifact path is narrower: `signedArtifactPeerHistory`
-    // in the advancer strips `recentRoundEndTimes` and reduces `perPeer` to canonical
-    // explicit activeAdmissionScore records before they enter the proposal-critical bytes.
-    // recentProofSizes / recentSigners stay in the signed artifact (fully sorted,
-    // byte-identical across honest nodes).
+    // below carries the deterministic chain-derived fields ONLY (recentProofSizes,
+    // recentSigners, controllerEvidence, penaltyUntil -- fully sorted, byte-identical
+    // across honest nodes) and keeps the locally-divergent `perPeer` /
+    // `recentRoundEndTimes` out of the proposal-critical bytes.
     //
     // v21/v27 layout: peer-keyed dimensions collapsed into a single map keyed by
     // PeerId so each id appears once. The union of keys across the peer-keyed
@@ -274,9 +292,29 @@ object schema {
         // boundary means the cluster has not yet produced a round whose Facility set
         // carried enough `proposerClockMs` values to compute the median (bootstrap or
         // partial-deploy); view derivation falls back to phase 1 vote-driven tick.
-        recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None
+        recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None,
+        // Stage 4: persist the evidence window + cert-anchored penalties so a cold restart
+        // re-seeds them from the sidecar / snapshot.peerHistory and the evidence-derived
+        // controller state survives the restart boundary. Same non-empty Option-wrap as
+        // recentSigners (the outcome already holds None-while-empty; filter defends the
+        // Some(empty) case so dropNullValues byte-stability is preserved).
+        controllerEvidence = controllerEvidence.filter(_.nonEmpty),
+        penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
     }
+
+    // Stage 4: the peerHistory payload packed into SIGNED artifact bytes at proposal build
+    // and validateArtifact re-execution. Evidence-only: `perPeer` and `recentRoundEndTimes`
+    // (the locally-divergent fields behind the alpha.92/129/147 wedges) are excluded;
+    // delegation to the shared helper keeps the dag-l0 / currency-l0 signed subsets from
+    // drifting apart.
+    def signedArtifactPeerHistory: ConsensusOperationalState =
+      ControllerEvidenceDerivation.signedArtifactOperationalState(
+        recentProofSizes = recentProofSizes,
+        recentSigners = recentSigners,
+        controllerEvidence = controllerEvidence,
+        penaltyUntil = penaltyUntil
+      )
   }
 
   @derive(encoder, decoder, eqv, show)

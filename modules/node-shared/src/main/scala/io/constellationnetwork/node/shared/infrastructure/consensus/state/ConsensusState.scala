@@ -194,6 +194,14 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // then consumed at round finalization to penalize active peers that were missing
   // from finalized timeout evidence. Never populated from local TC caches.
   acceptedTimeoutCertificateVoters: SortedSet[PeerId] = SortedSet.empty,
+  // Controller evidence (stage 1): targets of quorum-signed EvictionCertificates applied to
+  // this round at buildSignatureTransition. Carried separately from `removedFacilitators`
+  // because that set ALSO accumulates facility-phase fork-evictions, while the
+  // `controllerEvidence` / `penaltyUntil` outcome fields are certificate-anchored only.
+  // Same populate-at-accept / consume-at-finalize lifecycle as `admittedFacilitators` and
+  // `acceptedTimeoutCertificateVoters`. Defaulted to empty so pre-existing construction
+  // sites continue to compile.
+  certifiedEvictionTargets: SortedSet[PeerId] = SortedSet.empty,
   // v19 multi-committee partition of `roundStartFacilitators`. `coreFacilitators` is the
   // active LIVENESS quorum -- the quorum threshold across the round is computed against
   // `coreFacilitators.value.size`, NOT `facilitators.value.size` / `roundStartFacilitators.value.size`.

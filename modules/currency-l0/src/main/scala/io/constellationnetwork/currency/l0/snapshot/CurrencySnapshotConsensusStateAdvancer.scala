@@ -275,6 +275,34 @@ object CurrencySnapshotConsensusStateAdvancer {
                 )
               )
 
+            // Controller evidence stage 1, mirror of dag-l0: append the just-finalized round's
+            // canonical facts to the bounded evidence window. All inputs consensus-agreed; see
+            // GlobalSnapshotConsensusStateAdvancer for the full rationale. Write-only for now.
+            val controllerEvidenceEntry = ControllerEvidenceEntry(
+              roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+              completedSigners = SortedSet.from(completedFacilitators),
+              timeoutVoters = state.acceptedTimeoutCertificateVoters,
+              admittedPeers = SortedSet.from(state.admittedFacilitators.value),
+              evictedPeers = state.certifiedEvictionTargets
+            )
+            val newControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] =
+              ControllerEvidenceDerivation.appendBounded(
+                prior = state.lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+                key = state.key,
+                entry = controllerEvidenceEntry,
+                tighteningWindow = config.tighteningWindow
+              )
+            // Controller evidence stage 3, mirror of dag-l0: cert-anchored penalty horizons.
+            // Write-only for now.
+            val newPenaltyUntil: SortedMap[PeerId, SnapshotOrdinal] =
+              ControllerEvidenceDerivation.nextPenaltyUntil(
+                prior = state.lastOutcome.penaltyUntil.getOrElse(SortedMap.empty),
+                certifiedEvictions = state.certifiedEvictionTargets,
+                certifiedAdmissions = state.admittedFacilitators.value,
+                currentOrdinal = state.key,
+                penaltyDurationOrdinals = config.penaltyDurationOrdinals
+              )
+
             // B2 readmissionCountdown maintenance (v12 sticky-probation, see dag-l0 mirror for
             // full rationale). decrement (clamped at 0) → seed justUnpenalized → clear admitted.
             // Pre-v12 auto-cleared the entry when countdown hit 0; v12 keeps the key so only
@@ -360,7 +388,10 @@ object CurrencySnapshotConsensusStateAdvancer {
               activeAdmissionScores = newActiveAdmissionScores,
               lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
               // v19 phase 2 view-from-time anchor window, mirror of dag-l0.
-              recentRoundEndTimes = newRecentRoundEndTimes
+              recentRoundEndTimes = newRecentRoundEndTimes,
+              // Controller evidence stages 1+3 (write-only), mirror of dag-l0.
+              controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
+              penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
@@ -1346,9 +1377,9 @@ object CurrencySnapshotConsensusStateAdvancer {
             // validators accept/reject against the same facilitator set. See dag-l0 equivalent.
             state.roundStartFacilitators.value.toSet,
             getGlobalSnapshotByOrdinal,
-            // v20: re-pack from validator's own lastOutcome, but keep local time anchors out
-            // of the signed artifact. See the dag-l0 mirror.
-            Some(signedArtifactPeerHistory(state.lastOutcome))
+            // v32 (stage 4): re-pack the evidence-only peerHistory from the validator's own
+            // lastOutcome. See the dag-l0 mirror.
+            Some(state.lastOutcome.signedArtifactPeerHistory)
           )
           .map {
             case Right((validatedArtifact, context)) =>
@@ -1468,6 +1499,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                     facilitators = postEvictionFacilitators,
                     removedFacilitators = postEvictionRemoved,
                     admittedFacilitators = postAdmissionAdmitted,
+                    // Controller evidence stage 1: certificate-applied eviction targets only.
+                    // See dag-l0 mirror.
+                    certifiedEvictionTargets = state.certifiedEvictionTargets ++ evictedTargets,
                     // v7 codex turn 2 fix #5: REPLACE on accept (not union). See dag-l0 mirror.
                     observedResponders = ObservedResponders(leaderObservedResponders.toSet),
                     // v15: REPLACE on accept; see dag-l0 mirror.
@@ -1735,26 +1769,9 @@ object CurrencySnapshotConsensusStateAdvancer {
           // Canonical round-start committee — matches validateLeaderArtifact.
           state.roundStartFacilitators.value.toSet,
           getGlobalSnapshotByOrdinal,
-          // v20: see dag-l0 mirror.
-          Some(signedArtifactPeerHistory(state.lastOutcome))
+          // v32 (stage 4): evidence-only signed peerHistory. See the dag-l0 mirror.
+          Some(state.lastOutcome.signedArtifactPeerHistory)
         )
-
-      private def signedArtifactPeerHistory(outcome: CurrencyConsensusOutcome): ConsensusOperationalState = {
-        // TODO(v20 cleanup): mirror of dag-l0. Keep only v27's deterministic
-        // activeAdmissionScore in signed peerHistory, over the canonical committee key set with
-        // explicit zeros. Omit the older locally-divergent perPeer dimensions and
-        // recentRoundEndTimes.
-        val operational = outcome.toOperationalState
-        val signedControllerScores = SortedMap.from(
-          outcome.eligibleOrFacilitators.iterator.map { pid =>
-            pid -> PerPeerOperationalRecord.empty.copy(activeAdmissionScore = Some(outcome.activeAdmissionScores.getOrElse(pid, 0)))
-          }
-        )
-        operational.copy(
-          perPeer = signedControllerScores,
-          recentRoundEndTimes = None
-        )
-      }
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
