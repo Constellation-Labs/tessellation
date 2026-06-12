@@ -1,0 +1,287 @@
+name: Nightly Deploy
+
+on:
+  # Deploy on every merge to develop so the nightly cluster always runs the latest code.
+  # cancel-in-progress ensures rapid pushes don't pile up — only the latest deploy runs.
+  push:
+    branches:
+      - develop
+      - release/testnet
+      - nightly_monitoring_service
+  workflow_dispatch:
+    inputs:
+      branch:
+        type: string
+        description: 'Branch to build and deploy'
+        required: false
+        default: 'release/testnet'
+      skip_build:
+        type: boolean
+        description: 'Skip build (reuse existing JARs on nodes)'
+        required: false
+        default: false
+      clean:
+        type: boolean
+        description: 'Wipe data and do fresh genesis (vs rollback restart)'
+        required: false
+        default: false
+  workflow_call:
+    inputs:
+      branch:
+        type: string
+        required: false
+        default: 'release/testnet'
+      skip_build:
+        type: boolean
+        required: false
+        default: false
+      clean:
+        type: boolean
+        required: false
+        default: false
+
+# Shared with nightly-rebuild.yml — only one deploy/rebuild can run at a time
+concurrency:
+  group: nightly-deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build JARs
+    if: ${{ !inputs.skip_build }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch || 'release/testnet' }}
+          fetch-tags: true
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache SBT dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier
+            ~/.cache/coursier
+          key: ${{ runner.os }}-sbt-${{ hashFiles('build.sbt', 'project/*.scala', 'project/*.sbt', 'project/build.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-sbt-
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Install sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo gpg --dearmor -o /usr/share/keyrings/sbt-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      # The build checkout above pins to release/testnet (the deploy branch), but
+      # snapshot-streaming.patch fixes and workflow-script changes typically land on
+      # develop or a feature branch first. Grab them from the triggering ref so
+      # feature branches can exercise fixes in CI before merging to release/testnet.
+      - name: Grab patch and workflow scripts from triggering ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          path: .patch-source
+          sparse-checkout: |
+            docker/snapshot-streaming/snapshot-streaming.patch
+            .github/workflows/scripts/nightly-deploy
+          sparse-checkout-cone-mode: false
+
+      - name: Apply or disable snapshot-streaming patch
+        env:
+          BUILD_BRANCH: ${{ inputs.branch || 'release/testnet' }}
+          TRIGGERING_REF: ${{ github.ref_name }}
+        run: bash .patch-source/.github/workflows/scripts/nightly-deploy/apply-snapshot-streaming-patch.sh
+
+      - name: Build all JARs
+        run: just build --num-gl0=3 --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
+
+      - name: Upload tessellation JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+          retention-days: 3
+
+      - name: Upload snapshot-streaming JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/snapshot-streaming.jar
+          retention-days: 3
+
+      - name: Upload block-explorer
+        uses: actions/upload-artifact@v4
+        with:
+          name: block-explorer
+          path: docker/snapshot-streaming/block-explorer/
+          retention-days: 3
+
+  deploy:
+    name: Deploy to nightly cluster
+    needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      # Deploy uses tooling from the triggering ref (monitoring scripts, compose
+      # files, action_scripts) — these may not exist on older release branches.
+      # JARs come from the build job's artifacts, built from inputs.branch.
+      - name: Checkout deploy tooling
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Download tessellation JARs
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+
+      - name: Download snapshot-streaming JAR
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/
+
+      - name: Download block-explorer
+        if: ${{ !inputs.skip_build }}
+        uses: actions/download-artifact@v4
+        with:
+          name: block-explorer
+          path: docker/snapshot-streaming/block-explorer/
+
+      - name: Validate configuration
+        run: |
+          if [ -z "${{ vars.NIGHTLY_HOSTS }}" ]; then
+            echo "::error::NIGHTLY_HOSTS repository variable is not configured"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+          NIGHTLY_SSH_KEY: ${{ secrets.NIGHTLY_SSH_KEY }}
+        run: bash .github/workflows/scripts/nightly-deploy/setup-ssh.sh
+
+      - name: Verify SSH connectivity
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            echo "Testing n$i (${IPS[$i]})..."
+            ssh -o ConnectTimeout=10 "n$i" "hostname"
+          done
+
+      - name: Stop existing cluster
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          CLEAN="${{ inputs.clean }}"
+          CLEAN="${CLEAN:-false}"
+          if [ "$CLEAN" = "true" ]; then
+            just down --remote="$NODES" --clean
+          else
+            just down --remote="$NODES"
+          fi
+
+      - name: Deploy monitoring
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.NIGHTLY_GRAFANA_PASSWORD }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          export REMOTE_NODES="$NODES"
+          bash docker/monitoring/deploy-monitoring.sh
+
+      - name: Deploy cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLICKHOUSE_HOST: ${{ secrets.NIGHTLY_CLICKHOUSE_HOST }}
+          CLICKHOUSE_PORT: ${{ secrets.NIGHTLY_CLICKHOUSE_PORT || '8123' }}
+          CLICKHOUSE_PROTOCOL: ${{ secrets.NIGHTLY_CLICKHOUSE_PROTOCOL || 'http' }}
+          CLICKHOUSE_USER: ${{ secrets.NIGHTLY_CLICKHOUSE_USER || 'default' }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD || 'clickhouse' }}
+          CLICKHOUSE_DATABASE: ${{ secrets.NIGHTLY_CLICKHOUSE_DATABASE || 'default' }}
+        run: |
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          # Monitoring ClickHouse runs on the last NIGHTLY_HOSTS node; default to
+          # its IP when the explicit secret isn't set.
+          if [ -z "$CLICKHOUSE_HOST" ]; then
+            export CLICKHOUSE_HOST="${IPS[-1]}"
+          fi
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          just up --skip-assembly --remote="$NODES" --snapshot-streaming-branch=${{ vars.SNAPSHOT_STREAMING_BRANCH || 'testing' }} --block-explorer-branch=${{ vars.BLOCK_EXPLORER_BRANCH || 'increase_delegated_stakes' }}
+
+      - name: Verify monitoring pipeline
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+          CH_PASS: ${{ secrets.NIGHTLY_CLICKHOUSE_PASSWORD || 'clickhouse' }}
+        run: bash .github/workflows/scripts/nightly-deploy/verify-monitoring.sh
+
+      - name: Post-deploy health check
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+        run: bash .github/workflows/scripts/nightly-deploy/health-check.sh
+
+      - name: Collect remote logs on failure
+        if: failure()
+        env:
+          NIGHTLY_HOSTS: ${{ vars.NIGHTLY_HOSTS }}
+        run: bash .github/workflows/scripts/nightly-deploy/collect-failure-logs.sh
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-deploy-logs-${{ github.run_number }}
+          path: runner-logs/
+          retention-days: 7
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_NIGHTLY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && ':large_green_circle: Nightly Deploy succeeded' || ':red_circle: Nightly Deploy failed' }} (${{ github.ref_name }})",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ job.status == 'success' && ':large_green_circle: *Nightly Deploy succeeded*' || ':red_circle: *Nightly Deploy failed*' }}\nBranch: `${{ github.ref_name }}`\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run #${{ github.run_number }}>"
+                  }
+                }
+              ]
+            }

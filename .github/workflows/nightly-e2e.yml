@@ -1,0 +1,166 @@
+name: Nightly E2E
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+# Own group so hourly runs cancel each other but don't cancel deploys
+concurrency:
+  group: nightly-e2e
+  cancel-in-progress: true
+
+jobs:
+  e2e-test:
+    name: Nightly E2E tests
+    runs-on: ubuntu-22.04
+    # 90 min covers the wait (up to 75 min for build+deploy) plus the tests themselves
+    timeout-minutes: 90
+
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NODE_KEYS_DIR: docker/config/local-test-keys
+
+    steps:
+      - name: Wait for deploy/rebuild to finish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Deploy pipeline can take up to 75 min (45 build + 30 deploy). Poll for 80 min.
+          for i in $(seq 1 160); do
+            running=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow nightly-deploy.yml --workflow nightly-rebuild.yml \
+              --status in_progress --json databaseId --jq 'length' 2>/dev/null || echo 0)
+            [ "$running" = "0" ] && echo "No deploy/rebuild running, proceeding" && exit 0
+            echo "Deploy/rebuild in progress, waiting... ($i/160)"
+            sleep 30
+          done
+          echo "::error::Deploy/rebuild still running after 80 minutes"
+          exit 1
+
+      - name: Validate configuration
+        run: |
+          if [ -z "${{ vars.NIGHTLY_HOSTS }}" ]; then
+            echo "::error::NIGHTLY_HOSTS repository variable is not configured"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-tags: true
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install node dependencies
+        run: |
+          npm i @stardust-collective/dag4@v2.8.0
+          npm i js-sha256
+          npm i axios
+          npm i brotli
+          npm i zod
+          npm i elliptic
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.NIGHTLY_SSH_KEY }}" > ~/.ssh/nightly_key
+          chmod 600 ~/.ssh/nightly_key
+          touch ~/.ssh/config
+
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          for i in "${!IPS[@]}"; do
+            cat >> ~/.ssh/config <<EOF
+          Host n$i
+              User root
+              Hostname ${IPS[$i]}
+              IdentityFile ~/.ssh/nightly_key
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+          EOF
+          done
+          chmod 600 ~/.ssh/config
+
+      - name: Resolve remote args
+        id: remote
+        run: |
+          GENESIS_IP=$(echo "${{ vars.NIGHTLY_HOSTS }}" | cut -d',' -f1)
+          IFS=',' read -ra IPS <<< "${{ vars.NIGHTLY_HOSTS }}"
+          NODES=$(printf "n%s," "${!IPS[@]}" | sed 's/,$//')
+          echo "host=http://${GENESIS_IP}" >> "$GITHUB_OUTPUT"
+          echo "nodes=${NODES}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tx-sender is running on genesis node
+        run: |
+          if ssh n0 "docker ps --filter name=tx-sender --format '{{.Names}}'" 2>/dev/null | grep -q tx-sender; then
+            echo "tx-sender already running"
+          else
+            echo "Starting tx-sender on n0"
+            # tools.jar is deployed to n0 by nightly-deploy; only upload the config
+            DIR="/opt/tessellation"
+            if ! ssh n0 "test -f $DIR/tx-sender/tools.jar"; then
+              echo "::warning::tools.jar not found on n0 — tx-sender cannot start (run nightly-deploy first)"
+            else
+              sed 's|http://gl1-0:9100|http://localhost:9010|' docker/config/tx-sender.conf \
+                | ssh n0 "cat > $DIR/tx-sender/tx-sender.conf"
+              ssh n0 "docker rm -f tx-sender 2>/dev/null; docker run -d --name tx-sender \
+                --network host --restart unless-stopped \
+                -v $DIR/tx-sender/tools.jar:/app/tools.jar:ro \
+                -v $DIR/tx-sender/tx-sender.conf:/app/tx-sender.conf:ro \
+                eclipse-temurin:11-jre \
+                java -jar /app/tools.jar tx-sender --config /app/tx-sender.conf" \
+                && echo "tx-sender started" || echo "::warning::tx-sender failed to start"
+            fi
+          fi
+
+      # Tests run sequentially: delegated-staking sets node params,
+      # token-lock-replacement depends on that state existing.
+      - name: 'E2E: dag-cluster'
+        run: just test --skip-assembly --host=${{ steps.remote.outputs.host }} --test=dag-cluster
+
+      - name: 'E2E: delegated-staking'
+        run: just test --skip-assembly --host=${{ steps.remote.outputs.host }} --test=delegated-staking
+
+      - name: 'E2E: token-lock-replacement'
+        run: just test --skip-assembly --host=${{ steps.remote.outputs.host }} --test=token-lock-replacement
+
+      - name: 'E2E: snapshot-streaming'
+        run: just test --skip-assembly --host=${{ steps.remote.outputs.host }} --test=snapshot-streaming --remote=${{ steps.remote.outputs.nodes }}
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-logs-${{ github.run_number }}
+          path: runner-logs/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_NIGHTLY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": ":red_circle: Nightly E2E failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":red_circle: *Nightly E2E failed*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run #${{ github.run_number }}>"
+                  }
+                }
+              ]
+            }

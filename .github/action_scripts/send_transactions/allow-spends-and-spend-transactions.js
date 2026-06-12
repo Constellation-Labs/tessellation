@@ -8,6 +8,7 @@ const {
     PRIVATE_KEYS,
     sleep,
     withRetry,
+    withRetryOrdinal,
     generateProof,
     SerializerType,
     createAndConnectAccount,
@@ -20,7 +21,11 @@ const {
 
 const CONSTANTS = {
     ...sharedConstants,
-    EPOCH_PROGRESS_BUFFER: 5,
+    // Headroom for L1 to include the allow-spend before it expires. Larger values inflate
+    // test runtime because each scenario waits for prior scenarios' allow-spends to expire
+    // before starting. Must stay above verifyInL1's maxOrdinalMisses so the verifier can
+    // distinguish "still waiting" from "tx dropped/expired".
+    EPOCH_PROGRESS_BUFFER: 20,
 };
 
 const getRandomInt = (min, max) => {
@@ -187,18 +192,17 @@ const findMatchingHash = async (allowSpends, targetHash) => {
 
 const createVerifier = (urls) => {
     const verifyInL1 = async (hash, l1Url, layerName) => {
-        await withRetry(
+        await withRetryOrdinal(
             async () => {
                 logWorkflow.info(`Checking ${layerName} L1 for hash: ${hash}`);
                 const response = await axios.get(`${l1Url}/allow-spends/${hash}`);
                 if (!response.data) {
-                    logWorkflow.warning(`No data found in ${layerName} L1 for hash: ${hash}`);
-                    throw new Error('Transaction not found');
+                    throw new Error(`No data found in ${layerName} L1 for hash: ${hash}`);
                 }
                 logWorkflow.debug(`Found allow spend in ${layerName} L1: ${JSON.stringify(response.data, null, 2)}`);
                 logWorkflow.success(`AllowSpend transaction processed successfully in ${layerName} L1`);
             },
-            { name: `${layerName} L1 verification` }
+            { globalL0Url: urls.globalL0Url, name: `${layerName} L1 verification`, maxOrdinalMisses: CONSTANTS.EPOCH_PROGRESS_BUFFER }
         );
     };
 
