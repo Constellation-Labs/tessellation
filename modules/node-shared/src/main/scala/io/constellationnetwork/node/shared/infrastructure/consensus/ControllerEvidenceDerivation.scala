@@ -120,6 +120,51 @@ object ControllerEvidenceDerivation {
   def deriveQuality(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): SortedMap[PeerId, (Int, Int)] =
     derive(evidence).map { case (pid, state) => pid -> state.derivedQuality }
 
+  /** Trailing-miss count at or above which a peer is classified chronically missing (see `chronicMisses`).
+    *
+    * Why 3: it deliberately equals `TierTransitions.DemotionConsecutiveMisses`, the sustained-silence horizon that demotes a Core peer to
+    * Tier 1. Aligning the two means the moment the tier derivation sheds a silent Core peer, the chronic classification ALSO bars the
+    * Core-floor from immediately re-promoting it (the demote-then-repromote loop behind the ordinal-3150040 quorum-infeasible stall). Small
+    * enough to react within one evidence window; large enough that a single slow round (GC pause, network blip) does not strip a healthy
+    * peer. Compiled-in constant, jar-hash gated, same convention as `DemotionConsecutiveMisses`.
+    */
+  val ChronicMissThreshold: Int = TierTransitions.DemotionConsecutiveMisses
+
+  /** Number of TRAILING evidence entries in which `peer` was asked to sign (in `roundStartFacilitators`) but did not (absent from
+    * `completedSigners`), counted from the most recent entry backwards.
+    *
+    * Streak semantics (deliberate, relied on by `chronicMisses`):
+    *
+    *   - an entry where the peer SIGNED resets the streak to zero, and
+    *   - an entry where the peer is NOT in `roundStartFacilitators` BREAKS the streak rather than extending or skipping it. Absence means
+    *     the peer was not asked to sign that round, so the entry is no evidence of unresponsiveness either way; requiring the misses to be
+    *     strictly consecutive AND current keeps the classification anchored to the committee's live composition. A corollary used by
+    *     `chronicMisses`: any peer with a nonzero streak is necessarily missing in the LATEST entry.
+    *
+    * Pure function of the evidence window only -- NEVER of local readiness observations, which would diverge `facilitatorsHash` across
+    * nodes.
+    */
+  def consecutiveMisses(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry], peer: PeerId): Int =
+    evidence.values.toList.reverse.takeWhile { entry =>
+      entry.roundStartFacilitators.contains(peer) && !entry.completedSigners.contains(peer)
+    }.size
+
+  /** Per-peer trailing miss counts for peers whose `consecutiveMisses` streak has reached `ChronicMissThreshold`.
+    *
+    * Only peers missing from the LATEST entry can have a nonzero streak (see `consecutiveMisses`), so the candidate set is exactly the last
+    * entry's `roundStartFacilitators -- completedSigners`. Empty window derives an empty map (bootstrap regime, mirrored by the
+    * `controllerInputsWithFallback` carried fallback).
+    */
+  def chronicMisses(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): SortedMap[PeerId, Int] =
+    evidence.lastOption.fold(SortedMap.empty[PeerId, Int]) {
+      case (_, latest) =>
+        SortedMap.from(
+          (latest.roundStartFacilitators -- latest.completedSigners).iterator
+            .map(pid => pid -> consecutiveMisses(evidence, pid))
+            .filter { case (_, misses) => misses >= ChronicMissThreshold }
+        )
+    }
+
   /** Stage-4 read-side inputs for committee derivation: `ConsensusPeerController.chooseActive`, `CommitteeBuilder.build`,
     * `LeaderEligibility.fromRecentSigners`, and `FacilitatorSelector.selectLeaderWeighted`. The single source of truth for the
     * evidence-vs-carried decision -- the StateCreators consume these fields verbatim and contain NO conditional logic of their own, so the
@@ -140,6 +185,11 @@ object ControllerEvidenceDerivation {
     * @param selfHealth
     *   per-peer self-health hints for leader selection. Same contract as `viewChanges`: empty when evidence is present, carried only in the
     *   fallback regime. Stage-5 evidence-gap item.
+    * @param chronicMisses
+    *   per-peer TRAILING miss counts for peers at or above `ChronicMissThreshold` (see `chronicMisses(evidence)`). Feeds the
+    *   `CommitteeBuilder.build` chronic-core replacement ladder: chronic peers are never floor-promoted into Core and are actively swapped
+    *   out of it. EMPTY in the fallback (empty-window) regime -- the carried maps hold no trailing-miss evidence, and substituting local
+    *   readiness observations would diverge `facilitatorsHash` across nodes.
     * @param evidenceRounds
     *   number of evidence entries the derivation consumed; `0` means the carried fallback was taken.
     */
@@ -149,8 +199,13 @@ object ControllerEvidenceDerivation {
     peerTiers: SortedMap[PeerId, Int],
     viewChanges: Map[PeerId, Long],
     selfHealth: Map[PeerId, SelfHealthHint],
+    chronicMisses: SortedMap[PeerId, Int],
     evidenceRounds: Int
-  )
+  ) {
+
+    /** Peers currently classified chronically missing -- the exclusion set the committee derivation consumes. */
+    def chronicallyMissing: Set[PeerId] = chronicMisses.keySet
+  }
 
   /** Stage-4 read-side switch with bootstrap fallback.
     *
@@ -176,6 +231,7 @@ object ControllerEvidenceDerivation {
         peerTiers = carriedTiers,
         viewChanges = carriedViewChanges,
         selfHealth = carriedSelfHealth,
+        chronicMisses = SortedMap.empty,
         evidenceRounds = 0
       )
     else {
@@ -187,6 +243,7 @@ object ControllerEvidenceDerivation {
         peerTiers = derived.map { case (pid, state) => pid -> state.derivedTier },
         viewChanges = Map.empty,
         selfHealth = Map.empty,
+        chronicMisses = chronicMisses(evidence),
         evidenceRounds = evidence.size
       )
     }

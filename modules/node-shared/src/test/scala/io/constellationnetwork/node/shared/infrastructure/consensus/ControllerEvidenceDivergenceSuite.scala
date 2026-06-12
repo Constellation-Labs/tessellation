@@ -223,7 +223,9 @@ object ControllerEvidenceDivergenceSuite extends SimpleIOSuite {
       coreFloor = 2,
       minObservations = 3,
       minRatio = 0.5,
-      nonCorePeers = admission.probationAdmitted.toSet
+      nonCorePeers = admission.probationAdmitted.toSet,
+      chronicMisses = inputs.chronicMisses,
+      activeScores = inputs.activeScores
     )
     val eligibility = LeaderEligibility.fromRecentSigners(
       core = committees.core,
@@ -262,6 +264,45 @@ object ControllerEvidenceDivergenceSuite extends SimpleIOSuite {
     expect.same(roundA.tier1, roundB.tier1) &&
     expect.same(roundA.leaderPool, roundB.leaderPool) &&
     expect.same(roundA.leader, roundB.leader)
+  }
+
+  pureTest("chronic-core derivation is identical for identical evidence despite divergent carried maps") {
+    // c is chronically missing in sharedEvidence (4 trailing misses >= ChronicMissThreshold).
+    // Force it into the candidate set with a supply-short floor (coreFloor=4, only 3 healthy
+    // peers): the pre-ladder floor would have padded Core with c -- the exact live failure
+    // (chronic peer kept its quorum seat, every round abandoned quorum-infeasible). Both
+    // fixtures must shrink to the same healthy Core, regardless of their carried maps.
+    def committeesOf(fixture: OutcomeFixture): CommitteeBuilder.Committees = {
+      val inputs = ControllerEvidenceDerivation.controllerInputsWithFallback(
+        evidence = fixture.controllerEvidence,
+        carriedScores = fixture.activeAdmissionScores.toMap,
+        carriedQuality = fixture.peerQuality.toMap,
+        carriedTiers = fixture.peerTiers,
+        carriedViewChanges = fixture.peerViewChanges.toMap,
+        carriedSelfHealth = fixture.peerSelfHealth.toMap
+      )
+
+      CommitteeBuilder.build(
+        candidates = selected,
+        priorTiers = inputs.peerTiers,
+        peerQuality = inputs.peerQuality,
+        coreFloor = 4,
+        minObservations = 3,
+        minRatio = 0.5,
+        chronicMisses = inputs.chronicMisses,
+        activeScores = inputs.activeScores
+      )
+    }
+
+    val committeesA = committeesOf(outcomeA)
+    val committeesB = committeesOf(outcomeB)
+
+    expect(outcomeA.activeAdmissionScores != outcomeB.activeAdmissionScores) &&
+    expect(outcomeA.peerTiers != outcomeB.peerTiers) &&
+    expect.same(committeesA, committeesB) &&
+    expect.same(List(a, b, d), committeesA.core) &&
+    expect.same(List(c), committeesA.tier1) &&
+    expect(!committeesA.core.contains(c))
   }
 
   pureTest("signed-artifact peerHistory bytes are identical for identical evidence despite divergent carried perPeer state") {

@@ -28,9 +28,9 @@ import weaver.MutableIOSuite
   *   - Round trip: outcome -> `toOperationalState` -> circe encode/decode (exactly what `PeerHistorySidecarStorage` does) -> seed-style
   *     extraction (the Main.scala `seedOperational` reads) preserves `controllerEvidence` and `penaltyUntil` byte-identically across the
   *     cold-restart boundary.
-  *   - Signed-bytes divergence: two outcomes that agree on the deterministic chain-derived windows but carry DIFFERENT per-peer
-  *     operational state (poisoned restart seed, the alpha.92/129/147 wedge class) produce byte-identical `signedArtifactPeerHistory`
-  *     payloads -- the carried divergence cannot reach the proposal-critical bytes.
+  *   - Signed-bytes divergence: two outcomes that agree on the deterministic chain-derived windows but carry DIFFERENT per-peer operational
+  *     state (poisoned restart seed, the alpha.92/129/147 wedge class) produce byte-identical `signedArtifactPeerHistory` payloads -- the
+  *     carried divergence cannot reach the proposal-critical bytes.
   */
 object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
@@ -123,30 +123,30 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
     implicit val (js, h, sp) = res
 
     for {
-        finished <- mkFinished
-        outcome = mkOutcome(
-          finished,
-          peerQuality = SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
-          activeAdmissionScores = SortedMap(a -> 150, b -> 150, c -> 60),
-          peerTiers = SortedMap(a -> 2, b -> 2, c -> 1),
-          recentRoundEndTimes = SortedMap(ord(14L) -> 1700000000000L)
-        )
-        operational = outcome.toOperationalState
-        // PeerHistorySidecarStorage.write encodes with `asJson.noSpaces`; mirror it exactly.
-        encoded = operational.asJson.noSpaces
-        decoded = decode[ConsensusOperationalState](encoded)
-        // Main.scala seedOperational extraction: Option-shaped end to end, normalized non-empty.
-        seededEvidence = decoded.toOption.flatMap(_.controllerEvidence.filter(_.nonEmpty))
-        seededPenaltyUntil = decoded.toOption.flatMap(_.penaltyUntil.filter(_.nonEmpty))
-      } yield
-        expect(decoded.isRight, s"sidecar-style decode failed: $decoded") &&
-          expect(decoded.contains(operational), "decoded operational state differs from the encoded one") &&
-          expect.same(Some(evidence), seededEvidence) &&
-          expect.same(Some(penaltyUntil), seededPenaltyUntil) &&
-          // And the seeded outcome (what startFacilitatingAfterRollback receives) carries
-          // the identical windows forward.
-          expect.same(outcome.controllerEvidence, seededEvidence) &&
-          expect.same(outcome.penaltyUntil, seededPenaltyUntil)
+      finished <- mkFinished
+      outcome = mkOutcome(
+        finished,
+        peerQuality = SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
+        activeAdmissionScores = SortedMap(a -> 150, b -> 150, c -> 60),
+        peerTiers = SortedMap(a -> 2, b -> 2, c -> 1),
+        recentRoundEndTimes = SortedMap(ord(14L) -> 1700000000000L)
+      )
+      operational = outcome.toOperationalState
+      // PeerHistorySidecarStorage.write encodes with `asJson.noSpaces`; mirror it exactly.
+      encoded = operational.asJson.noSpaces
+      decoded = decode[ConsensusOperationalState](encoded)
+      // Main.scala seedOperational extraction: Option-shaped end to end, normalized non-empty.
+      seededEvidence = decoded.toOption.flatMap(_.controllerEvidence.filter(_.nonEmpty))
+      seededPenaltyUntil = decoded.toOption.flatMap(_.penaltyUntil.filter(_.nonEmpty))
+    } yield
+      expect(decoded.isRight, s"sidecar-style decode failed: $decoded") &&
+        expect(decoded.contains(operational), "decoded operational state differs from the encoded one") &&
+        expect.same(Some(evidence), seededEvidence) &&
+        expect.same(Some(penaltyUntil), seededPenaltyUntil) &&
+        // And the seeded outcome (what startFacilitatingAfterRollback receives) carries
+        // the identical windows forward.
+        expect.same(outcome.controllerEvidence, seededEvidence) &&
+        expect.same(outcome.penaltyUntil, seededPenaltyUntil)
   }
 
   test("divergent carried perPeer state yields byte-identical signedArtifactPeerHistory for the same evidence") { res =>
@@ -156,39 +156,39 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
     val printer = Printer.noSpaces.copy(dropNullValues = true)
 
     for {
-        finished <- mkFinished
-        // Healthy node: carried state matches reality.
-        healthy = mkOutcome(
-          finished,
-          peerQuality = SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
-          activeAdmissionScores = SortedMap(a -> 150, b -> 150, c -> 60),
-          peerTiers = SortedMap(a -> 2, b -> 2, c -> 1),
-          recentRoundEndTimes = SortedMap(ord(14L) -> 1700000000000L)
-        )
-        // Restarted node with a poisoned local seed: same deterministic windows, divergent
-        // carried perPeer dimensions AND divergent local time anchors.
-        poisoned = mkOutcome(
-          finished,
-          peerQuality = SortedMap(a -> (5, 5), b -> (1, 9), c -> (9, 9)),
-          activeAdmissionScores = SortedMap(a -> 150, b -> 10, c -> 150),
-          peerTiers = SortedMap(a -> 2, b -> 0, c -> 2),
-          recentRoundEndTimes = SortedMap(ord(14L) -> 1700000099999L)
-        )
-        healthySigned = healthy.signedArtifactPeerHistory
-        poisonedSigned = poisoned.signedArtifactPeerHistory
-      } yield
-        // The carried divergence is real (full operational states differ)...
-        expect(healthy.toOperationalState != poisoned.toOperationalState) &&
-          // ...but the signed payloads are identical, structurally and byte-for-byte.
-          expect.same(healthySigned, poisonedSigned) &&
-          expect.same(healthySigned.asJson.printWith(printer), poisonedSigned.asJson.printWith(printer)) &&
-          // The locally-divergent fields never enter the signed payload.
-          expect(healthySigned.perPeer.isEmpty) &&
-          expect(healthySigned.recentRoundEndTimes.isEmpty) &&
-          // The deterministic windows do.
-          expect.same(Some(evidence), healthySigned.controllerEvidence) &&
-          expect.same(Some(penaltyUntil), healthySigned.penaltyUntil) &&
-          expect.same(Some(recentSigners), healthySigned.recentSigners) &&
-          expect.same(recentProofSizes, healthySigned.recentProofSizes)
+      finished <- mkFinished
+      // Healthy node: carried state matches reality.
+      healthy = mkOutcome(
+        finished,
+        peerQuality = SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
+        activeAdmissionScores = SortedMap(a -> 150, b -> 150, c -> 60),
+        peerTiers = SortedMap(a -> 2, b -> 2, c -> 1),
+        recentRoundEndTimes = SortedMap(ord(14L) -> 1700000000000L)
+      )
+      // Restarted node with a poisoned local seed: same deterministic windows, divergent
+      // carried perPeer dimensions AND divergent local time anchors.
+      poisoned = mkOutcome(
+        finished,
+        peerQuality = SortedMap(a -> (5, 5), b -> (1, 9), c -> (9, 9)),
+        activeAdmissionScores = SortedMap(a -> 150, b -> 10, c -> 150),
+        peerTiers = SortedMap(a -> 2, b -> 0, c -> 2),
+        recentRoundEndTimes = SortedMap(ord(14L) -> 1700000099999L)
+      )
+      healthySigned = healthy.signedArtifactPeerHistory
+      poisonedSigned = poisoned.signedArtifactPeerHistory
+    } yield
+      // The carried divergence is real (full operational states differ)...
+      expect(healthy.toOperationalState != poisoned.toOperationalState) &&
+        // ...but the signed payloads are identical, structurally and byte-for-byte.
+        expect.same(healthySigned, poisonedSigned) &&
+        expect.same(healthySigned.asJson.printWith(printer), poisonedSigned.asJson.printWith(printer)) &&
+        // The locally-divergent fields never enter the signed payload.
+        expect(healthySigned.perPeer.isEmpty) &&
+        expect(healthySigned.recentRoundEndTimes.isEmpty) &&
+        // The deterministic windows do.
+        expect.same(Some(evidence), healthySigned.controllerEvidence) &&
+        expect.same(Some(penaltyUntil), healthySigned.penaltyUntil) &&
+        expect.same(Some(recentSigners), healthySigned.recentSigners) &&
+        expect.same(recentProofSizes, healthySigned.recentProofSizes)
   }
 }
