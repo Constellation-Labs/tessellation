@@ -267,6 +267,15 @@ object GlobalSnapshotConsensusStateAdvancer {
       override def isBootstrapActive(lastOutcome: GlobalConsensusOutcome): Boolean =
         !lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
 
+      // v33 quorum-denominator shrink anchors (see QuorumDenominatorShrink). Both are
+      // consensus-agreed outcome fields: the latest controllerEvidence entry's canonical
+      // completedSigners and the parent round's facility-median consensusEndTime.
+      override protected def latestEvidenceSigners(lastOutcome: GlobalConsensusOutcome): Option[SortedSet[PeerId]] =
+        lastOutcome.controllerEvidence.flatMap(_.lastOption).map { case (_, entry) => entry.completedSigners }
+
+      override protected def lastOutcomeEndTimeMs(lastOutcome: GlobalConsensusOutcome): Option[Long] =
+        lastOutcome.recentRoundEndTimes.lastOption.map { case (_, endTime) => endTime }
+
       def getConsensusOutcome(
         state: GlobalSnapshotConsensusState
       ): Option[(Previous[GlobalSnapshotKey], GlobalConsensusOutcome)] =
@@ -1683,26 +1692,34 @@ object GlobalSnapshotConsensusStateAdvancer {
         * dag-l0 and currency-l0 advancers cannot drift on consensus-adjacent logic. See the helper's scaladoc for the full branch summary;
         * ProposalVccValidatorSuite pins every positive/negative path including the alpha.90 P0 #1 seed-view bypass and the alpha.90 issue 2
         * stale-VCC view-mismatch gate.
+        *
+        * Effectful since v33: the shared quorum-denominator-shrink decision (wall-clock anchored, see `QuorumDenominatorShrink`) is derived
+        * per validation so a follower accepts a shrunken-quorum VCC/TC exactly when the escalation predicate holds, independent of any
+        * local retry counters.
         */
       private def validateProposalVcc(
         state: GlobalSnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[ProposalRejection, Unit] =
-        ProposalVccValidator.validate(
-          proposalView = proposal.view,
-          proposalHash = proposal.hash,
-          proposalVcc = proposal.vcc,
-          proposalTimeoutCertificate = proposal.timeoutCertificate,
-          initialViewNumber = state.initialViewNumber,
-          coreSize = state.coreFacilitators.value.size,
-          facilitatorsHash = facilitatorsHash,
-          lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
-          eligibleFacilitators = state.eligibleFacilitators.value.toSet,
-          peerQuality = state.lastOutcome.peerQuality.toMap,
-          quorumThresholdFraction = config.quorumThresholdFraction,
-          minParticipationObservations = config.minParticipationObservations
-        )
+      ): F[Either[ProposalRejection, Unit]] =
+        quorumShrinkDecision(state).map { shrinkDecision =>
+          ProposalVccValidator.validate(
+            proposalView = proposal.view,
+            proposalHash = proposal.hash,
+            proposalVcc = proposal.vcc,
+            proposalTimeoutCertificate = proposal.timeoutCertificate,
+            initialViewNumber = state.initialViewNumber,
+            coreSize = state.coreFacilitators.value.size,
+            facilitatorsHash = facilitatorsHash,
+            lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
+            eligibleFacilitators = state.eligibleFacilitators.value.toSet,
+            roundStartFacilitators = state.roundStartFacilitators.value.toSet,
+            peerQuality = state.lastOutcome.peerQuality.toMap,
+            quorumThresholdFraction = config.quorumThresholdFraction,
+            minParticipationObservations = config.minParticipationObservations,
+            quorumShrink = Some(shrinkDecision)
+          )
+        }
 
       /** Verify that every `Signed[ViewChangeVote]` inside the VCC has a valid cryptographic signature over the voter's actual payload.
         * Protects against an adversarial leader constructing a VCC with fabricated/unsigned votes. Each vote must have exactly one
@@ -2140,7 +2157,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
-        validateProposalVcc(state, leaderProposal, status.facilitatorsHash) match {
+        validateProposalVcc(state, leaderProposal, status.facilitatorsHash).flatMap {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
             val afterVccSig: F[Option[Transition]] = leaderProposal.vcc match {
@@ -3159,6 +3176,18 @@ object GlobalSnapshotConsensusStateAdvancer {
             val quorumThreshold = (coreSize / 2) + 1
             val fullCommittee = canonicalCommitteeSize
             for {
+              // v33 quorum-denominator shrink (QuorumDenominatorShrink): the finalization gate
+              // is the LAST quorum chokepoint. When the rung is active (testnet, deep silence
+              // since the parent outcome) the healthy subset must be able to finalize a round
+              // signed by an anchor-majority below the normal `(coreSize/2)+1`, or the chain
+              // never advances despite every cert/phase quorum already shrinking. `shrunkPath`
+              // requires the signers to BE anchor members and to meet the escalated requirement,
+              // so the relaxation is deterministic and bounded by the same Decision every other
+              // call site uses. Inert when the rung is off: `shrunkPath` is then always false and
+              // `canFinalize == validSignatures.size >= quorumThreshold` (byte-identical to pre-v33).
+              shrinkDecision <- quorumShrinkDecision(state)
+              shrinkSignerIds = validSignatures.map(_.id.toPeerId).toSet
+              canFinalize = validSignatures.size >= quorumThreshold || shrinkDecision.shrunkPath(shrinkSignerIds)
               // Hash over canonical committee: this hash lands in Finished (and
               // thus lastOutcome.finished.facilitatorsHash), which fork detection
               // compares across peers. Deriving from state.facilitators (mutable)
@@ -3183,7 +3212,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   "required" -> quorumThreshold.toString,
                   "facilitators" -> state.facilitators.value.size.toString
                 )
-                .whenA(validSignatures.size < quorumThreshold)
+                .whenA(!canFinalize)
               // Signature grace period: if we've met quorum but don't have the FULL
               // committee yet, delay finalization by `config.signatureGracePeriod` to
               // catch late arrivals. Mirrors the pattern in `recoveryObserve` where we
@@ -3193,12 +3222,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               // missed rewards, divergent peerQuality on downstream rounds.
               now <- Async[F].monotonic
               quorumSeen <-
-                if (validSignatures.size < quorumThreshold) (now, 0, false, false).pure[F]
+                if (!canFinalize) (now, 0, false, false).pure[F]
                 else if (validSignatures.size >= fullCommittee) {
-                  // Full committee signed — no reason to wait; clear tracker and commit.
+                  // Full committee signed -- no reason to wait; clear tracker and commit.
                   signatureQuorumFirstSeenRef.update(_ - state.key).as((now, validSignatures.size, true, false))
                 } else {
-                  // Quorum met but not full — stamp first-seen time and evaluate grace.
+                  // Quorum met but not full -- stamp first-seen time and evaluate grace.
                   signatureQuorumFirstSeenRef.modify { m =>
                     m.get(state.key) match {
                       case Some((t, firstCount)) => (m, (t, firstCount, false))
@@ -3215,7 +3244,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               waitMore = quorumSeen._4
               graceElapsed = now - firstSeen
               _ <-
-                if (validSignatures.size >= quorumThreshold && firstObserved)
+                if (canFinalize && firstObserved)
                   Metrics[F].incrementCounter("dag_consensus_signature_quorum_reached_total") >>
                     Metrics[F].recordDistribution("dag_consensus_signature_first_quorum_count", firstQuorumCount) >>
                     Metrics[F].recordDistribution("dag_consensus_signature_committee_size", fullCommittee) >>
@@ -3243,7 +3272,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 .whenA(waitMore)
               result <-
                 if (waitMore) none[Transition].pure[F]
-                else if (validSignatures.size >= quorumThreshold) {
+                else if (canFinalize) {
                   val lateAdded = (validSignatures.size - firstQuorumCount).max(0)
                   signatureQuorumFirstSeenRef.update(_ - state.key) >>
                     Metrics[F].recordDistribution("dag_consensus_signature_final_count", validSignatures.size) >>

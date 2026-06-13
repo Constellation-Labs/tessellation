@@ -105,8 +105,15 @@ object CurrencySnapshotConsensus {
     // event loop). Default `3` mirrors the dev-environment value.
     val resolvedCoreCommitteeSize: Int =
       snapshotConfig.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
+    // v33: env-resolved quorum-denominator-shrink activation threshold (absent env entry = 0 =
+    // rung disabled). Mirror of GlobalSnapshotConsensus.
+    val resolvedQuorumShrinkActivationViews: Int =
+      snapshotConfig.quorumShrinkActivationViews.get(environment).map(_.value).getOrElse(0)
     val effectiveConsensusConfig: ConsensusConfig =
-      snapshotConfig.consensus.copy(coreCommitteeSize = Some(resolvedCoreCommitteeSize))
+      snapshotConfig.consensus.copy(
+        coreCommitteeSize = Some(resolvedCoreCommitteeSize),
+        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews
+      )
 
     for {
       consensusStorage <- ConsensusStorage.make[

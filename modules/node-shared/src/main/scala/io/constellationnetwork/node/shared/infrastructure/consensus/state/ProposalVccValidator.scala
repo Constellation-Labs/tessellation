@@ -65,6 +65,13 @@ object ProposalVccValidator {
     *   `ConsensusConfig.quorumThresholdFraction`.
     * @param minParticipationObservations
     *   `ConsensusConfig.minParticipationObservations`.
+    * @param quorumShrink
+    *   v33 escalating quorum-denominator shrink decision (see `QuorumDenominatorShrink`). When active, the `vcc_under_quorum` /
+    *   `tc_under_quorum` gates additionally accept `requiredQuorum` votes FROM THE ANCHOR SET. CRITICAL determinism contract: the decision
+    *   passed here must be derived only from consensus-agreed data + the shared time anchor (the
+    *   `ConsensusStateAdvancer.quorumShrinkDecision` derivation), NEVER from local retry counters -- a follower whose local counters lag
+    *   the assembler's must still accept the shrunken cert, otherwise the recovery proposal is rejected and the wedge persists (the
+    *   alpha.92 stale-proposal-rejection shape). `None` preserves pre-v33 behavior byte-identically.
     */
   def validate(
     proposalView: Long,
@@ -76,9 +83,11 @@ object ProposalVccValidator {
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
     eligibleFacilitators: Set[PeerId],
+    roundStartFacilitators: Set[PeerId],
     peerQuality: Map[PeerId, (Int, Int)],
     quorumThresholdFraction: Double,
-    minParticipationObservations: Int
+    minParticipationObservations: Int,
+    quorumShrink: Option[QuorumDenominatorShrink.Decision] = None
   ): Either[ProposalRejection, Unit] = {
     val n = coreSize
     // Integer supermajority via shared `QuorumPolicy.fromFraction`. The legacy `ceil(n * fraction)`
@@ -87,6 +96,10 @@ object ProposalVccValidator {
     // (0.6666...) both flow through the same shim. See `QuorumPolicySuite` for the formula
     // equivalence guarantee when fraction == 2/3.
     val q = math.max(1, QuorumPolicy.fromFraction(n, quorumThresholdFraction))
+
+    def certQuorumMet(voterIds: List[PeerId]): Boolean =
+      voterIds.size >= q || quorumShrink.exists(d => d.active && voterIds.count(d.anchor.contains) >= d.requiredQuorum)
+
     val isSoloCore = n <= 1
     val isRoundStartView = proposalView === initialViewNumber.toLong
 
@@ -115,7 +128,7 @@ object ProposalVccValidator {
               s"vcc_view_mismatch vccFromView=${vcc.fromView} vccToView=${vcc.toView} proposalView=$proposalView"
             )
           )
-        case (Some(vcc), None) if vcc.votes.size < q =>
+        case (Some(vcc), None) if !certQuorumMet(vcc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)) =>
           Left(ProposalRejection(s"vcc_under_quorum votes=${vcc.votes.size} required=$q"))
         case (Some(vcc), None) if vcc.facilitatorsHash =!= facilitatorsHash =>
           Left(
@@ -138,11 +151,14 @@ object ProposalVccValidator {
               )
             )
           else {
-            // Symmetric with B1/B2 -- every VCC voter must be in the deterministic wider witness pool. The assembler
-            // (StateTransitions.checkViewChangeAssembly) filters by the same pool; without this re-check on the follower
-            // side, an adversarial leader could embed a VCC built from out-of-pool voters and the rest of the cluster
-            // would accept it.
-            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations)
+            // Symmetric with B1/B2 -- every VCC voter must be in the deterministic wider witness pool, which is
+            // WitnessPool.all UNIONED with roundStartFacilitators, matching the assembler's widerWitnessPoolAll in
+            // StateTransitions. Without this re-check on the follower side, an adversarial leader could embed a VCC
+            // built from out-of-pool voters and the rest of the cluster would accept it. The roundStartFacilitators
+            // union is REQUIRED for the v33 shrink path: a shrunken cert is built from the anchor (completedSigners
+            // INTERSECT roundStartFacilitators), whose voters are round-start facilitators but not necessarily in
+            // WitnessPool.all -- without the union the assembler accepts and the follower rejects (vcc_voter_not_in_pool).
+            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations).union(roundStartFacilitators)
             val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
             nonWitnessPoolVoter match {
               case Some(bad) =>
@@ -165,7 +181,7 @@ object ProposalVccValidator {
               s"tc_view_mismatch tcFromView=${tc.fromView} tcToView=${tc.toView} proposalView=$proposalView"
             )
           )
-        case (None, Some(tc)) if tc.votes.size < q =>
+        case (None, Some(tc)) if !certQuorumMet(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)) =>
           Left(ProposalRejection(s"tc_under_quorum votes=${tc.votes.size} required=$q"))
         case (None, Some(tc)) if tc.facilitatorsHash =!= facilitatorsHash =>
           Left(
@@ -194,7 +210,9 @@ object ProposalVccValidator {
               )
             )
           else {
-            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations)
+            // Same wider witness pool as the VCC branch above (WitnessPool.all unioned with roundStartFacilitators,
+            // matching the assembler's widerWitnessPoolAll); REQUIRED for the v33 shrink path's anchor voters.
+            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations).union(roundStartFacilitators)
             val nonWitnessPoolVoter = tc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
             nonWitnessPoolVoter match {
               case Some(bad) =>

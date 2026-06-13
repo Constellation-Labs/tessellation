@@ -168,6 +168,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       now <- Async[F].monotonic
       resources <- storage.getResources(key)
 
+      // v33 quorum-denominator shrink: one decision per monitor cycle, shared by the
+      // feasibility gates below. Derived ONLY from consensus-agreed anchors + wall clock
+      // (see QuorumDenominatorShrink scaladoc); inert in normal operation.
+      shrinkDecision <- ctx.advancer.quorumShrinkDecision(state)
+      _ <- Metrics[F].updateGauge("dag_consensus_quorum_shrink_active", if (shrinkDecision.active) 1L else 0L)
+      _ <- Metrics[F]
+        .updateGauge("dag_consensus_quorum_shrink_required", shrinkDecision.requiredQuorum.toLong)
+        .whenA(shrinkDecision.active)
+
       info = getResourcesInfo(state, resources)
       statusChanged = !ms.lastStatus.contains(state.status)
       resourcesChanged = info.hash != ms.lastResourcesHash
@@ -291,7 +300,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             activeCount = info.activeCount,
             missingPeerIds = info.missingPeerIds,
             missingPeers = info.missingPeers,
-            stallCount = newStallCount
+            stallCount = newStallCount,
+            quorumOverride = shrinkDecision.quorumOverride
           )
 
       didStall = stallResult.didStall
@@ -435,7 +445,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         selfId = selfId,
         peerCurrentKeysContains = peerCurrentKeys.contains _,
         peerCurrentKeyAtOrAfter = (peerId: PeerId) => peerCurrentKeys.get(peerId).exists(k => Order[Key].gteqv(k, lastOutcomeKey)),
-        quorumThresholdFraction = config.quorumThresholdFraction
+        quorumThresholdFraction = config.quorumThresholdFraction,
+        quorumOverride = shrinkDecision.quorumOverride
       )
       readyParticipationInfeasible = readyParticipationStatus.infeasible
       readyParticipationDuringJoiningGrace <- ctx.nodeStorage.isInJoiningGracePeriod
@@ -463,7 +474,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           "joiningGrace" -> readyParticipationDuringJoiningGrace.toString,
           "vccApplyScheduled" -> vccApplyScheduled.toString,
           "abandonSuppressedForVcc" -> readyParticipationSuppressedForVcc.toString,
-          "lastOutcomeKey" -> lastOutcomeKey.toString
+          "lastOutcomeKey" -> lastOutcomeKey.toString,
+          "quorumShrinkActive" -> shrinkDecision.active.toString,
+          "quorumShrinkSteps" -> shrinkDecision.steps.toString,
+          "quorumShrinkRequired" -> shrinkDecision.requiredQuorum.toString,
+          "quorumShrinkAnchorSize" -> shrinkDecision.anchor.size.toString
         ) >>
           Metrics[F].incrementCounter("dag_consensus_ready_participation_quorum_infeasible_total") >>
           Metrics[F]
@@ -740,7 +755,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     activeCount: Int,
     missingPeerIds: Set[String],
     missingPeers: Set[PeerId],
-    stallCount: Int
+    stallCount: Int,
+    // v33 quorum-denominator shrink: effective required quorum when the escalated rung is live.
+    quorumOverride: Option[Int]
   ): F[StallResult] =
     if (statusDuration >= declarationTimeout) {
       val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
@@ -768,7 +785,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         val coreStatus = StallDetector.computeCoreQuorumStatus(
           activeCore = activeCore,
           missingPeers = missingPeers,
-          quorumThresholdFraction = config.quorumThresholdFraction
+          quorumThresholdFraction = config.quorumThresholdFraction,
+          quorumOverride = quorumOverride
         )
         val coreSize = coreStatus.coreSize
         val coreRemaining = coreStatus.coreRemaining
@@ -1438,12 +1456,17 @@ object StallDetector {
   private[consensus] def computeCoreQuorumStatus(
     activeCore: Set[PeerId],
     missingPeers: Set[PeerId],
-    quorumThresholdFraction: Double
+    quorumThresholdFraction: Double,
+    // v33 quorum-denominator shrink: when the escalated rung is live, the effective required
+    // quorum (never above the base Core quorum) replaces the base in the feasibility gate so
+    // the detector stops abandoning rounds the shrunken quorum can actually close.
+    quorumOverride: Option[Int] = None
   ): CoreQuorumStatus = {
     val coreSize = activeCore.size
     val missingCore = activeCore.intersect(missingPeers)
     val coreRemaining = coreSize - missingCore.size
-    val coreRequired = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    val baseRequired = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    val coreRequired = quorumOverride.fold(baseRequired)(o => math.min(baseRequired, math.max(1, o)))
     CoreQuorumStatus(
       coreSize = coreSize,
       coreRemaining = coreRemaining,
@@ -1487,7 +1510,12 @@ object StallDetector {
     selfId: PeerId,
     peerCurrentKeysContains: PeerId => Boolean,
     peerCurrentKeyAtOrAfter: PeerId => Boolean,
-    quorumThresholdFraction: Double
+    quorumThresholdFraction: Double,
+    // v33 quorum-denominator shrink: effective required quorum when the escalated rung is
+    // live (see `computeCoreQuorumStatus`). Without this, the detector keeps firing
+    // `ready_participation_quorum_infeasible` and abandons the very rounds the shrunken
+    // quorum could close -- the live ord-3150197 loop.
+    quorumOverride: Option[Int] = None
   ): ReadyParticipationStatus = {
     val coreSize = coreFacilitators.size
     val readyPeerIdsWithSelf = readyPeerIds + selfId
@@ -1496,7 +1524,8 @@ object StallDetector {
       !peerCurrentKeysContains(peerId) || !peerCurrentKeyAtOrAfter(peerId)
     }
     val activeReady = coreSize - notReadyCore.size
-    val coreQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    val baseQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    val coreQuorum = quorumOverride.fold(baseQuorum)(o => math.min(baseQuorum, math.max(1, o)))
     ReadyParticipationStatus(
       coreSize = coreSize,
       activeReady = activeReady,

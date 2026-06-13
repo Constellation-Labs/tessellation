@@ -4,7 +4,7 @@ import cats.data.StateT
 import cats.effect.{Async, Clock}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
@@ -80,6 +80,38 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
   protected def config: ConsensusConfig
 
+  /** Layer-specific extraction of the most recent `controllerEvidence` entry's `completedSigners` from the carried outcome -- the
+    * deterministic voter anchor for [[QuorumDenominatorShrink]]. Consensus-agreed signed-outcome data; see the rung's scaladoc for the full
+    * two-node determinism argument. Defaults to `None` (rung inert) for implementations that do not carry evidence.
+    */
+  protected def latestEvidenceSigners(lastOutcome: Outcome): Option[SortedSet[PeerId]] = None
+
+  /** Layer-specific extraction of the parent outcome's `consensusEndTime` (last `recentRoundEndTimes` entry) -- the shared time anchor for
+    * [[QuorumDenominatorShrink]] escalation. Defaults to `None` (rung inert).
+    */
+  protected def lastOutcomeEndTimeMs(lastOutcome: Outcome): Option[Long] = None
+
+  /** Single quorum-shrink derivation shared by every consumer (phase quorums below, the cert assembly/apply sites in `StateTransitions`,
+    * the proposal-embedded cert validation in both layer advancers, and the `StallDetector` feasibility gates) so the rung cannot drift
+    * between call sites. Pure except for the wall-clock read. With `config.quorumShrinkActivationViews <= 0` (the default) or absent
+    * evidence/parent-end anchors the returned decision is inert and every gate is byte-identical to pre-rung behavior.
+    */
+  def quorumShrinkDecision(
+    state: ConsensusState[Key, Status, Outcome, Kind]
+  )(implicit asyncF: Async[F]): F[QuorumDenominatorShrink.Decision] =
+    Clock[F].realTime.map { now =>
+      QuorumDenominatorShrink.decide(
+        coreSize = state.coreFacilitators.value.size,
+        quorumThresholdFraction = config.quorumThresholdFraction,
+        latestEvidenceSigners = latestEvidenceSigners(state.lastOutcome),
+        roundStartFacilitators = state.roundStartFacilitators.value.toSet,
+        parentEndTimeMs = lastOutcomeEndTimeMs(state.lastOutcome),
+        nowMs = now.toMillis,
+        viewIntervalMs = config.viewInterval.toMillis,
+        activationViews = config.quorumShrinkActivationViews
+      )
+    }
+
   protected def maybeGetAllDeclarations[A](
     state: State,
     resources: Resources
@@ -119,13 +151,28 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     // `ceil(coreSize * fraction)` for every n in the operating range (see `QuorumPolicySuite`).
     val quorumFraction = config.quorumThresholdFraction
     val quorumThreshold = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumFraction))
+    val coreDeclared: Set[PeerId] = declarationsMap.keySet.filter(coreSet.contains)
 
     for {
+      // v33 quorum-denominator shrink: when the cluster has been silent at this key past the
+      // deterministic escalation threshold, the phase gate may pass on `requiredQuorum`
+      // anchor-member declarations instead of the full Core quorum. Inert (decision.meets ==
+      // `coreReceivedCount >= quorumThreshold`) in normal operation.
+      decision <- quorumShrinkDecision(state)
+      met = decision.meets(coreDeclared)
+      shrunk = decision.shrunkPath(coreDeclared)
       result <-
-        if (coreReceivedCount >= quorumThreshold) {
+        if (met) {
           logger.debug(
             s"Quorum reached: ${coreReceivedCount}/${coreSize} core declared (total received ${receivedCount}/${activeFacilitators.size}, need ${quorumThreshold} core) for key=${state.key}"
           ) >>
+            logger
+              .info(
+                s"[QuorumShrink] phase gate passed via shrunken quorum for key=${state.key}: " +
+                  s"coreDeclared=${coreReceivedCount}/${coreSize} base=${decision.baseQuorum} required=${decision.requiredQuorum} " +
+                  s"steps=${decision.steps} anchorSize=${decision.anchor.size}"
+              )
+              .whenA(shrunk) >>
             declarationsMap.some.pure[F]
         } else {
           none[SortedMap[PeerId, A]].pure[F]

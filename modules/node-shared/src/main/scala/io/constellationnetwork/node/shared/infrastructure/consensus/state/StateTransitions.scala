@@ -142,6 +142,45 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       )
       .union(state.roundStartFacilitators.value.toSet)
 
+  /** v33 quorum-denominator shrink decision for this round -- thin delegate to the single shared derivation on the advancer (see
+    * `ConsensusStateAdvancer.quorumShrinkDecision` and the `QuorumDenominatorShrink` scaladoc for the determinism contract). Inert in
+    * normal operation; consumed by the VCC/TC assembly and apply gates below.
+    */
+  private def quorumShrinkDecisionFor(
+    state: ConsensusState[Key, Status, Outcome, Kind]
+  ): F[QuorumDenominatorShrink.Decision] =
+    advancer.quorumShrinkDecision(state)
+
+  /** Observability for a gate that passed only via the shrunken quorum margin: one INFO line + the rung-activation counter. */
+  private def logQuorumShrinkApplied(
+    key: Key,
+    site: String,
+    decision: QuorumDenominatorShrink.Decision,
+    voters: Set[PeerId]
+  ): F[Unit] =
+    (
+      ConsensusLog.info(
+        log,
+        Category.Phase,
+        key.show,
+        "n/a",
+        LogEvent.ViewChange,
+        "assembly" -> "quorum_shrink_applied",
+        "site" -> site,
+        "votes" -> voters.size.toString,
+        "anchorVotes" -> voters.count(decision.anchor.contains).toString,
+        "baseQuorum" -> decision.baseQuorum.toString,
+        "requiredQuorum" -> decision.requiredQuorum.toString,
+        "steps" -> decision.steps.toString,
+        "anchorSize" -> decision.anchor.size.toString
+      ) >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_quorum_shrink_applied_total",
+          Seq(unsafeLabelName("site") -> site)
+        ) >>
+        Metrics[F].updateGauge("dag_consensus_quorum_shrink_required", decision.requiredQuorum.toLong)
+    ).whenA(decision.shrunkPath(voters))
+
   def checkUpdate(key: Key): F[Unit] =
     for {
       resources <- storage.getResources(key)
@@ -171,152 +210,30 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       case Some(state) =>
         val fromView = state.viewNumber.toLong
         val toView = fromView + 1L
-        storage.getResources(key).flatMap { resources =>
-          val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-          // v19: VCC assembly quorum threshold computed against the Core committee --
-          // mirrors `validateProposalVcc` in the advancer. The signer pool stays open to
-          // all of `roundStartFacilitators` (Tier 1 and Tier 0 peers may sign view changes
-          // and earn rewards), but the LIVENESS denominator that determines when q votes
-          // have arrived is Core-sized. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.coreFacilitators.value.size
-          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
-          if (votes.size >= q) {
-            val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
-            facilitatorsHashCandidates.toList match {
-              case singleHash :: Nil =>
-                // Widen VCC witness pool to match EvictionCertificateBuilder's widening.
-                // The proposal-validation path in the advancer derives the same pool
-                // from the same consensus-agreed inputs, so this is the canonical pool for the
-                // round. Quorum stays committee-sized (passed in q above).
-                val vccPool = widerWitnessPoolAll(state)
-                val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-                ViewChangeCertificateBuilder
-                  .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
-                  case Left(error) =>
-                    ConsensusLog.warn(
-                      log,
-                      Category.Phase,
-                      key.show,
-                      "n/a",
-                      LogEvent.ViewChange,
-                      "assembly" -> "vcc_build_failed",
-                      "reason" -> error.code,
-                      "fromView" -> fromView.toString,
-                      "toView" -> toView.toString,
-                      "votes" -> votes.size.toString,
-                      "quorum" -> q.toString
-                    ) >>
-                      Metrics[F].incrementCounter(
-                        "dag_consensus_vcc_assembly_total",
-                        Seq(
-                          unsafeLabelName("outcome") -> "build_failed",
-                          unsafeLabelName("reason") -> error.code
-                        )
-                      )
-                  case Right(vcc) =>
-                    for {
-                      shouldSchedule <- storage.markAssembledVccApplyScheduled(key, lastSnapshotHash, fromView, toView)
-                      _ <- storage.storeAssembledVcc(key, vcc)
-                      // Re-distribute the assembled VCC so peers that did NOT reach quorum
-                      // locally for this (fromView, toView) -- e.g. due to gossip lag -- still
-                      // store the VCC and can build a valid proposal when they next lead at
-                      // `view > 0`. Without this, the per-peer assembly path leaves a lagging
-                      // peer with an empty `assembledVccR` slot even though state.viewNumber
-                      // advances via gossip, and the next leadership turn wedges with
-                      // `vcc_missing_for_view_gt_0`. Targets the canonical round-start committee
-                      // (excluding self) -- the cohort that could become leader at any future
-                      // view of THIS round.
-                      vccGossipTargets = state.roundStartFacilitators.value.toSet - ctx.selfId
-                      _ <- gossip.spreadDirect(ConsensusAssembledVcc[Key](key, vcc), vccGossipTargets).whenA(shouldSchedule)
-                      _ <- ConsensusLog
-                        .info(
-                          log,
-                          Category.Phase,
-                          key.show,
-                          "n/a",
-                          LogEvent.ViewChange,
-                          "assembly" -> "quorum_reached_scheduled",
-                          "fromView" -> fromView.toString,
-                          "toView" -> toView.toString,
-                          "votes" -> votes.size.toString,
-                          "quorum" -> q.toString,
-                          "applyDelayMs" -> config.viewChangeApplyDelay.toMillis.toString
-                        )
-                        .whenA(shouldSchedule)
-                      _ <- Metrics[F]
-                        .incrementCounter(
-                          "dag_consensus_vcc_assembly_total",
-                          Seq(
-                            unsafeLabelName("outcome") -> "scheduled",
-                            unsafeLabelName("reason") -> "apply_delay"
-                          )
-                        )
-                        .whenA(shouldSchedule)
-                      _ <- Async[F]
-                        .start(
-                          Temporal[F].sleep(config.viewChangeApplyDelay) >>
-                            queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
-                        )
-                        .void
-                        .whenA(shouldSchedule)
-                    } yield ()
-                }
-              case multiple =>
-                ConsensusLog.warn(
-                  log,
-                  Category.Phase,
-                  key.show,
-                  "n/a",
-                  LogEvent.ViewChange,
-                  "assembly" -> "divergent_facilitators_hash",
-                  "hashes" -> multiple.size.toString,
-                  "fromView" -> fromView.toString,
-                  "toView" -> toView.toString
-                ) >>
-                  Metrics[F].incrementCounter(
-                    "dag_consensus_vcc_assembly_total",
-                    Seq(
-                      unsafeLabelName("outcome") -> "divergent_facilitators_hash",
-                      unsafeLabelName("reason") -> "multiple_hashes"
-                    )
-                  )
-            }
-          } else {
-            log.debug(
-              ConsensusLog.format(
-                Category.Phase,
-                key.show,
-                "n/a",
-                LogEvent.ViewChange,
-                "assembly" -> "waiting_for_quorum",
-                "votes" -> votes.size.toString,
-                "quorum" -> q.toString
-              )
-            )
-          }
-        }
-    }
-
-  def checkTimeoutCertificateAssembly(key: Key): F[Unit] =
-    storage.getState(key).flatMap {
-      case None => Async[F].unit
-      case Some(state) =>
-        storage.getResources(key).flatMap { resources =>
-          val fromView = state.viewNumber.toLong
-          val toView = fromView + 1L
-          val n = state.coreFacilitators.value.size
-          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
-          val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
-          val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-          val vccPool = widerWitnessPoolAll(state)
-
-          votes.values.toList.groupBy(_.value.reason).toList.traverse_ {
-            case (reason, reasonVotes) =>
-              val votesBySigner = reasonVotes.map(v => v.proofs.head.id.toPeerId -> v).toMap
-              votesBySigner.values.map(_.value.facilitatorsHash).toSet.toList match {
-                case singleHash :: Nil if votesBySigner.size >= q =>
-                  TimeoutCertificateBuilder
-                    .build(fromView, toView, singleHash, lastSnapshotHash, reason, votesBySigner, q, vccPool) match {
+        (storage.getResources(key), quorumShrinkDecisionFor(state)).tupled.flatMap {
+          case (resources, shrinkDecision) =>
+            val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+            // v19: VCC assembly quorum threshold computed against the Core committee --
+            // mirrors `validateProposalVcc` in the advancer. The signer pool stays open to
+            // all of `roundStartFacilitators` (Tier 1 and Tier 0 peers may sign view changes
+            // and earn rewards), but the LIVENESS denominator that determines when q votes
+            // have arrived is Core-sized. Integer math via `QuorumPolicy.fromFraction`.
+            // v33: under the escalated quorum-denominator shrink, `requiredQuorum`
+            // anchor-member votes also satisfy the gate; `builderQuorum` keeps the builder's
+            // internal under-quorum check consistent with whichever path passed.
+            val q = shrinkDecision.builderQuorum(votes.keySet)
+            if (shrinkDecision.meets(votes.keySet)) {
+              val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
+              facilitatorsHashCandidates.toList match {
+                case singleHash :: Nil =>
+                  // Widen VCC witness pool to match EvictionCertificateBuilder's widening.
+                  // The proposal-validation path in the advancer derives the same pool
+                  // from the same consensus-agreed inputs, so this is the canonical pool for the
+                  // round. Quorum stays committee-sized (passed in q above).
+                  val vccPool = widerWitnessPoolAll(state)
+                  val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
+                  ViewChangeCertificateBuilder
+                    .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
                     case Left(error) =>
                       ConsensusLog.warn(
                         log,
@@ -324,25 +241,36 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                         key.show,
                         "n/a",
                         LogEvent.ViewChange,
-                        "assembly" -> "timeout_cert_build_failed",
+                        "assembly" -> "vcc_build_failed",
                         "reason" -> error.code,
-                        "timeoutReason" -> reason.toString,
                         "fromView" -> fromView.toString,
                         "toView" -> toView.toString,
-                        "votes" -> votesBySigner.size.toString,
+                        "votes" -> votes.size.toString,
                         "quorum" -> q.toString
                       ) >>
                         Metrics[F].incrementCounter(
-                          "dag_consensus_timeout_certificate_total",
+                          "dag_consensus_vcc_assembly_total",
                           Seq(
                             unsafeLabelName("outcome") -> "build_failed",
                             unsafeLabelName("reason") -> error.code
                           )
                         )
-                    case Right(tc) =>
+                    case Right(vcc) =>
                       for {
-                        shouldSchedule <- storage.markTimeoutCertificateApplyScheduled(key, lastSnapshotHash, fromView, toView)
-                        _ <- storage.storeTimeoutCertificate(key, tc)
+                        shouldSchedule <- storage.markAssembledVccApplyScheduled(key, lastSnapshotHash, fromView, toView)
+                        _ <- storage.storeAssembledVcc(key, vcc)
+                        _ <- logQuorumShrinkApplied(key, "vcc_assembly", shrinkDecision, votes.keySet)
+                        // Re-distribute the assembled VCC so peers that did NOT reach quorum
+                        // locally for this (fromView, toView) -- e.g. due to gossip lag -- still
+                        // store the VCC and can build a valid proposal when they next lead at
+                        // `view > 0`. Without this, the per-peer assembly path leaves a lagging
+                        // peer with an empty `assembledVccR` slot even though state.viewNumber
+                        // advances via gossip, and the next leadership turn wedges with
+                        // `vcc_missing_for_view_gt_0`. Targets the canonical round-start committee
+                        // (excluding self) -- the cohort that could become leader at any future
+                        // view of THIS round.
+                        vccGossipTargets = state.roundStartFacilitators.value.toSet - ctx.selfId
+                        _ <- gossip.spreadDirect(ConsensusAssembledVcc[Key](key, vcc), vccGossipTargets).whenA(shouldSchedule)
                         _ <- ConsensusLog
                           .info(
                             log,
@@ -350,69 +278,32 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                             key.show,
                             "n/a",
                             LogEvent.ViewChange,
-                            "assembly" -> "timeout_cert_assembled",
-                            "timeoutReason" -> reason.toString,
+                            "assembly" -> "quorum_reached_scheduled",
                             "fromView" -> fromView.toString,
                             "toView" -> toView.toString,
-                            "votes" -> votesBySigner.size.toString,
+                            "votes" -> votes.size.toString,
                             "quorum" -> q.toString,
                             "applyDelayMs" -> config.viewChangeApplyDelay.toMillis.toString
                           )
                           .whenA(shouldSchedule)
                         _ <- Metrics[F]
                           .incrementCounter(
-                            "dag_consensus_timeout_certificate_total",
+                            "dag_consensus_vcc_assembly_total",
                             Seq(
                               unsafeLabelName("outcome") -> "scheduled",
-                              unsafeLabelName("reason") -> reason.toString
+                              unsafeLabelName("reason") -> "apply_delay"
                             )
                           )
                           .whenA(shouldSchedule)
-                        _ <- Metrics[F]
-                          .incrementCounter(
-                            "dag_consensus_timeout_certificate_total",
-                            Seq(
-                              unsafeLabelName("outcome") -> "duplicate_suppressed",
-                              unsafeLabelName("reason") -> reason.toString
-                            )
-                          )
-                          .unlessA(shouldSchedule)
                         _ <- Async[F]
                           .start(
                             Temporal[F].sleep(config.viewChangeApplyDelay) >>
-                              queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView))
+                              queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
                           )
                           .void
                           .whenA(shouldSchedule)
                       } yield ()
                   }
-                case Nil =>
-                  log.debug(
-                    ConsensusLog.format(
-                      Category.Phase,
-                      key.show,
-                      "n/a",
-                      LogEvent.ViewChange,
-                      "assembly" -> "timeout_waiting_for_quorum",
-                      "timeoutReason" -> reason.toString,
-                      "votes" -> votesBySigner.size.toString,
-                      "quorum" -> q.toString
-                    )
-                  )
-                case _ :: Nil =>
-                  log.debug(
-                    ConsensusLog.format(
-                      Category.Phase,
-                      key.show,
-                      "n/a",
-                      LogEvent.ViewChange,
-                      "assembly" -> "timeout_waiting_for_quorum",
-                      "timeoutReason" -> reason.toString,
-                      "votes" -> votesBySigner.size.toString,
-                      "quorum" -> q.toString,
-                      "hashes" -> "1"
-                    )
-                  )
                 case multiple =>
                   ConsensusLog.warn(
                     log,
@@ -420,21 +311,177 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     key.show,
                     "n/a",
                     LogEvent.ViewChange,
-                    "assembly" -> "timeout_divergent_facilitators_hash",
-                    "timeoutReason" -> reason.toString,
+                    "assembly" -> "divergent_facilitators_hash",
                     "hashes" -> multiple.size.toString,
                     "fromView" -> fromView.toString,
                     "toView" -> toView.toString
                   ) >>
                     Metrics[F].incrementCounter(
-                      "dag_consensus_timeout_certificate_total",
+                      "dag_consensus_vcc_assembly_total",
                       Seq(
                         unsafeLabelName("outcome") -> "divergent_facilitators_hash",
-                        unsafeLabelName("reason") -> reason.toString
+                        unsafeLabelName("reason") -> "multiple_hashes"
                       )
                     )
               }
-          }
+            } else {
+              log.debug(
+                ConsensusLog.format(
+                  Category.Phase,
+                  key.show,
+                  "n/a",
+                  LogEvent.ViewChange,
+                  "assembly" -> "waiting_for_quorum",
+                  "votes" -> votes.size.toString,
+                  "quorum" -> q.toString
+                )
+              )
+            }
+        }
+    }
+
+  def checkTimeoutCertificateAssembly(key: Key): F[Unit] =
+    storage.getState(key).flatMap {
+      case None => Async[F].unit
+      case Some(state) =>
+        (storage.getResources(key), quorumShrinkDecisionFor(state)).tupled.flatMap {
+          case (resources, shrinkDecision) =>
+            val fromView = state.viewNumber.toLong
+            val toView = fromView + 1L
+            val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
+            val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
+            val vccPool = widerWitnessPoolAll(state)
+
+            votes.values.toList.groupBy(_.value.reason).toList.traverse_ {
+              case (reason, reasonVotes) =>
+                val votesBySigner = reasonVotes.map(v => v.proofs.head.id.toPeerId -> v).toMap
+                // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied
+                // (anchor-member votes may satisfy `requiredQuorum` when the rung is live; inert
+                // decision degrades to the legacy `votesBySigner.size >= base` gate).
+                val q = shrinkDecision.builderQuorum(votesBySigner.keySet)
+                votesBySigner.values.map(_.value.facilitatorsHash).toSet.toList match {
+                  case singleHash :: Nil if shrinkDecision.meets(votesBySigner.keySet) =>
+                    TimeoutCertificateBuilder
+                      .build(fromView, toView, singleHash, lastSnapshotHash, reason, votesBySigner, q, vccPool) match {
+                      case Left(error) =>
+                        ConsensusLog.warn(
+                          log,
+                          Category.Phase,
+                          key.show,
+                          "n/a",
+                          LogEvent.ViewChange,
+                          "assembly" -> "timeout_cert_build_failed",
+                          "reason" -> error.code,
+                          "timeoutReason" -> reason.toString,
+                          "fromView" -> fromView.toString,
+                          "toView" -> toView.toString,
+                          "votes" -> votesBySigner.size.toString,
+                          "quorum" -> q.toString
+                        ) >>
+                          Metrics[F].incrementCounter(
+                            "dag_consensus_timeout_certificate_total",
+                            Seq(
+                              unsafeLabelName("outcome") -> "build_failed",
+                              unsafeLabelName("reason") -> error.code
+                            )
+                          )
+                      case Right(tc) =>
+                        for {
+                          shouldSchedule <- storage.markTimeoutCertificateApplyScheduled(key, lastSnapshotHash, fromView, toView)
+                          _ <- storage.storeTimeoutCertificate(key, tc)
+                          _ <- logQuorumShrinkApplied(key, "tc_assembly", shrinkDecision, votesBySigner.keySet)
+                          _ <- ConsensusLog
+                            .info(
+                              log,
+                              Category.Phase,
+                              key.show,
+                              "n/a",
+                              LogEvent.ViewChange,
+                              "assembly" -> "timeout_cert_assembled",
+                              "timeoutReason" -> reason.toString,
+                              "fromView" -> fromView.toString,
+                              "toView" -> toView.toString,
+                              "votes" -> votesBySigner.size.toString,
+                              "quorum" -> q.toString,
+                              "applyDelayMs" -> config.viewChangeApplyDelay.toMillis.toString
+                            )
+                            .whenA(shouldSchedule)
+                          _ <- Metrics[F]
+                            .incrementCounter(
+                              "dag_consensus_timeout_certificate_total",
+                              Seq(
+                                unsafeLabelName("outcome") -> "scheduled",
+                                unsafeLabelName("reason") -> reason.toString
+                              )
+                            )
+                            .whenA(shouldSchedule)
+                          _ <- Metrics[F]
+                            .incrementCounter(
+                              "dag_consensus_timeout_certificate_total",
+                              Seq(
+                                unsafeLabelName("outcome") -> "duplicate_suppressed",
+                                unsafeLabelName("reason") -> reason.toString
+                              )
+                            )
+                            .unlessA(shouldSchedule)
+                          _ <- Async[F]
+                            .start(
+                              Temporal[F].sleep(config.viewChangeApplyDelay) >>
+                                queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView))
+                            )
+                            .void
+                            .whenA(shouldSchedule)
+                        } yield ()
+                    }
+                  case Nil =>
+                    log.debug(
+                      ConsensusLog.format(
+                        Category.Phase,
+                        key.show,
+                        "n/a",
+                        LogEvent.ViewChange,
+                        "assembly" -> "timeout_waiting_for_quorum",
+                        "timeoutReason" -> reason.toString,
+                        "votes" -> votesBySigner.size.toString,
+                        "quorum" -> q.toString
+                      )
+                    )
+                  case _ :: Nil =>
+                    log.debug(
+                      ConsensusLog.format(
+                        Category.Phase,
+                        key.show,
+                        "n/a",
+                        LogEvent.ViewChange,
+                        "assembly" -> "timeout_waiting_for_quorum",
+                        "timeoutReason" -> reason.toString,
+                        "votes" -> votesBySigner.size.toString,
+                        "quorum" -> q.toString,
+                        "hashes" -> "1"
+                      )
+                    )
+                  case multiple =>
+                    ConsensusLog.warn(
+                      log,
+                      Category.Phase,
+                      key.show,
+                      "n/a",
+                      LogEvent.ViewChange,
+                      "assembly" -> "timeout_divergent_facilitators_hash",
+                      "timeoutReason" -> reason.toString,
+                      "hashes" -> multiple.size.toString,
+                      "fromView" -> fromView.toString,
+                      "toView" -> toView.toString
+                    ) >>
+                      Metrics[F].incrementCounter(
+                        "dag_consensus_timeout_certificate_total",
+                        Seq(
+                          unsafeLabelName("outcome") -> "divergent_facilitators_hash",
+                          unsafeLabelName("reason") -> reason.toString
+                        )
+                      )
+                }
+            }
         }
     }
 
@@ -532,12 +579,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     resources: ConsensusResources[Artifact, Kind],
     fromView: Long,
     toView: Long
-  ): F[Unit] = {
+  ): F[Unit] = quorumShrinkDecisionFor(state).flatMap { shrinkDecision =>
     val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-    val n = state.coreFacilitators.value.size
-    val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+    // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied (inert
+    // decision degrades to the legacy base-quorum gate).
+    val q = shrinkDecision.builderQuorum(votes.keySet)
 
-    if (votes.size < q)
+    if (!shrinkDecision.meets(votes.keySet))
       Metrics[F].incrementCounter(
         "dag_consensus_vcc_apply_total",
         Seq(
@@ -609,6 +657,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
               for {
                 _ <- storage.storeAssembledVcc(key, vcc)
+                _ <- logQuorumShrinkApplied(key, "vcc_apply", shrinkDecision, votes.keySet)
                 advanced <- storage.condModifyState[Boolean](key)(modify)
                 didAdvance = advanced.getOrElse(false)
                 _ <- ConsensusLog
@@ -680,13 +729,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     fromView: Long,
     toView: Long,
     reason: TimeoutReason
-  ): F[Unit] = {
+  ): F[Unit] = quorumShrinkDecisionFor(state).flatMap { shrinkDecision =>
     val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
     val reasonVotes = votes.collect { case (pid, signed) if signed.value.reason === reason => pid -> signed }
-    val n = state.coreFacilitators.value.size
-    val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+    // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied (inert
+    // decision degrades to the legacy base-quorum gate). On the shrunken path `q` is also the
+    // certified-shrink floor below, so the round-local active set may reduce to the TC voters.
+    val q = shrinkDecision.builderQuorum(reasonVotes.keySet)
 
-    if (reasonVotes.size < q)
+    if (!shrinkDecision.meets(reasonVotes.keySet))
       Metrics[F].incrementCounter(
         "dag_consensus_timeout_certificate_apply_total",
         Seq(
@@ -814,6 +865,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               for {
                 advanced <- storage.condModifyState[Boolean](key)(modify)
                 didAdvance = advanced.getOrElse(false)
+                _ <- logQuorumShrinkApplied(key, "tc_apply", shrinkDecision, reasonVotes.keySet).whenA(didAdvance)
                 _ <- ConsensusLog
                   .info(
                     log,
