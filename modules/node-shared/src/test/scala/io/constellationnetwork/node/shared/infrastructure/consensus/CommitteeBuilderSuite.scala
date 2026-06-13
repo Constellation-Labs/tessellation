@@ -1,9 +1,9 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{ControllerEvidenceEntry, SnapshotOrdinal}
 import io.constellationnetwork.security.hex.Hex
 
 import weaver.SimpleIOSuite
@@ -680,5 +680,152 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
     expect.same(a.witness.toSet, b.witness.toSet) &&
     expect.same(a.effectiveTiers, b.effectiveTiers) &&
     expect.same(2, a.tier1.size)
+  }
+
+  // -- Reward-rotation INTEGRATION: the real eligibleWaiting gate over the evidence window --
+  //
+  // These drive `CommitteeBuilder.build` with `recentParticipants` derived from a REAL evidence
+  // window via `ControllerEvidenceDerivation.recentParticipants(evidence, eligibilityWindow)` (not a
+  // synthetic Set), exactly as the StateCreators do. They prove the Codex finding-1 fairness fix: a
+  // peer rotated to Witness STOPS signing and ages out of the trailing evidence window, so unless the
+  // eligibility window EXCEEDS the epoch, it is never eligible again at the next boundary -- benched
+  // forever.
+
+  private def evEntry(roundStart: Set[PeerId], signers: Set[PeerId]): ControllerEvidenceEntry =
+    ControllerEvidenceEntry(
+      roundStartFacilitators = SortedSet.from(roundStart),
+      completedSigners = SortedSet.from(signers),
+      timeoutVoters = SortedSet.empty,
+      admittedPeers = SortedSet.empty,
+      evictedPeers = SortedSet.empty
+    )
+
+  // Build a `tighteningWindow`-bounded evidence window from a per-ordinal signer set, mirroring the
+  // StateAdvancers' `appendBounded` trim (keep only the most-recent `evidenceWindow` ordinals).
+  private def evidenceWindow(
+    signersByOrdinal: List[(Long, Set[PeerId])],
+    evidenceWindow: Int
+  ): SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] =
+    SortedMap.from(
+      signersByOrdinal.takeRight(evidenceWindow).map {
+        case (o, signers) => SnapshotOrdinal.unsafeApply(o) -> evEntry(signers, signers)
+      }
+    )
+
+  pureTest("integration: with epoch < eligibilityWindow a rotated-out peer returns within the window") {
+    // Core peer always signs. pSeat is the peer that held the rotating Tier-1 seat and signed up to
+    // the LAST boundary, then was rotated out and stopped signing. pWaiting is the peer currently in
+    // the seat. We advance to the boundary at ord (lastSeat + epoch) and check the eligible pool.
+    val pCore = pid("core")
+    val pSeat = pid("0sea") // rotated out at the previous boundary; idle since
+    val pWaiting = pid("0wai") // currently holds the seat
+    val epoch = 3
+    val eligibilityWindow = 10 // > epoch: the fairness invariant holds
+    val tighteningWindow = 10
+
+    // pSeat signed every ordinal through the previous boundary at ord 20; pWaiting has signed since.
+    // The next boundary is ord 23 (= 20 + epoch). The trailing 3 entries (21,22,23) carry pWaiting;
+    // pSeat last signed at ord 20, which is still inside the 10-wide eligibility window (>= 14).
+    val signers: List[(Long, Set[PeerId])] =
+      (14L to 20L).toList.map(o => o -> Set(pCore, pSeat)) ++
+        (21L to 23L).toList.map(o => o -> Set(pCore, pWaiting))
+    val evidence = evidenceWindow(signers, tighteningWindow)
+    val recentParticipants = ControllerEvidenceDerivation.recentParticipants(evidence, eligibilityWindow)
+
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pWaiting -> Tier1, pSeat -> Witness)
+    val candidates = List(pCore, pWaiting, pSeat)
+    val result = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(23)), // 23 % epoch(3) ... not a multiple; the test uses epoch boundary below
+      recentParticipants = recentParticipants,
+      idleWindows = ControllerEvidenceDerivation.idleWindows(evidence, _),
+      tenureWindows = ControllerEvidenceDerivation.tenureWindows(evidence, _),
+      rewardRotationEpochRounds = epoch
+    )
+
+    // Sanity: pSeat is demonstrated-live within the eligibility window (the gate the bug broke).
+    val seatStillEligible = expect(recentParticipants.contains(pSeat))
+    // On an ACTUAL boundary (ord 24, a multiple of epoch=3 nearest above) pSeat -- the longest-idle
+    // eligible peer -- rotates back into Tier 1, taking the seat from pWaiting. We re-run at ord 24
+    // with an evidence window whose latest ordinal is 24 (pWaiting signed 21..24, pSeat last at 20,
+    // idle 4 < eligibilityWindow 10, so still eligible).
+    val signers24 = (15L to 20L).toList.map(o => o -> Set(pCore, pSeat)) ++
+      (21L to 24L).toList.map(o => o -> Set(pCore, pWaiting))
+    val evidence24 = evidenceWindow(signers24, tighteningWindow)
+    val recent24 = ControllerEvidenceDerivation.recentParticipants(evidence24, eligibilityWindow)
+    val atBoundary = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(24)), // 24 % 3 == 0 -> epoch boundary
+      recentParticipants = recent24,
+      idleWindows = ControllerEvidenceDerivation.idleWindows(evidence24, _),
+      tenureWindows = ControllerEvidenceDerivation.tenureWindows(evidence24, _),
+      rewardRotationEpochRounds = epoch
+    )
+
+    seatStillEligible &&
+    expect(recent24.contains(pSeat)) &&
+    // pSeat returns to Tier 1 within the window (fairness restored); pWaiting yields the seat.
+    expect.same(List(pSeat), atBoundary.tier1) &&
+    expect.same(Some(Tier1), atBoundary.effectiveTiers.get(pSeat)) &&
+    expect.same(Some(Witness), atBoundary.effectiveTiers.get(pWaiting)) &&
+    // Core is never touched.
+    expect.same(List(pCore), atBoundary.core) &&
+    // `result` at the non-boundary ord 23 must NOT rotate (off-boundary inert), so pWaiting keeps the seat.
+    expect.same(List(pWaiting), result.tier1)
+  }
+
+  pureTest("integration: with epoch > eligibilityWindow a rotated-out peer is benched forever (the bug Codex described)") {
+    // Same shape, but the epoch (15) now EXCEEDS the eligibility window (10) and the evidence window.
+    // By the next boundary the rotated-out peer has signed too long ago to remain in the window, so
+    // it falls out of recentParticipants and can never rotate back. This documents the bug the
+    // fairness constraint (epoch < eligibilityWindow <= evidenceWindow) exists to prevent.
+    val pCore = pid("core")
+    val pSeat = pid("0sea")
+    val pWaiting = pid("0wai")
+    val epoch = 15
+    val eligibilityWindow = 10 // < epoch: invariant VIOLATED on purpose
+    val tighteningWindow = 10
+
+    // pSeat last signed at ord 15 (the previous boundary). The next boundary is ord 30 (= 15 + epoch).
+    // pWaiting has signed ords 16..30; the 10-bounded window is ords 21..30 -- pSeat (last at 15) is
+    // entirely gone from it.
+    val signers: List[(Long, Set[PeerId])] =
+      (1L to 15L).toList.map(o => o -> Set(pCore, pSeat)) ++
+        (16L to 30L).toList.map(o => o -> Set(pCore, pWaiting))
+    val evidence = evidenceWindow(signers, tighteningWindow)
+    val recentParticipants = ControllerEvidenceDerivation.recentParticipants(evidence, eligibilityWindow)
+
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pWaiting -> Tier1, pSeat -> Witness)
+    val candidates = List(pCore, pWaiting, pSeat)
+    val result = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(30)), // 30 % 15 == 0 -> epoch boundary
+      recentParticipants = recentParticipants,
+      idleWindows = ControllerEvidenceDerivation.idleWindows(evidence, _),
+      tenureWindows = ControllerEvidenceDerivation.tenureWindows(evidence, _),
+      rewardRotationEpochRounds = epoch
+    )
+
+    // pSeat has aged out of the eligibility window -> not demonstrated-live -> not eligible.
+    expect(!recentParticipants.contains(pSeat)) &&
+    // No eligible peer to seat: pWaiting keeps the Tier-1 seat, pSeat stays benched in Witness.
+    // This is the unfair outcome the fairness constraint forbids in production config.
+    expect.same(List(pWaiting), result.tier1) &&
+    expect.same(Some(Witness), result.effectiveTiers.get(pSeat))
   }
 }

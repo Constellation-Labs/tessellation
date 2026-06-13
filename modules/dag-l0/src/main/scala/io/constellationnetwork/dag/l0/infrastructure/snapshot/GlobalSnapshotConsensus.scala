@@ -184,11 +184,17 @@ object GlobalSnapshotConsensus {
       resolvedRewardRotationEpochRounds = appConfig.snapshot.rewardRotationEpochRounds
         .get(appConfig.environment)
         .getOrElse(0)
+      // Bounded one-slot Tier-1 reward rotation: env-resolved eligibility window (absent env entry =
+      // 0 = use the full evidence window). Folded into `deterministicConfigHash` via the copy below.
+      resolvedRewardRotationEligibilityWindow = appConfig.snapshot.rewardRotationEligibilityWindow
+        .get(appConfig.environment)
+        .getOrElse(0)
       effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        rewardRotationEpochRounds = resolvedRewardRotationEpochRounds
+        rewardRotationEpochRounds = resolvedRewardRotationEpochRounds,
+        rewardRotationEligibilityWindow = resolvedRewardRotationEligibilityWindow
       )
 
       consensusStorage <- ConsensusStorage.make[

@@ -465,8 +465,13 @@ object CurrencySnapshotConsensusStateCreator {
         // healthy reserves). Mirror of dag-l0; see CommitteeBuilder scaladoc for the ladder.
         // Bounded one-slot Tier-1 reward rotation inputs (RewardRotation). Mirror of dag-l0; all
         // evidence-derived from the signed controllerEvidence window so the swap is byte-identical
-        // across honest nodes. Inert when `rewardRotationEpochRounds == 0` (the env default).
+        // across honest nodes. `recentParticipants` is evaluated over the eligibility window
+        // (configured `rewardRotationEligibilityWindow`, or the full evidence window
+        // `tighteningWindow` when 0), which MUST exceed `rewardRotationEpochRounds` or a rotated-out
+        // peer is benched forever. Inert when `rewardRotationEpochRounds == 0` (the env default).
         rotationEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty)
+        rotationEligibilityWindow: Int =
+          if (config.rewardRotationEligibilityWindow > 0) config.rewardRotationEligibilityWindow else config.tighteningWindow
         committees = CommitteeBuilder.build(
           candidates = active,
           priorTiers = controllerInputs.peerTiers,
@@ -478,7 +483,7 @@ object CurrencySnapshotConsensusStateCreator {
           chronicMisses = controllerInputs.chronicMisses,
           activeScores = controllerInputs.activeScores,
           rotationKey = key.some,
-          recentParticipants = ControllerEvidenceDerivation.recentParticipants(rotationEvidence),
+          recentParticipants = ControllerEvidenceDerivation.recentParticipants(rotationEvidence, rotationEligibilityWindow),
           idleWindows = ControllerEvidenceDerivation.idleWindows(rotationEvidence, _),
           tenureWindows = ControllerEvidenceDerivation.tenureWindows(rotationEvidence, _),
           rewardRotationEpochRounds = config.rewardRotationEpochRounds,

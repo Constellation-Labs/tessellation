@@ -167,18 +167,44 @@ object ControllerEvidenceDerivation {
 
   /** Peers that signed at least one of the most recent `TierTransitions.DemotionConsecutiveMisses` evidence entries.
     *
-    * This is the deterministic "demonstrated-live" gate the reward-rotation lane consumes: a peer is eligible to be rotated INTO the
-    * signing set only if it has actually completed a round within the trailing window, so the rotation never seats a peer that has merely
-    * been observed locally (the alpha.92/129/147 fork class) or that is silently dead. It is the exact union of the signer sets the tier
-    * derivation already inspects for the Core/Tier1 split, so a rotated-in peer is by construction one the derivation treats as
-    * Core-eligible.
+    * This is the deterministic "demonstrated-live" gate the tier derivation's Core/Tier1 split inspects: a peer is treated as Core-eligible
+    * only if it has actually completed a round within the trailing `DemotionConsecutiveMisses` window. Retained at this fixed (short)
+    * window for the existing demotion-aligned callers; the reward-rotation lane uses the WINDOWED variant below with its own eligibility
+    * horizon.
     *
     * Pure function of the signed evidence window only -- empty window derives the empty set (bootstrap regime).
     */
   def recentParticipants(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): Set[PeerId] =
-    evidence.values.toList
-      .takeRight(TierTransitions.DemotionConsecutiveMisses)
-      .foldLeft(SortedSet.empty[PeerId])((acc, entry) => acc ++ entry.completedSigners)
+    recentParticipants(evidence, TierTransitions.DemotionConsecutiveMisses)
+
+  /** Peers that signed at least one of the most recent `window` evidence entries (the union of `completedSigners` over the trailing
+    * `window` entries, clamped to the evidence size).
+    *
+    * ==Why a parameterized window (the reward-rotation fairness fix)==
+    *
+    * The fixed `DemotionConsecutiveMisses` (3) variant above is the demonstrated-live gate for the demotion-aligned split. The reward
+    * rotation needs a DIFFERENT horizon: it rotates a Tier-1 seat once per `rewardRotationEpochRounds`-ordinal epoch, and a peer rotated to
+    * Witness STOPS signing, so it drops out of any window shorter than the epoch within ~`DemotionConsecutiveMisses` rounds and would never
+    * be eligible again at the next boundary -- benched forever. The eligibility window must therefore be STRICTLY LARGER than the epoch:
+    * `epoch < eligibilityWindow`.
+    *
+    * ==The hard upper bound==
+    *
+    * Eligibility cannot look back further than the signed evidence retains. The evidence window is trimmed to `tighteningWindow` entries
+    * (`appendBounded`), so `eligibilityWindow <= tighteningWindow` -- asking for a larger window is silently clamped here by the
+    * `takeRight` (you only ever see what the window holds). The fairness invariant is therefore `epoch < eligibilityWindow <=
+    * evidenceWindowSize (tighteningWindow)`; widening fairness for a larger waiting pool requires a larger evidence window, which is out of
+    * scope for this change.
+    *
+    * Pure function of the signed evidence window only (entry counts, never wall-clock) -- empty window or `window <= 0` derives the empty
+    * set, so two honest nodes holding the same window compute the identical set.
+    */
+  def recentParticipants(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry], window: Int): Set[PeerId] =
+    if (window <= 0) Set.empty
+    else
+      evidence.values.toList
+        .takeRight(window)
+        .foldLeft(SortedSet.empty[PeerId])((acc, entry) => acc ++ entry.completedSigners)
 
   /** Number of TRAILING evidence entries since `peer` last appeared in `completedSigners`, counted from the most recent entry backwards.
     *
