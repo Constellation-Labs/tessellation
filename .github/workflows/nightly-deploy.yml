@@ -3,8 +3,11 @@ name: Nightly Deploy
 on:
   # Deploy on every merge to develop so the nightly cluster always runs the latest code.
   # cancel-in-progress ensures rapid pushes don't pile up — only the latest deploy runs.
-  # Push-trigger deliberately disabled on release/testnet: this branch must
-  # never auto-deploy to the nightly cluster. Use workflow_dispatch explicitly.
+  push:
+    branches:
+      - develop
+      - release/testnet
+      - nightly_monitoring_service
   workflow_dispatch:
     inputs:
       branch:
