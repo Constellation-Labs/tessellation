@@ -179,10 +179,16 @@ object GlobalSnapshotConsensus {
       resolvedActiveAdmissionMinProbationReentrySlots = appConfig.snapshot.activeAdmissionMinProbationReentrySlots
         .get(appConfig.environment)
         .getOrElse(0)
+      // Bounded one-slot Tier-1 reward rotation: env-resolved epoch length (absent env entry =
+      // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
+      resolvedRewardRotationEpochRounds = appConfig.snapshot.rewardRotationEpochRounds
+        .get(appConfig.environment)
+        .getOrElse(0)
       effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
-        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots
+        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
+        rewardRotationEpochRounds = resolvedRewardRotationEpochRounds
       )
 
       consensusStorage <- ConsensusStorage.make[

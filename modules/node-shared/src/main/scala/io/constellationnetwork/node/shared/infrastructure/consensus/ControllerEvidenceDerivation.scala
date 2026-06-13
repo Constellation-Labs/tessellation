@@ -165,6 +165,45 @@ object ControllerEvidenceDerivation {
         )
     }
 
+  /** Peers that signed at least one of the most recent `TierTransitions.DemotionConsecutiveMisses` evidence entries.
+    *
+    * This is the deterministic "demonstrated-live" gate the reward-rotation lane consumes: a peer is eligible to be rotated INTO the
+    * signing set only if it has actually completed a round within the trailing window, so the rotation never seats a peer that has merely
+    * been observed locally (the alpha.92/129/147 fork class) or that is silently dead. It is the exact union of the signer sets the tier
+    * derivation already inspects for the Core/Tier1 split, so a rotated-in peer is by construction one the derivation treats as
+    * Core-eligible.
+    *
+    * Pure function of the signed evidence window only -- empty window derives the empty set (bootstrap regime).
+    */
+  def recentParticipants(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): Set[PeerId] =
+    evidence.values.toList
+      .takeRight(TierTransitions.DemotionConsecutiveMisses)
+      .foldLeft(SortedSet.empty[PeerId])((acc, entry) => acc ++ entry.completedSigners)
+
+  /** Number of TRAILING evidence entries since `peer` last appeared in `completedSigners`, counted from the most recent entry backwards.
+    *
+    * Larger = the peer has waited longer for a signing turn (more overdue). A peer in the latest entry's signer set has `0`; a peer that
+    * has never signed in the window has a count equal to the full window length. The reward-rotation lane sorts the eligible-waiting pool
+    * by this value descending so the longest-idle eligible peer is rotated in first (round-robin fairness over many epochs).
+    *
+    * Pure function of the signed evidence window only -- it counts entries, not wall-clock time, so two honest nodes holding the same
+    * window compute the identical value.
+    */
+  def idleWindows(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry], peer: PeerId): Int =
+    evidence.values.toList.reverse.takeWhile(!_.completedSigners.contains(peer)).size
+
+  /** Number of CONSECUTIVE trailing evidence entries in which `peer` WAS in `completedSigners`, counted from the most recent entry
+    * backwards.
+    *
+    * Larger = the peer has been serving (signing) longer without interruption. A peer absent from the latest entry's signer set has `0`.
+    * The reward-rotation lane sorts the current Tier-1 set by this value descending so the longest-tenured Tier-1 member is the one rotated
+    * OUT, giving a different healthy peer its turn.
+    *
+    * Pure function of the signed evidence window only -- same determinism contract as `idleWindows`.
+    */
+  def tenureWindows(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry], peer: PeerId): Int =
+    evidence.values.toList.reverse.takeWhile(_.completedSigners.contains(peer)).size
+
   /** Stage-4 read-side inputs for committee derivation: `ConsensusPeerController.chooseActive`, `CommitteeBuilder.build`,
     * `LeaderEligibility.fromRecentSigners`, and `FacilitatorSelector.selectLeaderWeighted`. The single source of truth for the
     * evidence-vs-carried decision -- the StateCreators consume these fields verbatim and contain NO conditional logic of their own, so the

@@ -91,4 +91,18 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     val operatorB = baseConfig.copy(coreCommitteeSize = Some(6))
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
   }
+
+  pureTest("different rewardRotationEpochRounds -> different deterministicConfigHash") {
+    // The reward rotation changes the committee -> roundStartFacilitators -> facilitatorsHash, so
+    // divergent operator values must be detected at the Facility handshake, not silently forked.
+    val disabled = baseConfig.copy(rewardRotationEpochRounds = 0)
+    val testnetLike = baseConfig.copy(rewardRotationEpochRounds = 10)
+    expect(disabled.deterministicConfigHash != testnetLike.deterministicConfigHash)
+  }
+
+  pureTest("same rewardRotationEpochRounds -> identical deterministicConfigHash") {
+    val a = baseConfig.copy(rewardRotationEpochRounds = 10)
+    val b = baseConfig.copy(rewardRotationEpochRounds = 10)
+    expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+  }
 }

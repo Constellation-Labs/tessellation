@@ -821,7 +821,19 @@ object types {
     // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
     // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
     // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
-    quorumShrinkActivationViews: Int = 0
+    quorumShrinkActivationViews: Int = 0,
+    // Bounded one-slot Tier-1 reward rotation (RewardRotation): epoch length in ordinals over
+    // which exactly ONE Tier-1 (non-quorum-bearing) signing seat is deterministically rotated
+    // among demonstrated-live peers, so reward share (which goes to the snapshot signers) does
+    // not stay pinned to the always-on signer set. `0` (default) disables the lane entirely
+    // (CommitteeBuilder output byte-identical to pre-rotation). Env-resolved at the consensus
+    // construction site from `SnapshotConfig.rewardRotationEpochRounds.get(env)` (the
+    // coreCommitteeSize pattern); testnet opts into a small value, mainnet stays disabled.
+    // Consensus-critical: the rotation changes the committee -> roundStartFacilitators ->
+    // facilitatorsHash, so it is folded into `deterministicConfigHash` and divergent operator
+    // values handshake-reject. Core is never rotated, so the rung never affects quorum
+    // feasibility -- only which Tier-1 peer holds the rotating signing/reward seat.
+    rewardRotationEpochRounds: Int = 0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -949,6 +961,11 @@ object types {
           // cert/phase acceptance quorum at a wedged key; divergent operator values would
           // make one node accept a shrunken VCC/TC that another rejects.
           s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
+          // Bounded one-slot Tier-1 reward rotation epoch length. Rotates a single Tier-1
+          // signing/reward seat among demonstrated-live peers at epoch boundaries; this
+          // changes the committee -> roundStartFacilitators -> facilitatorsHash, so divergent
+          // operator values must handshake-reject rather than silently fork. 0 = inert.
+          s"rewardRotationEpochRounds=$rewardRotationEpochRounds," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1092,6 +1109,15 @@ object types {
     // purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable if ever needed,
     // matching the resolved-scalar default.
     activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
+    // Bounded one-slot Tier-1 reward-rotation epoch length, keyed by AppEnvironment (the
+    // coreCommitteeSize pattern: env resolution happens once at the consensus construction site
+    // and the resolved scalar is threaded into `ConsensusConfig.rewardRotationEpochRounds`, which
+    // folds into `deterministicConfigHash`). An absent env entry means the lane is DISABLED for
+    // that environment (resolved scalar 0 = inert). Testnet opts into a small value so the
+    // signing/reward seat rotates fairly among healthy peers; mainnet/dev/integrationnet are
+    // absent on purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable, matching
+    // the resolved-scalar default.
+    rewardRotationEpochRounds: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,
