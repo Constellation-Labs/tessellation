@@ -3168,13 +3168,20 @@ object GlobalSnapshotConsensusStateAdvancer {
             // `ceil(coreFacilitators.size * quorumThresholdFraction)`. The finalization
             // threshold is a liveness lever, not the primary safety lever.
             //
-            // `fullCommittee` (used by the signature grace window below) stays as the full
-            // canonical committee so we wait for late-arriving Tier 1 sigs before declaring
-            // the artifact "fully signed".
+            // The signature grace window's "stop waiting" trigger is CORE completeness
+            // (`coreComplete`), NOT full-committee completeness: once every Core member has signed we
+            // finalize immediately and do NOT block on slow Tier 1 / probation peers. Waiting for the
+            // full committee let high-latency re-admitted peers (the re-entry lane) stall finalization
+            // -- the alpha.152 grace_wait_rate spike and the committee 3<->7 oscillation. Tier 1 sigs
+            // already present at Core completeness are still committed; late ones are a bonus we never
+            // block on. `fullCommittee` is retained only for the signature-count log display below.
             val canonicalCommitteeSize = state.roundStartFacilitators.value.size
             val coreSize = state.coreFacilitators.value.size
             val quorumThreshold = (coreSize / 2) + 1
             val fullCommittee = canonicalCommitteeSize
+            val coreSet = state.coreFacilitators.value.toSet
+            val coreSignedCount = validSignatures.count(p => coreSet.contains(p.id.toPeerId))
+            val coreComplete = coreSignedCount >= coreSize
             for {
               // v33 quorum-denominator shrink (QuorumDenominatorShrink): the finalization gate
               // is the LAST quorum chokepoint. When the rung is active (testnet, deep silence
@@ -3213,21 +3220,22 @@ object GlobalSnapshotConsensusStateAdvancer {
                   "facilitators" -> state.facilitators.value.size.toString
                 )
                 .whenA(!canFinalize)
-              // Signature grace period: if we've met quorum but don't have the FULL
-              // committee yet, delay finalization by `config.signatureGracePeriod` to
-              // catch late arrivals. Mirrors the pattern in `recoveryObserve` where we
-              // wait for peer convergence before committing. Without this, a round
-              // that crosses quorum in 1-3ms on a small cluster can finalize a round
-              // missing 1-2 signers that arrive a few ms later — noisy signer sets,
-              // missed rewards, divergent peerQuality on downstream rounds.
+              // Signature grace period: if we've met quorum but not all CORE members have signed
+              // yet, delay finalization by `config.signatureGracePeriod` to catch the remaining CORE
+              // signatures (never Tier 1 -- see coreComplete above). Mirrors the pattern in
+              // `recoveryObserve` where we wait for peer convergence before committing. Without this,
+              // a round that crosses quorum in 1-3ms on a small cluster can finalize missing a Core
+              // signer that arrives a few ms later -- noisy signer sets, missed rewards, divergent
+              // peerQuality on downstream rounds.
               now <- Async[F].monotonic
               quorumSeen <-
                 if (!canFinalize) (now, 0, false, false).pure[F]
-                else if (validSignatures.size >= fullCommittee) {
-                  // Full committee signed -- no reason to wait; clear tracker and commit.
+                else if (coreComplete) {
+                  // All Core members signed -- finalize immediately; do not extend grace for slow
+                  // Tier 1 / probation peers. Signatures already present are committed as-is.
                   signatureQuorumFirstSeenRef.update(_ - state.key).as((now, validSignatures.size, true, false))
                 } else {
-                  // Quorum met but not full -- stamp first-seen time and evaluate grace.
+                  // Quorum met but Core not complete -- stamp first-seen time and evaluate grace.
                   signatureQuorumFirstSeenRef.modify { m =>
                     m.get(state.key) match {
                       case Some((t, firstCount)) => (m, (t, firstCount, false))
