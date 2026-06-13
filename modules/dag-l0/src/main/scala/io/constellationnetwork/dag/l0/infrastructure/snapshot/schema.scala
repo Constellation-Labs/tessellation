@@ -167,9 +167,11 @@ object schema {
     // absent from the most-recent `TierTransitions.DemotionConsecutiveMisses` signer
     // sets is demoted to Tier 1. Window grows by one entry per round; entries older than
     // K are dropped at outcome finalization. Each entry is the just-completed round's
-    // signer set, byte-identically derived on every honest node since
-    // `completedFacilitators` (roundStartFacilitators minus evictedPeers) is canonical
-    // round-start state. Persisted via toOperationalState below; survives cold-restart
+    // canonical signer set (ControllerEvidenceDerivation.canonicalCompletedSigners:
+    // round-start committee restricted to the accepted proposal's observedResponders,
+    // minus certificate-applied evictions), byte-identically derived on every honest
+    // node because every input is round-start-frozen or quorum-accepted-proposal data.
+    // Persisted via toOperationalState below; survives cold-restart
     // so a freshly-rebooted cluster doesn't lose K rounds of demotion history. Default
     // empty: outcomes that pre-date the window have no signer history, treated as a
     // bootstrap window (the window-deep-enough guard in computeNextTiers suppresses
