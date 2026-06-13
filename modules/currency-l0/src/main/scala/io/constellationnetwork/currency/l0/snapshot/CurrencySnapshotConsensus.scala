@@ -109,10 +109,16 @@ object CurrencySnapshotConsensus {
     // rung disabled). Mirror of GlobalSnapshotConsensus.
     val resolvedQuorumShrinkActivationViews: Int =
       snapshotConfig.quorumShrinkActivationViews.get(environment).map(_.value).getOrElse(0)
+    // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry = 0 =
+    // lane inert). Mirror of GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the
+    // consensus config copy below.
+    val resolvedActiveAdmissionMinProbationReentrySlots: Int =
+      snapshotConfig.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0)
     val effectiveConsensusConfig: ConsensusConfig =
       snapshotConfig.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
-        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews
+        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
+        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots
       )
 
     for {

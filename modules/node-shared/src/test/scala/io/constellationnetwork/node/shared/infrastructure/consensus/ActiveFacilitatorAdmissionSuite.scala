@@ -19,6 +19,7 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
   private val b = peer('b')
   private val c = peer('c')
   private val d = peer('d')
+  private val e = peer('e')
 
   private def window(entries: (Long, Set[PeerId])*): SortedMap[SnapshotOrdinal, SortedSet[PeerId]] =
     SortedMap.from(entries.toList.map { case (o, ps) => ord(o) -> SortedSet.from(ps) })
@@ -33,7 +34,8 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     maxActiveSize: Int = 4,
     minParticipationObservations: Int = 3,
     minParticipationRatio: Double = 0.5,
-    maxExpansionPerRound: Int = Int.MaxValue
+    maxExpansionPerRound: Int = Int.MaxValue,
+    minProbationReentrySlots: Int = 0
   ): ActiveFacilitatorAdmission.Result =
     ActiveFacilitatorAdmission.fromRecentSigners(
       selected = selected,
@@ -45,7 +47,8 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
       maxActiveSize = maxActiveSize,
       minParticipationObservations = minParticipationObservations,
       minParticipationRatio = minParticipationRatio,
-      maxExpansionPerRound = maxExpansionPerRound
+      maxExpansionPerRound = maxExpansionPerRound,
+      minProbationReentrySlots = minProbationReentrySlots
     )
 
   pureTest("canonical facilitator base uses only parent facilitators") {
@@ -197,6 +200,136 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect.same(Set(d), result.exclusions.collect { case e if e.reason == ExclusionReason.ScoreBelowPromoteThreshold => e.peerId }.toSet) &&
     expect.same(1, result.expansionAdmittedSize) &&
     expect.same(1, result.probationAdmittedSize)
+  }
+
+  // Bounded probation re-entry lane (catch-22 fix): a 3-peer recent-signer core fills below the
+  // active target, several below-promote-threshold "rehabilitating" peers wait in `selected`, and
+  // maxExpansionPerRound = 1 throttles the legacy re-entry path to a single probation slot. With
+  // minProbationReentrySlots = 2 at least two of the scoreExcluded peers re-enter the active set
+  // in one round, draining a post-outage backlog in a bounded number of rounds.
+  pureTest("probation re-entry lane admits multiple rehabilitating peers despite expansion throttle") {
+    val result = fromRecent(
+      selected = List(a, b, c, d, e),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (5, 5), e -> (5, 5)),
+      activeScores = Map(a -> 120, b -> 120, c -> 120, d -> 60, e -> 60),
+      minActiveSize = 3,
+      targetActiveSize = 5,
+      maxActiveSize = 5,
+      maxExpansionPerRound = 1,
+      minProbationReentrySlots = 2
+    )
+
+    expect.same(List(d, e), result.probationAdmitted) &&
+    expect.same(2, result.probationAdmittedSize) &&
+    expect(result.active.contains(d)) &&
+    expect(result.active.contains(e))
+  }
+
+  // Companion: minProbationReentrySlots = 0 reproduces the pre-fix behavior exactly -- the lane is
+  // inert and probation re-entry is throttled by maxExpansionPerRound to a single slot.
+  pureTest("probation re-entry lane is inert at zero (pre-fix expansion-limited behavior)") {
+    val result = fromRecent(
+      selected = List(a, b, c, d, e),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (5, 5), e -> (5, 5)),
+      activeScores = Map(a -> 120, b -> 120, c -> 120, d -> 60, e -> 60),
+      minActiveSize = 3,
+      targetActiveSize = 5,
+      maxActiveSize = 5,
+      maxExpansionPerRound = 1,
+      minProbationReentrySlots = 0
+    )
+
+    expect.same(List(d), result.probationAdmitted) &&
+    expect.same(1, result.probationAdmittedSize)
+  }
+
+  // Cap: the lane never grows the active set beyond maxActiveSize (configuredMax), even when
+  // minProbationReentrySlots greatly exceeds the available headroom.
+  pureTest("probation re-entry lane never exceeds the active-set max") {
+    val result = fromRecent(
+      selected = List(a, b, c, d, e),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (5, 5), e -> (5, 5)),
+      activeScores = Map(a -> 120, b -> 120, c -> 120, d -> 60, e -> 60),
+      minActiveSize = 3,
+      targetActiveSize = 5,
+      maxActiveSize = 5,
+      maxExpansionPerRound = 1,
+      minProbationReentrySlots = 10
+    )
+
+    expect(result.active.size <= 5) &&
+    expect(result.active.toSet.size == result.active.size)
+  }
+
+  // Determinism: permuting the `selected` input ordering yields identical probationAdmitted because
+  // selection is sorted by probationRank (which ends in a stable PeerId tiebreak). Required so all
+  // honest nodes derive the same committee and facilitatorsHash.
+  pureTest("probation re-entry lane selection is deterministic under input permutation") {
+    def run(selected: List[PeerId]): ActiveFacilitatorAdmission.Result =
+      fromRecent(
+        selected = selected,
+        recentSigners = window(
+          10L -> Set(a, b, c),
+          11L -> Set(a, b, c),
+          12L -> Set(a, b, c)
+        ),
+        peerQuality = Map(d -> (5, 5), e -> (5, 5)),
+        activeScores = Map(a -> 120, b -> 120, c -> 120, d -> 60, e -> 60),
+        minActiveSize = 3,
+        targetActiveSize = 5,
+        maxActiveSize = 5,
+        maxExpansionPerRound = 1,
+        minProbationReentrySlots = 2
+      )
+
+    val ordered = run(List(a, b, c, d, e))
+    val permuted = run(List(e, d, c, b, a))
+
+    expect.same(ordered.probationAdmitted, permuted.probationAdmitted)
+  }
+
+  // Non-quorum: probation peers are returned in the probationAdmitted field (so the caller routes
+  // them to nonCorePeers in CommitteeBuilder) and are NOT double-counted as recent-signer-pool
+  // members. recentSignerPoolSize reflects only the always-on core.
+  pureTest("probation re-entry lane peers are not counted into the recent-signer pool") {
+    val result = fromRecent(
+      selected = List(a, b, c, d, e),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (5, 5), e -> (5, 5)),
+      activeScores = Map(a -> 120, b -> 120, c -> 120, d -> 60, e -> 60),
+      minActiveSize = 3,
+      targetActiveSize = 5,
+      maxActiveSize = 5,
+      maxExpansionPerRound = 1,
+      minProbationReentrySlots = 2
+    )
+
+    val probationSet = result.probationAdmitted.toSet
+    val recentCore = result.active.take(result.recentSignerPoolSize).toSet
+
+    expect.same(3, result.recentSignerPoolSize) &&
+    expect.same(Set(d, e), probationSet) &&
+    expect.same(Set(a, b, c), recentCore) &&
+    expect(probationSet.intersect(recentCore).isEmpty)
   }
 
   pureTest("promoted reserves maintain active target when expansion cadence is closed") {

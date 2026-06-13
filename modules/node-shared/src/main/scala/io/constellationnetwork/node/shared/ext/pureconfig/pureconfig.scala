@@ -56,4 +56,6 @@ package object pureconfig {
     genericMapReader(catchReadError(AppEnvironment.withName))
   implicit val envToPosIntMapReader: ConfigReader[Map[AppEnvironment, PosInt]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
+  implicit val envToIntMapReader: ConfigReader[Map[AppEnvironment, Int]] =
+    genericMapReader(catchReadError(AppEnvironment.withName))
 }

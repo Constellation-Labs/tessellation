@@ -306,6 +306,22 @@ object types {
     activeAdmissionPassiveDecay: Int = 1,
     activeAdmissionMaxExpansionPerRound: Int = 1,
     activeAdmissionExpansionIntervalRounds: Int = 1,
+    // Bounded probation re-entry lane: minimum number of probation (below-promote-threshold,
+    // "rehabilitating") peers admitted to the active set per round EVEN WHEN the per-round
+    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. Fixes the structural
+    // catch-22 where peers that dropped out of the recent-signer pool during an outage could never
+    // re-enter the signing set to rebuild their score, because the only re-entry path was throttled
+    // to ~1/round shared with promoted expansion. Decoupled from `activeAdmissionMaxExpansionPerRound`
+    // so a mass return after a cluster-wide outage drains in a bounded number of rounds; capped by
+    // the active-set max (`activeFacilitatorMax`/`coreCommitteeSize`) inside the admission function so
+    // it never overflows the signing set. Probation peers are non-quorum-bearing (routed to
+    // `nonCorePeers` in `CommitteeBuilder`), so widening the lane cannot affect quorum feasibility.
+    // Env-resolved at the consensus construction site from
+    // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
+    // pattern); default 0 leaves the lane inert. Consensus-critical: it changes the active committee
+    // -> roundStartFacilitators -> facilitatorsHash, so it is folded into `deterministicConfigHash`
+    // and divergent operator values handshake-reject.
+    activeAdmissionMinProbationReentrySlots: Int = 0,
     // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
     // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
     // AdmissionCertificate clears the entry. Pure ordinal comparisons, no per-round countdown.
@@ -908,6 +924,10 @@ object types {
           s"activeAdmissionPassiveDecay=$activeAdmissionPassiveDecay," +
           s"activeAdmissionMaxExpansionPerRound=$activeAdmissionMaxExpansionPerRound," +
           s"activeAdmissionExpansionIntervalRounds=$activeAdmissionExpansionIntervalRounds," +
+          // Bounded probation re-entry lane: changes the active committee -> roundStartFacilitators
+          // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
+          // silently fork. Env-resolved to 0 (inert) when absent for an environment.
+          s"activeAdmissionMinProbationReentrySlots=$activeAdmissionMinProbationReentrySlots," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
@@ -1063,6 +1083,15 @@ object types {
     // no entry on purpose -- the rung trades partition safety for liveness in its deep stage
     // (see QuorumDenominatorShrink scaladoc) and must be opted into per environment.
     quorumShrinkActivationViews: Map[AppEnvironment, PosInt] = Map.empty,
+    // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
+    // resolution happens once at the consensus construction site and the resolved scalar is threaded
+    // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into
+    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that environment
+    // (resolved scalar 0). Testnet opts into a small value to drain a mass post-outage return of
+    // rehabilitating peers in a bounded number of rounds; mainnet/dev/integrationnet are absent on
+    // purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable if ever needed,
+    // matching the resolved-scalar default.
+    activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,

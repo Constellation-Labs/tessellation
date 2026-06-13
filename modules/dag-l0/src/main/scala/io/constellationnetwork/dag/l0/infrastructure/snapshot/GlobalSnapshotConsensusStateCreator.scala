@@ -342,7 +342,8 @@ object GlobalSnapshotConsensusStateCreator {
               degradedPenalty = config.activeAdmissionDegradedPenalty,
               criticalPenalty = config.activeAdmissionCriticalPenalty,
               passiveDecay = config.activeAdmissionPassiveDecay,
-              maxExpansionPerRound = maxExpansionThisRound
+              maxExpansionPerRound = maxExpansionThisRound,
+              minProbationReentrySlots = config.activeAdmissionMinProbationReentrySlots
             )
           )
         )
