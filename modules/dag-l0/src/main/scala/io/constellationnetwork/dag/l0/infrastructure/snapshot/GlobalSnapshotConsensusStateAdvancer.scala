@@ -160,7 +160,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       // growth is bounded by the active round cone since abandoned rounds shed
       // entries on the next finalize at or past their key (and resources are
       // otherwise reset on round cleanup).
-      private val signatureQuorumFirstSeenRef: Ref[F, Map[GlobalSnapshotKey, (FiniteDuration, Int)]] = Ref.unsafe(Map.empty)
+      private val signatureQuorumFirstSeenRef: Ref[F, Map[GlobalSnapshotKey, SignatureGraceDecision.Stamp]] = Ref.unsafe(Map.empty)
 
       /** Tracks consecutive validation failures (stateProofDiffers) at the same ordinal. When a node's local state diverges (e.g., after
         * network isolation), every validation attempt fails with the same MPT root mismatch. Neither consensus fork detection (requires
@@ -3250,30 +3250,32 @@ object GlobalSnapshotConsensusStateAdvancer {
               // window while a Core signer is still missing. Used both by the wait evaluation below
               // and the diagnostic log line.
               activeGraceWindow = if (coreComplete) config.tier1SignatureGracePeriod else config.signatureGracePeriod
-              quorumSeen <-
-                if (!canFinalize) (now, 0, false, false).pure[F]
-                else if (fullCommitteeSigned) {
-                  // Everyone signed -- finalize immediately; no grace can add anything.
-                  signatureQuorumFirstSeenRef.update(_ - state.key).as((now, validSignatures.size, true, false))
-                } else {
-                  // Quorum met but committee not full -- stamp first-seen time and evaluate grace.
-                  // The window length depends on Core completeness: short for Tier-1-only gaps,
-                  // full for a still-missing Core signer.
-                  signatureQuorumFirstSeenRef.modify { m =>
-                    m.get(state.key) match {
-                      case Some((t, firstCount)) => (m, (t, firstCount, false))
-                      case None                  => (m + (state.key -> (now, validSignatures.size)), (now, validSignatures.size, true))
-                    }
-                  }.map {
-                    case (firstSeen, firstCount, firstObserved) =>
-                      (firstSeen, firstCount, firstObserved, (now - firstSeen) < activeGraceWindow)
-                  }
+              // Three-way grace decision (see SignatureGraceDecision): full committee -> finalize now;
+              // Core complete -> short Tier-1 window measured from FIRST Core completion (not first
+              // quorum, so a late-completing Core still gets the full Tier-1 collection); Core
+              // incomplete -> full window for the missing Core signer.
+              quorumSeen <- signatureQuorumFirstSeenRef.modify { m =>
+                val eval = SignatureGraceDecision.evaluate(
+                  now = now,
+                  validCount = validSignatures.size,
+                  canFinalize = canFinalize,
+                  fullCommitteeSigned = fullCommitteeSigned,
+                  coreComplete = coreComplete,
+                  existing = m.get(state.key),
+                  tier1Window = config.tier1SignatureGracePeriod,
+                  fullWindow = config.signatureGracePeriod
+                )
+                val m2 = eval.update match {
+                  case SignatureGraceDecision.Leave  => m
+                  case SignatureGraceDecision.Clear  => m - state.key
+                  case SignatureGraceDecision.Set(s) => m + (state.key -> s)
                 }
-              firstSeen = quorumSeen._1
-              firstQuorumCount = quorumSeen._2
-              firstObserved = quorumSeen._3
-              waitMore = quorumSeen._4
-              graceElapsed = now - firstSeen
+                (m2, eval)
+              }
+              firstQuorumCount = quorumSeen.firstQuorumCount
+              firstObserved = quorumSeen.firstObserved
+              waitMore = quorumSeen.waitMore
+              graceElapsed = now - quorumSeen.graceStart
               _ <-
                 if (canFinalize && firstObserved)
                   Metrics[F].incrementCounter("dag_consensus_signature_quorum_reached_total") >>
