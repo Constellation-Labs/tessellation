@@ -137,7 +137,8 @@ object CommitteeBuilder {
     *   Peers allowed into the round as non-Core participants only. They are forced to Tier 1 unless they were already Witness, and they are
     *   skipped by Core-floor promotion. This is used for probationary expansion: the peer can receive facilities and produce signer
     *   evidence, but cannot raise the liveness quorum denominator before the integral controller graduates it. Non-bypassable: even the
-    *   chronic ladder's liveness fallback never re-admits a probation peer into Core.
+    *   chronic ladder's liveness fallback never re-admits a probation peer into Core. The reward-rotation lane ALSO excludes these peers
+    *   from both the rotate-in pool and the rotate-out (tier1) candidates, so probation peers stay on their own rehab lane untouched.
     * @param chronicMisses
     *   `controllerInputs.chronicMisses` -- evidence-derived trailing miss counts for chronically-missing peers (see the chronic-core
     *   replacement ladder above). Empty in the fallback regime or when no peer is chronic, which makes the whole ladder inert.
@@ -148,9 +149,13 @@ object CommitteeBuilder {
     *   the round ordinal, used by the bounded reward-rotation lane to test the epoch boundary (`key.value % rewardRotationEpochRounds`).
     *   `None` disables rotation regardless of the other rotation parameters; defaulted so call sites that do not rotate are unaffected.
     * @param recentParticipants
-    *   `ControllerEvidenceDerivation.recentParticipants` -- peers demonstrated-live within the trailing evidence window. The
-    *   reward-rotation eligible-waiting pool is `candidates intersect recentParticipants minus core minus tier1`. Empty disables rotation
-    *   (no demonstrated peer to seat).
+    *   `ControllerEvidenceDerivation.recentParticipants(evidence, effectiveEligibilityWindow)` -- peers demonstrated-live within the
+    *   reward-rotation eligibility window. The caller resolves `effectiveEligibilityWindow` (the configured
+    *   `rewardRotationEligibilityWindow`, or the full evidence window `tighteningWindow` when 0) and applies it BEFORE passing this set, so
+    *   the rotation horizon can exceed the demotion-aligned `DemotionConsecutiveMisses` window (a rotated-out peer must stay eligible past
+    *   the next epoch boundary; see `ControllerEvidenceDerivation.recentParticipants(evidence, window)` for the fairness invariant). The
+    *   reward-rotation eligible-waiting pool is `candidates intersect recentParticipants minus core minus tier1` AND minus `nonCorePeers`
+    *   (probation peers stay on their own rehab lane, never rotated). Empty disables rotation (no demonstrated peer to seat).
     * @param idleWindows
     *   `ControllerEvidenceDerivation.idleWindows(evidence, _)` -- trailing entries since each peer last signed; ranks the rotated-in peer
     *   (longest-idle first).
@@ -284,17 +289,27 @@ object CommitteeBuilder {
     // core/tier1/witness split so it only ever moves a Tier-1 <-> Witness pair. The
     // eligible-waiting pool is demonstrated-live candidates outside core and tier1 --
     // by construction those are the Witness peers that have actually signed within the
-    // trailing evidence window, so the rotated-in peer is one the tier derivation already
-    // treats as Core-eligible. Inert (no-op, byte-identical output) when the lane is
-    // disabled: `rotationKey` empty, `rewardRotationEpochRounds <= 0`, or no candidate.
+    // eligibility window, so the rotated-in peer is one the tier derivation already
+    // treats as Core-eligible. Probation (`nonCorePeers`) peers are EXCLUDED from BOTH
+    // the rotate-in pool AND the rotate-out (tier1) candidates: they are on their own
+    // bounded rehab lane and must not be disturbed by reward rotation (a probation peer
+    // forced into the seat, or a probation peer's seat rotated away, would couple the two
+    // lanes). Inert (no-op, byte-identical output) when the lane is disabled: `rotationKey`
+    // empty, `rewardRotationEpochRounds <= 0`, or no eligible candidate.
     val splitTier1Set = splitTier1.toSet
     val eligibleWaiting =
-      candidates.filter(pid => recentParticipants.contains(pid) && !finalCoreSet.contains(pid) && !splitTier1Set.contains(pid))
+      candidates.filter(pid =>
+        recentParticipants.contains(pid) &&
+          !finalCoreSet.contains(pid) &&
+          !splitTier1Set.contains(pid) &&
+          !nonCorePeers.contains(pid)
+      )
+    val rotatableTier1 = splitTier1.filterNot(nonCorePeers.contains)
     val rotation = rotationKey.flatMap { key =>
       RewardRotation.rotateOneTier1(
         key = key,
         core = finalCoreSet,
-        tier1 = splitTier1,
+        tier1 = rotatableTier1,
         eligibleWaiting = eligibleWaiting,
         idle = idleWindows,
         tenure = tenureWindows,

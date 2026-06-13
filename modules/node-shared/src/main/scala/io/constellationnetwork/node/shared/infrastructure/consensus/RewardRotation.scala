@@ -16,9 +16,9 @@ import io.constellationnetwork.schema.peer.PeerId
   * ==Scope: Tier 1 only, never Core==
   *
   * Core is the LIVENESS quorum denominator. Rotating a Core seat would change the quorum membership and risk wedging consensus, so Core is
-  * NEVER touched here -- only a single Tier-1 seat is swapped. Tier-1 peers sign and earn but do not gate the cert quorum, so swapping one is
-  * reward-fair without any liveness cost (`CommitteeBuilder` scaladoc, "Reward and signer pool"). The churn is bounded to one slot per epoch
-  * boundary so the committee stays stable.
+  * NEVER touched here -- only a single Tier-1 seat is swapped. Tier-1 peers sign and earn but do not gate the cert quorum, so swapping one
+  * is reward-fair without any liveness cost (`CommitteeBuilder` scaladoc, "Reward and signer pool"). The churn is bounded to one slot per
+  * epoch boundary so the committee stays stable.
   *
   * ==Determinism contract (read before changing any input)==
   *
@@ -30,8 +30,8 @@ import io.constellationnetwork.schema.peer.PeerId
   *   - `idle` / `tenure` are `ControllerEvidenceDerivation.idleWindows` / `tenureWindows` over the SIGNED evidence window -- entry counts,
   *     never wall-clock.
   *   - `eligibleWaiting` is `candidates intersect recentParticipants minus core minus tier1`, all consensus-agreed sets.
-  *   - `lotteryHash` is reused verbatim from `FacilitatorSelector.rendezvousScore` (the existing rendezvous-hashing tiebreak), so the lottery
-  *     is the same SHA-256 mixing every node already computes for facilitator selection -- no new hashing scheme.
+  *   - `lotteryHash` is reused verbatim from `FacilitatorSelector.rendezvousScore` (the existing rendezvous-hashing tiebreak), so the
+  *     lottery is the same SHA-256 mixing every node already computes for facilitator selection -- no new hashing scheme.
   *
   * There is no randomness, no node-local readiness observation, and no mutable state. Two honest nodes holding the same `key`, evidence
   * window, and candidate set compute the identical `(rotateOut, rotateIn)` (or identical `None`).
@@ -51,8 +51,8 @@ object RewardRotation {
     *   - `tier1` is nonempty (there is a Tier-1 seat to give up).
     *
     * When it fires:
-    *   - `rotateIn` = the `eligibleWaiting` peer with the largest `idle` count (longest-overdue), `lotteryHash(peer, key)` descending as the
-    *     fair tiebreak among equally-idle peers, then `PeerId` lex as the final deterministic tiebreak.
+    *   - `rotateIn` = the `eligibleWaiting` peer with the largest `idle` count (longest-overdue), `lotteryHash(peer, key)` descending as
+    *     the fair tiebreak among equally-idle peers, then `PeerId` lex as the final deterministic tiebreak.
     *   - `rotateOut` = the `tier1` peer with the largest `tenure` count (longest-serving), `PeerId` lex tiebreak.
     *
     * Pure, deterministic, total.
@@ -60,8 +60,8 @@ object RewardRotation {
     * @param key
     *   the consensus-agreed round ordinal (the next round's key). The epoch boundary is derived from `key.value`.
     * @param core
-    *   the Core committee for the round. Present only so the caller's `eligibleWaiting` precondition is self-documenting; this function never
-    *   reads or alters it (Core is never rotated).
+    *   the Core committee for the round. Present only so the caller's `eligibleWaiting` precondition is self-documenting; this function
+    *   never reads or alters it (Core is never rotated).
     * @param tier1
     *   the current Tier-1 set. The rotated-out peer is drawn from here.
     * @param eligibleWaiting

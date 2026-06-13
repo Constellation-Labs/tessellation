@@ -105,4 +105,28 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     val b = baseConfig.copy(rewardRotationEpochRounds = 10)
     expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
   }
+
+  pureTest("different rewardRotationEligibilityWindow -> different deterministicConfigHash") {
+    // The eligibility window changes which demonstrated-live peers may rotate into the signing seat
+    // -> committee -> facilitatorsHash, so divergent operator values must handshake-reject.
+    val a = baseConfig.copy(rewardRotationEligibilityWindow = 0)
+    val b = baseConfig.copy(rewardRotationEligibilityWindow = 10)
+    expect(a.deterministicConfigHash != b.deterministicConfigHash)
+  }
+
+  pureTest("same rewardRotationEligibilityWindow -> identical deterministicConfigHash") {
+    val a = baseConfig.copy(rewardRotationEligibilityWindow = 10)
+    val b = baseConfig.copy(rewardRotationEligibilityWindow = 10)
+    expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+  }
+
+  pureTest("tier1SignatureGracePeriod is NOT in deterministicConfigHash (timing-only, same as signatureGracePeriod)") {
+    // Both grace periods are finalization-timing levers: the canonical snapshotHash is the agreed
+    // ARTIFACT hash, not the signed-artifact hash, so divergent grace values produce the same
+    // downstream hash and must NOT enter the config hash (otherwise honest operators with different
+    // timing would needlessly handshake-reject). This guards the documented treatment.
+    val a = baseConfig.copy(tier1SignatureGracePeriod = 750.milliseconds, signatureGracePeriod = 3.seconds)
+    val b = baseConfig.copy(tier1SignatureGracePeriod = 2.seconds, signatureGracePeriod = 9.seconds)
+    expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+  }
 }

@@ -213,6 +213,19 @@ object types {
     // canonically — see buildFinishedTransition). Tune down if round throughput
     // becomes a bottleneck; tune up if network jitter routinely drops late signers.
     signatureGracePeriod: FiniteDuration = 3.seconds,
+    // SHORT grace delay used when the CORE committee has fully signed but not the whole
+    // committee, to collect late-arriving Tier 1 signatures before finalizing. Distinct from
+    // `signatureGracePeriod` (which covers the Core-incomplete case): once every Core member has
+    // signed, liveness no longer needs the full window, but we still want Tier 1 signatures to
+    // land in `signedArtifact.proofs` so rewards are not collapsed onto Core (the alpha.153
+    // regression where finalizing the INSTANT Core completed dropped every Tier 1 reward). The
+    // bounded wait trades a few ms of finalization latency for reward fairness. Timing-only:
+    // NOT included in `deterministicConfigHash`, for the SAME reason as `signatureGracePeriod` --
+    // the canonical `snapshotHash` is the agreed ARTIFACT hash, not the signed-artifact hash, so
+    // two nodes with different grace periods still produce the same downstream snapshotHash; this
+    // lever only changes which proofs ride along, never a consensus-decided value. Default
+    // `signatureGracePeriod / 4` (a short fraction of the Core-incomplete window).
+    tier1SignatureGracePeriod: FiniteDuration = 750.milliseconds,
     // Delay between assembling/receiving a certified view-change and locally applying it
     // to reset the round into the next view. The VCC is still stored and gossiped immediately;
     // this only gives ordinary proposal/signature traffic time to arrive before a timeout
@@ -833,7 +846,21 @@ object types {
     // facilitatorsHash, so it is folded into `deterministicConfigHash` and divergent operator
     // values handshake-reject. Core is never rotated, so the rung never affects quorum
     // feasibility -- only which Tier-1 peer holds the rotating signing/reward seat.
-    rewardRotationEpochRounds: Int = 0
+    rewardRotationEpochRounds: Int = 0,
+    // Bounded one-slot Tier-1 reward rotation: trailing evidence-window length (in ordinals) over
+    // which a peer must have signed at least once to be eligible to ROTATE IN to the signing seat
+    // (`ControllerEvidenceDerivation.recentParticipants(evidence, window)`). `0` (default) means
+    // "use the full evidence window" (resolved to `tighteningWindow` at the CommitteeBuilder call
+    // site). Why a separate, LARGER knob than the demotion-aligned 3-entry default: a peer rotated
+    // to Witness stops signing and would drop out of the short 3-window within a few rounds, so it
+    // could never be re-eligible at the next epoch boundary -- benched forever. Fairness holds only
+    // while `rewardRotationEpochRounds < eligibilityWindow <= tighteningWindow` (the evidence window
+    // size); larger waiting pools need a larger evidence window (out of scope). Env-resolved at the
+    // consensus construction site from `SnapshotConfig.rewardRotationEligibilityWindow.get(env)` (the
+    // coreCommitteeSize pattern); inert (resolved 0) when absent. Consensus-critical: it changes the
+    // reward-rotation eligible pool -> committee -> roundStartFacilitators -> facilitatorsHash, so it
+    // is folded into `deterministicConfigHash` and divergent operator values handshake-reject.
+    rewardRotationEligibilityWindow: Int = 0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -867,6 +894,8 @@ object types {
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
       *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
+      *   - `rewardRotationEpochRounds` / `rewardRotationEligibilityWindow`: env-resolved reward-rotation epoch length and eligible-pool
+      *     window; both change the reward-rotation swap -> committee -> facilitatorsHash, so divergent operator values handshake-reject.
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -966,6 +995,11 @@ object types {
           // changes the committee -> roundStartFacilitators -> facilitatorsHash, so divergent
           // operator values must handshake-reject rather than silently fork. 0 = inert.
           s"rewardRotationEpochRounds=$rewardRotationEpochRounds," +
+          // Bounded one-slot Tier-1 reward-rotation eligibility window. Changes which
+          // demonstrated-live peers may rotate into the signing seat -> committee ->
+          // roundStartFacilitators -> facilitatorsHash, so divergent operator values must
+          // handshake-reject rather than silently fork. 0 = use the full evidence window.
+          s"rewardRotationEligibilityWindow=$rewardRotationEligibilityWindow," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1118,6 +1152,16 @@ object types {
     // absent on purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable, matching
     // the resolved-scalar default.
     rewardRotationEpochRounds: Map[AppEnvironment, Int] = Map.empty,
+    // Bounded one-slot Tier-1 reward-rotation eligibility window, keyed by AppEnvironment (the
+    // coreCommitteeSize pattern: env resolution happens once at the consensus construction site and
+    // the resolved scalar is threaded into `ConsensusConfig.rewardRotationEligibilityWindow`, which
+    // folds into `deterministicConfigHash`). This is the trailing evidence-window length a peer must
+    // have signed within to be eligible to rotate IN. It MUST exceed `rewardRotationEpochRounds` and
+    // not exceed `tighteningWindow` (the evidence window size), or a rotated-out peer is benched
+    // forever. An absent env entry means "use the full evidence window" (resolved scalar 0). `Int`
+    // (not `PosInt`) so 0 is expressible as the explicit full-window sentinel, matching the
+    // resolved-scalar default.
+    rewardRotationEligibilityWindow: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,

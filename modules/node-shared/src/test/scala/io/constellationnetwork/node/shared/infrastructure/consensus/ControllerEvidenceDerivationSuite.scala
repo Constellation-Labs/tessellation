@@ -243,6 +243,33 @@ object ControllerEvidenceDerivationSuite extends SimpleIOSuite {
     expect.same(Set.empty[PeerId], ControllerEvidenceDerivation.recentParticipants(SortedMap.empty))
   }
 
+  pureTest("windowed recentParticipants unions completedSigners over the trailing `window` entries (reward-rotation gate)") {
+    // 5 entries: a signs all; b only at ord 1; c at ord 3; d at ord 5. The reward-rotation
+    // eligibility window is LARGER than the demotion-aligned 3, so a peer that signed earlier in the
+    // window stays eligible (the fairness fix).
+    val evidence = window(
+      1L -> entry(Set(a, b), Set(a, b)),
+      2L -> entry(Set(a), Set(a)),
+      3L -> entry(Set(a, c), Set(a, c)),
+      4L -> entry(Set(a), Set(a)),
+      5L -> entry(Set(a, d), Set(a, d))
+    )
+    // window=5 sees all five entries -> b (ord 1) is still in the eligible pool, unlike the
+    // fixed-3 variant which would drop it.
+    expect.same(Set(a, b, c, d), ControllerEvidenceDerivation.recentParticipants(evidence, 5)) &&
+    // window=2 sees only ords 4,5 -> just a and d.
+    expect.same(Set(a, d), ControllerEvidenceDerivation.recentParticipants(evidence, 2)) &&
+    // window larger than the evidence is clamped to the evidence size (still all five entries).
+    expect.same(Set(a, b, c, d), ControllerEvidenceDerivation.recentParticipants(evidence, 100)) &&
+    // window <= 0 derives the empty set (no eligible peers).
+    expect.same(Set.empty[PeerId], ControllerEvidenceDerivation.recentParticipants(evidence, 0)) &&
+    // the fixed-3 no-arg variant equals the windowed call with DemotionConsecutiveMisses.
+    expect.same(
+      ControllerEvidenceDerivation.recentParticipants(evidence),
+      ControllerEvidenceDerivation.recentParticipants(evidence, TierTransitions.DemotionConsecutiveMisses)
+    )
+  }
+
   pureTest("idleWindows counts trailing entries since the peer last signed") {
     val evidence = window(
       1L -> entry(Set(a, b), Set(a, b)),
