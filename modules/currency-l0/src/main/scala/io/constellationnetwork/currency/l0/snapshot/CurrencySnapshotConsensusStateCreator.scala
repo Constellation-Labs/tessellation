@@ -24,8 +24,8 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 
 import eu.timepit.refined.auto._
@@ -463,6 +463,10 @@ object CurrencySnapshotConsensusStateCreator {
         // v19 multi-committee derivation, including the chronic-core replacement ladder
         // (evidence-derived `chronicMisses` bars chronic peers from Core and swaps them for
         // healthy reserves). Mirror of dag-l0; see CommitteeBuilder scaladoc for the ladder.
+        // Bounded one-slot Tier-1 reward rotation inputs (RewardRotation). Mirror of dag-l0; all
+        // evidence-derived from the signed controllerEvidence window so the swap is byte-identical
+        // across honest nodes. Inert when `rewardRotationEpochRounds == 0` (the env default).
+        rotationEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty)
         committees = CommitteeBuilder.build(
           candidates = active,
           priorTiers = controllerInputs.peerTiers,
@@ -472,7 +476,13 @@ object CurrencySnapshotConsensusStateCreator {
           minRatio = config.minParticipationRatio,
           nonCorePeers = activeAdmission.probationAdmitted.toSet,
           chronicMisses = controllerInputs.chronicMisses,
-          activeScores = controllerInputs.activeScores
+          activeScores = controllerInputs.activeScores,
+          rotationKey = key.some,
+          recentParticipants = ControllerEvidenceDerivation.recentParticipants(rotationEvidence),
+          idleWindows = ControllerEvidenceDerivation.idleWindows(rotationEvidence, _),
+          tenureWindows = ControllerEvidenceDerivation.tenureWindows(rotationEvidence, _),
+          rewardRotationEpochRounds = config.rewardRotationEpochRounds,
+          lotteryHash = FacilitatorSelector.lotteryHash
         )
 
         _ <- logger

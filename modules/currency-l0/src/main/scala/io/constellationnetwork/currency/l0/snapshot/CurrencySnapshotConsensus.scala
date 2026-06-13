@@ -114,11 +114,17 @@ object CurrencySnapshotConsensus {
     // consensus config copy below.
     val resolvedActiveAdmissionMinProbationReentrySlots: Int =
       snapshotConfig.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0)
+    // Bounded one-slot Tier-1 reward rotation: env-resolved epoch length (absent env entry = 0 =
+    // lane inert). Mirror of GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the
+    // consensus config copy below.
+    val resolvedRewardRotationEpochRounds: Int =
+      snapshotConfig.rewardRotationEpochRounds.get(environment).getOrElse(0)
     val effectiveConsensusConfig: ConsensusConfig =
       snapshotConfig.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
-        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots
+        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
+        rewardRotationEpochRounds = resolvedRewardRotationEpochRounds
       )
 
     for {

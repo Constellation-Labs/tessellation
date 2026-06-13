@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
 
@@ -512,5 +513,172 @@ object CommitteeBuilderSuite extends SimpleIOSuite {
     expect.same(result1, result2) &&
     expect.same(List(pA, pD, pC), result1.core) &&
     expect.same(List(pB, pE), result1.tier1)
+  }
+
+  // -- Bounded one-slot Tier-1 reward rotation --
+
+  private def ord(n: Long): SnapshotOrdinal = SnapshotOrdinal.unsafeApply(n)
+
+  pureTest("rotation is inert (output byte-identical) when rewardRotationEpochRounds = 0") {
+    val pCore = pid("core")
+    val pTier1 = pid("tie1")
+    val pWit = pid("0wit")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pTier1 -> Tier1, pWit -> Witness)
+    val candidates = List(pCore, pTier1, pWit)
+    val baseline = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio
+    )
+    // Same call but with all rotation inputs supplied and the lane DISABLED (epoch 0). Even with
+    // a demonstrated-live witness and a non-empty tier1, the result must equal the baseline.
+    val withDisabledRotation = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(10)),
+      recentParticipants = Set(pWit),
+      idleWindows = _ => 9,
+      tenureWindows = _ => 9,
+      rewardRotationEpochRounds = 0
+    )
+    expect.same(baseline, withDisabledRotation)
+  }
+
+  pureTest("rotation is inert off an epoch boundary") {
+    val pCore = pid("core")
+    val pTier1 = pid("tie1")
+    val pWit = pid("0wit")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pTier1 -> Tier1, pWit -> Witness)
+    val candidates = List(pCore, pTier1, pWit)
+    val baseline = CommitteeBuilder.build(candidates, priorTiers, NoQuality, coreFloor = 0, minObservations = MinObs, minRatio = MinRatio)
+    val offBoundary = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(13)), // not a multiple of 10
+      recentParticipants = Set(pWit),
+      idleWindows = _ => 9,
+      tenureWindows = _ => 9,
+      rewardRotationEpochRounds = 10
+    )
+    expect.same(baseline, offBoundary)
+  }
+
+  pureTest("on an epoch boundary, a demonstrated-live Witness peer is rotated into Tier 1 and a Tier-1 peer rotated out") {
+    val pCore = pid("core")
+    val pTier1 = pid("tie1")
+    val pWit = pid("0wit")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pTier1 -> Tier1, pWit -> Witness)
+    val candidates = List(pCore, pTier1, pWit)
+    val result = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(20)), // boundary at epoch 10
+      recentParticipants = Set(pWit),
+      idleWindows = _ => 5,
+      tenureWindows = _ => 3,
+      rewardRotationEpochRounds = 10
+    )
+    // pWit (demonstrated-live) takes the rotating Tier-1 seat; pTier1 moves to the front of witness.
+    // Core is untouched. Sizes of tier1 and witness are invariant (one in, one out).
+    expect.same(List(pCore), result.core) &&
+    expect.same(List(pWit), result.tier1) &&
+    expect.same(List(pTier1), result.witness) &&
+    expect.same(Some(Tier1), result.effectiveTiers.get(pWit)) &&
+    expect.same(Some(Witness), result.effectiveTiers.get(pTier1)) &&
+    expect.same(Some(Core), result.effectiveTiers.get(pCore))
+  }
+
+  pureTest("rotation NEVER seats a peer absent from recentParticipants (liveness gate)") {
+    val pCore = pid("core")
+    val pTier1 = pid("tie1")
+    val pWit = pid("0wit")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pTier1 -> Tier1, pWit -> Witness)
+    val candidates = List(pCore, pTier1, pWit)
+    val baseline = CommitteeBuilder.build(candidates, priorTiers, NoQuality, coreFloor = 0, minObservations = MinObs, minRatio = MinRatio)
+    // pWit is NOT in recentParticipants -> eligibleWaiting is empty -> no rotation even on a boundary.
+    val result = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(20)),
+      recentParticipants = Set.empty,
+      idleWindows = _ => 5,
+      tenureWindows = _ => 3,
+      rewardRotationEpochRounds = 10
+    )
+    expect.same(baseline, result)
+  }
+
+  pureTest("rotation never alters Core even when a Core peer is the only demonstrated-live candidate") {
+    val pCore = pid("core")
+    val pTier1 = pid("tie1")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, pTier1 -> Tier1)
+    val candidates = List(pCore, pTier1)
+    // recentParticipants = {pCore}, but pCore is in core, so eligibleWaiting (candidates - core -
+    // tier1) is empty. Core safety: the rotation cannot pull a Core peer out or seat into Core.
+    val baseline = CommitteeBuilder.build(candidates, priorTiers, NoQuality, coreFloor = 0, minObservations = MinObs, minRatio = MinRatio)
+    val result = CommitteeBuilder.build(
+      candidates = candidates,
+      priorTiers = priorTiers,
+      peerQuality = NoQuality,
+      coreFloor = 0,
+      minObservations = MinObs,
+      minRatio = MinRatio,
+      rotationKey = Some(ord(30)),
+      recentParticipants = Set(pCore),
+      idleWindows = _ => 9,
+      tenureWindows = _ => 9,
+      rewardRotationEpochRounds = 10
+    )
+    expect.same(baseline, result) &&
+    expect.same(List(pCore), result.core)
+  }
+
+  pureTest("rotation is deterministic across input-order permutations") {
+    val pCore = pid("core")
+    val t1 = pid("0ta1")
+    val t2 = pid("0tb2")
+    val w1 = pid("0wc1")
+    val w2 = pid("0wd2")
+    val priorTiers = SortedMap[PeerId, Int](pCore -> Core, t1 -> Tier1, t2 -> Tier1, w1 -> Witness, w2 -> Witness)
+    def run(candidates: List[PeerId]): CommitteeBuilder.Committees =
+      CommitteeBuilder.build(
+        candidates = candidates,
+        priorTiers = priorTiers,
+        peerQuality = NoQuality,
+        coreFloor = 0,
+        minObservations = MinObs,
+        minRatio = MinRatio,
+        rotationKey = Some(ord(40)),
+        recentParticipants = Set(w1, w2),
+        idleWindows = Map(w1 -> 4, w2 -> 4).getOrElse(_, 0), // equal -> lottery tiebreak
+        tenureWindows = Map(t1 -> 2, t2 -> 2).getOrElse(_, 0), // equal -> PeerId tiebreak
+        rewardRotationEpochRounds = 10
+      )
+    val a = run(List(pCore, t1, t2, w1, w2))
+    val b = run(List(w2, t2, pCore, w1, t1))
+    expect.same(a.core, b.core) &&
+    expect.same(a.tier1.toSet, b.tier1.toSet) &&
+    expect.same(a.witness.toSet, b.witness.toSet) &&
+    expect.same(a.effectiveTiers, b.effectiveTiers) &&
+    expect.same(2, a.tier1.size)
   }
 }
