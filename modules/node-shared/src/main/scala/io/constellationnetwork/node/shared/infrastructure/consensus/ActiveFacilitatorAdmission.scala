@@ -65,7 +65,12 @@ object ActiveFacilitatorAdmission {
     promoteThreshold: Int = 100,
     retainThreshold: Int = 70,
     demoteThreshold: Int = 40,
-    maxExpansionPerRound: Int = Int.MaxValue
+    maxExpansionPerRound: Int = Int.MaxValue,
+    // Bounded probation re-entry lane: minimum number of probation slots reserved for
+    // below-promote-threshold "rehabilitating" peers (`scoreExcluded`) EVEN WHEN the per-round
+    // expansion budget is exhausted. Default 0 is fully inert (preserves pre-fix behavior). See
+    // the inline note at the `probationSlots` computation for the catch-22 this breaks.
+    minProbationReentrySlots: Int = 0
   ): Result = {
     val minRatioScaled = minParticipationRatioScaled(minParticipationRatio)
 
@@ -158,7 +163,22 @@ object ActiveFacilitatorAdmission {
     val expansionSlots = math.max(0, target - recentSignerPool.size)
     val expansionLimit = math.min(expansionSlots, maxExpansionPerRound)
     val promotedAdmitted = sortedPromotedExpansionCandidates.take(expansionLimit)
-    val probationSlots = math.max(0, expansionLimit - promotedAdmitted.size)
+    // Bounded probation re-entry lane. `expansionProbationSlots` is the legacy budget: whatever
+    // is left of this round's expansion limit after promoted expansion. `minProbationReentrySlots`
+    // guarantees up to K probation slots EVEN WHEN that budget is 0, decoupled from
+    // `maxExpansionPerRound`, so a mass return after a cluster-wide outage drains in a bounded
+    // number of rounds instead of never (the catch-22: rehabilitating peers need to sign to
+    // rebuild their score, but the only re-entry path was throttled to ~1/round shared with
+    // promoted expansion, so the active set ratcheted down to the always-on core and never grew
+    // back). `reentryHeadroom` caps the lane by `configuredMax` (= max(minActiveSize, maxActiveSize),
+    // the floor-wins-over-ceiling active-set bound) so it can never overflow the signing set beyond
+    // what the size config already permits. Probation peers are non-quorum-bearing (they flow to
+    // nonCorePeers in CommitteeBuilder) so widening the lane cannot affect quorum feasibility.
+    // Deterministic: K is a constant and `probationRank` ends in a PeerId tiebreak, so committee
+    // derivation stays fork-safe. Inert when `minProbationReentrySlots == 0`.
+    val expansionProbationSlots = math.max(0, expansionLimit - promotedAdmitted.size)
+    val reentryHeadroom = math.max(0, configuredMax - recentSignerPool.size - promotedAdmitted.size)
+    val probationSlots = math.min(reentryHeadroom, math.max(expansionProbationSlots, minProbationReentrySlots))
     val probationAdmitted = scoreExcluded.sortBy(probationRank).take(probationSlots)
     val expansionAdmitted = promotedAdmitted ++ probationAdmitted
     val expansionAdmittedSet = expansionAdmitted.toSet

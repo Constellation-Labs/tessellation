@@ -21,7 +21,11 @@ object ConsensusPeerController {
     degradedPenalty: Int,
     criticalPenalty: Int,
     passiveDecay: Int,
-    maxExpansionPerRound: Int
+    maxExpansionPerRound: Int,
+    // Bounded probation re-entry lane (see ActiveFacilitatorAdmission.fromRecentSigners). Default
+    // 0 keeps the lane inert. Threaded from `ConsensusConfig.activeAdmissionMinProbationReentrySlots`
+    // at the StateCreator construction sites.
+    minProbationReentrySlots: Int = 0
   ) {
     def bounded: Config =
       Config(
@@ -37,7 +41,8 @@ object ConsensusPeerController {
         degradedPenalty = clampNonNegative(degradedPenalty),
         criticalPenalty = clampNonNegative(criticalPenalty),
         passiveDecay = clampNonNegative(passiveDecay),
-        maxExpansionPerRound = clampNonNegative(maxExpansionPerRound)
+        maxExpansionPerRound = clampNonNegative(maxExpansionPerRound),
+        minProbationReentrySlots = clampNonNegative(minProbationReentrySlots)
       )
   }
 
@@ -56,7 +61,8 @@ object ConsensusPeerController {
         degradedPenalty = 5,
         criticalPenalty = 20,
         passiveDecay = 1,
-        maxExpansionPerRound = 1
+        maxExpansionPerRound = 1,
+        minProbationReentrySlots = 0
       )
   }
 
@@ -129,7 +135,8 @@ object ConsensusPeerController {
       promoteThreshold = c.promoteThreshold,
       retainThreshold = c.retainThreshold,
       demoteThreshold = c.demoteThreshold,
-      maxExpansionPerRound = c.maxExpansionPerRound
+      maxExpansionPerRound = c.maxExpansionPerRound,
+      minProbationReentrySlots = c.minProbationReentrySlots
     )
   }
 

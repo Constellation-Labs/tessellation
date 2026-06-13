@@ -174,9 +174,15 @@ object GlobalSnapshotConsensus {
         .get(appConfig.environment)
         .map(_.value)
         .getOrElse(0)
+      // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry =
+      // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
+      resolvedActiveAdmissionMinProbationReentrySlots = appConfig.snapshot.activeAdmissionMinProbationReentrySlots
+        .get(appConfig.environment)
+        .getOrElse(0)
       effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
-        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews
+        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
+        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots
       )
 
       consensusStorage <- ConsensusStorage.make[
