@@ -168,7 +168,16 @@ object GlobalSnapshotConsensus {
       // The default `3` mirrors the dev-environment value used by
       // `GlobalSnapshotConsensusStateCreator.make` and `CurrencySnapshotConsensus`.
       resolvedCoreCommitteeSize = appConfig.snapshot.coreCommitteeSize.get(appConfig.environment).map(_.value).getOrElse(3)
-      effectiveConsensusConfig = appConfig.snapshot.consensus.copy(coreCommitteeSize = Some(resolvedCoreCommitteeSize))
+      // v33: env-resolved quorum-denominator-shrink activation threshold (absent env entry = 0 =
+      // rung disabled). Folded into `deterministicConfigHash` via the consensus config copy below.
+      resolvedQuorumShrinkActivationViews = appConfig.snapshot.quorumShrinkActivationViews
+        .get(appConfig.environment)
+        .map(_.value)
+        .getOrElse(0)
+      effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
+        coreCommitteeSize = Some(resolvedCoreCommitteeSize),
+        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews
+      )
 
       consensusStorage <- ConsensusStorage.make[
         F,

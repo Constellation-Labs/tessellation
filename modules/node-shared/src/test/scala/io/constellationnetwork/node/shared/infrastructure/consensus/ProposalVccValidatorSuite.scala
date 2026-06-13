@@ -107,6 +107,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -130,6 +131,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -156,6 +158,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -191,6 +194,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -219,6 +223,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -246,6 +251,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -272,6 +278,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -292,6 +299,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -321,6 +329,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = 1.0, // q = 3
       minParticipationObservations = minObs
@@ -351,6 +360,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -382,6 +392,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -413,6 +424,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolingExcludesDD,
+      roundStartFacilitators = poolingExcludesDD,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -449,6 +461,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -492,6 +505,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
@@ -518,6 +532,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
       eligibleFacilitators = poolABC,
+      roundStartFacilitators = poolABC,
       peerQuality = Map.empty,
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs

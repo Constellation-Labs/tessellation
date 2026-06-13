@@ -753,7 +753,17 @@ object types {
     //     controllerEvidence + penaltyUntil signed), so deploy as a coordinated cold L0
     //     restart. As always the jar/config-hash mismatch at handshake is the real gate; this
     //     bump is the audit anchor.
-    consensusSchemaVersion: Int = 32,
+    //     v33: escalating quorum-denominator shrink (QuorumDenominatorShrink). After
+    //     `quorumShrinkActivationViews` viewInterval units of silence since the parent
+    //     outcome closed, the REQUIRED quorum for phase/VCC/TC feasibility at the stuck key
+    //     escalates downward (stage 1 to the anchor majority, stage 2 slowly to the hard
+    //     floor 2), with shrunken-margin votes restricted to the deterministic anchor
+    //     (latest controllerEvidence completedSigners intersected with the frozen
+    //     round-start committee). The persisted committee and facilitatorsHash are never
+    //     touched. Targets the post-restart 3-of-6 mathematical wedge (ord 3150197 /
+    //     task #123 / the Apr-29 deadlock class). `quorumShrinkActivationViews` enters
+    //     `deterministicConfigHash`; default 0 keeps the rung disabled.
+    consensusSchemaVersion: Int = 33,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -783,7 +793,19 @@ object types {
     // `deterministicConfigHash` so a v19 (no-hash) and v20 (with-hash) cluster compute
     // different hashes and reject each other at the Facility handshake. Jar hash also gates
     // peer connection.
-    coreCommitteeSize: Option[Int] = None
+    coreCommitteeSize: Option[Int] = None,
+    // v33 quorum-denominator shrink rung (QuorumDenominatorShrink): number of `viewInterval`
+    // units of wall silence since the parent outcome's `consensusEndTime` after which the
+    // escalating quorum shrink begins. `0` (default) disables the rung entirely. Env-resolved
+    // at the consensus construction site from `SnapshotConfig.quorumShrinkActivationViews.get(env)`
+    // (the coreCommitteeSize pattern); testnet runs an aggressive value, mainnet stays disabled.
+    // Measured in views rather than abandonment counts deliberately: one abandonment cycle is
+    // ~1 viewInterval of silence, but the local abandonment counters are node-local Refs that
+    // reset on restart and must never gate cross-node acceptance (the alpha.104 lesson). The
+    // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
+    // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
+    // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
+    quorumShrinkActivationViews: Int = 0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -903,6 +925,10 @@ object types {
           // penaltyUntil eligibility filtering and the advancers' penaltyUntil writes;
           // divergent operator values would derive divergent committees and silently fork.
           s"penaltyDurationOrdinals=$penaltyDurationOrdinals," +
+          // v33: quorum-denominator shrink activation threshold. Changes the effective
+          // cert/phase acceptance quorum at a wedged key; divergent operator values would
+          // make one node accept a shrunken VCC/TC that another rejects.
+          s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1029,6 +1055,14 @@ object types {
     // (GlobalSnapshotConsensus / CurrencySnapshotConsensus); only the resolved scalar is
     // additionally threaded into the hash.
     coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
+    // v33 quorum-denominator shrink activation threshold, keyed by AppEnvironment (the
+    // coreCommitteeSize pattern: env resolution happens once at the construction site and the
+    // resolved scalar is threaded into `ConsensusConfig.quorumShrinkActivationViews`, which
+    // folds into `deterministicConfigHash`). An absent env entry means the rung is DISABLED
+    // for that environment (resolved scalar 0). Testnet runs an aggressive value; mainnet has
+    // no entry on purpose -- the rung trades partition safety for liveness in its deep stage
+    // (see QuorumDenominatorShrink scaladoc) and must be opted into per environment.
+    quorumShrinkActivationViews: Map[AppEnvironment, PosInt] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,

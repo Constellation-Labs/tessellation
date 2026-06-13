@@ -118,6 +118,15 @@ object CurrencySnapshotConsensusStateAdvancer {
       override def isBootstrapActive(lastOutcome: CurrencyConsensusOutcome): Boolean =
         !lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
 
+      // v33 quorum-denominator shrink anchors (see QuorumDenominatorShrink). Both are
+      // consensus-agreed outcome fields: the latest controllerEvidence entry's canonical
+      // completedSigners and the parent round's facility-median consensusEndTime.
+      override protected def latestEvidenceSigners(lastOutcome: CurrencyConsensusOutcome): Option[SortedSet[PeerId]] =
+        lastOutcome.controllerEvidence.flatMap(_.lastOption).map { case (_, entry) => entry.completedSigners }
+
+      override protected def lastOutcomeEndTimeMs(lastOutcome: CurrencyConsensusOutcome): Option[Long] =
+        lastOutcome.recentRoundEndTimes.lastOption.map { case (_, endTime) => endTime }
+
       def getConsensusOutcome(
         state: CurrencySnapshotConsensusState
       ): Option[(Previous[CurrencySnapshotKey], CurrencyConsensusOutcome)] =
@@ -963,27 +972,31 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       /** Validate view/VCC invariants on an incoming proposal. Thin delegate to the shared `ProposalVccValidator.validate` helper -- see
         * GlobalSnapshotConsensusStateAdvancer for the full rationale on the alpha.90 P0 #1 + alpha.90 issue 2 changes that the helper
-        * encapsulates.
+        * encapsulates. Effectful since v33: derives the shared quorum-denominator-shrink decision per validation (mirrors dag-l0).
         */
       private def validateProposalVcc(
         state: CurrencySnapshotConsensusState,
         proposal: Proposal,
         facilitatorsHash: Hash
-      ): Either[ProposalRejection, Unit] =
-        ProposalVccValidator.validate(
-          proposalView = proposal.view,
-          proposalHash = proposal.hash,
-          proposalVcc = proposal.vcc,
-          proposalTimeoutCertificate = proposal.timeoutCertificate,
-          initialViewNumber = state.initialViewNumber,
-          coreSize = state.coreFacilitators.value.size,
-          facilitatorsHash = facilitatorsHash,
-          lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
-          eligibleFacilitators = state.eligibleFacilitators.value.toSet,
-          peerQuality = state.lastOutcome.peerQuality.toMap,
-          quorumThresholdFraction = config.quorumThresholdFraction,
-          minParticipationObservations = config.minParticipationObservations
-        )
+      ): F[Either[ProposalRejection, Unit]] =
+        quorumShrinkDecision(state).map { shrinkDecision =>
+          ProposalVccValidator.validate(
+            proposalView = proposal.view,
+            proposalHash = proposal.hash,
+            proposalVcc = proposal.vcc,
+            proposalTimeoutCertificate = proposal.timeoutCertificate,
+            initialViewNumber = state.initialViewNumber,
+            coreSize = state.coreFacilitators.value.size,
+            facilitatorsHash = facilitatorsHash,
+            lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
+            eligibleFacilitators = state.eligibleFacilitators.value.toSet,
+            roundStartFacilitators = state.roundStartFacilitators.value.toSet,
+            peerQuality = state.lastOutcome.peerQuality.toMap,
+            quorumThresholdFraction = config.quorumThresholdFraction,
+            minParticipationObservations = config.minParticipationObservations,
+            quorumShrink = Some(shrinkDecision)
+          )
+        }
 
       /** Verify cryptographic signatures on every `Signed[ViewChangeVote]` inside the VCC. Mirrors the dag-l0 helper. */
       // Phase B1 bootstrap gate. Mirrors dag-l0 / Phase 4 warmup.
@@ -1286,7 +1299,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           logger
             .warn(s"[CONSENSUS] ACS validation failed key=${state.key.show} view=${state.viewNumber} reason=${rejection.code}")
             .as(none[Transition])
-        validateProposalVcc(state, leaderProposal, status.facilitatorsHash) match {
+        validateProposalVcc(state, leaderProposal, status.facilitatorsHash).flatMap {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
             val afterVccSig: F[Option[Transition]] = leaderProposal.vcc match {
