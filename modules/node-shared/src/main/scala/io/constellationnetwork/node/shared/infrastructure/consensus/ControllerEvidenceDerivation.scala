@@ -248,6 +248,70 @@ object ControllerEvidenceDerivation {
       )
     }
 
+  /** Canonical committee for a finalized round: the frozen round-start committee minus certificate-applied evictions ONLY.
+    *
+    * This is the denominator both StateAdvancers use for the `recentProofSizes` window (bootstrap classification). It deliberately does NOT
+    * subtract `state.removedFacilitators`: that set also accumulates facility-phase fork-evictions, which are computed from the LOCAL
+    * declaration snapshot at the moment Core quorum crosses (`maybeGetAllDeclarations` returns as soon as quorum is met, and declarations
+    * accrete asymmetrically across nodes -- the same accretion race that makes `signedMajorityArtifact.proofs` node-local). Certificate
+    * evictions, by contrast, are carried on the quorum-accepted leader Proposal, so every node that finalizes the round applied the
+    * identical set.
+    */
+  def canonicalCommittee(
+    roundStartFacilitators: SortedSet[PeerId],
+    certifiedEvictions: SortedSet[PeerId]
+  ): SortedSet[PeerId] =
+    roundStartFacilitators -- certifiedEvictions
+
+  /** Canonical completed-signer set for a finalized round, used for `ControllerEvidenceEntry.completedSigners` AND the `recentSigners`
+    * window entry by BOTH StateAdvancers (shared here so the two layers cannot drift).
+    *
+    * ==Determinism argument (read before changing any input)==
+    *
+    * The set must be byte-identical on every node that decides the same round, because it feeds the signed-artifact `peerHistory` bytes
+    * (`signedArtifactOperationalState`) and, via `ControllerEvidenceDerivation`, the next rounds' committee/leader derivation. A divergent
+    * set wedges the cluster: divergent evidence windows -> divergent derived committees -> divergent reward recipients and mptRoot ->
+    * `GlobalArtifactMismatch[controllerEvidenceDiffer]` (live stall at ordinal 3150166). Every input is therefore restricted to data all
+    * deciding nodes share at the same logical point:
+    *
+    *   - `roundStartFacilitators`: frozen once at round creation by the deterministic committee derivation and never mutated (the ord-5
+    *     fork fix). Every MajoritySignature binds `facilitatorsHash`, so a node holding a different committee cannot contribute valid
+    *     signatures to this round at all.
+    *   - `acceptedObservedResponders`: the leader's signed participation observation CARRIED ON THE QUORUM-ACCEPTED PROPOSAL
+    *     (REPLACE-on-accept at buildSignatureTransition). Unlike any locally collected declaration or signature snapshot, it is a CLOSED
+    *     set: authored once by the leader, bound to the leader by the rumor envelope signature, and certified by the quorum that signed the
+    *     proposal's artifact hash (VoteLock pins one hash per (key, view)). It cannot accrete after acceptance, so a fast finalizer and a
+    *     slow finalizer read the identical bytes.
+    *   - `certifiedEvictions`: targets of quorum-signed EvictionCertificates embedded in the same accepted proposal -- same argument.
+    *
+    * Inputs that are explicitly FORBIDDEN here, with the reason each one diverges:
+    *
+    *   - `signedMajorityArtifact.proofs` / the local threshold-crossing signature set: each node finalizes the instant it observes
+    *     quorum-many MajoritySignature declarations, and gossip delivery order differs per node, so under load node A packs 3 proofs while
+    *     node B has already received 4. The crossing snapshots are not even nested (different arrival orders), so no deterministic
+    *     truncation of the local set exists, and `SnapshotStorage.prepend` never merges later-arriving proofs -- there is no convergence
+    *     path.
+    *   - `state.removedFacilitators`: its facility-phase fork-eviction component is computed from the local declaration snapshot at
+    *     quorum-crossing (see `canonicalCommittee` above), so two honest nodes legitimately disagree on it for the same finalized round.
+    *
+    * ==Fallback==
+    *
+    * When `acceptedObservedResponders` is EMPTY the accepted proposal carried no participation observation (the leader emits an empty set
+    * during bootstrap by protocol), and the set falls back to the full canonical committee -- the presumed-signers convention the windows
+    * used during bootstrap before this derivation existed. The fallback condition is itself proposal-carried, hence consensus-agreed:
+    * either every deciding node takes it or none does.
+    */
+  def canonicalCompletedSigners(
+    roundStartFacilitators: SortedSet[PeerId],
+    acceptedObservedResponders: Set[PeerId],
+    certifiedEvictions: SortedSet[PeerId]
+  ): SortedSet[PeerId] = {
+    val committee = canonicalCommittee(roundStartFacilitators, certifiedEvictions)
+
+    if (acceptedObservedResponders.isEmpty) committee
+    else committee.filter(acceptedObservedResponders.contains)
+  }
+
   /** The peerHistory payload allowed into SIGNED artifact bytes: deterministic chain-derived fields ONLY.
     *
     * `perPeer` and `recentRoundEndTimes` are the locally-divergent fields behind the alpha.92/129/147 proposal-validation wedges, so they

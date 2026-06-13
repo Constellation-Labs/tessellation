@@ -194,14 +194,22 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       private def nextPeerTiersForFinished(state: GlobalSnapshotConsensusState): SortedMap[PeerId, Int] = {
-        val evictedPeers = state.removedFacilitators.value
-        val completedFacilitators = state.roundStartFacilitators.value.toSet -- evictedPeers
+        // MUST stay in lockstep with the `newRecentSigners` window built at outcome
+        // finalization (getConsensusOutcome): the same canonical signer set, sourced only
+        // from proposal-carried + round-start-frozen data. See
+        // `ControllerEvidenceDerivation.canonicalCompletedSigners` for the determinism
+        // argument (`state.removedFacilitators` is NOT an allowed input).
+        val canonicalSigners = ControllerEvidenceDerivation.canonicalCompletedSigners(
+          roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+          acceptedObservedResponders = state.observedResponders.value,
+          certifiedEvictions = state.certifiedEvictionTargets
+        )
         val currentOrdValue = state.key.value.value
         val tighteningMinOrdinalValue =
           math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
         val newRecentSigners =
           state.lastOutcome.recentSigners
-            .updated(state.key, SortedSet.from(completedFacilitators))
+            .updated(state.key, canonicalSigners)
             .filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
 
         TierTransitions.computeNextTiers(
@@ -406,13 +414,39 @@ object GlobalSnapshotConsensusStateAdvancer {
               else rawAccumulated
             val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
-            // Roll the proofs-size window forward using the consensus-agreed committee
-            // size for the completed round. Uses `completedFacilitators.size` (consensus
-            // agreed) instead of `f.signedMajorityArtifact.proofs.size` (locally observed).
+            // Canonical (node-independent) committee and completed-signer set for the
+            // just-finalized round. These feed the SIGNED-bytes windows below
+            // (recentProofSizes / recentSigners / controllerEvidence carried via
+            // signedArtifactPeerHistory), so they must be byte-identical on every node
+            // deciding this round. Unlike `completedFacilitators` above (which subtracts
+            // `state.removedFacilitators`, whose facility-phase fork-eviction component is
+            // computed from the LOCAL declaration snapshot at quorum-crossing and diverges
+            // across honest nodes -- the ordinal-3150166 controllerEvidenceDiffer wedge),
+            // these are derived ONLY from round-start-frozen and quorum-accepted-proposal
+            // data. Full determinism argument:
+            // `ControllerEvidenceDerivation.canonicalCompletedSigners`.
+            val canonicalCommitteeForRound: SortedSet[PeerId] =
+              ControllerEvidenceDerivation.canonicalCommittee(
+                roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                certifiedEvictions = state.certifiedEvictionTargets
+              )
+            val canonicalSigners: SortedSet[PeerId] =
+              ControllerEvidenceDerivation.canonicalCompletedSigners(
+                roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                acceptedObservedResponders = state.observedResponders.value,
+                certifiedEvictions = state.certifiedEvictionTargets
+              )
+
+            // Roll the proofs-size window forward using the canonical committee size for
+            // the completed round (NOT `f.signedMajorityArtifact.proofs.size`, locally
+            // observed; NOT `completedFacilitators.size`, which embeds local fork-eviction
+            // observations). Committee-size semantics are kept (rather than responder
+            // count) so the bootstrap classification keyed on
+            // `bootstrapCompleteProofsThreshold` continues to measure committee size.
             val bootstrapLookbackOrdinals = 10L
             val currentOrdValue = state.key.value.value
             val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
-            val currentProofsSize: Int = completedFacilitators.size
+            val currentProofsSize: Int = canonicalCommitteeForRound.size
             val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
               val withCurrent =
                 state.lastOutcome.recentProofSizes.updated(state.key, currentProofsSize)
@@ -421,16 +455,18 @@ object GlobalSnapshotConsensusStateAdvancer {
 
             // v22: recentSigners is repopulated as the rolling K-round signer-set window and is now
             // the input to the tier-demotion hysteresis (TierTransitions.DemotionConsecutiveMisses).
-            // Append the just-completed round's signer set and trim to the tightening window. The map
-            // is SortedMap[SnapshotOrdinal, SortedSet[PeerId]] -- fully sorted, so it serializes
-            // order-independently (ArtifactSerializationDeterminismSuite covers exactly this field)
-            // and every honest node writes byte-identical bytes. Same window-trim arithmetic the
-            // recentProofSizes / recentRoundEndTimes windows use.
+            // Append the just-completed round's CANONICAL signer set and trim to the tightening
+            // window. The map is SortedMap[SnapshotOrdinal, SortedSet[PeerId]] -- fully sorted, so
+            // it serializes order-independently (ArtifactSerializationDeterminismSuite covers
+            // exactly this field) and every honest node writes byte-identical bytes. Same
+            // window-trim arithmetic the recentProofSizes / recentRoundEndTimes windows use.
+            // MUST stay in lockstep with `nextPeerTiersForFinished`, which rebuilds the same
+            // window for the peerTiers computation.
             val tighteningMinOrdinalValue =
               math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
             val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
               val withCurrent =
-                state.lastOutcome.recentSigners.updated(state.key, SortedSet.from(completedFacilitators))
+                state.lastOutcome.recentSigners.updated(state.key, canonicalSigners)
               withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
             }
 
@@ -483,14 +519,17 @@ object GlobalSnapshotConsensusStateAdvancer {
               )
             // Controller evidence stage 1: append the just-finalized round's canonical facts to
             // the bounded evidence window. Every input is consensus-agreed at this site:
-            // roundStartFacilitators is the frozen canonical committee, completedFacilitators is
-            // the same canonical signer-set derivation recentSigners uses (NOT the local-observed
-            // proofs set), acceptedTimeoutCertificateVoters comes from the accepted proposal's
+            // roundStartFacilitators is the frozen canonical committee, canonicalSigners is the
+            // proposal-carried completed-signer set shared with the recentSigners window (NOT
+            // the local-observed proofs set and NOT `roundStart -- removedFacilitators`, whose
+            // fork-eviction component is node-local -- see
+            // ControllerEvidenceDerivation.canonicalCompletedSigners for the determinism
+            // argument), acceptedTimeoutCertificateVoters comes from the accepted proposal's
             // embedded TC, and admitted/certifiedEvicted are certificate-applied targets stashed
-            // at buildSignatureTransition. Write-only for now -- no consumer reads this window yet.
+            // at buildSignatureTransition.
             val controllerEvidenceEntry = ControllerEvidenceEntry(
               roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
-              completedSigners = SortedSet.from(completedFacilitators),
+              completedSigners = canonicalSigners,
               timeoutVoters = state.acceptedTimeoutCertificateVoters,
               admittedPeers = SortedSet.from(state.admittedFacilitators.value),
               evictedPeers = state.certifiedEvictionTargets

@@ -207,24 +207,47 @@ object CurrencySnapshotConsensusStateAdvancer {
               else rawAccumulated
             val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
 
-            // Roll the proofs-size window forward using consensus-agreed committee size.
+            // Canonical (node-independent) committee and completed-signer set for the
+            // just-finalized round, mirror of dag-l0. These feed the SIGNED-bytes windows
+            // (recentProofSizes / recentSigners / controllerEvidence). `completedFacilitators`
+            // above is NOT an allowed source: it subtracts `state.removedFacilitators`, whose
+            // facility-phase fork-eviction component is computed from the LOCAL declaration
+            // snapshot at quorum-crossing and diverges across honest nodes (the
+            // ordinal-3150166 controllerEvidenceDiffer wedge class). Full determinism
+            // argument: ControllerEvidenceDerivation.canonicalCompletedSigners.
+            val canonicalCommitteeForRound: SortedSet[PeerId] =
+              ControllerEvidenceDerivation.canonicalCommittee(
+                roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                certifiedEvictions = state.certifiedEvictionTargets
+              )
+            val canonicalSigners: SortedSet[PeerId] =
+              ControllerEvidenceDerivation.canonicalCompletedSigners(
+                roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                acceptedObservedResponders = state.observedResponders.value,
+                certifiedEvictions = state.certifiedEvictionTargets
+              )
+
+            // Roll the proofs-size window forward using the canonical committee size for
+            // the completed round. Mirror of dag-l0 (committee-size semantics kept so the
+            // bootstrap classification keyed on bootstrapCompleteProofsThreshold still
+            // measures committee size).
             val bootstrapLookbackOrdinals = 10L
             val currentOrdValue = state.key.value.value
             val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
-            val currentProofsSize: Int = completedFacilitators.size
+            val currentProofsSize: Int = canonicalCommitteeForRound.size
             val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
               val withCurrent =
                 state.lastOutcome.recentProofSizes.updated(state.key, currentProofsSize)
               withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
             }
 
-            // v22: recentSigners repopulated as the rolling K-round signer-set window; drives the
-            // tier-demotion hysteresis. Fully sorted -> deterministic. Mirror of dag-l0.
+            // v22: recentSigners repopulated as the rolling K-round CANONICAL signer-set window;
+            // drives the tier-demotion hysteresis. Fully sorted -> deterministic. Mirror of dag-l0.
             val tighteningMinOrdinalValue =
               math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
             val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
               val withCurrent =
-                state.lastOutcome.recentSigners.updated(state.key, SortedSet.from(completedFacilitators))
+                state.lastOutcome.recentSigners.updated(state.key, canonicalSigners)
               withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
             }
 
@@ -276,11 +299,13 @@ object CurrencySnapshotConsensusStateAdvancer {
               )
 
             // Controller evidence stage 1, mirror of dag-l0: append the just-finalized round's
-            // canonical facts to the bounded evidence window. All inputs consensus-agreed; see
-            // GlobalSnapshotConsensusStateAdvancer for the full rationale. Write-only for now.
+            // canonical facts to the bounded evidence window. All inputs consensus-agreed
+            // (completedSigners is the proposal-carried canonical set shared with the
+            // recentSigners window above); see GlobalSnapshotConsensusStateAdvancer and
+            // ControllerEvidenceDerivation.canonicalCompletedSigners for the full rationale.
             val controllerEvidenceEntry = ControllerEvidenceEntry(
               roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
-              completedSigners = SortedSet.from(completedFacilitators),
+              completedSigners = canonicalSigners,
               timeoutVoters = state.acceptedTimeoutCertificateVoters,
               admittedPeers = SortedSet.from(state.admittedFacilitators.value),
               evictedPeers = state.certifiedEvictionTargets

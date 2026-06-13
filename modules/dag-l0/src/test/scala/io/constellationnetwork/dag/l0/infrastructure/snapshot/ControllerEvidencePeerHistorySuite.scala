@@ -1,6 +1,8 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import cats.data.NonEmptySet
 import cats.effect.{IO, Resource}
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -147,6 +149,51 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         // the identical windows forward.
         expect.same(outcome.controllerEvidence, seededEvidence) &&
         expect.same(outcome.penaltyUntil, seededPenaltyUntil)
+  }
+
+  test("a strict superset of artifact proofs at pack time yields byte-identical signedArtifactPeerHistory") { res =>
+    implicit val (js, h, sp) = res
+
+    // Ordinal-3150166 regression: `signedMajorityArtifact.proofs` accretes asymmetrically
+    // (a fast finalizer packs quorum-many proofs while a slower one already holds a strict
+    // superset; SnapshotStorage.prepend never merges later arrivals). The outcome built by
+    // either node must still expose identical signed peerHistory bytes -- the proofs set has
+    // no path into `signedArtifactPeerHistory`.
+    val printer = Printer.noSpaces.copy(dropNullValues = true)
+
+    for {
+      keyPairs <- List.range(0, 4).traverse(_ => KeyPairGenerator.makeKeyPair[IO])
+      genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPairs.head)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      signedPerKey <- keyPairs.traverse(kp => Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, kp))
+      allProofs = signedPerKey.flatMap(_.proofs.toNonEmptyList.toList)
+      quorumProofs = NonEmptySet.fromSetUnsafe(SortedSet.from(allProofs.take(3)))
+      supersetProofs = NonEmptySet.fromSetUnsafe(SortedSet.from(allProofs))
+      fastFinalizerArtifact = Signed(lastArtifact, quorumProofs)
+      slowFinalizerArtifact = Signed(lastArtifact, supersetProofs)
+      snapshotHash <- fastFinalizerArtifact.toHashed.map(_.hash)
+      info = signedGenesis.value.info.toGlobalSnapshotInfo
+      finishedOf = (artifact: Signed[GlobalIncrementalSnapshot]) =>
+        Finished(artifact, info, EventTrigger, Candidates.empty, Hash.empty, snapshotHash)
+      sharedFields = (
+        SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
+        SortedMap(a -> 150, b -> 150, c -> 60),
+        SortedMap(a -> 2, b -> 2, c -> 1),
+        SortedMap(ord(14L) -> 1700000000000L)
+      )
+      nodeAOutcome = mkOutcome(finishedOf(fastFinalizerArtifact), sharedFields._1, sharedFields._2, sharedFields._3, sharedFields._4)
+      nodeBOutcome = mkOutcome(finishedOf(slowFinalizerArtifact), sharedFields._1, sharedFields._2, sharedFields._3, sharedFields._4)
+      signedA = nodeAOutcome.signedArtifactPeerHistory
+      signedB = nodeBOutcome.signedArtifactPeerHistory
+    } yield
+      // The proofs divergence is real (strict superset)...
+      expect(quorumProofs.toSortedSet.subsetOf(supersetProofs.toSortedSet)) &&
+        expect(quorumProofs =!= supersetProofs) &&
+        expect(nodeAOutcome.finished.signedMajorityArtifact.proofs =!= nodeBOutcome.finished.signedMajorityArtifact.proofs) &&
+        // ...but the signed peerHistory payloads are identical, structurally and byte-for-byte.
+        expect.same(signedA, signedB) &&
+        expect.same(signedA.asJson.printWith(printer), signedB.asJson.printWith(printer))
   }
 
   test("divergent carried perPeer state yields byte-identical signedArtifactPeerHistory for the same evidence") { res =>

@@ -18,9 +18,13 @@ import derevo.derive
   * byte-identical entry for the same ordinal:
   *
   *   - `roundStartFacilitators`: the canonical committee frozen at round creation (`state.roundStartFacilitators`).
-  *   - `completedSigners`: the canonical signer set for the completed round -- `roundStartFacilitators` minus evicted peers, the SAME
-  *     derivation the `recentSigners` window uses. NOT `signedMajorityArtifact.proofs`: the proofs set is local-observed (quorum-cutoff
-  *     races) and documented as divergent across nodes.
+  *   - `completedSigners`: the canonical completed-signer set for the round, derived by
+  *     `ControllerEvidenceDerivation.canonicalCompletedSigners` -- the frozen round-start committee restricted to the quorum-accepted
+  *     proposal's `observedResponders` (full committee while that set is empty, i.e. bootstrap), minus certificate-applied evictions; the
+  *     SAME derivation the `recentSigners` window uses. NOT `signedMajorityArtifact.proofs` (local-observed, quorum-cutoff accretion races)
+  *     and NOT `roundStartFacilitators -- state.removedFacilitators` (the fork-eviction component of `removedFacilitators` is computed from
+  *     the local declaration snapshot at quorum-crossing and diverges across honest nodes -- the ordinal-3150166 wedge). See the
+  *     determinism argument on `canonicalCompletedSigners`.
   *   - `timeoutVoters`: voters of the TimeoutCertificate embedded in the ACCEPTED proposal (`state.acceptedTimeoutCertificateVoters`),
   *     never a local timeout-cache observation.
   *   - `admittedPeers`: targets of quorum-signed AdmissionCertificates applied to the round.
