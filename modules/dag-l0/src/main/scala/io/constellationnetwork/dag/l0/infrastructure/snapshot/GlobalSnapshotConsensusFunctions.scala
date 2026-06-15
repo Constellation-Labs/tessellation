@@ -671,6 +671,12 @@ object GlobalSnapshotConsensusFunctions {
 
         _ <- emitBalanceEventMetrics("accepted", balanceDiagnostics.accepted: _*)
         _ <- emitBalanceEventMetrics("rejected", balanceDiagnostics.rejected: _*)
+        // State-size gauges: balances and lastTxRefs are the two dominant Address-keyed maps in
+        // GlobalSnapshotInfo (each ~444k entries on the dust-bloated testnet), so they track the
+        // on-disk/in-memory state magnitude and make the dust-sweep deflation observable as a step
+        // drop at the sweep ordinal. snapshotInfo here is the post-sweep GSI returned by accept.
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_state_balances_count", snapshotInfo.balances.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_global_snapshot_state_last_tx_refs_count", snapshotInfo.lastTxRefs.size.toLong)
         _ <- Metrics[F].incrementCounterBy(
           "dag_global_snapshot_dag_tx_parent_ordinal_above_last_total",
           balanceDiagnostics.rejected.toMap.getOrElse("dag_block_parent_ordinal_above_last", 0L),
