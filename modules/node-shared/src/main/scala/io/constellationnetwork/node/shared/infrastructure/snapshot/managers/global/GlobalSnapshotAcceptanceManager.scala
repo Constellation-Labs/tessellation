@@ -17,8 +17,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
-import io.constellationnetwork.node.shared.config.types
-import io.constellationnetwork.node.shared.config.types.{DustSweep, FieldsAddedOrdinals, MetagraphsSyncConfig}
+import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -174,10 +173,7 @@ object GlobalSnapshotAcceptanceManager {
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress,
     mptStore: MptStore[F, GlobalStateKey],
-    loggerBundle: LoggerBundle[F],
-    // Per-environment compile-time dust-sweep config (NOT HOCON): jar hash + environment is the determinism fence.
-    // Defaulted from `types.dustSweeps` so existing call sites are unchanged; threaded into `accept` via this closure (Q5).
-    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = types.dustSweeps
+    loggerBundle: LoggerBundle[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotAcceptanceManager[F] = {
@@ -1091,7 +1087,7 @@ object GlobalSnapshotAcceptanceManager {
             // Applied to the fully-built GSI BEFORE the MPT sync and proof so that the returned GSI, the MPT-sync input,
             // and buildProof all derive from the SAME swept state (sweptGsi == gsi2). Off the sweep ordinal this is a no-op
             // (didSweep = false) and gsi2 is the same value as gsi, so the normal incremental MPT path is unchanged.
-            (sweptGsi, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(gsi, ordinal, environment, dustSweeps)
+            (sweptGsi, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(gsi, ordinal, environment, fieldsAddedOrdinals.dustSweeps)
 
             _ <- loggerBundle.app
               .info(
