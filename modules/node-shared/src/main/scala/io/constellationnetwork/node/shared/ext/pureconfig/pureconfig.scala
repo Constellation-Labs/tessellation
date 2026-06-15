@@ -4,9 +4,11 @@ import java.nio.file.{Path => JPath}
 
 import cats.data.NonEmptySet
 
+import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
-import io.constellationnetwork.node.shared.config.types.{PriceOracleConfig, RouteRateLimiterConfig}
+import io.constellationnetwork.node.shared.config.types.{DustSweep, PriceOracleConfig, RouteRateLimiterConfig}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -57,5 +59,13 @@ package object pureconfig {
   implicit val envToPosIntMapReader: ConfigReader[Map[AppEnvironment, PosInt]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
   implicit val envToIntMapReader: ConfigReader[Map[AppEnvironment, Int]] =
+    genericMapReader(catchReadError(AppEnvironment.withName))
+  // Ordinal-keyed dust sweeps (env -> ordinal -> sweep), mirroring the fee-config readers above. DustSweep derives from the
+  // Balance and Address readers; the inner map is built as a SortedMap (the consumer's type) via the same SortedMap.from idiom
+  // the codebase uses to resolve feeConfigs.
+  implicit val ordinalToDustSweepReader: ConfigReader[SortedMap[SnapshotOrdinal, DustSweep]] =
+    genericMapReader[SnapshotOrdinal, DustSweep](catchReadError(strOrdinal => SnapshotOrdinal.unsafeApply(strOrdinal.toLong)))
+      .map(SortedMap.from(_))
+  implicit val envToOrdinalToDustSweepReader: ConfigReader[Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
 }

@@ -34,7 +34,12 @@ object types {
     updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
-    setSumFix: Map[AppEnvironment, SnapshotOrdinal]
+    setSumFix: Map[AppEnvironment, SnapshotOrdinal],
+    // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
+    // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
+    // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
+    // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
+    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
   )
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
@@ -49,37 +54,6 @@ object types {
     threshold: Balance,
     collectionAddress: Option[Address]
   )
-
-  /** Per-environment, ordinal-keyed dust sweeps. Keyed by the ordinal at which each sweep fires.
-    *
-    * Determinism fence: this is a COMPILE-TIME, per-environment literal, NOT a HOCON/env-overridable key. The jar hash plus the environment
-    * is the fence (exactly as the `FieldsAddedOrdinals.tessellation3Migration` transition is fenced). The per-snapshot check is an
-    * exact-key lookup `dustSweeps.get(env).flatMap(_.get(ordinal))`, so an entry fires exactly once at its ordinal and never replays;
-    * keying by ordinal structurally enforces at most one sweep per ordinal. Empty default for every environment; add entries over time.
-    *
-    * Deploy model: safe ONLY under a coordinated network-wide cold restart (no rolling deploy). At the sweep ordinal every node must run
-    * the deflating build, or a node that did not would compute the old state root and diverge.
-    */
-  val dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] =
-    Map(
-      AppEnvironment.Testnet -> SortedMap(
-        // Testnet sweep ordinal. Tip was ~3154543 on 2026-06-15 (chain was DEGRADED/barely advancing -- a couple stalls + a rollback),
-        // so 3154700 is ~150 ahead. NOTE: the chain must be HEALTHY when it crosses D; do not deploy the deflating jar until the
-        // committee/signer set has recovered, and re-confirm the tip-vs-D gap at deploy (the chain rate is variable under stress).
-        // FINALIZE right before deploy: D MUST be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. The match
-        // is an exact-key get(ordinal): if the chain crosses D while still on the OLD jar, the sweep is MISSED (until a rollback
-        // re-crosses D). Bump D UP if the chain nears it before the coordinated cold restart completes, or if the chain looks sketchy.
-        SnapshotOrdinal.unsafeApply(3154700L) ->
-          DustSweep(
-            // Q3 recommendation: a principled sub-fee-floor dust line of <= 0.001 DAG (100000 datum). The testnet dust is exactly
-            // 12345 datum, well below the 200000-datum fee floor, so this threshold captures the entire dust population.
-            threshold = Balance(NonNegLong.unsafeFrom(100000L)),
-            // Testnet decision: BURN (None). The swept dust (~55 DAG) vanishes and reported supply drops by the swept sum, which is
-            // fine on testnet (no supply-conservation invariant; Appendix A). Use Some(treasury) where supply fidelity matters.
-            collectionAddress = None
-          )
-      )
-    )
 
   case class MetagraphsSyncConfig(
     maxUnappliedGlobalChangeOrdinals: PosInt
