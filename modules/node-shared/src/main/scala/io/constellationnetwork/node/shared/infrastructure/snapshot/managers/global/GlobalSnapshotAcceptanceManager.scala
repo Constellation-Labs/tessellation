@@ -17,7 +17,8 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
-import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
+import io.constellationnetwork.node.shared.config.types
+import io.constellationnetwork.node.shared.config.types.{DustSweep, FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -173,7 +174,10 @@ object GlobalSnapshotAcceptanceManager {
     collateral: Amount,
     withdrawalTimeLimit: EpochProgress,
     mptStore: MptStore[F, GlobalStateKey],
-    loggerBundle: LoggerBundle[F]
+    loggerBundle: LoggerBundle[F],
+    // Per-environment compile-time dust-sweep config (NOT HOCON): jar hash + environment is the determinism fence.
+    // Defaulted from `types.dustSweeps` so existing call sites are unchanged; threaded into `accept` via this closure (Q5).
+    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = types.dustSweeps
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): GlobalSnapshotAcceptanceManager[F] = {
@@ -1083,6 +1087,19 @@ object GlobalSnapshotAcceptanceManager {
               updatedAcceptedMetagraphSyncData
             )
 
+            // CONSENSUS-CRITICAL ordinal-gated dust sweep (state deflation).
+            // Applied to the fully-built GSI BEFORE the MPT sync and proof so that the returned GSI, the MPT-sync input,
+            // and buildProof all derive from the SAME swept state (sweptGsi == gsi2). Off the sweep ordinal this is a no-op
+            // (didSweep = false) and gsi2 is the same value as gsi, so the normal incremental MPT path is unchanged.
+            (sweptGsi, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(gsi, ordinal, environment, dustSweeps)
+
+            _ <- loggerBundle.app
+              .info(
+                s"[ACCEPTANCE] ordinal=$ordinal DUST_SWEEP removed=${gsi.balances.size - sweptGsi.balances.size} " +
+                  s"balancesBefore=${gsi.balances.size} balancesAfter=${sweptGsi.balances.size}"
+              )
+              .whenA(didSweep)
+
             balanceChanges: SortedMap[Address, Balance] =
               initialData.blockResult.contextUpdate.balances.toSortedMap ++
                 currencyAcceptanceBalanceUpdate.toSortedMap ++
@@ -1138,8 +1155,14 @@ object GlobalSnapshotAcceptanceManager {
                 s"nc=${removedNodeCollateralKeys.size},ncw=${removedNodeCollateralWithdrawalKeys.size})"
             )
 
-            _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-            stateProof <- builder.buildProof(gsi, ordinal)
+            // At the sweep ordinal, rebuild the MPT in one shot from the swept state (sub-second on the pruned ~hundreds of entries)
+            // rather than streaming hundreds of thousands of incremental deletions. syncFull yields the identical canonical root the
+            // incremental path would produce for the same entry set (the MPT root is a pure function of the entry set), so consensus
+            // still agrees, and the producer resumes correct incremental syncs from the pruned base afterward.
+            _ <-
+              if (didSweep) sweptGsi.allStateEntries[F].flatMap(mptStore.syncFull[Json](_, ordinal))
+              else mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
+            stateProof <- builder.buildProof(sweptGsi, ordinal)
 
             _ <- loggerBundle.app.info(
               s"[ACCEPTANCE] ordinal=$ordinal EXIT stateProof: " +
@@ -1151,7 +1174,7 @@ object GlobalSnapshotAcceptanceManager {
                 s"delegWithdrawals=${stateProof.delegatedStakesWithdrawals.map(_.show.take(12)).getOrElse("none")} " +
                 s"nodeCollaterals=${stateProof.activeNodeCollaterals.map(_.show.take(12)).getOrElse("none")} " +
                 s"collateralWithdrawals=${stateProof.nodeCollateralWithdrawals.map(_.show.take(12)).getOrElse("none")} " +
-                s"gsi.balances=${gsi.balances.size} gsi.currSnapshots=${gsi.lastCurrencySnapshots.size}"
+                s"gsi.balances=${sweptGsi.balances.size} gsi.currSnapshots=${sweptGsi.lastCurrencySnapshots.size}"
             )
 
             (expiredAllowSpends, expiredTokenLocks) = (
@@ -1189,7 +1212,7 @@ object GlobalSnapshotAcceptanceManager {
               scSnapshots,
               returnedSCEvents,
               acceptedRewardTxs,
-              gsi,
+              sweptGsi,
               stateProof,
               acceptedSpendActions,
               updatedUpdateNodeParameters.view.mapValues(_._1).toSortedMap,
