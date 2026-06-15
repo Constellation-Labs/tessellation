@@ -70,7 +70,15 @@ object ActiveFacilitatorAdmission {
     // below-promote-threshold "rehabilitating" peers (`scoreExcluded`) EVEN WHEN the per-round
     // expansion budget is exhausted. Default 0 is fully inert (preserves pre-fix behavior). See
     // the inline note at the `probationSlots` computation for the catch-22 this breaks.
-    minProbationReentrySlots: Int = 0
+    minProbationReentrySlots: Int = 0,
+    // Lookback depth (in ordinals) of the recent-signer pool: how far back a peer may have last
+    // signed and still count as a sticky, score-gated "recent signer" seat rather than churning
+    // through the volatile expansion/reserve fill each round. Decoupled from the demotion hysteresis
+    // `TierTransitions.DemotionConsecutiveMisses` (which stays at 3 and independently keeps non-recent
+    // signers OUT of quorum-bearing Core), so widening this only changes active-set eligibility.
+    // Floored internally to DemotionConsecutiveMisses so a low value cannot disable
+    // `recentWindowDeepEnough`. Default preserves the pre-change 3-ordinal lookback.
+    recentSignerWindow: Int = TierTransitions.DemotionConsecutiveMisses
   ): Result = {
     val minRatioScaled = minParticipationRatioScaled(minParticipationRatio)
 
@@ -95,7 +103,10 @@ object ActiveFacilitatorAdmission {
         case _ => false
       }
 
-    val recentSets = recentSigners.values.toList.takeRight(TierTransitions.DemotionConsecutiveMisses)
+    // Floor the lookback to the demotion-hysteresis depth so a misconfigured low value cannot make
+    // `recentWindowDeepEnough` false and silently disable the recent-signer path (Codex review #2).
+    val effectiveRecentSignerWindow = math.max(TierTransitions.DemotionConsecutiveMisses, recentSignerWindow)
+    val recentSets = recentSigners.values.toList.takeRight(effectiveRecentSignerWindow)
     def recentSignerCount(pid: PeerId): Int = recentSets.count(_.contains(pid))
     val scoreHistoryAvailable = activeScores.nonEmpty
     def bootstrapScore(pid: PeerId): Int =

@@ -25,7 +25,11 @@ object ConsensusPeerController {
     // Bounded probation re-entry lane (see ActiveFacilitatorAdmission.fromRecentSigners). Default
     // 0 keeps the lane inert. Threaded from `ConsensusConfig.activeAdmissionMinProbationReentrySlots`
     // at the StateCreator construction sites.
-    minProbationReentrySlots: Int = 0
+    minProbationReentrySlots: Int = 0,
+    // Recent-signer pool lookback depth (see ActiveFacilitatorAdmission.fromRecentSigners). Default
+    // is the demotion-hysteresis constant (preserves the pre-change 3-ordinal lookback); threaded
+    // from `ConsensusConfig.activeAdmissionRecentSignerWindow` at the StateCreator construction sites.
+    recentSignerWindow: Int = TierTransitions.DemotionConsecutiveMisses
   ) {
     def bounded: Config =
       Config(
@@ -42,7 +46,8 @@ object ConsensusPeerController {
         criticalPenalty = clampNonNegative(criticalPenalty),
         passiveDecay = clampNonNegative(passiveDecay),
         maxExpansionPerRound = clampNonNegative(maxExpansionPerRound),
-        minProbationReentrySlots = clampNonNegative(minProbationReentrySlots)
+        minProbationReentrySlots = clampNonNegative(minProbationReentrySlots),
+        recentSignerWindow = math.max(TierTransitions.DemotionConsecutiveMisses, recentSignerWindow)
       )
   }
 
@@ -62,7 +67,8 @@ object ConsensusPeerController {
         criticalPenalty = 20,
         passiveDecay = 1,
         maxExpansionPerRound = 1,
-        minProbationReentrySlots = 0
+        minProbationReentrySlots = 0,
+        recentSignerWindow = TierTransitions.DemotionConsecutiveMisses
       )
   }
 
@@ -136,7 +142,8 @@ object ConsensusPeerController {
       retainThreshold = c.retainThreshold,
       demoteThreshold = c.demoteThreshold,
       maxExpansionPerRound = c.maxExpansionPerRound,
-      minProbationReentrySlots = c.minProbationReentrySlots
+      minProbationReentrySlots = c.minProbationReentrySlots,
+      recentSignerWindow = c.recentSignerWindow
     )
   }
 

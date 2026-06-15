@@ -35,7 +35,8 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     minParticipationObservations: Int = 3,
     minParticipationRatio: Double = 0.5,
     maxExpansionPerRound: Int = Int.MaxValue,
-    minProbationReentrySlots: Int = 0
+    minProbationReentrySlots: Int = 0,
+    recentSignerWindow: Int = TierTransitions.DemotionConsecutiveMisses
   ): ActiveFacilitatorAdmission.Result =
     ActiveFacilitatorAdmission.fromRecentSigners(
       selected = selected,
@@ -48,7 +49,8 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
       minParticipationObservations = minParticipationObservations,
       minParticipationRatio = minParticipationRatio,
       maxExpansionPerRound = maxExpansionPerRound,
-      minProbationReentrySlots = minProbationReentrySlots
+      minProbationReentrySlots = minProbationReentrySlots,
+      recentSignerWindow = recentSignerWindow
     )
 
   pureTest("canonical facilitator base uses only parent facilitators") {
@@ -509,5 +511,69 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect.same(List(a, b, c), result.active) &&
     expect(result.exclusions.isEmpty) &&
     expect(!result.recentFilterApplied)
+  }
+
+  // Tier-1 stickiness (recentSignerWindow): a peer that last signed several ordinals ago (present in
+  // a 10-deep lookback, absent from the default 3-deep one) and still holds retain score is EXCLUDED
+  // from the recent-signer pool with the narrow window but INCLUDED once the lookback is widened --
+  // the change that keeps intermittently-signing Tier-1 peers in the paid committee instead of
+  // churning them through the volatile expansion/reserve fill.
+  pureTest("widening recentSignerWindow keeps an intermittently-signing peer in the recent-signer pool") {
+    val signers = window(
+      10L -> Set(a, b, c, d),
+      11L -> Set(a, b, c),
+      12L -> Set(a, b, c),
+      13L -> Set(a, b, c),
+      14L -> Set(a, b, c),
+      15L -> Set(a, b, c),
+      16L -> Set(a, b, c),
+      17L -> Set(a, b, c),
+      18L -> Set(a, b, c),
+      19L -> Set(a, b, c)
+    )
+    val scores = Map(a -> 120, b -> 120, c -> 120, d -> 80)
+
+    val narrow = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = signers,
+      activeScores = scores,
+      minActiveSize = 3,
+      targetActiveSize = 3,
+      maxActiveSize = 4,
+      recentSignerWindow = 3
+    )
+    val wide = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = signers,
+      activeScores = scores,
+      minActiveSize = 3,
+      targetActiveSize = 3,
+      maxActiveSize = 4,
+      recentSignerWindow = 10
+    )
+
+    expect(!narrow.active.contains(d)) &&
+    expect(wide.active.contains(d)) &&
+    expect.same(List(a, b, c, d), wide.active)
+  }
+
+  // Clamp (Codex review #2): a recentSignerWindow below the demotion-hysteresis floor is raised to it
+  // so it cannot make the window "not deep enough" and silently disable the recent-signer path. With
+  // a 3-deep signer history and recentSignerWindow = 0, the filter still applies (floored to 3).
+  pureTest("recentSignerWindow is floored to the demotion-hysteresis depth") {
+    val floored = fromRecent(
+      selected = List(a, b, c, d),
+      recentSigners = window(
+        10L -> Set(a, b, c),
+        11L -> Set(a, b, c),
+        12L -> Set(a, b, c)
+      ),
+      peerQuality = Map(d -> (1, 5)),
+      targetActiveSize = 3,
+      recentSignerWindow = 0
+    )
+
+    expect(floored.recentFilterApplied) &&
+    expect.same(List(a, b, c), floored.active)
   }
 }

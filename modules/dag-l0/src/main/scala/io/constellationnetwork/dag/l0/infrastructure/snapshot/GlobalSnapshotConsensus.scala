@@ -179,6 +179,13 @@ object GlobalSnapshotConsensus {
       resolvedActiveAdmissionMinProbationReentrySlots = appConfig.snapshot.activeAdmissionMinProbationReentrySlots
         .get(appConfig.environment)
         .getOrElse(0)
+      // Recent-signer pool lookback depth: env-resolved, floored to the DemotionConsecutiveMisses
+      // constant (3) so a low operator value cannot disable the recent-signer path (Codex review #2).
+      // Absent env entry resolves to that floor (the pre-change lookback). Folded into the copy below.
+      resolvedActiveAdmissionRecentSignerWindow = math.max(
+        3,
+        appConfig.snapshot.activeAdmissionRecentSignerWindow.get(appConfig.environment).getOrElse(3)
+      )
       // Bounded one-slot Tier-1 reward rotation: env-resolved epoch length (absent env entry =
       // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
       resolvedRewardRotationEpochRounds = appConfig.snapshot.rewardRotationEpochRounds
@@ -193,6 +200,7 @@ object GlobalSnapshotConsensus {
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
         rewardRotationEpochRounds = resolvedRewardRotationEpochRounds,
         rewardRotationEligibilityWindow = resolvedRewardRotationEligibilityWindow
       )

@@ -114,6 +114,11 @@ object CurrencySnapshotConsensus {
     // consensus config copy below.
     val resolvedActiveAdmissionMinProbationReentrySlots: Int =
       snapshotConfig.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0)
+    // Recent-signer pool lookback depth: env-resolved, floored to DemotionConsecutiveMisses (3) so a
+    // low operator value cannot disable the recent-signer path (Codex review #2). Mirror of
+    // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the consensus config copy below.
+    val resolvedActiveAdmissionRecentSignerWindow: Int =
+      math.max(3, snapshotConfig.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3))
     // Bounded one-slot Tier-1 reward rotation: env-resolved epoch length (absent env entry = 0 =
     // lane inert). Mirror of GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the
     // consensus config copy below.
@@ -129,6 +134,7 @@ object CurrencySnapshotConsensus {
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
         rewardRotationEpochRounds = resolvedRewardRotationEpochRounds,
         rewardRotationEligibilityWindow = resolvedRewardRotationEligibilityWindow
       )

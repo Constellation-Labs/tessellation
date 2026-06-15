@@ -335,6 +335,18 @@ object types {
     // -> roundStartFacilitators -> facilitatorsHash, so it is folded into `deterministicConfigHash`
     // and divergent operator values handshake-reject.
     activeAdmissionMinProbationReentrySlots: Int = 0,
+    // Recent-signer pool lookback depth (in ordinals): how far back a peer may have last signed and
+    // still hold a sticky, score-gated active seat instead of churning through the volatile
+    // expansion/reserve fill. Decoupled from the demotion hysteresis (which stays at
+    // `TierTransitions.DemotionConsecutiveMisses` = 3 and independently keeps non-recent signers out
+    // of Core), so widening this only changes active-set eligibility, never the quorum-bearing Core.
+    // Env-resolved at the consensus construction site from
+    // `SnapshotConfig.activeAdmissionRecentSignerWindow.get(env)` (the coreCommitteeSize pattern),
+    // floored to DemotionConsecutiveMisses. Default 3 preserves the pre-change lookback; testnet
+    // widens to the full persisted `recentSigners` window (`tighteningWindow`). Consensus-critical:
+    // it changes the active committee -> roundStartFacilitators -> facilitatorsHash, so it is folded
+    // into `deterministicConfigHash` and divergent operator values handshake-reject.
+    activeAdmissionRecentSignerWindow: Int = 3,
     // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
     // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
     // AdmissionCertificate clears the entry. Pure ordinal comparisons, no per-round countdown.
@@ -969,6 +981,10 @@ object types {
           // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
           // silently fork. Env-resolved to 0 (inert) when absent for an environment.
           s"activeAdmissionMinProbationReentrySlots=$activeAdmissionMinProbationReentrySlots," +
+          // Recent-signer pool lookback depth: changes the active committee -> roundStartFacilitators
+          // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
+          // silently fork. Floored to DemotionConsecutiveMisses (3) at the construction site.
+          s"activeAdmissionRecentSignerWindow=$activeAdmissionRecentSignerWindow," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
@@ -1143,6 +1159,15 @@ object types {
     // purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable if ever needed,
     // matching the resolved-scalar default.
     activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
+    // Recent-signer pool lookback depth (in ordinals), keyed by AppEnvironment (the coreCommitteeSize
+    // pattern: env resolution happens once at the consensus construction site and the resolved scalar
+    // is threaded into `ConsensusConfig.activeAdmissionRecentSignerWindow`, which folds into
+    // `deterministicConfigHash`). Controls how long an intermittently-signing peer keeps a sticky
+    // active seat before churning through expansion/reserve. An absent env entry resolves to the
+    // DemotionConsecutiveMisses floor (3 = the pre-change lookback). Testnet widens to the full
+    // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
+    // purpose -- widening is an active-set/reward-breadth change to opt into per environment.
+    activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
     // Bounded one-slot Tier-1 reward-rotation epoch length, keyed by AppEnvironment (the
     // coreCommitteeSize pattern: env resolution happens once at the consensus construction site
     // and the resolved scalar is threaded into `ConsensusConfig.rewardRotationEpochRounds`, which
