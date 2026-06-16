@@ -35,6 +35,11 @@ object types {
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
     setSumFix: Map[AppEnvironment, SnapshotOrdinal],
+    // Ordinal-gated balance source for state-channel fee affordability (commit dd6e83a19). At/after this ordinal the fee
+    // check reads the metagraph owner's balance from the deterministic accept() context (lastGlobalSnapshotInfo.balances);
+    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. testnet is
+    // 0 (the fix is already live there); the mainnet entry is a placeholder to set to the coordinated launch ordinal.
+    scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with

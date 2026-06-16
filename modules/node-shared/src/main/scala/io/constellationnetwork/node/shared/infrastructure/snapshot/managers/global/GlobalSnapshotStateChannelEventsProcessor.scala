@@ -60,7 +60,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     feeCalculator: FeeCalculator[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    scFeeBalanceFromContextOrdinal: SnapshotOrdinal
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
@@ -316,8 +317,16 @@ object GlobalSnapshotStateChannelEventsProcessor {
                                   current.asRight[Agg].pure[F]
                               ) { feeAddress =>
                                 val localBalance = balanceUpdate.get(feeAddress)
-                                val contextBalance = lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty)
-                                localBalance.getOrElse(contextBalance).pure[F].map { balance =>
+                                // Ordinal-gated balance source (commit dd6e83a19): at/after the gate use the deterministic
+                                // accept() context (lastGlobalSnapshotInfo.balances); below it the pre-fix mptStore.getBalance
+                                // path so already-signed history re-derives byte-identically. The in-batch localBalance
+                                // accumulator takes precedence either way.
+                                val initialBalanceF: F[Balance] =
+                                  if (snapshotOrdinal >= scFeeBalanceFromContextOrdinal)
+                                    lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty).pure[F]
+                                  else
+                                    mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty))
+                                localBalance.fold(initialBalanceF)(_.pure[F]).map { balance =>
                                   // We're inside the Some(feeAddress) handler, so isFeeRequired is always true here.
                                   // If fee deduction succeeds, continue processing; otherwise reject remaining binaries.
                                   (balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance)) match {

@@ -189,7 +189,8 @@ object SharedServices {
             globalSnapshotStateChannelManager,
             currencySnapshotContextFns,
             feeCalculator,
-            storages.mptStore
+            storages.mptStore,
+            cfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
           ),
         updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,

@@ -146,7 +146,8 @@ object GlobalSnapshotConsensus {
             globalStateChannelManager,
             sharedServices.currencySnapshotContextFns,
             feeCalculator,
-            mptStore
+            mptStore,
+            sharedCfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
           ),
           sharedServices.updateNodeParametersAcceptanceManager,
           sharedServices.updateDelegatedStakeAcceptanceManager,
