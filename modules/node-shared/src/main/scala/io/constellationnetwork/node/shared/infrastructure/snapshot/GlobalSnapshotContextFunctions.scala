@@ -326,36 +326,30 @@ object GlobalSnapshotContextFunctions {
             getGlobalSnapshotByOrdinal
           )
 
-        // For followers (currency-l0, dag-l1, currency-l1), we log warnings instead of raising errors
-        // for blocks, state channels, and rewards validation divergences.
-        // The snapshot was already validated by dag-l0 majority consensus, so local acceptance
-        // divergences on followers should not cause permanent stalls. The same rationale applies
-        // as for skipping state proof validation below.
-        _ <- logger
-          .warn(
-            s"Follower: ${acceptanceResult.notAccepted.size} blocks not accepted at ordinal=${signedArtifact.ordinal.show}. " +
-              s"Reasons: ${acceptanceResult.notAccepted.map { case (_, reason) => reason }.mkString(", ")}. " +
-              s"Continuing since snapshot was already validated by L0 majority consensus."
-          )
-          .whenA(acceptanceResult.notAccepted.nonEmpty)
-        _ <- logger
-          .warn(
-            s"Follower: ${returnedSCEvents.size} state channels returned at ordinal=${signedArtifact.ordinal.show} " +
-              s"for addresses: ${returnedSCEvents.toList.map(_.address).mkString(", ")}. " +
-              s"Continuing since snapshot was already validated by L0 majority consensus."
-          )
-          .whenA(returnedSCEvents.nonEmpty)
+        // Followers (currency-l0, dag-l1, currency-l1) AND dag-l0 recovery/replay reconstruct the global context
+        // by RE-RUNNING acceptance over the already-L0-validated signedArtifact. Items the local reconstruction
+        // rejects (blocks / state-channels / rewards that the signed snapshot included) mean this node computed a
+        // DIFFERENT GlobalSnapshotInfo than the canonical one -- its global state has diverged. This was previously
+        // three benign-looking warnings ("Continuing since validated"), which masked real forks. We now surface it
+        // as a single loud, greppable signal. Full per-ordinal MPT re-validation stays skipped here (too expensive
+        // -- ~2 min for 800K entries; the MPT is synced once during initial download). By default we still continue
+        // (followers trust the L0 majority and re-sync via the caller's download path); set
+        // CL_RAISE_ON_FOLLOWER_DIVERGENCE=true to instead halt so the caller's recovery re-syncs the correct state.
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
-        _ <- logger
-          .warn(
-            s"Follower: ${diffRewards.size} rewards not accepted at ordinal=${signedArtifact.ordinal.show}. " +
-              s"Continuing since snapshot was already validated by L0 majority consensus."
-          )
-          .whenA(diffRewards.nonEmpty)
-        // State proof validation is also skipped for followers.
-        // The snapshot was already validated by the majority consensus on dag-l0.
-        // Doing a full MPT sync and validation on every ordinal is too expensive (~2 min for 800K entries).
-        // The MPT store is synced once during initial download for query support.
+        diverged = acceptanceResult.notAccepted.nonEmpty || returnedSCEvents.nonEmpty || diffRewards.nonEmpty
+        _ <- (
+          logger.error(
+            s"[FOLLOWER-STATE-DIVERGENCE] ordinal=${signedArtifact.ordinal.show}: local reconstruction diverged from " +
+              s"the L0-validated snapshot (this node may be on a forked global state and should re-sync). " +
+              s"blocksNotAccepted=${acceptanceResult.notAccepted.size} " +
+              s"[${acceptanceResult.notAccepted.map { case (_, reason) => reason }.mkString("; ")}] " +
+              s"stateChannelsReturned=${returnedSCEvents.size} [${returnedSCEvents.toList.map(_.address).mkString(",")}] " +
+              s"rewardsDiff=${diffRewards.size}"
+          ) >>
+            GlobalStateDivergenceError(signedArtifact.ordinal)
+              .raiseError[F, Unit]
+              .whenA(sys.env.get("CL_RAISE_ON_FOLLOWER_DIVERGENCE").exists(_.equalsIgnoreCase("true")))
+        ).whenA(diverged)
 
       } yield snapshotInfo
     }
@@ -379,5 +373,13 @@ object GlobalSnapshotContextFunctions {
 
     override def getMessage: String =
       s"Cannot build global snapshot because of not accepted rewards: ${notAcceptedRewards.show}"
+  }
+
+  // Raised only when CL_RAISE_ON_FOLLOWER_DIVERGENCE=true, so a node whose local reconstruction diverges from the
+  // L0-validated snapshot halts and re-syncs via the caller's recovery path instead of proceeding on forked state.
+  case class GlobalStateDivergenceError(ordinal: SnapshotOrdinal) extends NoStackTrace {
+
+    override def getMessage: String =
+      s"Follower reconstruction diverged from the L0-validated snapshot at ordinal=${ordinal.value}"
   }
 }

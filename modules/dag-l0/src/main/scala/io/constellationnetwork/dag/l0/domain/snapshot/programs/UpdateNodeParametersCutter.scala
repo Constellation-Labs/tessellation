@@ -35,21 +35,27 @@ object UpdateNodeParametersCutter {
           SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]
         )
         val currentOrdinalValue = currentOrdinal.value
-        events
-          .flatMap(event => event.updateNodeParameters.proofs.toList.map(proof => (proof.id, event)))
-          .sortWith {
-            case ((id1, _), (id2, _)) =>
-              def ordinalDiff(id: Id): Long = {
-                val lastOrdinalValue = lastSnapshotUpdateNodeParameters
-                  .get(id)
-                  .map { case (_, snapshotOrdinal) => snapshotOrdinal }
-                  .getOrElse(SnapshotOrdinal.MinValue)
-                  .value
-                currentOrdinalValue - lastOrdinalValue
-              }
 
-              ordinalDiff(id1) >= ordinalDiff(id2)
-          }
+        // Staleness rank of an id: ordinals elapsed since its parameters last changed (larger = staler).
+        def ordinalDiff(id: Id): Long = {
+          val lastOrdinalValue = lastSnapshotUpdateNodeParameters
+            .get(id)
+            .map { case (_, snapshotOrdinal) => snapshotOrdinal }
+            .getOrElse(SnapshotOrdinal.MinValue)
+            .value
+          currentOrdinalValue - lastOrdinalValue
+        }
+
+        events
+          .flatMap(event => event.updateNodeParameters.proofs.toList.map(proof => (proof, event)))
+          // Deterministic TOTAL order: stalest first, then by the full signature proof to break ties. `events`
+          // arrives from a Set (non-deterministic iteration) and `.take` below cuts at maxUpdateNodeParameters;
+          // the previous `sortWith(_ >= _)` was a non-total order, and every first-time id shares the same
+          // ordinalDiff (currentOrdinal - MinValue), so tied entries were kept in input order and different nodes
+          // accepted different UNP subsets -> divergent GlobalSnapshotInfo -> divergent stateProof.mptRoot.
+          // Tie-breaking on the whole proof (id + signature) stays total even when one signer has multiple
+          // pending updates, so every node selects the identical subset regardless of input order.
+          .sortBy { case (proof, _) => (-ordinalDiff(proof.id), proof) }
           .take(maxUpdateNodeParameters)
           .map { case (_, event) => event }
           .distinct
