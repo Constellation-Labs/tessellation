@@ -4,8 +4,28 @@ Design for adding a Byzantine-resilient, deterministic time anchor to each
 global snapshot so the round-in-progress can derive its current view from
 wall-clock without requiring proposer-trust or per-validator clock tolerance.
 
-Status: design accepted, not yet implemented. Targets the deploy after the
-phase 1 `viewChangeVotes` preservation fix lands.
+**Status:** Implemented and live. Landed at consensusSchemaVersion v19 (phase 2)
+on both dag-l0 and currency-l0; the live schema is now 33
+(`config/types.scala:830`). Wiring:
+
+- Producer: `ConsensusEndTime.compute` (median + monotonicity clamp):
+  `ConsensusEndTime.scala:47-62`, called at
+  `GlobalSnapshotConsensusStateAdvancer.scala:957-958`; the trimmed
+  `recentRoundEndTimes` window is written at
+  `GlobalSnapshotConsensusStateAdvancer.scala:692`.
+- Consumer: `ViewFromTime.compute`: `ViewFromTime.scala:36-45`, called at
+  `GlobalSnapshotConsensusStateCreator.scala:674-675` off the parent's last
+  `recentRoundEndTimes` entry.
+- `Facility.proposerClockMs`: `consensus/declaration.scala:73`, captured via
+  `Clock[F].realTime` at `GlobalSnapshotConsensusStateCreator.scala:501`.
+- `ConsensusOperationalState.recentRoundEndTimes`:
+  `schema/ConsensusOperationalState.scala:160`.
+- `ConsensusEndTime.scala:31` back-references this doc via `@see`.
+
+The algorithm, determinism, and prior-art sections below remain an accurate
+design reference. The forward-looking Migration / streaming-deploy / alpha.82
+sections are historical release notes; see the inline notes that reconcile them
+with the shipped state.
 
 ---
 
@@ -104,8 +124,8 @@ final case class Facility(
 ```
 
 The `Option` wrap is mandatory per the derevo-decoder caveat documented in
-`ConsensusOperationalState.scala` lines 65-89. With `dropNullValues = true`,
-pre-v22 Facilities (no field) decode identically to v22 Facilities carrying
+`ConsensusOperationalState.scala` lines 127-136. With `dropNullValues = true`,
+pre-v19 Facilities (no field) decode identically to v19 Facilities carrying
 `None`.
 
 Facilities written by alpha.82+ peers carry `Some(currentTimeMillis)`.
@@ -135,9 +155,11 @@ window.
 
 ### 3. Consensus schema version bump
 
-Bump `consensusSchemaVersion: Int = 18` to `19` in
-`node-shared/.../config/types.scala`. This is an audit-anchor only; the jar
-hash already version-gates peer connections.
+This shipped at `consensusSchemaVersion` v19; the live value is now 33
+(`config/types.scala:830`). The version is an audit-anchor only -- the jar hash
+already version-gates peer connections (`consensus/declaration.scala:67-72`
+notes the field was `Option`-wrapped for derevo back-compat, not for runtime
+mixed-version interop).
 
 ### 4. Currency-l0 mirror
 
@@ -179,24 +201,40 @@ deterministic.
 
 ```hocon
 consensus {
-  view-interval = 30s              # local timer for time-derived view advance
-  recent-round-end-times-window = 50  # ordinals retained in operational state
+  view-interval = 60s   # divisor for floor((now - parentEndTime) / viewInterval)
 }
 ```
 
-`view-interval = 30s` matches the observed alpha.81 abandon cadence (~45s
-per abandon, force-VC fires after 3 abandons), so time-derived views
-increment at roughly the same rate as today's vote-derived views. No
-exponential backoff initially -- can be added after observing the simple
+The live default is `view-interval = 60s` (`config/types.scala:295`), raised
+from the originally-proposed 30s on 2026-05-28. The 30s value fired a wasted
+timestamp-pacemaker VCV every round: median round duration (~45s) exceeded 30s,
+so `floor((now - parentEndTime) / viewInterval)` evaluated to >= 1 during the
+proposal phase on every round even though the round still finalized at view 0.
+At 60s, `floor(45/60) = 0`, the per-round VCV disappears, and a genuine ~120s
+stall still trips `timeView >= 2`. `viewInterval` is folded into
+`deterministicConfigHash` (`config/types.scala:980`, `viewIntervalMs=...`), so
+divergent operator values reject each other at peer connection.
+
+There is NO `recent-round-end-times-window` config key. The retained-ordinals
+window is pinned in code to `tighteningWindow` (the same K as `recentSigners`;
+documented at `schema/ConsensusOperationalState.scala:150`, trimmed at
+`GlobalSnapshotConsensusStateAdvancer.scala:497-500`) and is not independently
+configurable.
+
+No exponential backoff initially -- can be added after observing the simple
 version's failure modes. Aptos's Pacemaker uses adaptive backoff but they
 also have sub-second per-block latency; our slower consensus does not need
 the extra complexity yet.
 
 ---
 
-## Migration
+## Migration (historical release notes)
 
-Phase 2 ships as alpha.82 with both new fields Option-wrapped. Mixed-version
+> These sections are point-in-time alpha.82 release notes, retained for
+> context. The mechanism is fully deployed (schema v19, live schema 33); the
+> mixed-version window described below is closed.
+
+Phase 2 shipped as alpha.82 with both new fields Option-wrapped. Mixed-version
 window behavior:
 
 - Pre-alpha.82 peers: encode Facility without `proposerClockMs`. Their
@@ -220,7 +258,10 @@ fallback.
 
 ---
 
-## Streaming impact
+## Streaming impact (historical release notes)
+
+> Retained for context; this was the alpha.82 deploy procedure. The fields are
+> already live.
 
 Same flow as the alpha.81 deploy:
 

@@ -634,6 +634,10 @@ object types {
     //     v12 cannot safely participate in v13 rounds -- cluster-wide cold restart required.
     //     Closes the testnet ord 3121304 stuck-cluster gap. See
     //     docs/consensus/eviction-cert-deterministic-shrinkage.md.
+    //     REVERTED after v13 (commit 5b2ce6722): the current `Facility` has no
+    //     `appliedEvictionCerts` field; eviction certs now ride `Proposal.evictionCertificates`
+    //     and apply at proposal-acceptance, with QuorumDenominatorShrink (v33) as the liveness
+    //     remedy for this wedge class. Kept as deploy history.
     //   v14: Leader rotation band. `selectLeaderWeighted` tier formula changes from
     //     unbounded `participated - completed` to a binary band keyed on
     //     `leaderRotationMinRatioPct` (default 50): peers at or above the ratio threshold all land

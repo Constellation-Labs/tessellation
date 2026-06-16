@@ -1,6 +1,6 @@
 # Coordinated cluster restart signaling (proposal, deferred)
 
-Status: deferred. Documents the user-proposed design from the 2026-05-15 self-health discussion. Schedule after the self-health throttle (v15) ships and is stable.
+Status: proposal, not yet implemented (deferred). Documents the user-proposed design from the 2026-05-15 self-health discussion. None of the mechanism below exists in code (no `clusterIntent` / `CoordinatedRestart` / `RestartGroup` / `WaitingForCoordinatedRestart` / `coordinatorPeerIds` under `modules/*/src/main`). Its main precondition -- the self-health throttle (v15) -- has since shipped (see [self-health-throttle.md](self-health-throttle.md), Status: IMPLEMENTED), so the remaining blockers are the node-pilot SDK surface and a design sign-off rather than missing dependencies.
 
 ## Motivation
 
@@ -108,10 +108,9 @@ The closest match is Cosmos `halt_height`. Worth reading their implementation be
 
 ## Scheduling
 
-After:
-- v15 self-health throttle ships and runs for >= 1 week.
-- The 6 hardware-marginal community peers (8804651b, 90eb1ed3, 9561959b, 340f0814, 97f40fed, cd6362ae) are either evicted via existing chronic-classifier or self-demoting via v15's hint.
-- node-pilot owner reviews the proposal and signs off on the SDK surface.
+The v15 self-health throttle precondition has shipped (see [self-health-throttle.md](self-health-throttle.md)). Remaining gates before this work is picked up:
+- node-pilot owner reviews the proposal and signs off on the SDK surface (node-pilot still issues hard kills today).
+- Confirm the wedge pattern this proposal targets is not already covered by the chronic-classifier / self-health demotion paths now in place; if hardware-marginal peers are being demoted or evicted automatically, the marginal value of coordinated restart drops.
 
 Estimated scope: ~2-3 weeks of focused work plus node-pilot SDK changes.
 

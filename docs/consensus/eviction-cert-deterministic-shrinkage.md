@@ -1,9 +1,42 @@
 # Deterministic eviction-cert-driven committee shrinkage
 
-**Status:** Proposed — under review
+**Status:** SUPERSEDED / not adopted. Retained as historical context.
 **Author:** ottobot-ai (with @scasplte2)
 **Date:** 2026-05-07
-**Related:** PR #1485 (fork-recovery followup), PR #1476 (B1 eviction mechanism)
+**Related:** `quorum-shrink.md` (the shipped liveness remedy), PR #1485 (fork-recovery followup), PR #1476 (B1 eviction mechanism)
+
+> **SUPERSEDED.** The recommended fix below (approach alpha: add
+> `appliedEvictionCerts: List[EvictionCertificate]` to the `Facility` declaration and
+> apply eviction certs at round-start) was implemented as v13 (commit `1dbc4c284`) and
+> then **reverted** (commit `5b2ce6722`, "Revert ... deterministic same-ordinal committee
+> shrinkage ... (v13)"). The current `Facility` case class (`declaration.scala:46-74`)
+> carries `consensusConfigHash`, `selfHealthHint`, and `proposerClockMs`, but has no
+> `appliedEvictionCerts` field; the symbol survives only as a stale v13 entry in the
+> `consensusSchemaVersion` deploy-history comment at `config/types.scala:628`.
+>
+> Eviction certificates are still embedded in `Proposal.evictionCertificates`
+> (`declaration.scala:428`) and applied only at **proposal-acceptance of the next
+> ordinal**: on acceptance the accepted certs' targets are accumulated into
+> `removedFacilitators` (`GlobalSnapshotConsensusStateAdvancer.scala:2902-2904`,
+> applied into the round state at `:3029`; signature verification of the embedded certs
+> is the separate `verifyEcsSignatures` at `:1881`). In other words the "mechanical gap"
+> the Problem section describes below is still the design; the cert remains
+> proposal-embedded and proposal-accept-applied.
+>
+> The liveness remedy for the wedge class this doc targets (ordinal 3121304) was instead
+> delivered by **QuorumDenominatorShrink** (`state/QuorumDenominatorShrink.scala`, commit
+> `f22132d69`, consensusSchemaVersion 33), which unwedges a stuck committee by lowering
+> the quorum **denominator** at the stuck key rather than by reducing the committee. Note
+> that `QuorumDenominatorShrink` is wired into the VCC/TimeoutCertificate view-advance
+> quorums (`shrinkDecision.builderQuorum(...)` at `StateTransitions.scala:224`/`361`/`586`/`738`),
+> not into the eviction-assembly quorum: `checkEvictionAssembly` still computes its
+> threshold from the Core committee via `QuorumPolicy.fromFraction` (`StateTransitions.scala:1018-1019`).
+> See **[quorum-shrink.md](quorum-shrink.md)**.
+>
+> The body below is preserved for design-history context. Note that several inline
+> `declaration.scala` / `*StateAdvancer.scala` / `ConsensusStorage.scala` line anchors
+> in it predate later refactors and no longer point at the cited code; treat them as
+> approximate.
 
 ## Problem
 
