@@ -15,13 +15,13 @@ import eu.timepit.refined.types.numeric.NonNegLong
 
 /** Deterministic, ordinal-gated, consensus-critical one-time GSI dust sweep (state deflation).
   *
-  * The testnet global state is dominated by a deliberately-injected dust population (hundreds of thousands of addresses each holding exactly
-  * 12345 datum, all pure receivers with empty transaction refs). This object removes that sub-threshold liquid dust at a single coordinated
-  * ordinal during a network-wide cold restart, collapsing the state from ~80MB to ~1MB.
+  * The testnet global state is dominated by a deliberately-injected dust population (hundreds of thousands of addresses each holding
+  * exactly 12345 datum, all pure receivers with empty transaction refs). This object removes that sub-threshold liquid dust at a single
+  * coordinated ordinal during a network-wide cold restart, collapsing the state from ~80MB to ~1MB.
   *
   * '''This is consensus-critical.''' Every honest node MUST compute the identical swept `GlobalSnapshotInfo` and the identical MPT state
-  * root at the sweep ordinal, or the cluster forks. The transform is a pure function of the GSI map contents at a fixed ordinal (sorted maps,
-  * commutative datum sum), so every node at the sweep ordinal computes the identical pruned GSI and root. The gating, threshold, and
+  * root at the sweep ordinal, or the cluster forks. The transform is a pure function of the GSI map contents at a fixed ordinal (sorted
+  * maps, commutative datum sum), so every node at the sweep ordinal computes the identical pruned GSI and root. The gating, threshold, and
   * burn-vs-treasury choice come from the per-environment compile-time `dustSweeps` config literal (NOT HOCON): the jar hash plus the
   * environment is the determinism fence.
   *
@@ -30,25 +30,25 @@ import eu.timepit.refined.types.numeric.NonNegLong
   *   1. ORDINAL GATE: the sweep fires only when `dustSweeps.get(env).flatMap(_.get(ordinal))` returns a `DustSweep` (exact-key lookup). An
   *      entry fires exactly once at its ordinal and never replays; an absent environment never sweeps.
   *
-  *   2. DUST THRESHOLD: only an address with `balance.value <= threshold.value` is eligible.
+  * 2. DUST THRESHOLD: only an address with `balance.value <= threshold.value` is eligible.
   *
-  *   3. EMPTY-REF GATE: only an address whose `lastTxRef` is absent or empty (`TransactionReference.empty`, ordinal 0) is eligible. An
-  *      address that ever SENT has a non-empty ref; pruning it would reset its nonce and reopen a transaction-replay vector. The dust
-  *      population is entirely pure receivers (empty refs), so this gate loses zero coverage.
+  * 3. EMPTY-REF GATE: only an address whose `lastTxRef` is absent or empty (`TransactionReference.empty`, ordinal 0) is eligible. An
+  * address that ever SENT has a non-empty ref; pruning it would reset its nonce and reopen a transaction-replay vector. The dust population
+  * is entirely pure receivers (empty refs), so this gate loses zero coverage.
   *
-  *   4. COMPLETE EXCLUSION: an address that appears as a key (INCLUDING nested inner-map keys) in ANY non-balance Address-keyed
-  *      `GlobalSnapshotInfo` field is never swept. Locking/staking/collateralizing debits the liquid `balances` entry, so a real staker can
-  *      legitimately sit near zero liquid balance; sweeping their dust would be wrong. See `addressesWithNonBalanceState`.
+  * 4. COMPLETE EXCLUSION: an address that appears as a key (INCLUDING nested inner-map keys) in ANY non-balance Address-keyed
+  * `GlobalSnapshotInfo` field is never swept. Locking/staking/collateralizing debits the liquid `balances` entry, so a real staker can
+  * legitimately sit near zero liquid balance; sweeping their dust would be wrong. See `addressesWithNonBalanceState`.
   *
-  *   5. NOT THE COLLECTION ADDRESS: the treasury sink itself is never a sweep candidate.
+  * 5. NOT THE COLLECTION ADDRESS: the treasury sink itself is never a sweep candidate.
   */
 object GlobalSnapshotDustSweep {
 
   /** Union of every address that appears as a key in any NON-balance Address-keyed field of the GSI, including nested inner-map keys.
     *
     * These addresses are excluded from the sweep. The set references EVERY Address-keyed field other than `balances` (the field being
-    * swept). A reflective coverage test (`GlobalSnapshotDustSweepSuite`) mechanically fails if a future Address-keyed field is added but not
-    * referenced here.
+    * swept). A reflective coverage test (`GlobalSnapshotDustSweepSuite`) mechanically fails if a future Address-keyed field is added but
+    * not referenced here.
     *
     * Address-keyed fields covered (13 total):
     *   - lastStateChannelSnapshotHashes (Address keys)
@@ -65,11 +65,11 @@ object GlobalSnapshotDustSweep {
     *   - nodeCollateralWithdrawals (Address keys)
     *   - metagraphSyncData (Address keys)
     *
-    * `lastTxRefs` is Address-keyed but is DELIBERATELY EXCLUDED from this protected set. Every pure receiver (the entire dust
-    * population) holds an empty-ref `lastTxRefs` entry, so treating `lastTxRefs` keys as protected would exclude the whole dust
-    * population and the sweep would remove nothing (verified live: ~444k of ~444.5k `lastTxRefs` entries are empty). The
-    * transaction-nonce / replay concern is instead handled by the EMPTY-REF GATE in `applyDustSweep` (sweep only absent/empty refs; a
-    * never-sent address has no prior transaction to replay).
+    * `lastTxRefs` is Address-keyed but is DELIBERATELY EXCLUDED from this protected set. Every pure receiver (the entire dust population)
+    * holds an empty-ref `lastTxRefs` entry, so treating `lastTxRefs` keys as protected would exclude the whole dust population and the
+    * sweep would remove nothing (verified live: ~444k of ~444.5k `lastTxRefs` entries are empty). The transaction-nonce / replay concern is
+    * instead handled by the EMPTY-REF GATE in `applyDustSweep` (sweep only absent/empty refs; a never-sent address has no prior transaction
+    * to replay).
     *
     * Fields intentionally NOT included because they are not Address-keyed: `updateNodeParameters` (Id keys) and `priceState` (TokenPair
     * keys).
