@@ -112,14 +112,6 @@ object ControllerEvidenceDerivation {
     )
   }
 
-  /** Derived scores only, in the shape `ActiveFacilitatorAdmission.fromRecentSigners` consumes as `activeScores`. */
-  def deriveScores(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): SortedMap[PeerId, Int] =
-    derive(evidence).map { case (pid, state) => pid -> state.derivedScore }
-
-  /** Derived `(completed, participated)` quality only, in the shape `peerQuality` consumers expect. */
-  def deriveQuality(evidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]): SortedMap[PeerId, (Int, Int)] =
-    derive(evidence).map { case (pid, state) => pid -> state.derivedQuality }
-
   /** Trailing-miss count at or above which a peer is classified chronically missing (see `chronicMisses`).
     *
     * Why 3: it deliberately equals `TierTransitions.DemotionConsecutiveMisses`, the sustained-silence horizon that demotes a Core peer to

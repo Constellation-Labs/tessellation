@@ -13,8 +13,6 @@ object CertBuildError {
   final case class ReasonMismatch(count: Int) extends CertBuildError(s"reason_mismatch peers=$count")
   final case class FacilitatorsHashMismatch(count: Int) extends CertBuildError(s"facilitators_mismatch peers=$count")
   final case class LastSnapshotHashMismatch(count: Int) extends CertBuildError(s"last_snapshot_hash_mismatch peers=$count")
-  final case class VoterNotInCommittee(count: Int) extends CertBuildError(s"voter_not_in_committee peers=$count")
-  final case class SignerNotInCommittee(count: Int) extends CertBuildError(s"signer_not_in_committee peers=$count")
   final case class UnderQuorum(have: Int, required: Int) extends CertBuildError(s"under_quorum votes=$have required=$required")
   case object DivergentQcs extends CertBuildError("divergent_qcs")
   case object EmptyVotesAfterFilter extends CertBuildError("empty_votes_after_filter")
