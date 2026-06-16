@@ -1,7 +1,5 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
-import java.nio.file.NoSuchFileException
-
 import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._

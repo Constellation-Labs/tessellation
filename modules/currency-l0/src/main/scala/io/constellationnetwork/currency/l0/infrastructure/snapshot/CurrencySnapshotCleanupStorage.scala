@@ -1,7 +1,5 @@
 package io.constellationnetwork.currency.l0.infrastructure.snapshot
 
-import java.nio.file.NoSuchFileException
-
 import cats.effect.Async
 import cats.syntax.all._
 
