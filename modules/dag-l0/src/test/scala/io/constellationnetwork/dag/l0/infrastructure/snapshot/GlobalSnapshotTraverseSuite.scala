@@ -380,7 +380,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           stateChannelManager,
           currencySnapshotContextFns,
           feeCalculator,
-          mptStore
+          mptStore,
+          SnapshotOrdinal.MinValue
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(

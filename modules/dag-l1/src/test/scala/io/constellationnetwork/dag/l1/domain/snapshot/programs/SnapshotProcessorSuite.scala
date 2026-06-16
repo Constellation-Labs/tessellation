@@ -275,7 +275,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       globalSnapshotStateChannelManager,
                       currencySnapshotContextFns,
                       feeCalculator,
-                      mptStore
+                      mptStore,
+                      SnapshotOrdinal.MinValue
                     ),
                   updateNodeParametersAcceptanceManager,
                   updateDelegatedStakeAcceptanceManager,
