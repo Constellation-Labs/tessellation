@@ -631,11 +631,10 @@ object GlobalSnapshotAcceptanceManager {
         val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
           .getOrElse(environment, SnapshotOrdinal.MinValue)
 
-        val burnActionActivation = fieldsAddedOrdinals.burnActionActivation
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
-
         loggerBundle.app.withOrdinal(ordinal) {
           for {
+            burnActionActivation <- fieldsAddedOrdinals.burnActionActivationFor(environment).liftTo[F]
+
             _ <- loggerBundle.app.debug(
               s"[ACCEPTANCE] ordinal=$ordinal epoch=${epochProgress.show} ENTER " +
                 s"blocks=${blocksForAcceptance.size} allowSpend=${allowSpendBlocksForAcceptance.size} " +

@@ -350,7 +350,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           Map.empty,
           Map.empty,
           Map.empty,
-          Map.empty
+          Map(Dev -> SnapshotOrdinal.MinValue)
         ),
         Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
@@ -431,7 +431,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             Map.empty,
             Map.empty,
             Map.empty,
-            Map.empty
+            Map(Dev -> SnapshotOrdinal.MinValue)
           ),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,

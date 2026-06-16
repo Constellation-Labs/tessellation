@@ -88,7 +88,7 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
                 Map.empty,
                 Map.empty,
                 Map.empty,
-                Map.empty
+                Map(Dev -> SnapshotOrdinal.MinValue)
               ),
               Dev,
               LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(50)),

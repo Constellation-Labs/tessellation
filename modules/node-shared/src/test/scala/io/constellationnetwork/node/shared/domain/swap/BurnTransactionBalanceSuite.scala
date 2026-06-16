@@ -246,71 +246,70 @@ object BurnTransactionBalanceSuite extends MutableIOSuite {
         }
   }
 
-  test("burnFrom BurnAction is accepted and re-executes identically across currency and global (no SnapshotDifferentThanExpected)") {
-    res =>
-      implicit val (_, hs, sp) = res
+  test("burnFrom BurnAction is accepted and re-executes identically across currency and global (no SnapshotDifferentThanExpected)") { res =>
+    implicit val (_, hs, sp) = res
 
-      val validator = BurnActionValidator.make[IO]
-      val currencyOps = AllowSpendOpsManager.make[IO]
-      val globalManager = SpendTransactionBalanceManager.make[IO]()
+    val validator = BurnActionValidator.make[IO]
+    val currencyOps = AllowSpendOpsManager.make[IO]
+    val globalManager = SpendTransactionBalanceManager.make[IO]()
 
-      for {
-        keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
-        keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
-        keyPair3 <- KeyPairGenerator.makeKeyPair[IO]
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair3 <- KeyPairGenerator.makeKeyPair[IO]
 
-        source = keyPair1.getPublic.toAddress
-        currencyId = CurrencyId(keyPair2.getPublic.toAddress)
-        ammAddress = keyPair3.getPublic.toAddress
+      source = keyPair1.getPublic.toAddress
+      currencyId = CurrencyId(keyPair2.getPublic.toAddress)
+      ammAddress = keyPair3.getPublic.toAddress
 
-        // AllowSpend reserves 10 of the source's funds (approver = ammAddress = the metagraph that emits the burn).
-        allowSpend = AllowSpend(
-          source,
-          ammAddress,
-          currencyId.some,
-          SwapAmount(10L),
-          AllowSpendFee(0L),
-          AllowSpendReference.empty,
-          EpochProgress(20L),
-          List(ammAddress)
-        )
-        signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
-        hashedAllowSpend <- signedAllowSpend.toHashed
+      // AllowSpend reserves 10 of the source's funds (approver = ammAddress = the metagraph that emits the burn).
+      allowSpend = AllowSpend(
+        source,
+        ammAddress,
+        currencyId.some,
+        SwapAmount(10L),
+        AllowSpendFee(0L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(ammAddress)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
+      hashedAllowSpend <- signedAllowSpend.toHashed
 
-        // Burn 4 of the 10 reserved. Expected: 6 returned to source.
-        burnTx = BurnTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(4L), source)
-        burnAction = BurnAction(NonEmptyList.of(burnTx))
+      // Burn 4 of the 10 reserved. Expected: 6 returned to source.
+      burnTx = BurnTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(4L), source)
+      burnAction = BurnAction(NonEmptyList.of(burnTx))
 
-        // Source already pre-debited by the reserved 10 (100 -> 90).
-        currentBalances = SortedMap(source -> Balance(NonNegLong(90L)))
-        activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(source -> SortedSet(signedAllowSpend)))
-        balancesForValidation = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+      // Source already pre-debited by the reserved 10 (100 -> 90).
+      currentBalances = SortedMap(source -> Balance(NonNegLong(90L)))
+      activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(source -> SortedSet(signedAllowSpend)))
+      balancesForValidation = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-        (accepted, rejected) <- validator.validateReturningAcceptedAndRejected(
-          Map(ammAddress -> List(burnAction)),
-          activeAllowSpends,
-          balancesForValidation
-        )
+      (accepted, rejected) <- validator.validateReturningAcceptedAndRejected(
+        Map(ammAddress -> List(burnAction)),
+        activeAllowSpends,
+        balancesForValidation
+      )
 
-        acceptedBurnTxs = accepted.getOrElse(ammAddress, List.empty).flatMap(_.burnTransactions.toList)
-        allActive: SortedMap[Address, List[Hashed[AllowSpend]]] = SortedMap(source -> List(hashedAllowSpend))
+      acceptedBurnTxs = accepted.getOrElse(ammAddress, List.empty).flatMap(_.burnTransactions.toList)
+      allActive: SortedMap[Address, List[Hashed[AllowSpend]]] = SortedMap(source -> List(hashedAllowSpend))
 
-        currencyResult = currencyOps.updateCurrencyBalancesByBurnTransactions(currentBalances, allActive, acceptedBurnTxs)
-        globalResult = globalManager.updateGlobalBalancesByBurnTransactions(currentBalances, allActive, acceptedBurnTxs)
-      } yield
-        (currencyResult, globalResult) match {
-          case (Right(currencyBalances), Right((globalBalances, _))) =>
-            expect.all(
-              rejected.isEmpty,
-              accepted.contains(ammAddress),
-              accepted(ammAddress) === List(burnAction),
-              // 90 + (10 - 4) = 96, i.e. the original 100 minus the burned 4.
-              currencyBalances(source) === Balance(NonNegLong(96L)),
-              !currencyBalances.contains(ammAddress),
-              // Re-execution identity: currency-side and global-side appliers agree exactly.
-              currencyBalances === globalBalances
-            )
-          case other => failure(s"Unexpected balance results: $other")
-        }
+      currencyResult = currencyOps.updateCurrencyBalancesByBurnTransactions(currentBalances, allActive, acceptedBurnTxs)
+      globalResult = globalManager.updateGlobalBalancesByBurnTransactions(currentBalances, allActive, acceptedBurnTxs)
+    } yield
+      (currencyResult, globalResult) match {
+        case (Right(currencyBalances), Right((globalBalances, _))) =>
+          expect.all(
+            rejected.isEmpty,
+            accepted.contains(ammAddress),
+            accepted(ammAddress) === List(burnAction),
+            // 90 + (10 - 4) = 96, i.e. the original 100 minus the burned 4.
+            currencyBalances(source) === Balance(NonNegLong(96L)),
+            !currencyBalances.contains(ammAddress),
+            // Re-execution identity: currency-side and global-side appliers agree exactly.
+            currencyBalances === globalBalances
+          )
+        case other => failure(s"Unexpected balance results: $other")
+      }
   }
 }

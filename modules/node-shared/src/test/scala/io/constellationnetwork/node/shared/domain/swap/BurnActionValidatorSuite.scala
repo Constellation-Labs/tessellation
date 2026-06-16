@@ -16,7 +16,6 @@ import io.constellationnetwork.schema.artifact.{BurnAction, BurnTransaction}
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap._
-import io.constellationnetwork.schema.{SnapshotOrdinal, _}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
@@ -71,8 +70,8 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx, metagraphBurnTx))
       balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
-    } yield expect(result)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+    } yield expect(result.isValid)
   }
 
   test("should validate burnFrom with valid allow spend reference for Currency") { res =>
@@ -109,9 +108,8 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx, metagraphBurnTx))
       balances = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
-
-    } yield expect(result)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+    } yield expect(result.isValid)
   }
 
   test("should validate self-burn (no ref, source == currencyId)") { res =>
@@ -136,6 +134,65 @@ object BurnActionValidatorSuite extends MutableIOSuite {
 
       result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value)
     } yield expect(result.isValid)
+  }
+
+  test("should reject cumulative self-burns in one BurnAction when total exceeds currencyId balance") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = BurnActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      currencyId = CurrencyId(keyPair1.getPublic.toAddress)
+
+      firstBurnTx = BurnTransaction(none, currencyId.some, SwapAmount(70L), currencyId.value)
+      secondBurnTx = BurnTransaction(none, currencyId.some, SwapAmount(40L), currencyId.value)
+      burnAction = BurnAction(NonEmptyList.of(firstBurnTx, secondBurnTx))
+
+      activeAllowSpends = SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+      balances = Map(currencyId.value.some -> SortedMap(currencyId.value -> Balance(NonNegLong(100L))))
+
+      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value)
+    } yield
+      expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
+        case BurnActionValidator.NotEnoughCurrencyIdBalance(_) => true
+        case _                                                 => false
+      }))
+  }
+
+  test("should reject later self-burn action when earlier accepted action depleted the balance") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = BurnActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      currencyId = CurrencyId(keyPair1.getPublic.toAddress)
+
+      firstBurnTx = BurnTransaction(none, currencyId.some, SwapAmount(70L), currencyId.value)
+      secondBurnTx = BurnTransaction(none, currencyId.some, SwapAmount(40L), currencyId.value)
+      firstBurnAction = BurnAction(NonEmptyList.of(firstBurnTx))
+      secondBurnAction = BurnAction(NonEmptyList.of(secondBurnTx))
+
+      burnActions = Map(currencyId.value -> List(firstBurnAction, secondBurnAction))
+      activeAllowSpends = SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+      balances = Map(currencyId.value.some -> SortedMap(currencyId.value -> Balance(NonNegLong(100L))))
+
+      (acceptedBurnActions, rejectedBurnActions) <- validator.validateReturningAcceptedAndRejected(
+        burnActions,
+        activeAllowSpends,
+        balances
+      )
+    } yield
+      expect.all(
+        acceptedBurnActions.get(currencyId.value).contains(List(firstBurnAction)),
+        rejectedBurnActions.contains(currencyId.value),
+        rejectedBurnActions(currencyId.value)._1 === secondBurnAction,
+        rejectedBurnActions(currencyId.value)._2.exists {
+          case BurnActionValidator.NotEnoughCurrencyIdBalance(_) => true
+          case _                                                 => false
+        }
+      )
   }
 
   test("should fail validation when currency not found in active allow spends") { res =>

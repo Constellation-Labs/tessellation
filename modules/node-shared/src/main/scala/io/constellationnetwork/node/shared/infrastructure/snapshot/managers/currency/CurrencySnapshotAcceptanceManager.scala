@@ -198,8 +198,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       .getOrElse(environment, SnapshotOrdinal.MinValue)
     fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
       .getOrElse(environment, SnapshotOrdinal.MinValue)
-    burnActionActivation = fieldsAddedOrdinals.burnActionActivation
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
+    burnActionActivation <- fieldsAddedOrdinals.burnActionActivationFor(environment).liftTo[F]
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
       blocksForAcceptance,
@@ -470,6 +469,17 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     burnAllowSpendRefs = metagraphIdBurnTransactions.flatMap(_.allowSpendRef)
 
+    acceptedBurnArtifacts = SortedSet.from[SharedArtifact](
+      acceptedBurnActionsByMetagraph
+        .getOrElse(metagraphId, List.empty)
+        .map(burnAction => burnAction: SharedArtifact)
+    )
+    acceptedSharedArtifactsWithoutBurn = acceptedSharedArtifacts.filter {
+      case _: BurnAction => false
+      case _             => true
+    }
+    acceptedSharedArtifactsForOutput = acceptedSharedArtifactsWithoutBurn ++ acceptedBurnArtifacts
+
     updatedAllowSpends <- allowSpendOps.acceptCurrencyAllowSpends(
       lastGlobalSnapshotEpochProgress,
       incomingCurrencyAllowSpends,
@@ -612,7 +622,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       messagesAcceptanceResult,
       globalSnapshotSyncAcceptanceResult,
       acceptedRewardTxs,
-      acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ maybeGlobalSnapshotProcessedEvent,
+      acceptedSharedArtifactsForOutput ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ maybeGlobalSnapshotProcessedEvent,
       acceptedFeeTxs,
       csi,
       stateProof,

@@ -23,8 +23,8 @@ import derevo.derive
 /** Validator for [[BurnAction]]s.
   *
   * Mirrors [[SpendActionValidator]] exactly, minus the destination check (a [[BurnTransaction]] has no destination). A burn either:
-  *   - references an [[AllowSpend]] (`burnFrom`): the referenced allow spend must match currency, approver, and source, and reserve at least
-  *     the burned amount; or
+  *   - references an [[AllowSpend]] (`burnFrom`): the referenced allow spend must match currency, approver, and source, and reserve at
+  *     least the burned amount; or
   *   - has no reference (self-burn): the source must be the metagraph's own address (`currencyId`) and have enough balance.
   *
   * Net effect in all cases: the amount is destroyed, reducing totalSupply. There is never a destination credit.
@@ -60,44 +60,62 @@ object BurnActionValidator {
       def processActionsForCurrency(
         currencyId: Address,
         currencyBurnActions: List[BurnAction],
-        currentAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+        currentAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+        currentBalances: Map[Option[Address], SortedMap[Address, Balance]]
       ): F[
         (
           SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+          Map[Option[Address], SortedMap[Address, Balance]],
           (Address, (List[(BurnAction, List[BurnActionValidationError])], List[BurnAction]))
         )
       ] =
         currencyBurnActions
           .foldLeftM(
-            (currentAllowSpends, List.empty[(BurnAction, List[BurnActionValidationError])], List.empty[BurnAction])
+            (
+              currentAllowSpends,
+              currentBalances,
+              List.empty[(BurnAction, List[BurnActionValidationError])],
+              List.empty[BurnAction]
+            )
           ) {
-            case ((allowSpendsAcc, rejectedBurnActions, acceptedBurnActions), action) =>
-              validate(action, allowSpendsAcc, allBalances, currencyId).flatMap {
+            case ((allowSpendsAcc, balancesAcc, rejectedBurnActions, acceptedBurnActions), action) =>
+              validate(action, allowSpendsAcc, balancesAcc, currencyId).flatMap {
                 case Valid(validAction) =>
-                  updateCurrentAllowSpendsForValidation(validAction, allowSpendsAcc).map { updated =>
-                    (updated, rejectedBurnActions, validAction :: acceptedBurnActions)
+                  updateCurrentAllowSpendsForValidation(validAction, allowSpendsAcc).map { updatedAllowSpends =>
+                    updateCurrentBalancesForValidation(validAction, balancesAcc, currencyId) match {
+                      case Right(updatedBalances) =>
+                        (updatedAllowSpends, updatedBalances, rejectedBurnActions, validAction :: acceptedBurnActions)
+                      case Left(error) =>
+                        (allowSpendsAcc, balancesAcc, (action -> List(error)) :: rejectedBurnActions, acceptedBurnActions)
+                    }
                   }
                 case Invalid(errors) =>
-                  Async[F].pure((allowSpendsAcc, (action -> errors.toNonEmptyList.toList) :: rejectedBurnActions, acceptedBurnActions))
+                  Async[F].pure(
+                    (allowSpendsAcc, balancesAcc, (action -> errors.toNonEmptyList.toList) :: rejectedBurnActions, acceptedBurnActions)
+                  )
               }
           }
           .map {
-            case (updatedAllowSpends, rejected, accepted) =>
-              updatedAllowSpends -> (currencyId -> (rejected.reverse, accepted.reverse))
+            case (updatedAllowSpends, updatedBalances, rejected, accepted) =>
+              (updatedAllowSpends, updatedBalances, currencyId -> (rejected.reverse, accepted.reverse))
           }
 
       burnActions.toList
         .foldLeftM(
-          (activeAllowSpends, List.empty[(Address, (List[(BurnAction, List[BurnActionValidationError])], List[BurnAction]))])
+          (
+            activeAllowSpends,
+            allBalances,
+            List.empty[(Address, (List[(BurnAction, List[BurnActionValidationError])], List[BurnAction]))]
+          )
         ) {
-          case ((allowSpendsAcc, results), (currencyId, currencyBurnActions)) =>
-            processActionsForCurrency(currencyId, currencyBurnActions, allowSpendsAcc).map {
-              case (updatedAllowSpends, result) =>
-                (updatedAllowSpends, result :: results)
+          case ((allowSpendsAcc, balancesAcc, results), (currencyId, currencyBurnActions)) =>
+            processActionsForCurrency(currencyId, currencyBurnActions, allowSpendsAcc, balancesAcc).map {
+              case (updatedAllowSpends, updatedBalances, result) =>
+                (updatedAllowSpends, updatedBalances, result :: results)
             }
         }
         .map {
-          case (_, burnTransactionsValidations) =>
+          case (_, _, burnTransactionsValidations) =>
             val acceptedBurnActions = burnTransactionsValidations.map {
               case (address, (_, accepted)) => address -> accepted
             }.filter {
@@ -136,8 +154,38 @@ object BurnActionValidator {
           validateAllowSpendRef(burnTransaction, activeAllowSpends, allBalances, currencyId)
         }
 
-        validations.map(_.sequence.as(burnAction))
+        validations.map { transactionValidations =>
+          (
+            transactionValidations.sequence,
+            validateCumulativeSelfBurns(burnAction, allBalances, currencyId)
+          ).mapN((_, _) => burnAction)
+        }
       }
+    }
+
+    private def validateCumulativeSelfBurns(
+      burnAction: BurnAction,
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
+      currencyId: Address
+    ): BurnActionValidationErrorOr[Unit] = {
+      val selfBurnAmountsByCurrency = burnAction.burnTransactions.toList.collect {
+        case txn if txn.allowSpendRef.isEmpty && txn.source === currencyId =>
+          txn.currencyId.map(_.value) -> BigInt(txn.amount.value.value)
+      }.groupMap { case (currencyAddress, _) => currencyAddress } { case (_, amount) => amount }
+
+      selfBurnAmountsByCurrency.toList.traverse {
+        case (currencyAddress, amounts) =>
+          val total = amounts.sum
+          val currentBalances = allBalances.getOrElse(currencyAddress, SortedMap.empty[Address, Balance])
+          val currencyIdBalance = currentBalances.getOrElse(currencyId, Balance.empty)
+
+          if (amounts.size > 1 && total > BigInt(currencyIdBalance.value.value))
+            (NotEnoughCurrencyIdBalance(
+              s"Total burn amount: $total greater than currencyId balance: $currencyIdBalance"
+            ): BurnActionValidationError).invalidNec[Unit]
+          else
+            ().validNec[BurnActionValidationError]
+      }.void
     }
 
     private def updateCurrentAllowSpendsForValidation(
@@ -185,6 +233,31 @@ object BurnActionValidator {
           removeAllowSpendRef(acc, currencyId, source, ref)
       }
     }
+
+    private def updateCurrentBalancesForValidation(
+      validAction: BurnAction,
+      currentBalances: Map[Option[Address], SortedMap[Address, Balance]],
+      currencyId: Address
+    ): Either[BurnActionValidationError, Map[Option[Address], SortedMap[Address, Balance]]] =
+      validAction.burnTransactions.toList
+        .filter(txn => txn.allowSpendRef.isEmpty && txn.source === currencyId)
+        .foldLeft[Either[BurnActionValidationError, Map[Option[Address], SortedMap[Address, Balance]]]](Right(currentBalances)) {
+          case (accEither, burnTransaction) =>
+            accEither.flatMap { acc =>
+              val currencyAddress = burnTransaction.currencyId.map(_.value)
+              val currencyBalances = acc.getOrElse(currencyAddress, SortedMap.empty[Address, Balance])
+              val currentBalance = currencyBalances.getOrElse(currencyId, Balance.empty)
+
+              currentBalance
+                .minus(io.constellationnetwork.schema.swap.SwapAmount.toAmount(burnTransaction.amount))
+                .map { updatedBalance =>
+                  acc.updated(currencyAddress, currencyBalances.updated(currencyId, updatedBalance))
+                }
+                .leftMap { error =>
+                  NotEnoughCurrencyIdBalance(s"Balance arithmetic error updating validation balances by burn transactions: $error")
+                }
+            }
+        }
 
     private def validateAllowSpendRef(
       burnTransaction: BurnTransaction,

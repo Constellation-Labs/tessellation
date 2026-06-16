@@ -52,7 +52,12 @@ object types {
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
     // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
-  )
+  ) {
+    def burnActionActivationFor(environment: AppEnvironment): Either[IllegalStateException, SnapshotOrdinal] =
+      burnActionActivation
+        .get(environment)
+        .toRight(new IllegalStateException(s"Missing fields-added-ordinals.burn-action-activation for environment=$environment"))
+  }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
     *
