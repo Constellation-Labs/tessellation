@@ -1160,6 +1160,31 @@ object GlobalSnapshotAcceptanceManager {
               else mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
             stateProof <- builder.buildProof(sweptGsi, ordinal)
 
+            // DIAGNOSTIC (opt-in via CL_MPT_VERIFY_INCREMENTAL=true; log-only, off by default; lazy so it costs
+            // nothing when off). On the incremental path, independently rebuild the full MPT root from the swept
+            // GSI (a standalone trie -- does NOT touch the shared store) and compare to the incremental store root
+            // that buildProof just produced. A mismatch means syncFromStateChanges drifted from the canonical
+            // entry set: the live, in-memory analogue of the historical "MptStore carries wrong state incrementally"
+            // divergence. Catches drift at its source, the same ordinal it is introduced, before it propagates.
+            _ <- GlobalSnapshotInfo
+              .mptStateProof[F](sweptGsi)
+              .map(_.mptRoot)
+              .flatMap { fullRebuildRoot =>
+                loggerBundle.app
+                  .error(
+                    s"[MPT.VERIFY] ordinal=$ordinal INCREMENTAL DRIFT detected: " +
+                      s"incrementalRoot=${stateProof.mptRoot.map(_.show.take(12)).getOrElse("none")} != " +
+                      s"fullRebuildRoot=${fullRebuildRoot.map(_.show.take(12)).getOrElse("none")}"
+                  )
+                  .whenA(stateProof.mptRoot =!= fullRebuildRoot)
+              }
+              // Diagnostic must never affect acceptance: swallow any rebuild/serialization failure so a node with
+              // the flag set cannot fail or diverge from nodes without it. Log-only by contract.
+              .handleErrorWith(e =>
+                loggerBundle.app.warn(s"[MPT.VERIFY] ordinal=$ordinal diagnostic rebuild failed (ignored): ${e.getMessage}")
+              )
+              .whenA(!didSweep && sys.env.get("CL_MPT_VERIFY_INCREMENTAL").exists(_.equalsIgnoreCase("true")))
+
             _ <- loggerBundle.app.info(
               s"[ACCEPTANCE] ordinal=$ordinal EXIT stateProof: " +
                 s"mptRoot=${stateProof.mptRoot.map(_.show.take(12)).getOrElse("none")} " +

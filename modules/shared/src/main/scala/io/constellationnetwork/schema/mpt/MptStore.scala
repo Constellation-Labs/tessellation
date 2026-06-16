@@ -8,6 +8,7 @@ import cats.syntax.all._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.producer._
@@ -35,7 +36,7 @@ trait MptStore[F[_], K] {
   def build(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
   def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
   def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
-  def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit]
+  def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal, expectedRoot: Option[Hash] = None): F[Unit]
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
   def underlying: StatefulMerklePatriciaProducer[F]
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
@@ -238,7 +239,7 @@ object MptStore {
           } yield ()
       }
 
-    override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit] =
+    override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal, expectedRoot: Option[Hash]): F[Unit] =
       // Use atomic modify to prevent race condition where two threads both see needsSync=true.
       // Returns (priorLastOrdinal, needsSync) so the caller can log the decision input
       // alongside the resulting branch. This diagnostic targets the per-retry full-build
@@ -259,7 +260,31 @@ object MptStore {
             s"[MptStore.syncFullIfNeeded] ordinal=$ordinal priorLastSynced=$priorLastOrdinal needsSync=$needsSync"
           ) >>
             (if (needsSync) newState.flatMap(syncFull(_, ordinal))
-             else logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal"))
+             else
+               // Content-aware skip. The ordinal tag says we are already synced here, but an abandoned-round
+               // mutation or a savepoint restore can leave the in-memory entry set stale while the tag persists,
+               // so a pure ordinal check can build a proposal/proof off divergent state. When the caller knows
+               // the expected stateProof root, verify the producer's current root matches before trusting the
+               // no-op; on mismatch force a full resync so we never emit a divergent root.
+               expectedRoot match {
+                 case None =>
+                   logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
+                 case Some(expected) =>
+                   // Build (not getCurrentRootHash) so pending inserts/removes are applied before reading the
+                   // root -- getCurrentRootHash returns the last-built trie root and would miss pending mutations,
+                   // letting a stale state pass the check. A Left build is treated as a mismatch (force resync).
+                   build(ordinal).flatMap { built =>
+                     val currentRoot = built.toOption.map(_.rootHash.value)
+                     if (currentRoot.contains(expected))
+                       logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal (root verified)")
+                     else
+                       logger.warn(
+                         s"[MptStore] lastSynced tag matches ordinal=$ordinal but current root " +
+                           s"${currentRoot.map(_.show.take(8)).getOrElse("none")} != expected " +
+                           s"${expected.show.take(8)}; forcing full resync to avoid divergence"
+                       ) >> newState.flatMap(syncFull(_, ordinal))
+                   }
+               })
       }
 
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =

@@ -1082,17 +1082,9 @@ object GlobalSnapshotConsensusStateAdvancer {
           }
           (mempoolEvents, mempoolHashToEvent) = mempoolData
 
-          // After recovery download, the MPT may lag behind the lastOutcome (e.g., downloaded
-          // to ordinal N but consensus outcome fetched at N+1). Ensure the MPT reflects the
-          // lastOutcome's state before computing the proposal. syncFullIfNeeded is a no-op
-          // if the MPT already matches the expected state.
-          _ <- mptStore.syncFullIfNeeded[Json](
-            HasherSelector[F].withCurrent(implicit hs => state.lastOutcome.finished.context.allStateEntries[F]),
-            state.lastOutcome.key
-          )
-
-          // Restore any previous savepoint from an abandoned round at the SAME ordinal,
-          // ensuring MptStore is in a clean pre-mutation state before createArtifact().
+          // Restore any previous savepoint from an abandoned round at the SAME ordinal FIRST, so the
+          // content-guarded sync below runs on (and verifies) the FINAL pre-proposal state. Restoring AFTER
+          // the sync would replace a forced resync with the abandoned round's stale producer state.
           previousSp <- proposalSavepointRef.getAndSet(none)
           _ <- previousSp.traverse_ {
             case (spKey, sp) =>
@@ -1119,6 +1111,18 @@ object GlobalSnapshotConsensusStateAdvancer {
                   "currentKey" -> state.key.show
                 )
           }
+
+          // After recovery download (or a just-restored savepoint), the MPT may lag or mismatch the lastOutcome
+          // (e.g. downloaded to ordinal N but the outcome was fetched at N+1, or the restore re-applied a stale
+          // pre-mutation state). Ensure the MPT reflects the lastOutcome's state before computing the proposal.
+          // syncFullIfNeeded is a no-op only when already synced AND the producer's current root reproduces the
+          // lastOutcome's signed stateProof root; on mismatch it forces a full resync so an abandoned-round
+          // mutation can never leave the MPT stale under createArtifact().
+          _ <- mptStore.syncFullIfNeeded[Json](
+            HasherSelector[F].withCurrent(implicit hs => state.lastOutcome.finished.context.allStateEntries[F]),
+            state.lastOutcome.key,
+            state.lastOutcome.finished.signedMajorityArtifact.value.stateProof.mptRoot
+          )
           // Take a fresh savepoint before mutations
           sp <- mptStore.savepoint
           _ <- proposalSavepointRef.set((state.key, sp).some)
