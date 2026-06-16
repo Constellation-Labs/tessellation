@@ -1,9 +1,37 @@
 # Liveness Shrink: permissioned-fallback committee reduction
 
-**Status:** Draft proposal - under review
+**Status:** SUPERSEDED - never implemented. Retained as historical context.
 **Author:** scas (with Claude Opus 4.7)
 **Date:** 2026-05-12
-**Related:** `eviction-cert-deterministic-shrinkage.md` (B1 eviction mechanism), `0006-selecting-facilitators.md`
+**Related:** `quorum-shrink.md` (the shipped mechanism), `eviction-cert-deterministic-shrinkage.md` (also superseded), `0006-selecting-facilitators.md`
+
+> **SUPERSEDED.** The "Liveness Shrink" mechanism proposed below was never built.
+> No part of it exists in the source tree: `grep -rln "LivenessShrink" modules/`
+> returns no source file, and the symbol `LivenessShrink` (the vote, the certificate,
+> `checkLivenessShrinkAssembly`, the `eligiblePeers: Map[AppEnvironment, Set[PeerId]]`
+> config, the gossip routing) appears in no Scala source. It is referenced only in this
+> doc and in the shipped mechanism's doc (`quorum-shrink.md`, which records it as the
+> superseded predecessor).
+>
+> The wedge class it targets (a quorum-threshold subset of the locked-in committee
+> persistently down, exemplified by the 2026-05-11/05-12 rollback at ordinal 3122961
+> and wedge at round 3122962) was instead solved by **QuorumDenominatorShrink**
+> (`state/QuorumDenominatorShrink.scala`, commit `f22132d69`, consensusSchemaVersion 33).
+> See **[quorum-shrink.md](quorum-shrink.md)** for the shipped design.
+>
+> The shipped mechanism makes a structurally different trade than this proposal:
+> - It introduces **no permissioned eligible-peer set** and **no new vote or
+>   certificate wire type**. The shrink is a pure function of consensus-agreed
+>   inputs plus a local wall clock, re-derived at every consumer.
+> - It **does not shrink the committee**: `roundStartFacilitators` and
+>   `facilitatorsHash` are left byte-identical (`QuorumDenominatorShrink.scala:21-23`).
+>   It lowers only the quorum **denominator** used for phase/cert feasibility at the
+>   stuck key, so the same committee re-runs the round at a reduced required threshold.
+> - It is gated per environment by `quorum-shrink-activation-views` (testnet only;
+>   mainnet and dev deliberately leave it off).
+>
+> Do not follow the Implementation plan below: building it would add a duplicate,
+> conflicting mechanism. The body is preserved only for design-history context.
 
 ## Problem
 
@@ -171,9 +199,18 @@ The cert is the determinism anchor: every node that sees the cert applies the sa
 
 ### Comparison with B1 eviction
 
+> **Correction (post-v19).** The B1 column below described an earlier code state.
+> Current B1 eviction-assembly computes its quorum denominator from the **Core**
+> committee, not `roundStartFacilitators`: `val n = state.coreFacilitators.value.size`
+> then `q = max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))`
+> (`StateTransitions.scala:1012-1019`, the "v19: ECS assembly quorum threshold computed
+> against the Core committee" change). The signer/witness pool is widened separately
+> (the eligible-facilitator union), but that widening is orthogonal to the denominator,
+> which is Core-sized.
+
 | Property                | B1 Eviction              | Liveness Shrink           |
 |-------------------------|--------------------------|---------------------------|
-| Quorum denominator      | `roundStartFacilitators` (n) | `eligiblePeers(env)` (m) |
+| Quorum denominator      | `coreFacilitators` (Core-sized, v19) | `eligiblePeers(env)` (m) |
 | Quorum threshold        | `0.67` supermajority     | `0.5+1` simple majority   |
 | Who can sign            | Any committee member     | Only `eligiblePeers(env)` |
 | Per-target cap          | Yes (n - quorum)         | No (single bulk eviction) |

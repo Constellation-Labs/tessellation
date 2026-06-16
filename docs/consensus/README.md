@@ -40,7 +40,7 @@ The consensus engine follows an **event-driven architecture** with a central com
 | `ConsensusManager` | `engine/ConsensusManager.scala` | External API (facade) |
 | `ConsensusRoundRunner` | `engine/ConsensusRoundRunner.scala` | Round facilitation, trigger scheduling |
 | `StallDetector` | `engine/StallDetector.scala` | Monitors round progress, triggers eviction |
-| `ViewChangeManager` | `engine/ViewChangeManager.scala` | Leader re-election, peer eviction |
+| `ViewChangeManager` | `engine/ViewChangeManager.scala` | Two-track leader re-election (emits VCC + TimeoutCertificate votes) |
 | `AbandonmentTracker` | `engine/AbandonmentTracker.scala` | Recovery download triggering |
 | `ConsensusStateAdvancer` | `state/ConsensusStateAdvancer.scala` | Phase transitions within a round |
 | `ConsensusStateCreator` | `state/ConsensusStateCreator.scala` | Creates new round states |
@@ -78,9 +78,13 @@ final case class RoundCompleted(expectedAttemptId: Option[Long] = None)
 final case class RumorReceived(rumor: Either[PeerRumor[_], CommonRumor[_]])
 final case class CheckUpdate[Key](key: Key)
 
-// Quorum-certified assembly checks. Each is queued whenever a vote of the relevant type
-// has been locally stored and the state-transitions path should attempt cert assembly.
+// Quorum-certified assembly / apply checks. Each is queued whenever a vote of the relevant
+// type has been locally stored and the state-transitions path should attempt cert assembly,
+// or whenever an embedded certificate should be applied at a view advance.
 final case class CheckViewChangeAssembly[Key](key: Key)
+final case class CheckViewChangeApply[Key](key: Key, fromView: Long, toView: Long)
+final case class CheckTimeoutCertificateAssembly[Key](key: Key)           // Track 2 (TC)
+final case class CheckTimeoutCertificateApply[Key](key: Key, fromView: Long, toView: Long)
 final case class CheckEvictionAssembly[Key](key: Key, target: PeerId)   // per-target
 final case class CheckAdmissionAssembly[Key](key: Key, target: PeerId)  // per-target
 
@@ -91,7 +95,9 @@ final case class InternalScheduled[K, A, C, O](inner: ConsensusCommand[K, A, C, 
 final case class InitializeFromDownload[Key, Artifact, Ctx](
   key: Key, artifact: Signed[Artifact], context: Ctx, isRecovery: Boolean = false
 )
-final case class InitializeFromRollback[Key, Outcome](key: Key, outcome: Outcome)
+final case class InitializeFromRollback[Key, Outcome](
+  key: Key, outcome: Outcome, deferFirstRound: Boolean = false
+)
 case object WithdrawFromConsensus
 final case class PeerObserved(peer: Peer)
 ```
@@ -260,21 +266,24 @@ def handle(cmd: ConsensusCommand[Key, Artifact, Ctx, Outcome]): F[Unit] =
   isRunning.get.flatMap { running =>
     cmd match {
       // Always — independent of IDLE/BUSY
-      case RumorReceived(r)                    => rumorHandler.process(r)
-      case CheckUpdate(key)                    => transitions.checkUpdate(key)
-      case CheckViewChangeAssembly(key)        => transitions.checkViewChangeAssembly(key)
-      case CheckEvictionAssembly(key, target)  => transitions.checkEvictionAssembly(key, target)
-      case CheckAdmissionAssembly(key, target) => transitions.checkAdmissionAssembly(key, target)
-      case InternalScheduled(inner)            => handle(inner)
-      case PeerObserved(peer)                  => transitions.registerPeer(peer)
+      case RumorReceived(r)                            => rumorHandler.process(r)
+      case CheckUpdate(key)                            => transitions.checkUpdate(key)
+      case CheckViewChangeAssembly(key)                => transitions.checkViewChangeAssembly(key)
+      case CheckViewChangeApply(key, from, to)         => transitions.checkViewChangeApply(key, from, to)
+      case CheckTimeoutCertificateAssembly(key)        => transitions.checkTimeoutCertificateAssembly(key)
+      case CheckTimeoutCertificateApply(key, from, to) => transitions.checkTimeoutCertificateApply(key, from, to)
+      case CheckEvictionAssembly(key, target)          => transitions.checkEvictionAssembly(key, target)
+      case CheckAdmissionAssembly(key, target)         => transitions.checkAdmissionAssembly(key, target)
+      case InternalScheduled(inner)                    => handle(inner)
+      case PeerObserved(peer)                          => transitions.registerPeer(peer)
 
-      case _ if running                        => handleWhileBusy(cmd)
-      case _                                   => handleWhileIdle(cmd)
+      case _ if running                                => handleWhileBusy(cmd)
+      case _                                           => handleWhileIdle(cmd)
     }
   }
 ```
 
-The five "always-handled" cases (rumors, `CheckUpdate`, and the three quorum-assembly checks) are intentionally allowed in both IDLE and BUSY: they only attempt to update state for an actively-tracked round and are no-ops when the round is gone. This is what lets a quorum-certified VCC / EvictionCertificate / AdmissionCertificate assemble even while the FSM is processing the *current* phase of the same round. See `state/ConsensusFSM.scala`.
+The "always-handled" cases (rumors, `CheckUpdate`, `PeerObserved`, and the cert assembly/apply checks) are intentionally allowed in both IDLE and BUSY: they only attempt to update state for an actively-tracked round and are no-ops when the round is gone. This is what lets a quorum-certified VCC / TimeoutCertificate / EvictionCertificate / AdmissionCertificate assemble (and then apply at a view advance) even while the FSM is processing the *current* phase of the same round. The view-advance pipeline runs on two parallel tracks: `CheckViewChangeAssembly` / `CheckViewChangeApply` for the VCC track, and `CheckTimeoutCertificateAssembly` / `CheckTimeoutCertificateApply` for the TimeoutCertificate track (see [§10](#10-leader-election--view-changes) and [timeout-certificate.md](timeout-certificate.md)). See `state/ConsensusFSM.scala`.
 
 The handler also force-completes a stuck round when an `InitializeFromDownload` arrives in `Observing` while still BUSY (recovery's stale-round escape hatch); under any other node state it re-queues the command after 1s without blocking the event loop.
 
@@ -343,11 +352,35 @@ final case class GlobalConsensusOutcome(
   peerQuality: SortedMap[PeerId, (Int, Int)],          // (completed, participated)
   cumulativeMissCounts: SortedMap[PeerId, Long],       // Repeat-offender exponent
   recentProofSizes: SortedMap[SnapshotOrdinal, Int],   // Bootstrap-classification window
-  readmissionCountdown: SortedMap[PeerId, Int]         // B2 sticky probation (v12)
+  readmissionCountdown: SortedMap[PeerId, Int],        // B2 sticky probation
+  peerSelfHealth: SortedMap[PeerId, SelfHealthHint],   // Last-known self-health hint per
+                                                       // peer; demotes leaders next round
+  peerViewChanges: SortedMap[PeerId, Long],            // View-changes caused as failed
+                                                       // leader-of-the-view
+  recentSigners:                                       // Rolling K-round signer-set window;
+    SortedMap[SnapshotOrdinal, SortedSet[PeerId]],     // input to tier-demotion + leader
+                                                       // recent-signer gate
+  peerTiers: SortedMap[PeerId, Int],                   // Core/Tier1/Witness carry-forward
+                                                       // that drives CommitteeBuilder
+  activeAdmissionScores: SortedMap[PeerId, Int],       // Bounded integral controller score
+  lastTimeoutCertificateVoters: SortedSet[PeerId],     // Voters from the accepted proposal's
+                                                       // TimeoutCertificate
+  recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long], // (ordinal -> consensusEndTime);
+                                                       // the view-from-time anchor window
+  controllerEvidence:                                  // Bounded per-round evidence window
+    Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
+  penaltyUntil:                                        // Cert-anchored absolute penalty
+    Option[SortedMap[PeerId, SnapshotOrdinal]]         // horizon per peer
 )
 ```
 
+(See `dag-l0/.../snapshot/schema.scala:109-233` for the canonical field list and per-field semantics.)
+
 `readmissionCountdown` is the B2 probation map: a peer's `removalPenalty` expiry seeds an entry at `readmissionProbationRounds`, and from then on the only path out is a quorum-certified `AdmissionCertificate` accepted on a proposal. See [§11](#11-stall-detection--eviction).
+
+`peerTiers` and `recentSigners` are the inputs that drive the next round's committee and leader selection: `CommitteeBuilder` reads `peerTiers` (carried-forward Core/Tier1/Witness classification) and `LeaderEligibility` reads `recentSigners` (see [§9](#9-facilitator-selection) and [§10](#10-leader-election--view-changes)). `recentRoundEndTimes` is the view-from-time anchor consumed by the next round's pacemaker hint.
+
+`GlobalConsensusOutcome` is also packed onto the signed incremental snapshot as a `ConsensusOperationalState` (`schema.scala:234-316`, `toOperationalState`): the deterministic chain-derived fields (`recentProofSizes`, `recentSigners`, `controllerEvidence`, `penaltyUntil`) ride the proposal-critical bytes, and the locally-divergent per-peer fields ride the wider sidecar. This is what lets the committee/leader/penalty history survive a cluster cold-restart instead of resetting to genesis.
 
 ### What is a Key?
 
@@ -423,7 +456,7 @@ CollectingSignatures
 | CollectingSignatures | Quorum of valid `MajoritySignature`s | Everyone |
 | Finished | Outcome persisted with deduplicated proofs | - |
 
-> **Note:** The advancer transitions when `ceil(N * config.quorumThresholdFraction)` matching declarations are present, where `N = state.roundStartFacilitators.value.size`. Default `quorumThresholdFraction = 1.0` (unanimity) keeps the previous "all peers" behaviour; testnet operates at supermajority. A `signatureGracePeriod` (~500ms) keeps the round open after quorum is reached so late-arriving signatures from the full committee can still land in the proofs set. Liveness is provided by `StallDetector` view-changing or vote-evicting unresponsive peers when safe (see [§11](#11-stall-detection--eviction)).
+> **Note (multi-committee quorum):** The advancer transitions when `max(1, QuorumPolicy.fromFraction(N, config.quorumThresholdFraction))` matching declarations are present, where **`N = state.coreFacilitators.value.size`** (the **Core** committee, not the flat round-start set) (`QuorumPolicy.scala`, `state/ConsensusState.scala:207`). `QuorumPolicy.fromFraction` is pure **integer** arithmetic: it dispatches `1.0 -> unanimity(N) = N` and `0.6666...(2/3) -> supermajority(N) = (2*N + 2) / 3` (verified in `QuorumPolicySuite` to equal the legacy `ceil(N * fraction)` for every operated cluster size); any other fraction is rejected at config load. Tier-1 and Witness peers do **not** count toward the cert/phase quorum denominator, so a silent Tier-1 peer cannot wedge a round (see [§9](#9-facilitator-selection)). Default `quorumThresholdFraction = 1.0` (unanimity); testnet operates at supermajority. On testnet the v33 `QuorumDenominatorShrink` rung can deterministically lower this denominator at a wedged key after a wall-clock-anchored silence period, leaving the committee byte-identical (see [quorum-shrink.md](quorum-shrink.md)). Snapshot finalization itself is gated by the `SignatureGraceDecision` grace machine (see [§15](#15-signature-threshold)) so late-but-honest signatures still land in the proofs set. Liveness is provided by `StallDetector` view-changing (VCC + TimeoutCertificate) or vote-evicting unresponsive peers when safe (see [§10](#10-leader-election--view-changes) and [§11](#11-stall-detection--eviction)).
 
 ---
 
@@ -441,6 +474,13 @@ Sent at the start of a round. Contains:
 - `lastGlobalSnapshotOrdinal: SnapshotOrdinal`
 - `lastSnapshotHash: Hash`
 - `consensusConfigHash: Option[Hash]` - peer-side fence on `deterministicConfigHash`
+- `selfHealthHint: Option[SelfHealthHint]` - the peer's own current self-health (from
+  `LocalHealthMonitor`); the leader aggregates these into `Proposal.observedSelfHealth`
+  so the next round's leader selection can demote unhealthy peers (see
+  [self-health-throttle.md](self-health-throttle.md))
+- `proposerClockMs: Option[Long]` - per-facilitator wall clock at signing time; the
+  median across the accepted Facility set becomes the outcome's `consensusEndTime`,
+  the view-from-time anchor (see [view-from-time-anchor.md](view-from-time-anchor.md))
 
 ### Proposal
 
@@ -452,15 +492,22 @@ case class Proposal(
   facilitatorsHash: Hash,
   lastSnapshotHash: Hash,
   view: Long,                                     // View number
-  vcc: Option[ViewChangeCertificate],             // If view > 0, the VCC that
+  vcc: Option[ViewChangeCertificate],             // Track 1: if view > 0, the VCC that
                                                   // certified the rotation
-  evictionCertificates: List[EvictionCertificate], // B1 quorum-certified evictions
-                                                  // applied at proposal acceptance
-  admissionCertificates: List[AdmissionCertificate], // B2 quorum-certified
+  timeoutCertificate: Option[TimeoutCertificate] = None, // Track 2: the TimeoutCertificate
+                                                  // that certified the rotation. A view > 0
+                                                  // is justified by exactly one of vcc / TC
+  evictionCertificates: List[EvictionCertificate] = List.empty, // B1 quorum-certified
+                                                  // evictions applied at proposal acceptance
+  admissionCertificates: List[AdmissionCertificate] = List.empty, // B2 quorum-certified
                                                   // re-admissions
-  observedResponders: List[PeerId]                // v7 leader's positive participation
+  observedResponders: List[PeerId] = List.empty,  // Leader's positive participation
                                                   // observation; replaces (not unions)
                                                   // state.observedResponders on accept
+  observedSelfHealth:                             // Leader's canonical view of each
+    SortedMap[PeerId, SelfHealthHint] = SortedMap.empty // responder's SelfHealthHint,
+                                                  // aggregated from this round's Facilities;
+                                                  // becomes outcome.peerSelfHealth on accept
 )
 ```
 
@@ -487,6 +534,22 @@ case class ViewChangeVote(
                                                   // a vote-locked proposal hash
 )
 ```
+
+### TimeoutVote / TimeoutCertificate (Track 2 view advance)
+
+The second, parallel view-advance track. `ViewChangeManager.performViewChange` emits a `TimeoutVote` alongside every `ViewChangeVote` (see [§10](#10-leader-election--view-changes)). A quorum of matching `(fromView, toView)` votes assembles into a `TimeoutCertificate`, which the next leader embeds in its `Proposal.timeoutCertificate`. See [timeout-certificate.md](timeout-certificate.md).
+
+```scala
+case class TimeoutVote(
+  fromView: Long, toView: Long,
+  facilitatorsHash: Hash, lastSnapshotHash: Hash,
+  highestKnownQc: Option[ProposalQC],             // Lets the next leader inherit a
+                                                  // vote-locked proposal hash
+  reason: TimeoutReason                           // NoProgress | QuorumInfeasible
+)
+```
+
+`TimeoutReason` is `NoProgress` (round elapsed with no advance) or `QuorumInfeasible` (too few responsive committee members), computed by `StallDetector` and threaded through `performViewChange`. A `TimeoutCertificate` carries the same `(fromView, toView)`, `facilitatorsHash`, `lastSnapshotHash`, `reason`, and the `NonEmptySet[Signed[TimeoutVote]]` it assembled from.
 
 ### EvictionVote (B1)
 
@@ -644,88 +707,58 @@ private def scheduleTimeTrigger: F[Unit] =
 
 ## 9. Facilitator Selection
 
-Facilitator selection is a multi-stage process that produces a deterministic facilitator set. See [ADR-0006](../adr/0006-selecting-facilitators.md) for design rationale.
+> **Superseded pipeline note:** The pre-launch consensus rewrite (the "v19"
+> multi-committee derivation) replaced the flat "previous-eligible + candidates →
+> filters → rendezvous subset" pipeline that [ADR-0006](../adr/0006-selecting-facilitators.md)
+> describes. The chronic-non-signer / prior-round-missing / tightening-window /
+> candidate-deferral filters were **retired** and replaced by the three-tier
+> `CommitteeBuilder` partition documented here. The full as-shipped reference is
+> [committee-tiers.md](committee-tiers.md); ADR-0006 is kept for historical context only.
+> Sources: `CommitteeBuilder.scala`, `GlobalSnapshotConsensusStateCreator.scala`.
 
-### Selection Pipeline
+Each round's facilitators are produced in two stages: a thin **candidate filter** in the StateCreator, then a deterministic **three-tier partition** in `CommitteeBuilder`.
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Previous       │     │  Seedlist       │     │  TCA Filter     │
-│  Eligible +     │────►│  Filter         │────►│  (Proof-based)  │
-│  Candidates     │     │                 │     │                 │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-                                                        │
-                                                        ▼
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Rendezvous     │     │  Min Quorum     │     │  Collateral +   │
-│  Hashing        │◄────│  Floor          │◄────│  Penalty        │
-│  Subset         │     │                 │     │  Exclusion      │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-```
+### Stage 1 -- Candidate set
 
-### Step-by-Step
+The StateCreator gates the candidate set by only **two** behavioural filters now: active **removal penalties** and **re-admission probation** (`readmissionCountdown`). Everything the old pipeline did with chronic-non-signer / prior-round-missing / tightening-window / candidate-deferral filtering is now handled inside the tier partition. `selfId` is still NOT unconditionally added (per-node self-add diverges `facilitatorsHash` and causes fork eviction); nodes join via candidate registration, and the genesis empty set falls back to `List(selfId)`.
 
-1. **Base Set**: Previous eligible facilitators + approved candidates (consensus-agreed data only)
-2. **Seedlist Filter**: If seedlist is configured, only include matching peers
-3. **TCA Filter**: Exclude degraded peers based on proof participation in last round
-4. **Collateral Filter**: Apply `facilitatorFilter` (e.g., minimum stake requirements)
-5. **New Candidate Deferral**: Peers entering consensus for the first time observe one round before actively participating
-6. **Penalty Exclusion**: Exclude peers with active removal penalties and deferred candidates
-7. **Min Quorum Floor**: If exclusions would drop below `minViableQuorum`, bypass penalties and deferral
-8. **Subset Selection**: Apply rendezvous hashing if `maxFacilitatorCount` is set
+### Stage 2 -- Three-tier `CommitteeBuilder` partition
 
-> **Note:** `selfId` is NOT unconditionally added to the base set. Each node adding
-> its own peerId creates a unique facilitator set per node, causing `facilitatorsHash`
-> divergence and fork eviction. Instead, nodes join via the candidate registration
-> mechanism (see [Candidate Registration](#candidate-registration) below). Genesis
-> ordinal 1 (empty base set) is handled by the `allEligible` fallback:
-> `if (list.isEmpty) List(selfId)`.
+`CommitteeBuilder.build` partitions the candidate set into **Core (Tier 2)**, **Tier 1**, and **Witness (Tier 0)** from consensus-agreed inputs only -- the carried-forward `lastOutcome.peerTiers`, `lastOutcome.peerQuality` (`(completed, participated)`), and evidence-derived chronic/score inputs -- so every honest node derives a byte-identical partition.
 
-### TCA (Trailing Common Ancestor) Filter
+| Tier | Role | In cert quorum? | Signs + earns? | Leader-eligible? |
+|------|------|:---------------:|:--------------:|:----------------:|
+| **Core** (Tier 2) | Full facilitators; the liveness quorum denominator | Yes | Yes | Yes |
+| **Tier 1** | Witness-eligible; signs the snapshot and witnesses certs | No | Yes | No |
+| **Witness** (Tier 0) | Observation only | No | No | No |
 
-The TCA filter uses consensus-agreed data for determinism:
+**Tier assignment rule** (re-derived every round, in order): (1) **quality-degradation override** -- a peer whose cumulative `completed/participated` ratio has dropped below `minRatio` (with `participated >= minObservations`) is forced to Tier 1 regardless of its prior tier, so a degraded peer can never gate the liveness quorum; (2) **carried-forward** `priorTiers.get(pid)`; (3) **quality-proven bootstrap** -- a new peer (absent from `priorTiers`) enters Core only if `peerQuality` already proves it above the ratio bar; (4) **default Tier 1** -- unproven new peers join the witness-eligible pool, not the quorum (the replacement for the old "everyone defaults to Core" bootstrap that let unclassified peers wedge the cluster).
 
-```scala
-// Compares who was supposed to sign vs who actually signed
-val lastFacilitators = lastOutcome.facilitators.value.toSet
-val lastSigners = lastOutcome.finished.signedMajorityArtifact.proofs.map(_.id.toPeerId).toSet
-val degraded = tcaFilter.degradedPeers(lastFacilitators, lastSigners)
-```
+**Core floor.** If derived Core is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1, ranked by quality (descending ratio, then descending completed count, then PeerId lex). `coreCommitteeSize` is consensus-critical and is folded into `deterministicConfigHash`, so a mismatched value is rejected at handshake.
+
+**Chronic-core replacement ladder.** `chronicMisses` (evidence-derived trailing asked-but-silent streaks past `ChronicMissThreshold`) drives a deterministic ladder, applied in order: **exclude** every chronically-missing Core member (demoted to Tier 1, still signs and earns, just out of the quorum denominator); **replace** each one-for-one with a non-chronic Tier 1 reserve (highest evidence score first); **floor** tops Core back up to `coreCommitteeSize` from non-chronic reserves only; **shrink** leaves Core smaller rather than padding with chronic peers (the quorum is proportional, so a smaller all-healthy Core is strictly more live); **liveness fallback** re-admits the least-bad chronic peers only if healthy Core would fall below `MinViableCoreSize` (= 2). With no chronic peers every step is inert.
+
+**Reward rotation.** A bounded one-slot **reward-rotation lane** cycles a single Tier-1 signing seat among demonstrated-live Witness peers each epoch (`rewardRotationEpochRounds`), so reward share does not stay pinned to the always-on signer set. Core is never touched; probation peers are excluded from both ends of the rotation. The lane is inert (byte-identical output) when disabled.
+
+The reward facilitator set is `lastArtifact.proofs.map(_.id)` (see `Rewards.distribute`): Core and Tier 1 sign and split the pool evenly. There is no Core-vs-Tier-1 reward stratification.
 
 ### Candidate Registration
 
-New nodes join the facilitator set through a multi-round registration pipeline:
+New nodes join through a multi-round registration pipeline:
 
 1. Peer enters `Observing` state
 2. Other nodes' `peerRegistrationStream` queries the peer's `/consensus/registration` endpoint
    (with a 3s retry if the first attempt returns `None` -- covers the race between
    entering Observing and `initFromDownload` setting `observationKeyR`)
 3. Registration stored at both `key` and `key.next` in `peerRegistrationsR`
-4. Next round: `getCandidates(key.next)` includes the peer. Leader's `Facility`
-   declaration carries the candidates list.
+4. Next round: `getCandidates(key.next)` includes the peer; the leader's `Facility`
+   declaration carries the candidates list
 5. Round completes: outcome's `finished.candidates` includes the peer
-6. Next round: `filteredCandidates` includes the peer, enters `fullBase`
-7. `genuinelyNewCandidates` deferral: peer observes one round (unless quorum bypass triggers)
-8. Round after: peer is in `previousEligible`, no longer "new" -- active facilitator
+6. Next round: the peer enters the candidate set and is classified by `CommitteeBuilder`.
+   A freshly-registered peer with no proven participation defaults to Tier 1, and is
+   promoted toward Core only as its `peerQuality` accrues
 
-**Timeline:** ~2-3 rounds from registration to active facilitation (~90-130s at default TimeTrigger).
-
-### Minimum Viable Quorum
-
-Penalties can never reduce the facilitator set below the majority threshold. This prevents
-`PeerQualityTracker` from shrinking the cluster to an unviable size.
-
-```scala
-val minViableQuorum = math.max(3, (allEligible.size / 2) + 1)
-val eligibleThisRound = {
-  val excluded = previouslyRemoved ++ penalizedPeers ++ genuinelyNewCandidates
-  val filtered = allEligible.filterNot(excluded.contains)
-  if (filtered.size >= minViableQuorum) filtered
-  else if (allEligible.size >= minViableQuorum) allEligible  // Bypass all exclusions
-  else if (allEligible.nonEmpty) allEligible
-  else List(selfId)  // Last resort
-}
-```
+**Timeline:** a registered peer can sign (as Tier 1) within ~2-3 rounds; Core promotion follows demonstrated participation.
 
 ### Rendezvous Hashing
 
@@ -770,46 +803,71 @@ On view change, `viewNumber` increments, producing a different leader without ch
 
 Leader selection uses consensus-agreed `(completed, participated)` scores from `lastOutcome.peerQuality`. Tier `= participated - completed = failure count`; lower tier wins; rendezvous score breaks ties within a tier. Integer-only arithmetic guarantees cross-platform determinism.
 
-### Graduation-Gated Leader Pool (commits `ec4369924`, `3d75cd676`, `b7226c4f0`)
+### Recent-Signer Leader Pool (`LeaderEligibility.fromRecentSigners`)
 
-Leader candidates are pre-filtered before `selectLeaderWeighted` to keep unproven or chronic-flaky peers out of the lead slot (see `dag-l0/.../GlobalSnapshotConsensusStateCreator.scala:524`):
+Leader candidates are pre-filtered before `selectLeaderWeighted` by `LeaderEligibility.fromRecentSigners` (`LeaderEligibility.scala`), which applies **two** gates over the **Core** committee (not the full active set):
 
 ```scala
-val graduatedLeaderPool = active.filter { pid =>
-  val (completed, participated) = lastOutcome.peerQuality.getOrElse(pid, (0, 0))
-  participated >= config.minParticipationObservations && completed >= 1   // v11 kick-fast
+// Gate 1 -- graduated: participated >= minParticipationObservations && completed >= 1
+val graduated = core.filter { pid =>
+  val (completed, participated) = peerQuality.getOrElse(pid, (0, 0))
+  participated >= minParticipationObservations && completed >= 1
 }
+val graduationBase = if (graduated.size >= minLeaderPoolSize) graduated else core
+
+// Gate 2 -- recent-signer: present in EVERY one of the last DemotionConsecutiveMisses
+//          recentSigners windows (only applied once that window is deep enough)
+val recentSets = recentSigners.values.toList.takeRight(DemotionConsecutiveMisses)
+val recentSignerPool =
+  if (recentSets.sizeIs >= DemotionConsecutiveMisses)
+    graduationBase.filter(pid => recentSets.forall(_.contains(pid)))
+  else graduationBase
 val leaderPool =
-  if (graduatedLeaderPool.size >= 2) graduatedLeaderPool else active   // safety fallback
-val leader = facilitatorSelector.selectLeaderWeighted(leaderPool, entropy, qualityScores = lastOutcome.peerQuality)
+  if (recentSignerPool.size >= minLeaderPoolSize) recentSignerPool else graduationBase
 ```
 
-The `completed >= 1` clause (commit `b7226c4f0`, "v11 kick-fast") closes the apr30 trap where chronic peers had accumulated `participated >= 5` from past rounds but had never finalized one as a member of `roundStartFacilitators` — they kept being elected leader and stalled rounds indefinitely. A peer that has never finalized is not lead-eligible, regardless of how long they have been around. Recovery is automatic: a single completed round as a non-leader follower restores eligibility.
+- **Gate 1 (graduated)** keeps unproven and never-finalized peers out of the lead slot. The `completed >= 1` clause is the key: a peer can accumulate `participated` from past rounds without ever finalizing one, and such a peer kept being elected and stalling rounds. A single completed round as a non-leader follower restores eligibility.
+- **Gate 2 (recent-signer)** further requires the peer to have signed in *every* one of the last `DemotionConsecutiveMisses` rounds, so a peer that recently went quiet is not handed the lead slot before the tier machinery demotes it.
 
-The `if (size >= 2) else active` fallback handles genesis / cold-start (nobody has enough history yet) and the solo-bootstrap tail. With a single graduated peer, `viewNumber % 1 == 0` always returns the same leader, making view change a no-op — falling back to `active` keeps view rotation meaningful.
+Both gates carry the `minLeaderPoolSize` fallback: if applying a gate would drop the pool below `minLeaderPoolSize`, it falls back to the broader set (so a small or cold-start cluster still has a meaningful pool, and `viewNumber % size` view rotation stays meaningful). Excluded peers are reported with typed reasons (`NotGraduated` / `NotRecentSigner`). `GlobalSnapshotConsensusStateCreator` reads `leaderEligibility.leaderPool` and applies `selectLeaderWeighted` to it.
 
-### View Change Protocol (Phase 2: quorum-certified VCC)
+### View Change Protocol (two-track view advance)
 
-> **Note:** The Lock/ACK/Vote mechanism from v1 is removed. The earlier "local-increment" view-change path (each node bumps `state.viewNumber` independently) is also removed — it produced split committees under racing transitions. View changes are now driven by a quorum-certified `ViewChangeCertificate`.
+> **Note:** The Lock/ACK/Vote mechanism and the earlier per-node "local-increment" path are both removed. View advance is now driven entirely by quorum certificates, on **two parallel tracks**.
 
-When `StallDetector` invokes `ViewChangeManager.performViewChange(key, state)`:
+When `StallDetector` invokes `ViewChangeManager.performViewChange(key, state, timeoutReason)` (`engine/ViewChangeManager.scala:80`), it emits **both** votes and queues **both** assembly checks:
 
 1. Record peer quality for the old leader.
 2. Read any locally-held `VoteLock` and pull `lockedQc` (the highest known `ProposalQC`) so the next leader can inherit a vote-locked proposal hash.
-3. Delegate to a `ViewChangeVoter` (typically `GossipingViewChangeVoter`) which signs a `ViewChangeVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc)`, stores it locally, and gossips it as a `ConsensusPeerVote` to the active facilitator set.
-4. Queue `CheckViewChangeAssembly(key)` so `StateTransitions.checkViewChangeAssembly` picks up the votes.
+3. **Track 1 (VCC):** delegate to a `ViewChangeVoter` (typically `GossipingViewChangeVoter`) to sign+store+gossip a `ViewChangeVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc)`, then queue `CheckViewChangeAssembly(key)`.
+4. **Track 2 (TC):** delegate to a `TimeoutVoter` (typically `GossipingTimeoutVoter`) to sign+store+gossip a `TimeoutVote(...same fields..., reason)` where `reason` is the `TimeoutReason` (`NoProgress` or `QuorumInfeasible`), then queue `CheckTimeoutCertificateAssembly(key)`.
 
-The `facilitatorsHash` signed into every VCV is the **canonical round-start committee hash** (`state.roundStartFacilitators.value.hash`), so honest nodes that observed different mid-round withdrawals still produce VCVs with the same hash and certify together. `roundStartFacilitators` is frozen at round creation and never mutated — the read-site comment in `state/ConsensusState.scala` enumerates which derivations must use it (outcome.facilitators, completedFacilitators, Finished.facilitatorsHash, VCV/eviction-vote facilitatorsHash) versus which must keep mutable `state.facilitators` (in-round liveness).
+Whichever certificate (`ViewChangeCertificate` or `TimeoutCertificate`) assembles first deterministically advances the round's view. A view greater than 0 must be justified by **exactly one** of a VCC or a TC on the leader's proposal; the two are mutually exclusive on any single proposal. Both carry the highest known `ProposalQC` so the inheriting leader keeps any vote-locked proposal hash. See [timeout-certificate.md](timeout-certificate.md) for the full TC pipeline.
+
+The `facilitatorsHash` signed into every vote is the **canonical round-start committee hash** (`state.roundStartFacilitators.value.hash`), so honest nodes that observed different mid-round withdrawals still produce votes with the same hash and certify together. `roundStartFacilitators` is frozen at round creation and never mutated; the read-site comment in `state/ConsensusState.scala` enumerates which derivations must use it versus which must keep mutable `state.facilitators` (in-round liveness).
 
 ### VCC Assembly (`StateTransitions.checkViewChangeAssembly`)
 
-`checkViewChangeAssembly(key)` runs whenever a `ViewChangeVote` lands in storage. When `votes.size >= ceil(n * quorumThresholdFraction)` and all votes agree on a single `facilitatorsHash`, `ViewChangeCertificateBuilder.build` assembles a `ViewChangeCertificate` (de-duplicates by signer, rejects voters not in the committee, sorts deterministically). On success the FSM:
+`checkViewChangeAssembly(key)` runs whenever a `ViewChangeVote` lands in storage. When `votes.size >= max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))` (quorum over the **Core** committee, see [§9](#9-facilitator-selection)) and all votes agree on a single `facilitatorsHash`, `ViewChangeCertificateBuilder.build` assembles a `ViewChangeCertificate` (de-duplicates by signer, rejects voters not in the committee, sorts deterministically). On success the FSM:
 
 1. Stores the assembled VCC via `storage.storeAssembledVcc(key, vcc)` so the new leader's `Proposal` carries it.
 2. Atomically advances `state.viewNumber → toView`, sets `state.leader` to the deterministic new leader, **clears `withdrawnFacilitators`** (a withdrawal is scoped to the `(key, view)` pair it was emitted for), and resets `state.status` to a fresh `CollectingFacilities`.
 3. Queues `CheckUpdate(key)` so the new view's facility-collection round begins immediately.
 
-Mid-round eviction does NOT happen on this path. If a facilitator is genuinely unreachable, the stall-cycle abandonment path in `StallDetector` handles it (the round is abandoned and retried with the current eligibility set). For consensus-witnessed eviction, see B1 below.
+The witness pool for the quorum is widened to `state.eligibleFacilitators - target` so eligible-but-not-active peers can still witness (see [§11](#11-stall-detection--eviction), "Witness Pool Widening").
+
+### TimeoutCertificate Assembly + Apply (`StateTransitions.checkTimeoutCertificateAssembly` / `...Apply`)
+
+The Track-2 counterpart. `checkTimeoutCertificateAssembly(key)` runs whenever a `TimeoutVote` lands in storage; on a Core-quorum of matching `(fromView, toView)` votes it assembles a `TimeoutCertificate` via `TimeoutCertificateBuilder` (`StateTransitions.scala:343`). When a leader's `Proposal.timeoutCertificate` arrives at a view advance, `checkTimeoutCertificateApply(key, from, to)` re-validates it against the same quorum / witness-pool / hash invariants and applies it (`StateTransitions.scala:488`, `applyCertifiedTimeoutCertificate` at `:725`). Both tracks feed the v33 `QuorumDenominatorShrink` decision so the effective denominator can be lowered at a wedged key (see [quorum-shrink.md](quorum-shrink.md)).
+
+Mid-round eviction does NOT happen on either view-change path. If a facilitator is genuinely unreachable, the stall-cycle abandonment path in `StallDetector` handles it (the round is abandoned and retried with the current eligibility set). For consensus-witnessed eviction, see B1 below.
+
+### Self-Health and View-from-Time Inputs
+
+Two consensus-agreed inputs feed leader election and the pacemaker, both threaded through the Facility -> Proposal -> outcome path:
+
+- **Self-health throttle.** Each peer stamps its own `SelfHealthHint` (from `LocalHealthMonitor`) onto its `Facility.selfHealthHint`. The leader aggregates the responders' hints into `Proposal.observedSelfHealth`, which becomes the next outcome's `peerSelfHealth`. The next round's `selectLeaderWeighted` health-gates the leader pool: Degraded peers are demoted to tier 1, and Critical peers are **hard-excluded** from the primary pool (`FacilitatorSelector.scala:249`), reachable only through the starvation fallback at tier 2 so liveness still holds if every peer reports Critical. Design reference: [self-health-throttle.md](self-health-throttle.md).
+- **View-from-time anchor.** Each peer stamps its wall clock onto `Facility.proposerClockMs`. The median across the accepted Facility set becomes `consensusEndTime` (clamped against `parent.consensusEndTime + 1` for anti-regression), recorded into the outcome's `recentRoundEndTimes`. The next round derives a `timeView` from this anchor (`ViewFromTime.compute`), but **only as a pacemaker timeout hint** that wakes the round to emit a signed view-change vote. Proposal-critical view advance still requires a quorum-certified VCC or TC (`initialView = 0` at round start; see `GlobalSnapshotConsensusStateCreator.scala:668-690`). Design reference: [view-from-time-anchor.md](view-from-time-anchor.md).
 
 ### Self-Recovered Leader Cooldown (commit `2026-04-27` codex-followups)
 
@@ -826,7 +884,7 @@ If `selfId` is elected leader within `recoveryLeaderCooldownRounds` (default 3) 
 ### Architecture
 
 `StallDetector` is the orchestrator (`engine/StallDetector.scala`) that polls state periodically and delegates:
-- **ViewChangeManager** — leader rotation via gossiped `ViewChangeVote`s; the actual view advance is performed by `StateTransitions.checkViewChangeAssembly` once a quorum certificate forms.
+- **ViewChangeManager** -- leader rotation. Each `performViewChange` emits **both** a gossiped `ViewChangeVote` (Track 1) **and** a signed `TimeoutVote` carrying a `TimeoutReason` (Track 2); the actual view advance is performed by `StateTransitions.checkViewChangeAssembly` or `checkTimeoutCertificateAssembly` once either quorum certificate forms (see [§10](#10-leader-election--view-changes)).
 - **EvictionVoter** / **AdmissionVoter** — sign-and-gossip the corresponding vote; B1/B2 cert assembly happens in `StateTransitions.checkEvictionAssembly` / `checkAdmissionAssembly`.
 - **AbandonmentTracker** — consecutive failure tracking, resource cleanup, recovery download trigger.
 
@@ -851,6 +909,9 @@ Poll (100ms-1000ms adaptive)
         selectEvictionTargets candidates, queue CheckEvictionAssembly, then performViewChange
       → Proposal phase, all declared but no proposal: performViewChange
       → Other phases, all declared but no advance: count toward abandon
+  → Every performViewChange ALSO emits a signed TimeoutVote with a TimeoutReason
+    (NoProgress | QuorumInfeasible) and queues CheckTimeoutCertificateAssembly,
+    in parallel with the ViewChangeVote / CheckViewChangeAssembly (two-track view advance)
   → After maxStallCycles, maxRoundDuration (per-view), QuorumInfeasible, or Lagging
     → AbandonmentTracker.abandonRound(reason)
   → Update health snapshot on each cycle
@@ -868,15 +929,18 @@ The first stall timeout warns only — peers get one more cycle. Eviction-vote e
 
 ### Quorum Floor (per-tick infeasibility check)
 
-`StallDetector` derives a per-tick quorum floor as the minimum of cluster-wide and round-level quorum:
+`StallDetector` derives the feasibility floor from the **Core** committee via the pure helper `computeCoreQuorumStatus` (`StallDetector.scala:1456`), using the same integer `QuorumPolicy.fromFraction` denominator as the advancer:
 
 ```scala
-val clusterSize = math.max(readyPeerCount + 1, totalFacilitators)
-val minQuorum = math.max(1, math.ceil(totalFacilitators * config.quorumThresholdFraction).toInt)
-val quorumInfeasible = (totalFacilitators - missingPeers.size) < minQuorum
+val activeCore   = state.coreFacilitators.value.toSet -- state.withdrawnFacilitators.value
+val coreRemaining = activeCore.size - activeCore.intersect(missingPeers).size
+val baseRequired  = math.max(1, QuorumPolicy.fromFraction(activeCore.size, config.quorumThresholdFraction))
+// v33 shrink: an escalated rung may lower (never raise) the required quorum.
+val coreRequired  = quorumOverride.fold(baseRequired)(o => math.min(baseRequired, math.max(1, o)))
+val quorumInfeasible = coreRemaining < coreRequired
 ```
 
-`min(cluster, round)` matters when facilitator subsetting is active: with 3 facilitators, 1 missing, `remaining = 2` — we don't want to flag QUORUM_INFEASIBLE just because cluster-Ready is 5. The check is a **ceiling, not a floor on aggregate evictions**: `selectEvictionTargets` separately caps each round's vote emission at `committee.size - minQuorum` so the certified evictions can never shrink the next-round committee below quorum (commit `3ee1800d3`, "Eviction targets capped").
+Computing over `activeCore` (not the flat facilitator set) matters when facilitator subsetting is active: with Core=3, 1 missing, `coreRemaining = 2` — we don't want to flag QUORUM_INFEASIBLE just because cluster-Ready is 5. The check is a **ceiling, not a floor on aggregate evictions**: `selectEvictionTargets` separately caps each round's vote emission at `committee.size - minQuorum` so the certified evictions can never shrink the next-round committee below quorum (commit `3ee1800d3`, "Eviction targets capped").
 
 ### Witness Pool Widening (commit `e1bdfb190`, "v9")
 
@@ -1261,23 +1325,40 @@ The `quorumImpossible` escalation in `AbandonmentTracker` provides a third -- if
 
 ## 15. Signature Threshold
 
-Rounds require a **majority** of valid signatures before completing:
+Finalization is gated by the pure `SignatureGraceDecision.evaluate` state machine
+(`SignatureGraceDecision.scala:58-82`), not a single count check. A round that
+crosses the finalization quorum does **not** commit instantly; it may keep collecting
+`MajoritySignature` declarations for a bounded **grace window** so the proof set (which
+determines rewards) is not truncated to whoever happened to sign in the first 1-3ms.
+The window length is one of three cases:
 
-```scala
-val majorityThreshold = (state.facilitators.value.size / 2) + 1
-if (validSignatures.size >= majorityThreshold) { /* complete round */ }
-else { none[Transition] /* no outcome, round abandoned */ }
-```
+| Case | Condition | Window | Anchored from |
+|------|-----------|--------|---------------|
+| **Full committee signed** | Every committee member has signed | finalize immediately | - |
+| **Core complete, committee not full** | Only Tier-1 (non-quorum) signatures outstanding | short `tier1Window` | when Core **first** completed |
+| **Core incomplete** | A quorum-bearing Core signer is still missing | full `fullWindow` | first quorum |
 
-This prevents a view-change minority (e.g., 2/5 nodes that followed a view change
-while 3/5 continued with the original leader) from producing a fork snapshot.
-Without this threshold, the minority would complete the round with 2 signatures,
-create a different artifact than the majority's 3-signature snapshot, and the fork
-would persist until gossip fork detection fires (~10-30s later).
+The Core-complete window is anchored from when Core first completed (not from first
+quorum) so a round whose Core completes late still gives prompt Tier-1 signatures a
+chance to land for reward inclusion, instead of concentrating rewards on Core.
 
-The threshold uses `state.facilitators.value.size` (post-eviction). When the
-`ViewChangeManager` evicts unresponsive peers, the facilitator set shrinks and the
-threshold scales down accordingly.
+Two distinctions matter:
+
+- **The quorum denominator is the Core committee**, not the flat facilitator set. The
+  finalization safety-quorum is `max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))`
+  over Core (integer `unanimity` / `(2*coreSize + 2) / 3` supermajority); the more-permissive snapshot-finalization threshold
+  `(roundStartFacilitators.size / 2) + 1` spans Core + Tier 1. Safety in finalization
+  is enforced via `VoteLock` + the VCC/TC view-advance certificates, not by tightening
+  this threshold (`CommitteeBuilder.scala:13-18`).
+- **Config split.** `signatureGracePeriod` is the short Tier-1 grace window; the
+  Core-incomplete case waits the longer full window. The grace machine is the pure
+  decision; the caller owns the per-round `Stamp` in a `Ref` and applies the returned
+  `StampUpdate`.
+
+The Core-quorum requirement still prevents a view-change minority from producing a
+fork snapshot: a minority that followed a view change while the majority continued
+cannot reach the Core quorum and so produces no outcome. See
+[signature-grace.md](signature-grace.md) for the full state machine.
 
 ---
 
@@ -1305,17 +1386,23 @@ what was on disk before recovery.
 
 ### Pre-Proposal Safety Net
 
-Before each proposal, the advancer calls:
+Before each proposal, the advancer calls `syncFullIfNeeded`, whose signature now takes
+a third `expectedRoot: Option[Hash]` parameter (`MptStore.scala:39`):
 ```scala
-mptStore.syncFullIfNeeded[Json](
-  lastOutcome.finished.context.allStateEntries[F],
-  lastOutcome.key
-)
+def syncFullIfNeeded[V: Encoder](
+  newState: => F[Map[K, V]],            // thunk: state entries to rebuild from
+  ordinal: SnapshotOrdinal,
+  expectedRoot: Option[Hash] = None     // content-aware divergence guard
+): F[Unit]
 ```
-This is a **no-op** during normal consensus (`lastSyncedOrdinalRef` matches the
-outcome's ordinal). It only fires after recovery when the MPT ordinal lags behind
-the consensus outcome (e.g., download ended at ordinal N but `fetchOutcomeFromCluster`
-returned N+1). Atomic check-then-act prevents race conditions.
+With `expectedRoot = None` this is a **no-op** during normal consensus when the synced
+ordinal matches; it only fires when the MPT ordinal lags behind the consensus outcome
+(e.g., download ended at ordinal N but `fetchOutcomeFromCluster` returned N+1). When an
+`expectedRoot` is supplied, a second **content-aware** branch fires (divergence branch
+at `MptStore.scala:269`): the store builds the trie and forces a full resync when the
+current root differs from `expectedRoot` even though the ordinal tag matches, closing
+the silent-divergence case where a stale-but-same-ordinal trie would otherwise be
+treated as clean. Atomic check-then-act prevents race conditions.
 
 ### Savepoint Mechanism
 
@@ -1354,11 +1441,14 @@ them to follow consensus without participating as a facilitator.
 | `ConsensusManager.scala` | External API facade |
 | `ConsensusRoundRunner.scala` | Round facilitation, trigger scheduling |
 | `StallDetector.scala` | Phase-aware stall monitoring, capped-exp Facility retransmit, B1/B2 vote emission |
-| `ViewChangeManager.scala` | Quorum-certified VCC orchestration via the `ViewChangeVoter` trait |
+| `ViewChangeManager.scala` | Two-track view-change orchestration: emits both a `ViewChangeVote` (VCC) and a `TimeoutVote` (TC) per `performViewChange` |
 | `AbandonmentTracker.scala` | Consecutive failure tracking, recovery trigger |
 | `PendingTriggers.scala` | Queues triggers while BUSY |
 | `ViewChangeVoter.scala` | Trait + no-op default for emitting a `ViewChangeVote` |
 | `GossipingViewChangeVoter.scala` | Concrete `ViewChangeVoter` (sign with local keypair + store + gossip) |
+| `TimeoutVoter.scala` | Trait + no-op default for emitting a `TimeoutVote` (Track 2) |
+| `GossipingTimeoutVoter.scala` | Concrete `TimeoutVoter` for the timeout-certificate flow |
+| `TimeoutCertificateBuilder.scala` | Assembles a `TimeoutCertificate` from collected `TimeoutVote`s |
 | `EvictionVoter.scala` | Trait + no-op default for emitting an `EvictionVote` |
 | `GossipingEvictionVoter.scala` | Concrete `EvictionVoter` |
 | `AdmissionVoter.scala` | Trait + no-op default for emitting an `AdmissionVote` (B2) |
@@ -1380,7 +1470,7 @@ them to follow consensus without participating as a facilitator.
 | `consensus/state/ConsensusStateUpdater.scala` | Updates state from declarations |
 | `consensus/state/ConsensusEngineContext.scala` | Shared dependencies bundle |
 | `consensus/state/RumorHandler.scala` | Consensus rumor receiver/dispatcher (distinct from the lower-level `gossip/RumorHandler.scala`) |
-| `consensus/state/StateTransitions.scala` | High-level state change logic |
+| `consensus/state/StateTransitions.scala` | High-level state change logic; VCC + TimeoutCertificate assemble/apply (`checkViewChangeAssembly` / `checkViewChangeApply` / `checkTimeoutCertificateAssembly` / `checkTimeoutCertificateApply`) |
 | `ReadmissionMaintenance.scala` | Per-round maintenance of `readmissionCountdown` (B2 sticky-probation map) |
 | `ProposalRejection.scala` | Typed reason ADT returned by the advancer's `resolveLeaderProposal` validation pipeline |
 
@@ -1393,14 +1483,21 @@ them to follow consensus without participating as a facilitator.
 | `ConsensusStorage.scala` | Storage for state and declarations |
 | `ConsensusResources.scala` | Resources gathered for a round |
 | `FacilitatorSelector.scala` | Rendezvous hashing for selection/leader |
+| `CommitteeBuilder.scala` | Three-tier (Core/Tier1/Witness) partition, Core floor, chronic-replacement ladder, reward rotation ([committee-tiers.md](committee-tiers.md)) |
+| `TierTransitions.scala` | Tier-demotion hysteresis (Core peer demoted after `DemotionConsecutiveMisses` missed signer sets) |
+| `LeaderEligibility.scala` | Leader-pool gates over Core: graduated + recent-signer |
+| `SignatureGraceDecision.scala` | Pure three-way finalization grace machine ([signature-grace.md](signature-grace.md)) |
+| `state/QuorumDenominatorShrink.scala` | v33 quorum-denominator shrink rung ([quorum-shrink.md](quorum-shrink.md)) |
+| `state/QuorumPolicy.scala` | Integer Core-quorum derivation `fromFraction(coreSize, quorumThresholdFraction)` (`unanimity` / `(2*n + 2) / 3` supermajority) |
+| `RewardRotation.scala` | Bounded one-slot Tier-1 reward-seat rotation |
 | `PeerQualityTracker.scala` | Score-based peer assessment |
-| `TrailingCommonAncestorFilter.scala` | Proof-based peer quality, removal penalties |
+| `TrailingCommonAncestorFilter.scala` | Proof-based peer quality, removal penalties (historical; superseded by `CommitteeBuilder` tiering) |
 
 ### Global Snapshot Specific (`dag-l0/infrastructure/snapshot/`)
 
 | File | Purpose |
 |------|---------|
-| `GlobalSnapshotConsensusStateCreator.scala` | Facilitator selection pipeline |
+| `GlobalSnapshotConsensusStateCreator.scala` | Candidate filter + `CommitteeBuilder` tier partition + `LeaderEligibility` leader pool + view-from-time hint |
 | `GlobalSnapshotConsensusStateAdvancer.scala` | Phase transitions for global snapshots |
 | `GlobalSnapshotConsensusFunctions.scala` | Artifact creation, validation |
 
@@ -1431,6 +1528,15 @@ them to follow consensus without participating as a facilitator.
 | [0006-selecting-facilitators.md](../adr/0006-selecting-facilitators.md) | Facilitator selection |
 | [0013-delayed_download.md](../adr/0013-delayed_download.md) | Download deferral |
 | [0014-download-for-incremental-snapshots.md](../adr/0014-download-for-incremental-snapshots.md) | Incremental download |
+
+### Further Reading (current mechanism docs)
+
+| Doc | Topic |
+|-----|-------|
+| [committee-tiers.md](committee-tiers.md) | Three-tier Core / Tier-1 / Witness committee model ([§9](#9-facilitator-selection)) |
+| [timeout-certificate.md](timeout-certificate.md) | Track-2 timeout-certificate view advance ([§10](#10-leader-election--view-changes)) |
+| [quorum-shrink.md](quorum-shrink.md) | v33 quorum-denominator shrink liveness rung ([§5](#5-consensus-round-phases), [§15](#15-signature-threshold)) |
+| [signature-grace.md](signature-grace.md) | `SignatureGraceDecision` finalization grace machine ([§15](#15-signature-threshold)) |
 
 ---
 
