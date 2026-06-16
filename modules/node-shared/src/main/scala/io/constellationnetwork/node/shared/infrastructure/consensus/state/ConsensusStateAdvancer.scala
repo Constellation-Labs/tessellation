@@ -81,13 +81,13 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
   protected def config: ConsensusConfig
 
   /** Layer-specific extraction of the most recent `controllerEvidence` entry's `completedSigners` from the carried outcome -- the
-    * deterministic voter anchor for [[QuorumDenominatorShrink]]. Consensus-agreed signed-outcome data; see the rung's scaladoc for the full
+    * deterministic voter anchor for `QuorumDenominatorShrink`. Consensus-agreed signed-outcome data; see the rung's scaladoc for the full
     * two-node determinism argument. Defaults to `None` (rung inert) for implementations that do not carry evidence.
     */
   protected def latestEvidenceSigners(lastOutcome: Outcome): Option[SortedSet[PeerId]] = None
 
   /** Layer-specific extraction of the parent outcome's `consensusEndTime` (last `recentRoundEndTimes` entry) -- the shared time anchor for
-    * [[QuorumDenominatorShrink]] escalation. Defaults to `None` (rung inert).
+    * `QuorumDenominatorShrink` escalation. Defaults to `None` (rung inert).
     */
   protected def lastOutcomeEndTimeMs(lastOutcome: Outcome): Option[Long] = None
 
