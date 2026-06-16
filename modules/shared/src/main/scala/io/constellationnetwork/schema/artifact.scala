@@ -33,6 +33,17 @@ object artifact {
   )
 
   @derive(decoder, encoder, order, ordering, show)
+  case class BurnAction(burnTransactions: NonEmptyList[BurnTransaction]) extends SharedArtifact
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class BurnTransaction(
+    allowSpendRef: Option[Hash],
+    currencyId: Option[CurrencyId],
+    amount: SwapAmount,
+    source: Address
+  )
+
+  @derive(decoder, encoder, order, ordering, show)
   case class TokenUnlock(
     tokenLockRef: Hash,
     amount: TokenLockAmount,

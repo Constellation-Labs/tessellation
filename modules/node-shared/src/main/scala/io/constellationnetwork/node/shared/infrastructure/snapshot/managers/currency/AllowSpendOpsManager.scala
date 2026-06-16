@@ -7,11 +7,12 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{AllowSpendExpiration, SharedArtifact, SpendTransaction}
+import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
@@ -24,12 +25,14 @@ class AllowSpendOpsManager[F[_]: Async] {
     incomingCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
     existentCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
     allAcceptedSpendTxns: List[SpendTransaction],
+    burnAllowSpendRefs: List[Hash],
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
     fixingAllowSpendExpiration: SnapshotOrdinal
   )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = {
+    // Allow spends consumed by spends OR burns must be removed from the active pool so they cannot be reused.
     val allAcceptedSpendTxnsAllowSpendsRefs =
       allAcceptedSpendTxns
-        .flatMap(_.allowSpendRef)
+        .flatMap(_.allowSpendRef) ++ burnAllowSpendRefs
 
     for {
       expiredAllowSpends <- filterExpiredAllowSpends(
@@ -204,6 +207,59 @@ class AllowSpendOpsManager[F[_]: Async] {
                 txnAcc
                   .updated(destinationAddress, updatedDestinationBalance)
                   .updated(sourceAddress, updatedSourceBalance)
+          }
+        } yield updatedBalances
+    }
+
+  /** Applies metagraph-issued [[BurnTransaction]]s to currency balances.
+    *
+    * Burn semantics = spend semantics MINUS the destination credit. Every branch strictly reduces totalSupply by the burned amount; no
+    * destination is ever credited.
+    *
+    *   - `allowSpendRef = Some(ref)` and found: the allow spend pre-debited `allowSpend.amount` at acceptance. We return only the unspent
+    *     reservation (`allowSpend.amount - burnAmount`) to the source; the burned amount is simply not returned. Net source: -burnAmount,
+    *     totalSupply: -burnAmount.
+    *   - `allowSpendRef = None` (self-burn): the source (the metagraph's own address) is debited by `burnAmount`. Net source: -burnAmount,
+    *     totalSupply: -burnAmount.
+    */
+  def updateCurrencyBalancesByBurnTransactions(
+    currentBalances: SortedMap[Address, Balance],
+    allActiveCurrencyAllowSpends: SortedMap[Address, List[io.constellationnetwork.security.Hashed[AllowSpend]]],
+    metagraphIdBurnTransactions: List[BurnTransaction]
+  ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] =
+    metagraphIdBurnTransactions.foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](Right(currentBalances)) {
+      (txnAccEither, burnTransaction) =>
+        for {
+          txnAcc <- txnAccEither
+          sourceAddress = burnTransaction.source
+
+          addressAllowSpends = allActiveCurrencyAllowSpends.getOrElse(sourceAddress, List.empty)
+          burnTransactionAmount = SwapAmount.toAmount(burnTransaction.amount)
+
+          updatedBalances <- burnTransaction.allowSpendRef.flatMap { allowSpendRef =>
+            addressAllowSpends.find(_.hash === allowSpendRef)
+          } match {
+            case Some(allowSpend) =>
+              val sourceAllowSpendAddress = allowSpend.source
+              val currentSourceBalance = txnAcc.getOrElse(sourceAllowSpendAddress, Balance.empty)
+              val balanceToReturnToAddress = allowSpend.amount.value.value - burnTransactionAmount.value.value
+
+              for {
+                updatedSourceBalance <- currentSourceBalance.plus(
+                  Amount(
+                    NonNegLong
+                      .from(balanceToReturnToAddress)
+                      .getOrElse(NonNegLong.MinValue)
+                  )
+                )
+              } yield txnAcc.updated(sourceAllowSpendAddress, updatedSourceBalance)
+
+            case None =>
+              val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
+
+              for {
+                updatedSourceBalance <- currentSourceBalance.minus(burnTransactionAmount)
+              } yield txnAcc.updated(sourceAddress, updatedSourceBalance)
           }
         } yield updatedBalances
     }

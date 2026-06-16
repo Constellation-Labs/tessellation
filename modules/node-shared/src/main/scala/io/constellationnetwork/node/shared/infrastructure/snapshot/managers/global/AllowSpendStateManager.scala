@@ -12,6 +12,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance, BalanceArithmeti
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
@@ -28,7 +29,8 @@ trait AllowSpendStateManager[F[_]] {
     activeAllowSpendsFromCurrencySnapshots: SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
     globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
     lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-    allAcceptedSpendTxns: List[SpendTransaction]
+    allAcceptedSpendTxns: List[SpendTransaction],
+    burnAllowSpendRefs: List[Hash]
   )(implicit hasher: Hasher[F]): F[AllowSpendAcceptanceResult]
 
   def acceptAllowSpendRefs(
@@ -58,11 +60,13 @@ object AllowSpendStateManager {
       activeAllowSpendsFromCurrencySnapshots: SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
       lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      allAcceptedSpendTxns: List[SpendTransaction]
+      allAcceptedSpendTxns: List[SpendTransaction],
+      burnAllowSpendRefs: List[Hash]
     )(implicit hasher: Hasher[F]): F[AllowSpendAcceptanceResult] = {
+      // Allow spends consumed by spends OR burns must be removed from the active pool so they cannot be reused.
       val allAcceptedSpendTxnsAllowSpendsRefs =
         allAcceptedSpendTxns
-          .flatMap(_.allowSpendRef)
+          .flatMap(_.allowSpendRef) ++ burnAllowSpendRefs
 
       val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
       val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)

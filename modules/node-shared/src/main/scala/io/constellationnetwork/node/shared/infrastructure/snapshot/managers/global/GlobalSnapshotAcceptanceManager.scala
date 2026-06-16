@@ -32,9 +32,9 @@ import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValid
 import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
 import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
-import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
 import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcceptanceManager, AllowSpendBlockAcceptanceResult}
+import io.constellationnetwork.node.shared.domain.swap.{BurnActionValidator, SpendActionValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.{TokenLockBlockAcceptanceManager, TokenLockBlockAcceptanceResult}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.logger.LoggerBundle
@@ -631,6 +631,9 @@ object GlobalSnapshotAcceptanceManager {
         val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
           .getOrElse(environment, SnapshotOrdinal.MinValue)
 
+        val burnActionActivation = fieldsAddedOrdinals.burnActionActivation
+          .getOrElse(environment, SnapshotOrdinal.MinValue)
+
         loggerBundle.app.withOrdinal(ordinal) {
           for {
             _ <- loggerBundle.app.debug(
@@ -772,6 +775,17 @@ object GlobalSnapshotAcceptanceManager {
               .filter { case (_, actions) => actions.nonEmpty }
               .toSortedMap
 
+            // BurnActions are gated by burnActionActivation. Before activation they are ignored (collected as empty).
+            burnActionsEnabled = ordinal >= burnActionActivation
+            burnActions =
+              if (burnActionsEnabled)
+                sharedArtifacts
+                  .mapValues(_.collect { case ba: BurnAction => ba })
+                  .filter { case (_, actions) => actions.nonEmpty }
+                  .toSortedMap
+              else
+                SortedMap.empty[Address, List[BurnAction]]
+
             pricingUpdates = sharedArtifacts
               .mapValues(_.collect { case pu: PricingUpdate => pu })
               .filter { case (_, updates) => updates.nonEmpty }
@@ -800,6 +814,33 @@ object GlobalSnapshotAcceptanceManager {
               globalBalances,
               lastSnapshotContext
             )
+
+            // Validate BurnActions (additive, gated). Accepted burn transactions are applied to global balances after the spend step and
+            // their referenced allow spends are consumed alongside spend refs.
+            (acceptedBurnActions, _) <-
+              if (burnActions.nonEmpty)
+                BurnActionValidator
+                  .make[F]
+                  .validateReturningAcceptedAndRejected(
+                    burnActions,
+                    lastActiveAllowSpends,
+                    currencyBalances ++ globalBalances
+                  )
+              else
+                (
+                  Map.empty[Address, List[BurnAction]],
+                  Map.empty[Address, (BurnAction, List[BurnActionValidator.BurnActionValidationError])]
+                ).pure[F]
+
+            globalBurnTransactions = acceptedBurnActions.values.flatten
+              .flatMap(_.burnTransactions.toList)
+              .filter(_.currencyId.isEmpty)
+              .toList
+
+            allAcceptedBurnTxns = acceptedBurnActions.values.flatten
+              .flatMap(_.burnTransactions.toList)
+              .toList
+            burnAllowSpendRefs = allAcceptedBurnTxns.flatMap(_.allowSpendRef)
             acceptedSpendActionsMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
             rejectedSpendActionMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
             acceptedPricingUpdatesMessage =
@@ -873,7 +914,8 @@ object GlobalSnapshotAcceptanceManager {
                 activeAllowSpendsFromCurrencySnapshots,
                 globalAllowSpends,
                 globalActiveAllowSpends,
-                allAcceptedSpendTxns
+                allAcceptedSpendTxns,
+                burnAllowSpendRefs
               )
 
             updatedAllowSpendRefs = allowSpendStateManager.acceptAllowSpendRefs(
@@ -1009,6 +1051,17 @@ object GlobalSnapshotAcceptanceManager {
                 .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
             )
 
+            // Apply burns AFTER the spend step, feeding the spend step's output balances in. Burns reduce totalSupply (never credit).
+            (updatedBalancesByBurnTransactions, updatedBalancesByBurnTransactionsDeltas) = spendTransactionBalanceManager
+              .updateGlobalBalancesByBurnTransactions(
+                updatedBalancesBySpendTransactions,
+                allGlobalAllowSpends,
+                globalBurnTransactions
+              ) match {
+              case Right(balances) => balances
+              case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by burn transactions: $error")
+            }
+
             MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
               ordinal,
               updatedLastCurrencySnapshots
@@ -1067,7 +1120,7 @@ object GlobalSnapshotAcceptanceManager {
               initialData.blockResult,
               updatedLastStateChannelSnapshotHashes,
               transactionsRefs,
-              updatedBalancesBySpendTransactions,
+              updatedBalancesByBurnTransactions,
               updatedLastCurrencySnapshots,
               updatedLastCurrencySnapshotProofs,
               updatedAllowSpendsCleaned,
@@ -1103,7 +1156,8 @@ object GlobalSnapshotAcceptanceManager {
                 rewardBalancesDelta ++
                 updatedBalancesByAllowSpendsDeltas ++
                 updatedBalancesByTokenLocksDeltas ++
-                updatedBalancesBySpendTransactionsDeltas
+                updatedBalancesBySpendTransactionsDeltas ++
+                updatedBalancesByBurnTransactionsDeltas
 
             currencySnapshotsDeltas = incomingCurrencySnapshots.collect {
               case (address, snapshots) if snapshots.nonEmpty => address -> snapshots.last

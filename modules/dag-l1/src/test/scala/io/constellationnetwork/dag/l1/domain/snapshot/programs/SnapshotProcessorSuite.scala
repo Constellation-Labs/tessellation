@@ -186,6 +186,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       Map.empty,
                       Map.empty,
                       Map.empty,
+                      Map.empty,
                       Map.empty
                     ),
                     Dev,
@@ -253,6 +254,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
                 GlobalSnapshotAcceptanceManager.make(
                   FieldsAddedOrdinals(
+                    Map.empty,
                     Map.empty,
                     Map.empty,
                     Map.empty,

@@ -35,6 +35,10 @@ object types {
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
     setSumFix: Map[AppEnvironment, SnapshotOrdinal],
+    // Ordinal-gated activation of the L0 BurnAction primitive (Constellation-Labs/tessellation#1526). Fail-closed:
+    // an environment with no entry never activates burns (see burnActionActivationFor). Default empty keeps every
+    // network disabled until a coordinated activation ordinal is set, matching scFeeBalanceFromContext/subTrieRoots.
+    burnActionActivation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated balance source for state-channel fee affordability (commit dd6e83a19). At/after this ordinal the fee
     // check reads the metagraph owner's balance from the deterministic accept() context (lastGlobalSnapshotInfo.balances);
     // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. testnet is
