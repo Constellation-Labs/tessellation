@@ -71,17 +71,6 @@ object FacilitatorSelector {
       .map(Integer.parseInt(_, 16).toByte)
       .toArray
 
-  /** Deterministic per-(peer, ordinal) lottery score reusing the rendezvous hash.
-    *
-    * This is the fair tiebreak the bounded reward-rotation lane (`RewardRotation.rotateOneTier1`) consumes: it is the SAME SHA-256
-    * rendezvous mixing `select` / `selectLeaderWeighted` already use, keyed on the round ordinal so the lottery varies each epoch. The
-    * ordinal is rendered as a fixed-width 16-char hex string for the hash entropy, so the score is a pure function of `(peer, key)` --
-    * byte-identical on every honest node, no node-local input. Exposed publicly (the raw `rendezvousScore` is package-private) so the
-    * dag-l0 / currency-l0 StateCreators can thread it into `CommitteeBuilder.build` without reimplementing the hash.
-    */
-  def lotteryHash(peerId: PeerId, key: SnapshotOrdinal): BigInt =
-    rendezvousScore(peerId.value.value, f"${key.value.value}%016x")
-
   /** Order peers by their rendezvous score relative to a reference hash. */
   private[consensus] def orderByScore(referenceHash: Hash): Order[PeerId] =
     Order.by(peerId => rendezvousScore(peerId.value.value, referenceHash.value))
