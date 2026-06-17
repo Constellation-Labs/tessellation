@@ -21,9 +21,11 @@ import io.constellationnetwork.schema.peer.PeerId
   *
   * ==Reward and signer pool==
   *
-  * `lastArtifact.proofs.map(_.id)` is the reward facilitator set (see `Rewards.distribute`). Anyone who signs the finalized snapshot earns
-  * an equal share. Tier 1 peers are in `roundStartFacilitators`, sign just like Core peers, and split the facilitator reward pool evenly.
-  * There is no Core-vs-Tier-1 stratification in today's reward math.
+  * Delegated rewards (the mainnet mechanism) follow the round COMMITTEE, not the signer subset: the consensus facilitator set
+  * (`roundStartFacilitators` = Core + Tier 1 + Witness) is threaded to the distributor as `lastFacilitators` in
+  * `GlobalSnapshotConsensusFunctions` (built from the current-round facilitators, explicitly not `lastArtifact.proofs`). Every committee
+  * member earns an equal share; there is no Core-vs-Tier-1 stratification in today's reward math. The legacy classic-rewards path still
+  * keys off `lastArtifact.proofs` (= signers), but mainnet runs delegated.
   *
   * ==Tier assignment rule==
   *
@@ -137,8 +139,7 @@ object CommitteeBuilder {
     *   Peers allowed into the round as non-Core participants only. They are forced to Tier 1 unless they were already Witness, and they are
     *   skipped by Core-floor promotion. This is used for probationary expansion: the peer can receive facilities and produce signer
     *   evidence, but cannot raise the liveness quorum denominator before the integral controller graduates it. Non-bypassable: even the
-    *   chronic ladder's liveness fallback never re-admits a probation peer into Core. The reward-rotation lane ALSO excludes these peers
-    *   from both the rotate-in pool and the rotate-out (tier1) candidates, so probation peers stay on their own rehab lane untouched.
+    *   chronic ladder's liveness fallback never re-admits a probation peer into Core.
     * @param chronicMisses
     *   `controllerInputs.chronicMisses` -- evidence-derived trailing miss counts for chronically-missing peers (see the chronic-core
     *   replacement ladder above). Empty in the fallback regime or when no peer is chronic, which makes the whole ladder inert.

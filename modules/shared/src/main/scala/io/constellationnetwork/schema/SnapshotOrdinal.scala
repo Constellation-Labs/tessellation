@@ -42,6 +42,9 @@ object SnapshotOrdinal {
   }
 
   val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
+  // Fail-closed sentinel for ordinal activation gates: an `ordinal >= gate` check never fires at
+  // MaxValue, so a gate that defaults to this stays OFF (legacy behavior) until explicitly set.
+  val MaxValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MaxValue)
   val MinIncrementalValue: SnapshotOrdinal = next.next(MinValue)
 
   def unsafeApply(value: Long): SnapshotOrdinal =

@@ -147,7 +147,9 @@ object GlobalSnapshotConsensus {
             sharedServices.currencySnapshotContextFns,
             feeCalculator,
             mptStore,
-            sharedCfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+            // Fail closed: an unset env must NOT silently activate the new context-balance path from
+            // genesis (that would diverge replay), so default to MaxValue = gate never fires.
+            sharedCfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(sharedCfg.environment, SnapshotOrdinal.MaxValue)
           ),
           sharedServices.updateNodeParametersAcceptanceManager,
           sharedServices.updateDelegatedStakeAcceptanceManager,
