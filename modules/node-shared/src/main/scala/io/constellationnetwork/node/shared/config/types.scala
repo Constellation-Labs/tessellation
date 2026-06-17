@@ -1134,11 +1134,11 @@ object types {
     // v33 quorum-denominator shrink activation threshold, keyed by AppEnvironment (the
     // coreCommitteeSize pattern: env resolution happens once at the construction site and the
     // resolved scalar is threaded into `ConsensusConfig.quorumShrinkActivationViews`, which
-    // folds into `deterministicConfigHash`). An absent env entry means the rung is DISABLED
-    // for that environment (resolved scalar 0). Testnet runs an aggressive value; mainnet has
-    // no entry on purpose -- the rung trades partition safety for liveness in its deep stage
-    // (see QuorumDenominatorShrink scaladoc) and must be opted into per environment.
-    quorumShrinkActivationViews: Map[AppEnvironment, PosInt] = Map.empty,
+    // folds into `deterministicConfigHash`). 0 (or an absent env) DISABLES the rung for that
+    // environment, matching the resolved scalar's `<= 0` disable. Same Int shape as the sibling
+    // activeAdmission* knobs below. Testnet runs an aggressive value; mainnet/integrationnet/dev
+    // are 0 -- the deep stage trades partition safety for liveness and is opted into per env.
+    quorumShrinkActivationViews: Map[AppEnvironment, Int] = Map.empty,
     // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved scalar is threaded
     // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into

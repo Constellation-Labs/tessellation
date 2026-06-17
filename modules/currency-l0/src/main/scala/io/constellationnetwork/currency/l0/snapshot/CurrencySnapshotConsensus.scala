@@ -108,7 +108,7 @@ object CurrencySnapshotConsensus {
     // v33: env-resolved quorum-denominator-shrink activation threshold (absent env entry = 0 =
     // rung disabled). Mirror of GlobalSnapshotConsensus.
     val resolvedQuorumShrinkActivationViews: Int =
-      snapshotConfig.quorumShrinkActivationViews.get(environment).map(_.value).getOrElse(0)
+      snapshotConfig.quorumShrinkActivationViews.get(environment).getOrElse(0)
     // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry = 0 =
     // lane inert). Mirror of GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the
     // consensus config copy below.
