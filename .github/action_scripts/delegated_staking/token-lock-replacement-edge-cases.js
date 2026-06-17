@@ -40,7 +40,6 @@ const {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
-  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,
@@ -348,23 +347,13 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     amount = newAmount
     logWorkflow.info(`  Sequential replacement ${i} verified ✓`)
     
-    // Wait for 2 ordinal progressions + L1 sync before next replacement.
-    // One progression isn't enough: GL0 has the new lock at ordinal N, but the
-    // global snapshot for N still needs to reach L1 and be processed before L1
-    // will accept a replacement referencing the new lock. Otherwise L1 returns
-    // NothingToReplace.
+    // Wait for ordinal progression + L1 sync before next replacement
     if (i < 3) {
-      logWorkflow.info('  Waiting for 2 ordinal progressions before next replacement...')
-      let startOrdinal = null
+      logWorkflow.info('  Waiting for ordinal progression before next replacement...')
       await withRetryOrdinal(
-        async ({ ordinal }) => {
-          if (startOrdinal === null) {
-            startOrdinal = ordinal
-            throw new Error(`Captured start ordinal: ${ordinal}`)
-          }
-          if (ordinal - startOrdinal < 2) {
-            throw new Error(`Waiting for 2 ordinal progressions from ${startOrdinal}: at ${ordinal}`)
-          }
+        async ({ ordinal, prevOrdinal }) => {
+          if (!prevOrdinal) throw new Error('Waiting for first ordinal')
+          if (ordinal - prevOrdinal < 1) throw new Error(`Waiting for ordinal progression: ${ordinal}`)
           return true
         },
         { globalL0Url: urls.globalL0Url, name: `waitBeforeReplacement${i + 1}`, maxOrdinalMisses: 10, maxStalledChecks: 30 }
@@ -497,13 +486,13 @@ const setupNodeParameters = async (urls) => {
     privateKeyString: privateKeyString1,
     nodeId: nodeId1,
     account: account1,
-  } = extractKeysAndAccount(resolveNodeKeyPath('genesis-node', 0))
+  } = extractKeysAndAccount('../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex')
 
   const {
     privateKeyString: privateKeyString2,
     nodeId: nodeId2,
     account: account2,
-  } = extractKeysAndAccount(resolveNodeKeyPath('validator-1', 1))
+  } = extractKeysAndAccount('../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex')
 
   // Set up node 1 params
   const ur1 = await postNodeParamsNodeId(
@@ -532,83 +521,6 @@ const setupNodeParameters = async (urls) => {
 }
 
 /**
- * Clean up all existing delegated stakes and token locks for an account.
- *
- * Withdraws all active stakes, waits for pending withdrawals to drain, then
- * waits for the address's active token locks to drain. Stake withdrawal emits
- * a TokenUnlock that eventually frees the underlying lock from currentTokenLocks,
- * but the lock can persist in the validator's view past the point where pending
- * withdrawals reach zero, so we must poll the locks endpoint independently.
- *
- * Without this, persistent clusters (e.g. the nightly E2E environment that
- * reuses the same account hourly) accumulate locks until the address hits
- * TooManyTokenLocksForAddress on the next createTokenLock.
- */
-const cleanupExistingStakes = async (urls, account) => {
-  const response = await getAccountDelegatedStakes(urls, account.address)
-  const active = response.activeDelegatedStakes || []
-  const pending = response.pendingWithdrawals || []
-  const initialLocks = await getActiveTokenLocks(urls, account.address)
-
-  if (active.length === 0 && pending.length === 0 && initialLocks.length === 0) {
-    logWorkflow.info('No pre-existing stakes or token locks to clean up')
-    return
-  }
-
-  logWorkflow.info(
-    `Cleaning up ${active.length} active stakes, ${pending.length} pending withdrawals, ${initialLocks.length} token locks`
-  )
-
-  for (const stake of active) {
-    logWorkflow.info(`  Withdrawing stake ${stake.hash.substring(0, 16)}...`)
-    try {
-      await withdrawDelegatedStake(account, stake.hash)
-    } catch (e) {
-      // Stake may already be withdrawing from a prior interrupted run
-      if (e.message && e.message.includes('already')) {
-        logWorkflow.info(`  Stake already withdrawing, skipping`)
-      } else {
-        throw e
-      }
-    }
-  }
-
-  await withRetryOrdinal(
-    async () => {
-      const r = await getAccountDelegatedStakes(urls, account.address)
-      if (r.activeDelegatedStakes.length > 0)
-        throw new Error(`Still ${r.activeDelegatedStakes.length} active stakes`)
-      if (r.pendingWithdrawals.length > 0)
-        throw new Error(`Still ${r.pendingWithdrawals.length} pending withdrawals`)
-    },
-    {
-      globalL0Url: urls.globalL0Url,
-      name: 'cleanupExistingStakes:stakes',
-      maxOrdinalMisses: 60,
-      maxStalledChecks: 120,
-      interval: 5000,
-    },
-  )
-
-  await withRetryOrdinal(
-    async () => {
-      const locks = await getActiveTokenLocks(urls, account.address)
-      if (locks.length > 0)
-        throw new Error(`Still ${locks.length} active token locks`)
-    },
-    {
-      globalL0Url: urls.globalL0Url,
-      name: 'cleanupExistingStakes:tokenLocks',
-      maxOrdinalMisses: 60,
-      maxStalledChecks: 120,
-      interval: 5000,
-    },
-  )
-
-  logWorkflow.info('Pre-existing stakes and token locks cleaned up')
-}
-
-/**
  * Main test runner
  */
 const testTokenLockReplacementEdgeCases = async (urls) => {
@@ -626,71 +538,55 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
   const nodeIds = nodeParams.map(p => p.peerId)
   const nodeId2 = nodeParams.length > 1 ? nodeParams[1].peerId : nodeParams[0].peerId
 
-  // Clean up any leftover state from prior runs (stakes + their token locks).
-  // On persistent clusters (nightly), repeated runs accumulate locked balance
-  // until the account hits InsufficientBalance or TooManyTokenLocksForAddress.
-  await cleanupExistingStakes(urls, account)
+  // Test 1: Replace with same amount (should fail)
+  const { lockHash, stakeHash, lockAmount } = await testReplaceSameAmount(urls, account, nodeIds)
 
-  try {
-    // Test 1: Replace with same amount (should fail)
-    const { lockHash, stakeHash, lockAmount } = await testReplaceSameAmount(urls, account, nodeIds)
+  // Test 2: Replace with less amount (should fail)
+  await testReplaceLessAmount(urls, account, lockHash, lockAmount)
 
-    // Test 2: Replace with less amount (should fail)
-    await testReplaceLessAmount(urls, account, lockHash, lockAmount)
+  // Test 3: Replace non-existent token lock ref (should fail)
+  await testReplaceNonExistentRef(urls, account)
 
-    // Test 3: Replace non-existent token lock ref (should fail)
-    await testReplaceNonExistentRef(urls, account)
+  // Test 4: Replace with minimum valid increase (+1 datum)
+  const { newLockHash, newAmount } = await testReplaceMinimumIncrease(
+    urls, account, lockHash, lockAmount, stakeHash
+  )
 
-    // Test 4: Replace with minimum valid increase (+1 datum)
-    const { newLockHash, newAmount } = await testReplaceMinimumIncrease(
-      urls, account, lockHash, lockAmount, stakeHash
-    )
+  // Wait for 2 ordinal progressions to ensure lock is fully propagated to L1.
+  // One progression isn't enough with slow rounds (43s): the lock lands in ordinal N,
+  // the global snapshot for N needs to reach L1, and L1 needs to process it.
+  // Two progressions guarantees the lock's snapshot has been accepted and L1 is current.
+  logWorkflow.info('Waiting for 2 ordinal progressions before sequential replacements...')
+  // Compare against a FIXED baseline (first observed ordinal), not the previous
+  // poll: on slow networks the ordinal advances by exactly 1 between polls, so
+  // a consecutive-poll delta of 2 is unsatisfiable even though rounds progress.
+  let baselineOrdinal = null
+  await withRetryOrdinal(
+    async ({ ordinal }) => {
+      if (baselineOrdinal === null) {
+        baselineOrdinal = ordinal
+        throw new Error('Waiting for first ordinal')
+      }
+      if (ordinal - baselineOrdinal < 2) throw new Error(`Waiting for 2 ordinal progressions: ${ordinal}`)
+      return true
+    },
+    { globalL0Url: urls.globalL0Url, name: 'waitForLockPropagation', maxOrdinalMisses: 10, maxStalledChecks: 60 }
+  )
+  await sleep(5000) // Extra buffer for L1 to process the snapshot
 
-    // Wait for 2 ordinal progressions to ensure lock is fully propagated to L1.
-    // One progression isn't enough with slow rounds (43s): the lock lands in ordinal N,
-    // the global snapshot for N needs to reach L1, and L1 needs to process it.
-    // Two progressions guarantees the lock's snapshot has been accepted and L1 is current.
-    logWorkflow.info('Waiting for 2 ordinal progressions before sequential replacements...')
-    let startOrdinal = null
-    await withRetryOrdinal(
-      async ({ ordinal }) => {
-        if (startOrdinal === null) {
-          startOrdinal = ordinal
-          throw new Error(`Captured start ordinal: ${ordinal}`)
-        }
-        if (ordinal - startOrdinal < 2) {
-          throw new Error(`Waiting for 2 ordinal progressions from ${startOrdinal}: at ${ordinal}`)
-        }
-        return true
-      },
-      { globalL0Url: urls.globalL0Url, name: 'waitForLockPropagation', maxOrdinalMisses: 10, maxStalledChecks: 60 }
-    )
-    await sleep(5000) // Extra buffer for L1 to process the snapshot
+  // Test 5: Multiple sequential replacements
+  await testMultipleSequentialReplacements(urls, account, newLockHash, newAmount, stakeHash)
 
-    // Test 5: Multiple sequential replacements
-    await testMultipleSequentialReplacements(urls, account, newLockHash, newAmount, stakeHash)
+  // Wait for L1 to sync latest global snapshots before next test to avoid ordinal conflicts
+  logWorkflow.info('Waiting for L1 sync before withdrawal test...')
+  await sleep(10000)
 
-    // Wait for L1 to sync latest global snapshots before next test to avoid ordinal conflicts
-    logWorkflow.info('Waiting for L1 sync before withdrawal test...')
-    await sleep(10000)
+  // Test 6: Replace while stake is in withdrawal
+  await testReplaceWhileInWithdrawal(urls, account, nodeId2)
 
-    // Test 6: Replace while stake is in withdrawal
-    await testReplaceWhileInWithdrawal(urls, account, nodeId2)
-
-    logWorkflow.info('========================================')
-    logWorkflow.info('All edge case tests completed!')
-    logWorkflow.info('========================================')
-  } finally {
-    // Always clean up — withdraw all stakes so token locks are freed and balance
-    // is returned. This runs even if a test fails midway, preventing state from
-    // accumulating across runs on persistent clusters.
-    logWorkflow.info('---- Cleanup: withdrawing all stakes ----')
-    try {
-      await cleanupExistingStakes(urls, account)
-    } catch (cleanupErr) {
-      logWorkflow.error(`Cleanup failed: ${cleanupErr.message}`)
-    }
-  }
+  logWorkflow.info('========================================')
+  logWorkflow.info('All edge case tests completed!')
+  logWorkflow.info('========================================')
 }
 
 const executeWorkflowByType = async (workflowType) => {
