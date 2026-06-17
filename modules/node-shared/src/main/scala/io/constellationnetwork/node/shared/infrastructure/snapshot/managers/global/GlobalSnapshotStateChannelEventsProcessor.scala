@@ -8,8 +8,10 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.types.FieldsAddedOrdinals
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
@@ -61,10 +63,17 @@ object GlobalSnapshotStateChannelEventsProcessor {
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     feeCalculator: FeeCalculator[F],
     mptStore: MptStore[F, GlobalStateKey],
-    scFeeBalanceFromContextOrdinal: SnapshotOrdinal
+    fieldsAddedOrdinals: FieldsAddedOrdinals,
+    environment: AppEnvironment
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
+
+      // Ordinal-gated SC fee-balance source, resolved from config here rather than threaded as a bare
+      // ordinal. Fail closed: an unset env defaults to MaxValue so the context-balance path stays OFF
+      // (the gate never fires) rather than activating from genesis and diverging replay.
+      private val scFeeBalanceFromContextOrdinal: SnapshotOrdinal =
+        fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(environment, SnapshotOrdinal.MaxValue)
 
       def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
         JsonSerializer[F].deserialize[A](binary.value.content).map(_.toOption)
