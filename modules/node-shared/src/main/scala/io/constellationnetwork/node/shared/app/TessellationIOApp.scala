@@ -137,6 +137,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                 logger.info(s"App environment: ${cfg.environment}") >>
                 logger.info(s"App version: ${version.show}") >>
                 logger.info(s"App collateral: ${cfg.collateral.amount.show}") >>
+                TessellationIOApp.logHeapCheck(logger) >>
                 jarHash(cfg.environment).flatMap { jarHash =>
                   logger.info(s"Jar hash: ${jarHash.value}") >>
                     KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
@@ -373,5 +374,36 @@ abstract class TessellationIOApp[A <: CliMethod](
         password.value.value.toCharArray,
         password.value.value.toCharArray
       )
+
+}
+
+object TessellationIOApp {
+
+  /** Recommended JVM max heap (megabytes) for a validator participating in global consensus.
+    *
+    * Matches the mainnet default documented in `docker/bin/docker-env-setup.sh` (-Xmx8192M = 8 GB).
+    *
+    * Under-provisioned heap causes long stop-the-world GC pauses -- observed on testnet: a validator with an undersized heap stalled for
+    * 21.5 seconds in a single GC event, backing up the consensus command queue and indirectly draining neighbor peers that were waiting on
+    * its HTTP responses. This constant is the threshold we log a warning at; it is not enforced (operators may still run under-provisioned
+    * nodes, they just see a loud startup message).
+    */
+  private val RecommendedHeapMb: Long = 8192L
+
+  /** Emit a startup log line describing the JVM max heap, and a loud error if it is below the recommended floor. Operators see this on
+    * every startup regardless of launcher (docker, systemd, bare JVM, etc.) because it reads `Runtime.getRuntime.maxMemory()` directly.
+    */
+  def logHeapCheck(logger: org.typelevel.log4cats.SelfAwareStructuredLogger[IO]): IO[Unit] =
+    IO(Runtime.getRuntime.maxMemory() / (1024L * 1024L)).flatMap { heapMaxMb =>
+      if (heapMaxMb < RecommendedHeapMb)
+        logger.error(
+          s"JVM max heap = ${heapMaxMb}MB, below recommended ${RecommendedHeapMb}MB. " +
+            s"Undersized heap causes long GC pauses which stall consensus and degrade cluster " +
+            s"throughput. Set JVM max heap to at least ${RecommendedHeapMb}m via your launcher " +
+            s"(e.g. -Xmx${RecommendedHeapMb}m, JAVA_OPTS, or jvm.options)."
+        )
+      else
+        logger.info(s"JVM max heap = ${heapMaxMb}MB (recommended >= ${RecommendedHeapMb}MB).")
+    }
 
 }

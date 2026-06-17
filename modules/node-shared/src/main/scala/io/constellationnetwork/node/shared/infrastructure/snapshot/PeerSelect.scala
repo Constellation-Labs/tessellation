@@ -5,6 +5,7 @@ import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.effect.syntax.concurrent._
+import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -17,7 +18,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.http.p2p.clients.SnapshotClient
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.schema.node.NodeState.Ready
+import io.constellationnetwork.schema.node.NodeState.{Observing, Ready, WaitingForReady}
 import io.constellationnetwork.schema.peer.Peer.toP2PContext
 import io.constellationnetwork.schema.peer.{L0Peer, Peer}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
@@ -54,6 +55,7 @@ object PeerSelect {
   val defaultPeerTrustScore: TrustValueRefined = 1e-4
 
   case object NoPeersToSelect extends NoStackTrace
+  case object NoValidPeersForRecoverySource extends NoStackTrace
   case object NoHashes extends NoStackTrace
 
   def make[F[_]: Async: Random, S <: Snapshot, SI <: SnapshotInfo[_]](
@@ -68,9 +70,31 @@ object PeerSelect {
       .flatTap(details => logger.debug(details.asJson.noSpaces))
       .map(_.selectedPeer)
 
-    def getFilteredPeerDetails: F[FilteredPeerDetails] = for {
-      peers <- storage.getResponsivePeers
-        .map(_.filter(_.state === Ready))
+    /** Recovery variant: try `select` first; if it raises `NoPeersToSelect`, retry with the Observing pool, raising
+      * `NoValidPeersForRecoverySource` if even that is empty. Lets callers in the recovery path distinguish "no Ready peer right now"
+      * (often resolves on its own) from "no candidate source at all" (operator action needed).
+      */
+    def selectForRecovery: F[L0Peer] = select.recoverWith {
+      case NoPeersToSelect =>
+        getFilteredPeerDetails(observingFallback = true)
+          .flatTap(details => logger.debug(details.asJson.noSpaces))
+          .map(_.selectedPeer)
+          .recoverWith { case NoPeersToSelect => MonadThrow[F].raiseError(NoValidPeersForRecoverySource) }
+    }
+
+    def getFilteredPeerDetails: F[FilteredPeerDetails] = getFilteredPeerDetails(observingFallback = false)
+
+    def getFilteredPeerDetails(observingFallback: Boolean): F[FilteredPeerDetails] = for {
+      // WaitingForReady peers hold the same snapshot state as Ready peers (initFromDownload
+      // already ran trySetInitialConsensusOutcome). Including them in the primary pool
+      // prevents the post-rollback bottleneck where only the rollback-lead node is Ready
+      // while sibling source nodes await a round to close: joining peers funnel through
+      // the lone Ready peer for snapshot downloads and stall.
+      peers <- storage.getResponsivePeers.map { all =>
+        val primary = all.filter(p => p.state === Ready || p.state === WaitingForReady)
+        if (primary.nonEmpty || !observingFallback) primary
+        else all.filter(_.state === Observing)
+      }
         .flatMap(getPeerSublist)
         .flatMap { peerSublist =>
           MonadThrow[F].fromOption(peerSublist.toNel, NoPeersToSelect)

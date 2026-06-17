@@ -10,6 +10,8 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import scala.concurrent.ExecutionContext
+
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
@@ -32,7 +34,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.collateral.MptStoreCollateral
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
-import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipClient, RecoveryPeerHint}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient, RecoveryPeerHint}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -67,7 +69,9 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     txHasher: Hasher[F],
-    loggerBundle: LoggerBundle[F]
+    loggerBundle: LoggerBundle[F],
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    consensusEc: Option[ExecutionContext] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
@@ -139,7 +143,13 @@ object Services {
             eventMempoolService,
             eventGossipClient,
             loggerBundle,
-            queues.rumor
+            queues.rumor,
+            getPeerChainTips,
+            // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
+            // into the SharedServices-owned Ref; Cluster reads from the same Ref via the
+            // consensusHealth thunk passed at Cluster.make time.
+            injectedHealthRef = Some(sharedServices.consensusHealthRef),
+            consensusEc = consensusEc
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](

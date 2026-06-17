@@ -117,6 +117,7 @@ jobs:
       CL_TIME_TRIGGER_INTERVAL: "43 seconds"
       CL_MAX_ROUND_DURATION: "5 minutes"
       CL_EVENT_TRIGGER_COOLDOWN: "15 seconds"
+      CL_QUORUM_THRESHOLD_FRACTION: "1.0"
 
     steps:
       - name: Checkout code

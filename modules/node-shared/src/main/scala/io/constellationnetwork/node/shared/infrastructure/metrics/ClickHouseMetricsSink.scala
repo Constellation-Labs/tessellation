@@ -2,7 +2,10 @@ package io.constellationnetwork.node.shared.infrastructure.metrics
 
 import cats.effect._
 import cats.effect.std.Queue
+import cats.effect.syntax.all._
 import cats.syntax.all._
+
+import scala.concurrent.duration._
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics._
@@ -79,6 +82,9 @@ object ClickHouseMetricsSink {
       _ <- startFlusher(queue, writer, config, pausedUntil, logger)
     } yield new Impl[F](queue, logger, config.tableName)
 
+  // 15s timeout matches ClickHouseSink.connectTimeout — guards against `getConnection`
+  // or DDL execution stalling indefinitely if ClickHouse becomes unreachable between
+  // pool init and table creation.
   private def initTable[F[_]: Async](ds: HikariDataSource, tableName: String, retentionPeriodInDays: Int): F[Unit] =
     Async[F].blocking {
       val conn = ds.getConnection
@@ -87,7 +93,9 @@ object ClickHouseMetricsSink {
         try stmt.execute(createTableDDL(tableName, retentionPeriodInDays))
         finally stmt.close()
       } finally conn.close()
-    }.void
+    }
+      .timeout(15.seconds)
+      .void
 
   private def startFlusher[F[_]: Async](
     queue: Queue[F, QueuedMetric],

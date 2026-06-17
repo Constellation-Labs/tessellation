@@ -730,7 +730,7 @@ object Mocks {
       }
 
       private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
-        stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
+        stakeRecord.amount.value.value + stakeRecord.rewards.value
 
       private def getTotalActiveStake(
         activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
@@ -947,7 +947,7 @@ object Mocks {
               lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
               delegatorRewardPool,
               delegatedStakeDiffs.acceptedCreates
-            ).map(_.toSortedMap)
+            ).map(_.map { case (k, v) => k -> SortedMap.from(v) }.toSortedMap)
 
           nodeOperatorRewards <-
             calculateNodeOperatorRewards(

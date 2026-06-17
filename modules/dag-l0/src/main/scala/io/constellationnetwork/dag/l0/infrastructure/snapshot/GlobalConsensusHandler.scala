@@ -13,7 +13,7 @@ import io.constellationnetwork.security.HasherSelector
 
 object GlobalConsensusHandler {
   def make[F[_]: Async: HasherSelector](
-    queue: Queue[F, ConsensusCommand]
+    queue: Queue[F, ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]]
   ): RumorHandler[F] = {
     val all = new ConsensusRumorHandlers[
       F,
@@ -31,6 +31,11 @@ object GlobalConsensusHandler {
       all.signatureHandler <+>
       all.ackHandler <+>
       all.artifactHandler <+>
-      all.withdrawHandler
+      all.withdrawHandler <+>
+      all.viewChangeVoteHandler <+>
+      all.timeoutVoteHandler <+>
+      all.evictionVoteHandler <+>
+      all.admissionVoteHandler <+>
+      all.assembledVccHandler
   }
 }

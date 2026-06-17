@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import monocle.Lens
@@ -33,7 +34,11 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   stallDetector: StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   roundFibersRef: Ref[F, List[Fiber[F, Throwable, Unit]]],
   cancelSignalRef: Ref[F, Option[Deferred[F, Unit]]]
-)(implicit outcomeKey: Lens[Outcome, Key], supervisor: Supervisor[F]) {
+)(
+  implicit outcomeKey: Lens[Outcome, Key],
+  outcomeArtifact: Lens[Outcome, Signed[Artifact]],
+  supervisor: Supervisor[F]
+) {
 
   import ctx.{advancer, config, creator, logger, queue, storage, updater}
 
@@ -55,14 +60,18 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
+        // No outcome exists yet — round cannot run. Unconditional (no attempt-id): the queue is
+        // already quiescent and the FSM must Idle cleanly.
         ConsensusLog.warn(logger, Category.Lifecycle, "n/a", "n/a", LogEvent.NoPreviousOutcome) >>
           Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          queue.offer(ConsensusCommand.RoundCompleted(None))
 
       case Some(outcome) =>
         val nextKey = outcomeKey.get(outcome).next
         val lastKey = outcomeKey.get(outcome)
-        ConsensusLog.info(
+        val lastArtifact = outcomeArtifact.get(outcome)
+        val lastSignerIds = lastArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
+        ConsensusLog.debug(
           logger,
           Category.Lifecycle,
           nextKey.toString,
@@ -70,6 +79,8 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           LogEvent.RoundFacilitating,
           "trigger" -> trigger.toString,
           "lastKey" -> lastKey.toString,
+          "lastSigners" -> lastSignerIds,
+          "lastSignerCount" -> lastArtifact.proofs.size.toString,
           "declarationTimeout" -> config.declarationTimeout.toString,
           "timeTriggerInterval" -> config.timeTriggerInterval.toString
         ) >>
@@ -79,31 +90,62 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   private def facilitateRound(lastOutcome: Outcome, key: Key, trigger: Option[ConsensusTrigger]): F[Unit] =
     for {
       resources <- storage.getResources(key)
-      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources)
+      // Retry/view-change history is passed as a compatibility and diagnostic signal only. Consensus
+      // implementations must not treat a local counter or single VCV as quorum evidence for
+      // proposal-critical view/leader seeding.
+      priorAbandonmentCount = (resources.viewChangeVotes.keys.map(_._2).maxOption match {
+        case Some(maxToView) => maxToView + 1
+        case None            => 0L
+      }).toInt
+      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources, priorAbandonmentCount)
 
+      // Validators must not produce solo — solo production from multiple validators creates
+      // divergent forks when they restart simultaneously. Abort the round if this is a
+      // validator node and the facilitator set is just self.
+      // Note: only block when selfId IS in the facilitator set. If selfId is NOT a facilitator
+      // (e.g., a joining node observing rounds before candidate registration), let it follow
+      // the round as an observer - it won't produce its own snapshot.
+      isValidator <- ctx.nodeStorage.isValidatorMode
       _ <- facilitated match {
         case Some(_) =>
           storage.getState(key).flatMap { maybeState =>
             val leaderInfo = maybeState.map(s => ConsensusLog.pid(s.leader)).getOrElse("unknown")
             val count = maybeState.map(_.facilitators.value.size).getOrElse(0)
             val role = maybeState.map(s => ConsensusLog.role(ctx.selfId, s.leader)).getOrElse("n/a")
+            val selfIsFacilitator = maybeState.exists(_.facilitators.value.contains(ctx.selfId))
 
-            Metrics[F].incrementCounter(
-              "dag_consensus_round_facilitated",
-              Seq(unsafeLabelName("outcome") -> "success")
-            ) >>
-              ConsensusLog.info(
+            if (isValidator && count <= 1 && selfIsFacilitator) {
+              // Validator refused to facilitate solo: snapshot current attemptId so the FSM drops
+              // this RoundCompleted if another node's gossip advances our round before dequeue.
+              ConsensusLog.warn(
                 logger,
                 Category.Lifecycle,
                 key.toString,
                 role,
-                LogEvent.RoundFacilitated,
-                "leader" -> leaderInfo,
+                LogEvent.RoundBlockedByState,
+                "reason" -> "validator_solo_blocked",
                 "facilitators" -> count.toString
-              )
-          } >>
-            startRoundMonitor(key) >>
-            doInitialCheck(key)
+              ) >>
+                Metrics[F].incrementCounter("dag_consensus_validator_solo_blocked") >>
+                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+            } else {
+              Metrics[F].incrementCounter(
+                "dag_consensus_round_facilitated",
+                Seq(unsafeLabelName("outcome") -> "success")
+              ) >>
+                ConsensusLog.info(
+                  logger,
+                  Category.Lifecycle,
+                  key.toString,
+                  role,
+                  LogEvent.RoundFacilitated,
+                  "leader" -> leaderInfo,
+                  "facilitators" -> count.toString
+                ) >>
+                startRoundMonitor(key) >>
+                doInitialCheck(key)
+            }
+          }
 
         case None =>
           handleExistingOrMissingState(key)
@@ -130,12 +172,14 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           doInitialCheck(key)
 
       case None =>
+        // No state for this key — state may have been wiped mid-facilitate, or the creator never
+        // produced one. Snapshot attemptId; a concurrent advance should override this completion.
         Metrics[F].incrementCounter(
           "dag_consensus_round_facilitated",
           Seq(unsafeLabelName("outcome") -> "no_state")
         ) >>
           ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.NoState) >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
     }
 
   private def doInitialCheck(key: Key): F[Unit] =

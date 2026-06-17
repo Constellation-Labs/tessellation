@@ -34,6 +34,10 @@ package object shared {
       classOf[Proposal] -> 508,
       classOf[MajoritySignature] -> 509,
       classOf[ConsensusArtifact[_, _]] -> 510,
+      classOf[ProposalQC] -> 511,
+      classOf[ViewChangeVote] -> 512,
+      classOf[ViewChangeCertificate] -> 513,
+      classOf[ConsensusPeerVote[_]] -> 514,
       // classOf[PeerMismatch] -> 520,
       // classOf[PeerCheckTimeouted] -> 521,
       // classOf[PeerCheckUnexpectedError] -> 522,
@@ -48,6 +52,25 @@ package object shared {
       TimeTrigger.getClass -> 531,
       classOf[DataApplicationBlock] -> 532,
       classOf[BinarySignature] -> 533,
-      classOf[GlobalSyncView] -> 534 // Since the genesis snapshot is kryo encoded we need this
+      classOf[GlobalSyncView] -> 534, // Since the genesis snapshot is kryo encoded we need this
+      // Kryo ID 535 previously registered StallReport (removed with TimeoutAggregator revert)
+      // Phase B1 EvictionVote mechanism: signed negative-evidence votes, quorum-certified,
+      // embedded in next Proposal to remove persistently-absent peers from the committee.
+      classOf[EvictionVote] -> 535,
+      classOf[EvictionCertificate] -> 536,
+      classOf[ConsensusPeerEvictionVote[_]] -> 537,
+      EvictionReason.Silent.getClass -> 538,
+      // Phase B2 AdmissionVote mechanism: signed positive-evidence votes, quorum-certified,
+      // embedded in next Proposal to re-admit previously-removed peers that have demonstrated
+      // current-tip participation. Symmetric to B1 eviction.
+      classOf[AdmissionVote] -> 539,
+      classOf[AdmissionCertificate] -> 540,
+      classOf[ConsensusPeerAdmissionVote[_]] -> 541,
+      AdmissionReason.ReadyAtTip.getClass -> 542,
+      classOf[TimeoutVote] -> 543,
+      classOf[TimeoutCertificate] -> 544,
+      classOf[ConsensusPeerTimeoutVote[_]] -> 545,
+      TimeoutReason.NoProgress.getClass -> 546,
+      TimeoutReason.QuorumInfeasible.getClass -> 547
     ).union(sharedKryoRegistrar)
 }

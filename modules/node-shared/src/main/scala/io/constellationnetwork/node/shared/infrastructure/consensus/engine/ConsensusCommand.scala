@@ -2,12 +2,25 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.gossip.{CommonRumor, PeerRumor}
-import io.constellationnetwork.schema.peer.Peer
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.security.signature.Signed
 
 /** Commands that drive the Consensus Finite State Machine (FSM).
   *
   * The consensus engine is event-driven: all state changes happen in response to commands placed on a queue. This decouples the sources of
   * events (gossip, timers, API calls) from the processing logic, making the system easier to reason about and test.
+  *
+  * ==Type parameters==
+  *
+  * The trait is parameterized by the four engine types that previously leaked through as `Any` and were recovered via unsafe `asInstanceOf`
+  * inside the FSM dispatch:
+  *   - `Key` — consensus round key (e.g. `GlobalSnapshotKey`)
+  *   - `Artifact` — produced artifact (e.g. `GlobalIncrementalSnapshot`); only `Signed[Artifact]` is carried
+  *   - `Ctx` — consensus context (e.g. `GlobalSnapshotContext`)
+  *   - `Outcome` — final round outcome (carries key, artifact, context, trigger via lenses)
+  *
+  * Variance is `+` on every parameter so the no-payload commands (`TimeTick`, `WithdrawFromConsensus`, etc.) can declare
+  * `ConsensusCommand[Nothing, Nothing, Nothing, Nothing]` and remain assignable into any specialized queue.
   *
   * ==Command Categories==
   *
@@ -31,21 +44,47 @@ import io.constellationnetwork.schema.peer.Peer
   * @see
   *   ConsensusFSM for command routing logic
   */
-
-sealed trait ConsensusCommand
+sealed trait ConsensusCommand[+Key, +Artifact, +Ctx, +Outcome]
 
 object ConsensusCommand {
-  case class RumorReceived(rumor: Either[PeerRumor[_], CommonRumor[_]]) extends ConsensusCommand
-  case class StartRound(trigger: Option[ConsensusTrigger]) extends ConsensusCommand
-  case object TimeTick extends ConsensusCommand
-  case object FacilitateByEvent extends ConsensusCommand
-  case class CheckUpdate(key: Any) extends ConsensusCommand
-  case object RoundCompleted extends ConsensusCommand
-  case class InternalScheduled(inner: ConsensusCommand) extends ConsensusCommand
-  case class PeerObserved(peer: Peer) extends ConsensusCommand
-  case class InitializeFromDownload(key: Any, artifact: Any, context: Any, isRecovery: Boolean = false) extends ConsensusCommand
-  case class InitializeFromRollback(key: Any, outcome: Any) extends ConsensusCommand
-  case object WithdrawFromConsensus extends ConsensusCommand
-  case class IgnoreUnexpectedRumor(rumor: Any) extends ConsensusCommand
-  case class ConsensusFinished(key: Any, outcome: Any, trigger: ConsensusTrigger) extends ConsensusCommand
+  final case class RumorReceived(rumor: Either[PeerRumor[_], CommonRumor[_]]) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  final case class StartRound(trigger: Option[ConsensusTrigger]) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  case object TimeTick extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  case object FacilitateByEvent extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+
+  final case class CheckUpdate[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class CheckViewChangeAssembly[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class CheckViewChangeApply[Key](key: Key, fromView: Long, toView: Long)
+      extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class CheckTimeoutCertificateAssembly[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class CheckTimeoutCertificateApply[Key](key: Key, fromView: Long, toView: Long)
+      extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  // EvictionVote assembly is per-target: different targets accumulate quorums independently,
+  // so this command carries both the round key and the target peer whose votes should be
+  // checked. Dispatched from the event loop to StateTransitions.checkEvictionAssembly.
+  final case class CheckEvictionAssembly[Key](key: Key, target: PeerId) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  // B2 admission assembly — symmetric to CheckEvictionAssembly. Dispatched when a new
+  // AdmissionVote has been locally stored and the state transition should attempt
+  // certificate assembly for `target` at round `key`.
+  final case class CheckAdmissionAssembly[Key](key: Key, target: PeerId) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+
+  /** Round ended without producing an outcome. `expectedAttemptId = Some(n)` causes the FSM to drop the command if the round has advanced
+    * past attempt `n` (state mutation bumped `ConsensusStorage.roundAttemptId`). `None` means unconditional — reserved for force-recovery
+    * paths where the round must always complete.
+    */
+  final case class RoundCompleted(expectedAttemptId: Option[Long] = None) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  final case class InternalScheduled[Key, Artifact, Ctx, Outcome](inner: ConsensusCommand[Key, Artifact, Ctx, Outcome])
+      extends ConsensusCommand[Key, Artifact, Ctx, Outcome]
+  final case class PeerObserved(peer: Peer) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  final case class InitializeFromDownload[Key, Artifact, Ctx](
+    key: Key,
+    artifact: Signed[Artifact],
+    context: Ctx,
+    isRecovery: Boolean = false
+  ) extends ConsensusCommand[Key, Artifact, Ctx, Nothing]
+  final case class InitializeFromRollback[Key, Outcome](key: Key, outcome: Outcome, deferFirstRound: Boolean = false)
+      extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
+  case object WithdrawFromConsensus extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  final case class ConsensusFinished[Key, Outcome](key: Key, outcome: Outcome, trigger: ConsensusTrigger)
+      extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
 }

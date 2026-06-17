@@ -64,12 +64,16 @@ object HttpApi {
       snapshotRoutes <-
         SnapshotRoutes.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages.snapshot,
+          // currency-l0 has no equivalent LastN storage for fallback; preserves legacy behavior.
+          None,
           None,
           "/snapshots",
           storages.node,
           HasherSelector.alwaysCurrent[F],
           sharedConfig.snapshotTimeoutsConfig,
-          combinedSnapshotCheckpointFileSystemStorage
+          combinedSnapshotCheckpointFileSystemStorage,
+          sharedConfig.snapshotServingConfig,
+          httpCfg.externalIp.toString.some
         )
     } yield
       new HttpApi[F](

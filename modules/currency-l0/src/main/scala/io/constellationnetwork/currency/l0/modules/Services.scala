@@ -9,6 +9,7 @@ import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
+import scala.concurrent.ExecutionContext
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.config.types.AppConfig
@@ -34,6 +35,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.{AddressServ
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -78,7 +80,9 @@ object Services {
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
-    queues: Queues[F]
+    queues: Queues[F],
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    consensusEc: Option[ExecutionContext] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -166,6 +170,7 @@ object Services {
           storages.lastSyncGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
+          cfg.environment,
           client,
           session,
           stateChannelSnapshotService,
@@ -178,7 +183,10 @@ object Services {
           globalL0Service.pullGlobalSnapshot,
           maybeCustomArtifacts,
           storages.eventMempool,
-          queues.rumor
+          queues.rumor,
+          getPeerChainTips,
+          sharedServices.localHealthMonitor,
+          consensusEc
         )
     } yield
       new Services[F, R](

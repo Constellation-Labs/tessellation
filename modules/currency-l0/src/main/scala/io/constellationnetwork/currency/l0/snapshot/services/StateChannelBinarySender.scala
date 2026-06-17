@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Ident
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
@@ -197,7 +198,7 @@ object StateChannelBinarySender {
     private def getConfirmedHashes(
       identifier: Address,
       globalSnapshot: Hashed[GlobalIncrementalSnapshot]
-    ): F[Set[io.constellationnetwork.security.hash.Hash]] = {
+    ): F[Set[Hash]] = {
       val binaries = globalSnapshot.stateChannelSnapshots.get(identifier).toList.flatMap(_.toList)
       binaries.traverse(_.toHashed).map(_.map(_.hash)).map(_.toSet)
     }

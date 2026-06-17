@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.resources
 
 import cats.effect.kernel.{Async, Resource}
-import cats.syntax.show._
+import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.config.types.HttpServerConfig
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
@@ -39,7 +39,9 @@ object MkHttpServer {
         .withHost(cfg.host)
         .withPort(cfg.port)
         .withShutdownTimeout(cfg.shutdownTimeout)
+        .withMaxConnections(cfg.maxConnections.value)
         .withHttpApp(httpApp)
         .build
         .evalTap(showEmberBanner[F](name))
+        .evalTap(_ => logger.info(s"HTTP Server name=${name.show} maxConnections=${cfg.maxConnections.value}"))
 }

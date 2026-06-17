@@ -43,7 +43,8 @@ trait CurrencySnapshotValidator[F[_]] {
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    peerHistory: Option[ConsensusOperationalState] = None
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
@@ -70,7 +71,12 @@ object CurrencySnapshotValidator {
           lastContext,
           artifact,
           facilitators,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          // Chain-replay path: no live consensus state to consult, so re-feed the
+          // artifact's own claim as the recreation input. The signature-validation
+          // above already binds the value to the signing facilitators -- if it
+          // were tampered with, this would have failed first.
+          artifact.value.peerHistory
         ).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
@@ -81,14 +87,16 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
         lastArtifact,
         lastContext,
         artifact,
         facilitators,
-        getGlobalSnapshotByOrdinal
+        getGlobalSnapshotByOrdinal,
+        peerHistory
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -120,7 +128,8 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -172,7 +181,8 @@ object CurrencySnapshotValidator {
                 expected.artifacts.map(() => _),
                 getGlobalSnapshotByOrdinal,
                 shouldPerformMetagraphSpecificValidations = false,
-                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts)
+                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
+                peerHistory
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =

@@ -28,10 +28,12 @@ EOF
              --data @"$payload_file" \
              http://localhost:"$CL_DOCKER_JOIN_CLI_PORT"/cluster/join || echo "failure")
         echo "Join response: $response"
-        if [ "$response" == "failure" ]; then
+        if [[ "$response" == "failure" ]]; then
           echo "Join failed, retrying..."
-        elif [ "$response" == *"does not allow for joining the cluster"* ]; then
-          echo "Join completed"
+        elif [[ "$response" == *"does not allow for joining the cluster"* ]]; then
+          echo "Join rejected (node not ready), retrying..."
+        elif [[ "$response" == "" || "$response" == "\"\"" ]]; then
+          echo "Join succeeded"
           break
         else
           echo "Join not obvious failure, retrying..."
@@ -99,8 +101,24 @@ fi
 
 export RUN_COMMAND="run-validator"
 
-# Add Java 21 module access flags for Kryo serialization
-export CL_DOCKER_JAVA_OPTS="${CL_DOCKER_JAVA_OPTS:-} --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED"
+# JVM tuning + Java 21 module access flags for Kryo serialization.
+#
+# Heap (-Xms2g -Xmx8g): matches RecommendedHeapMb=8192 in TessellationIOApp so the
+# startup heap-check stays quiet. Without an explicit cap, Java 21's container
+# support sizes max heap at 25% of host RAM -- on the 256 GB CI runner that gave
+# each of 5 nodes ~30 GB, with G1 working sets to match. Smaller, fixed heap =
+# shorter, more predictable mixed-mode collections, which matters because 5
+# sibling JVMs hitting overlapping multi-second GC pauses is exactly the
+# consensus-wedge profile observed in the 2026-05-05 fork-recovery flake.
+#
+# MaxGCPauseMillis=200: explicit pause-time goal for G1. Without this, G1 will
+# tolerate longer pauses on a fat heap.
+#
+# Per-environment thread-pool caps (-XX:ActiveProcessorCount=N) are NOT set here;
+# they belong in the compose file for the multi-node test scenario, where 5
+# sibling JVMs share one box. Production validators run alone on dedicated
+# hardware and should see all cores.
+export CL_DOCKER_JAVA_OPTS="${CL_DOCKER_JAVA_OPTS:-} -Xms2g -Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED"
 
 if [ "$CL_DOCKER_GENESIS" == "true" ]; then
   if [ "$L0" == "false" ]; then

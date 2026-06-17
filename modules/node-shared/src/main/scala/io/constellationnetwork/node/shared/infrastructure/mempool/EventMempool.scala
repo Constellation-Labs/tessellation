@@ -92,6 +92,10 @@ trait EventMempool[F[_], Event, Key] {
     */
   def snapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]]
 
+  /** Get a snapshot of entries temporarily held out of proposal selection.
+    */
+  def suspendedSnapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]]
+
   /** Clear events that were included in a finalized snapshot.
     *
     * Called after consensus finalization to remove processed events.
@@ -101,10 +105,18 @@ trait EventMempool[F[_], Event, Key] {
     */
   def clearIncluded(hashes: Set[Hash]): F[Unit]
 
-  /** Get the current size of the mempool.
+  /** Temporarily hold events out of proposal selection while preserving their original receipt metadata.
+    */
+  def suspend(hashes: Set[Hash]): F[Unit]
+
+  /** Return previously suspended events to normal proposal selection.
+    */
+  def reactivate(hashes: Set[Hash]): F[Unit]
+
+  /** Get the current proposal-eligible size of the mempool.
     *
     * @return
-    *   Number of events in the mempool
+    *   Number of active, non-suspended events in the mempool
     */
   def size: F[Int]
 
@@ -146,12 +158,13 @@ case class MempoolConfig(
   */
 private[mempool] case class MempoolState[Event, Key](
   entries: Map[Hash, MempoolEntry[Event, Key]],
-  insertionOrder: Vector[Hash]
+  insertionOrder: Vector[Hash],
+  suspended: Set[Hash]
 )
 
 private[mempool] object MempoolState {
   def empty[Event, Key]: MempoolState[Event, Key] =
-    MempoolState(Map.empty, Vector.empty)
+    MempoolState(Map.empty, Vector.empty, Set.empty)
 }
 
 object EventMempool {
@@ -222,7 +235,8 @@ object EventMempool {
         storage.update { state =>
           state.copy(
             entries = state.entries -- hashes,
-            insertionOrder = state.insertionOrder.filterNot(hashes.contains)
+            insertionOrder = state.insertionOrder.filterNot(hashes.contains),
+            suspended = state.suspended -- hashes
           )
         }
 
@@ -233,6 +247,18 @@ object EventMempool {
         storage.get.map { state =>
           MempoolSnapshot(
             state.insertionOrder
+              .filterNot(state.suspended.contains)
+              .take(limit)
+              .flatMap(h => state.entries.get(h).map(h -> _))
+              .toMap
+          )
+        }
+
+      def suspendedSnapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]] =
+        storage.get.map { state =>
+          MempoolSnapshot(
+            state.insertionOrder
+              .filter(state.suspended.contains)
               .take(limit)
               .flatMap(h => state.entries.get(h).map(h -> _))
               .toMap
@@ -242,14 +268,24 @@ object EventMempool {
       def clearIncluded(hashes: Set[Hash]): F[Unit] =
         remove(hashes)
 
+      def suspend(hashes: Set[Hash]): F[Unit] =
+        storage.update { state =>
+          state.copy(suspended = state.suspended ++ hashes.filter(state.entries.contains))
+        }
+
+      def reactivate(hashes: Set[Hash]): F[Unit] =
+        storage.update { state =>
+          state.copy(suspended = state.suspended -- hashes)
+        }
+
       def size: F[Int] =
-        storage.get.map(_.entries.size)
+        storage.get.map(state => state.entries.keySet.diff(state.suspended).size)
 
       def addBatch(events: List[Signed[Event]]): F[List[Either[MempoolRejectionReason, MempoolEntry[Event, Key]]]] =
         events.traverse(add)
 
       def getEventHashes: F[Set[Hash]] =
-        storage.get.map(_.entries.keySet)
+        storage.get.map(state => state.entries.keySet -- state.suspended)
 
       def clear: F[Unit] =
         storage.set(MempoolState.empty[Event, Key])

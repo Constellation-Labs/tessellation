@@ -180,14 +180,14 @@ abstract class CurrencyL1App(
         )
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck)
         .handlers <+>
         blockRumorHandler[IO](queues.peerBlock) <+>
         allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks) <+>
         tokenLockBlockRumorHandler[IO](queues.tokenLocksBlocks)
 
       _ <- DAGL1Daemons
-        .start(storages, services)
+        .start(storages, services, sharedServices.stateEntryAtRef)
         .asResource
 
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext
@@ -211,9 +211,11 @@ abstract class CurrencyL1App(
           setTokenLockLimits,
           sharedConfig
         )
-      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
-      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
-      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
+      // Alpha.95: env-resolved listener caps; see HttpMaxConnectionsDefaults.
+      httpResolved = cfg.http.envResolved(cfg.environment)
+      _ <- MkHttpServer[IO].newEmber(ServerName("public"), httpResolved.publicHttp, api.publicApp)
+      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), httpResolved.p2pHttp, api.p2pApp)
+      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), httpResolved.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](

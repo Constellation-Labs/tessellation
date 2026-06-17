@@ -1,5 +1,12 @@
 services:
   ml0:
+    environment:
+      # Match gl0's test override (docker-compose.test.yaml:46,51). The metagraph L0
+      # serves /snapshots/latest/combined on host port 9200, and E2E harnesses poll
+      # it from a single host IP at sub-second intervals, tripping the production
+      # 10/60s cap. 0 disables the middleware (SnapshotRoutes.scala:302 predicate).
+      - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW:-0}
+      - CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW:-0}
     # merge in an extra network just for tests
     networks:
       tessellation_common:

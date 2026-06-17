@@ -185,4 +185,91 @@ object MptStoreSavepointSuite extends MutableIOSuite {
         afterRestore2.isEmpty // key2 should be gone after restore
       )
   }
+
+  // --- M1a: syncFullIfNeeded content-aware skip (commit fa0f3616d) ---
+  // The ordinal tag alone can be stale: an abandoned-round mutation or a savepoint restore can
+  // leave the in-memory entry set divergent while lastSyncedOrdinalRef still names the ordinal,
+  // so a pure ordinal no-op would build a proposal/proof off forked state. These pin the guard.
+
+  test("syncFullIfNeeded: tag matches but root diverged -> forces a resync to the canonical root") { implicit res =>
+    implicit val (hs, js) = res
+    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+    val ord = SnapshotOrdinal.unsafeApply(200L)
+    val key1 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw"))
+    val key2 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"))
+    val stateA = Map[GlobalStateKey, String](key1 -> "value1", key2 -> "value2")
+    for {
+      producer <- InMemoryMerklePatriciaProducer.make[IO]()
+      store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+      _ <- store.syncFull(stateA, ord)
+      expectedRoot <- store.build(ord).map(_.toOption.map(_.rootHash.value))
+      // Diverge the in-memory state; the lastSynced tag still names `ord`.
+      _ <- store.insert(key2, "MUTATED")
+      rootAfterMutation <- store.build(ord).map(_.toOption.map(_.rootHash.value))
+      // Guarded sync at the same ordinal: must verify the root, see the mismatch, and resync.
+      _ <- store.syncFullIfNeeded(IO.pure(stateA), ord, expectedRoot)
+      rootAfterGuard <- store.build(ord).map(_.toOption.map(_.rootHash.value))
+      key2After <- store.get[String](key2)
+    } yield
+      expect.all(
+        rootAfterMutation != expectedRoot, // the mutation really diverged the root
+        rootAfterGuard == expectedRoot, // the guard forced a resync to the canonical root
+        key2After.contains("value2") // canonical value restored, not "MUTATED"
+      )
+  }
+
+  test("syncFullIfNeeded: tag matches and root verified -> no-op (newState is never forced)") { implicit res =>
+    implicit val (hs, js) = res
+    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+    val ord = SnapshotOrdinal.unsafeApply(200L)
+    val key1 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw"))
+    val key2 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"))
+    val stateA = Map[GlobalStateKey, String](key1 -> "value1", key2 -> "value2")
+    for {
+      producer <- InMemoryMerklePatriciaProducer.make[IO]()
+      store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+      _ <- store.syncFull(stateA, ord)
+      expectedRoot <- store.build(ord).map(_.toOption.map(_.rootHash.value))
+      // newState would WIPE the store if forced; a verified no-op must not force it.
+      _ <- store.syncFullIfNeeded(IO.pure(Map.empty[GlobalStateKey, String]), ord, expectedRoot)
+      key1After <- store.get[String](key1)
+      key2After <- store.get[String](key2)
+    } yield expect.all(key1After.contains("value1"), key2After.contains("value2"))
+  }
+
+  test("syncFullIfNeeded: expectedRoot=None is a pure ordinal no-op (stale state NOT corrected)") { implicit res =>
+    implicit val (hs, js) = res
+    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+    val ord = SnapshotOrdinal.unsafeApply(200L)
+    val key1 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw"))
+    val key2 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"))
+    val stateA = Map[GlobalStateKey, String](key1 -> "value1", key2 -> "value2")
+    for {
+      producer <- InMemoryMerklePatriciaProducer.make[IO]()
+      store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+      _ <- store.syncFull(stateA, ord)
+      _ <- store.insert(key2, "MUTATED")
+      _ <- store.syncFullIfNeeded(IO.pure(stateA), ord, None)
+      key2After <- store.get[String](key2)
+    } yield expect(key2After.contains("MUTATED")) // back-compat: None stays a pure ordinal no-op
+  }
+
+  test("syncFullIfNeeded: a new ordinal always triggers a full sync") { implicit res =>
+    implicit val (hs, js) = res
+    implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+    val ord = SnapshotOrdinal.unsafeApply(200L)
+    val ordNext = SnapshotOrdinal.unsafeApply(201L)
+    val key1 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw"))
+    val key2 = GlobalStateKey.hypergraph(GlobalStateFieldId.Balances, Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"))
+    val stateA = Map[GlobalStateKey, String](key1 -> "value1", key2 -> "value2")
+    val stateB = Map[GlobalStateKey, String](key1 -> "B1")
+    for {
+      producer <- InMemoryMerklePatriciaProducer.make[IO]()
+      store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+      _ <- store.syncFull(stateA, ord)
+      _ <- store.syncFullIfNeeded(IO.pure(stateB), ordNext, None)
+      key1After <- store.get[String](key1)
+      key2After <- store.get[String](key2)
+    } yield expect.all(key1After.contains("B1"), key2After.isEmpty) // resynced to stateB
+  }
 }
