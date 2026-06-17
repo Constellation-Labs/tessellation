@@ -256,7 +256,7 @@ object MptStore {
         }
       }.flatMap {
         case (priorLastOrdinal, needsSync) =>
-          logger.info(
+          logger.debug(
             s"[MptStore.syncFullIfNeeded] ordinal=$ordinal priorLastSynced=$priorLastOrdinal needsSync=$needsSync"
           ) >>
             (if (needsSync) newState.flatMap(syncFull(_, ordinal))

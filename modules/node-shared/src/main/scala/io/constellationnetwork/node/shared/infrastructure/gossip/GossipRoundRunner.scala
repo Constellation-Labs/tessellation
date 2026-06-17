@@ -114,7 +114,7 @@ object GossipRoundRunner {
                   if (transientStates.contains(peer.state))
                     logger.debug(s"Gossip round failed for peer in ${peer.state} {peer=${peer.show}, reason=${err.show}}")
                   else
-                    logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}")
+                    logger.warn(s"Error running gossip round {peer=${peer.show}, reason=${err.show}}")
                 logEffect >> recordPeerRoundFailure(peer, err) >> recordFailure(peer.id) >> localHealthcheck.start(peer)
               },
             selectedPeersR.update(_.excl(peer))

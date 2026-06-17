@@ -1074,7 +1074,7 @@ object Download {
         // Use syncFullIfNeeded for atomic initialization - avoids race condition where
         // two concurrent calls both see mptEntries.isEmpty=true and both try to sync
         def performInitialSync: F[Unit] =
-          logger.info("Performing initial sync of MPT (if needed)") >>
+          logger.debug("Performing initial sync of MPT (if needed)") >>
             mptStore.syncFullIfNeeded[Json](
               hasherSelector.withCurrent(implicit h => context.allStateEntries[F]),
               lastSnapshot.ordinal
@@ -1183,7 +1183,7 @@ object Download {
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>
-          logger.info(s"Downloading snapshot hash=${hash.show}, ordinal=${ordinal.show}")
+          logger.debug(s"Downloading snapshot hash=${hash.show}, ordinal=${ordinal.show}")
         }
         .flatMap { peers =>
           type Success = Signed[GlobalIncrementalSnapshot]
