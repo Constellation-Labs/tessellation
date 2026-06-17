@@ -145,28 +145,6 @@ object CommitteeBuilder {
     * @param activeScores
     *   `controllerInputs.activeScores` -- evidence-derived per-peer scores. Used ONLY to rank one-for-one chronic replacements (highest
     *   score first, PeerId lex tie-break); the Core-floor top-up keeps its original quality ranking.
-    * @param rotationKey
-    *   the round ordinal, used by the bounded reward-rotation lane to test the epoch boundary (`key.value % rewardRotationEpochRounds`).
-    *   `None` disables rotation regardless of the other rotation parameters; defaulted so call sites that do not rotate are unaffected.
-    * @param recentParticipants
-    *   `ControllerEvidenceDerivation.recentParticipants(evidence, effectiveEligibilityWindow)` -- peers demonstrated-live within the
-    *   reward-rotation eligibility window. The caller resolves `effectiveEligibilityWindow` (the configured
-    *   `rewardRotationEligibilityWindow`, or the full evidence window `tighteningWindow` when 0) and applies it BEFORE passing this set, so
-    *   the rotation horizon can exceed the demotion-aligned `DemotionConsecutiveMisses` window (a rotated-out peer must stay eligible past
-    *   the next epoch boundary; see `ControllerEvidenceDerivation.recentParticipants(evidence, window)` for the fairness invariant). The
-    *   reward-rotation eligible-waiting pool is `candidates intersect recentParticipants minus core minus tier1` AND minus `nonCorePeers`
-    *   (probation peers stay on their own rehab lane, never rotated). Empty disables rotation (no demonstrated peer to seat).
-    * @param idleWindows
-    *   `ControllerEvidenceDerivation.idleWindows(evidence, _)` -- trailing entries since each peer last signed; ranks the rotated-in peer
-    *   (longest-idle first).
-    * @param tenureWindows
-    *   `ControllerEvidenceDerivation.tenureWindows(evidence, _)` -- consecutive trailing entries each peer has signed; ranks the
-    *   rotated-out Tier-1 peer (longest-serving first).
-    * @param rewardRotationEpochRounds
-    *   epoch length in ordinals for the reward-rotation lane. `<= 0` (the default) leaves the lane inert and `build` byte-identical to its
-    *   pre-rotation output.
-    * @param lotteryHash
-    *   `FacilitatorSelector.rendezvousScore`-equivalent `(peer, key) => BigInt`, reused as the equally-idle tiebreak in the rotation lane.
     */
   def build(
     candidates: List[PeerId],
@@ -177,13 +155,7 @@ object CommitteeBuilder {
     minRatio: Double,
     nonCorePeers: Set[PeerId] = Set.empty,
     chronicMisses: Map[PeerId, Int] = Map.empty,
-    activeScores: Map[PeerId, Int] = Map.empty,
-    rotationKey: Option[SnapshotOrdinal] = None,
-    recentParticipants: Set[PeerId] = Set.empty,
-    idleWindows: PeerId => Int = _ => 0,
-    tenureWindows: PeerId => Int = _ => 0,
-    rewardRotationEpochRounds: Int = 0,
-    lotteryHash: (PeerId, SnapshotOrdinal) => BigInt = FacilitatorSelector.lotteryHash
+    activeScores: Map[PeerId, Int] = Map.empty
   ): Committees = {
     def hasSufficientHistory(pid: PeerId): Option[Double] =
       peerQuality.get(pid).flatMap {
@@ -283,50 +255,9 @@ object CommitteeBuilder {
     val splitTier1 = candidates.filterNot(pid => finalCoreSet.contains(pid) || rawWitnessSet.contains(pid))
     val splitWitness: List[PeerId] = rawWitness
 
-    // Bounded one-slot reward rotation (see RewardRotation scaladoc). Cycles a single
-    // Tier-1 signing seat among demonstrated-live peers so reward share does not stay
-    // pinned to the always-on signer set. Core is NEVER touched. Applied AFTER the
-    // core/tier1/witness split so it only ever moves a Tier-1 <-> Witness pair. The
-    // eligible-waiting pool is demonstrated-live candidates outside core and tier1 --
-    // by construction those are the Witness peers that have actually signed within the
-    // eligibility window, so the rotated-in peer is one the tier derivation already
-    // treats as Core-eligible. Probation (`nonCorePeers`) peers are EXCLUDED from BOTH
-    // the rotate-in pool AND the rotate-out (tier1) candidates: they are on their own
-    // bounded rehab lane and must not be disturbed by reward rotation (a probation peer
-    // forced into the seat, or a probation peer's seat rotated away, would couple the two
-    // lanes). Inert (no-op, byte-identical output) when the lane is disabled: `rotationKey`
-    // empty, `rewardRotationEpochRounds <= 0`, or no eligible candidate.
-    val splitTier1Set = splitTier1.toSet
-    val eligibleWaiting =
-      candidates.filter(pid =>
-        recentParticipants.contains(pid) &&
-          !finalCoreSet.contains(pid) &&
-          !splitTier1Set.contains(pid) &&
-          !nonCorePeers.contains(pid)
-      )
-    val rotatableTier1 = splitTier1.filterNot(nonCorePeers.contains)
-    val rotation = rotationKey.flatMap { key =>
-      RewardRotation.rotateOneTier1(
-        key = key,
-        core = finalCoreSet,
-        tier1 = rotatableTier1,
-        eligibleWaiting = eligibleWaiting,
-        idle = idleWindows,
-        tenure = tenureWindows,
-        epochRounds = rewardRotationEpochRounds,
-        lotteryHash = lotteryHash
-      )
-    }
-    val (finalTier1, finalWitness) =
-      rotation match {
-        case Some((rotateOut, rotateIn)) =>
-          // Move rotateIn from witness into tier1 (appended, preserving the upstream order
-          // of the retained tier1 members); move rotateOut from tier1 to the FRONT of
-          // witness/reserve. Both lists keep their size invariant (remove one, add one).
-          (splitTier1.filterNot(_ == rotateOut) :+ rotateIn, rotateOut :: splitWitness.filterNot(_ == rotateIn))
-        case None =>
-          (splitTier1, splitWitness)
-      }
+    // Reward follows committee membership (delegated rewards pay the round committee, not the
+    // signer subset), so Tier-1 and Witness are just the post-split sets -- no reward rotation.
+    val (finalTier1, finalWitness) = (splitTier1, splitWitness)
 
     // Stamp the effective tier on every classified peer for the round's persisted view.
     // Carry-forward semantics: peers in priorTiers but NOT in candidates retain their

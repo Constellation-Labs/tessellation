@@ -539,19 +539,6 @@ object GlobalSnapshotConsensusStateCreator {
         // swaps them for the highest-scored non-chronic reserves, prefers a smaller Core over
         // chronic padding when supply is short, and re-admits the least-bad chronic peers only
         // below MinViableCoreSize. See the CommitteeBuilder scaladoc for the full ladder.
-        // Bounded one-slot Tier-1 reward rotation inputs (RewardRotation): all evidence-derived
-        // from the SIGNED controllerEvidence window (entry counts, never wall-clock), so the swap
-        // is byte-identical on every honest node. `recentParticipants` is the demonstrated-live
-        // gate, evaluated over the eligibility window (configured `rewardRotationEligibilityWindow`,
-        // or the full evidence window `tighteningWindow` when 0). The window MUST exceed
-        // `rewardRotationEpochRounds`, or a rotated-out peer drops out of the eligible pool before
-        // the next epoch boundary and is benched forever. idle/tenure rank the rotated-in/out peers;
-        // the lottery hash (reused from FacilitatorSelector) is the equally-idle tiebreak keyed on
-        // the round ordinal. Inert when `rewardRotationEpochRounds == 0` (the env default) --
-        // committee output byte-identical.
-        rotationEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty)
-        rotationEligibilityWindow: Int =
-          if (config.rewardRotationEligibilityWindow > 0) config.rewardRotationEligibilityWindow else config.tighteningWindow
         committees = CommitteeBuilder.build(
           candidates = active,
           priorTiers = controllerInputs.peerTiers,
@@ -561,13 +548,7 @@ object GlobalSnapshotConsensusStateCreator {
           minRatio = config.minParticipationRatio,
           nonCorePeers = activeAdmission.probationAdmitted.toSet,
           chronicMisses = controllerInputs.chronicMisses,
-          activeScores = controllerInputs.activeScores,
-          rotationKey = key.some,
-          recentParticipants = ControllerEvidenceDerivation.recentParticipants(rotationEvidence, rotationEligibilityWindow),
-          idleWindows = ControllerEvidenceDerivation.idleWindows(rotationEvidence, _),
-          tenureWindows = ControllerEvidenceDerivation.tenureWindows(rotationEvidence, _),
-          rewardRotationEpochRounds = config.rewardRotationEpochRounds,
-          lotteryHash = FacilitatorSelector.lotteryHash
+          activeScores = controllerInputs.activeScores
         )
 
         _ <- logger
