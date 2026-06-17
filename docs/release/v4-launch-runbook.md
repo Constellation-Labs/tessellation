@@ -87,10 +87,12 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       deterministic `accept()` context (`lastGlobalSnapshotInfo.balances`); below it from the pre-fix
       `mptStore.getBalance` path, so signed history re-derives byte-identically
       (`GlobalSnapshotStateChannelEventsProcessor.scala:324-328`). The ordinal is resolved at
-      `GlobalSnapshotConsensus.scala:150` and `SharedServices.scala:193`, both defaulting to
-      `SnapshotOrdinal.MinValue` when the environment has no entry. **mainnet is the placeholder `9999999`
-      (keeps the OLD path); testnet is `0` (fix already live).** SET mainnet to the coordinated launch
-      ordinal at deploy. Leaving it unset silently keeps the pre-fix `mptStore` balance source.
+      `GlobalSnapshotConsensus.scala:152` and `SharedServices.scala:195`, both **failing closed** to
+      `SnapshotOrdinal.MaxValue` when the environment has no entry (the gate never fires, so an unset env
+      keeps the OLD path). **mainnet and integrationnet are `9999999` placeholders (both still on the
+      `mptStore` path); testnet is pinned to `3101393`, its real v4.0.0->alpha.0 cutover.** SET mainnet
+      and integrationnet to the coordinated context-deploy ordinal at deploy. Leaving an env unset
+      keeps the pre-fix `mptStore` balance source.
 
 - [ ] **`dust-sweeps`** (`application.conf:286-292`, `config/types.scala:43-61`). Per-environment,
       keyed by the exact ordinal each one-time GSI dust sweep fires at. Only `testnet` has an entry today
