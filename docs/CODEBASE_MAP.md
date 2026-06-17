@@ -49,7 +49,7 @@ The detailed, code-accurate references for the rewritten subsystems live under `
 
 **Consensus** (`docs/consensus/`)
 - [README.md](consensus/README.md) - the definitive consensus reference (round FSM, declarations, B1/B2 admission/eviction, recovery)
-- [committee-tiers.md](consensus/committee-tiers.md) - Core/Tier-1/Witness committees, active-set admission, witness pool, chronic classification, reward rotation
+- [committee-tiers.md](consensus/committee-tiers.md) - Core/Tier-1/Witness committees, active-set admission, witness pool, chronic classification
 - [timeout-certificate.md](consensus/timeout-certificate.md) - HotStuff-aligned Timeout Certificate (Track-2 view advance)
 - [quorum-shrink.md](consensus/quorum-shrink.md) - QuorumDenominatorShrink (v33) liveness rung
 - [signature-grace.md](consensus/signature-grace.md) - post-finalization signature grace
@@ -147,7 +147,6 @@ tessellation/
 | `infrastructure/consensus/TierTransitions.scala` | Windowed promotion/demotion thresholds between tiers |
 | `infrastructure/consensus/FacilitatorSelector.scala` | Deterministic leader/subset selection (`selectLeaderWeighted`, self-health gating) |
 | `infrastructure/consensus/SignatureGraceDecision.scala` | Post-finalization signature-grace state machine |
-| `infrastructure/consensus/RewardRotation.scala` | Bounded one-slot Tier-1 reward rotation |
 | `infrastructure/consensus/state/StateTransitions.scala` | Certificate-assembly hub (eviction / admission / view-change / timeout) |
 | `infrastructure/consensus/state/QuorumDenominatorShrink.scala` | v33 deterministic quorum-denominator shrink (liveness rung) |
 | `infrastructure/consensus/state/WitnessPool.scala` | Deterministic witness pool widening the signer / certificate set |
@@ -210,7 +209,7 @@ graph LR
 | `infrastructure/snapshot/GlobalSnapshotConsensus.scala` | Factory for consensus engine |
 | `infrastructure/snapshot/GlobalSnapshotConsensusFunctions.scala` | Snapshot creation/validation |
 | `domain/cell/L0Cell.scala` | Hylomorphism for event processing |
-| `infrastructure/rewards/Rewards.scala` | Classic + delegated rewards (signer-based; one-slot Tier-1 reward rotation, see `RewardRotation.scala`) |
+| `infrastructure/rewards/Rewards.scala` | Classic + delegated rewards |
 | `infrastructure/trust/` | EigenTrust, DATT, Self-Avoiding Walk |
 | `modules/Services.scala` | Service wiring |
 | `modules/Storages.scala` | Storage wiring |
@@ -225,7 +224,7 @@ graph LR
 2. Consensus daemon publishes events to facilitators
 3. Facilitators create proposal artifacts
 4. Signatures collected, snapshot finalized
-5. Rewards distributed (signer-based: classic or delegated by epoch, plus one-slot Tier-1 rotation)
+5. Rewards distributed (signer-based: classic or delegated by epoch)
 6. At a configured ordinal, an ordinal-gated GSI dust sweep deflates global state and rebuilds the MPT in one shot (`GlobalSnapshotDustSweep`; deterministic, every node computes the identical swept state). See [operations/fields-added-ordinals](../operations/fields-added-ordinals.md)
 
 ---
