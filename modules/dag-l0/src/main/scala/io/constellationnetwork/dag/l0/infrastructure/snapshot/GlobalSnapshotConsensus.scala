@@ -175,7 +175,6 @@ object GlobalSnapshotConsensus {
       // rung disabled). Folded into `deterministicConfigHash` via the consensus config copy below.
       resolvedQuorumShrinkActivationViews = appConfig.snapshot.quorumShrinkActivationViews
         .get(appConfig.environment)
-        .map(_.value)
         .getOrElse(0)
       // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry =
       // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
