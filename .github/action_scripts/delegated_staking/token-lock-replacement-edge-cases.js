@@ -124,6 +124,38 @@ const createTokenLockExpectError = async (account, urls, lockAmount, replaceRef,
 }
 
 /**
+ * Create a REPLACEMENT token lock, tolerating the dag-L1's MPT trailing the global L0.
+ *
+ * A dag-L1 validates token-lock replacements against its own MPT, which it syncs from
+ * global snapshots on a ~10s loop while GL0 finalizes ordinals ~20s apart, so the L1
+ * steadily trails GL0 by ~1 ordinal. Immediately after a lock is confirmed in GL0 state,
+ * posting its replacement can race ahead of the L1's MPT and be rejected at admission
+ * with NothingToReplace. The parent lock IS in global state -- this is pure propagation
+ * lag -- so retry across ordinal progressions until the L1 catches up. (testReplaceSameAmount
+ * / testReplaceLessAmount already apply this on their expected-error path; the success
+ * paths need the same tolerance.)
+ */
+const createReplacementTokenLock = (account, urls, lockAmount, replaceRef, replaceBalance) =>
+  withRetryOrdinal(
+    async () => {
+      try {
+        return await createTokenLock(account, urls, lockAmount, replaceRef, replaceBalance)
+      } catch (e) {
+        if (e.message && e.message.includes('NothingToReplace')) {
+          logWorkflow.info('Replacement parent not yet in L1 MPT, waiting for ordinal progression...')
+        }
+        throw e
+      }
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'createReplacementTokenLock',
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
+    },
+  )
+
+/**
  * Test 1: Replace with same amount (should fail)
  * Also sets up the initial token lock and stake for subsequent tests
  */
@@ -276,7 +308,7 @@ const testReplaceMinimumIncrease = async (urls, account, existingLockHash, exist
 
   const minIncrease = existingAmount + 1 // Minimum valid increase
   
-  const newLockHash = await createTokenLock(account, urls, minIncrease, existingLockHash, existingAmount)
+  const newLockHash = await createReplacementTokenLock(account, urls, minIncrease, existingLockHash, existingAmount)
   logWorkflow.info(`Created replacement with +1 datum: ${newLockHash}`)
 
   // Verify delegated stake updated using ordinal-aware retry
@@ -322,7 +354,7 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     logWorkflow.info(`Sequential replacement ${i}: ${amount} -> ${newAmount}`)
     logWorkflow.info(`  Replacing lock: ${lockHash.substring(0, 16)}...`)
 
-    const newLockHash = await createTokenLock(account, urls, newAmount, lockHash, amount)
+    const newLockHash = await createReplacementTokenLock(account, urls, newAmount, lockHash, amount)
     logWorkflow.info(`  Created replacement ${i}: ${newLockHash.substring(0, 16)}...`)
 
     // Verify delegated stake updated using ordinal-aware retry
