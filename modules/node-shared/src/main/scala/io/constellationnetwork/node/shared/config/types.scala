@@ -873,33 +873,7 @@ object types {
     // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
     // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
     // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
-    quorumShrinkActivationViews: Int = 0,
-    // Bounded one-slot Tier-1 reward rotation (RewardRotation): epoch length in ordinals over
-    // which exactly ONE Tier-1 (non-quorum-bearing) signing seat is deterministically rotated
-    // among demonstrated-live peers, so reward share (which goes to the snapshot signers) does
-    // not stay pinned to the always-on signer set. `0` (default) disables the lane entirely
-    // (CommitteeBuilder output byte-identical to pre-rotation). Env-resolved at the consensus
-    // construction site from `SnapshotConfig.rewardRotationEpochRounds.get(env)` (the
-    // coreCommitteeSize pattern); testnet opts into a small value, mainnet stays disabled.
-    // Consensus-critical: the rotation changes the committee -> roundStartFacilitators ->
-    // facilitatorsHash, so it is folded into `deterministicConfigHash` and divergent operator
-    // values handshake-reject. Core is never rotated, so the rung never affects quorum
-    // feasibility -- only which Tier-1 peer holds the rotating signing/reward seat.
-    rewardRotationEpochRounds: Int = 0,
-    // Bounded one-slot Tier-1 reward rotation: trailing evidence-window length (in ordinals) over
-    // which a peer must have signed at least once to be eligible to ROTATE IN to the signing seat
-    // (`ControllerEvidenceDerivation.recentParticipants(evidence, window)`). `0` (default) means
-    // "use the full evidence window" (resolved to `tighteningWindow` at the CommitteeBuilder call
-    // site). Why a separate, LARGER knob than the demotion-aligned 3-entry default: a peer rotated
-    // to Witness stops signing and would drop out of the short 3-window within a few rounds, so it
-    // could never be re-eligible at the next epoch boundary -- benched forever. Fairness holds only
-    // while `rewardRotationEpochRounds < eligibilityWindow <= tighteningWindow` (the evidence window
-    // size); larger waiting pools need a larger evidence window (out of scope). Env-resolved at the
-    // consensus construction site from `SnapshotConfig.rewardRotationEligibilityWindow.get(env)` (the
-    // coreCommitteeSize pattern); inert (resolved 0) when absent. Consensus-critical: it changes the
-    // reward-rotation eligible pool -> committee -> roundStartFacilitators -> facilitatorsHash, so it
-    // is folded into `deterministicConfigHash` and divergent operator values handshake-reject.
-    rewardRotationEligibilityWindow: Int = 0
+    quorumShrinkActivationViews: Int = 0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -933,8 +907,6 @@ object types {
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
       *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
-      *   - `rewardRotationEpochRounds` / `rewardRotationEligibilityWindow`: env-resolved reward-rotation epoch length and eligible-pool
-      *     window; both change the reward-rotation swap -> committee -> facilitatorsHash, so divergent operator values handshake-reject.
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -1033,16 +1005,6 @@ object types {
           // cert/phase acceptance quorum at a wedged key; divergent operator values would
           // make one node accept a shrunken VCC/TC that another rejects.
           s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
-          // Bounded one-slot Tier-1 reward rotation epoch length. Rotates a single Tier-1
-          // signing/reward seat among demonstrated-live peers at epoch boundaries; this
-          // changes the committee -> roundStartFacilitators -> facilitatorsHash, so divergent
-          // operator values must handshake-reject rather than silently fork. 0 = inert.
-          s"rewardRotationEpochRounds=$rewardRotationEpochRounds," +
-          // Bounded one-slot Tier-1 reward-rotation eligibility window. Changes which
-          // demonstrated-live peers may rotate into the signing seat -> committee ->
-          // roundStartFacilitators -> facilitatorsHash, so divergent operator values must
-          // handshake-reject rather than silently fork. 0 = use the full evidence window.
-          s"rewardRotationEligibilityWindow=$rewardRotationEligibilityWindow," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1195,25 +1157,6 @@ object types {
     // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
     // purpose -- widening is an active-set/reward-breadth change to opt into per environment.
     activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
-    // Bounded one-slot Tier-1 reward-rotation epoch length, keyed by AppEnvironment (the
-    // coreCommitteeSize pattern: env resolution happens once at the consensus construction site
-    // and the resolved scalar is threaded into `ConsensusConfig.rewardRotationEpochRounds`, which
-    // folds into `deterministicConfigHash`). An absent env entry means the lane is DISABLED for
-    // that environment (resolved scalar 0 = inert). Testnet opts into a small value so the
-    // signing/reward seat rotates fairly among healthy peers; mainnet/dev/integrationnet are
-    // absent on purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable, matching
-    // the resolved-scalar default.
-    rewardRotationEpochRounds: Map[AppEnvironment, Int] = Map.empty,
-    // Bounded one-slot Tier-1 reward-rotation eligibility window, keyed by AppEnvironment (the
-    // coreCommitteeSize pattern: env resolution happens once at the consensus construction site and
-    // the resolved scalar is threaded into `ConsensusConfig.rewardRotationEligibilityWindow`, which
-    // folds into `deterministicConfigHash`). This is the trailing evidence-window length a peer must
-    // have signed within to be eligible to rotate IN. It MUST exceed `rewardRotationEpochRounds` and
-    // not exceed `tighteningWindow` (the evidence window size), or a rotated-out peer is benched
-    // forever. An absent env entry means "use the full evidence window" (resolved scalar 0). `Int`
-    // (not `PosInt`) so 0 is expressible as the explicit full-window sentinel, matching the
-    // resolved-scalar default.
-    rewardRotationEligibilityWindow: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,

@@ -119,24 +119,12 @@ object CurrencySnapshotConsensus {
     // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the consensus config copy below.
     val resolvedActiveAdmissionRecentSignerWindow: Int =
       math.max(3, snapshotConfig.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3))
-    // Bounded one-slot Tier-1 reward rotation: env-resolved epoch length (absent env entry = 0 =
-    // lane inert). Mirror of GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the
-    // consensus config copy below.
-    val resolvedRewardRotationEpochRounds: Int =
-      snapshotConfig.rewardRotationEpochRounds.get(environment).getOrElse(0)
-    // Bounded one-slot Tier-1 reward rotation: env-resolved eligibility window (absent env entry =
-    // 0 = use the full evidence window). Mirror of GlobalSnapshotConsensus; folds into
-    // `deterministicConfigHash` via the consensus config copy below.
-    val resolvedRewardRotationEligibilityWindow: Int =
-      snapshotConfig.rewardRotationEligibilityWindow.get(environment).getOrElse(0)
     val effectiveConsensusConfig: ConsensusConfig =
       snapshotConfig.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
-        rewardRotationEpochRounds = resolvedRewardRotationEpochRounds,
-        rewardRotationEligibilityWindow = resolvedRewardRotationEligibilityWindow
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow
       )
 
     for {
