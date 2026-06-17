@@ -66,7 +66,7 @@ jobs:
           sudo apt-get install -y sbt
 
       - name: Build all JARs
-        run: just build --use-test-metagraph --num-gl0=3 --snapshot-streaming-branch=${{ inputs.snapshot_streaming_branch || 'testing' }} --block-explorer-branch=${{ inputs.block_explorer_branch || 'increase_delegated_stakes' }}
+        run: just build --use-test-metagraph --num-gl0=3 --snapshot-streaming-branch=${{ inputs.snapshot_streaming_branch || 'release/testnet' }} --block-explorer-branch=${{ inputs.block_explorer_branch || 'increase_delegated_stakes' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
@@ -176,7 +176,7 @@ jobs:
         run: mkdir -p runner-logs
 
       - name: Run E2E tests
-        run: just test --skip-assembly --test=${{ matrix.test-group.tests }} ${{ matrix.test-group.extra-args || '' }} ${{ matrix.test-group.name == 'snapshot-streaming' && format('--snapshot-streaming-branch={0} --block-explorer-branch={1}', inputs.snapshot_streaming_branch || 'testing', inputs.block_explorer_branch || 'increase_delegated_stakes') || '' }}
+        run: just test --skip-assembly --test=${{ matrix.test-group.tests }} ${{ matrix.test-group.extra-args || '' }} ${{ matrix.test-group.name == 'snapshot-streaming' && format('--snapshot-streaming-branch={0} --block-explorer-branch={1}', inputs.snapshot_streaming_branch || 'release/testnet', inputs.block_explorer_branch || 'increase_delegated_stakes') || '' }}
 
       - name: Collect Docker container logs
         if: always()
