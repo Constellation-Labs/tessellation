@@ -190,7 +190,9 @@ object SharedServices {
             currencySnapshotContextFns,
             feeCalculator,
             storages.mptStore,
-            cfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
+            // Fail closed: an unset env defaults to MaxValue so the new context-balance path stays OFF
+            // (the gate never fires) rather than activating from genesis and diverging replay.
+            cfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue)
           ),
         updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,
