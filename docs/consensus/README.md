@@ -738,8 +738,6 @@ The StateCreator gates the candidate set by only **two** behavioural filters now
 
 **Chronic-core replacement ladder.** `chronicMisses` (evidence-derived trailing asked-but-silent streaks past `ChronicMissThreshold`) drives a deterministic ladder, applied in order: **exclude** every chronically-missing Core member (demoted to Tier 1, still signs and earns, just out of the quorum denominator); **replace** each one-for-one with a non-chronic Tier 1 reserve (highest evidence score first); **floor** tops Core back up to `coreCommitteeSize` from non-chronic reserves only; **shrink** leaves Core smaller rather than padding with chronic peers (the quorum is proportional, so a smaller all-healthy Core is strictly more live); **liveness fallback** re-admits the least-bad chronic peers only if healthy Core would fall below `MinViableCoreSize` (= 2). With no chronic peers every step is inert.
 
-**Reward rotation.** A bounded one-slot **reward-rotation lane** cycles a single Tier-1 signing seat among demonstrated-live Witness peers each epoch (`rewardRotationEpochRounds`), so reward share does not stay pinned to the always-on signer set. Core is never touched; probation peers are excluded from both ends of the rotation. The lane is inert (byte-identical output) when disabled.
-
 The reward facilitator set is `lastArtifact.proofs.map(_.id)` (see `Rewards.distribute`): Core and Tier 1 sign and split the pool evenly. There is no Core-vs-Tier-1 reward stratification.
 
 ### Candidate Registration
@@ -1483,13 +1481,12 @@ them to follow consensus without participating as a facilitator.
 | `ConsensusStorage.scala` | Storage for state and declarations |
 | `ConsensusResources.scala` | Resources gathered for a round |
 | `FacilitatorSelector.scala` | Rendezvous hashing for selection/leader |
-| `CommitteeBuilder.scala` | Three-tier (Core/Tier1/Witness) partition, Core floor, chronic-replacement ladder, reward rotation ([committee-tiers.md](committee-tiers.md)) |
+| `CommitteeBuilder.scala` | Three-tier (Core/Tier1/Witness) partition, Core floor, chronic-replacement ladder ([committee-tiers.md](committee-tiers.md)) |
 | `TierTransitions.scala` | Tier-demotion hysteresis (Core peer demoted after `DemotionConsecutiveMisses` missed signer sets) |
 | `LeaderEligibility.scala` | Leader-pool gates over Core: graduated + recent-signer |
 | `SignatureGraceDecision.scala` | Pure three-way finalization grace machine ([signature-grace.md](signature-grace.md)) |
 | `state/QuorumDenominatorShrink.scala` | v33 quorum-denominator shrink rung ([quorum-shrink.md](quorum-shrink.md)) |
 | `state/QuorumPolicy.scala` | Integer Core-quorum derivation `fromFraction(coreSize, quorumThresholdFraction)` (`unanimity` / `(2*n + 2) / 3` supermajority) |
-| `RewardRotation.scala` | Bounded one-slot Tier-1 reward-seat rotation |
 | `PeerQualityTracker.scala` | Score-based peer assessment |
 | `TrailingCommonAncestorFilter.scala` | Proof-based peer quality, removal penalties (historical; superseded by `CommitteeBuilder` tiering) |
 

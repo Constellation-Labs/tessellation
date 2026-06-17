@@ -15,7 +15,7 @@ load-bearing, because the committee feeds `roundStartFacilitators` ->
 `facilitatorsHash`, and a divergent committee forks the cluster. This document
 covers how the tiers are built, how the round's active set is admitted, the
 deterministic witness pool, the chronic-classification evidence layer, the tier
-transitions, and the bounded Tier-1 reward rotation.
+transitions, and how rewards are distributed to the committee.
 
 All source paths below are under
 `modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/`
@@ -32,7 +32,7 @@ unless noted otherwise. The dag-l0 wiring lives in
 5. [Participation Evidence and Chronic Classification](#5-participation-evidence-and-chronic-classification)
 6. [Tier Transitions](#6-tier-transitions)
 7. [Leader Eligibility](#7-leader-eligibility)
-8. [Tier-1 Reward Rotation](#8-tier-1-reward-rotation)
+8. [Rewards and the committee](#8-rewards-and-the-committee)
 9. [How It Wires Into a Round](#9-how-it-wires-into-a-round)
 
 ---
@@ -45,7 +45,7 @@ The tier integers are defined in `TierTransitions.scala:42-49`:
 |------|----------|-------|----------------|
 | Core | `TierTransitions.Core` | `2` | Full facilitator. In the **liveness quorum**; the cert quorum (B1/B2/VCC) and the snapshot-finalization threshold are computed against the Core size. Only Core peers are eligible to **lead** a round. |
 | Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and **earn** rewards proportionally. They cannot lead, and they do **not** count toward the cert quorum denominator, so a silent Tier-1 peer cannot wedge a certificate. |
-| Witness | `TierTransitions.Witness` | `0` | Observation only. Open membership; in the v19 transition path peers fall here only via explicit eviction, plus the one slot moved by reward rotation (see [section 8](#8-tier-1-reward-rotation)). |
+| Witness | `TierTransitions.Witness` | `0` | Observation only. Open membership; in the v19 transition path peers fall here only via explicit eviction. |
 
 The key safety property: **the liveness quorum is gated on Core only.** The
 quorum threshold is `q = ceil(coreFacilitators.size * quorumThresholdFraction)`
@@ -278,7 +278,7 @@ history, and in steady state with a healthy committee the union is dominated by
 ## 5. Participation Evidence and Chronic Classification
 
 `ControllerEvidenceDerivation` (`ControllerEvidenceDerivation.scala`) derives all
-the per-peer signals the tier/leader/rotation logic consumes, purely from the
+the per-peer signals the tier and leader logic consumes, purely from the
 bounded signed `controllerEvidence` window. This replaces carried-forward
 controller state (scores/tiers/quality copied round-over-round and re-seeded from a
 local sidecar on restart), whose locally divergent seeds caused the
@@ -306,17 +306,10 @@ mirror the `ActiveFacilitatorAdmission` promote/retain/demote bands
   `completedSigners`); a signed entry resets the streak, and an entry where the
   peer was not asked breaks it. This is the input to the chronic-core replacement
   ladder.
-- **`idleWindows`** (`:210-211`) -- trailing entries since the peer last signed
-  (more overdue). Ranks the rotated-**in** peer.
-- **`tenureWindows`** (`:222-223`) -- consecutive trailing entries the peer has
-  signed (longest-serving). Ranks the rotated-**out** peer.
 - **`recentParticipants`** (`:169-199`) -- peers that signed at least one of the
   most recent `window` entries (the demonstrated-live gate). The fixed
   `DemotionConsecutiveMisses`-window variant mirrors the same gate the tier split
-  in `derive` applies via its own inline `recentSignerSets` computation; the
-  parameterized variant with a larger window is the one wired into the StateCreator,
-  feeding reward rotation (`GlobalSnapshotConsensusStateCreator.scala:566`, see
-  [section 8](#8-tier-1-reward-rotation)).
+  in `derive` applies via its own inline `recentSignerSets` computation.
 - **`canonicalCompletedSigners`** (`:361-370`) -- the canonical signer set for a
   finalized round, derived from `roundStartFacilitators` and the leader's
   proposal-carried `acceptedObservedResponders` (a closed set, certified by the
@@ -435,70 +428,18 @@ completion-ratio tiering within the pool and uses rendezvous score plus
 
 ---
 
-## 8. Tier-1 Reward Rotation
+## 8. Rewards and the committee
 
-`RewardRotation` (`RewardRotation.scala:6-100`) is a bounded, one-slot-per-epoch
-rotation that deterministically cycles demonstrated-live waiting peers through a
-single Tier-1 signing seat. It exists because snapshot rewards follow snapshot
-signers, and `ActiveFacilitatorAdmission.recentSignerRank` orders by
-`-recentSignerCount` -- so the peers that already sign most often keep their seats
-and reward share concentrates on a stale group while healthy waiting peers never
-sign (`RewardRotation.scala:8-14`).
+Rewards are distributed by the delegated-rewards path (mainnet's mechanism) to the
+round committee: `roundStartFacilitators` = Core + Tier 1 + Witness, the same set
+carried as `state.facilitators`. Distribution is health- and quality-gated, and
+every committee member earns an equal share.
 
-Per the reward-set mechanics, the live reward set is `roundStartFacilitators` that
-actually sign, not a separately curated signer list -- so the lever for spreading
-reward share is **selection into the round**, which is exactly what this rotation
-moves.
-
-### Scope and safety
-
-**Tier 1 only, never Core.** Core is the liveness quorum denominator; rotating a
-Core seat would change quorum membership and risk wedging consensus, so only a
-single Tier-1 seat is swapped (`RewardRotation.scala:16-21`). Tier-1 peers sign and
-earn but do not gate the cert quorum, so swapping one is reward-fair at no liveness
-cost. The churn is bounded to one slot per epoch boundary so the committee stays
-stable.
-
-### Selection
-
-`rotateOneTier1` (`RewardRotation.scala:80-100`) returns `Some((rotateOut, rotateIn))`
-only when ALL of: `epochRounds > 0` AND `key.value % epochRounds == 0` (epoch
-boundary), `eligibleWaiting` is nonempty, and `tier1` is nonempty. When it fires:
-
-- `rotateIn` = the `eligibleWaiting` peer with the largest `idle` count
-  (longest-overdue), `lotteryHash(peer, key)` descending as the fair tiebreak among
-  equally-idle peers, then PeerId lex.
-- `rotateOut` = the `tier1` peer with the largest `tenure` count (longest-serving),
-  PeerId lex tiebreak.
-
-`CommitteeBuilder` applies it AFTER the core/tier1/witness split, moving exactly one
-Tier-1 <-> Witness pair (`CommitteeBuilder.scala:286-329`): `rotateIn` moves from
-Witness into Tier 1, `rotateOut` moves from Tier 1 to the front of the Witness
-reserve, each list keeping its size invariant. The eligible-waiting pool is
-`candidates intersect recentParticipants minus core minus tier1 minus nonCorePeers`
-(`CommitteeBuilder.scala:300-306`) -- probation peers are excluded from both the
-rotate-in pool and the rotate-out candidates so they stay on their own rehab lane.
-
-### Determinism and inert-by-default
-
-This rotation feeds `committee -> roundStartFacilitators -> facilitatorsHash`, so a
-divergent swap forks the cluster. Every input is chain-derived or a deterministic
-function of consensus-agreed state, and every ordering ends in a PeerId tiebreak:
-`key` is the consensus-agreed ordinal, `idle`/`tenure` are evidence-window entry
-counts (never wall-clock), `eligibleWaiting` is built from consensus-agreed sets,
-and `lotteryHash` is reused verbatim from `FacilitatorSelector.rendezvousScore`
-(`RewardRotation.scala:23-37`).
-
-The eligibility window must be **strictly larger** than the epoch
-(`epoch < eligibilityWindow <= tighteningWindow`): a rotated-out peer stops signing
-and would otherwise drop out of any shorter window before the next epoch boundary and
-be benched forever (`ControllerEvidenceDerivation.scala:175-189`). The dag-l0 wiring
-resolves the window as `rewardRotationEligibilityWindow`, or the full evidence window
-`tighteningWindow` when 0 (`GlobalSnapshotConsensusStateCreator.scala:552-554`).
-
-`epochRounds <= 0` (the default for every environment) always returns `None`, so with
-the feature disabled `CommitteeBuilder.build` is byte-identical to its pre-rotation
-behavior (`RewardRotation.scala:39-42`).
+There is no per-seat reward rotation. An earlier bounded one-slot Tier-1 rotation
+lane was removed; reward fairness is achieved purely by committee **selection**,
+which the health/quality system already governs (sections 2-7). Spreading reward
+share is therefore a matter of which peers the tier partition admits into the round,
+not of moving a seat after the fact.
 
 ---
 
@@ -517,9 +458,9 @@ StateCreator mirrors it):
 3. **Active admission.** `ConsensusPeerController.chooseActive` (which calls
    `ActiveFacilitatorAdmission.fromRecentSigners`) selects `activeFacilitators` and
    the `probationAdmitted` set (`:322-352`).
-4. **Tier partition + reward rotation.** `CommitteeBuilder.build` partitions the
+4. **Tier partition.** `CommitteeBuilder.build` partitions the
    active set into Core / Tier 1 / Witness, applies the Core floor and chronic-core
-   replacement ladder, and runs the bounded reward rotation, with `nonCorePeers`
+   replacement ladder, with `nonCorePeers`
    set to the probation peers (`:555-571`).
 5. **Leader selection.** `LeaderEligibility.fromRecentSigners` restricts the leader
    pool to graduated recent signers within Core (`:635-643`), then
