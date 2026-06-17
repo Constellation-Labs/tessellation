@@ -1189,7 +1189,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               "tier1Facilitators" -> state.tier1Facilitators.value.size.toString
             ) ++ (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty)): _*
           )
-          _ <- ConsensusLog.info(
+          _ <- ConsensusLog.debug(
             logger,
             Category.Proposal,
             state.key.show,
@@ -1197,7 +1197,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             Event.ProposalStateProof,
             "detail" -> describeStateProof(artifact.stateProof)
           )
-          _ <- ConsensusLog.info(
+          _ <- ConsensusLog.debug(
             logger,
             Category.Proposal,
             state.key.show,
@@ -2256,7 +2256,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         val role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
         if (leaderProposal.hash === status.proposalArtifactInfo.hash) {
           // Leader's artifact matches our own — use local ArtifactInfo (avoids re-validation)
-          ConsensusLog.info(
+          ConsensusLog.debug(
             logger,
             Category.Validation,
             state.key.show,

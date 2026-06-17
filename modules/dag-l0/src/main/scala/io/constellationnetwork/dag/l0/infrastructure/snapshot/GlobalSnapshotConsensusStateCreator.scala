@@ -163,7 +163,7 @@ object GlobalSnapshotConsensusStateCreator {
         }
 
         _ <- tcaDegraded.traverse_ { degraded =>
-          ConsensusLog.info(
+          ConsensusLog.debug(
             logger,
             Facilitator,
             key.show,
@@ -313,7 +313,7 @@ object GlobalSnapshotConsensusStateCreator {
           carriedViewChanges = lastOutcome.peerViewChanges.toMap,
           carriedSelfHealth = lastOutcome.peerSelfHealth.toMap
         )
-        _ <- logger.info(
+        _ <- logger.debug(
           s"Controller inputs for key=$key: " + (
             if (controllerInputs.evidenceRounds === 0) "controller_evidence=empty fallback=carried"
             else s"controller_evidence=${controllerInputs.evidenceRounds} rounds"
