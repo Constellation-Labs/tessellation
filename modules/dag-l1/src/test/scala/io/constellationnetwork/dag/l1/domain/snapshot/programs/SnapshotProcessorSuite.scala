@@ -275,7 +275,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       globalSnapshotStateChannelManager,
                       currencySnapshotContextFns,
                       feeCalculator,
-                      mptStore
+                      mptStore,
+                      SnapshotOrdinal.MinValue
                     ),
                   updateNodeParametersAcceptanceManager,
                   updateDelegatedStakeAcceptanceManager,
@@ -323,6 +324,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
 
                   override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
+
+                  override def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal, localHash: Hash)
+                    : IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+                  override def queryLatestEpochProgress: IO[Option[io.constellationnetwork.schema.epoch.EpochProgress]] = ???
 
                   override def pullGlobalSnapshots
                     : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???

@@ -84,14 +84,27 @@ object DownloadDaemon {
                 }
                 (peerDiscoveryDelay.waitForPeers >> downloadAction)
                   .flatTap(_ => nodeStorage.clearRecoveryDownload)
-              }
-              .handleErrorWith { err =>
-                val nextBackoff = (backoff * 2).min(maxBackoff)
-                logger.error(err)(
-                  s"[DownloadDaemon] Download attempt $attempt failed, retrying in ${backoff.toSeconds}s"
-                ) >> Async[F].sleep(backoff) >> go(attempt + 1, nextBackoff)
-              // Do NOT clear recoveryDownload flag here — preserve it so retries
-              // still use the incremental recovery path instead of full download.
+                  .handleErrorWith { err =>
+                    val nextBackoff = (backoff * 2).min(maxBackoff)
+                    // If the full download failed because genesis is unavailable (peers don't
+                    // serve it), switch to incremental recovery on the next attempt. This handles
+                    // validators with persisted snapshots but no snapshot_info anchor — the full
+                    // download falls back to genesis which is too old for any peer to serve.
+                    // The recovery path doesn't need snapshot_info; it downloads from the tip.
+                    //
+                    // Detection is via the `RecoveryFallbackEligible` marker trait mixed into the
+                    // concrete error case objects in each layer's Download.scala. Using a marker
+                    // trait rather than `getClass.getSimpleName.contains(...)` means a rename of
+                    // those errors fails at compile time instead of silently breaking the switch.
+                    val shouldSwitchToRecovery = !isRecovery && err.isInstanceOf[RecoveryFallbackEligible]
+                    val switchAction =
+                      (logger.warn(
+                        s"[DownloadDaemon] Full download failed with recovery-eligible error (${err.getClass.getSimpleName}); switching to recovery path"
+                      ) >> nodeStorage.setRecoveryDownload).whenA(shouldSwitchToRecovery)
+                    logger.error(err)(
+                      s"[DownloadDaemon] Download attempt $attempt failed, retrying in ${backoff.toSeconds}s"
+                    ) >> switchAction >> Async[F].sleep(backoff) >> go(attempt + 1, nextBackoff)
+                  }
               }
           case other =>
             logger.info(s"[DownloadDaemon] Node no longer in WaitingForDownload (state=$other), aborting retry loop") >>

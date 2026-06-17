@@ -97,8 +97,17 @@ object ConsensusLog {
     case object FacilitatorsFinalized extends Event { val show = "FACILITATORS_FINALIZED" }
     case object FacilitatorSubsetting extends Event { val show = "FACILITATOR_SUBSETTING" }
     case object MinQuorumFloorApplied extends Event { val show = "MIN_QUORUM_FLOOR_APPLIED" }
+    case object CandidateObserving extends Event { val show = "CANDIDATE_OBSERVING" }
+    case object ChronicNonSignersExcluded extends Event { val show = "CHRONIC_NON_SIGNERS_EXCLUDED" }
+    // Active-set tightening based on the recent-signers window. Logged at round-start
+    // when the M-of-K filter is evaluated. The `filterApplied` field distinguishes
+    // whether the filter actually excluded peers or fell through to the bootstrap/floor
+    // fallback.
+    case object ActiveSetTightened extends Event { val show = "ACTIVE_SET_TIGHTENED" }
     case object TcaFilterApplied extends Event { val show = "TCA_FILTER_APPLIED" }
     case object AbandonedMissingLogged extends Event { val show = "ABANDONED_MISSING_LOGGED" }
+    case object PriorRoundMissingExcluded extends Event { val show = "PRIOR_ROUND_MISSING_EXCLUDED" }
+    case object FacilityRetransmit extends Event { val show = "FACILITY_RETRANSMIT" }
 
     // ── Proposal events ───────────────────────────────────────────
     case object ProposalEvents extends Event { val show = "PROPOSAL_EVENTS" }
@@ -135,8 +144,23 @@ object ConsensusLog {
     case object ViewChange extends Event { val show = "VIEW_CHANGE" }
     case object ViewChangeWithEviction extends Event { val show = "VIEW_CHANGE_WITH_EVICTION" }
     case object EarlyViewChange extends Event { val show = "EARLY_VIEW_CHANGE" }
+    // Defensive force-VCV emission when consecutiveAbandonments at the same
+    // ordinal crosses `forceViewChangeAbandonments`. Bypasses the per-round "missing-still-
+    // responsive" gate in StallDetector that otherwise blocks VCV emission across abandoned
+    // rounds (the gate is correct for the FIRST stall but wrong when applied across N abandons
+    // at the same ord). All responsive peers cross the threshold within bounded skew and emit
+    // VCVs at the same (fromView, toView), letting VCC assembly converge.
+    case object ForcedViewChange extends Event { val show = "FORCED_VIEW_CHANGE" }
     case object EvictionLoopEscalation extends Event { val show = "EVICTION_LOOP_ESCALATION" }
     case object EvictionSkippedMinFacilitators extends Event { val show = "EVICTION_SKIPPED_MIN_FACILITATORS" }
+    // Phase B1 EvictionVote mechanism (see codex-handoff-facilitator-set-shrinkage.md):
+    // signed negative-evidence votes for persistently-absent facilitators, assembled into
+    // an EvictionCertificate at quorum and embedded in the next Proposal.
+    case object Eviction extends Event { val show = "EVICTION" }
+    // Phase B2 AdmissionVote mechanism: symmetric counterpart — signed positive-evidence
+    // votes for previously-removed peers observed at tip, assembled into an
+    // AdmissionCertificate at quorum and embedded in the next Proposal.
+    case object Admission extends Event { val show = "ADMISSION" }
 
     // ── Stall detection events ────────────────────────────────────
     case object StallDetected extends Event { val show = "STALL_DETECTED" }
@@ -159,15 +183,29 @@ object ConsensusLog {
     case object DownloadInitMismatch extends Event { val show = "DOWNLOAD_INIT_MISMATCH" }
     case object DownloadInitError extends Event { val show = "DOWNLOAD_INIT_ERROR" }
     case object DownloadInitRecoveryImmediate extends Event { val show = "DOWNLOAD_INIT_RECOVERY_IMMEDIATE" }
+    case object DownloadInitRecoveryDeferred extends Event { val show = "DOWNLOAD_INIT_RECOVERY_DEFERRED" }
+    case object DownloadInitReadyPromotion extends Event { val show = "DOWNLOAD_INIT_READY_PROMOTION" }
     case object InitDownloadFailureTracked extends Event { val show = "INIT_DOWNLOAD_FAILURE_TRACKED" }
 
     // ── Rollback events ───────────────────────────────────────────
     case object RollbackInitStart extends Event { val show = "ROLLBACK_INIT_START" }
     case object RollbackStateCleared extends Event { val show = "ROLLBACK_STATE_CLEARED" }
+    case object RollbackBootstrapActive extends Event { val show = "ROLLBACK_BOOTSTRAP_ACTIVE" }
+    case object RollbackFirstRoundDeferred extends Event { val show = "ROLLBACK_FIRST_ROUND_DEFERRED" }
+    case object RollbackQuorumFeasible extends Event { val show = "ROLLBACK_QUORUM_FEASIBLE" }
 
     // ── Recovery events ───────────────────────────────────────────
     case object RecoveryStateTransition extends Event { val show = "RECOVERY_STATE_TRANSITION" }
     case object RecoveryTransitionFailed extends Event { val show = "RECOVERY_TRANSITION_FAILED" }
+    case object ForcedRoundCompletionOnRecovery extends Event { val show = "FORCED_ROUND_COMPLETION_ON_RECOVERY" }
+    case object RecoveryDownloadPhase extends Event { val show = "RECOVERY_DOWNLOAD_PHASE" }
+
+    // ── Declaration-receive events (for cross-node timeline reconstruction) ────
+    // Phase transitions are already captured by STATE_UPDATED (Category.Phase) with
+    // status="X→Y" format — no separate event needed.
+    case object DeclarationReceived extends Event { val show = "DECL_RECEIVED" }
+    case object DeclarationWithdrawn extends Event { val show = "DECL_WITHDRAWN" }
+    case object DeclarationAckReceived extends Event { val show = "DECL_ACK_RECEIVED" }
 
     // ── Force leave events ────────────────────────────────────────
     case object ForceLeaveFromInitFailures extends Event { val show = "FORCE_LEAVE_FROM_INIT_FAILURES" }
@@ -179,6 +217,15 @@ object ConsensusLog {
     case object ForceLeaveFailed extends Event { val show = "FORCE_LEAVE_FAILED" }
     case object ForceLeaveTriggered extends Event { val show = "FORCE_LEAVE_TRIGGERED" }
     case object RecoveryDownloadTriggered extends Event { val show = "RECOVERY_DOWNLOAD_TRIGGERED" }
+    // Alpha.97 same-key soft reset: an in-place clear of round-volatile state
+    // (artifacts, VCC, vote locks, withdrawals) while preserving the per-peer declaration
+    // map, so a wedged round can re-evaluate without flipping NodeState out of Ready.
+    // Fired when consecutive VCC-validation rejections (stale-local-view category) or
+    // artifact-hash-mismatch failures (artifact-mismatch category) at the same key cross
+    // their respective thresholds, AND useful peer declarations are present to rebuild
+    // from, AND the per-key soft-reset budget is not exhausted.
+    case object SoftResetTriggered extends Event { val show = "SOFT_RESET_TRIGGERED" }
+    case object SoftResetSuppressed extends Event { val show = "SOFT_RESET_SUPPRESSED" }
 
     // ── MPT (Merkle Patricia Trie) events ─────────────────────────
     case object MptSavepointRestored extends Event { val show = "MPT_SAVEPOINT_RESTORED" }

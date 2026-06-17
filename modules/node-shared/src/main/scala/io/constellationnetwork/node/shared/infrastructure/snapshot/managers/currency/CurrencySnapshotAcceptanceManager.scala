@@ -14,6 +14,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, LastGlobalSnapshotsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
@@ -22,7 +23,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalan
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{GlobalSnapshotsProcessed, SharedArtifact, TokenUnlock}
+import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -417,7 +418,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       acceptedTokenUnlocks
     ) match {
       case Right(balances) => balances
-      case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
+      case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString)
     }
 
     acceptedCurrencyAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
@@ -453,7 +454,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       .flatMap {
         case Right(balances) => balances.pure[F]
         case Left(error) =>
-          new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $error")
+          SnapshotFailure.BalanceArithmeticError
+            .AllowSpends(error.toString)
             .raiseError[F, SortedMap[Address, Balance]]
       }
 
@@ -468,7 +470,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       metagraphIdSpendTransactions
     ) match {
       case Right(balances) => balances
-      case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
+      case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString)
     }
 
     updatedAllowSpendsCleaned = updatedAllowSpends.filter { case (_, allowSpends) => allowSpends.nonEmpty }
@@ -488,7 +490,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       }
 
     balanceAdjustments = acceptedSharedArtifacts.collect {
-      case balanceAdjustment: io.constellationnetwork.schema.artifact.BalanceAdjustment => balanceAdjustment
+      case balanceAdjustment: BalanceAdjustment => balanceAdjustment
     }
 
     updatedBalancesByInvalidAddressChecks <-

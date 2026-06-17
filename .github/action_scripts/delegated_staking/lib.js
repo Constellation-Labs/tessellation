@@ -15,7 +15,8 @@ const {
 
 const checkOk = (response) => {
   if (response.status !== 200) {
-    throw new Error(`Node returned ${response.status} instead of 200`)
+    const body = response.data !== undefined ? JSON.stringify(response.data) : (response.body || '')
+    throw new Error(`Node returned ${response.status} instead of 200: ${String(body).slice(0, 300)}`)
   }
 }
 

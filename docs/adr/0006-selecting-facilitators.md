@@ -2,9 +2,11 @@
 
 Date: 2022-01-17
 
+> **Superseded.** The model described below -- L0 selecting facilitators by looking at the L1 active peer list, storing them in the Global Snapshot for L1 to fetch -- no longer reflects the implementation. Facilitator selection now happens deterministically inside the global consensus itself: rendezvous hashing (`FacilitatorSelector.scala`) feeds a three-tier `CommitteeBuilder` that partitions the active set into Core / Tier-1 / Witness, with leader eligibility gated by `LeaderEligibility.scala`. See [docs/consensus/committee-tiers.md](../consensus/committee-tiers.md) and [docs/consensus/README.md](../consensus/README.md) sections 9-10. The body below is retained as historical context.
+
 ## Status
 
-Accepted
+Superseded
 
 ## Context
 

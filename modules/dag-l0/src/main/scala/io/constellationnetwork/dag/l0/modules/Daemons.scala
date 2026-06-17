@@ -3,9 +3,12 @@ package io.constellationnetwork.dag.l0.modules
 import java.security.KeyPair
 
 import cats.effect.Async
+import cats.effect.kernel.Ref
 import cats.effect.std.Supervisor
 import cats.syntax.functor._
 import cats.syntax.traverse._
+
+import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
@@ -16,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
@@ -23,7 +27,7 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor: HasherSelector: SecurityProvider, R <: CliMethod](
+  def start[F[_]: Async: Supervisor: HasherSelector: SecurityProvider: Metrics, R <: CliMethod](
     storages: Storages[F],
     services: Services[F, R],
     programs: Programs[F],
@@ -32,7 +36,11 @@ object Daemons {
     keyPair: KeyPair,
     cfg: AppConfig,
     hasherSelector: HasherSelector[F],
-    eventGossipDaemon: EventGossipDaemon[F, GlobalSnapshotEvent, GlobalStateKey]
+    eventGossipDaemon: EventGossipDaemon[F, GlobalSnapshotEvent, GlobalStateKey],
+    // SharedServices-owned Ref. NodeStateDaemon writes the monotonic timestamp of each
+    // observed transition; Cluster.leave()'s dwell-time guard reads it through the thunk
+    // installed in SharedServices.make.
+    stateEntryAtRef: Ref[F, FiniteDuration]
   ): F[Unit] = {
     val pddCfg = cfg.peerDiscovery.delay
     val peerDiscoveryDelay = SelectablePeerDiscoveryDelay.make(
@@ -45,7 +53,7 @@ object Daemons {
     )
 
     List[Daemon[F]](
-      NodeStateDaemon.make(storages.node, services.gossip),
+      NodeStateDaemon.make(storages.node, services.gossip, stateEntryAtRef = Some(stateEntryAtRef)),
       DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay, hasherSelector),
       Daemon.periodic(storages.trust.updateTrustWithBiases(nodeId), cfg.trust.daemon.interval),
       GlobalSnapshotEventsPublisherDaemon

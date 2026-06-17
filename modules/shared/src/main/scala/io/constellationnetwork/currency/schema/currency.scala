@@ -237,6 +237,9 @@ object currency {
     allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
     tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
     globalSyncView: Option[GlobalSyncView],
+    // v20: snapshot of the prev round's consensus-derived peer-behavior counters.
+    // See the GlobalIncrementalSnapshot mirror for the full determinism rationale.
+    peerHistory: Option[ConsensusOperationalState] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -256,6 +259,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication.map(_.toDataApplicationPart),
+          None,
           None,
           None,
           None,
@@ -294,6 +298,7 @@ object currency {
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication.map(_.toDataApplicationPart),
+        None,
         None,
         None,
         None,
@@ -367,6 +372,7 @@ object currency {
           None,
           None,
           genesis.globalSyncView,
+          None,
           genesis.version
         )
       }

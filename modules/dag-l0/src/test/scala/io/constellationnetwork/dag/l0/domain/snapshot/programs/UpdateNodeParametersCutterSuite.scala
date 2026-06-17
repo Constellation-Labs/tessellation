@@ -74,6 +74,25 @@ object UpdateNodeParametersCutterSuite extends MutableIOSuite with Checkers {
     }
   }
 
+  test("cut is deterministic under overflow with tied staleness (regression: divergent UNP -> divergent mptRoot)") { res =>
+    implicit val (j, h, _) = res
+
+    // More events than maxSize forces `.take` to cut; an empty context makes every id first-time, so all share
+    // the same ordinalDiff (tied). The selected subset MUST be identical regardless of input order -- otherwise
+    // different nodes accept different UNP events and the stateProof.mptRoot diverges (the bug this regression pins).
+    val gen = eventsGen(8, 14)
+
+    forall(gen) { events =>
+      val cutter = mkCutter(3)
+      val ctx = mkGlobalContext()
+      val ordinal = SnapshotOrdinal.MinValue.plus(NonNegLong(10))
+      for {
+        forward <- cutter.cut(events, ctx, ordinal)
+        reversed <- cutter.cut(events.reverse, ctx, ordinal)
+      } yield expect.same(forward, reversed).and(expect.all(forward.toSet.subsetOf(events.toSet), forward.size <= 3))
+    }
+  }
+
   def mkCutter(maxSize: Int): UpdateNodeParametersCutter[IO] =
     UpdateNodeParametersCutter.make[IO](PosInt.unsafeFrom(maxSize))
 

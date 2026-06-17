@@ -69,8 +69,8 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
     address <- addressGen
     deductAmount <- Gen.chooseNum(1L, 1000000L)
     increaseAmount <- Gen.chooseNum(1L, 1000000L)
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
-    reference <- Gen.listOfN(1, Gen.alphaNumStr.filter(_.nonEmpty))
+    reason <- Gen.nonEmptyListOf(Gen.alphaNumChar).map(_.mkString)
+    reference <- Gen.listOfN(1, Gen.nonEmptyListOf(Gen.alphaNumChar).map(_.mkString))
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
       address = address,
@@ -83,8 +83,8 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
   // Generator for invalid JsonAdjustment (neither deduct nor increase)
   val invalidJsonAdjustmentNeitherGen: Gen[BalanceAdjustmentLoader.JsonAdjustment] = for {
     address <- addressGen
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
-    reference <- Gen.listOfN(1, Gen.alphaNumStr.filter(_.nonEmpty))
+    reason <- Gen.nonEmptyListOf(Gen.alphaNumChar).map(_.mkString)
+    reference <- Gen.listOfN(1, Gen.nonEmptyListOf(Gen.alphaNumChar).map(_.mkString))
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
       address = address,

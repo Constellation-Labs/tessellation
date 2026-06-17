@@ -52,7 +52,6 @@ object method {
       c.priorityPeerIds.get(environment),
       c.snapshot.size,
       c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
-      c.forkInfoStorage,
       c.lastKryoHashOrdinal,
       c.lastLegacyStateProofOrdinal,
       c.incrementalDelegatedStakingStartingOrdinal,
@@ -68,7 +67,8 @@ object method {
       c.snapshotBinarySenderTimeouts,
       c.snapshot.timeouts,
       c.clickHouseConfig,
-      c.snapshot.mptSnapshotInfoPath
+      c.snapshot.mptSnapshotInfoPath,
+      c.snapshotServing
     )
   }
 

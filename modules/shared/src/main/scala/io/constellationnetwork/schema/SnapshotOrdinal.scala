@@ -15,7 +15,7 @@ import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.data.csv.{CellDecoder, DecoderError}
-import io.circe.{Decoder, Encoder}
+import io.circe._
 
 @derive(order, ordering, show)
 case class SnapshotOrdinal(value: NonNegLong) {
@@ -42,6 +42,9 @@ object SnapshotOrdinal {
   }
 
   val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
+  // Fail-closed sentinel for ordinal activation gates: an `ordinal >= gate` check never fires at
+  // MaxValue, so a gate that defaults to this stays OFF (legacy behavior) until explicitly set.
+  val MaxValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MaxValue)
   val MinIncrementalValue: SnapshotOrdinal = next.next(MinValue)
 
   def unsafeApply(value: Long): SnapshotOrdinal =
@@ -57,4 +60,10 @@ object SnapshotOrdinal {
   implicit val encoder: Encoder[SnapshotOrdinal] = Encoder[NonNegLong].contramap(_.value)
 
   implicit val decoder: Decoder[SnapshotOrdinal] = Decoder[NonNegLong].map(SnapshotOrdinal(_))
+
+  implicit val keyEncoder: KeyEncoder[SnapshotOrdinal] = KeyEncoder[Long].contramap(_.value.value)
+
+  implicit val keyDecoder: KeyDecoder[SnapshotOrdinal] = KeyDecoder[Long].map { v =>
+    NonNegLong.from(v).toOption.map(SnapshotOrdinal(_)).getOrElse(SnapshotOrdinal.MinValue)
+  }
 }

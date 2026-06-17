@@ -30,7 +30,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 
 case class DelegatedRewardsResult(
-  delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]],
+  delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]],
   updatedCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
   updatedWithdrawDelegatedStakes: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
   nodeOperatorRewards: SortedSet[RewardTransaction],
@@ -65,6 +65,10 @@ object DelegatedRewardsDistributor {
 
   /** Identifies which stakes are being modified (have matching tokenLockRef in both existing records and acceptedCreates). Returns a Set of
     * (Address, TokenLockRef) tuples representing the modified stakes.
+    *
+    * Matching uses the existing record's effective `tokenLockRef` (the replacement `currentTokenLockRef` when present, otherwise the
+    * original `event.tokenLockRef`) so that a Create which re-delegates a stake whose token lock has been replaced is still recognized as a
+    * modification of that stake rather than treated as a brand-new one.
     */
   def identifyModifiedStakes(
     existingRecords: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
@@ -76,7 +80,7 @@ object DelegatedRewardsDistributor {
           case (ev, _) =>
             existingRecords
               .get(addr)
-              .filter(_.exists(_.event.tokenLockRef === ev.tokenLockRef))
+              .filter(_.exists(_.tokenLockRef === ev.tokenLockRef))
               .map(_ => addr -> ev.tokenLockRef)
         }
     }.toSet
@@ -92,7 +96,7 @@ object DelegatedRewardsDistributor {
       case (address, records) =>
         val filtered = records.filterNot { record =>
           modifiedStakes.contains(
-            (address, record.event.tokenLockRef)
+            (address, record.tokenLockRef)
           )
         }
 
@@ -101,7 +105,7 @@ object DelegatedRewardsDistributor {
     }.toSortedMap
 
   def getUpdatedCreateDelegatedStakes[F[_]: Async: Hasher](
-    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]],
+    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]],
     delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
     partitionedRecords: PartitionedStakeUpdates
   ): F[SortedMap[Address, SortedSet[DelegatedStakeRecord]]] = {
@@ -115,8 +119,11 @@ object DelegatedRewardsDistributor {
 
           stakeList.traverse {
             case (ev, ord) =>
+              // Match on the existing record's effective tokenLockRef (currentTokenLockRef when the lock has been
+              // replaced, otherwise event.tokenLockRef) so accumulated rewards carry over to a re-delegated/increased
+              // stake instead of resetting to Balance.empty.
               val matchingExistingRecord = existingRecordsForAddr.find { record =>
-                record.event.tokenLockRef === ev.tokenLockRef
+                record.tokenLockRef === ev.tokenLockRef
               }
 
               DelegatedStakeRecord(
@@ -205,7 +212,7 @@ object DelegatedRewardsDistributor {
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],
     nodeOperatorRewards: SortedSet[RewardTransaction],
-    delegatorRewardsMap: Map[PeerId, Map[Address, Amount]]
+    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]]
   ): F[Amount] = {
     val reservedEmittedAmount = reservedAddressRewards.toList.map(_.amount.value.value).sum
     val validatorsEmittedAmount = nodeOperatorRewards.toList.map(_.amount.value.value).sum

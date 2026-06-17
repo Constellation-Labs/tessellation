@@ -1,3 +1,10 @@
 <configuration>
     <include resource="logback-included.xml"/>
+    <!-- Mainnet runs at INFO. The included base sets io.constellationnetwork (and the
+         PeerSelect/Transaction diagnostic streams) to DEBUG, which is too verbose for
+         production app.log. Override to INFO here; testnet/dev keep DEBUG via their own
+         includes. Re-enable a specific logger at DEBUG only for targeted launch diagnosis. -->
+    <logger name="io.constellationnetwork" level="INFO"/>
+    <logger name="PeerSelectLogger" level="INFO"/>
+    <logger name="TransactionLogger" level="INFO"/>
 </configuration>

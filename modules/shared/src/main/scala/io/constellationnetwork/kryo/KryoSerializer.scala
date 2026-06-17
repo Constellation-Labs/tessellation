@@ -53,10 +53,31 @@ object KryoSerializer {
             }
 
           def deserialize[T](bytes: Array[Byte])(implicit T: ClassTag[T]): Either[Throwable, T] =
-            Either.catchNonFatal {
+            try {
               val obj: AnyRef = kryoPool.fromBytes(bytes)
               val migration = migrationsMap.getOrElse((obj.getClass, T.runtimeClass), identity[AnyRef](_))
-              migration(obj).asInstanceOf[T]
+              val result = migration(obj)
+              // Validate the deserialized type matches the expected type at runtime.
+              // Without this check, JVM type erasure allows asInstanceOf[T] to silently succeed
+              // for wrong types (e.g., Map$EmptyMap$ cast to Signed[GlobalSnapshot]), causing
+              // ClassCastExceptions downstream when the value is actually used.
+              if (!T.runtimeClass.isInstance(result))
+                Left(
+                  new ClassCastException(
+                    s"Kryo deserialized ${result.getClass.getName} but expected ${T.runtimeClass.getName}"
+                  )
+                )
+              else
+                Right(result.asInstanceOf[T])
+            } catch {
+              case scala.util.control.NonFatal(t) => Left(t)
+              // Kryo's reflection can throw LinkageError subclasses (InstantiationError,
+              // NoClassDefFoundError, etc.) when speculative bytes don't match the registered
+              // type's class shape — e.g., brotli bytes accidentally parsing as a registered
+              // Kryo class ID whose constructor can't be invoked (scala.collection.immutable.Range).
+              // These are recoverable deserialization failures, not JVM errors — treat them
+              // the same as NonFatal so the caller can fall through to an alternate decoder.
+              case le: LinkageError => Left(le)
             }
         }
       }

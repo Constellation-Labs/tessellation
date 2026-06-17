@@ -1,5 +1,4 @@
 diff --git a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
-index 7e8f10f..3787c52 100644
 --- a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
 +++ b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
 @@ -116,7 +116,6 @@ object Configuration {
@@ -10,3 +9,51 @@ index 7e8f10f..3787c52 100644
        c.lastKryoHashOrdinal,
        c.lastLegacyStateProofOrdinal,
        c.incrementalDelegatedStakingStartingOrdinal,
+@@ -130,7 +129,6 @@ object Configuration {
+       c.priceOracle.getOrElse(env, PriceOracleConfig.default),
+       c.snapshotBinarySenderTimeouts,
+       c.snapshot.timeouts,
+-      c.combinedRouteRateLimiter,
+       c.clickHouseConfig,
+       c.snapshot.mptSnapshotInfoPath
+     )
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+--- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+@@ -120,7 +120,8 @@ object TessellationServices {
+           GlobalSnapshotStateChannelEventsProcessor.make[F](
+             validators.stateChannelValidator,
+             stateChannelManager,
+             currencySnapshotContextFns,
+-            feeCalculator
++            feeCalculator,
++            mptStore
+           )
+         val priceOracle = configuration.priceOracle.getOrElse(env, PriceOracleConfig.default)
+         val globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F] = GlobalSnapshotAcceptanceManager.make(
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
+--- a/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorage.scala
+@@ -117,6 +117,22 @@ object FileBasedLastGlobalIncrementalSnapshotStorage {
+
+       def getHeight: F[Option[Height]] = get.map(_.map(_.height))
+
++      def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] = {
++        val snapshotWithState = SnapshotWithState(snapshot, state)
++        saveSnapshotWithStateJson(path, snapshotWithState) >> cachedSnapshot.set(Some(snapshotWithState))
++      }
++
++      def clear: F[Unit] = {
++        val backupPath = Path(path.toString + ".bk")
++        val deleteFile = (p: Path) =>
++          Files[F].deleteIfExists(p).void.handleErrorWith {
++            case _: java.nio.file.NoSuchFileException => Async[F].unit
++            case e                                    => Async[F].raiseError(e)
++          }
++        cachedSnapshot.set(None) >> deleteFile(path) >> deleteFile(backupPath)
++      }
++
++
+     }
+
+ }
