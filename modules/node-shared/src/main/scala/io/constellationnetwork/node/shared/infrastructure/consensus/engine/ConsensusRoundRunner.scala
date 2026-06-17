@@ -71,7 +71,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
         val lastKey = outcomeKey.get(outcome)
         val lastArtifact = outcomeArtifact.get(outcome)
         val lastSignerIds = lastArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
-        ConsensusLog.info(
+        ConsensusLog.debug(
           logger,
           Category.Lifecycle,
           nextKey.toString,
