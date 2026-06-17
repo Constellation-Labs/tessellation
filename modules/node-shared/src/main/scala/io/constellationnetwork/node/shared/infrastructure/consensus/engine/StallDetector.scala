@@ -459,7 +459,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       readyParticipationSuppressedForVcc = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && vccApplyScheduled
       readyParticipationShouldAbandon = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && !vccApplyScheduled
       _ <- (
-        ConsensusLog.warn(
+        // DEBUG, not WARN: this re-fires every monitor tick while any Core peer is locally observed
+        // not-Ready, so at WARN it floods app.log for the whole stall. The operator-relevant event is
+        // recorded once by the abandon path (AbandonReason.ReadyParticipationQuorumInfeasible); the
+        // metric increment below stays unthrottled for dashboards.
+        ConsensusLog.debug(
           logger,
           Category.Stall,
           key.toString,

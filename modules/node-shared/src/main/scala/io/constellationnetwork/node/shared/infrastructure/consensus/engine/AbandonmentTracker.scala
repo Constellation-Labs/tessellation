@@ -320,7 +320,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
     * retried without counting toward recovery threshold, since the node isn't stuck or forked — it just needs more peers to reach quorum.
     */
   def abandonRound(key: Key, reason: AbandonReason): F[Unit] =
-    ConsensusLog.error(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message) >>
+    // Retriable abandons (QuorumInfeasible / ReadyParticipationQuorumInfeasible) are routine transient
+    // churn -- the node is not stuck or forked, it just needs more peers; log them at DEBUG. Reserve a
+    // single WARN for the non-retriable cases (MaxStalls / RoundTimeout / Lagging) that an operator
+    // actually wants to see. The dag_consensus_round_abandoned counter (below) is unconditional.
+    (if (reason.retriable)
+       ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)
+     else ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)) >>
       Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
       Metrics[F].incrementCounter("dag_consensus_stall_abandon_reason", Seq((Metrics.unsafeLabelName("reason"), reason.label))) >>
       storage

@@ -633,7 +633,7 @@ object GlobalSnapshotAcceptanceManager {
 
         loggerBundle.app.withOrdinal(ordinal) {
           for {
-            _ <- loggerBundle.app.info(
+            _ <- loggerBundle.app.debug(
               s"[ACCEPTANCE] ordinal=$ordinal epoch=${epochProgress.show} ENTER " +
                 s"blocks=${blocksForAcceptance.size} allowSpend=${allowSpendBlocksForAcceptance.size} " +
                 s"tokenLock=${tokenLockBlocksForAcceptance.size} sc=${scEvents.size} unp=${unpEvents.size} " +
