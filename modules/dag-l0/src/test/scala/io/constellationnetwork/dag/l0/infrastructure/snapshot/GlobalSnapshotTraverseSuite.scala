@@ -381,7 +381,20 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           currencySnapshotContextFns,
           feeCalculator,
           mptStore,
-          SnapshotOrdinal.MinValue
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
