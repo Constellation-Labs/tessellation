@@ -165,7 +165,27 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       }
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, feeCalculator, mptStore, SnapshotOrdinal.MinValue)
+        .make[IO](
+          validator,
+          manager,
+          currencySnapshotContextFns,
+          feeCalculator,
+          mptStore,
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
+        )
     } yield processor
   }
 

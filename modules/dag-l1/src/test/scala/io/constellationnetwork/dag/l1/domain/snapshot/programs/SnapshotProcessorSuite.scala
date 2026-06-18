@@ -276,7 +276,20 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       currencySnapshotContextFns,
                       feeCalculator,
                       mptStore,
-                      SnapshotOrdinal.MinValue
+                      FieldsAddedOrdinals(
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+                      ),
+                      Dev
                     ),
                   updateNodeParametersAcceptanceManager,
                   updateDelegatedStakeAcceptanceManager,
