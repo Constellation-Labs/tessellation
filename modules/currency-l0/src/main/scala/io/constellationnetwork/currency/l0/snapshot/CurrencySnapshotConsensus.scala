@@ -8,7 +8,6 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
-import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
@@ -35,6 +34,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
@@ -89,11 +89,12 @@ object CurrencySnapshotConsensus {
     // from this node's current LocalHealthMonitor sample. Shared with the dag-l0 instance via
     // SharedServices.localHealthMonitor at the caller site.
     localHealthMonitor: LocalHealthMonitor[F],
-    // Dedicated EC for the FSM consume fiber. When provided, the whole
-    // `loop.run.compile.drain` is shifted onto this EC via `Async[F].evalOn`, isolating
-    // round-timing from HTTP serving load on the default global runtime. When None (default,
-    // and what tests use) the loop runs on the ambient runtime. See `ConsensusExecutor`.
-    consensusEc: Option[ExecutionContext] = None
+    // Dedicated dispatcher (EC + EC-scoped supervisor) for the FSM consume fiber. When provided,
+    // the whole `loop.run.compile.drain` is shifted onto its EC via `Async[F].evalOn` and the fiber
+    // is supervised by the dispatcher's supervisor (finalized before the EC, so the fiber is
+    // cancelled while the pool is still alive). When None (default, and what tests use) the loop
+    // runs on the ambient runtime under the outer supervisor. See `ConsensusExecutor`.
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
     implicit val daDecoder: Decoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
@@ -341,10 +342,14 @@ object CurrencySnapshotConsensus {
         CurrencyConsensusKind
       ](consensusStorage, rumorQueue)
 
-      // Pin the consume fiber onto the dedicated consensus EC when one was provided. The
-      // shift covers the entire stream's compile-drain so queue.take blocks on the consensus
-      // pool rather than the global runtime.
-      _ <- supervisor.supervise(consensusEc.fold(loop.run.compile.drain)(ec => Async[F].evalOn(loop.run.compile.drain, ec)))
+      // Pin the consume fiber onto the dedicated consensus EC when one was provided, supervised by
+      // that dispatcher's EC-scoped supervisor so it is cancelled before the pool is shut down.
+      // The shift covers the entire stream's compile-drain so queue.take blocks on the consensus
+      // pool rather than the global runtime. Without a dispatcher: run on the ambient runtime under
+      // the outer supervisor (test/default behaviour).
+      _ <- consensusDispatcher.fold(supervisor.supervise(loop.run.compile.drain)) { d =>
+        d.supervisor.supervise(Async[F].evalOn(loop.run.compile.drain, d.ec))
+      }
       triggerEventConsensus = loop.queue.offer(
         ConsensusCommand.FacilitateByEvent
       )

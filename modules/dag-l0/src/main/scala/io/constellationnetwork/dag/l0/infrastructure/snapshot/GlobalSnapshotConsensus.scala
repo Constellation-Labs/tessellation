@@ -9,7 +9,6 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
-import scala.concurrent.ExecutionContext
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
@@ -55,6 +54,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.PeerHistorySidecarStorage
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
@@ -120,12 +120,13 @@ object GlobalSnapshotConsensus {
     // reads, activating the leave-refusal behavior. When None, the engine creates its own
     // internal Ref and the cluster-level guard sees only the empty default (inert).
     injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None,
-    // Dedicated EC for the FSM consume fiber. When provided, the whole
-    // `loop.run.compile.drain` is shifted onto this EC via `Async[F].evalOn`, isolating
-    // round-timing from HTTP serving load on the default global runtime. When None (default,
-    // and what tests use) the loop runs on the ambient runtime -- same behaviour as before
-    // PR-2's executor isolation. See `ConsensusExecutor`.
-    consensusEc: Option[ExecutionContext] = None
+    // Dedicated dispatcher (EC + EC-scoped supervisor) for the FSM consume fiber. When provided,
+    // the whole `loop.run.compile.drain` is shifted onto its EC via `Async[F].evalOn` and the fiber
+    // is supervised by the dispatcher's supervisor (finalized before the EC, so the fiber is
+    // cancelled while the pool is still alive). When None (default, and what tests use) the loop
+    // runs on the ambient runtime under the outer supervisor -- same behaviour as before PR-2's
+    // executor isolation. See `ConsensusExecutor`.
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -429,11 +430,15 @@ object GlobalSnapshotConsensus {
 
       triggerEvent = loop.queue.offer(ConsensusCommand.FacilitateByEvent)
 
-      // Pin the consume fiber onto the dedicated consensus EC when one was provided. The
-      // shift covers the entire stream's compile-drain so queue.take blocks on the consensus
+      // Pin the consume fiber onto the dedicated consensus EC when one was provided, supervised by
+      // that dispatcher's EC-scoped supervisor so it is cancelled before the pool is shut down.
+      // The shift covers the entire stream's compile-drain so queue.take blocks on the consensus
       // pool rather than the global runtime; downstream effects that elect to shift back via
-      // `evalOn` (gossip emits, P2P calls) are not forced onto the consensus pool.
-      _ <- supervisor.supervise(consensusEc.fold(loop.run.compile.drain)(ec => Async[F].evalOn(loop.run.compile.drain, ec)))
+      // `evalOn` (gossip emits, P2P calls) are not forced onto the consensus pool. Without a
+      // dispatcher: run on the ambient runtime under the outer supervisor (test/default behaviour).
+      _ <- consensusDispatcher.fold(supervisor.supervise(loop.run.compile.drain)) { d =>
+        d.supervisor.supervise(Async[F].evalOn(loop.run.compile.drain, d.ec))
+      }
       consensus = new Consensus(
         handler,
         consensusStorage,
