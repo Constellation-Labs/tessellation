@@ -20,7 +20,7 @@ import io.constellationnetwork.node.shared.http.p2p.clients.SnapshotClient
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.node.NodeState.{Observing, Ready, WaitingForReady}
 import io.constellationnetwork.schema.peer.Peer.toP2PContext
-import io.constellationnetwork.schema.peer.{L0Peer, Peer}
+import io.constellationnetwork.schema.peer.{L0Peer, Peer, PeerId}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
 import io.constellationnetwork.schema.trust.{TrustScores, TrustValueRefined, TrustValueRefinement}
 import io.constellationnetwork.security.hash.Hash
@@ -66,25 +66,30 @@ object PeerSelect {
 
     val logger = Slf4jLogger.getLoggerFromName[F](peerSelectLoggerName)
 
-    def select: F[L0Peer] = getFilteredPeerDetails
+    def select: F[L0Peer] = getFilteredPeerDetails(observingFallback = false, Set.empty)
       .flatTap(details => logger.debug(details.asJson.noSpaces))
       .map(_.selectedPeer)
 
-    /** Recovery variant: try `select` first; if it raises `NoPeersToSelect`, retry with the Observing pool, raising
+    /** Recovery variant: try the Ready pool first; if it raises `NoPeersToSelect`, retry with the Observing pool, raising
       * `NoValidPeersForRecoverySource` if even that is empty. Lets callers in the recovery path distinguish "no Ready peer right now"
-      * (often resolves on its own) from "no candidate source at all" (operator action needed).
+      * (often resolves on its own) from "no candidate source at all" (operator action needed). `preferredPeers` biases selection toward the
+      * recovery-hint majority within the validated candidate set (see the trait scaladoc).
       */
-    def selectForRecovery: F[L0Peer] = select.recoverWith {
-      case NoPeersToSelect =>
-        getFilteredPeerDetails(observingFallback = true)
-          .flatTap(details => logger.debug(details.asJson.noSpaces))
-          .map(_.selectedPeer)
-          .recoverWith { case NoPeersToSelect => MonadThrow[F].raiseError(NoValidPeersForRecoverySource) }
-    }
+    def selectForRecovery(preferredPeers: Set[PeerId]): F[L0Peer] =
+      getFilteredPeerDetails(observingFallback = false, preferredPeers)
+        .flatTap(details => logger.debug(details.asJson.noSpaces))
+        .map(_.selectedPeer)
+        .recoverWith {
+          case NoPeersToSelect =>
+            getFilteredPeerDetails(observingFallback = true, preferredPeers)
+              .flatTap(details => logger.debug(details.asJson.noSpaces))
+              .map(_.selectedPeer)
+              .recoverWith { case NoPeersToSelect => MonadThrow[F].raiseError(NoValidPeersForRecoverySource) }
+        }
 
-    def getFilteredPeerDetails: F[FilteredPeerDetails] = getFilteredPeerDetails(observingFallback = false)
+    def getFilteredPeerDetails: F[FilteredPeerDetails] = getFilteredPeerDetails(observingFallback = false, Set.empty)
 
-    def getFilteredPeerDetails(observingFallback: Boolean): F[FilteredPeerDetails] = for {
+    def getFilteredPeerDetails(observingFallback: Boolean, preferredPeers: Set[PeerId]): F[FilteredPeerDetails] = for {
       // WaitingForReady peers hold the same snapshot state as Ready peers (initFromDownload
       // already ran trySetInitialConsensusOutcome). Including them in the primary pool
       // prevents the post-rollback bottleneck where only the rollback-lead node is Ready
@@ -114,7 +119,13 @@ object PeerSelect {
           )
         }
         .map(_.groupMap { case (_, hash) => hash } { case (peer, _) => peer })
-      peerCandidates = peerDistribution.values.maxBy(_.length)
+      validatedCandidates = peerDistribution.values.maxBy(_.length)
+      // #8 recovery hint: bias toward the preferred (fork-recovery majority) peers by intersecting them with
+      // the already-validated majority-ordinal/majority-hash candidates. Narrows only WITHIN the validated set
+      // and falls back to the full set when the hint does not overlap. Empty hint => prior behavior.
+      peerCandidates =
+        if (preferredPeers.isEmpty) validatedCandidates
+        else validatedCandidates.filter(p => preferredPeers.contains(p.id)).toNel.getOrElse(validatedCandidates)
       selectedPeer <- Random[F].elementOf(peerCandidates.toList).map(L0Peer.fromPeer)
     } yield
       FilteredPeerDetails(

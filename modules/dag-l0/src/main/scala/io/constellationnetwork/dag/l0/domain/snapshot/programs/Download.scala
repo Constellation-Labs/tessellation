@@ -23,6 +23,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.programs.{Download, S
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.fork.ExitOnFork
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.RecoveryPeerHint
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
@@ -65,6 +66,20 @@ case class RecoveryConvergenceFailed(
 ) extends RuntimeException(
       s"Recovery did not converge: observed=$observed, clusterTip=$clusterTip, lag=$lag ordinals after " +
         s"$iterations iterations / ${elapsed.toSeconds}s. Re-triggering recovery."
+    )
+    with NoStackTrace
+
+/** Raised when a backward (rollback) recovery would delete local snapshots above the network tip, but the rollback target `(ordinal, hash)`
+  * is not corroborated by a strict majority of Ready peers. Failing closed prevents an irreversible `deleteAbove` on an unverified or
+  * minority tip. Re-raised so the outer handler retries: a legitimate cluster-wide rollback corroborates once enough peers report the same
+  * target, while a lagging or minority source never reaches a majority.
+  */
+case class RollbackTargetNotCorroborated(
+  target: SnapshotOrdinal,
+  responders: Int
+) extends RuntimeException(
+      s"Rollback target ordinal=$target not corroborated by a strict majority of $responders Ready-peer tips; " +
+        s"refusing destructive deleteAbove. Re-triggering recovery."
     )
     with NoStackTrace
 
@@ -125,6 +140,14 @@ object Download {
     */
   private[snapshot] val minReadyQuorum: Int = 1
 
+  /** Minimum number of Ready peers that must agree on the exact `(ordinal, hash)` rollback target before a backward (destructive) recovery
+    * is allowed to `deleteAbove` it. Unlike `minReadyQuorum` (which gates the non-destructive forward-observe shortcut and is intentionally
+    * 1), a destructive rollback must not be authorized by a single source peer, so this floor is 2 and is combined with a strict-majority
+    * check (see the corroboration gate in `recoveryStart`). Forward / same-ordinal recovery is not gated -- it deletes nothing above our
+    * tip.
+    */
+  private[snapshot] val minRollbackCorroborators: Int = 2
+
   /** Decide the observe-loop target ordinal.
     *
     * Default behavior: require observing `currentOrdinal + observationOffset` (i.e. one newer snapshot) before exiting observe. This is the
@@ -183,7 +206,8 @@ object Download {
     mptStore: MptStore[F, GlobalStateKey],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     globalSnapshotConsensusStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    joining: Joining[F]
+    joining: Joining[F],
+    recoveryPeerHint: RecoveryPeerHint[F]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
@@ -470,7 +494,11 @@ object Download {
           // StateTransitions.fetchOutcomeFromCluster. Doesn't fully solve the alpha.40 cascade where ALL
           // peers were in WaitingForDownload, but covers the partial case where some peers reached
           // Observing while others were still in download.
-          peerSelect.selectForRecovery.flatMap(peer => p2pClient.globalSnapshot.getLatestMetadata.run(peer).tupleLeft(peer))
+          // #8: bias recovery source selection toward the fork-recovery majority hint when present (it only
+          // narrows within the validated candidate set; see PeerSelect.selectForRecovery).
+          recoveryPeerHint.getPreferredPeers
+            .flatMap(hint => peerSelect.selectForRecovery(hint.getOrElse(Set.empty)))
+            .flatMap(peer => p2pClient.globalSnapshot.getLatestMetadata.run(peer).tupleLeft(peer))
         }
       }
 
@@ -491,6 +519,34 @@ object Download {
                 s"direction=$direction"
             )
             _ <- recordRecoveryPhase("start", direction)
+            // #9 directional rollback gate: a backward recovery (network tip BELOW our local ordinal) deletes
+            // local snapshots above the tip -- irreversible. Require a strict majority of Ready peers to
+            // corroborate the EXACT (ordinal, hash) target, with at least `minRollbackCorroborators` agreeing,
+            // so a single (lagging or minority) source peer cannot authorize destroying local state. Forward /
+            // same-ordinal recovery is NOT gated: `deleteAbove(metadata.ordinal)` removes nothing above our tip
+            // there. Fail closed on no corroboration -- raise so the outer recovery loop retries: a legitimate
+            // cluster-wide rollback corroborates once peers come up; a minority-fork source never reaches a
+            // majority and the node keeps retrying (eventually force-leaving via the recovery-attempt counter).
+            _ <- Async[F].whenA(localOrdinal.exists(metadata.ordinal < _)) {
+              getReadyPeerTips.flatMap { tips =>
+                val corroborators = tips.count(t => t.ordinal === metadata.ordinal && t.hash === metadata.hash)
+                val corroborated = corroborators >= minRollbackCorroborators && corroborators > tips.size / 2
+                if (corroborated)
+                  logger.info(
+                    s"[RecoveryDownload] Rollback target ordinal=${metadata.ordinal.show} hash=${metadata.hash.show} " +
+                      s"corroborated by $corroborators/${tips.size} Ready peers"
+                  ) >> recordRecoveryPhase("rollback_corroborated", direction)
+                else
+                  logger.warn(
+                    s"[RecoveryDownload] Rollback target ordinal=${metadata.ordinal.show} NOT corroborated " +
+                      s"($corroborators/${tips.size} Ready peers agree; need a strict majority and >= $minRollbackCorroborators); " +
+                      s"refusing destructive deleteAbove and re-triggering recovery"
+                  ) >>
+                    Metrics[F].incrementCounter("dag_recovery_rollback_uncorroborated_total") >>
+                    recordRecoveryPhase("rollback_uncorroborated", direction) >>
+                    RollbackTargetNotCorroborated(metadata.ordinal, tips.size).raiseError[F, Unit]
+              }
+            }
             // Clean up snapshots above the network tip (e.g. from a minority fork).
             _ <- snapshotStorage.cleanupAbove(metadata.ordinal)
             _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
