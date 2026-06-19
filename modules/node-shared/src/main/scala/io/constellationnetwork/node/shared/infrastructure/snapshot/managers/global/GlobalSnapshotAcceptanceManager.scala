@@ -1167,7 +1167,7 @@ object GlobalSnapshotAcceptanceManager {
             // entry set: the live, in-memory analogue of the historical "MptStore carries wrong state incrementally"
             // divergence. Catches drift at its source, the same ordinal it is introduced, before it propagates.
             _ <- GlobalSnapshotInfo
-              .mptStateProof[F](sweptGsi)
+              .mptStateProof[F](sweptGsi, ordinal)
               .map(_.mptRoot)
               .flatMap { fullRebuildRoot =>
                 loggerBundle.app
