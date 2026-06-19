@@ -19,9 +19,13 @@ object metrics {
   def updateFailedConfirmingStateChannelBinaryMetrics[F[_]: Monad: Metrics](): F[Unit] =
     Metrics[F].incrementCounter("dag_binaries_failed_confirmation")
 
+  def updateDroppedStateChannelBinaryMetrics[F[_]: Monad: Metrics](): F[Unit] =
+    Metrics[F].incrementCounter("dag_binaries_state_channel_dropped_total")
+
   private def getTrackerStateTags(state: TrackerState): TagSeq =
     Seq(
       ("binaries_tracked_number", state.tracked.size.toString),
+      ("binaries_in_flight", state.inFlight.size.toString),
       ("binaries_cap", state.cap.toString),
       ("binaries_retry_mode", state.retryMode.toString),
       ("binaries_no_confirmations_since_retry_count", state.noConfirmationsSinceRetryCount.toString),
