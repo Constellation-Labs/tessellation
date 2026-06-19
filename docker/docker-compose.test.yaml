@@ -57,6 +57,15 @@ services:
       # from a single host IP at sub-second intervals, which trips the production 10/60s
       # cap immediately. 0 disables the middleware (predicate at SnapshotRoutes.scala:302).
       - CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW:-0}
+      # Concurrency cap (ConcurrencyLimitMiddleware) returns 503 INDEPENDENTLY of the per-IP
+      # limiters above -- application.conf notes "concurrency cap still applies" even when the
+      # per-IP limits are 0. The E2E harness, the snapshot-streaming consumer, and recovering
+      # peers poll/serve the public snapshot routes heavily enough to saturate the production cap
+      # of 20, producing transient 503s mid-test (e.g. "Failed to fetch snapshot ordinal: 503").
+      # Raise it to effectively-unlimited for the multi-node test topology; production keeps 20.
+      - CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC=${CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC:-100000}
+      # Long-window per-IP bandwidth limiter: same test rationale as the per-window limiter above; off.
+      - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW:-0}
     # merge in an extra network just for tests
     networks:
       tessellation_common:
