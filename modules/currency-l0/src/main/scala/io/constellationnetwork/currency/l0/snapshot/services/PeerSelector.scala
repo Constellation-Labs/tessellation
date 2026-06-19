@@ -11,10 +11,16 @@ object PeerSelector {
 
   /** Deterministically pick the single metagraph node responsible for posting a binary.
     *
-    * `alivePeers` is the set of currently-responsive peers (plus self). When provided, dead peers are removed from the candidate set BEFORE
-    * selection, so a binary is never assigned to a node that cannot send it; if no candidate is alive, this node takes over
-    * (self-fallback). When `None` (liveness unknown), no filtering is applied and selection degrades to the pure deterministic behaviour.
-    * Selection is stable across nodes that share the same alive view, so exactly one node selects itself in the common case.
+    * The PRIMARY owner and the rotation order are computed over the FULL candidate set (liveness-independent), seeded by `lastSnapshotHash`
+    * — so every node, regardless of its local view of who is alive, agrees on the same primary and the same ordering. `alivePeers` is then
+    * used ONLY to skip past dead peers along that shared rotation and let the next live one (or self) take over.
+    *
+    * Consequences:
+    *   - When the primary is alive, it always selects itself (it sees itself alive), so there is exactly one sender — no dependency on
+    *     other nodes agreeing about anyone's liveness.
+    *   - When the primary is dead, nodes converge on the same next-in-rotation live peer; transient alive-view disagreement can at worst
+    *     cause a (harmless, hash-deduplicated) duplicate send, never silence.
+    *   - When `alivePeers` is None (liveness unknown), selection degrades to the pure deterministic primary.
     */
   def pickDeterministicPeer(
     binarySigners: List[PeerId],
@@ -22,48 +28,33 @@ object PeerSelector {
     selfId: PeerId,
     lastSnapshotHash: Hash,
     alivePeers: Option[Set[PeerId]]
-  ): PeerId = {
-    def keepLive(peers: List[PeerId]): List[PeerId] =
-      alivePeers.fold(peers)(live => peers.filter(p => live.contains(p) || p === selfId))
-
-    if (binarySigners.isEmpty) {
-      selfId
-    } else {
-      val liveSigners = keepLive(binarySigners)
-      if (liveSigners.isEmpty) {
-        selfId
-      } else if (liveSigners.size === 1) {
-        liveSigners.head
-      } else if (allowedPeers.isEmpty) {
-        selectFromSigners(liveSigners, lastSnapshotHash)
-      } else {
-        selectFromEligiblePeers(liveSigners, keepLive(allowedPeers), lastSnapshotHash)
-      }
+  ): PeerId =
+    candidateSet(binarySigners, allowedPeers) match {
+      case Nil => selfId
+      case candidates =>
+        val sorted = candidates.distinct.sortBy(_.toString)
+        val primaryIdx = computeOffset(sorted, lastSnapshotHash)
+        alivePeers match {
+          case None => sorted(primaryIdx)
+          case Some(live) =>
+            val n = sorted.size
+            (0 until n).iterator
+              .map(i => sorted((primaryIdx + i) % n))
+              .find(p => live.contains(p) || p === selfId)
+              .getOrElse(selfId)
+        }
     }
-  }
 
-  private def selectFromSigners(signers: List[PeerId], seed: Hash): PeerId = {
-    val sortedSigners = signers.sortBy(_.toString)
-    val offset = computeOffset(sortedSigners, seed)
-    sortedSigners(offset)
-  }
-
-  private def selectFromEligiblePeers(
-    binarySigners: List[PeerId],
-    allowedPeers: List[PeerId],
-    lastSnapshotHash: Hash
-  ): PeerId = {
-    val eligiblePeers = binarySigners.filter(allowedPeers.contains)
-    if (eligiblePeers.isEmpty) {
-      // No signer is in the allowance list: fall back to a single deterministic signer rather than `selfId`,
-      // which would make every node post the same binary (thundering herd).
-      selectFromSigners(binarySigners, lastSnapshotHash)
-    } else {
-      val sortedEligible = eligiblePeers.sortBy(_.toString)
-      val offset = computeOffset(sortedEligible, lastSnapshotHash)
-      sortedEligible(offset)
+  /** The liveness-independent candidate set: prefer signers intersected with the allowance list, but never let an empty intersection
+    * collapse to "self on every node" (thundering herd) — fall back to the full signer set.
+    */
+  private def candidateSet(binarySigners: List[PeerId], allowedPeers: List[PeerId]): List[PeerId] =
+    if (binarySigners.isEmpty) Nil
+    else if (allowedPeers.isEmpty) binarySigners
+    else {
+      val eligible = binarySigners.filter(allowedPeers.contains)
+      if (eligible.isEmpty) binarySigners else eligible
     }
-  }
 
   private def computeOffset(peers: List[PeerId], seed: Hash): Int = {
     val hashInput = seed.value + peers.map(_.toString).mkString("|")

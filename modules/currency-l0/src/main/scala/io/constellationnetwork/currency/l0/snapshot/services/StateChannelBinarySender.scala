@@ -73,6 +73,7 @@ object StateChannelBinarySender {
         identifierStorage,
         cluster,
         selfId,
+        maxTrackedBinaries,
         fa => S.supervise(fa).void,
         logger
       )
@@ -118,6 +119,7 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
   identifierStorage: IdentifierStorage[F],
   cluster: ClusterStorage[F],
   selfId: PeerId,
+  maxTrackedBinaries: Int,
   // How a posting effect is scheduled. Production forks it on a Supervisor (non-blocking, fire-and-forget);
   // tests pass identity to run it synchronously and observe ordering deterministically.
   forkSend: F[Unit] => F[Unit],
@@ -143,7 +145,7 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
           logger.info(s"[Queue] Enqueued binary ${binary.hash} at ordinal $currencySnapshotOrdinal")
         else
           logger.error(
-            s"[Queue] Send queue is full (>= $normalSendWindow window, bound reached); dropping binary ${binary.hash} " +
+            s"[Queue] Send queue is full (bound=$maxTrackedBinaries reached); dropping binary ${binary.hash} " +
               s"at ordinal $currencySnapshotOrdinal. The chain head is not draining; metagraph may require resync."
           ) >> updateDroppedStateChannelBinaryMetrics()
     } yield ()
@@ -194,7 +196,7 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
   // degrading to the pure deterministic behaviour rather than wrongly treating everyone as dead.
   private def aliveSet: F[Option[Set[PeerId]]] =
     cluster.getResponsivePeers
-      .map(peers => (peers.map(_.id) + selfId).some)
+      .map(peers => (peers.toList.map(_.id).toSet + selfId).some)
       .handleErrorWith { err =>
         logger
           .warn(err)("[Queue] Could not read responsive peers; not filtering by liveness this tick")
@@ -250,13 +252,17 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
       case true =>
         tracker.tryBeginSend(p.binary.hash, currentOrdinal).flatMap {
           case false => Applicative[F].unit // already in flight on this node
-          case true =>
+          case true  =>
+            // .guarantee releases the in-flight claim when the (forked) send finishes or is cancelled; the outer
+            // handleErrorWith covers the rare case where scheduling the fork itself fails, so the claim never leaks.
             forkSend(
               poster
                 .sendSelf(p.binary, signers)
                 .flatMap(_ => logger.info(s"[Queue] Posted ${p.binary.hash}"))
                 .handleErrorWith(err => logger.warn(s"[Queue] Failed to post ${p.binary.hash}: ${err.getMessage}"))
                 .guarantee(tracker.endSend(p.binary.hash))
+            ).handleErrorWith(err =>
+              logger.warn(err)(s"[Queue] Could not schedule send for ${p.binary.hash}") >> tracker.endSend(p.binary.hash)
             )
         }
     }

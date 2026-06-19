@@ -175,6 +175,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         identifierStorage,
         clusterStorage(),
         selfId,
+        maxTrackedBinaries,
         // Run posting synchronously so the test can observe send ordering / re-sends deterministically.
         identity,
         logger
@@ -203,10 +204,13 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   // Production path: normal-mode sending, confirmation + pruning (exercising the REAL impl, not a divergent double)
   // ---------------------------------------------------------------------------------------------------------------
 
-  test("normal mode - enqueue then processQueue posts pending binaries") { res =>
+  test("normal mode - posts every pending binary exactly once, in chain order") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
-    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+    // Keep the list within the normal-mode window (10) so we can assert the full, ordered set was posted.
+    val gen = Gen.choose(1, 8).flatMap(n => Gen.listOfN(n, binaryGen))
+
+    forall(gen) { binaries =>
       (for {
         kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
         (sender, _, postedRef) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
@@ -216,7 +220,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none))
             _ <- sender.processQueueWithoutSnapshot
             posted <- postedRef.get
-          } yield expect(posted.toSet.subsetOf(hashed.toSet)).and(expect(posted.nonEmpty))
+          } yield expect.eql(posted.map(_.hash), hashed.map(_.hash))
         )
       } yield result).use(IO.pure)
     }
@@ -420,17 +424,17 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   }
 
   // ---------------------------------------------------------------------------------------------------------------
-  // F5 — bounded exponential backoff
+  // F5 — never go silent: cap floors at 1 (silence would guarantee the external 5-min health restart)
   // ---------------------------------------------------------------------------------------------------------------
 
-  test("backoff exponent is clamped and never overflows the wait threshold") { res =>
+  test("retry mode never silences: cap floors at 1 even after a long confirmation drought") { res =>
     implicit val (_, hs, sp, _, _) = res
 
     forall(binaryGen) { binary =>
       for {
         hashed <- binary.toHashed
-        // cap == 1, no confirmations, already at the clamp -> entering backoff must keep the exponent at the clamp (6),
-        // not grow it to 7 (which would eventually saturate Math.pow(2, exponent) and freeze sending forever).
+        // Already at the minimum budget, retry mode, no confirmations: cap must STAY at 1 (never 0), so the head
+        // keeps being posted every tick. The stall exponent advances (clamped) only for observability.
         pending = PendingBinary(hashed, SnapshotOrdinal(1L), SnapshotOrdinal(1L), NonNegLong.unsafeFrom(1L), none)
         stalled = TrackerState.empty.copy(
           tracked = scala.collection.immutable.Queue[TrackedBinary](pending),
@@ -438,11 +442,12 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           retryMode = true,
           backoffExponent = NonNegLong.unsafeFrom(6L)
         )
-        afterBackoff = RetryStrategy.updateRetryParameters(stalled, previousRetryMode = true)
+        // Apply the transition repeatedly to simulate many confirmation-less ordinals.
+        afterMany = (1 to 20).foldLeft(stalled)((s, _) => RetryStrategy.updateRetryParameters(s, previousRetryMode = true))
       } yield
         expect
-          .eql(afterBackoff.backoffExponent.value, 6L)
-          .and(expect.eql(afterBackoff.cap.value, 0L))
+          .eql(afterMany.cap.value, 1L)
+          .and(expect(afterMany.backoffExponent.value <= 6L))
     }
   }
 
@@ -466,6 +471,27 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
               .eql(state.tracked.size, 3)
               .and(expect.eql(outcomes.count(identity), 3))
               .and(expect.eql(outcomes.count(o => !o), 2))
+        )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  test("sender enqueue caps the queue (drop path does not throw and keeps the prefix)") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(Gen.listOfN(6, binaryGen)) { binaries =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty, maxTrackedBinaries = 4)
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none)) // exercises the drop log + metric branch
+            state <- tracker.getState
+          } yield
+            expect
+              .eql(state.tracked.size, 4)
+              .and(expect.eql(state.tracked.collect { case p: PendingBinary => p.binary.hash }.toList, hashed.take(4).map(_.hash)))
         )
       } yield result).use(IO.pure)
     }
@@ -526,20 +552,22 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     val b = PeerId(Hex("bbb"))
     val c = PeerId(Hex("ccc"))
     val signers = List(a, b, c)
-
-    // Pure deterministic choice with full liveness (everyone alive)
-    val ownerAllAlive = PeerSelector.pickDeterministicPeer(signers, Nil, a, Hash("seed"), Some(Set(a, b, c)))
-    // The chosen owner is now dead -> must NOT be selected
-    val ownerWithoutChosen = PeerSelector.pickDeterministicPeer(signers, Nil, a, Hash("seed"), Some(Set(a, b, c) - ownerAllAlive))
-    // Nobody among signers is alive (and self is none of them) -> self takes over
+    // self is deliberately NOT a signer, so the self-fallback does not mask the "next live peer takes over" path.
     val self = PeerId(Hex("eee"))
-    val ownerNoneAlive = PeerSelector.pickDeterministicPeer(signers, Nil, self, Hash("seed"), Some(Set.empty[PeerId]))
+
+    // The primary owner is computed over the full signer set (liveness-independent) and is alive here.
+    val primary = PeerSelector.pickDeterministicPeer(signers, Nil, self, Hash("seed"), Some(Set(a, b, c)))
+    // Kill the primary: a different, still-alive signer must take over (never silence).
+    val stillAlive = Set(a, b, c) - primary
+    val takeover = PeerSelector.pickDeterministicPeer(signers, Nil, self, Hash("seed"), Some(stillAlive))
+    // Nobody among the signers is alive -> self takes over.
+    val noneAlive = PeerSelector.pickDeterministicPeer(signers, Nil, self, Hash("seed"), Some(Set.empty[PeerId]))
 
     IO {
-      expect(signers.contains(ownerAllAlive))
-        .and(expect(ownerWithoutChosen =!= ownerAllAlive))
-        .and(expect(signers.contains(ownerWithoutChosen)))
-        .and(expect.eql(ownerNoneAlive, self))
+      expect(signers.contains(primary))
+        .and(expect(takeover =!= primary))
+        .and(expect(stillAlive.contains(takeover)))
+        .and(expect.eql(noneAlive, self))
     }
   }
 
