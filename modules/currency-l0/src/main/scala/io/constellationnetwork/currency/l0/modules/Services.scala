@@ -98,7 +98,8 @@ object Services {
         stateChannelAllowanceLists,
         selfId,
         cfg.environment,
-        customPeersAllowanceList
+        customPeersAllowanceList,
+        storages.cluster
       )
 
       l0NodeContext = L0NodeContext
