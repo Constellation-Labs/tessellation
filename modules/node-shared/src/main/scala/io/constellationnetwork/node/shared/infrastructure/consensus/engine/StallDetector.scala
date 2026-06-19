@@ -996,7 +996,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                               unresponsiveMissing = candidates,
                               committee = committeeSet,
                               alreadyVotedBySelf = alreadyVotedBySelf,
-                              minQuorum = minQuorum
+                              // Eviction cap from the UNSHRUNK supermajority, not the shrunk quorum: a
+                              // liveness shrink must not raise the cap and let the committee be evicted
+                              // below the supermajority budget. The abandon gate still uses the shrunk value.
+                              minQuorum = coreStatus.baseRequired
                             )
                             newTargets.traverse_ { target =>
                               evictionVoter.emitEvictionVote(key, target, EvictionReason.Silent) >>
@@ -1441,6 +1444,10 @@ object StallDetector {
     coreSize: Int,
     coreRemaining: Int,
     coreRequired: Int,
+    // Unshrunk supermajority (before any quorum-denominator-shrink override). The eviction cap MUST be
+    // derived from this, never from the shrunk `coreRequired`, so a liveness shrink cannot raise the cap
+    // and let the committee be voted below the supermajority safety budget (cap = committee.size - f).
+    baseRequired: Int,
     quorumInfeasible: Boolean
   )
 
@@ -1475,6 +1482,7 @@ object StallDetector {
       coreSize = coreSize,
       coreRemaining = coreRemaining,
       coreRequired = coreRequired,
+      baseRequired = baseRequired,
       quorumInfeasible = coreRemaining < coreRequired
     )
   }

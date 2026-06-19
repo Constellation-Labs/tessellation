@@ -64,31 +64,34 @@ object ViewChangeCertificateBuilder {
       val matchingByView = votes.values
         .filter(signed => signed.value.fromView == fromView && signed.value.toView == toView)
         .toList
-      // Deduplicate by signer. Multiple votes from the same signer under different storage keys
-      // (relay duplicates) collapse to one -- `head` is deterministic because all entries in the
-      // group are byte-identical signed payloads.
-      val bySigner: Map[PeerId, Signed[ViewChangeVote]] =
-        matchingByView.groupBy(_.proofs.head.id.toPeerId).view.mapValues(_.head).toMap
-      val poolSigners: Map[PeerId, Signed[ViewChangeVote]] = bySigner.filter {
-        case (signer, _) => witnessPool.contains(signer)
-      }
+      // Group by signer. Storage may hold more than one vote from a signer (equivocation / relay
+      // duplicates). Keep ALL of a signer's votes for the divergent-QC check below, then collapse to a
+      // deterministic representative -- the lowest by the total `Signed` ordering. `.head` over a
+      // `groupBy` list is arrival-order dependent and could split nodes onto different certs.
+      val poolSignersAll: Map[PeerId, List[Signed[ViewChangeVote]]] =
+        matchingByView.groupBy(_.proofs.head.id.toPeerId).filter { case (signer, _) => witnessPool.contains(signer) }
+      // Detect divergent QCs over ALL of each pool signer's votes, BEFORE representative selection, so
+      // an equivocating signer's conflicting QC cannot be silently dropped by the collapse.
+      val poolQcs = poolSignersAll.values.flatten.flatMap(_.value.highestKnownQc).toList
+      val divergent = poolQcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
+      // Per-signer representative: prefer the highest known QC (HotStuff carry-forward), with a
+      // deterministic tiebreak by the total Signed ordering. Divergent (conflicting same-view) QCs are
+      // already rejected above, so the survivors differ only by QC view, and we keep the highest.
+      val poolSigners: Map[PeerId, Signed[ViewChangeVote]] =
+        poolSignersAll.view.mapValues(_.maxBy(v => (v.value.highestKnownQc.map(_.view).getOrElse(Long.MinValue), v))).toMap
       if (wrongLastSnapshotHash.nonEmpty)
         Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapshotHash.size))
       else if (poolSigners.size < quorumSize)
         Left(CertBuildError.UnderQuorum(poolSigners.size, quorumSize))
+      else if (divergent)
+        Left(CertBuildError.DivergentQcs)
       else {
         val matchingSigned = poolSigners.values.toList
-        val qcs = matchingSigned.flatMap(_.value.highestKnownQc)
-        val divergent = qcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
-        if (divergent)
-          Left(CertBuildError.DivergentQcs)
-        else {
-          val sortedSet: SortedSet[Signed[ViewChangeVote]] = SortedSet.empty[Signed[ViewChangeVote]] ++ matchingSigned
-          NonEmptySet
-            .fromSet(sortedSet)
-            .toRight(CertBuildError.EmptyVotesAfterFilter)
-            .map(nes => ViewChangeCertificate(fromView, toView, facilitatorsHash, nes))
-        }
+        val sortedSet: SortedSet[Signed[ViewChangeVote]] = SortedSet.empty[Signed[ViewChangeVote]] ++ matchingSigned
+        NonEmptySet
+          .fromSet(sortedSet)
+          .toRight(CertBuildError.EmptyVotesAfterFilter)
+          .map(nes => ViewChangeCertificate(fromView, toView, facilitatorsHash, nes))
       }
     }
   }

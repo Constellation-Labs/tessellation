@@ -519,6 +519,11 @@ object ConsensusStorage {
           updateResources(key) { resources =>
             val transitionKey = (fromView, toView)
             val currentPerTransition = resources.viewChangeVotes.getOrElse(transitionKey, Map.empty)
+            // Last-write-wins per verified signer (origin is the verified signer; the relay-overwrite
+            // hole the review flagged is closed by the origin===signer guard in RumorHandler.handlePeerVote).
+            // NOT first-write-wins: unlike eviction/admission votes, a ViewChangeVote carries a mutable
+            // highestKnownQc and an honest node may re-emit with an upgraded QC (no vote-once-on-emit lock),
+            // so keeping the latest preserves HotStuff highest-QC carry-forward.
             val updatedPerTransition = currentPerTransition.updated(origin, vote)
             val updatedMap = resources.viewChangeVotes.updated(transitionKey, updatedPerTransition)
             resources.copy(viewChangeVotes = updatedMap)
@@ -534,6 +539,8 @@ object ConsensusStorage {
           updateResources(key) { resources =>
             val transitionKey = (fromView, toView)
             val currentPerTransition = resources.timeoutVotes.getOrElse(transitionKey, Map.empty)
+            // Last-write-wins per signer (same rationale as addViewChangeVote: a TimeoutVote also carries
+            // a mutable highestKnownQc; keep the latest so an upgraded QC is not dropped).
             val updatedPerTransition = currentPerTransition.updated(origin, vote)
             val updatedMap = resources.timeoutVotes.updated(transitionKey, updatedPerTransition)
             resources.copy(timeoutVotes = updatedMap)
@@ -785,7 +792,8 @@ object ConsensusStorage {
             assembledVccApplyScheduledR(key).set(none) >>
             assembledVccReceiptsR(key).set(none) >>
             assembledEvictionCertsR(key).set(none) >>
-            assembledAdmissionCertsR(key).set(none)
+            assembledAdmissionCertsR(key).set(none) >>
+            timeoutCertificateApplyScheduledR(key).set(none)
 
         def clearResourcesPreservingDeclarations(key: Key): F[Unit] =
           // evictionVotes, assembledEvictionCerts, viewChangeVotes, and assembledVcc
@@ -903,6 +911,7 @@ object ConsensusStorage {
               assembledVccReceiptsR(key).set(none) >>
               assembledEvictionCertsR(key).set(none) >>
               assembledAdmissionCertsR(key).set(none) >>
+              timeoutCertificateApplyScheduledR(key).set(none) >>
               statesR(key).set(none)
           }
 
@@ -1008,6 +1017,8 @@ object ConsensusStorage {
             _ <- ecsKeys.traverse_(k => assembledEvictionCertsR(k).set(none))
             acsKeys <- assembledAdmissionCertsR.keys
             _ <- acsKeys.traverse_(k => assembledAdmissionCertsR(k).set(none))
+            tcsKeys <- timeoutCertificateApplyScheduledR.keys
+            _ <- tcsKeys.traverse_(k => timeoutCertificateApplyScheduledR(k).set(none))
           } yield ()
       }
   }

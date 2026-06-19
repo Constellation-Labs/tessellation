@@ -34,13 +34,17 @@ object ViewFromTime {
     *   a ~50-year stall at 30s interval) saturates rather than wraps.
     */
   def compute(nowMs: Long, parentEndTimeMs: Option[Long], viewIntervalMs: Long): Int =
-    parentEndTimeMs.fold(0) { parent =>
-      val deltaMs = nowMs - parent
-      if (deltaMs <= 0L) 0
-      else {
-        val rawView = deltaMs / viewIntervalMs
-        if (rawView > Int.MaxValue.toLong) Int.MaxValue
-        else rawView.toInt
+    // Guard the divisor: a non-positive interval (misconfiguration) yields view 0 rather than an
+    // ArithmeticException. The interval is expected to be strictly positive; this is defence in depth.
+    if (viewIntervalMs <= 0L) 0
+    else
+      parentEndTimeMs.fold(0) { parent =>
+        val deltaMs = nowMs - parent
+        if (deltaMs <= 0L) 0
+        else {
+          val rawView = deltaMs / viewIntervalMs
+          if (rawView > Int.MaxValue.toLong) Int.MaxValue
+          else rawView.toInt
+        }
       }
-    }
 }

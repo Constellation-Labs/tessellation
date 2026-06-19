@@ -538,12 +538,18 @@ object CurrencySnapshotConsensusStateCreator {
             exclusionReasonLabel -> "selected_pool"
           )
         )
-        // Phase 1 + phase 2 combined view seed. Mirror of dag-l0; see
-        // GlobalSnapshotConsensusStateCreator for full rationale.
+        // Deterministic currency-L0 view seed (mirror of dag-l0 GlobalSnapshotConsensusStateCreator):
+        // `timeView` is computed as a pacemaker timeout hint only, NOT proposal-critical state. A local
+        // wall clock must not pick the round-start view/leader directly; view movement must arrive
+        // through the signed VCV/VCC path so all honest peers converge on the same view before
+        // accepting proposals.
         nowMs <- Clock[F].realTime.map(_.toMillis)
         parentEndTimeMs = lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
         timeView = ViewFromTime.compute(nowMs, parentEndTimeMs, config.viewInterval.toMillis)
-        initialView = math.max(priorAbandonmentCount, timeView)
+        // Round-start view must be certificate-derived. `priorAbandonmentCount` is a local retry
+        // diagnostic and `timeView` is only a pacemaker hint; neither is quorum evidence, so neither
+        // may seed proposal-critical view/leader selection.
+        initialView = 0
         leader = facilitatorSelector.selectLeaderWeighted(
           leaderPool,
           entropy,
@@ -575,7 +581,8 @@ object CurrencySnapshotConsensusStateCreator {
           "recentSignerFilterApplied" -> leaderEligibility.recentFilterApplied.toString,
           "leaderExclusions" -> leaderEligibility.exclusions.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
-          "leader" -> ConsensusLog.pid(leader)
+          "leader" -> ConsensusLog.pid(leader),
+          "timeViewTimeoutHint" -> timeView.toString
         )
 
         state = ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
@@ -595,8 +602,8 @@ object CurrencySnapshotConsensusStateCreator {
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
-          // Mirror dag-l0: round-start view = max(priorAbandonmentCount, timeView). MUST match
-          // the viewNumber argument passed to selectLeaderWeighted above for leader consistency.
+          // Round-start view = 0 (certificate-derived only; mirror of dag-l0). MUST match the
+          // viewNumber argument passed to selectLeaderWeighted above for leader consistency.
           viewNumber = initialView,
           // Mirror dag-l0 alpha.90 P0 #1 self-wedge fix -- see GlobalSnapshotConsensusStateCreator
           // for the full rationale on `initialViewNumber`. Frozen at construction so the validator
@@ -616,7 +623,7 @@ object CurrencySnapshotConsensusStateCreator {
             "leader" -> ConsensusLog.pid(leader),
             "leaderScore" -> f"$leaderScore%.2f",
             "self" -> ConsensusLog.pid(selfId),
-            "view" -> priorAbandonmentCount.toString,
+            "view" -> initialView.toString,
             "lastGlobalOrd" -> lastGlobalSnapshotOrdinal.show
           )
           val optionalPairs =

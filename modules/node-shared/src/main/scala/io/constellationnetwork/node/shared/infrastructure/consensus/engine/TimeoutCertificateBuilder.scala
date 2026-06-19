@@ -48,11 +48,17 @@ object TimeoutCertificateBuilder {
       val matchingByView = votes.values
         .filter(signed => signed.value.fromView == fromView && signed.value.toView == toView && signed.value.reason == reason)
         .toList
-      val bySigner: Map[PeerId, Signed[TimeoutVote]] =
-        matchingByView.groupBy(_.proofs.head.id.toPeerId).view.mapValues(_.head).toMap
-      val poolSigners: Map[PeerId, Signed[TimeoutVote]] = bySigner.filter {
-        case (signer, _) => witnessPool.contains(signer)
-      }
+      // Group by signer; keep all votes for the divergent-QC check, then collapse to a deterministic
+      // representative (lowest by total `Signed` ordering) -- never `.head`, which is arrival-order
+      // dependent and could split nodes onto different certs.
+      val poolSignersAll: Map[PeerId, List[Signed[TimeoutVote]]] =
+        matchingByView.groupBy(_.proofs.head.id.toPeerId).filter { case (signer, _) => witnessPool.contains(signer) }
+      val poolQcs = poolSignersAll.values.flatten.flatMap(_.value.highestKnownQc).toList
+      val divergent = poolQcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
+      // Per-signer representative: prefer the highest known QC (carry-forward), deterministic tiebreak by
+      // the total Signed ordering. Divergent (conflicting same-view) QCs are already rejected above.
+      val poolSigners: Map[PeerId, Signed[TimeoutVote]] =
+        poolSignersAll.view.mapValues(_.maxBy(v => (v.value.highestKnownQc.map(_.view).getOrElse(Long.MinValue), v))).toMap
 
       if (wrongLastSnapshotHash.nonEmpty)
         Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapshotHash.size))
@@ -60,19 +66,15 @@ object TimeoutCertificateBuilder {
         Left(CertBuildError.ReasonMismatch(wrongReason.size))
       else if (poolSigners.size < quorumSize)
         Left(CertBuildError.UnderQuorum(poolSigners.size, quorumSize))
+      else if (divergent)
+        Left(CertBuildError.DivergentQcs)
       else {
         val matchingSigned = poolSigners.values.toList
-        val qcs = matchingSigned.flatMap(_.value.highestKnownQc)
-        val divergent = qcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
-        if (divergent)
-          Left(CertBuildError.DivergentQcs)
-        else {
-          val sortedSet: SortedSet[Signed[TimeoutVote]] = SortedSet.empty[Signed[TimeoutVote]] ++ matchingSigned
-          NonEmptySet
-            .fromSet(sortedSet)
-            .toRight(CertBuildError.EmptyVotesAfterFilter)
-            .map(nes => TimeoutCertificate(fromView, toView, facilitatorsHash, lastSnapshotHash, reason, nes))
-        }
+        val sortedSet: SortedSet[Signed[TimeoutVote]] = SortedSet.empty[Signed[TimeoutVote]] ++ matchingSigned
+        NonEmptySet
+          .fromSet(sortedSet)
+          .toRight(CertBuildError.EmptyVotesAfterFilter)
+          .map(nes => TimeoutCertificate(fromView, toView, facilitatorsHash, lastSnapshotHash, reason, nes))
       }
     }
   }

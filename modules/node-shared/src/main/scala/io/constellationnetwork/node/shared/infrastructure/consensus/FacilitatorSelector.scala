@@ -71,9 +71,11 @@ object FacilitatorSelector {
       .map(Integer.parseInt(_, 16).toByte)
       .toArray
 
-  /** Order peers by their rendezvous score relative to a reference hash. */
+  /** Order peers by their rendezvous score relative to a reference hash. PeerId is the final tiebreak so a score collision can never make
+    * the order node-dependent.
+    */
   private[consensus] def orderByScore(referenceHash: Hash): Order[PeerId] =
-    Order.by(peerId => rendezvousScore(peerId.value.value, referenceHash.value))
+    Order.by(peerId => (rendezvousScore(peerId.value.value, referenceHash.value), peerId.value.value))
 }
 
 class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
@@ -257,7 +259,8 @@ class FacilitatorSelector private (maxFacilitatorCount: Option[Int]) {
           else if (completed.toLong * 100L >= participated.toLong * minLeaderRatioPct.toLong) 0L
           else 1L
       }
-      (tier, rendezvousScore)
+      // PeerId is the final tiebreak so a (tier, score) collision can never make the leader node-dependent.
+      (tier, rendezvousScore, pid.value.value)
     }
     val index = viewNumber % sorted.size
     sorted(index)

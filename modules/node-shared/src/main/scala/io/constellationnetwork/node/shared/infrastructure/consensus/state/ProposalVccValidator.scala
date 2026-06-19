@@ -97,8 +97,14 @@ object ProposalVccValidator {
     // equivalence guarantee when fraction == 2/3.
     val q = math.max(1, QuorumPolicy.fromFraction(n, quorumThresholdFraction))
 
-    def certQuorumMet(voterIds: List[PeerId]): Boolean =
-      voterIds.size >= q || quorumShrink.exists(d => d.active && voterIds.count(d.anchor.contains) >= d.requiredQuorum)
+    // Count DISTINCT signers, not raw votes. `ViewChangeVote.highestKnownQc`/`TimeoutVote` are part of
+    // the vote identity, so one signer can contribute multiple distinct Signed votes that all survive in
+    // the cert's NonEmptySet. The builder and local assembler dedup by signer; this follower-side gate
+    // must too, or ceil(q/2) equivocators could each emit two differing-QC votes to forge quorum.
+    def certQuorumMet(voterIds: List[PeerId]): Boolean = {
+      val signers = voterIds.toSet
+      signers.size >= q || quorumShrink.exists(d => d.active && signers.count(d.anchor.contains) >= d.requiredQuorum)
+    }
 
     val isSoloCore = n <= 1
     val isRoundStartView = proposalView === initialViewNumber.toLong

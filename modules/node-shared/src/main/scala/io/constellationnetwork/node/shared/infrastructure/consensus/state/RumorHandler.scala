@@ -144,22 +144,40 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     val signedVote = v.vote
     val fromView = signedVote.value.fromView
     val toView = signedVote.value.toView
-    observeTip >>
-      ConsensusLog.info(
+    val signer = signedVote.proofs.head.id.toPeerId
+    if (origin =!= signer) {
+      // Parity with handleTimeoutVote: a relay must not inject a vote under a foreign signer's slot.
+      observeTip >> ConsensusLog.warn(
         log,
         Category.Facilitator,
         key.toString,
         "n/a",
         LogEvent.DeclarationReceived,
         "kind" -> "ViewChangeVote",
+        "rejected" -> "origin_signer_mismatch",
         "from" -> ConsensusLog.pid(origin),
+        "signer" -> ConsensusLog.pid(signer),
         "fromView" -> fromView.toString,
         "toView" -> toView.toString
-      ) >>
-      storage
-        .addViewChangeVote(origin, key, fromView, toView, signedVote)
-        .flatMap(triggerUpdateIfChanged(queue, key)) >>
-      queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
+      )
+    } else {
+      observeTip >>
+        ConsensusLog.info(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "ViewChangeVote",
+          "from" -> ConsensusLog.pid(origin),
+          "fromView" -> fromView.toString,
+          "toView" -> toView.toString
+        ) >>
+        storage
+          .addViewChangeVote(signer, key, fromView, toView, signedVote)
+          .flatMap(triggerUpdateIfChanged(queue, key)) >>
+        queue.offer(ConsensusCommand.CheckViewChangeAssembly(key))
+    }
   }
 
   private def handleTimeoutVote(origin: PeerId, v: ConsensusPeerTimeoutVote[_]): F[Unit] = {
