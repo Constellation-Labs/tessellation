@@ -90,10 +90,13 @@ trait Storages[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] {
   val tokenLockBlock: TokenLockBlockStorage[F]
   val globalL0Alignment: GlobalL0AlignmentStorage[F]
 
-  /** Single fair-FIFO lock serializing the in-memory storage COMMIT performed by the live block-acceptance path (BlockService.accept, block
-    * store) against the commit performed by the L0->L1 alignment path (SnapshotProcessor.processAlignment). It guards only microsecond
-    * Ref/MapRef writes -- never network I/O, hashing of whole snapshots, or the MPT trie build -- so L1 keeps producing/aligning while it
-    * is held.
+  /** Single fair-FIFO lock serializing the live block-acceptance path against the L0->L1 alignment commit
+    * (SnapshotProcessor.processAlignment), so the two never interleave their storage mutations. Scope is asymmetric by design: the
+    * ALIGNMENT side holds it only across in-memory Ref/MapRef writes (the MPT trie build, createContext and lastN update stay OUTSIDE),
+    * while the ACCEPTANCE side holds it across the whole accept -- including block/tx hashing and signature verification -- so the
+    * read-compute-write of balances is atomic w.r.t. alignment (acceptable because acceptance is a serial 1s-tick stream; network I/O and
+    * the MPT build are never under the lock). Lock ordering: the per-stream semaphores are always acquired OUTSIDE this mutex and it is
+    * never re-acquired reentrantly, so there is no cycle.
     */
   val storageMutationLock: Mutex[F]
 }

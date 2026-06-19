@@ -121,6 +121,25 @@ class TransactionStorage[F[_]: Async](
           }
     }
 
+  /** Pure precondition check (no mutation) for `advanceMajorityRefs`: returns the addresses for which advancing to the given majority ref
+    * would FAIL (no matching local AcceptedTx and not already a MajorityTx at that ref, and not the empty special case). Run BEFORE any
+    * storage mutation in processAlignment so a divergence aborts the whole apply cleanly, instead of `advanceMajorityRefs` raising AFTER
+    * block storage was already mutated (cross-store partial commit). The predicate mirrors the accept conditions of `advanceMajorityRefs`
+    * exactly.
+    */
+  def majorityRefsViolations(refs: Map[Address, TransactionReference]): F[List[String]] =
+    refs.toList.traverse {
+      case (source, majorityTxRef) =>
+        transactionsR(source).get.map { maybeStored =>
+          val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+          val ok =
+            (stored.isEmpty && majorityTxRef === TransactionReference.empty) ||
+              stored.exists { case (_, a: AcceptedTx) => a.ref === majorityTxRef; case _ => false } ||
+              stored.exists { case (_, m: MajorityTx) => m.ref === majorityTxRef; case _ => false }
+          if (ok) none[String] else s"tx:${source.show}->${majorityTxRef.show}".some
+        }
+    }.map(_.flatten)
+
   def accept(hashedTx: Hashed[Transaction]): F[Unit] = {
     val parent = hashedTx.signed.value.parent
     val source = hashedTx.signed.value.source

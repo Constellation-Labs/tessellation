@@ -386,10 +386,14 @@ class StateChannel[
             case (hash, signedBlock) =>
               logger.debug(s"Acceptance of a block $hash starts!") >>
                 HasherSelector[F].withCurrent { implicit hasher =>
-                  // Serialize the whole validate+commit against the alignment commit (processAlignment). accept is
-                  // pure local validation + in-memory storage mutation (no network, no MPT build), so holding the
-                  // lock across it is cheap and makes the read-balance/compute/write-balance step atomic w.r.t.
-                  // alignment -- closing the balance-divergence and block-state races.
+                  // Serialize the whole accept against the alignment commit (processAlignment) on the shared
+                  // storageMutationLock. NOTE: this region is deliberately COARSE -- it includes block hashing and
+                  // ECDSA signature verification (blockAcceptanceManager.acceptBlock) and per-tx hashing, not only the
+                  // in-memory writes -- so the read-balance / compute / write-balance step is atomic w.r.t. alignment
+                  // (closing the balance-divergence and block-state races). This is acceptable because blockAcceptance
+                  // is a single serial 1s-tick stream whose only contender for the lock is the 10s alignment commit.
+                  // The heavy MPT trie build and all network I/O are NOT under this lock (they stay outside, in
+                  // processAlignment's updateMptStorage and in the L0 output/pull paths).
                   storages.storageMutationLock.lock.surround {
                     services.block
                       .accept(signedBlock)

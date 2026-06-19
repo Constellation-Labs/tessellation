@@ -133,8 +133,24 @@ abstract class SnapshotProcessor[
 
         // Commit the in-memory storage mutations under the shared lock so they cannot interleave with a concurrent
         // block-acceptance commit (BlockService.accept). The MPT build and lastN update stay OUTSIDE the lock.
+        // Validate the majority-ref preconditions BEFORE any mutation (still under the lock). If local state drifted
+        // from the reconciliation snapshot (a concurrent accept landed between checkAlignment's lock-free read and
+        // this apply), abort with nothing mutated and let the caller schedule a redownload -- rather than mutating
+        // block storage in adjustToMajority and only then having advanceMajorityRefs raise (a cross-store partial
+        // commit that cannot be cleanly retried).
+        val checkMajorityRefPreconditions: F[Unit] =
+          (
+            transactionStorage.majorityRefsViolations(txRefsToMarkMajority),
+            allowSpendStorage.majorityRefsViolations(allowSpendRefsToMarkMajority),
+            tokenLockStorage.majorityRefsViolations(tokenLockRefsToMarkMajority)
+          ).mapN(_ ++ _ ++ _).flatMap {
+            case Nil        => Async[F].unit
+            case violations => MajorityRefsDiverged(violations).raiseError[F, Unit]
+          }
+
         storageMutationLock.lock.surround {
-          adjustToMajority >>
+          checkMajorityRefPreconditions >>
+            adjustToMajority >>
             markTxRefsAsMajority >>
             setSnapshot
         } >>
@@ -182,8 +198,21 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
+        // See AlignedAtNewOrdinal: validate majority-ref preconditions before any mutation to avoid a cross-store
+        // partial commit when local state drifted since the lock-free reconciliation read.
+        val checkMajorityRefPreconditions: F[Unit] =
+          (
+            transactionStorage.majorityRefsViolations(txRefsToMarkMajority),
+            allowSpendStorage.majorityRefsViolations(allowSpendRefsToMarkMajority),
+            tokenLockStorage.majorityRefsViolations(tokenLockRefsToMarkMajority)
+          ).mapN(_ ++ _ ++ _).flatMap {
+            case Nil        => Async[F].unit
+            case violations => MajorityRefsDiverged(violations).raiseError[F, Unit]
+          }
+
         storageMutationLock.lock.surround {
-          adjustToMajority >>
+          checkMajorityRefPreconditions >>
+            adjustToMajority >>
             markTxRefsAsMajority >>
             setSnapshot
         } >>
@@ -741,5 +770,11 @@ object SnapshotProcessor {
   case class TipsGotMisaligned(deprecatedToAdd: Set[ProofsHash], activeToDeprecate: Set[ProofsHash]) extends SnapshotProcessingError {
     override def getMessage: String =
       s"Tips got misaligned! Check the implementation! deprecatedToAdd -> $deprecatedToAdd not equal activeToDeprecate -> $activeToDeprecate"
+  }
+
+  case class MajorityRefsDiverged(violations: List[String]) extends SnapshotProcessingError {
+    override def getMessage: String =
+      s"Majority tx/allow-spend/token-lock refs diverged from local state (drift since reconciliation), scheduling redownload " +
+        s"and mutating nothing: ${violations.mkString(", ")}"
   }
 }
