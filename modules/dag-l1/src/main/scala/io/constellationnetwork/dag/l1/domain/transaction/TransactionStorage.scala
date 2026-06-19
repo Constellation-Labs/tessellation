@@ -68,31 +68,77 @@ class TransactionStorage[F[_]: Async](
   def replaceByRefs(refs: Map[Address, TransactionReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
     refs.toList.traverse_ {
       case (address, reference) =>
-        val initial = SortedMap(reference.ordinal -> MajorityTx(reference, snapshotOrdinal))
-        transactionsR(address).set(initial.some)
+        transactionsR(address).update { maybeStored =>
+          val majority: StoredTransaction = MajorityTx(reference, snapshotOrdinal)
+          // Reset the address to the majority ref, but PRESERVE in-flight Waiting/Processing txs strictly ABOVE it.
+          // A blind `.set` dropped a ProcessingTx that a concurrent consensus round was about to return via putBack
+          // (putBack only restores ProcessingTx), silently losing a valid in-flight client tx. Accepted txs above the
+          // majority ARE discarded -- a redownload makes the majority ref the source of truth.
+          val preserved = maybeStored.toList.flatMap(_.collect {
+            case entry @ (ordinal, _: WaitingTx) if ordinal > reference.ordinal    => entry
+            case entry @ (ordinal, _: ProcessingTx) if ordinal > reference.ordinal => entry
+          })
+          (SortedMap(reference.ordinal -> majority) ++ preserved).some
+        }
     }
 
   def advanceMajorityRefs(refs: Map[Address, TransactionReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
     refs.toList.traverse_ {
       case (source, majorityTxRef) =>
-        transactionsR(source).modify[Either[MarkingTransactionReferenceAsMajorityError, Unit]] { maybeStored =>
-          val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+        transactionsR(source)
+          .modify[Either[MarkingTransactionReferenceAsMajorityError, Unit]] { maybeStored =>
+            val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
 
-          if (stored.isEmpty && majorityTxRef === TransactionReference.empty) {
-            val updated = stored + (majorityTxRef.ordinal -> MajorityTx(majorityTxRef, snapshotOrdinal))
-            (updated.some, ().asRight)
-          } else {
-            stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
-              val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
+            if (stored.isEmpty && majorityTxRef === TransactionReference.empty) {
+              val updated = stored + (majorityTxRef.ordinal -> MajorityTx(majorityTxRef, snapshotOrdinal))
+              (updated.some, ().asRight)
+            } else {
+              stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
+                val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
 
-              remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
-            } match {
-              case Some(updated) => (updated.some, ().asRight)
-              case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+                remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
+              } match {
+                case Some(updated) => (updated.some, ().asRight)
+                // Idempotent re-mark: the ref is already stored as MajorityTx (advanced by a prior alignment).
+                // getLastProcessedTransaction already reports the correct ref, so this is a no-op, not a divergence.
+                case None if stored.exists { case (_, m: MajorityTx) => m.ref === majorityTxRef; case _ => false } =>
+                  (maybeStored, ().asRight)
+                case None =>
+                  (
+                    maybeStored,
+                    UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, getLastProcessedTransaction(stored)).asLeft
+                  )
+              }
             }
           }
-        }
+          .flatMap {
+            case Right(_) => Async[F].unit
+            // Previously the Either was discarded, silently leaving the local ref stale while the snapshot advanced.
+            // Surface it: this is a genuine local-vs-majority divergence that must escalate to a redownload.
+            case Left(e) =>
+              logger.warn(s"advanceMajorityRefs could not mark majority ref for source=${source.show}: ${e.getMessage}") >>
+                e.raiseError[F, Unit]
+          }
     }
+
+  /** Pure precondition check (no mutation) for `advanceMajorityRefs`: returns the addresses for which advancing to the given majority ref
+    * would FAIL (no matching local AcceptedTx and not already a MajorityTx at that ref, and not the empty special case). Run BEFORE any
+    * storage mutation in processAlignment so a divergence aborts the whole apply cleanly, instead of `advanceMajorityRefs` raising AFTER
+    * block storage was already mutated (cross-store partial commit). The predicate mirrors the accept conditions of `advanceMajorityRefs`
+    * exactly.
+    */
+  def majorityRefsViolations(refs: Map[Address, TransactionReference]): F[List[String]] =
+    refs.toList.traverse {
+      case (source, majorityTxRef) =>
+        transactionsR(source).get.map { maybeStored =>
+          val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+          val ok =
+            (stored.isEmpty && majorityTxRef === TransactionReference.empty) ||
+              stored.exists { case (_, a: AcceptedTx) => a.ref === majorityTxRef; case _ => false } ||
+              stored.exists { case (_, m: MajorityTx) => m.ref === majorityTxRef; case _ => false }
+          if (ok) none[String] else s"tx:${source.show}->${majorityTxRef.show}".some
+        }
+    }.map(_.flatten)
 
   def accept(hashedTx: Hashed[Transaction]): F[Unit] = {
     val parent = hashedTx.signed.value.parent

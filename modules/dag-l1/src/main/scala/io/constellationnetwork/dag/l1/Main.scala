@@ -126,7 +126,8 @@ object Main
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
         storages.globalL0Alignment,
-        sharedStorages.mptStore
+        sharedStorages.mptStore,
+        storages.storageMutationLock
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -204,7 +205,8 @@ object Main
           validators.allowSpend,
           keyPair,
           nodeId,
-          storages.globalL0Alignment
+          storages.globalL0Alignment,
+          storages.storageMutationLock
         )
       }
 
@@ -224,7 +226,8 @@ object Main
           validators.tokenLock,
           keyPair,
           nodeId,
-          storages.globalL0Alignment
+          storages.globalL0Alignment,
+          storages.storageMutationLock
         )
       }
 

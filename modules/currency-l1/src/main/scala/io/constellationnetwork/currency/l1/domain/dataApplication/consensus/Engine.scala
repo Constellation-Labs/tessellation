@@ -326,13 +326,23 @@ object Engine {
           def combine(roundId: RoundId)(updates: List[DataTransactions]): F[Option[DataApplicationBlock]] =
             NonEmptyList.fromList(updates).traverse { allUpdates =>
               getHashes(allUpdates.toList, dataApplication.serializeUpdate).flatMap { hashesList =>
-                NonEmptyList
-                  .fromList(hashesList)
-                  .fold(
+                // Canonicalize bundle ordering across facilitators. Each facilitator merges updates from its own
+                // Set/Map (and prepends its OWN proposal first), so without a deterministic sort the resulting
+                // dataTransactionsHashes -- and therefore the block hash -- differs per node, the aggregated multisig
+                // fails to verify, and every round with >=2 contributing facilitators is cancelled. Sorting by the
+                // content-derived per-bundle hashes (already computed here) yields byte-identical blocks on every node.
+                // Delimiter-separated key: correct regardless of per-hash length (a delimiter-less concat could in
+                // theory be ambiguous across bundle/hash boundaries for a future variable-length hash).
+                val sortedByHash = allUpdates.toList
+                  .zip(hashesList)
+                  .sortBy { case (_, bundleHashes) => bundleHashes.toList.map(_.value).mkString(":") }
+
+                (NonEmptyList.fromList(sortedByHash.map(_._1)), NonEmptyList.fromList(sortedByHash.map(_._2))) match {
+                  case (Some(sortedUpdates), Some(sortedHashes)) =>
+                    DataApplicationBlock(roundId, sortedUpdates, sortedHashes).pure[F]
+                  case _ =>
                     new IllegalStateException("Could not find DataApplicationBlock hashes").raiseError[F, DataApplicationBlock]
-                  ) { hashes =>
-                    DataApplicationBlock(roundId, allUpdates, hashes).pure[F]
-                  }
+                }
               }
             }
 

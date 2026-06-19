@@ -28,6 +28,9 @@ object AddressStorage {
       def updateBalances(addressBalances: Map[Address, Balance]): F[Unit] =
         balances.update(_ ++ addressBalances)
 
+      def replaceAll(addressBalances: Map[Address, Balance]): F[Unit] =
+        balances.set(addressBalances)
+
       def clean: F[Unit] =
         balances.set(Map.empty)
     }
