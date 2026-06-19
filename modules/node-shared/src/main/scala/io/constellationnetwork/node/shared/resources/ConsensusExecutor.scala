@@ -3,10 +3,21 @@ package io.constellationnetwork.node.shared.resources
 import java.util.concurrent.{ExecutorService, Executors}
 
 import cats.effect.kernel.{Async, Resource}
+import cats.effect.std.Supervisor
 
 import scala.concurrent.ExecutionContext
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+/** The dedicated consensus EC paired with a `Supervisor` whose lifetime is nested INSIDE the EC's.
+  *
+  * The consume fiber is pinned to `ec` via `evalOn` and started on `supervisor`. Because `supervisor` is acquired after `ec` (see
+  * `ConsensusExecutor.optional`), its finalizer runs BEFORE the EC's: on shutdown the fiber is cancelled while the pool is still alive
+  * (cancellation has to execute on that pool), and only then is the pool shut down. Using the app-wide outer supervisor instead would
+  * reverse the order -- the pool is `shutdownNow`-ed first, the fiber's cancellation can never be scheduled, and the JVM hangs (the
+  * create-genesis non-termination we hit on v4.1.0).
+  */
+final case class ConsensusDispatcher[F[_]](ec: ExecutionContext, supervisor: Supervisor[F])
 
 /** Dedicated `ExecutionContext` for the consensus event loop.
   *
@@ -42,10 +53,16 @@ object ConsensusExecutor {
       .map(ExecutionContext.fromExecutorService)
   }
 
-  /** Optional flavour: returns `Some(ec)` when `requestedThreads > 0`, `None` otherwise. Callers that handle the `None` case typically fall
-    * back to the default global runtime.
+  /** Optional flavour: returns `Some(dispatcher)` (EC + EC-scoped supervisor) when `requestedThreads > 0`, `None` otherwise. Callers that
+    * handle the `None` case typically fall back to the default global runtime under the app-wide supervisor.
     */
-  def optional[F[_]: Async](requestedThreads: Int): Resource[F, Option[ExecutionContext]] =
-    if (requestedThreads > 0) make[F](requestedThreads).map(Option(_))
-    else Resource.pure[F, Option[ExecutionContext]](None)
+  def optional[F[_]: Async](requestedThreads: Int): Resource[F, Option[ConsensusDispatcher[F]]] =
+    if (requestedThreads > 0)
+      for {
+        ec <- make[F](requestedThreads)
+        // Acquired AFTER `ec` so it is finalized BEFORE `ec`: the consume fiber is cancelled while
+        // the pool is still alive, then the pool is shut down. See ConsensusDispatcher.
+        supervisor <- Supervisor[F]
+      } yield Option(ConsensusDispatcher(ec, supervisor))
+    else Resource.pure[F, Option[ConsensusDispatcher[F]]](None)
 }

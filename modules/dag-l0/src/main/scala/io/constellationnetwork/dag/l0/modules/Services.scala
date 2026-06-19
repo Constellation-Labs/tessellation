@@ -10,8 +10,6 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import scala.concurrent.ExecutionContext
-
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
@@ -41,6 +39,7 @@ import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
@@ -71,7 +70,7 @@ object Services {
     txHasher: Hasher[F],
     loggerBundle: LoggerBundle[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    consensusEc: Option[ExecutionContext] = None
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
@@ -149,7 +148,7 @@ object Services {
             // into the SharedServices-owned Ref; Cluster reads from the same Ref via the
             // consensusHealth thunk passed at Cluster.make time.
             injectedHealthRef = Some(sharedServices.consensusHealthRef),
-            consensusEc = consensusEc
+            consensusDispatcher = consensusDispatcher
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](

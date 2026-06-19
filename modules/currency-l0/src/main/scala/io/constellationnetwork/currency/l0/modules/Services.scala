@@ -9,7 +9,6 @@ import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
-import scala.concurrent.ExecutionContext
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.config.types.AppConfig
@@ -43,6 +42,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.curr
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -82,7 +82,7 @@ object Services {
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     queues: Queues[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    consensusEc: Option[ExecutionContext] = None
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -186,7 +186,7 @@ object Services {
           queues.rumor,
           getPeerChainTips,
           sharedServices.localHealthMonitor,
-          consensusEc
+          consensusDispatcher
         )
     } yield
       new Services[F, R](
