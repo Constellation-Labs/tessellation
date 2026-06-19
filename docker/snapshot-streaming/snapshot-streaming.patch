@@ -1,0 +1,27 @@
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
+index 7e8f10f..3787c52 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/Configuration.scala
+@@ -116,7 +116,6 @@ object Configuration {
+       c.priorityPeerIds.get(env),
+       c.snapshot.size,
+       c.feeConfigs.get(env).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
+-      c.forkInfoStorage,
+       c.lastKryoHashOrdinal,
+       c.lastLegacyStateProofOrdinal,
+       c.incrementalDelegatedStakingStartingOrdinal,
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+index e6569e7..16d8eca 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+@@ -124,7 +124,9 @@ object TessellationServices {
+             stateChannelManager,
+             currencySnapshotContextFns,
+             feeCalculator,
+-            mptStore
++            mptStore,
++            configuration.fieldsAddedOrdinals,
++            env
+           )
+         val priceOracle = configuration.priceOracle.getOrElse(env, PriceOracleConfig.default)
+         val globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F] = GlobalSnapshotAcceptanceManager.make(
