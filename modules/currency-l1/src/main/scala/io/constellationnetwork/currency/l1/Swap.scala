@@ -4,7 +4,7 @@ import java.security.KeyPair
 
 import cats.Applicative
 import cats.effect.kernel.Async
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -47,7 +47,8 @@ object Swap {
     allowSpendValidator: AllowSpendValidator[F],
     selfKeyPair: KeyPair,
     selfId: PeerId,
-    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F]
+    globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
+    storageMutationLock: Mutex[F]
   ): Stream[F, Unit] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -165,17 +166,18 @@ object Swap {
             }.flatMap {
               _.toList.traverse {
                 case (hash, signedBlock) =>
-                  services.allowSpendBlock
-                    .accept(signedBlock, snapshotOrdinal)
-                    .handleErrorWith { error =>
-                      for {
-                        _ <- logger.warn(error)(s"Failed acceptance of an allow spend block with ${hash.show}")
-                        _ <- globalL0AlignmentStorage.updateShouldRedownload(
-                          value = true,
-                          reasons = List(s"Allow spend block acceptance failed for ${hash.show}: ${error.getMessage}")
-                        )
-                      } yield ()
-                    }
+                  storageMutationLock.lock.surround {
+                    services.allowSpendBlock
+                      .accept(signedBlock, snapshotOrdinal)
+                  }.handleErrorWith { error =>
+                    for {
+                      _ <- logger.warn(error)(s"Failed acceptance of an allow spend block with ${hash.show}")
+                      _ <- globalL0AlignmentStorage.updateShouldRedownload(
+                        value = true,
+                        reasons = List(s"Allow spend block acceptance failed for ${hash.show}: ${error.getMessage}")
+                      )
+                    } yield ()
+                  }
               }
             }.void
           case None => ().pure[F]

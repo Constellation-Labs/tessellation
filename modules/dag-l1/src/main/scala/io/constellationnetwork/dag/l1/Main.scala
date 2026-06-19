@@ -205,7 +205,8 @@ object Main
           validators.allowSpend,
           keyPair,
           nodeId,
-          storages.globalL0Alignment
+          storages.globalL0Alignment,
+          storages.storageMutationLock
         )
       }
 
@@ -225,7 +226,8 @@ object Main
           validators.tokenLock,
           keyPair,
           nodeId,
-          storages.globalL0Alignment
+          storages.globalL0Alignment,
+          storages.storageMutationLock
         )
       }
 
