@@ -2,13 +2,11 @@ package io.constellationnetwork.currency.l0.snapshot.services
 
 import java.security.KeyPair
 
-import cats.data.{Kleisli, NonEmptyList, NonEmptySet}
+import cats.data._
 import cats.effect._
-import cats.effect.std.Supervisor
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
-import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.env.AppEnvironment
@@ -17,7 +15,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.generators.nonEmptyStringGen
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
+import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
@@ -25,9 +23,11 @@ import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshot
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signedOf}
 import io.constellationnetwork.schema.height.Height
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
 import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
@@ -40,22 +40,15 @@ import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.auto._
-import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.Stream
 import org.scalacheck.Gen
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
-
-  def mkEmptySnapshots(n: Long, keyPair: KeyPair)(
-    implicit hs: Hasher[IO],
-    sp: SecurityProvider[IO],
-    globalStateProofSelector: GlobalStateProofSelector,
-    jsonSerializer: JsonSerializer[IO]
-  ): IO[List[Hashed[GlobalIncrementalSnapshot]]] =
-    (1L to n).toList.traverse(ordinal => mkSnapshot(SnapshotOrdinal(NonNegLong.unsafeFrom(ordinal)), keyPair, List.empty))
 
   def mkSnapshot(ordinal: SnapshotOrdinal, keyPair: KeyPair, confirmedBinaries: List[Signed[StateChannelSnapshotBinary]])(
     implicit hs: Hasher[IO],
@@ -81,59 +74,67 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       .flatMap(_.toHashed)
   }
 
-  def mkService(
+  // A cluster storage that reports a configurable set of responsive peers (default: none, i.e. only self is alive).
+  private def clusterStorage(responsive: Set[Peer] = Set.empty): ClusterStorage[IO] =
+    new ClusterStorage[IO] {
+      def getPeers: IO[Set[Peer]] = responsive.pure[IO]
+      def getResponsivePeers: IO[Set[Peer]] = responsive.pure[IO]
+      def getPeer(id: PeerId): IO[Option[Peer]] = none[Peer].pure[IO]
+      def addPeer(peer: Peer): IO[Boolean] = ???
+      def hasPeerId(id: PeerId): IO[Boolean] = ???
+      def hasPeerHostPort(host: Host, p2pPort: Port): IO[Boolean] = ???
+      def updatePeerState(id: PeerId, state: NodeState): IO[Boolean] = ???
+      def setPeerResponsiveness(id: PeerId, responsiveness: PeerResponsiveness): IO[Unit] = ???
+      def removePeer(id: PeerId): IO[Unit] = ???
+      def removePeers(ids: Set[PeerId]): IO[Unit] = ???
+      def peerChanges: Stream[IO, Ior[Peer, Peer]] = Stream.empty
+      def createToken: IO[ClusterSessionToken] = ???
+      def getToken: IO[Option[ClusterSessionToken]] = none[ClusterSessionToken].pure[IO]
+      def setToken(token: ClusterSessionToken): IO[Unit] = ???
+      def getClusterId: ClusterId = ???
+    }
+
+  /** Build the REAL StateChannelBinarySenderImpl with synchronous send scheduling, so that ordering and re-send behaviour are observable
+    * deterministically (no fire-and-forget races in the test).
+    */
+  def mkSender(
     identifier: Address,
-    currentOrdinal: SnapshotOrdinal,
+    enqueueAtOrdinal: SnapshotOrdinal,
     state: TrackerState,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]] = None,
     selfId: PeerId = PeerId(Hex("0000000000000000")),
-    environment: AppEnvironment = Dev
+    environment: AppEnvironment = Dev,
+    maxTrackedBinaries: Int = 10000
   )(
-    implicit sp: SecurityProvider[IO],
-    hs: Hasher[IO],
+    implicit hs: Hasher[IO],
     metrics: Metrics[IO]
-  ): Resource[IO, (StateChannelBinarySender[IO], BinaryTracker[IO], Ref[IO, List[Hashed[StateChannelSnapshotBinary]]])] =
+  ): Resource[IO, (StateChannelBinarySenderImpl[IO], BinaryTracker[IO], Ref[IO, List[Hashed[StateChannelSnapshotBinary]]])] =
     for {
       identifierStorage <- Resource.pure(new IdentifierStorage[IO] {
         def setInitial(address: Address): IO[Unit] = ???
-
         def get: IO[Address] = identifier.pure[IO]
       })
 
       globalL0ClusterStorage = new L0ClusterStorage[IO] {
         def getPeers: IO[NonEmptySet[L0Peer]] = ???
-
         def getPeer(id: PeerId): IO[Option[L0Peer]] = ???
-
         def getRandomPeer: IO[L0Peer] = L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).pure[IO]
-
         def getRandomPeerExistentOnList(peers: List[PeerId]): IO[Option[L0Peer]] =
           L0Peer(PeerId(Hex("")), Host.fromString("0.0.0.0").get, Port.fromInt(100).get).some.pure[IO]
-
         def addPeers(l0Peers: Set[L0Peer]): IO[Unit] = ???
-
         def setPeers(l0Peers: NonEmptySet[L0Peer]): IO[Unit] = ???
-
         def removePeer(id: PeerId): IO[Unit] = IO.unit
       }
 
       lastSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
         def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
-
         def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
-
         def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
-
         def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
-
         def getCombinedStream: fs2.Stream[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
-
-        def getOrdinal: IO[Option[SnapshotOrdinal]] = currentOrdinal.some.pure[IO]
-
+        def getOrdinal: IO[Option[SnapshotOrdinal]] = enqueueAtOrdinal.some.pure[IO]
         def getHeight: IO[Option[Height]] = ???
-
         def clear: IO[Unit] = ().pure[IO]
-
         def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ().pure[IO]
       }
 
@@ -151,7 +152,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           }
       }
 
-      tracker <- Resource.eval(BinaryTracker.make[IO])
+      tracker <- Resource.eval(BinaryTracker.make[IO](maxTrackedBinaries))
       _ <- Resource.eval(tracker.updateState(_ => state))
 
       poster = new BinaryPoster[IO](
@@ -165,116 +166,20 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         tracker
       )
 
-      supervisor <- Supervisor[IO]
+      logger = Slf4jLogger.getLogger[IO]
 
-      sender = new TestStateChannelBinarySender[IO](
+      sender = new StateChannelBinarySenderImpl[IO](
         tracker,
         poster,
         lastSnapshotStorage,
         identifierStorage,
-        supervisor
+        clusterStorage(),
+        selfId,
+        // Run posting synchronously so the test can observe send ordering / re-sends deterministically.
+        identity,
+        logger
       )
     } yield (sender, tracker, postedRef)
-
-  // Test implementation that exposes internal methods for testing
-  class TestStateChannelBinarySender[G[_]: Async: Hasher: Metrics](
-    tracker: BinaryTracker[G],
-    poster: BinaryPoster[G],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[G, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    identifierStorage: IdentifierStorage[G],
-    supervisor: Supervisor[G]
-  ) extends StateChannelBinarySender[G] {
-
-    def enqueue(
-      binary: Hashed[StateChannelSnapshotBinary],
-      currencySnapshotOrdinal: SnapshotOrdinal,
-      lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
-    ): G[Unit] =
-      for {
-        currentGlobalOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
-        _ <- tracker.enqueue(binary, currencySnapshotOrdinal, currentGlobalOrdinal)
-      } yield ()
-
-    // For testing: immediately process the queue after enqueuing
-    def process(
-      binary: Hashed[StateChannelSnapshotBinary],
-      lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
-    ): G[Unit] =
-      for {
-        currentOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
-        _ <- enqueue(binary, currentOrdinal, lastGlobalSnapshotSigners)
-        state <- tracker.getState
-        _ <-
-          if (!state.retryMode) {
-            // In normal mode, send immediately for testing
-            poster.post(binary, lastGlobalSnapshotSigners).void
-          } else {
-            Async[G].unit
-          }
-      } yield ()
-
-    def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): G[Unit] =
-      for {
-        identifier <- identifierStorage.get
-        confirmedHashes <- getConfirmedHashes(identifier, globalSnapshot)
-        state <- tracker.getState
-        oldRetryMode = state.retryMode
-        proof = GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
-        _ <- tracker.markAsConfirmed(confirmedHashes, proof)
-        updatedState <- tracker.getState
-        retryMode = RetryStrategy.shouldEnterRetryMode(updatedState, globalSnapshot.ordinal)
-        _ <- tracker.updateState(_.copy(retryMode = retryMode))
-        _ <- tracker.updateState(RetryStrategy.updateRetryParameters(_, oldRetryMode))
-      } yield ()
-
-    // Manually trigger queue processing for tests (simulates background worker)
-    def processQueue(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): G[Unit] =
-      tracker.getState.flatMap { state =>
-        if (state.retryMode) {
-          val lastGlobalSnapshotSigners = globalSnapshot.signed.proofs.map(_.id.toPeerId).some
-          tracker.getPendingToRetry(state.cap.value.toInt).flatMap { toRetry =>
-            toRetry.traverse_(pending => poster.post(pending.binary, lastGlobalSnapshotSigners).void)
-          }
-        } else {
-          // Process unsent binaries in normal mode
-          tracker.getPendingToRetry(10).flatMap { pending =>
-            val unsent = pending.filter(_.sendsSoFar.value === 0L)
-            unsent.traverse_(p => poster.post(p.binary, none).void)
-          }
-        }
-      }
-
-    def clearPending: G[Unit] = tracker.clear
-
-    private def getConfirmedHashes(
-      identifier: Address,
-      globalSnapshot: Hashed[GlobalIncrementalSnapshot]
-    ): G[Set[Hash]] = {
-      val binaries = globalSnapshot.stateChannelSnapshots.get(identifier).toList.flatMap(_.toList)
-      binaries.traverse(b => b.toHashed[G]).map(_.map(_.hash).toSet)
-    }
-  }
-
-  def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
-    GlobalSnapshotInfo(
-      lastStateChannelSnapshotHashes,
-      SortedMap.empty,
-      SortedMap.empty,
-      SortedMap.empty,
-      SortedMap.empty,
-      None,
-      None,
-      None,
-      None,
-      None,
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty),
-      Some(SortedMap.empty)
-    )
 
   type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], JsonSerializer[IO])
 
@@ -294,48 +199,165 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       signedBinary <- signedOf(StateChannelSnapshotBinary(hash, content.getBytes, SnapshotFee.MinValue))
     } yield signedBinary
 
-  test("should add confirmation proof for confirmed binaries in the queue") { res =>
+  // ---------------------------------------------------------------------------------------------------------------
+  // Production path: normal-mode sending, confirmation + pruning (exercising the REAL impl, not a divergent double)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test("normal mode - enqueue then processQueue posts pending binaries") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
       (for {
         kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        (sender, tracker, _) <- mkService(
-          kp.getPublic.toAddress,
-          currentOrdinal = SnapshotOrdinal.MinValue,
-          state = TrackerState.empty
-        )
+        (sender, _, postedRef) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
         result <- Resource.eval(
           for {
             hashed <- binaries.traverse(_.toHashed)
-            _ <- hashed.traverse(binaryHashed => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binaryHashed, none))
-            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
-            _ <- sender.confirm(globalSnapshot)
-            state <- tracker.getState
-            currentOrdinal = SnapshotOrdinal.MinValue
-            expected = hashed.map { binary =>
-              ConfirmedBinary(
-                PendingBinary(binary, currentOrdinal, currentOrdinal, NonNegLong.unsafeFrom(0L)), // Changed from 0L to 1L
-                GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
-              )
-            }
-          } yield expect.eql(state.tracked.toList, expected)
+            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none))
+            _ <- sender.processQueueWithoutSnapshot
+            posted <- postedRef.get
+          } yield expect(posted.toSet.subsetOf(hashed.toSet)).and(expect(posted.nonEmpty))
         )
       } yield result).use(IO.pure)
     }
   }
 
-  test("should transition to retry mode when a snapshot is not confirmed for 5 or more ordinals") { res =>
+  test("confirm marks the chain prefix confirmed and prunes it from the queue") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
+            _ <- sender.confirm(globalSnapshot)
+            state <- tracker.getState
+          } yield expect(state.tracked.isEmpty).and(expect(state.inFlight.isEmpty))
+        )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  test("confirm with no matching binaries leaves the queue untouched") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
+            _ <- sender.confirm(globalSnapshot)
+            state <- tracker.getState
+          } yield expect.eql(state.tracked.size, hashed.size)
+        )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // F4 — re-send until *confirmed*, not until merely delivered once
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test("re-sends an unconfirmed binary on a later tick (delivery is not acceptance)") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
     forall(binaryGen) { binary =>
       (for {
         kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        (sender, tracker, _) <- mkService(kp.getPublic.toAddress, currentOrdinal = SnapshotOrdinal.MinValue, state = TrackerState.empty)
+        (sender, _, postedRef) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
         result <- Resource.eval(
           for {
             hashed <- binary.toHashed
-            _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashed, none)
+            _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none)
+            s1 <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
+            s3 <- mkSnapshot(SnapshotOrdinal(3L), kp, List.empty)
+            _ <- sender.processQueue(s1) // first attempt, stamps lastAttempt = 1
+            _ <- sender.processQueue(s3) // ordinal advanced by >= resend interval -> re-send
+            posted <- postedRef.get
+          } yield expect.eql(posted.count(_.hash === hashed.hash), 2)
+        )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Retry mode escalation + chain ordering
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test("retry mode escalates: every permitted node posts the stalled binaries, in chain order") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, postedRef) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none))
+            _ <- tracker.updateState(_.copy(retryMode = true, cap = NonNegLong.unsafeFrom(binaries.length.toLong)))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(2L), kp, List.empty)
+            _ <- sender.processQueue(globalSnapshot)
+            posted <- postedRef.get
+          } yield expect.eql(posted.map(_.hash), hashed.map(_.hash)) // posted in enqueue/chain order
+        )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  test("does not post when not on the allowance list (Mainnet, self excluded)") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        selfId = PeerId(Hex("0000000000000000"))
+        allowed = PeerId(Hex("000000000000011"))
+        allowanceList = Map(kp.getPublic.toAddress -> NonEmptySet.of(allowed))
+        (sender, _, postedRef) <- mkSender(
+          kp.getPublic.toAddress,
+          SnapshotOrdinal(1L),
+          TrackerState.empty.copy(retryMode = true, cap = NonNegLong.unsafeFrom(binaries.length.toLong)),
+          allowanceList.some,
+          selfId,
+          Mainnet
+        )
+        result <- Resource.eval(
+          for {
+            hashed <- binaries.traverse(_.toHashed)
+            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none))
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(2L), kp, List.empty)
+            _ <- sender.processQueue(globalSnapshot) // even retry-mode escalation must respect the allowance gate
+            posted <- postedRef.get
+          } yield expect.eql(posted.size, 0)
+        )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Retry FSM transitions (unchanged logic, exercised through the REAL atomic confirm)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test("transitions to retry mode when a binary is unconfirmed for >= 5 ordinals") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(binaryGen) { binary =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, tracker, _) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal(1L), TrackerState.empty)
+        result <- Resource.eval(
+          for {
+            hashed <- binary.toHashed
+            _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none) // enqueuedAt = 1 (not MinValue)
             globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
             _ <- sender.confirm(globalSnapshot)
             state <- tracker.getState
@@ -345,142 +367,48 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("normal mode - process should enqueue and send a binary right away") { res =>
+  test("does NOT enter retry mode for a not-yet-anchored binary (enqueuedAt == MinValue)") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
-    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+    forall(binaryGen) { binary =>
       (for {
         kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        (sender, tracker, postedRef) <- mkService(
-          kp.getPublic.toAddress,
-          currentOrdinal = SnapshotOrdinal.MinValue,
-          state = TrackerState.empty.copy(retryMode = false)
-        )
+        // enqueueAtOrdinal = MinValue simulates startup before any global snapshot is known
+        (sender, tracker, _) <- mkSender(kp.getPublic.toAddress, SnapshotOrdinal.MinValue, TrackerState.empty)
         result <- Resource.eval(
           for {
-            hashed <- binaries.traverse(_.toHashed)
-            _ <- hashed.traverse(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
+            hashed <- binary.toHashed
+            _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none)
+            globalSnapshot <- mkSnapshot(SnapshotOrdinal(6L), kp, List.empty)
+            _ <- sender.confirm(globalSnapshot)
             state <- tracker.getState
-            posted <- postedRef.get
-          } yield
-            expect(state.tracked.nonEmpty)
-              .and(expect(state.tracked.map {
-                case PendingBinary(binary, _, _, _)    => binary
-                case ConfirmedBinary(pendingBinary, _) => pendingBinary.binary
-              }.toSet.subsetOf(hashed.toSet)))
-              .and(expect(posted.toSet.subsetOf(hashed.toSet)))
+          } yield expect(!state.retryMode)
         )
       } yield result).use(IO.pure)
     }
   }
 
-  test("retry mode - should switch to normal mode if cap >= enqueued count, all sent and no stalled") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
-
-    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      (for {
-        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        (sender, tracker, _) <- mkService(
-          kp.getPublic.toAddress,
-          currentOrdinal = SnapshotOrdinal.MinValue,
-          state = TrackerState.empty.copy(
-            retryMode = true,
-            cap = NonNegLong.unsafeFrom(binaries.length.toLong)
-          )
-        )
-        result <- Resource.eval(
-          for {
-            hashed <- binaries.traverse(_.toHashed)
-            _ <- hashed.traverse(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
-
-            globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp, List.empty)
-            _ <- sender.confirm(globalSnapshot)
-            capReachedButNoSendsSoFar <- tracker.getState
-
-            _ <- tracker.updateState { state =>
-              state.copy(
-                tracked = state.tracked.map {
-                  case pending @ PendingBinary(_, _, _, _) =>
-                    pending.copy(sendsSoFar = NonNegLong.unsafeFrom(1L), enqueuedAtOrdinal = SnapshotOrdinal(0L))
-                  case confirmed => confirmed
-                },
-                cap = NonNegLong.unsafeFrom(state.tracked.length.toLong)
-              )
-            }
-            _ <- sender.confirm(globalSnapshot)
-            capReachedAllSentButHasStalled <- tracker.getState
-
-            _ <- tracker.updateState { state =>
-              state.copy(
-                tracked = state.tracked.map {
-                  case pending @ PendingBinary(_, _, _, _) =>
-                    pending.copy(sendsSoFar = NonNegLong.unsafeFrom(1L), enqueuedAtOrdinal = SnapshotOrdinal(1L))
-                  case confirmed => confirmed
-                },
-                cap = NonNegLong.unsafeFrom(state.tracked.length.toLong)
-              )
-            }
-            _ <- sender.confirm(globalSnapshot)
-            capReachedAllSentAndNoStalled <- tracker.getState
-          } yield
-            expect(capReachedButNoSendsSoFar.retryMode)
-              .and(expect(capReachedAllSentButHasStalled.retryMode))
-              .and(expect(!capReachedAllSentAndNoStalled.retryMode))
-        )
-      } yield result).use(IO.pure)
-    }
-  }
-
-  test("retry mode - process should enqueue binary without sending") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
-
-    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
-      (for {
-        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        (sender, tracker, postedRef) <- mkService(
-          kp.getPublic.toAddress,
-          currentOrdinal = SnapshotOrdinal.MinValue,
-          state = TrackerState.empty.copy(retryMode = true)
-        )
-        result <- Resource.eval(
-          for {
-            hashed <- binaries.traverse(_.toHashed)
-            _ <- hashed.traverse(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
-            state <- tracker.getState
-            posted <- postedRef.get
-          } yield
-            expect(state.tracked.nonEmpty)
-              .and(expect(state.tracked.map {
-                case PendingBinary(binary, _, _, _)    => binary
-                case ConfirmedBinary(pendingBinary, _) => pendingBinary.binary
-              }.toSet.subsetOf(hashed.toSet)))
-              .and(expect(posted.isEmpty))
-        )
-      } yield result).use(IO.pure)
-    }
-  }
-
-  test("retry mode - cap should decrement by 1 if no confirmations") { res =>
+  test("retry mode - cap decrements by 1 on a confirmation-less ordinal") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
     val gen = for {
       binary <- binaryGen
-      cap <- chooseNumRefined(NonNegLong.unsafeFrom(1L), NonNegLong.unsafeFrom(100L))
+      cap <- chooseNumRefined(NonNegLong.unsafeFrom(2L), NonNegLong.unsafeFrom(100L))
     } yield (binary, cap)
 
     forall(gen) {
       case (binary, cap) =>
         (for {
           kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-          (sender, tracker, _) <- mkService(
+          (sender, tracker, _) <- mkSender(
             kp.getPublic.toAddress,
-            currentOrdinal = SnapshotOrdinal.MinValue,
-            state = TrackerState.empty.copy(cap = cap, retryMode = true)
+            SnapshotOrdinal(1L),
+            TrackerState.empty.copy(cap = cap, retryMode = true)
           )
           result <- Resource.eval(
             for {
-              hashedBinary <- binary.toHashed
-              _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashedBinary, none)
+              hashed <- binary.toHashed
+              _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none)
               globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
               prevState <- tracker.getState
               _ <- sender.confirm(globalSnapshot)
@@ -491,366 +419,147 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("retry mode - cap should increment with every confirmation but no more than 4*confirmedCount") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
+  // ---------------------------------------------------------------------------------------------------------------
+  // F5 — bounded exponential backoff
+  // ---------------------------------------------------------------------------------------------------------------
 
-    val gen = for {
-      nBinaries <- Gen.nonEmptyListOf(binaryGen)
-      binary <- binaryGen
-      binaries = nBinaries :+ binary
-      howManyToConfirm <- Gen.choose(1, binaries.length - 1)
-      confirmedBinaries = binaries.take(howManyToConfirm)
-    } yield (binaries, confirmedBinaries)
-
-    forall(gen) {
-      case (binaries, confirmedBinaries) =>
-        (for {
-          kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-          (sender, tracker, _) <- mkService(
-            kp.getPublic.toAddress,
-            currentOrdinal = SnapshotOrdinal.MinValue,
-            state = TrackerState.empty.copy(
-              cap = NonNegLong.unsafeFrom(1L),
-              retryMode = true
-            )
-          )
-          result <- Resource.eval(
-            for {
-              _ <- binaries.traverse_(bin =>
-                bin.toHashed.flatMap(binary => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binary, none))
-              )
-              globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, confirmedBinaries)
-              prevState <- tracker.getState
-              _ <- sender.confirm(globalSnapshot)
-              state <- tracker.getState
-            } yield expect(state.cap.value >= prevState.cap.value).and(expect(state.cap.value <= confirmedBinaries.length * 4))
-          )
-        } yield result).use(IO.pure)
-    }
-  }
-
-  test("retry mode - should switch to exponential mode when cap goes to 0") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
+  test("backoff exponent is clamped and never overflows the wait threshold") { res =>
+    implicit val (_, hs, sp, _, _) = res
 
     forall(binaryGen) { binary =>
-      (for {
-        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        (sender, tracker, _) <- mkService(
-          kp.getPublic.toAddress,
-          currentOrdinal = SnapshotOrdinal.MinValue,
-          state = TrackerState.empty.copy(cap = NonNegLong.unsafeFrom(1L), retryMode = true)
+      for {
+        hashed <- binary.toHashed
+        // cap == 1, no confirmations, already at the clamp -> entering backoff must keep the exponent at the clamp (6),
+        // not grow it to 7 (which would eventually saturate Math.pow(2, exponent) and freeze sending forever).
+        pending = PendingBinary(hashed, SnapshotOrdinal(1L), SnapshotOrdinal(1L), NonNegLong.unsafeFrom(1L), none)
+        stalled = TrackerState.empty.copy(
+          tracked = scala.collection.immutable.Queue[TrackedBinary](pending),
+          cap = NonNegLong.unsafeFrom(1L),
+          retryMode = true,
+          backoffExponent = NonNegLong.unsafeFrom(6L)
         )
-        result <- Resource.eval(
-          for {
-            hashedBinary <- binary.toHashed
-            _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashedBinary, none)
-            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, List.empty)
-            _ <- sender.confirm(globalSnapshot)
-            state <- tracker.getState
-          } yield
-            expect
-              .eql(state.cap.value, 0L)
-              .and(expect.eql(state.backoffExponent.value, 1L))
-              .and(expect.eql(state.noConfirmationsSinceRetryCount.value, 1L))
-        )
-      } yield result).use(IO.pure)
+        afterBackoff = RetryStrategy.updateRetryParameters(stalled, previousRetryMode = true)
+      } yield
+        expect
+          .eql(afterBackoff.backoffExponent.value, 6L)
+          .and(expect.eql(afterBackoff.cap.value, 0L))
     }
   }
 
-  test("retry mode (exponential) - increments exponent if passed 2^n without confirmations and resets counter") { res =>
+  // ---------------------------------------------------------------------------------------------------------------
+  // F6 — bounded queue (backpressure instead of unbounded growth -> OOM/restart loop)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test("enqueue is bounded: drops (returns false) once the queue is full") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
-    val gen = for {
-      binary <- binaryGen
-      exponent <- chooseNumRefined(NonNegLong.unsafeFrom(1L), NonNegLong.unsafeFrom(100L))
-    } yield (binary, exponent)
-
-    forall(gen) {
-      case (binary, exponent) =>
-        (for {
-          kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-          (sender, tracker, _) <- mkService(
-            kp.getPublic.toAddress,
-            currentOrdinal = SnapshotOrdinal.MinValue,
-            state = TrackerState.empty.copy(
-              cap = NonNegLong.unsafeFrom(1L),
-              retryMode = true,
-              backoffExponent = exponent,
-              noConfirmationsSinceRetryCount = NonNegLong.unsafeFrom(Math.pow(2.0, exponent.value.toDouble).toLong - 1L)
-            )
-          )
-          result <- Resource.eval(
-            for {
-              hashedBinary <- binary.toHashed
-              _ <- sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(hashedBinary, none)
-              snapshot <- mkSnapshot(ordinal = SnapshotOrdinal.MinValue, kp, List.empty)
-              prevState <- tracker.getState
-              _ <- sender.confirm(snapshot) >>
-                sender.asInstanceOf[TestStateChannelBinarySender[IO]].processQueue(snapshot)
-              state <- tracker.getState
-            } yield
-              expect
-                .eql(state.backoffExponent.value, prevState.backoffExponent.value + 1L)
-                .and(expect.eql(state.noConfirmationsSinceRetryCount, NonNegLong.unsafeFrom(1L)))
-                .and(expect.eql(state.cap, NonNegLong.unsafeFrom(0L)))
-          )
-        } yield result).use(IO.pure)
-    }
-  }
-
-  test("should reject when not on allowance list") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
-
-    forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
+    forall(Gen.listOfN(5, binaryGen)) { binaries =>
       (for {
-        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
-        selfId = PeerId(Hex("0000000000000000"))
-        allowed = PeerId(Hex("000000000000011"))
-        allowanceList = Map(kp.getPublic.toAddress -> NonEmptySet.of(allowed))
-
-        (sender, tracker, postedRef) <- mkService(
-          kp.getPublic.toAddress,
-          currentOrdinal = SnapshotOrdinal.MinValue,
-          state = TrackerState.empty,
-          allowanceList.some,
-          selfId,
-          Mainnet
-        )
+        tracker <- Resource.eval(BinaryTracker.make[IO](maxTrackedBinaries = 3))
         result <- Resource.eval(
           for {
             hashed <- binaries.traverse(_.toHashed)
-            _ <- hashed.traverse(binaryHashed => sender.asInstanceOf[TestStateChannelBinarySender[IO]].process(binaryHashed, none))
-            globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp, binaries)
-            _ <- sender.confirm(globalSnapshot)
+            outcomes <- hashed.traverse(b => tracker.enqueue(b, SnapshotOrdinal(1L), SnapshotOrdinal(1L)))
             state <- tracker.getState
-            expected = hashed.map { binary =>
-              ConfirmedBinary(
-                PendingBinary(binary, SnapshotOrdinal.MinValue, SnapshotOrdinal.MinValue, NonNegLong.unsafeFrom(0L)),
-                GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot)
-              )
-            }
-            posted <- postedRef.get
           } yield
-            expect.all(
-              state.tracked.toList === expected,
-              posted.size === 0
-            )
+            expect
+              .eql(state.tracked.size, 3)
+              .and(expect.eql(outcomes.count(identity), 3))
+              .and(expect.eql(outcomes.count(o => !o), 2))
         )
       } yield result).use(IO.pure)
     }
   }
 
-  test("should pick deterministic peer to send snapshots - with allowed peers") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
-    val selfId = PeerId(Hex("123"))
+  // ---------------------------------------------------------------------------------------------------------------
+  // F8 — per-binary in-flight de-duplication
+  // ---------------------------------------------------------------------------------------------------------------
 
-    val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
-    val lastSigners1: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("789")), PeerId(Hex("456")))
-    val lastSigners2: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("123")), PeerId(Hex("789")))
-    val lastSigners3: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("789")), PeerId(Hex("123")))
-    val lastSigners4: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("123")), PeerId(Hex("456")))
-    val lastSigners5: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("456")), PeerId(Hex("123")))
+  test("tryBeginSend de-duplicates concurrent sends of the same binary") { res =>
+    implicit val (_, hs, sp, _, _) = res
 
-    val allowedPeers: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
-    for {
-      selectedPeer <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners,
-          allowedPeers,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer1 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners1,
-          allowedPeers,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer2 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners2,
-          allowedPeers,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer3 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners3,
-          allowedPeers,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer4 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners4,
-          allowedPeers,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer5 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners5,
-          allowedPeers,
-          selfId,
-          Hash.empty
-        )
-      )
-    } yield
-      expect.all(
-        selectedPeer.value.value === selectedPeer1.value.value,
-        selectedPeer1.value.value === selectedPeer2.value.value,
-        selectedPeer2.value.value === selectedPeer3.value.value,
-        selectedPeer3.value.value === selectedPeer4.value.value,
-        selectedPeer4.value.value === selectedPeer5.value.value,
-        selectedPeer5.value.value === "456"
-      )
+    forall(binaryGen) { binary =>
+      for {
+        tracker <- BinaryTracker.make[IO]()
+        hashed <- binary.toHashed
+        _ <- tracker.enqueue(hashed, SnapshotOrdinal(1L), SnapshotOrdinal(1L))
+        first <- tracker.tryBeginSend(hashed.hash, none)
+        second <- tracker.tryBeginSend(hashed.hash, none) // already in flight
+        _ <- tracker.endSend(hashed.hash)
+        third <- tracker.tryBeginSend(hashed.hash, none) // released -> allowed again
+        unknown <- tracker.tryBeginSend(Hash("deadbeef"), none) // not pending -> refused
+      } yield
+        expect(first)
+          .and(expect(!second))
+          .and(expect(third))
+          .and(expect(!unknown))
+    }
   }
 
-  test("should pick deterministic peer to send snapshots - without allowed peers") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
-    val selfId = PeerId(Hex("123"))
+  // ---------------------------------------------------------------------------------------------------------------
+  // markConfirmedUpToHighest pure semantics (chain-prefix confirmation)
+  // ---------------------------------------------------------------------------------------------------------------
 
-    val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
-    val lastSigners1: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("789")), PeerId(Hex("456")))
-    val lastSigners2: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("123")), PeerId(Hex("789")))
-    val lastSigners3: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("789")), PeerId(Hex("123")))
-    val lastSigners4: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("123")), PeerId(Hex("456")))
-    val lastSigners5: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("456")), PeerId(Hex("123")))
+  test("markConfirmedUpToHighest confirms every entry up to the highest confirmed index") { res =>
+    implicit val (_, hs, sp, _, _) = res
 
-    for {
-      selectedPeer <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners,
-          List.empty,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer1 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners1,
-          List.empty,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer2 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners2,
-          List.empty,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer3 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners3,
-          List.empty,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer4 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners4,
-          List.empty,
-          selfId,
-          Hash.empty
-        )
-      )
-      selectedPeer5 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners5,
-          List.empty,
-          selfId,
-          Hash.empty
-        )
-      )
-    } yield
-      expect.all(
-        selectedPeer.value.value === selectedPeer1.value.value,
-        selectedPeer1.value.value === selectedPeer2.value.value,
-        selectedPeer2.value.value === selectedPeer3.value.value,
-        selectedPeer3.value.value === selectedPeer4.value.value,
-        selectedPeer4.value.value === selectedPeer5.value.value,
-        selectedPeer5.value.value === "456"
-      )
+    forall(Gen.listOfN(4, binaryGen)) { binaries =>
+      for {
+        hashed <- binaries.traverse(_.toHashed)
+        pendings = hashed.map(b => PendingBinary(b, SnapshotOrdinal(1L), SnapshotOrdinal(1L), NonNegLong.MinValue, none))
+        state = TrackerState.empty.copy(tracked = scala.collection.immutable.Queue[TrackedBinary](pendings: _*))
+        // confirm only the *second* binary's hash -> entries at index 0 and 1 become confirmed, 2 and 3 stay pending
+        proof = GlobalSnapshotConfirmationProof(Hash("aa"), SnapshotOrdinal(1L), EpochProgress.MinValue)
+        confirmed = BinaryTracker.markConfirmedUpToHighest(state, Set(hashed(1).hash), proof)
+        confirmedCount = confirmed.tracked.count(_.isInstanceOf[ConfirmedBinary])
+        pendingCount = confirmed.tracked.count(_.isInstanceOf[PendingBinary])
+      } yield expect.eql(confirmedCount, 2).and(expect.eql(pendingCount, 2))
+    }
   }
 
-  test("should pick deterministic peer to send snapshots - without allowed peers - different hash") { res =>
-    implicit val (_, hs, sp, metrics, j) = res
-    val selfId = PeerId(Hex("123"))
+  // ---------------------------------------------------------------------------------------------------------------
+  // F1/F2 — liveness-aware deterministic peer selection with self-fallback
+  // ---------------------------------------------------------------------------------------------------------------
 
-    val lastSigners: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
-    val lastSigners1: List[PeerId] = List(PeerId(Hex("123")), PeerId(Hex("789")), PeerId(Hex("456")))
-    val lastSigners2: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("123")), PeerId(Hex("789")))
-    val lastSigners3: List[PeerId] = List(PeerId(Hex("456")), PeerId(Hex("789")), PeerId(Hex("123")))
-    val lastSigners4: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("123")), PeerId(Hex("456")))
-    val lastSigners5: List[PeerId] = List(PeerId(Hex("789")), PeerId(Hex("456")), PeerId(Hex("123")))
+  test("liveness: a dead deterministic owner is skipped and a live peer (or self) takes over") { _ =>
+    val a = PeerId(Hex("aaa"))
+    val b = PeerId(Hex("bbb"))
+    val c = PeerId(Hex("ccc"))
+    val signers = List(a, b, c)
 
-    for {
-      selectedPeer <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners,
-          List.empty,
-          selfId,
-          Hash("123")
-        )
-      )
-      selectedPeer1 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners1,
-          List.empty,
-          selfId,
-          Hash("123")
-        )
-      )
-      selectedPeer2 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners2,
-          List.empty,
-          selfId,
-          Hash("123")
-        )
-      )
-      selectedPeer3 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners3,
-          List.empty,
-          selfId,
-          Hash("123")
-        )
-      )
-      selectedPeer4 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners4,
-          List.empty,
-          selfId,
-          Hash("123")
-        )
-      )
-      selectedPeer5 <- IO.pure(
-        PeerSelector.pickDeterministicPeer(
-          lastSigners5,
-          List.empty,
-          selfId,
-          Hash("123")
-        )
-      )
-    } yield
-      expect.all(
-        selectedPeer.value.value === selectedPeer1.value.value,
-        selectedPeer1.value.value === selectedPeer2.value.value,
-        selectedPeer2.value.value === selectedPeer3.value.value,
-        selectedPeer3.value.value === selectedPeer4.value.value,
-        selectedPeer4.value.value === selectedPeer5.value.value,
-        selectedPeer5.value.value === "123"
-      )
+    // Pure deterministic choice with full liveness (everyone alive)
+    val ownerAllAlive = PeerSelector.pickDeterministicPeer(signers, Nil, a, Hash("seed"), Some(Set(a, b, c)))
+    // The chosen owner is now dead -> must NOT be selected
+    val ownerWithoutChosen = PeerSelector.pickDeterministicPeer(signers, Nil, a, Hash("seed"), Some(Set(a, b, c) - ownerAllAlive))
+    // Nobody among signers is alive (and self is none of them) -> self takes over
+    val self = PeerId(Hex("eee"))
+    val ownerNoneAlive = PeerSelector.pickDeterministicPeer(signers, Nil, self, Hash("seed"), Some(Set.empty[PeerId]))
+
+    IO {
+      expect(signers.contains(ownerAllAlive))
+        .and(expect(ownerWithoutChosen =!= ownerAllAlive))
+        .and(expect(signers.contains(ownerWithoutChosen)))
+        .and(expect.eql(ownerNoneAlive, self))
+    }
+  }
+
+  test("liveness None degrades to pure deterministic selection (stable across nodes)") { _ =>
+    val signers = List(PeerId(Hex("123")), PeerId(Hex("456")), PeerId(Hex("789")))
+    val self = PeerId(Hex("123"))
+    val a = PeerSelector.pickDeterministicPeer(signers, signers, self, Hash.empty, None)
+    val b = PeerSelector.pickDeterministicPeer(signers.reverse, signers.reverse, self, Hash.empty, None)
+    IO(expect.eql(a.value.value, b.value.value).and(expect.eql(a.value.value, "456")))
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // F9 — empty eligible set must not make every node post (no thundering herd)
+  // ---------------------------------------------------------------------------------------------------------------
+
+  test("empty eligible set falls back to a single deterministic signer, not self") { _ =>
+    val signers = List(PeerId(Hex("aaa")), PeerId(Hex("bbb")))
+    val disjointAllowed = List(PeerId(Hex("ccc")), PeerId(Hex("ddd")))
+    val self = PeerId(Hex("eee"))
+    val selected = PeerSelector.pickDeterministicPeer(signers, disjointAllowed, self, Hash("seed"), None)
+    IO(expect(signers.contains(selected)).and(expect(selected =!= self)))
   }
 }

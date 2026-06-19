@@ -12,9 +12,17 @@ object RetryStrategy {
   private val noConfirmationsToTriggerRetryMode: PosLong = PosLong.unsafeFrom(5L)
   private val confirmedCountMultiplier: PosLong = PosLong.unsafeFrom(4L)
 
+  // Hard cap on the exponential backoff. Without it `Math.pow(2, exponent)` saturates to Long.MaxValue, which
+  // freezes `cap` at 0 for an unbounded number of snapshots (apparent permanent disconnection). With the clamp the
+  // longest silent window between cap-1 send attempts is 2^maxBackoffExponent confirmations.
+  private val maxBackoffExponent: NonNegLong = NonNegLong.unsafeFrom(6L)
+
   def shouldEnterRetryMode(state: TrackerState, currentOrdinal: SnapshotOrdinal): Boolean = {
     val hasStalled = state.tracked.exists {
-      case PendingBinary(_, _, enqueuedAtOrdinal, _) =>
+      case PendingBinary(_, _, enqueuedAtOrdinal, _, _) =>
+        // Ignore not-yet-anchored binaries (enqueued before the first global ordinal was known) so we do not
+        // trip retry mode spuriously at startup, when enqueuedAtOrdinal defaults to MinValue.
+        enqueuedAtOrdinal =!= SnapshotOrdinal.MinValue &&
         currentOrdinal.value - enqueuedAtOrdinal.value >= noConfirmationsToTriggerRetryMode
       case _ => false
     }
@@ -24,8 +32,8 @@ object RetryStrategy {
     } else {
       val pendingCount = state.tracked.collect { case _: PendingBinary => 1 }.sum
       val allPendingAlreadySent = state.tracked.forall {
-        case PendingBinary(_, _, _, sendsSoFar) => sendsSoFar.value >= 1
-        case _                                  => true
+        case PendingBinary(_, _, _, sendsSoFar, _) => sendsSoFar.value >= 1
+        case _                                     => true
       }
 
       if (pendingCount <= state.cap.value && allPendingAlreadySent && !hasStalled)
@@ -37,7 +45,7 @@ object RetryStrategy {
 
   def updateRetryParameters(state: TrackerState, previousRetryMode: Boolean): TrackerState =
     if ((!state.retryMode && previousRetryMode) || state.tracked.isEmpty) {
-      TrackerState.empty.copy(tracked = state.tracked)
+      TrackerState.empty.copy(tracked = state.tracked, inFlight = state.inFlight)
     } else if (!state.retryMode) {
       state
     } else {
@@ -80,15 +88,16 @@ object RetryStrategy {
   private def enterBackoffMode(state: TrackerState): TrackerState =
     state.copy(
       cap = NonNegLong.unsafeFrom(0L),
-      backoffExponent = NonNegLong.from(state.backoffExponent.value + 1L).getOrElse(NonNegLong.MaxValue),
+      backoffExponent = NonNegLong.from(Math.min(state.backoffExponent.value + 1L, maxBackoffExponent.value)).getOrElse(maxBackoffExponent),
       noConfirmationsSinceRetryCount = NonNegLong.unsafeFrom(1L)
     )
 
   private def updateBackoffCounter(state: TrackerState): TrackerState = {
     val noConfirmationsSinceRetryCount =
       NonNegLong.from(state.noConfirmationsSinceRetryCount.value + 1).getOrElse(NonNegLong.MaxValue)
+    val clampedExponent = Math.min(state.backoffExponent.value, maxBackoffExponent.value)
     val updatedCap =
-      if (noConfirmationsSinceRetryCount.value >= Math.ceil(Math.pow(2.0, state.backoffExponent.value.toDouble)).toLong)
+      if (noConfirmationsSinceRetryCount.value >= Math.ceil(Math.pow(2.0, clampedExponent.toDouble)).toLong)
         NonNegLong.unsafeFrom(1L)
       else state.cap
 
