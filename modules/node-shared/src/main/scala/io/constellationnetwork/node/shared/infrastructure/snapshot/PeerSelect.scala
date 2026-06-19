@@ -104,9 +104,17 @@ object PeerSelect {
         .flatMap { peerSublist =>
           MonadThrow[F].fromOption(peerSublist.toNel, NoPeersToSelect)
         }
-      peerOrdinals <- peers.parTraverseN(maxConcurrentPeerInquiries) { peer =>
-        snapshotClient.getLatestOrdinal(peer).map((peer, _))
-      }
+      // Tolerate per-peer failures here. A peer that is not Ready returns 503 on
+      // /global-snapshots/latest/ordinal; left unhandled inside parTraverseN, one such failure
+      // aborts the whole selection, so a single lagging/recovering peer poisons the pool and the
+      // node can never pick a healthy source (observed: two laggards deadlock fetching from each
+      // other). Drop the unresponsive peer instead -- mirrors getSnapshotHashByPeer's Option pattern.
+      peerOrdinals <- peers.toList
+        .parTraverseN(maxConcurrentPeerInquiries) { peer =>
+          snapshotClient.getLatestOrdinal(peer).map(ordinal => Option((peer, ordinal))).handleError(_ => Option.empty)
+        }
+        .map(_.flatten)
+        .flatMap(responded => MonadThrow[F].fromOption(responded.toNel, NoPeersToSelect))
       latestOrdinals = peerOrdinals.map { case (_, ordinal) => ordinal }
       ordinalDistribution = peerOrdinals.groupMap { case (_, ordinal) => ordinal } { case (peer, _) => peer }
       (majorityOrdinal, _) = latestOrdinals.groupBy(identity).maxBy { case (_, ordinals) => ordinals.size }
