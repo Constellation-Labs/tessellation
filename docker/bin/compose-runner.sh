@@ -65,6 +65,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo ""
   echo "Usage: just test --test=dag-cluster --test=delegated-staking"
   echo "       just test --test=dag-cluster,rewards    (comma-separated)"
+  echo "       just test --skip-streaming              (run everything except the snapshot-streaming build+test)"
   exit 0
 fi
 
@@ -87,8 +88,17 @@ if [ -n "$SELECTED_TESTS" ] && [ -n "$METAGRAPH" ]; then
   fi
 fi
 
+# Whether to build + run the snapshot-streaming test. Skipped entirely when --skip-streaming is set
+# (avoids the heavyweight ss build + GitHub Packages auth for local metagraph iteration); otherwise
+# runs when no specific tests are selected or snapshot-streaming is among them.
+streaming_enabled() {
+  [ "$SKIP_STREAMING" = "true" ] && return 1
+  [ -z "$SELECTED_TESTS" ] && return 0
+  echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"
+}
+
 # snapshot-streaming build-from-source needs sdk/publishLocal
-if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+if streaming_enabled; then
   export PUBLISH=${PUBLISH:-true}
 fi
 
@@ -147,7 +157,7 @@ else
 
 
   # Build snapshot-streaming JAR (needed before BUILD_ONLY exit so `just build` produces it)
-  if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+  if streaming_enabled; then
     SS_DIR="$PROJECT_ROOT/docker/snapshot-streaming"
     source "$SS_DIR/build-snapshot-streaming.sh"
     cd "$PROJECT_ROOT"
@@ -340,7 +350,7 @@ else
 
 
   # --- Snapshot-streaming infrastructure ---
-  if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+  if streaming_enabled; then
     echo "================================================"
     echo "Setting up snapshot-streaming infrastructure"
     echo "================================================"
@@ -564,7 +574,7 @@ if should_run_test "fork-recovery"; then
   show_time "Fork recovery test completed"
 fi
 
-if should_run_test "snapshot-streaming"; then
+if streaming_enabled; then
   echo "================================================"
   echo "Running snapshot-streaming E2E test"
   echo "================================================"
