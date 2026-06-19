@@ -66,8 +66,9 @@ object ViewChangeCertificateBuilder {
         .toList
       // Group by signer. Storage may hold more than one vote from a signer (equivocation / relay
       // duplicates). Keep ALL of a signer's votes for the divergent-QC check below, then collapse to a
-      // deterministic representative -- the lowest by the total `Signed` ordering. `.head` over a
-      // `groupBy` list is arrival-order dependent and could split nodes onto different certs.
+      // single deterministic representative per signer (the highest known QC, with a total-`Signed`
+      // tiebreak -- see the representative selection below). `.head` over a `groupBy` list is
+      // arrival-order dependent and could split nodes onto different certs.
       val poolSignersAll: Map[PeerId, List[Signed[ViewChangeVote]]] =
         matchingByView.groupBy(_.proofs.head.id.toPeerId).filter { case (signer, _) => witnessPool.contains(signer) }
       // Detect divergent QCs over ALL of each pool signer's votes, BEFORE representative selection, so

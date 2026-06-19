@@ -48,9 +48,10 @@ object TimeoutCertificateBuilder {
       val matchingByView = votes.values
         .filter(signed => signed.value.fromView == fromView && signed.value.toView == toView && signed.value.reason == reason)
         .toList
-      // Group by signer; keep all votes for the divergent-QC check, then collapse to a deterministic
-      // representative (lowest by total `Signed` ordering) -- never `.head`, which is arrival-order
-      // dependent and could split nodes onto different certs.
+      // Group by signer; keep all votes for the divergent-QC check, then collapse to a single deterministic
+      // representative per signer (the highest known QC, with a total-`Signed` tiebreak -- see the
+      // representative selection below) -- never `.head`, which is arrival-order dependent and could split
+      // nodes onto different certs.
       val poolSignersAll: Map[PeerId, List[Signed[TimeoutVote]]] =
         matchingByView.groupBy(_.proofs.head.id.toPeerId).filter { case (signer, _) => witnessPool.contains(signer) }
       val poolQcs = poolSignersAll.values.flatten.flatMap(_.value.highestKnownQc).toList
