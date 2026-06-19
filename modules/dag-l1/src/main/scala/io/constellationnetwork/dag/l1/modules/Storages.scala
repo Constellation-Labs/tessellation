@@ -2,7 +2,7 @@ package io.constellationnetwork.dag.l1.modules
 
 import cats.Parallel
 import cats.effect.kernel.Async
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -51,6 +51,7 @@ object Storages {
       tokenLockStorage <- TokenLockStorage.make[F](TokenLockReference.empty, contextualTokenLockValidator)
       tokenLockBlockStorage <- TokenLockBlockStorage.make[F]
       globalL0AlignmentStorage <- GlobalL0AlignmentStorage.make[F]
+      mutationLock <- Mutex[F]
     } yield
       new Storages[F, P, S, SI] {
         val address = addressStorage
@@ -68,6 +69,7 @@ object Storages {
         val tokenLock = tokenLockStorage
         val tokenLockBlock = tokenLockBlockStorage
         val globalL0Alignment = globalL0AlignmentStorage
+        val storageMutationLock = mutationLock
       }
 }
 
@@ -87,4 +89,11 @@ trait Storages[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] {
   val tokenLock: TokenLockStorage[F]
   val tokenLockBlock: TokenLockBlockStorage[F]
   val globalL0Alignment: GlobalL0AlignmentStorage[F]
+
+  /** Single fair-FIFO lock serializing the in-memory storage COMMIT performed by the live block-acceptance path (BlockService.accept, block
+    * store) against the commit performed by the L0->L1 alignment path (SnapshotProcessor.processAlignment). It guards only microsecond
+    * Ref/MapRef writes -- never network I/O, hashing of whole snapshots, or the MPT trie build -- so L1 keeps producing/aligning while it
+    * is held.
+    */
+  val storageMutationLock: Mutex[F]
 }

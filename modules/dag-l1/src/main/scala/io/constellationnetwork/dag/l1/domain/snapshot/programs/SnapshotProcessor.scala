@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 
 import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.effect.std.Mutex
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow, Parallel}
 
@@ -87,7 +88,8 @@ abstract class SnapshotProcessor[
     tokenLockStorage: TokenLockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    storageMutationLock: Mutex[F]
   )(
     implicit hasher: Hasher[F],
     stateProofSelector: StateProofSelector
@@ -129,9 +131,13 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          markTxRefsAsMajority >>
-          setSnapshot >>
+        // Commit the in-memory storage mutations under the shared lock so they cannot interleave with a concurrent
+        // block-acceptance commit (BlockService.accept). The MPT build and lastN update stay OUTSIDE the lock.
+        storageMutationLock.lock.surround {
+          adjustToMajority >>
+            markTxRefsAsMajority >>
+            setSnapshot
+        } >>
           updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
@@ -176,9 +182,11 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          markTxRefsAsMajority >>
-          setSnapshot >>
+        storageMutationLock.lock.surround {
+          adjustToMajority >>
+            markTxRefsAsMajority >>
+            setSnapshot
+        } >>
           updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
@@ -198,8 +206,7 @@ abstract class SnapshotProcessor[
           ) >> onDownload(snapshot, state)
 
         val setBalances: F[Unit] =
-          addressStorage.clean >>
-            addressStorage.updateBalances(state.balances)
+          addressStorage.replaceAll(state.balances)
 
         val setTransactionRefs: F[Unit] =
           transactionStorage.initByRefs(state.lastTxRefs, snapshot.ordinal)
@@ -216,10 +223,12 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          setBalances >>
-          setTransactionRefs >>
-          setInitialSnapshot >>
+        storageMutationLock.lock.surround {
+          adjustToMajority >>
+            setBalances >>
+            setTransactionRefs >>
+            setInitialSnapshot
+        } >>
           updateMptStorage >>
           setInitialLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             DownloadPerformed(
@@ -254,8 +263,7 @@ abstract class SnapshotProcessor[
           ) >> onRedownload(snapshot, state)
 
         val setBalances: F[Unit] =
-          addressStorage.clean >>
-            addressStorage.updateBalances(state.balances)
+          addressStorage.replaceAll(state.balances)
 
         val setTransactionRefs: F[Unit] =
           transactionStorage.replaceByRefs(state.lastTxRefs, snapshot.ordinal)
@@ -269,10 +277,12 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          setBalances >>
-          setTransactionRefs >>
-          setSnapshot >>
+        storageMutationLock.lock.surround {
+          adjustToMajority >>
+            setBalances >>
+            setTransactionRefs >>
+            setSnapshot
+        } >>
           updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             RedownloadPerformed(
@@ -417,11 +427,11 @@ abstract class SnapshotProcessor[
                             }
 
                           def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
-                            for {
-                              _ <- logger.info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
-                              _ <- globalL0AlignmentStorage.clean()
-                              alignment = createRedownloadNeeded()
-                            } yield alignment
+                            // The flag was already read-and-cleared atomically by consumeShouldRedownload below,
+                            // so no separate clean() is needed (and a concurrently-raised flag is preserved).
+                            logger
+                              .info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
+                              .as(createRedownloadNeeded())
 
                           def createRedownloadNeeded(): Alignment =
                             RedownloadNeeded(
@@ -450,7 +460,7 @@ abstract class SnapshotProcessor[
                               postponedToWaiting
                             )
 
-                          globalL0AlignmentStorage.getShouldRedownload.flatMap { shouldRedownload =>
+                          globalL0AlignmentStorage.consumeShouldRedownload.flatMap { shouldRedownload =>
                             validateTipsAlignment() >>
                               determineAlignment(shouldRedownload)
                           }
@@ -513,11 +523,11 @@ abstract class SnapshotProcessor[
                             onlyInMajority.isEmpty && acceptedToRemove.isEmpty
 
                           def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
-                            for {
-                              _ <- logger.info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
-                              _ <- globalL0AlignmentStorage.clean()
-                              alignment = createRedownloadNeeded()
-                            } yield alignment
+                            // The flag was already read-and-cleared atomically by consumeShouldRedownload below,
+                            // so no separate clean() is needed (and a concurrently-raised flag is preserved).
+                            logger
+                              .info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
+                              .as(createRedownloadNeeded())
 
                           def createAlignedAtNewHeight(): Alignment =
                             AlignedAtNewHeight(
@@ -547,7 +557,7 @@ abstract class SnapshotProcessor[
                               postponedToWaiting
                             )
 
-                          globalL0AlignmentStorage.getShouldRedownload.flatMap { shouldRedownload =>
+                          globalL0AlignmentStorage.consumeShouldRedownload.flatMap { shouldRedownload =>
                             validateTipsAlignment() >>
                               determineHeightAlignment(shouldRedownload)
                           }

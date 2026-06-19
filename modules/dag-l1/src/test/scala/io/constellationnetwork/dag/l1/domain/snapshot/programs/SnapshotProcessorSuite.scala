@@ -4,7 +4,7 @@ import java.security.KeyPair
 
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect._
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -315,6 +315,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   SnapshotOrdinal.MinValue
                 )
               }
+              storageMutationLock <- Mutex[IO].asResource
               snapshotProcessor = {
                 val addressStorage = new AddressStorage[IO] {
                   def getState: IO[Map[Address, Balance]] =
@@ -324,6 +325,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     balancesR.get.map(b => b(address))
 
                   def updateBalances(addressBalances: Map[Address, balance.Balance]): IO[Unit] =
+                    balancesR.update(_ ++ addressBalances)
+
+                  def replaceAll(addressBalances: Map[Address, balance.Balance]): IO[Unit] =
                     balancesR.set(addressBalances)
 
                   def clean: IO[Unit] = balancesR.set(Map.empty)
@@ -369,7 +373,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     globalL0Service.pullGlobalSnapshot,
                     globalL0Service,
                     globalL0AlignmentStorage,
-                    mptStore
+                    mptStore,
+                    storageMutationLock
                   )
               }
               keys <- (

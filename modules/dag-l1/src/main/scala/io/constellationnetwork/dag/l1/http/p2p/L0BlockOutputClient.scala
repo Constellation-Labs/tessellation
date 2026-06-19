@@ -41,6 +41,15 @@ object L0BlockOutputClient {
       val accepted: Boolean = true
     }
 
+    /** L0 accepted the block into its awaiting-parent mempool (HTTP 202) but has NOT yet included it in a snapshot, because a parent tx
+      * ordinal is not yet finalized. This is PROVISIONAL: L0 evicts awaiting-parent entries on a TTL/overflow, so a 202 must NOT be treated
+      * as terminal -- the block stays buffered and is re-sent until L0 confirms inclusion with a 200. A contiguous stuck chain always gets
+      * 202 (never the 4xx that triggers backfill), so dropping it here was a silent, unrecoverable loss.
+      */
+    case class AwaitingParent(statusCode: Int) extends L1OutputSubmissionResult {
+      val accepted: Boolean = false
+    }
+
     case class ParentOrdinalGapTooLarge(
       currentLastTxOrdinal: Long,
       parentOrdinal: Long,
@@ -113,7 +122,13 @@ object L0BlockOutputClient {
           // Surface the actual status + body so the real failure mode is diagnosable.
           c.run(req.withEntity(output)).use { resp =>
             if (resp.status.isSuccess)
-              Async[F].pure(L1OutputSubmissionResult.Accepted)
+              // 202 Accepted == awaiting-parent (provisional, keep re-sending); 200 Ok == included (terminal).
+              if (resp.status.code == 202)
+                logger
+                  .debug("[L1-OUTPUT] L0 holding block awaiting parent (202); retained for re-send until included")
+                  .as(L1OutputSubmissionResult.AwaitingParent(resp.status.code): L1OutputSubmissionResult)
+              else
+                Async[F].pure(L1OutputSubmissionResult.Accepted: L1OutputSubmissionResult)
             else
               resp.bodyText.compile.string.flatMap { body =>
                 val result = L1OutputSubmissionResult.rejected(resp.status.code, resp.status.reason, body)

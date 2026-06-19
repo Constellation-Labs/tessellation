@@ -9,6 +9,14 @@ trait GlobalL0AlignmentStorage[F[_]] {
 
   def updateShouldRedownload(value: Boolean, reasons: List[String]): F[Unit]
 
+  /** Atomically read the current flag and reset it to empty in one operation.
+    *
+    * Replaces the racy `getShouldRedownload` ... later `clean()` pair: with two separate ops a concurrent `updateShouldRedownload(true)`
+    * landing between the read and the clear was silently wiped by the unconditional `set(empty)`. `getAndSet` consumes exactly the value
+    * the caller acts on; any flag raised afterwards survives for the next cycle.
+    */
+  def consumeShouldRedownload: F[ShouldRedownload]
+
   def clean(): F[Unit]
 }
 
@@ -20,6 +28,9 @@ object GlobalL0AlignmentStorage {
     new GlobalL0AlignmentStorage[F] {
       def getShouldRedownload: F[ShouldRedownload] =
         shouldRedownload.get
+
+      def consumeShouldRedownload: F[ShouldRedownload] =
+        shouldRedownload.getAndSet(ShouldRedownload.empty)
 
       def updateShouldRedownload(value: Boolean, reasons: List[String]): F[Unit] =
         shouldRedownload.update { current =>

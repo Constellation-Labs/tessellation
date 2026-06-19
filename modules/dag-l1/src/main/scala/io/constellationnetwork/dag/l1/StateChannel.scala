@@ -24,7 +24,7 @@ import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusOutpu
 import io.constellationnetwork.dag.l1.domain.consensus.block.Validator.{canStartInspectionTrigger, canStartOwnConsensus, isPeerInputValid}
 import io.constellationnetwork.dag.l1.domain.consensus.block._
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult
-import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult.{Accepted, ParentOrdinalGapTooLarge, Rejected}
+import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult._
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.fs2.StreamOps
@@ -173,13 +173,17 @@ class StateChannel[
 
   private val storeBlock: Pipe[F, FinalBlock, Unit] =
     _.evalMapLocked(blockStoringS) { fb =>
-      storages.lastSnapshot.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
-        if (lastSnapshotHeight < fb.hashedBlock.height)
-          storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
-        else
-          logger.debug(
-            s"Block can't be stored! Block height not above last snapshot height! block:${fb.hashedBlock.height} <= snapshot: $lastSnapshotHeight"
-          )
+      // Hold the storage-mutation lock across the height-check AND the store so the decision cannot race
+      // alignment's setSnapshot + adjustToMajority (which together move the snapshot height and the block set).
+      storages.storageMutationLock.lock.surround {
+        storages.lastSnapshot.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
+          if (lastSnapshotHeight < fb.hashedBlock.height)
+            storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
+          else
+            logger.debug(
+              s"Block can't be stored! Block height not above last snapshot height! block:${fb.hashedBlock.height} <= snapshot: $lastSnapshotHeight"
+            )
+        }
       }
     }
 
@@ -193,6 +197,7 @@ class StateChannel[
   private def submissionOutcome(result: L1OutputSubmissionResult): String =
     result match {
       case Accepted                    => "accepted"
+      case _: AwaitingParent           => "awaiting_parent"
       case _: ParentOrdinalGapTooLarge => "parent_ordinal_gap_too_large"
       case _: Rejected                 => "rejected"
     }
@@ -316,6 +321,10 @@ class StateChannel[
   private def bufferFailedL0Delivery(block: Signed[Block], result: L1OutputSubmissionResult): F[Unit] =
     result match {
       case Accepted => Async[F].unit
+      // 202: L0 holds it awaiting a parent. Keep it buffered and re-send until L0 includes it (200) -- otherwise
+      // L0's TTL/overflow eviction silently loses it and the address chain stalls.
+      case _: AwaitingParent =>
+        appendToL0ResendBuffer(List(block), "awaiting_parent")
       case gap: ParentOrdinalGapTooLarge =>
         bufferBackfillForGap(block, gap)
       case _: Rejected =>
@@ -377,8 +386,14 @@ class StateChannel[
             case (hash, signedBlock) =>
               logger.debug(s"Acceptance of a block $hash starts!") >>
                 HasherSelector[F].withCurrent { implicit hasher =>
-                  services.block
-                    .accept(signedBlock)
+                  // Serialize the whole validate+commit against the alignment commit (processAlignment). accept is
+                  // pure local validation + in-memory storage mutation (no network, no MPT build), so holding the
+                  // lock across it is cheap and makes the read-balance/compute/write-balance step atomic w.r.t.
+                  // alignment -- closing the balance-divergence and block-state races.
+                  storages.storageMutationLock.lock.surround {
+                    services.block
+                      .accept(signedBlock)
+                  }
                 }.handleErrorWith { error =>
                   for {
                     _ <- logger.warn(error)(s"Failed acceptance of a block with ${hash.show}")

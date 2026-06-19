@@ -169,7 +169,8 @@ abstract class CurrencyL1App(
         services.globalL0.pullGlobalSnapshot,
         services.globalL0,
         storages.globalL0Alignment,
-        sharedStorages.mptStore
+        sharedStorages.mptStore,
+        storages.storageMutationLock
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](

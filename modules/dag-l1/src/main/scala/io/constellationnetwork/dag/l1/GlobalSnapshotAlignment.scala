@@ -203,20 +203,29 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
   ): F[List[SnapshotProcessingResult]] =
     (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
       case (snapshot :: nextSnapshots, aggResults) =>
-        HasherSelector[F].withCurrent { implicit hasher =>
-          programs.snapshotProcessor
-            .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-        }
+        // Retry THIS snapshot transiently before giving up -- a momentary createContext/MPT hiccup should not
+        // escalate to a full redownload. Only after retries are exhausted do we STOP the batch and schedule a
+        // redownload. Crucially we no longer skip-and-continue past a failed snapshot: continuing processed later
+        // snapshots against an unadvanced lastSnapshot, turning them all into NotNext -> Ignore and silently
+        // dropping the remainder of the batch (then forcing a full redownload for what may have been transient).
+        withRetry(
+          operation = HasherSelector[F].withCurrent { implicit hasher =>
+            programs.snapshotProcessor
+              .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+          },
+          operationName = s"Process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}"
+        )
           .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
           .handleErrorWith { e =>
-            val message = s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}, skipping"
-            for {
-              _ <- storages.globalL0Alignment.updateShouldRedownload(
-                value = true,
-                reasons = List(message)
-              )
-              _ <- logger.error(e)(message)
-            } yield (nextSnapshots, aggResults).asLeft[List[SnapshotProcessingResult]]
+            val message =
+              s"Failed to process snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show} after retries; stopping batch and scheduling redownload"
+            storages.globalL0Alignment.updateShouldRedownload(
+              value = true,
+              reasons = List(message)
+            ) >>
+              logger
+                .error(e)(message)
+                .as(aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])])
           }
 
       case (Nil, aggResults) =>

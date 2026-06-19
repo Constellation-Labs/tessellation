@@ -2,7 +2,7 @@ package io.constellationnetwork.currency.l1.domain.snapshot.programs
 
 import cats.data.{NonEmptyList, Validated, ValidatedNel}
 import cats.effect.Async
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.all._
 import cats.{Applicative, Parallel}
 
@@ -64,7 +64,8 @@ object CurrencySnapshotProcessor {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
     globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    storageMutationLock: Mutex[F]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -229,7 +230,7 @@ object CurrencySnapshotProcessor {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
-                            processAlignment(alignment, bs, ts, als, tls, lcss, as, mptStore).as {
+                            processAlignment(alignment, bs, ts, als, tls, lcss, as, mptStore, storageMutationLock).as {
                               val updatedAgg = agg :+ alignment
 
                               NonEmptyList.fromList(nextSnapshots) match {
@@ -256,7 +257,8 @@ object CurrencySnapshotProcessor {
                     tokenLockStorage,
                     lastCurrencySnapshotStorage,
                     addressStorage,
-                    mptStore
+                    mptStore,
+                    storageMutationLock
                   )
                 }.flatMap { results =>
                   setGlobalSnapshot >>
