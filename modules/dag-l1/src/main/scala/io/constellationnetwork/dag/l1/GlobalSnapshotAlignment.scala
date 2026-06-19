@@ -174,10 +174,10 @@ class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <
             operationName = s"Process single snapshot ${SnapshotReference.fromHashedSnapshot(snapshot).show}"
           )
         case Right(snapshots) =>
-          withRetry(
-            operation = performSnapshotsBatchProcessing(snapshots),
-            operationName = s"Process ${snapshots.size} snapshots batch"
-          )
+          // No outer withRetry here: performSnapshotsBatchProcessing already retries each snapshot internally and
+          // recovers (returns the applied prefix + schedules redownload) rather than raising, so a wrapping retry
+          // would never fire.
+          performSnapshotsBatchProcessing(snapshots)
       }
 
     def logResults(results: List[SnapshotProcessingResult]): F[Unit] =

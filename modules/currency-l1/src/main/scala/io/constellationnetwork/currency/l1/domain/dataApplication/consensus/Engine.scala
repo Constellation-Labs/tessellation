@@ -331,9 +331,11 @@ object Engine {
                 // dataTransactionsHashes -- and therefore the block hash -- differs per node, the aggregated multisig
                 // fails to verify, and every round with >=2 contributing facilitators is cancelled. Sorting by the
                 // content-derived per-bundle hashes (already computed here) yields byte-identical blocks on every node.
+                // Delimiter-separated key: correct regardless of per-hash length (a delimiter-less concat could in
+                // theory be ambiguous across bundle/hash boundaries for a future variable-length hash).
                 val sortedByHash = allUpdates.toList
                   .zip(hashesList)
-                  .sortBy { case (_, bundleHashes) => bundleHashes.toList.map(_.value).mkString }
+                  .sortBy { case (_, bundleHashes) => bundleHashes.toList.map(_.value).mkString(":") }
 
                 (NonEmptyList.fromList(sortedByHash.map(_._1)), NonEmptyList.fromList(sortedByHash.map(_._2))) match {
                   case (Some(sortedUpdates), Some(sortedHashes)) =>

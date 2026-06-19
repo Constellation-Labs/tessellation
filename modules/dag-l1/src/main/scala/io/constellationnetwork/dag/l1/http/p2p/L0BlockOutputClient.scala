@@ -21,6 +21,11 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait L0BlockOutputClient[F[_]] {
+
+  /** LOSSY: collapses the result to a bare Boolean, mapping an awaiting-parent HTTP 202 to `false` (indistinguishable from a real
+    * rejection). Prefer `sendL1OutputDetailed`, which distinguishes Accepted / AwaitingParent / gap / rejection so the caller can
+    * retain-and-resend a 202 instead of dropping it. (Only reachable today via the unused L0CurrencyBlockOutputClient.)
+    */
   def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean]
   def sendL1OutputDetailed(output: Signed[Block]): PeerResponse[F, L0BlockOutputClient.L1OutputSubmissionResult]
   def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(

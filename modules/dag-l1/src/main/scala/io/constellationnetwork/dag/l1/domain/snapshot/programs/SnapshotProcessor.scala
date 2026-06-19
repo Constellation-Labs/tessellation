@@ -489,10 +489,10 @@ abstract class SnapshotProcessor[
                               postponedToWaiting
                             )
 
-                          globalL0AlignmentStorage.consumeShouldRedownload.flatMap { shouldRedownload =>
-                            validateTipsAlignment() >>
-                              determineAlignment(shouldRedownload)
-                          }
+                          // Validate tips BEFORE consuming the redownload flag: if tips are misaligned (raises),
+                          // we must NOT have cleared a pending redownload request that the next cycle still needs.
+                          validateTipsAlignment() >>
+                            globalL0AlignmentStorage.consumeShouldRedownload.flatMap(determineAlignment)
                       }
                     }
 
@@ -586,10 +586,9 @@ abstract class SnapshotProcessor[
                               postponedToWaiting
                             )
 
-                          globalL0AlignmentStorage.consumeShouldRedownload.flatMap { shouldRedownload =>
-                            validateTipsAlignment() >>
-                              determineHeightAlignment(shouldRedownload)
-                          }
+                          // Validate tips BEFORE consuming the redownload flag (see AlignedAtNewOrdinal branch).
+                          validateTipsAlignment() >>
+                            globalL0AlignmentStorage.consumeShouldRedownload.flatMap(determineHeightAlignment)
                       }
                     }
 

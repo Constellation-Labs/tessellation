@@ -189,7 +189,7 @@ object CurrencySnapshotProcessor {
               allowSpendStorage,
               tokenLockStorage
             ).flatMap {
-              case (as, bs, lcss, ts, als, tls) =>
+              case (as, bs, lcss, ts, als, tls, replayLock) =>
                 type Success = NonEmptyList[Alignment]
                 type Agg = (NonEmptyList[Hashed[CurrencyIncrementalSnapshot]], List[Alignment])
                 type Result = Option[Success]
@@ -230,7 +230,7 @@ object CurrencySnapshotProcessor {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
-                            processAlignment(alignment, bs, ts, als, tls, lcss, as, mptStore, storageMutationLock).as {
+                            processAlignment(alignment, bs, ts, als, tls, lcss, as, mptStore, replayLock).as {
                               val updatedAgg = agg :+ alignment
 
                               NonEmptyList.fromList(nextSnapshots) match {
@@ -293,7 +293,11 @@ object CurrencySnapshotProcessor {
           LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
           TransactionStorage[F],
           AllowSpendStorage[F],
-          TokenLockStorage[F]
+          TokenLockStorage[F],
+          // A dedicated, uncontended lock for the intermediate-replay processAlignment below: those storages are
+          // private throwaway copies (built here) that no other fiber can observe, so the replay must NOT serialize
+          // on the shared storageMutationLock. The real commit (against the live storages) still uses the shared one.
+          Mutex[F]
         )
       ] = {
         val bs = blockStorage.getState().flatMap(BlockStorage.make[F](_))
@@ -329,7 +333,7 @@ object CurrencySnapshotProcessor {
                 TokenLockStorage.make(lastTxs, _, ctlv)
               }
           }
-        (as, bs, lcss, ts, als, tls).mapN((_, _, _, _, _, _))
+        (as, bs, lcss, ts, als, tls, Mutex[F]).mapN((_, _, _, _, _, _, _))
       }
 
       // We are extracting all currency snapshots, but we don't assume that all the state channel binaries need to be

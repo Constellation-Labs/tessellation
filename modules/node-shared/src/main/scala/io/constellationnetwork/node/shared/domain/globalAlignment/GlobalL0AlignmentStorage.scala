@@ -5,8 +5,6 @@ import cats.effect.kernel.Ref
 import cats.syntax.all._
 
 trait GlobalL0AlignmentStorage[F[_]] {
-  def getShouldRedownload: F[ShouldRedownload]
-
   def updateShouldRedownload(value: Boolean, reasons: List[String]): F[Unit]
 
   /** Atomically read the current flag and reset it to empty in one operation.
@@ -16,8 +14,6 @@ trait GlobalL0AlignmentStorage[F[_]] {
     * the caller acts on; any flag raised afterwards survives for the next cycle.
     */
   def consumeShouldRedownload: F[ShouldRedownload]
-
-  def clean(): F[Unit]
 }
 
 object GlobalL0AlignmentStorage {
@@ -26,9 +22,6 @@ object GlobalL0AlignmentStorage {
 
   def make[F[_]: Async](shouldRedownload: Ref[F, ShouldRedownload]): GlobalL0AlignmentStorage[F] =
     new GlobalL0AlignmentStorage[F] {
-      def getShouldRedownload: F[ShouldRedownload] =
-        shouldRedownload.get
-
       def consumeShouldRedownload: F[ShouldRedownload] =
         shouldRedownload.getAndSet(ShouldRedownload.empty)
 
@@ -40,8 +33,5 @@ object GlobalL0AlignmentStorage {
             ShouldRedownload(value, reasons)
           }
         }
-
-      def clean(): F[Unit] =
-        shouldRedownload.set(ShouldRedownload.empty)
     }
 }

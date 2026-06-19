@@ -448,6 +448,10 @@ object StateChannel {
     txHasher: Hasher[F]
   ): F[StateChannel[F, P, S, SI, R]] =
     for {
+      // These per-stream semaphores guard each consensus stream against SELF-overlap (a tick starting before the
+      // previous one finished). Cross-path serialization between the acceptance/store commit and the L0->L1 alignment
+      // commit is a separate concern handled by storages.storageMutationLock, which is always acquired INNERMOST
+      // (inside these semaphores), so the two locking layers never form a cycle.
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
