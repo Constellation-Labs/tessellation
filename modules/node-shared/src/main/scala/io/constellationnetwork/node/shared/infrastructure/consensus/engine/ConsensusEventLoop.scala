@@ -212,79 +212,94 @@ object ConsensusEventLoop {
               }
               if (isRecovering && isStaleCommand) {
                 ctx.logger.debug(s"Discarding stale ${cmd.getClass.getSimpleName} command: node in $currentState (recovery)")
-              } else {
-                fsm
-                  .handle(cmd)
-                  .flatTap { _ =>
-                    // After a successful consensus round completes, reset recovery counters.
-                    // This prevents stale history from causing premature force-leave on future (unrelated) recovery.
-                    cmd match {
-                      case _: ConsensusCommand.ConsensusFinished[_, _] =>
-                        abandonmentTracker.resetOnSuccessfulRound >>
-                          // Re-collect registrations from Ready peers in the background.
-                          // The peerRegistrationStream only fires on state changes, so peers that
-                          // registered before their observation key was set (or whose state change
-                          // was missed) never get re-queried. This ensures every Ready peer's
-                          // registration is refreshed each round, closing the timing gap.
-                          Async[F]
-                            .start(
-                              ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
-                                peers
-                                  .filter(_.state === NodeState.Ready)
-                                  .toList
-                                  .traverse_(peer =>
-                                    collectRegistration(consensusClient, storage)(peer)
-                                      .handleErrorWith(_ => Async[F].unit)
-                                  )
-                              }
-                            )
-                            .void
-                      case _ => Async[F].unit
-                    }
-                  }
-                  .handleErrorWith { err =>
-                    ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
-                      Metrics[F].incrementCounter("dag_consensus_command_error") >>
-                      (cmd match {
-                        case _: ConsensusCommand.ConsensusFinished[_, _] | _: ConsensusCommand.RoundCompleted =>
-                          // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
-                          // Force round completion so the next round can start. Unconditional (no attemptId)
-                          // because this is the error-recovery path — must always proceed.
-                          // Also offer TimeTick ONLY if node is not in Leaving state: the forced RoundCompleted
-                          // calls completeRound without afterConsensusFinish, so no timer is scheduled for the
-                          // next round. On solo nodes with no external events, this would deadlock consensus.
-                          // However, if the node is Leaving, queuing TimeTick creates a tight spin loop
-                          // (rounds immediately abandon, can't force-leave, can't recover, re-queue TimeTick).
-                          ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
-                            Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
-                            queue.offer(ConsensusCommand.RoundCompleted(None)) >>
-                            nodeStorage.getNodeState.flatMap { state =>
-                              if (state =!= NodeState.Leaving)
-                                queue.offer(ConsensusCommand.TimeTick)
-                              else
-                                ctx.logger.warn("Skipping TimeTick after error recovery: node is in Leaving state") >>
-                                  Metrics[F].incrementCounter("dag_consensus_timetick_suppressed_leaving")
-                            }
-                        case _: ConsensusCommand.InitializeFromDownload[_, _, _] =>
-                          // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
-                          // Without recovery, the node stays stuck — never initializes, never starts consensus.
-                          // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves
-                          // (prevents infinite download → init fail → download loops).
-                          // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
-                          ctx.logger.error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
-                            Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
-                            abandonmentTracker.trackInitFromDownloadFailure >>
-                            nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
-                              case NodeStateTransition.Success =>
-                                ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")
-                              case _ =>
-                                // May already be in a different state; try from Ready as well
-                                nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
-                            }
-                        case _ => Async[F].unit
-                      })
-                  }
-              }
+              } else
+                cmd match {
+                  case ConsensusCommand.AbandonRound(key, reason) =>
+                    // #1 lost-update fix: the StallDetector monitor enqueues AbandonRound instead of calling
+                    // abandonmentTracker.abandonRound on its own fiber. Handling it here runs abandonRound's
+                    // condModifyState on this single command-loop fiber, the only state writer (see
+                    // ConsensusStorage.condModifyState). abandonRound re-checks outcome-readiness, so a round
+                    // that completed since the monitor's decision is not wiped.
+                    abandonmentTracker
+                      .abandonRound(key, reason)
+                      .handleErrorWith { err =>
+                        ctx.logger.error(err)("Unhandled error processing AbandonRound, recovering") >>
+                          Metrics[F].incrementCounter("dag_consensus_command_error")
+                      }
+                  case _ =>
+                    fsm
+                      .handle(cmd)
+                      .flatTap { _ =>
+                        // After a successful consensus round completes, reset recovery counters.
+                        // This prevents stale history from causing premature force-leave on future (unrelated) recovery.
+                        cmd match {
+                          case _: ConsensusCommand.ConsensusFinished[_, _] =>
+                            abandonmentTracker.resetOnSuccessfulRound >>
+                              // Re-collect registrations from Ready peers in the background.
+                              // The peerRegistrationStream only fires on state changes, so peers that
+                              // registered before their observation key was set (or whose state change
+                              // was missed) never get re-queried. This ensures every Ready peer's
+                              // registration is refreshed each round, closing the timing gap.
+                              Async[F]
+                                .start(
+                                  ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
+                                    peers
+                                      .filter(_.state === NodeState.Ready)
+                                      .toList
+                                      .traverse_(peer =>
+                                        collectRegistration(consensusClient, storage)(peer)
+                                          .handleErrorWith(_ => Async[F].unit)
+                                      )
+                                  }
+                                )
+                                .void
+                          case _ => Async[F].unit
+                        }
+                      }
+                      .handleErrorWith { err =>
+                        ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
+                          Metrics[F].incrementCounter("dag_consensus_command_error") >>
+                          (cmd match {
+                            case _: ConsensusCommand.ConsensusFinished[_, _] | _: ConsensusCommand.RoundCompleted =>
+                              // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
+                              // Force round completion so the next round can start. Unconditional (no attemptId)
+                              // because this is the error-recovery path — must always proceed.
+                              // Also offer TimeTick ONLY if node is not in Leaving state: the forced RoundCompleted
+                              // calls completeRound without afterConsensusFinish, so no timer is scheduled for the
+                              // next round. On solo nodes with no external events, this would deadlock consensus.
+                              // However, if the node is Leaving, queuing TimeTick creates a tight spin loop
+                              // (rounds immediately abandon, can't force-leave, can't recover, re-queue TimeTick).
+                              ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
+                                Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
+                                queue.offer(ConsensusCommand.RoundCompleted(None)) >>
+                                nodeStorage.getNodeState.flatMap { state =>
+                                  if (state =!= NodeState.Leaving)
+                                    queue.offer(ConsensusCommand.TimeTick)
+                                  else
+                                    ctx.logger.warn("Skipping TimeTick after error recovery: node is in Leaving state") >>
+                                      Metrics[F].incrementCounter("dag_consensus_timetick_suppressed_leaving")
+                                }
+                            case _: ConsensusCommand.InitializeFromDownload[_, _, _] =>
+                              // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
+                              // Without recovery, the node stays stuck — never initializes, never starts consensus.
+                              // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves
+                              // (prevents infinite download → init fail → download loops).
+                              // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
+                              ctx.logger
+                                .error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
+                                Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
+                                abandonmentTracker.trackInitFromDownloadFailure >>
+                                nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
+                                  case NodeStateTransition.Success =>
+                                    ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")
+                                  case _ =>
+                                    // May already be in a different state; try from Ready as well
+                                    nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
+                                }
+                            case _ => Async[F].unit
+                          })
+                      }
+                }
             }
         }
 

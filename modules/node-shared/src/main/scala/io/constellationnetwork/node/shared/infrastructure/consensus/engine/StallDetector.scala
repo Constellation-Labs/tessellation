@@ -543,7 +543,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               "count" -> info.missingPeers.size.toString
             )
             .whenA(info.missingPeers.nonEmpty) >>
-          abandonmentTracker.abandonRound(key, abandonReason)
+          // Route the abandon through the command queue rather than calling abandonmentTracker.abandonRound
+          // directly on this monitor fiber. abandonRound mutates per-key state via condModifyState; running it
+          // here raced the command loop's condModifyState calls (the #1 lost-update). The command loop is the
+          // single serialized writer (see ConsensusStorage.condModifyState). The monitor still terminates on
+          // shouldAbandon below (Right(())), so it cannot enqueue a duplicate for this round.
+          queue.offer(ConsensusCommand.AbandonRound(key, abandonReason))
       ).whenA(shouldAbandon)
 
       // --- Update health snapshot ---

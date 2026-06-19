@@ -73,6 +73,15 @@ object ConsensusCommand {
     * paths where the round must always complete.
     */
   final case class RoundCompleted(expectedAttemptId: Option[Long] = None) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+
+  /** Request to abandon the round at `key` for `reason`. Enqueued by the `StallDetector` monitor fiber instead of calling
+    * `AbandonmentTracker.abandonRound` directly. `abandonRound` mutates per-key state via `condModifyState`; running it on the monitor
+    * fiber raced the command loop's own `condModifyState` calls (non-atomic get -> effect -> set lost-update). Routing through the queue
+    * serializes every `condModifyState` writer onto the single command-loop fiber -- the invariant documented at
+    * `ConsensusStorage.condModifyState`. The handler re-checks at drain time that the round has not produced an outcome (see
+    * `abandonRound`), so a round that completed between the monitor's decision and this command draining is never wiped.
+    */
+  final case class AbandonRound[Key](key: Key, reason: AbandonReason) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class InternalScheduled[Key, Artifact, Ctx, Outcome](inner: ConsensusCommand[Key, Artifact, Ctx, Outcome])
       extends ConsensusCommand[Key, Artifact, Ctx, Outcome]
   final case class PeerObserved(peer: Peer) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]

@@ -318,8 +318,31 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
 
   /** Abandon a round: clear state, track consecutive failures, and either retry or trigger recovery. Quorum-infeasible abandonments are
     * retried without counting toward recovery threshold, since the node isn't stuck or forked — it just needs more peers to reach quorum.
+    *
+    * Bug A guard for the queued abandon (#1): `AbandonRound` is enqueued by the `StallDetector` monitor and drained later on the command
+    * loop. The monitor only decides to abandon when no outcome is ready (see `StallDetector.monitorStep`); re-checking outcome-readiness
+    * here closes the decision-to-drain gap so a round that completed in between is left intact for `ConsensusFinished` rather than wiped.
+    * The check is content-based, not attempt-id-based: it must NOT skip on a bare view advance, because the monitor has already terminated
+    * for this round and a dropped abandon would leave the advanced round with no local monitor.
     */
   def abandonRound(key: Key, reason: AbandonReason): F[Unit] =
+    storage.getState(key).flatMap {
+      case Some(state) if ctx.advancer.getConsensusOutcome(state).isDefined =>
+        ConsensusLog.debug(
+          logger,
+          Category.Lifecycle,
+          key.toString,
+          "n/a",
+          LogEvent.RoundAbandoned,
+          "reason" -> reason.label,
+          "skipped" -> "outcome_ready"
+        ) >>
+          Metrics[F].incrementCounter("dag_consensus_abandon_skipped_outcome_ready_total")
+      case _ =>
+        performAbandon(key, reason)
+    }
+
+  private def performAbandon(key: Key, reason: AbandonReason): F[Unit] =
     // Retriable abandons (QuorumInfeasible / ReadyParticipationQuorumInfeasible) are routine transient
     // churn -- the node is not stuck or forked, it just needs more peers; log them at DEBUG. Reserve a
     // single WARN for the non-retriable cases (MaxStalls / RoundTimeout / Lagging) that an operator
