@@ -315,7 +315,7 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
                 case Some((snapshot, state)) =>
                   cachedCombinedResponse.get(snapshot.ordinal, snapshot, state).flatMap { bytes =>
                     Response[F](status = Status.Ok)
-                      .withEntity(bytes)
+                      .withEntity(bytes)(EntityEncoder.byteArrayEncoder[F])
                       .putHeaders(`Content-Type`(MediaType.application.json))
                       .pure[F]
                   }
