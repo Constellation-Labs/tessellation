@@ -508,6 +508,19 @@ const testCreateDelegatedStake = async (urls, account, nodeIds) => {
     {
       globalL0Url: urls.globalL0Url,
       name: 'assertDelegatedStake2Created',
+      // The 2nd create can be lost in L0 event intake (a single submission over an async mempool; the
+      // identical first-create path succeeds moments earlier, so intake itself works). Resubmit the IDENTICAL
+      // create (same tokenLockRef -> same signed tx and hash) after 2 missed ordinals. Once one create lands,
+      // a re-accepted duplicate is rejected as InvalidParent/InvalidTokenLock, so this cannot double-apply the
+      // stake; the exact final assertion below is unchanged.
+      onOrdinalMiss: async ({ ordinalsMissed }) => {
+        if (ordinalsMissed >= 2) {
+          logWorkflow.warning(
+            `assertDelegatedStake2Created: resubmitting 2nd delegated-stake create after ${ordinalsMissed} ordinal misses`,
+          )
+          await createDelegatedStake(account, secondLockHash, secondLockAmount, nodeIds[1])
+        }
+      },
     },
   )
 

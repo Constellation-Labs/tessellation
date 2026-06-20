@@ -265,6 +265,14 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
     throw new Error('Failed to create TokenLock')
   }
 
+  // Fresh locks: confirm GL0 inclusion ordinal-awarely before the wall-clock balance check below. A fresh lock
+  // can race the dag-L1 token-lock MPT (it trails GL0 by ~1 ordinal), so the balance only drops once the L1
+  // catches up; waiting on ordinal progress avoids a wall-clock timeout. Replacements change the active-lock
+  // hash (a /token-locks TOCTOU), so they rely on the replacement-retry / stake-ref path instead.
+  if (!replaceRef) {
+    await waitForTokenLockInclusion(urls, account.address, hash)
+  }
+
   // The account may hold active delegated stakes that accrue reward credits during
   // the wait, so its balance can sit ABOVE the exact post-lock value (rewards only
   // ever add). Require the balance to have dropped by ~the locked amount (confirming
