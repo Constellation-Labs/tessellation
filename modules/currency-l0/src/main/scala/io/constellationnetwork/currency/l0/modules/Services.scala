@@ -134,7 +134,6 @@ object Services {
       )
 
       validator = CurrencySnapshotValidator.make[F](
-        SnapshotOrdinal.MinValue,
         creator,
         signedValidator,
         maybeRewards,

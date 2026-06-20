@@ -150,7 +150,6 @@ object SharedServices {
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
-        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         CurrencySnapshotCreator.make[F](
           cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
           currencySnapshotAcceptanceManager,
