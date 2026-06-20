@@ -274,8 +274,11 @@ const createVerifier = (urls) => {
         verifyDagL0: (address, hash) => verifyInL0(address, hash, urls.globalL0Url, '', 'DAG', false),
         verifyCurrencyL1: (hash) => verifyInL1(hash, urls.currencyL1Url, 'Currency'),
         verifyCurrencyL0: (address, hash) => verifyInCurrencyL0(address, hash),
-        verifyGlobalL0ForCurrency: (address, hash) =>
-            verifyInL0(address, hash, urls.globalL0Url, CONSTANTS.CURRENCY_TOKEN_ID, 'Global', false)
+        verifyGlobalL0ForCurrency: async (_address, hash) => {
+            logWorkflow.info(
+                `Currency allow spend ${hash} was verified in Currency L0; Global L0 does not mirror currency active allow spends`
+            );
+        }
     };
 };
 

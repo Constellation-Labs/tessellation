@@ -1,3 +1,4 @@
+const axios = require('axios')
 const { dag4 } = require('@stardust-collective/dag4')
 const { parseSharedArgs, logWorkflow } = require('../shared')
 
@@ -107,6 +108,39 @@ const waitForAnyBalanceMatch = async (label, fetchBalances, predicates) => {
   )
 }
 
+const getMetagraphOrdinal = async (networkOptions) => {
+  const response = await axios.get(`${networkOptions.l0MetagraphUrl}/snapshots/latest`)
+  return response.data.value.ordinal
+}
+
+const waitForMetagraphOrdinalProgression = async (networkOptions, label) => {
+  const startingOrdinal = await getMetagraphOrdinal(networkOptions)
+  const deadline = Date.now() + BALANCE_QUERY_TIMEOUT
+  let lastOrdinal = startingOrdinal
+  let attempt = 0
+
+  while (Date.now() <= deadline) {
+    attempt += 1
+    lastOrdinal = await getMetagraphOrdinal(networkOptions)
+
+    if (lastOrdinal > startingOrdinal) {
+      logMessage(
+        `${label} metagraph ordinal advanced from ${startingOrdinal} to ${lastOrdinal} on attempt ${attempt}`,
+      )
+      return lastOrdinal
+    }
+
+    logMessage(
+      `${label} waiting for metagraph ordinal to advance past ${startingOrdinal}; current ${lastOrdinal}`,
+    )
+    await sleep(BALANCE_QUERY_INTERVAL)
+  }
+
+  throw Error(
+    `${label} metagraph ordinal did not advance within ${BALANCE_QUERY_TIMEOUT} ms; last ordinal ${lastOrdinal}`,
+  )
+}
+
 const batchTransaction = async (
   origin,
   destination,
@@ -171,7 +205,9 @@ const batchMetagraphTransaction = async (
     )
 
     logMessage(
-      `L0 token transaction from: ${origin.address} sent - batch of ${num}.`,
+      `L0 token transaction from: ${origin.address} sent - batch of ${num}. Hashes: ${hashes.join(
+        ', ',
+      )}`,
     )
 
     return hashes
@@ -468,6 +504,13 @@ const transferTest = async (
     expectedFromBalance,
     expectedToBalance,
   )
+
+  if (metagraphOpts) {
+    await waitForMetagraphOrdinalProgression(
+      metagraphOpts,
+      'Metagraph transfer settle',
+    )
+  }
 }
 
 const sendTransactionsUsingUrls = async (networkOptions) => {
