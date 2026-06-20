@@ -314,11 +314,10 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
               headWithFallback.flatMap {
                 case Some((snapshot, state)) =>
                   cachedCombinedResponse.get(snapshot.ordinal, snapshot, state).flatMap { bytes =>
-                    Ok(
-                      fs2.Stream.chunk[F, Byte](fs2.Chunk.array(bytes)),
-                      `Content-Type`(MediaType.application.json),
-                      `Content-Length`.unsafeFromLong(bytes.length.toLong)
-                    )
+                    Response[F](status = Status.Ok)
+                      .withEntity(bytes)
+                      .putHeaders(`Content-Type`(MediaType.application.json))
+                      .pure[F]
                   }
                 case _ => NotFound()
               }
@@ -617,8 +616,7 @@ object SnapshotRoutes {
     *
     * Resolution:
     *   - `/latest/combined`: resolve latest ordinal via the checkpoint storage, then ask for its on-disk size. The in-memory cached route
-    *     should match that checkpoint size, and the route still sets Content-Length from the actual cached bytes for post-check defense in
-    *     depth.
+    *     should match that checkpoint size, and the strict byte-array entity advertises its actual length for post-check defense in depth.
     *   - `/latest/combined/stream`: resolve latest ordinal via the checkpoint storage, then ask for its on-disk size.
     *   - `/latest/combined/checkpoint/{ord}`: parse the ordinal from the path, look up its on-disk size.
     *
