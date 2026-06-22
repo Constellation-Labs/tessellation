@@ -41,9 +41,10 @@ else
 
   # Apply compatibility patch if present (breaks circular dependency with tessellation)
   # Uses --check first to skip gracefully if already applied upstream.
-  # The patch currently strips c.forkInfoStorage so positional args line up
-  # against a SharedConfig where forkInfoStorage has been removed (release/testnet).
-  # On branches that still carry forkInfoStorage (develop, feature branches),
+  # The patch drops the obsolete tessellation3Migration arg from CurrencySnapshotValidator.make
+  # so snapshot-streaming compiles against tessellation v4.1.0 (the validator dropped that param).
+  # release/testnet's SharedConfig already has forkInfoStorage removed; on a local tessellation
+  # that still carries forkInfoStorage (develop, feature branches),
   # applying it leaves the constructor one arg short — detect and skip in that case.
   PATCH_FILE="$SS_DIR/snapshot-streaming.patch"
   TYPES_FILE="$SCRIPT_DIR/../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/config/types.scala"
