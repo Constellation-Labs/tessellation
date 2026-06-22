@@ -70,7 +70,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx, metagraphBurnTx))
       balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield expect(result.isValid)
   }
 
@@ -108,8 +108,56 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx, metagraphBurnTx))
       balances = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield expect(result.isValid)
+  }
+
+  test("should reject burnFrom whose allow spend ref was already consumed by a spend (spends win)") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = BurnActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      ammAddress = keyPair2.getPublic.toAddress
+
+      allowSpend = AllowSpend(
+        address,
+        ammAddress,
+        None,
+        SwapAmount(1L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(ammAddress)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
+      hashedAllowSpend <- signedAllowSpend.toHashed
+
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
+
+      // This burnFrom would validate on its own (cf. the DAG burnFrom test) ...
+      userBurnTx = BurnTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address)
+      burnAction = BurnAction(NonEmptyList.of(userBurnTx))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
+
+      // ... but the same allow-spend ref is already consumed by an accepted spend in this snapshot -> reject (spends win).
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set(hashedAllowSpend.hash))
+    } yield
+      expect.all(
+        result.isInvalid,
+        result.fold(
+          errors =>
+            errors.exists {
+              case BurnActionValidator.AllowSpendConsumedBySpend(_) => true
+              case _                                                => false
+            },
+          _ => false
+        )
+      )
   }
 
   test("should validate self-burn (no ref, source == currencyId)") { res =>
@@ -132,7 +180,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
         currencyId.value.some -> SortedMap(currencyId.value -> Balance(NonNegLong(1000L)))
       )
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value, Set.empty[Hash])
     } yield expect(result.isValid)
   }
 
@@ -152,7 +200,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       activeAllowSpends = SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
       balances = Map(currencyId.value.some -> SortedMap(currencyId.value -> Balance(NonNegLong(100L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.NotEnoughCurrencyIdBalance(_) => true
@@ -181,7 +229,8 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       (acceptedBurnActions, rejectedBurnActions) <- validator.validateReturningAcceptedAndRejected(
         burnActions,
         activeAllowSpends,
-        balances
+        balances,
+        Set.empty[Hash]
       )
     } yield
       expect.all(
@@ -229,7 +278,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx))
       balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.NoActiveAllowSpends(_) => true
@@ -271,7 +320,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx))
       balances = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.InvalidCurrencyId(_) => true
@@ -314,7 +363,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx))
       balances = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.InvalidSourceAddress(_) => true
@@ -355,7 +404,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx))
       balances = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.BurnAmountGreaterThanAllowed(_) => true
@@ -397,7 +446,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       burnAction = BurnAction(NonEmptyList.of(userBurnTx))
       balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, ammAddress, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.AllowSpendNotFound(_) => true
@@ -426,7 +475,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
         currencyId.value.some -> SortedMap(currencyId.value -> Balance(NonNegLong(1000L)))
       )
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.InvalidSourceAddress(_) => true
@@ -452,7 +501,7 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
       balances = Map.empty[Option[Address], SortedMap[Address, Balance]]
 
-      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value)
+      result <- validator.validate(burnAction, activeAllowSpends, balances, currencyId.value, Set.empty[Hash])
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case BurnActionValidator.NotEnoughCurrencyIdBalance(_) => true
@@ -495,7 +544,8 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       (acceptedBurnActions, rejectedBurnActions) <- validator.validateReturningAcceptedAndRejected(
         burnActions,
         activeAllowSpends,
-        balances
+        balances,
+        Set.empty[Hash]
       )
     } yield
       expect.all(
@@ -533,7 +583,8 @@ object BurnActionValidatorSuite extends MutableIOSuite {
       (acceptedBurnActions, rejectedBurnActions) <- validator.validateReturningAcceptedAndRejected(
         burnActions,
         activeAllowSpends,
-        balances
+        balances,
+        Set.empty[Hash]
       )
     } yield
       expect.all(

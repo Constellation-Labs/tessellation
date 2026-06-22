@@ -40,7 +40,10 @@ object artifact {
     allowSpendRef: Option[Hash],
     currencyId: Option[CurrencyId],
     amount: SwapAmount,
-    source: Address
+    source: Address,
+    // L0-opaque commitment to an off-chain, source-signed intent. L0 carries and hashes it
+    // but never interprets it; the consuming application verifies the preimage and the source signature.
+    intentHash: Option[Hash] = None
   )
 
   @derive(decoder, encoder, order, ordering, show)

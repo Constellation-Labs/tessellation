@@ -377,6 +377,12 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     // BurnActions are collected from the metagraph's own shared artifacts. Gated by burnActionActivation: before activation they are
     // ignored entirely (no validation, no balance effect). This change is strictly additive to the spend path.
+    //
+    // burnActionActivation is a GLOBAL ordinal. The currency path gates on the metagraph's synced global view
+    // (lastUnsyncGlobalSnapshot.ordinal); the global path (GlobalSnapshotAcceptanceManager) gates on the global ordinal being created.
+    // The two bases are consistent: the global ordinal that ingests this currency snapshot is always >= the synced global view it was
+    // produced against, so currency-enabled implies global-enabled. A burn the metagraph accepts is therefore never rejected by the
+    // global activation gate (which would otherwise cause a currency/global divergence).
     burnActionsEnabled = lastUnsyncGlobalSnapshot.ordinal >= burnActionActivation
     incomingBurnActions =
       if (burnActionsEnabled)
@@ -452,12 +458,21 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     // to balances after the spend step, and their referenced allow spends are consumed alongside spend refs.
     activeAllowSpendsForBurnValidation = SortedMap(metagraphId.some -> lastActiveAllowSpends)
     balancesForBurnValidation = Map(metagraphId.some -> updatedBalancesByTokenLocks)
+    // Allow-spend single-use across artifact types (mirrors the global path). On the currency path same-snapshot SpendActions are NOT yet
+    // globally accepted, so we exclude refs consumed by BOTH (a) already-accepted global spends and (b) SpendActions emitted in THIS
+    // snapshot. A colliding burnFrom is rejected (spends win) and never enters the currency snapshot's accepted burns, which keeps the
+    // currency re-derivation consistent with the later global acceptance (no SnapshotDifferentThanExpected).
+    currentSnapshotSpendRefs = acceptedSharedArtifacts.collect { case sa: SpendAction => sa }
+      .flatMap(_.spendTransactions.toList)
+      .flatMap(_.allowSpendRef)
+    spendConsumedRefs = (metagraphIdSpendTransactions.flatMap(_.allowSpendRef) ++ currentSnapshotSpendRefs).toSet
     (acceptedBurnActionsByMetagraph, _) <-
       if (incomingBurnActionsByMetagraph.nonEmpty)
         burnActionValidator.validateReturningAcceptedAndRejected(
           incomingBurnActionsByMetagraph,
           activeAllowSpendsForBurnValidation,
-          balancesForBurnValidation
+          balancesForBurnValidation,
+          spendConsumedRefs
         )
       else
         (Map.empty[Address, List[BurnAction]], Map.empty[Address, (BurnAction, List[BurnActionValidator.BurnActionValidationError])])

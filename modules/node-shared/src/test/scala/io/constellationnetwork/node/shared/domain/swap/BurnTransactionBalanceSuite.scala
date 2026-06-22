@@ -220,7 +220,8 @@ object BurnTransactionBalanceSuite extends MutableIOSuite {
         (accepted, rejected) <- validator.validateReturningAcceptedAndRejected(
           Map(metagraph -> List(burnAction)),
           activeAllowSpends,
-          balancesForValidation
+          balancesForValidation,
+          Set.empty
         )
 
         acceptedBurnTxs = accepted.getOrElse(metagraph, List.empty).flatMap(_.burnTransactions.toList)
@@ -288,7 +289,8 @@ object BurnTransactionBalanceSuite extends MutableIOSuite {
       (accepted, rejected) <- validator.validateReturningAcceptedAndRejected(
         Map(ammAddress -> List(burnAction)),
         activeAllowSpends,
-        balancesForValidation
+        balancesForValidation,
+        Set.empty
       )
 
       acceptedBurnTxs = accepted.getOrElse(ammAddress, List.empty).flatMap(_.burnTransactions.toList)

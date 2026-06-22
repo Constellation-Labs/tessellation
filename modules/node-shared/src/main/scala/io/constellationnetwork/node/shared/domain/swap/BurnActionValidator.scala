@@ -34,13 +34,16 @@ trait BurnActionValidator[F[_]] {
     burnAction: BurnAction,
     activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
     allBalances: Map[Option[Address], SortedMap[Address, Balance]],
-    currencyId: Address
+    currencyId: Address,
+    spendConsumedRefs: Set[Hash]
   ): F[BurnActionValidationErrorOr[BurnAction]]
 
   def validateReturningAcceptedAndRejected(
     burnActions: Map[Address, List[BurnAction]],
     activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-    allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+    allBalances: Map[Option[Address], SortedMap[Address, Balance]],
+    // allow-spend refs already consumed by accepted spends in this snapshot; burnFrom on any of these is rejected (spends win).
+    spendConsumedRefs: Set[Hash]
   ): F[(Map[Address, List[BurnAction]], Map[Address, (BurnAction, List[BurnActionValidationError])])]
 }
 
@@ -50,7 +53,8 @@ object BurnActionValidator {
     def validateReturningAcceptedAndRejected(
       burnActions: Map[Address, List[BurnAction]],
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
+      spendConsumedRefs: Set[Hash]
     ): F[
       (
         Map[Address, List[BurnAction]],
@@ -79,7 +83,7 @@ object BurnActionValidator {
             )
           ) {
             case ((allowSpendsAcc, balancesAcc, rejectedBurnActions, acceptedBurnActions), action) =>
-              validate(action, allowSpendsAcc, balancesAcc, currencyId).flatMap {
+              validate(action, allowSpendsAcc, balancesAcc, currencyId, spendConsumedRefs).flatMap {
                 case Valid(validAction) =>
                   updateCurrentAllowSpendsForValidation(validAction, allowSpendsAcc).map { updatedAllowSpends =>
                     updateCurrentBalancesForValidation(validAction, balancesAcc, currencyId) match {
@@ -138,7 +142,8 @@ object BurnActionValidator {
       burnAction: BurnAction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
-      currencyId: Address
+      currencyId: Address,
+      spendConsumedRefs: Set[Hash]
     ): F[BurnActionValidationErrorOr[BurnAction]] = {
       val hasDuplicatedAllowSpendReference = burnAction.burnTransactions
         .groupBy(_.allowSpendRef)
@@ -151,7 +156,12 @@ object BurnActionValidator {
         ): BurnActionValidationError).invalidNec[BurnAction].pure[F]
       } else {
         val validations = burnAction.burnTransactions.traverse { burnTransaction =>
-          validateAllowSpendRef(burnTransaction, activeAllowSpends, allBalances, currencyId)
+          if (burnTransaction.allowSpendRef.exists(spendConsumedRefs.contains))
+            (AllowSpendConsumedBySpend(
+              s"Allow spend ${burnTransaction.allowSpendRef} already consumed by an accepted spend in this snapshot"
+            ): BurnActionValidationError).invalidNec[BurnTransaction].pure[F]
+          else
+            validateAllowSpendRef(burnTransaction, activeAllowSpends, allBalances, currencyId)
         }
 
         validations.map { transactionValidations =>
@@ -345,6 +355,7 @@ object BurnActionValidator {
   case class NotEnoughCurrencyIdBalance(error: String) extends BurnActionValidationError
   case class InvalidCurrencyId(error: String) extends BurnActionValidationError
   case class DuplicatedAllowSpendReference(error: String) extends BurnActionValidationError
+  case class AllowSpendConsumedBySpend(error: String) extends BurnActionValidationError
 
   type BurnActionValidationErrorOr[A] = ValidatedNec[BurnActionValidationError, A]
 }

@@ -774,7 +774,10 @@ object GlobalSnapshotAcceptanceManager {
               .filter { case (_, actions) => actions.nonEmpty }
               .toSortedMap
 
-            // BurnActions are gated by burnActionActivation. Before activation they are ignored (collected as empty).
+            // BurnActions are gated by burnActionActivation (a GLOBAL ordinal). The global path gates on the global ordinal being
+            // created; the currency path (CurrencySnapshotAcceptanceManager) gates on the metagraph's synced global view. Since this
+            // global ordinal is always >= the synced view a currency snapshot was produced against, currency-enabled implies
+            // global-enabled, so a burn accepted at the currency level is never dropped here. Before activation, burns are ignored.
             burnActionsEnabled = ordinal >= burnActionActivation
             burnActions =
               if (burnActionsEnabled)
@@ -814,6 +817,13 @@ object GlobalSnapshotAcceptanceManager {
               lastSnapshotContext
             )
 
+            // Allow-spend single-use across artifact types: refs consumed by accepted spends in this snapshot are excluded from burn
+            // validation, so a burnFrom colliding with an accepted spend is rejected (spends win) and never enters acceptedBurnActions.
+            spendConsumedRefs = acceptedSpendActions.toSortedMap.values.flatten
+              .flatMap(_.spendTransactions.toList)
+              .flatMap(_.allowSpendRef)
+              .toSet
+
             // Validate BurnActions (additive, gated). Accepted burn transactions are applied to global balances after the spend step and
             // their referenced allow spends are consumed alongside spend refs.
             (acceptedBurnActions, _) <-
@@ -823,7 +833,8 @@ object GlobalSnapshotAcceptanceManager {
                   .validateReturningAcceptedAndRejected(
                     burnActions,
                     lastActiveAllowSpends,
-                    currencyBalances ++ globalBalances
+                    currencyBalances ++ globalBalances,
+                    spendConsumedRefs
                   )
               else
                 (
