@@ -11,6 +11,9 @@ services:
       # docker-compose.test.yaml). Raise to effectively-unlimited for the test topology; prod keeps 20.
       - CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC=${CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC:-100000}
       - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW:-0}
+      # Widen the active-set recent-signer window (dev default 3) to testnet's 10 so slow-but-healthy
+      # facilitators on a loaded box are not demoted every few rounds (committee-breathing). See gl0 note.
+      - CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW=${CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW:-10}
     # merge in an extra network just for tests
     networks:
       tessellation_common:

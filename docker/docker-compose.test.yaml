@@ -46,6 +46,12 @@ services:
       # Floor 10000 = effectively infinite for any conceivable test runtime
       # (cluster would need to run 10000 facilitator-rounds = >24h at local cadence).
       - CL_MIN_OBSERVATION_HISTORY_FLOOR=${CL_MIN_OBSERVATION_HISTORY_FLOOR:-10000}
+      # Active-set recent-signer window: dev default is 3, but on a loaded multi-JVM box the round
+      # cadence stretches (signatures arrive late), so a window of 3 demotes slow-but-healthy peers
+      # from the active facilitator set every few rounds -> the committee "breathes" 3<->5 and the
+      # fork-recovery pre-isolation gate (spread<=1, fac stable, 3 consecutive rounds) never opens.
+      # Widen to testnet's value (10), which exists for the same slow-signing reason on a latent network.
+      - CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW=${CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW:-10}
       # v9 (2026-04-29) bandwidth limiter is dormant in test by design — the test cluster
       # snapshot bodies are tiny (kB-MB) and run at low cadence, nowhere near the 300 MB/min
       # default cap. Setting explicitly to 0 here makes the middleware unambiguously off
