@@ -196,11 +196,23 @@ abstract class CurrencyL0App(
         services.consensus.handler
 
       // Chain tip getter used by IHave HTTP endpoint (EventGossipRoutes, passed to HttpApi at line 231).
-      // Intentionally NOT passed to EventGossipDaemon — fork detection is deferred for currency-l0.
-      // Returns None when no checkpoint has been written yet (empty sentinel hash).
-      getLocalChainTip = storages.combinedCurrencySnapshotCheckpointStorage.getLatestCheckpointInfo.map { info =>
-        if (info.hash == Hash.empty) none[ChainTip]
-        else ChainTip(info.ordinal, info.hash).some
+      // Intentionally NOT passed to EventGossipDaemon -- fork detection is deferred for currency-l0.
+      // The combined-checkpoint store is the primary source, but it is only written on the production
+      // path, so a node that stays caught up by FOLLOWING/downloading (e.g. a 2nd metagraph-L0 node
+      // before it is promoted) has an empty checkpoint even while its currency chain head advances
+      // every round. Without an advertised tip the B2 admission gate never witnesses it as at-tip and
+      // never promotes it to facilitator -- a deadlock for the joining node. Fall back to the latest
+      // currency snapshot we hold so a caught-up follower becomes a witnessable admission candidate.
+      getLocalChainTip = storages.combinedCurrencySnapshotCheckpointStorage.getLatestCheckpointInfo.flatMap { info =>
+        if (info.hash =!= Hash.empty) ChainTip(info.ordinal, info.hash).some.pure[IO]
+        else
+          storages.snapshot.headSnapshot.flatMap {
+            _.flatTraverse { signed =>
+              hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+                signed.toHashed[IO].map(hashed => ChainTip(signed.value.ordinal, hashed.hash).some)
+              }
+            }
+          }
       }
 
       eventGossipDaemon <- {
