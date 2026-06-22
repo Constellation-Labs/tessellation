@@ -567,16 +567,24 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
           ifTrue = logger.debug(s"Heartbeat: pruned ${result.pruned.size} peers from mesh"),
           ifFalse = Async[F].unit
         )
-      // Sample chain tips from a few mesh peers so fork detector has fresh data.
-      // The pull loop only contacts non-mesh peers; when the mesh covers all peers
-      // (small clusters or adaptive mesh), chain tips would never be collected.
-      _ <- maybeForkRecoveryDetector.fold(Async[F].unit) { _ =>
+      // Sample chain tips from a few mesh peers into MeshState. This data feeds two independent
+      // consumers: the fork-recovery detector (when enabled, in the block below) AND the B2 re-admission
+      // witness channel in the consensus engine, which reads peer chain tips (getPeerChainTips) to
+      // confirm a candidate has caught up to the committed tip. The pull loop only contacts NON-mesh
+      // peers, so when the mesh covers all peers (small clusters / adaptive mesh) this heartbeat sampling
+      // is the only path that collects mesh-peer tips. It was previously gated on the fork detector being
+      // present, which starved the B2 gate on nodes that serve a chain tip but wire no fork detector
+      // (e.g. currency-l0): a joining 2nd metagraph-L0 was never witnessed and never admitted. Run it
+      // whenever there are mesh peers; peers that serve no tip contribute nothing. Fork DETECTION (acting
+      // on this data) stays gated on the detector + handler below, so this does NOT enable fork recovery
+      // for nodes that opted out -- it only populates the shared chain-tip view.
+      _ <- {
         for {
           meshPeerIds <- meshState.getMeshPeers
           meshPeers = peers.filter(p => meshPeerIds.contains(p.id)).toList
           sampled = scala.util.Random.shuffle(meshPeers).take(3)
           _ <- logger.debug(
-            s"Chain tip sampling: forkDetector=Some meshSize=${meshPeers.size} sampled=${sampled.size} availablePeers=${peers.size}"
+            s"Chain tip sampling: meshSize=${meshPeers.size} sampled=${sampled.size} availablePeers=${peers.size}"
           )
           _ <- sampled.traverse_ { peer =>
             gossipClient.getIHave
