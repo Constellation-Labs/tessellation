@@ -200,6 +200,27 @@ object EventMempoolSuite extends SimpleIOSuite {
       )
   }
 
+  test("clearIncluded removes suspended events") {
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+      mempool <- EventMempool.make[IO, TestEvent, TestKey](noopExtractor, defaultConfig)
+      entry <- mempool.add(fakeSignedEvent("committed-while-suspended")).map(_.toOption.get)
+      _ <- mempool.suspend(Set(entry.hashed.hash))
+      _ <- mempool.clearIncluded(Set(entry.hashed.hash))
+      active <- mempool.snapshot(limit = 10)
+      suspended <- mempool.suspendedSnapshot(limit = 10)
+      found <- mempool.get(entry.hashed.hash)
+      size <- mempool.size
+    } yield
+      expect.all(
+        !active.hashes.contains(entry.hashed.hash),
+        !suspended.hashes.contains(entry.hashed.hash),
+        found.isEmpty,
+        size == 0
+      )
+  }
+
   // ── clear ─────────────────────────────────────────────────────
 
   test("clear empties the mempool") {

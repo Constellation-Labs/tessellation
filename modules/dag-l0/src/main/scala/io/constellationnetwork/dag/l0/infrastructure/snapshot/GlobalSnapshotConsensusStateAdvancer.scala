@@ -12,7 +12,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.{FiniteDuration, _}
 
 import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{DAGEvent, GlobalSnapshotEvent}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
@@ -49,6 +49,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature._
+import io.constellationnetwork.statechannel.StateChannelOutput
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -1135,20 +1136,15 @@ object GlobalSnapshotConsensusStateAdvancer {
 
           (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, mempoolEvents)
 
-          // Clear included events from mempool
-          includedHashes = {
-            val returnedSet = returnedEvents.toSet
-            mempoolHashToEvent.collect {
-              case (hash, event) if !returnedSet.contains(event) => hash
-            }.toSet
-          }
+          // Do not remove accepted events at proposal time. A proposal can lose the round, or
+          // different facilitators can propose the same event at adjacent ordinals. Events are
+          // removed only after the winning artifact is finalized and persisted.
           heldDagHashes = {
             val returnedSet = returnedEvents.toSet
             mempoolHashToEvent.collect {
               case (hash, event @ DAGEvent(_)) if returnedSet.contains(event) => hash
             }.toSet
           }
-          _ <- eventMempool.clearIncluded(includedHashes)
           _ <- eventMempool.suspend(heldDagHashes).whenA(heldDagHashes.nonEmpty)
           _ <- Metrics[F]
             .incrementCounterBy(
@@ -3483,12 +3479,58 @@ object GlobalSnapshotConsensusStateAdvancer {
           })
 
         persist.ifM(
-          recordMetrics(signedArtifact) >> writeSidecar,
+          clearCommittedEvents(signedArtifact.value) >> recordMetrics(signedArtifact) >> writeSidecar,
           ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
             .raiseError(
               new RuntimeException("Persist failed")
             )
         )
+      }
+
+      private def clearCommittedEvents(artifact: GlobalSnapshotArtifact): F[Unit] = {
+        val committed = committedEvents(artifact)
+
+        if (committed.isEmpty) Applicative[F].unit
+        else
+          for {
+            activeHashes <- eventMempool.getEventHashes
+            activeEvents <- eventMempool.getMultiple(activeHashes)
+            suspended <- eventMempool.suspendedSnapshot(Int.MaxValue)
+            activeCommittedHashes = activeEvents.collect {
+              case (hash, hashed) if committed.contains(hashed.signed.value) => hash
+            }.toSet
+            suspendedCommittedHashes = suspended.entries.collect {
+              case (hash, entry) if committed.contains(entry.hashed.signed.value) => hash
+            }.toSet
+            committedHashes = activeCommittedHashes | suspendedCommittedHashes
+            _ <- eventMempool.clearIncluded(committedHashes).whenA(committedHashes.nonEmpty)
+            _ <- ConsensusLog
+              .info(
+                logger,
+                Category.Lifecycle,
+                artifact.ordinal.show,
+                "n/a",
+                Event.CommittedMempoolEventsCleared,
+                "committedMempoolEventsCleared" -> committedHashes.size.toString
+              )
+              .whenA(committedHashes.nonEmpty)
+          } yield ()
+      }
+
+      private def committedEvents(artifact: GlobalSnapshotArtifact): Set[GlobalSnapshotEvent] = {
+        val dagEvents = artifact.blocks.unsorted.toList.map(_.block).map(DAGEvent(_))
+        val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
+          case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).map(StateChannelEvent(_)).toList
+        }
+        val allowSpendEvents = artifact.allowSpendBlocks.toList.flatMap(_.toList.map(AllowSpendEvent(_)))
+        val tokenLockEvents = artifact.tokenLockBlocks.toList.flatMap(_.toList.map(TokenLockEvent(_)))
+        val unpEvents = artifact.updateNodeParameters.toList.flatMap(_.values.map(UpdateNodeParametersEvent(_)))
+        val cdsEvents = artifact.activeDelegatedStakes.toList.flatMap(_.values.flatMap(_.map(CreateDelegatedStakeEvent(_))))
+        val wdsEvents = artifact.delegatedStakesWithdrawals.toList.flatMap(_.values.flatMap(_.map(WithdrawDelegatedStakeEvent(_))))
+        val cncEvents = artifact.activeNodeCollaterals.toList.flatMap(_.values.flatMap(_.map(CreateNodeCollateralEvent(_))))
+        val wncEvents = artifact.nodeCollateralWithdrawals.toList.flatMap(_.values.flatMap(_.map(WithdrawNodeCollateralEvent(_))))
+
+        (dagEvents ++ scEvents ++ allowSpendEvents ++ tokenLockEvents ++ unpEvents ++ cdsEvents ++ wdsEvents ++ cncEvents ++ wncEvents).toSet
       }
 
       private def checkForkByLastSnapshotHash[A](declarations: SortedMap[PeerId, A], ownHash: Hash, minObservations: Int)(

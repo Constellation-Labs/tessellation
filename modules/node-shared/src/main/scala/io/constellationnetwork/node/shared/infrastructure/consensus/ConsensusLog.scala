@@ -79,6 +79,7 @@ object ConsensusLog {
     case object ConsensusFinished extends Event { val show = "CONSENSUS_FINISHED" }
     case object IdleRoundCompleted extends Event { val show = "IDLE_ROUND_COMPLETED" }
     case object IdleConsensusFinished extends Event { val show = "IDLE_CONSENSUS_FINISHED" }
+    case object CommittedMempoolEventsCleared extends Event { val show = "COMMITTED_MEMPOOL_EVENTS_CLEARED" }
 
     // ── State events ──────────────────────────────────────────────
     case object StateCreated extends Event { val show = "STATE_CREATED" }
