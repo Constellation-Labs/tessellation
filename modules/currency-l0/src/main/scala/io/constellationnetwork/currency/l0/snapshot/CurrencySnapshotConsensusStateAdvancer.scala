@@ -730,24 +730,14 @@ object CurrencySnapshotConsensusStateAdvancer {
             facilitatorsHash <- hashFacilitators(state)
 
             // Pull events from mempool using hash union across all facilitator declarations
-            mempoolData <- eventMempool.getMultiple(commonHashes).map { hashToHashed =>
-              val events = hashToHashed.values.map(_.signed.value).toSet
-              val hashToEvent = hashToHashed.map { case (h, hashed) => h -> hashed.signed.value }
-              (events, hashToEvent)
-            }
-            (mempoolEvents, mempoolHashToEvent) = mempoolData
+            mempoolEvents <- eventMempool.getMultiple(commonHashes).map(_.values.map(_.signed.value).toSet)
 
-            (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, mempoolEvents)
+            (artifact, context, _) <- createArtifact(state, majorityTrigger, mempoolEvents)
 
-            // Clear included events from mempool (events not returned were included)
-            includedHashes = {
-              val returnedSet = returnedEvents.toSet
-              mempoolHashToEvent.collect {
-                case (hash, event) if !returnedSet.contains(event) => hash
-              }.toSet
-            }
-            _ <- eventMempool.clearIncluded(includedHashes)
-
+            // Do not remove accepted events at proposal time. A proposal can lose the round, or
+            // different facilitators can propose the same event at adjacent ordinals. Events are
+            // removed only after the winning artifact is finalized and persisted, so a proposed-but-
+            // not-committed event survives in the mempool and is re-proposed next round.
             hash <- hashArtifact(artifact)
             isLeader = selfId === state.leader
             role = if (isLeader) "LEADER" else "FOLLOWER"
@@ -1942,14 +1932,75 @@ object CurrencySnapshotConsensusStateAdvancer {
         state: CurrencySnapshotConsensusState,
         context: CurrencySnapshotContext
       )(implicit hasher: Hasher[F]): F[Unit] =
-        stateChannelSnapshotService.consume(
-          signedArtifact,
-          hashedBinary,
-          state.lastOutcome.facilitators.value,
-          context
-        ) >>
-          recordMetrics(signedArtifact, hashedBinary, context) >>
-          notifyDataApplication(signedArtifact)
+        stateChannelSnapshotService
+          .consume(
+            signedArtifact,
+            hashedBinary,
+            state.lastOutcome.facilitators.value,
+            context
+          )
+          .ifM(
+            // Persist succeeded: this is the winning, persisted artifact, so clear the events it
+            // committed from the mempool (active and suspended). Mirror of dag-l0.
+            clearCommittedEvents(signedArtifact.value) >>
+              recordMetrics(signedArtifact, hashedBinary, context) >>
+              notifyDataApplication(signedArtifact),
+            ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >>
+              recordMetrics(signedArtifact, hashedBinary, context) >>
+              notifyDataApplication(signedArtifact)
+          )
+
+      private def clearCommittedEvents(artifact: CurrencySnapshotArtifact): F[Unit] =
+        committedEvents(artifact).flatMap { committed =>
+          if (committed.isEmpty) Applicative[F].unit
+          else
+            for {
+              activeHashes <- eventMempool.getEventHashes
+              activeEvents <- eventMempool.getMultiple(activeHashes)
+              suspended <- eventMempool.suspendedSnapshot(Int.MaxValue)
+              activeCommittedHashes = activeEvents.collect {
+                case (hash, hashed) if committed.contains(hashed.signed.value) => hash
+              }.toSet
+              suspendedCommittedHashes = suspended.entries.collect {
+                case (hash, entry) if committed.contains(entry.hashed.signed.value) => hash
+              }.toSet
+              committedHashes = activeCommittedHashes | suspendedCommittedHashes
+              _ <- eventMempool.clearIncluded(committedHashes).whenA(committedHashes.nonEmpty)
+              _ <- ConsensusLog
+                .info(
+                  logger,
+                  Category.Lifecycle,
+                  artifact.ordinal.show,
+                  "n/a",
+                  Event.CommittedMempoolEventsCleared,
+                  "committedMempoolEventsCleared" -> committedHashes.size.toString
+                )
+                .whenA(committedHashes.nonEmpty)
+            } yield ()
+        }
+
+      // Reconstruct the mempool-originating events that this finalized artifact committed, from its
+      // per-round accepted-event deltas (NOT accumulated state), so we never clear still-pending
+      // events. Mirror of dag-l0; data-application blocks are stored as serialized bytes in the
+      // artifact, so they are deserialized (best-effort) to recover their events, matching
+      // CurrencySnapshotValidator. ForceEventTrigger is a synchronization trigger that is never
+      // carried as accepted artifact content, so it is intentionally not enumerated here.
+      private def committedEvents(artifact: CurrencySnapshotArtifact): F[Set[CurrencySnapshotEvent]] = {
+        val blockEvents = artifact.blocks.unsorted.toList.map(_.block).map(BlockEvent(_))
+        val allowSpendEvents = artifact.allowSpendBlocks.toList.flatMap(_.toList.map(AllowSpendBlockEvent(_)))
+        val tokenLockEvents = artifact.tokenLockBlocks.toList.flatMap(_.toList.map(TokenLockBlockEvent(_)))
+        val messageEvents = artifact.messages.toList.flatMap(_.toList.map(CurrencyMessageEvent(_)))
+        val globalSnapshotSyncEvents = artifact.globalSnapshotSyncs.toList.flatMap(_.toList.map(GlobalSnapshotSyncEvent(_)))
+
+        val dataApplicationEvents: F[List[CurrencySnapshotEvent]] =
+          maybeDataApplication.flatTraverse { service =>
+            artifact.dataApplication.map(_.blocks).traverse(_.traverse(service.deserializeBlock))
+          }.map(_.map(_.flatMap(_.toOption).map(DataApplicationBlockEvent(_))).getOrElse(List.empty))
+
+        dataApplicationEvents.map { daEvents =>
+          (blockEvents ++ allowSpendEvents ++ tokenLockEvents ++ messageEvents ++ globalSnapshotSyncEvents ++ daEvents).toSet
+        }
+      }
 
       private def recordMetrics(
         signed: Signed[CurrencySnapshotArtifact],
