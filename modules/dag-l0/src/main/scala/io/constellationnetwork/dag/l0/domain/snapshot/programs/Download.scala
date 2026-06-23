@@ -496,9 +496,18 @@ object Download {
           // Observing while others were still in download.
           // #8: bias recovery source selection toward the fork-recovery majority hint when present (it only
           // narrows within the validated candidate set; see PeerSelect.selectForRecovery).
-          recoveryPeerHint.getPreferredPeers
-            .flatMap(hint => peerSelect.selectForRecovery(hint.getOrElse(Set.empty)))
-            .flatMap(peer => p2pClient.globalSnapshot.getLatestMetadata.run(peer).tupleLeft(peer))
+          // Pass our local ordinal so recovery source selection can route to the live higher chain when a
+          // STRICT MAJORITY of responders are ahead (we are legitimately behind) -- breaks the mutual-503
+          // triangle where equally-stuck peers pick each other. When only a minority is ahead (a fork),
+          // PeerSelect FAILS CLOSED to prior behavior, so we never converge onto an uncorroborated minority
+          // higher tip. Inert for rollback / caught-up, so the rollback gate below is unaffected.
+          for {
+            localHead <- lastNGlobalSnapshotStorage.get
+            localOrdinal = localHead.map(_.ordinal)
+            hint <- recoveryPeerHint.getPreferredPeers
+            peer <- peerSelect.selectForRecovery(hint.getOrElse(Set.empty), localOrdinal)
+            metadataWithPeer <- p2pClient.globalSnapshot.getLatestMetadata.run(peer).tupleLeft(peer)
+          } yield metadataWithPeer
         }
       }
 
