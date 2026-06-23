@@ -172,6 +172,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // feasibility gates below. Derived ONLY from consensus-agreed anchors + wall clock
       // (see QuorumDenominatorShrink scaladoc); inert in normal operation.
       shrinkDecision <- ctx.advancer.quorumShrinkDecision(state)
+      // v4.1.0 cluster-majority floor: separate committee-floored decision whose `baseQuorum` is the actual
+      // finality floor outside bootstrap. Used ONLY by the terminal halt diagnostic below; the abandon/
+      // eviction feasibility keeps using the Core-sized `shrinkDecision`.
+      finalityDecision <- ctx.advancer.quorumFinalityDecision(state)
       _ <- Metrics[F].updateGauge("dag_consensus_quorum_shrink_active", if (shrinkDecision.active) 1L else 0L)
       _ <- Metrics[F]
         .updateGauge("dag_consensus_quorum_shrink_required", shrinkDecision.requiredQuorum.toLong)
@@ -307,6 +311,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       didStall = stallResult.didStall
       adjustedStatusStartTime = if (didStall) now else newStatusStartTime
       finalStallCount = if (didStall) newStallCount + 1 else newStallCount
+
+      // v4.1.0 terminal halt diagnostic (observability only): announce when a stalled round's committee
+      // cannot reach the finality floor (cluster too degraded -- silent/flaky peers -- to finalize under
+      // the safety floor). Does not change any abandon/eviction decision; see announceHaltIfDegraded.
+      _ <- announceHaltIfDegraded(key, state, info.missingPeers, finalStallCount, finalityDecision.baseQuorum)
+        .whenA(didStall)
 
       // Bounded sender-side retransmit of our own Facility when stalled in CollectingFacilities.
       // Switched from "fire on every stall cycle" to capped exponential backoff.
@@ -754,6 +764,44 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     clusterSize: Int = 0,
     evictionEscalated: Boolean = false
   )
+
+  /** v4.1.0 cluster-majority floor -- terminal halt diagnostic. Observability ONLY: it never changes the abandon/eviction decision (those
+    * stay Core-gated, so silent Tier 1 peers cannot trigger an eviction split). When a round has genuinely stalled (`stallCount > 1`)
+    * outside bootstrap and the FROZEN ROUND COMMITTEE cannot reach the finality floor (`responding < finalityFloor`), emit ONE WARN naming
+    * the CAUSE (which committee members are silent) and the SYMPTOM (responders vs floor): the cluster is too degraded -- silent/flaky
+    * peers -- to finalize under the safety floor, and will halt here until peers recover or the committee reconfigures between rounds.
+    * `finalityFloor` is `quorumFinalityDecision`'s `baseQuorum`, which is committee-sized only when the floor is actually active, so this
+    * never fires for a healthy Core==committee round or during bootstrap.
+    */
+  private def announceHaltIfDegraded(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    missingPeers: Set[PeerId],
+    stallCount: Int,
+    finalityFloor: Int
+  ): F[Unit] = {
+    val committee = state.roundStartFacilitators.value.toSet
+    val silentCommittee = committee.intersect(missingPeers)
+    val responding = committee.size - silentCommittee.size
+    val degraded = !ctx.isInBootstrap(state.lastOutcome) && stallCount > 1 && responding < finalityFloor
+    (
+      ConsensusLog.warn(
+        logger,
+        Category.Stall,
+        key.toString,
+        selfRole(state),
+        LogEvent.StallDetected,
+        "reason" -> "CONSENSUS_HALTED_DEGRADED",
+        "detail" -> "committee cannot reach finality floor; cluster too degraded (silent/flaky peers) -- halting until peer recovery or committee reconfiguration",
+        "committee" -> committee.size.toString,
+        "finalityFloor" -> finalityFloor.toString,
+        "responding" -> responding.toString,
+        "silentCommittee" -> ConsensusLog.pids(silentCommittee),
+        "view" -> state.viewNumber.toString,
+        "stallCount" -> stallCount.toString
+      ) >> Metrics[F].incrementCounter("dag_consensus_halted_degraded")
+    ).whenA(degraded)
+  }
 
   private def handleStall(
     key: Key,

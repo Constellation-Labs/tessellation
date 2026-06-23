@@ -5,7 +5,7 @@ import cats.data.NonEmptySet
 import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
-import io.constellationnetwork.node.shared.infrastructure.consensus.state.{ProposalRejection, ProposalVccValidator, QuorumDenominatorShrink}
+import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -62,16 +62,21 @@ object QuorumDenominatorShrinkSuite extends FunSuite {
   private def nowAtSteps(steps: Int): Long =
     parentEndMs + (activationViews.toLong + steps.toLong) * viewIntervalMs
 
+  // Defaults to applyClusterFloor = false: these cases exercise the SHRINK RUNG in isolation (requiredQuorum
+  // walking down toward MinQuorumFloor), which outside bootstrap is neutralized by the v4.1.0 cluster floor.
+  // The floor-ON regime is covered by the dedicated cluster-floor tests below.
   private def decideAt(
     steps: Int,
     latestSigners: Option[SortedSet[PeerId]] = fullAnchorSigners,
     parentEnd: Option[Long] = Some(parentEndMs),
     activation: Int = activationViews,
     coreSize: Int = 6,
-    nowOffsetMs: Long = 0L
+    nowOffsetMs: Long = 0L,
+    applyClusterFloor: Boolean = false
   ): QuorumDenominatorShrink.Decision =
     QuorumDenominatorShrink.decide(
       coreSize = coreSize,
+      applyClusterFloor = applyClusterFloor,
       quorumThresholdFraction = testnetFraction,
       latestEvidenceSigners = latestSigners,
       roundStartFacilitators = committee,
@@ -118,6 +123,7 @@ object QuorumDenominatorShrinkSuite extends FunSuite {
   test("rung is inert before the activation threshold (steps == 0)") {
     val decision = QuorumDenominatorShrink.decide(
       coreSize = 6,
+      applyClusterFloor = false,
       quorumThresholdFraction = testnetFraction,
       latestEvidenceSigners = fullAnchorSigners,
       roundStartFacilitators = committee,
@@ -254,6 +260,117 @@ object QuorumDenominatorShrinkSuite extends FunSuite {
     expect(canFinalize(active)(committee - deadLeader - deadE)) && // 4 == majority, normal path
     expect(!canFinalize(inert)(healthyTrio)) && // rung off: only the majority gate applies, 3 < 4
     expect(canFinalize(inert)(committee - deadLeader - deadE)) // rung off: 4 == majority still finalizes
+  }
+
+  // ----------------------------------------------------------------------------
+  // v4.1.0 cluster-majority floor (applyClusterFloor = true). A Core that has shrunk to a
+  // cluster-minority must NEVER finalize -- on the normal path OR the shrunk/anchor path -- because
+  // the quorum is floored at a super/unanimity-majority of the FROZEN ROUND COMMITTEE. This is the
+  // proven 2-of-5 fork; the floor is the safety fix. Mirrors `QuorumDenominatorShrink.decide`.
+  // ----------------------------------------------------------------------------
+
+  // The proven fork shape: a committee of 5, whose Core shrank to 2 (CommitteeBuilder "Shrink" rung).
+  private val n1 = pid("a1")
+  private val n2 = pid("a2")
+  private val n3 = pid("a3")
+  private val n4 = pid("a4")
+  private val n5 = pid("a5")
+  private val committee5: Set[PeerId] = Set(n1, n2, n3, n4, n5)
+  private val minority2: Set[PeerId] = Set(n1, n2)
+  private val majority4: Set[PeerId] = Set(n1, n2, n3, n4)
+
+  private def decideFloor(
+    steps: Int,
+    coreSize: Int,
+    fraction: Double = testnetFraction,
+    latestSigners: Option[SortedSet[PeerId]] = Some(SortedSet.empty[PeerId] ++ committee5),
+    committeeSet: Set[PeerId] = committee5,
+    applyClusterFloor: Boolean = true
+  ): QuorumDenominatorShrink.Decision =
+    QuorumDenominatorShrink.decide(
+      coreSize = coreSize,
+      applyClusterFloor = applyClusterFloor,
+      quorumThresholdFraction = fraction,
+      latestEvidenceSigners = latestSigners,
+      roundStartFacilitators = committeeSet,
+      parentEndTimeMs = Some(parentEndMs),
+      nowMs = nowAtSteps(steps),
+      viewIntervalMs = viewIntervalMs,
+      activationViews = activationViews
+    )
+
+  test("cluster floor: a 2-of-5 minority Core cannot finalize on the normal path (supermajority committee floor)") {
+    val d = decideFloor(steps = 0, coreSize = 2)
+    expect.same(4, d.baseQuorum) && // fromFraction(5, 2/3) == 4, NOT fromFraction(2, 2/3) == 2
+    expect(!d.meets(minority2), s"2-of-5 minority must not meet the committee floor of 4, got meets=true") &&
+    expect(d.meets(majority4), "a committee super-majority (4 of 5) must finalize")
+  }
+
+  test("cluster floor: the shrink rung cannot relax below the committee floor (2-of-5 still rejected after deep silence)") {
+    // Full anchor + maximum escalation: pre-floor this walked requiredQuorum down to MinQuorumFloor=2.
+    // With the floor active, requiredQuorum is clamped UP to the committee floor, so the rung is neutralized
+    // and a minority anchor can never assemble a shrunken-margin cert.
+    val d = decideFloor(steps = 1000, coreSize = 2)
+    expect(d.requiredQuorum >= 4, s"requiredQuorum must not drop below the committee floor 4, got ${d.requiredQuorum}") &&
+    expect.same(d.baseQuorum, d.requiredQuorum) && // floored == base
+    expect(!d.active, "the rung must be inert (neutralized) once the floor binds") &&
+    expect(!d.meets(minority2), "2 anchor voters must not finalize via the shrunk path under the floor") &&
+    expect(!d.meets(Set(n1, n3)), "any 2-subset must be rejected under the floor")
+  }
+
+  test("cluster floor under unanimity (currency-l0 fraction=1.0): the entire round committee is required") {
+    val d = decideFloor(steps = 0, coreSize = 2, fraction = 1.0)
+    expect.same(5, d.baseQuorum) && // unanimity(5) == 5
+    expect(!d.meets(majority4), "under unanimity even 4 of 5 must not finalize") &&
+    expect(d.meets(committee5), "the full committee must finalize")
+  }
+
+  test("cluster floor: a healthy committee (Core == committee) is unchanged by the floor") {
+    // When Core == roundStartFacilitators the floor equals the Core quorum, so floor-on and floor-off agree.
+    val floored = decideFloor(steps = 0, coreSize = 5)
+    val unfloored = decideFloor(steps = 0, coreSize = 5, applyClusterFloor = false)
+    expect.same(unfloored.baseQuorum, floored.baseQuorum) &&
+    expect.same(4, floored.baseQuorum) &&
+    expect(floored.meets(majority4) == unfloored.meets(majority4), "healthy committee gate must be identical") &&
+    expect(!floored.meets(minority2), "even healthy, a 2-of-5 cannot finalize")
+  }
+
+  test("bootstrap exemption: applyClusterFloor=false is byte-identical to pre-floor (Core-only, no floor)") {
+    // The floor MUST be off during cold start, or genesis (which finalizes solo / small-Core) deadlocks.
+    val d = decideFloor(steps = 0, coreSize = 2, applyClusterFloor = false)
+    expect.same(2, d.baseQuorum) && // Core-only fromFraction(2, 2/3) == 2; floor NOT applied
+    expect(d.meets(minority2), "in bootstrap a 2-Core CAN finalize (cold-start liveness); the floor turns on post-bootstrap")
+  }
+
+  test("cluster floor determinism: two nodes with the same shared inputs derive the identical floored Decision") {
+    val a = decideFloor(steps = 7, coreSize = 2)
+    val b = decideFloor(steps = 7, coreSize = 2)
+    expect.same(a, b) && expect.same(a.baseQuorum, b.baseQuorum) && expect.same(a.requiredQuorum, b.requiredQuorum)
+  }
+
+  // ----------------------------------------------------------------------------
+  // v4.1.0 collection/gate consistency (Codex review fix). The phase-gate declaration-collection universe
+  // must include the FROZEN round committee when the floor is active, so a member dropped from the mutable
+  // active set mid-round (a B1 eviction shrinks state.facilitators at proposal acceptance; a withdrawal also
+  // removes it) still contributes its declaration to the finality count -- otherwise a round the frozen
+  // committee could close DEADLOCKS below the floor.
+  // ----------------------------------------------------------------------------
+
+  test("collection universe includes the frozen committee when the floor is active (no mid-round-eviction deadlock)") {
+    // Active set shrank to 3 (n4, n5 evicted mid-round) but the frozen committee is still 5.
+    val active = Set(n1, n2, n3)
+    val universe = ConsensusStateAdvancer.collectionUniverse(active, committee5, floorActive = true)
+    expect(committee5.subsetOf(universe), s"frozen committee must remain in the lookup universe, got $universe") &&
+    expect(
+      universe.contains(n4) && universe.contains(n5),
+      "frozen members evicted from the active set must still be looked up so their declarations count"
+    )
+  }
+
+  test("collection universe is exactly the active set when the floor is off (bootstrap byte-identical)") {
+    val active = Set(n1, n2, n3)
+    val coreSet = Set(n1, n2) // gate set is Core in bootstrap; must NOT widen the collection universe
+    expect.same(active, ConsensusStateAdvancer.collectionUniverse(active, coreSet, floorActive = false))
   }
 
   // ----------------------------------------------------------------------------

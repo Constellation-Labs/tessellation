@@ -127,6 +127,12 @@ object CurrencySnapshotConsensusStateAdvancer {
       override protected def lastOutcomeEndTimeMs(lastOutcome: CurrencyConsensusOutcome): Option[Long] =
         lastOutcome.recentRoundEndTimes.lastOption.map { case (_, endTime) => endTime }
 
+      // v4.1.0 cluster-majority floor: enable the committee-supermajority finality floor outside bootstrap
+      // (see QuorumDenominatorShrink.decide / ConsensusStateAdvancer.clusterFloorActive). isInBootstrap is
+      // derived from consensus-agreed recentProofSizes, so this is deterministic across nodes.
+      override protected def clusterFloorActive(state: CurrencySnapshotConsensusState): Boolean =
+        !isInBootstrap(state)
+
       def getConsensusOutcome(
         state: CurrencySnapshotConsensusState
       ): Option[(Previous[CurrencySnapshotKey], CurrencyConsensusOutcome)] =

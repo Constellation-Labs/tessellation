@@ -276,6 +276,12 @@ object GlobalSnapshotConsensusStateAdvancer {
       override protected def lastOutcomeEndTimeMs(lastOutcome: GlobalConsensusOutcome): Option[Long] =
         lastOutcome.recentRoundEndTimes.lastOption.map { case (_, endTime) => endTime }
 
+      // v4.1.0 cluster-majority floor: enable the committee-supermajority finality floor outside bootstrap
+      // (see QuorumDenominatorShrink.decide / ConsensusStateAdvancer.clusterFloorActive). isInBootstrap is
+      // derived from consensus-agreed recentProofSizes, so this is deterministic across nodes.
+      override protected def clusterFloorActive(state: GlobalSnapshotConsensusState): Boolean =
+        !isInBootstrap(state)
+
       def getConsensusOutcome(
         state: GlobalSnapshotConsensusState
       ): Option[(Previous[GlobalSnapshotKey], GlobalConsensusOutcome)] =
@@ -3156,21 +3162,27 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
-            // Finalization threshold: strict majority of the CORE committee only (v19 alpha.89).
+            // Finalization threshold -- two regimes (v4.1.0 cluster-majority floor).
             //
-            // Denominator uses `state.coreFacilitators.value.size` rather than
-            // `roundStartFacilitators.value.size` (Core + Tier 1). The v19 design decouples
-            // liveness gating from the signer pool: Tier 1 peers may sign and earn rewards,
-            // but their absence must not block finalization. Pre-alpha.89 the threshold gated
-            // on the full canonical committee, which wedged alpha.88 overnight at "3 active < 4
-            // required (clusterSize=6)" -- 3 source nodes signing, 3 community Tier 1 peers
-            // silent, threshold over Core+Tier1 unreachable.
+            // OUTSIDE bootstrap: finalization requires a super-majority of the FROZEN ROUND COMMITTEE
+            // (`roundStartFacilitators`), via the SAME `QuorumDenominatorShrink.Decision.meets` that every
+            // other cert/phase gate uses (`canFinalize` below). This closes the proven 2-of-5 fork: the
+            // pre-v4.1.0 gate was a strict majority of the CORE sub-committee `(coreSize/2)+1`, which a Core
+            // that had shrunk to a cluster-minority could satisfy and self-finalize a snapshot diverging
+            // from the cluster majority. The Tier 1 reward-decoupling that motivated the Core-only gate
+            // (alpha.88/89: 3 source nodes signing, 3 community Tier 1 silent, a Core+Tier1 threshold
+            // unreachable) is now preserved differently: the round committee `roundStartFacilitators` is
+            // already history- and admission-filtered, so genuinely-silent peers are dropped from it at the
+            // next round-start -- the floor only requires a super-majority of the peers the consensus-agreed
+            // derivation considered live this round, not of the raw cluster.
             //
-            // Formula stays `(n/2)+1` (strict majority, not supermajority) for liveness slack.
-            // Safety against view-change splits is enforced by VoteLock + VCC, both of which
-            // already gate on Core only via the cert-quorum formula
-            // `ceil(coreFacilitators.size * quorumThresholdFraction)`. The finalization
-            // threshold is a liveness lever, not the primary safety lever.
+            // IN bootstrap: the legacy strict-majority Core gate `(coreSize/2)+1` is preserved
+            // byte-identical (plus the shrunk-path OR), keeping the deliberate cold-start liveness slack;
+            // `clusterFloorActive(state)` (== !isInBootstrap) selects the regime.
+            //
+            // The grace-window machinery below (coreComplete / fullCommittee) is unchanged: it governs
+            // reward-fair signature collection TIMING, not the finality threshold, so it stays Core/committee
+            // -derived per its original design.
             //
             // The signature grace window is THREE-WAY, keyed on how complete the signer set is
             // (`coreComplete` + `fullCommittee`), so neither liveness nor reward fairness is
@@ -3202,18 +3214,19 @@ object GlobalSnapshotConsensusStateAdvancer {
             val coreComplete = coreSignedCount >= coreSize
             val fullCommitteeSigned = validSignatures.size >= fullCommittee
             for {
-              // v33 quorum-denominator shrink (QuorumDenominatorShrink): the finalization gate
-              // is the LAST quorum chokepoint. When the rung is active (testnet, deep silence
-              // since the parent outcome) the healthy subset must be able to finalize a round
-              // signed by an anchor-majority below the normal `(coreSize/2)+1`, or the chain
-              // never advances despite every cert/phase quorum already shrinking. `shrunkPath`
-              // requires the signers to BE anchor members and to meet the escalated requirement,
-              // so the relaxation is deterministic and bounded by the same Decision every other
-              // call site uses. Inert when the rung is off: `shrunkPath` is then always false and
-              // `canFinalize == validSignatures.size >= quorumThreshold` (byte-identical to pre-v33).
-              shrinkDecision <- quorumShrinkDecision(state)
+              // v33 quorum-denominator shrink (QuorumDenominatorShrink): the finalization gate is the LAST
+              // quorum chokepoint, routed through the same `Decision` as every cert/phase gate so it cannot
+              // drift. v4.1.0: OUTSIDE bootstrap `canFinalize = decision.meets(signers)` -- signers.size must
+              // reach the committee floor (`baseQuorum`), or, on the shrunk path, an anchor-majority that is
+              // itself floored at the committee majority. A minority Core therefore cannot finalize on ANY
+              // path. IN bootstrap the floor is off, so `meets` would reduce to the Core super-majority; to
+              // keep cold start byte-identical we instead use the legacy strict-majority `(coreSize/2)+1`
+              // with the shrunk-path OR exactly as before.
+              shrinkDecision <- quorumFinalityDecision(state)
               shrinkSignerIds = validSignatures.map(_.id.toPeerId).toSet
-              canFinalize = validSignatures.size >= quorumThreshold || shrinkDecision.shrunkPath(shrinkSignerIds)
+              canFinalize =
+                if (clusterFloorActive(state)) shrinkDecision.meets(shrinkSignerIds)
+                else validSignatures.size >= quorumThreshold || shrinkDecision.shrunkPath(shrinkSignerIds)
               // Hash over canonical committee: this hash lands in Finished (and
               // thus lastOutcome.finished.facilitatorsHash), which fork detection
               // compares across peers. Deriving from state.facilitators (mutable)
@@ -3235,7 +3248,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                   Event.RoundBlockedByState,
                   "reason" -> "insufficient_signatures",
                   "valid" -> validSignatures.size.toString,
-                  "required" -> quorumThreshold.toString,
+                  "required" -> (if (clusterFloorActive(state)) shrinkDecision.baseQuorum else quorumThreshold).toString,
+                  "committee" -> canonicalCommitteeSize.toString,
                   "facilitators" -> state.facilitators.value.size.toString
                 )
                 .whenA(!canFinalize)
