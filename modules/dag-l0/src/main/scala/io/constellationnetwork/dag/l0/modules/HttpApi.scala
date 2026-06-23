@@ -262,7 +262,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       storages.mptStore
     )
   }
-  private val tokenLockRoutes = GL0TokenLockRoutes(storages.globalSnapshot)
+  private val tokenLockRoutes = GL0TokenLockRoutes(storages.globalSnapshot, storages.mptStore)
 
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
