@@ -448,10 +448,7 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   // - Token lock may still be active (replacement succeeds)
   // - Token lock may be removed (NothingToReplace)
   const activeTokenLocks = await getActiveTokenLocks(urls, account.address)
-  const isLockActive = activeTokenLocks.some(lock => {
-    // Compare by amount since we don't have direct hash access
-    return lock.amount === lockAmount
-  })
+  const isLockActive = activeTokenLocks.some(lock => lock.hash === lockHash)
   logWorkflow.info(`Token lock active status after withdrawal: ${isLockActive}`)
 
   const newAmount = lockAmount + 100000000000 // +1000 DAG

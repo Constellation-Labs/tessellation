@@ -12,7 +12,8 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
-import io.constellationnetwork.schema.tokenLock.TokenLock
+import io.constellationnetwork.schema.tokenLock._
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -21,7 +22,7 @@ import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-final case class GL0TokenLockRoutes[F[_]: Async](
+final case class GL0TokenLockRoutes[F[_]: Async: Hasher](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   mptStore: MptStore[F, GlobalStateKey]
 ) extends Http4sDsl[F]
@@ -31,15 +32,19 @@ final case class GL0TokenLockRoutes[F[_]: Async](
 
   protected val prefixPath: InternalUrlPrefix = "/"
 
-  // v4.1.0: read the FULL active token-lock state from the MPT, NOT GlobalSnapshotInfo.activeTokenLocks.
-  // After the MPT migration the GSI carries only the per-snapshot DELTA (the StateChangesAccumulator), so a
-  // token lock committed in an earlier snapshot is absent from the head delta and this endpoint would wrongly
-  // return "not found" for every ordinal after the one in which the lock changed (the delegated-staking /
-  // token-lock-replacement e2e failures). Mirrors DelegatedStakesRoutes / NodeCollateralRoutes.
-  private def getActiveTokenLocks(address: Address): F[List[TokenLock]] =
+  // v4.1.0: serve the FULL active token-lock state from the MPT as TokenLockView (transaction + hash + status).
+  // After the MPT migration GlobalSnapshotInfo.activeTokenLocks carries only the per-snapshot DELTA, so reading
+  // head.info would wrongly return "not found" for any lock committed in an earlier snapshot (the delegated-staking
+  // / token-lock-replacement e2e failures). The served hash is the canonical TokenLockReference (signed.value.hash)
+  // -- the same value a client passes as a delegated stake's tokenLockRef -- so the lock can be matched by hash,
+  // consistent with the gl1 by-hash route and the DelegatedStakes / NodeCollateral info routes.
+  private def getActiveTokenLocks(address: Address): F[List[TokenLockView]] =
     mptStore
       .getActiveTokenLocks(address)
-      .map(_.getOrElse(SortedSet.empty[Signed[TokenLock]]).toList.map(_.value))
+      .map(_.getOrElse(SortedSet.empty[Signed[TokenLock]]).toList)
+      .flatMap(_.traverse { signed =>
+        TokenLockReference.of(signed).map(ref => TokenLockView(signed.value, ref.hash, TokenLockStatus.Waiting))
+      })
 
   override protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "token-locks" / AddressVar(address) =>

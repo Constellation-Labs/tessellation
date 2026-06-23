@@ -30,11 +30,12 @@ import suite.HttpSuite
 
 /** Regression test for the v4.1.0 token-lock serving fix.
   *
-  * After the MPT migration, GlobalSnapshotInfo carried in snapshotStorage.head holds only the per-snapshot
-  * DELTA of activeTokenLocks; the authoritative full state lives in the MPT. This pins that GET
-  * /token-locks/:address reads the MPT full state, so a lock committed in an earlier snapshot (absent from
-  * the head delta) is still served -- the bug behind the delegated-staking / token-lock-replacement e2e
-  * failures. If a future change reverts to reading head.info.activeTokenLocks, this test fails.
+  * After the MPT migration, GlobalSnapshotInfo carried in snapshotStorage.head holds only the per-snapshot DELTA of activeTokenLocks; the
+  * authoritative full state lives in the MPT. This pins two things behind the delegated-staking / token-lock-replacement e2e failures: (1)
+  * GET /token-locks/:address reads the MPT full state, so a lock committed in an earlier snapshot (absent from the head delta) is still
+  * served; (2) it serves TokenLockView carrying the canonical TokenLockReference hash (signed.value.hash) -- the value clients match on and
+  * reuse as a delegated stake's tokenLockRef. If a future change reverts to reading head.info.activeTokenLocks, or drops/alters the hash,
+  * this test fails.
   */
 object GL0TokenLockRoutesSuite extends HttpSuite {
 
@@ -62,11 +63,13 @@ object GL0TokenLockRoutesSuite extends HttpSuite {
       def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[IO]): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
       def get(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
       def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[IO]): IO[Option[Hash]] = ???
-      def setHeadForRecovery(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo)(implicit hasher: Hasher[IO]): IO[Unit] =
+      def setHeadForRecovery(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo)(
+        implicit hasher: Hasher[IO]
+      ): IO[Unit] =
         ???
     }
 
-  test("GET /token-locks serves an MPT-resident lock even when the head info delta is empty") {
+  test("GET /token-locks serves an MPT-resident lock as a TokenLockView even when the head info delta is empty") {
     case (hsh, sp, jsn) =>
       implicit val hasher: Hasher[IO] = hsh
       implicit val secProvider: SecurityProvider[IO] = sp
@@ -85,6 +88,8 @@ object GL0TokenLockRoutesSuite extends HttpSuite {
           none
         )
         signedTokenLock <- Signed.forAsyncHasher(tokenLock, kp)
+        // The served hash must be the canonical reference hash the client matches on (== signed.value.hash).
+        expectedRef <- TokenLockReference.of(signedTokenLock)
 
         // MPT holds the FULL state (the lock); the served head holds an EMPTY activeTokenLocks delta.
         mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
@@ -106,7 +111,10 @@ object GL0TokenLockRoutesSuite extends HttpSuite {
 
         routes = GL0TokenLockRoutes[IO](storage, mptStore).publicRoutes
         req = GET(Uri.unsafeFromString(s"/token-locks/${address.value.value}"))
-        result <- expectHttpBodyAndStatus(routes, req)(List(tokenLock), Status.Ok)
+        result <- expectHttpBodyAndStatus(routes, req)(
+          List(TokenLockView(tokenLock, expectedRef.hash, TokenLockStatus.Waiting)),
+          Status.Ok
+        )
       } yield result
   }
 }
