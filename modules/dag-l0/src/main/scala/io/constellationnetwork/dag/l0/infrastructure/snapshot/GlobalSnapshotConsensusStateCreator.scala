@@ -493,6 +493,7 @@ object GlobalSnapshotConsensusStateCreator {
               logger
             )
           }
+          _ <- DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, lastOutcome.finished.context, logger).void
           eventHashes <- eventMempool.getEventHashes
           selfHealth <- localHealthMonitor.current
           // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the

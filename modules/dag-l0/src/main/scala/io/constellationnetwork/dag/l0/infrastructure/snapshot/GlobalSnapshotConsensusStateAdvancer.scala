@@ -985,6 +985,9 @@ object GlobalSnapshotConsensusStateAdvancer {
 
           // Sync missing events from peers before building proposal
           _ <- syncMissingEvents(missingHashes, hashToPeers).whenA(missingHashes.nonEmpty)
+          // A peer may have declared a permanently-dead hash in its Facility before reaping its own
+          // active mempool. Drop anything re-fetched from those stale declarations before proposal build.
+          _ <- DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, state.lastOutcome.finished.context, logger).void
 
           _ <- Metrics[F].updateGauge("dag_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_consensus_facility_quorum_ratio", responderRatio)
@@ -1067,7 +1070,11 @@ object GlobalSnapshotConsensusStateAdvancer {
               logger
             )
             .void
-        }
+        } >>
+          // Reap permanently-dead DAG blocks (conflicting tx already committed in a prior snapshot) from the
+          // active mempool so they stop being re-rejected every proposal build. Judged against the committed
+          // context only, so it cannot evict a block that could still become valid.
+          DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, context, logger).void
 
       private def buildProposalTransition(
         state: GlobalSnapshotConsensusState,
