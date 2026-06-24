@@ -10,6 +10,7 @@ import cats.syntax.all._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cluster.programs.TrustPush
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.Download
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.RecoveryCheckpoint
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader
 import io.constellationnetwork.json.JsonSerializer
@@ -25,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{GlobalSnapsh
 import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 import io.circe.Json
@@ -43,7 +45,9 @@ object Programs {
     globalSnapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    seedlist: Option[Set[PeerId]],
+    recoveryCheckpoint: Option[RecoveryCheckpoint]
   )(implicit globalStateProofSelector: GlobalStateProofSelector): Programs[F] =
     HasherSelector[F].withCurrent { implicit hasher =>
       val trustPush = TrustPush.make(storages.trust, services.gossip)
@@ -69,7 +73,9 @@ object Programs {
           services.eventMempool,
           globalSnapshotStorage,
           sharedPrograms.joining,
-          services.recoveryPeerHint
+          services.recoveryPeerHint,
+          seedlist,
+          recoveryCheckpoint
         )
       val rollbackLoader = RollbackLoader.make(
         keyPair,

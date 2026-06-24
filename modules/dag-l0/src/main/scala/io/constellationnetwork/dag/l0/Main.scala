@@ -11,6 +11,7 @@ import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.domain.snapshot.ForkRecoveryService
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.RecoveryCheckpointLoader
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
@@ -39,9 +40,9 @@ import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.{Signed, SignedValidator}
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -166,6 +167,15 @@ object Main
         )
         .asResource
 
+      recoveryCheckpoint <- HasherSelector[IO].withCurrent { implicit hasher =>
+        RecoveryCheckpointLoader.load[IO](
+          cfg.recovery.checkpointPath,
+          nodeShared.seedlist.map(_.map(_.peerId)),
+          cfg.environment.toString,
+          SignedValidator.make[IO]
+        )
+      }.asResource
+
       programs = Programs.make[IO, Run](
         sharedPrograms,
         storages,
@@ -178,7 +188,9 @@ object Main
         storages.globalSnapshot,
         sharedStorages.lastNGlobalSnapshot,
         sharedStorages.lastGlobalSnapshot,
-        sharedStorages.mptStore
+        sharedStorages.mptStore,
+        nodeShared.seedlist.map(_.map(_.peerId)),
+        recoveryCheckpoint
       )
 
       rumorHandler = RumorHandlers

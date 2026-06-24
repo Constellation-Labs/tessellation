@@ -8,6 +8,7 @@ import cats.{Applicative, MonadError, Parallel}
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.RecoveryCheckpoint
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
@@ -33,11 +34,11 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node.NodeState
-import io.constellationnetwork.schema.peer.{L0Peer, Peer}
+import io.constellationnetwork.schema.peer.{L0Peer, Peer, PeerId}
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.validator.StateProofValidator
 
 import eu.timepit.refined.auto._
@@ -109,6 +110,8 @@ object Download {
 
     case object DeadlineExceeded extends DownloadOutcome { val label = "deadline_exceeded" }
     case object StateProofInvalid extends DownloadOutcome { val label = "state_proof_invalid" }
+    case object SnapshotSignaturesInvalid extends DownloadOutcome { val label = "snapshot_signatures_invalid" }
+    case object RecoveryCheckpointFork extends DownloadOutcome { val label = "recovery_checkpoint_fork" }
     case object ChainInvalid extends DownloadOutcome { val label = "chain_invalid" }
     case object HashOrdinalMismatch extends DownloadOutcome { val label = "hash_ordinal_mismatch" }
     case object FirstIncrementalMissing extends DownloadOutcome { val label = "first_incremental_missing" }
@@ -187,7 +190,7 @@ object Download {
     }
   }
 
-  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: Metrics](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: Metrics: SecurityProvider](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -207,7 +210,9 @@ object Download {
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     globalSnapshotConsensusStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     joining: Joining[F],
-    recoveryPeerHint: RecoveryPeerHint[F]
+    recoveryPeerHint: RecoveryPeerHint[F],
+    seedlist: Option[Set[PeerId]],
+    recoveryCheckpoint: Option[RecoveryCheckpoint]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): Download[F, GlobalIncrementalSnapshot] = new Download[F, GlobalIncrementalSnapshot] {
@@ -215,6 +220,73 @@ object Download {
     val logger = Slf4jLogger.getLogger[F]
 
     private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
+
+    // L1 fork-safety: every downloaded snapshot is signature-validated before it is accepted into the
+    // local chain (the download path historically validated only the state proof, which a minority fork
+    // also satisfies). This is a stateless reuse of the shared validator -- no consensus logic lives here.
+    private val signedValidator = SignedValidator.make[F]
+
+    // Verify a downloaded snapshot's own proofs before it is accepted: cryptographic validity (under the
+    // hasher active AT THE SNAPSHOT'S ORDINAL -- the signing hasher, not the current one), every signer in
+    // the seedlist (inert when no seedlist is configured), and no duplicate signers. This does NOT enforce
+    // a finality threshold (the committee is not available at recovery -- see the recovery-checkpoint gate
+    // for that); it closes signature forgery and non-seedlist signers.
+    private def validateSnapshotSignatures(
+      snapshot: Signed[GlobalIncrementalSnapshot]
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      hasherSelector
+        .forOrdinal(snapshot.ordinal)(implicit hasher => signedValidator.validateSignatures(snapshot))
+        .flatMap { cryptoValid =>
+          cryptoValid
+            .productL(signedValidator.validateUniqueSigners(snapshot))
+            .productL(signedValidator.validateSignaturesWithSeedlist(seedlist, snapshot))
+            .fold(
+              errors => InvalidSnapshotSignatures(snapshot.ordinal, errors.toList.mkString(", ")).raiseError[F, Unit],
+              _ => ().pure[F]
+            )
+        }
+
+    // L2c fork-safety: when a seedlist-signed recovery checkpoint is configured, the chain this node accepts
+    // MUST pass through the checkpoint's exact (ordinal, hash). At the checkpoint ordinal a hash mismatch
+    // means this chain forks from the trusted recovery anchor -- reject it. Enforced at three sites so a
+    // configured checkpoint cannot be bypassed: each downloaded snapshot in the forward walk (`checkpointGate`),
+    // each snapshot persisted in observe mode (fetchNextSnapshot), and the already-persisted local snapshot at
+    // the checkpoint ordinal when the forward walk starts at or above it (`verifyLocalCheckpoint`). All share
+    // the pure `RecoveryCheckpoint.mismatchAt` decision so the rule cannot drift. Inert when no checkpoint is
+    // configured. The hash is computed under the snapshot's own ordinal hasher to match the canonical hash.
+    private def raiseOnCheckpointMismatch(ordinal: SnapshotOrdinal, hash: Hash): F[Unit] =
+      RecoveryCheckpoint.mismatchAt(recoveryCheckpoint, ordinal, hash) match {
+        case Some((expected, got)) => CheckpointForkDetected(ordinal, expected, got).raiseError[F, Unit]
+        case None                  => Applicative[F].unit
+      }
+
+    private def checkpointGate(
+      snapshot: Signed[GlobalIncrementalSnapshot]
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      if (recoveryCheckpoint.exists(_.ordinal === snapshot.ordinal))
+        hasherSelector
+          .forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed)
+          .flatMap(hashed => raiseOnCheckpointMismatch(snapshot.ordinal, hashed.hash))
+      else Applicative[F].unit
+
+    // Forward `validateChain` only re-validates ordinals ABOVE its starting anchor, so a checkpoint at or
+    // below the anchor would never be proven against the (already-persisted) local chain. Verify it directly:
+    // a forked local snapshot at the checkpoint ordinal is then caught even when the node has local history
+    // through the checkpoint (the operator-recovers-a-forked-node case).
+    private def verifyLocalCheckpoint(
+      anchorOrdinal: SnapshotOrdinal
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      recoveryCheckpoint match {
+        case Some(cp) if cp.ordinal.value.value <= anchorOrdinal.value.value =>
+          snapshotStorage.readPersisted(cp.ordinal).flatMap {
+            case Some(local) =>
+              hasherSelector
+                .forOrdinal(cp.ordinal)(implicit hasher => local.toHashed)
+                .flatMap(hashed => raiseOnCheckpointMismatch(cp.ordinal, hashed.hash))
+            case None => Applicative[F].unit
+          }
+        case _ => Applicative[F].unit
+      }
 
     val minBatchSizeToStartObserving: Long = 1L
     val observationOffset = NonNegLong(1L)
@@ -373,6 +445,8 @@ object Download {
       case _: SnapshotFailure.TokenUnlockGenerationFailed              => DownloadOutcome.TokenUnlockError
       case _: SnapshotFailure.CleanupIncomplete                        => DownloadOutcome.CleanupIncomplete
       case InvalidStateProof(_)                                        => DownloadOutcome.StateProofInvalid
+      case InvalidSnapshotSignatures(_, _)                             => DownloadOutcome.SnapshotSignaturesInvalid
+      case CheckpointForkDetected(_, _, _)                             => DownloadOutcome.RecoveryCheckpointFork
       case InvalidChain                                                => DownloadOutcome.ChainInvalid
       case HashAndOrdinalMismatch                                      => DownloadOutcome.HashOrdinalMismatch
       case FirstIncrementalNotFound                                    => DownloadOutcome.FirstIncrementalMissing
@@ -389,6 +463,8 @@ object Download {
       case _: SnapshotFailure.BalanceArithmeticError.SpendTransactions => DownloadOutcome.BalanceArithmeticSpendTxns
       case _: SnapshotFailure.TokenUnlockGenerationFailed              => DownloadOutcome.TokenUnlockError
       case CannotFetchSnapshot                                         => DownloadOutcome.FetchSnapshotFailed
+      case InvalidSnapshotSignatures(_, _)                             => DownloadOutcome.SnapshotSignaturesInvalid
+      case CheckpointForkDetected(_, _, _)                             => DownloadOutcome.RecoveryCheckpointFork
       case InvalidChain                                                => DownloadOutcome.ChainInvalid
       case other                                                       => DownloadOutcome.Unclassified(other.getClass.getSimpleName)
     }
@@ -994,6 +1070,8 @@ object Download {
               Validator.isNextSnapshot(hashed, snapshot.value)
             }(InvalidChain.raiseError[F, Unit])
           } >>
+            validateSnapshotSignatures(snapshot) >>
+            checkpointGate(snapshot) >>
             HasherSelector[F].withCurrent { implicit hasher =>
               globalSnapshotContextFns
                 .createContext(
@@ -1105,34 +1183,36 @@ object Download {
           } else
             readSnapshot.flatMap {
               case Some(snapshot) =>
-                HasherSelector[F].withCurrent { implicit hasher =>
-                  globalSnapshotContextFns
-                    .createContext(
-                      context,
-                      lastSnapshot,
-                      snapshot,
-                      fetchSnapshotByOrdinal
-                    )
-                }
-                  .flatTap(newContext =>
-                    hasherSelector.withCurrent { implicit hasher =>
-                      snapshotStorage
-                        .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
-                        .ifM(
-                          ().pure[F],
-                          snapshot.toHashed.flatMap { hashed =>
-                            validator.validate(hashed, newContext).map(_.isValid)
-                          }.ifM(
-                            snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
-                            InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                          )
-                        )
-                    }
-                  )
-                  .flatMap { state =>
-                    updateStoragesWithDownloadedSnapshot(snapshot, state) >>
-                      go(snapshot, state)
+                validateSnapshotSignatures(snapshot) >>
+                  checkpointGate(snapshot) >>
+                  HasherSelector[F].withCurrent { implicit hasher =>
+                    globalSnapshotContextFns
+                      .createContext(
+                        context,
+                        lastSnapshot,
+                        snapshot,
+                        fetchSnapshotByOrdinal
+                      )
                   }
+                    .flatTap(newContext =>
+                      hasherSelector.withCurrent { implicit hasher =>
+                        snapshotStorage
+                          .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
+                          .ifM(
+                            ().pure[F],
+                            snapshot.toHashed.flatMap { hashed =>
+                              validator.validate(hashed, newContext).map(_.isValid)
+                            }.ifM(
+                              snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
+                              InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                            )
+                          )
+                      }
+                    )
+                    .flatMap { state =>
+                      updateStoragesWithDownloadedSnapshot(snapshot, state) >>
+                        go(snapshot, state)
+                    }
               case None => InvalidChain.raiseError[F, Agg]
             }
 
@@ -1209,7 +1289,8 @@ object Download {
         }
         .flatMap {
           case (s, c) =>
-            updateStoragesWithDownloadedSnapshot(s, c) >>
+            verifyLocalCheckpoint(s.ordinal) >>
+              updateStoragesWithDownloadedSnapshot(s, c) >>
               go(s, c)
         }
     }
@@ -1324,6 +1405,10 @@ object Download {
   case object InvalidChain extends NoStackTrace with RecoveryFallbackEligible
 
   case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
+
+  case class InvalidSnapshotSignatures(ordinal: SnapshotOrdinal, reason: String) extends NoStackTrace
+
+  case class CheckpointForkDetected(ordinal: SnapshotOrdinal, expected: Hash, got: Hash) extends NoStackTrace with RecoveryFallbackEligible
 
   case object UnexpectedState extends NoStackTrace
 
