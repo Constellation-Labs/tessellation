@@ -69,20 +69,7 @@ const transferTokensToCurrencyId = async (urls) => {
         l1Url: urls.currencyL1Url
     })
 
-    // Fund the currencyId's plain DAG balance from key2: key2 is genesis-funded but otherwise UNUSED in this
-    // test, so its transaction chain is empty and this funding tx commits within a snapshot or two. Funding from
-    // key1 (used throughout the suite) chains on key1's hundreds-deep backlog, whose parent ordinal outruns gl0's
-    // committed lastTxRef by far more than maxParentOrdinalGap (32) -> the funding tx is rejected
-    // ParentOrdinalGapTooLarge and never lands. The metagraph-token transfer stays on key1 (which holds the
-    // currency balance).
-    const fundingAccount = dag4.createAccount(PRIVATE_KEYS.key2)
-    await fundingAccount.connect({
-        networkVersion: '2.0',
-        l0Url: urls.globalL0Url,
-        l1Url: urls.dagL1Url,
-        testnet: true
-    })
-    await fundingAccount.transferDag(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
+    await account.transferDag(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
     await metagraphClient.transfer(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
 
     // Every spend bundle includes a metagraph self-spend leg (createMetagraphSpendTransaction) whose
@@ -97,9 +84,10 @@ const transferTokensToCurrencyId = async (urls) => {
     // under heavy CI load, so a fixed attempt budget false-fails a slow-but-live chain. Keep polling while gl0
     // keeps producing new ordinals; fail only if it is genuinely stuck (no new ordinal for maxStallPolls) or the
     // generous overall cap is reached. The combined-snapshot fetch already carries the ordinal, so no extra query.
-    // Funding from the unused key2 commits in a snapshot or two, so this budget is a safety net, not the
-    // expected path. Keep it well under the e2e job's wall-clock limit so a genuinely stuck funding fails
-    // cleanly with the error below instead of letting the whole job hit the runner timeout.
+    // With the faster gl0 cadence (CL_TIME_TRIGGER_INTERVAL / CL_EVENT_TRIGGER_COOLDOWN lowered in the e2e
+    // workflow), gl0 keeps up with key1's chain so the funding commits in a few snapshots; this budget is a
+    // safety net, not the expected path. Keep it well under the e2e job's wall-clock limit so a genuinely stuck
+    // funding fails cleanly with the error below instead of letting the whole job hit the runner timeout.
     const maxFundingPolls = 180  // ~3min cap
     const maxStallPolls = 90     // ~90s with no new gl0 ordinal => stuck; funding cannot land
     let lastOrdinal = null
