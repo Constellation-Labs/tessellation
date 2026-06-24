@@ -36,7 +36,9 @@ object RecoveryCheckpointSuite extends MutableIOSuite {
 
   test("mismatchAt: a different ordinal is never a mismatch") { _ =>
     val other = SnapshotOrdinal.unsafeApply(999L)
-    IO.pure(expect(RecoveryCheckpoint.mismatchAt(Some(checkpoint()), other, forkHash).isEmpty, "non-checkpoint ordinal must not flag a fork"))
+    IO.pure(
+      expect(RecoveryCheckpoint.mismatchAt(Some(checkpoint()), other, forkHash).isEmpty, "non-checkpoint ordinal must not flag a fork")
+    )
   }
 
   test("mismatchAt: the matching hash at the checkpoint ordinal is not a mismatch") { _ =>
@@ -79,10 +81,11 @@ object RecoveryCheckpointSuite extends MutableIOSuite {
       seedlist = keys.map(kp => PeerId.fromPublic(kp.getPublic)).toSet
       signed <- signWith(checkpoint(net = "Mainnet"), keys.take(2))
       result <- RecoveryCheckpoint.verify(SignedValidator.make[IO], seedlist, network, signed)
-    } yield expect(
-      result == Left(NetworkMismatch(network, "Mainnet")),
-      s"expected NetworkMismatch, got $result"
-    )
+    } yield
+      expect(
+        result == Left(NetworkMismatch(network, "Mainnet")),
+        s"expected NetworkMismatch, got $result"
+      )
   }
 
   test("verify rejects a checkpoint below the seedlist majority") { res =>
@@ -92,11 +95,12 @@ object RecoveryCheckpointSuite extends MutableIOSuite {
       seedlist = keys.map(kp => PeerId.fromPublic(kp.getPublic)).toSet
       signed <- signWith(checkpoint(), keys.take(1)) // 1-of-3 < majority(3)=2
       result <- RecoveryCheckpoint.verify(SignedValidator.make[IO], seedlist, network, signed)
-    } yield result match {
-      case Left(e: InvalidCheckpointSignatures) =>
-        expect(e.reason.contains("NotEnoughSeedlistSignatures"), s"reason should name the threshold failure, got: ${e.reason}")
-      case other => failure(s"expected InvalidCheckpointSignatures, got $other")
-    }
+    } yield
+      result match {
+        case Left(e: InvalidCheckpointSignatures) =>
+          expect(e.reason.contains("NotEnoughSeedlistSignatures"), s"reason should name the threshold failure, got: ${e.reason}")
+        case other => failure(s"expected InvalidCheckpointSignatures, got $other")
+      }
   }
 
   test("verify rejects a checkpoint with a signer outside the seedlist") { res =>
@@ -108,10 +112,11 @@ object RecoveryCheckpointSuite extends MutableIOSuite {
       // 2 in-seedlist signers (>= majority) plus 1 outsider: majority passes, membership must fail.
       signed <- signWith(checkpoint(), seedKeys.take(2) :+ outsider)
       result <- RecoveryCheckpoint.verify(SignedValidator.make[IO], seedlist, network, signed)
-    } yield result match {
-      case Left(e: InvalidCheckpointSignatures) =>
-        expect(e.reason.contains("SignersNotInSeedlist"), s"reason should name the membership failure, got: ${e.reason}")
-      case other => failure(s"expected InvalidCheckpointSignatures, got $other")
-    }
+    } yield
+      result match {
+        case Left(e: InvalidCheckpointSignatures) =>
+          expect(e.reason.contains("SignersNotInSeedlist"), s"reason should name the membership failure, got: ${e.reason}")
+        case other => failure(s"expected InvalidCheckpointSignatures, got $other")
+      }
   }
 }

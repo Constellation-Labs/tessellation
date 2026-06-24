@@ -16,10 +16,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Loads and verifies the optional seedlist-signed recovery checkpoint at node startup.
   *
-  * Fail-fast: a configured-but-invalid checkpoint (unreadable, undecodable, wrong network, insufficient or
-  * non-seedlist signatures) aborts startup -- a fork anchor must never be silently ignored. Returns None
-  * only when no checkpoint is configured (the gate is then inert and recovery falls back to L1 signature
-  * validation plus source corroboration).
+  * Fail-fast: a configured-but-invalid checkpoint (unreadable, undecodable, wrong network, insufficient or non-seedlist signatures) aborts
+  * startup -- a fork anchor must never be silently ignored. Returns None only when no checkpoint is configured (the gate is then inert and
+  * recovery falls back to L1 signature validation plus source corroboration).
   */
 object RecoveryCheckpointLoader {
 

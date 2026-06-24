@@ -15,18 +15,17 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
-/** A seedlist-signed recovery anchor: an out-of-band assertion, signed by a majority of the seedlist (the
-  * allowed cluster peers), that global snapshot `ordinal` has hash `snapshotHash` on the canonical chain.
+/** A seedlist-signed recovery anchor: an out-of-band assertion, signed by a majority of the seedlist (the allowed cluster peers), that
+  * global snapshot `ordinal` has hash `snapshotHash` on the canonical chain.
   *
-  * This is a SEPARATE TRUST DOMAIN from protocol finality. The recovery download path cannot reconstruct
-  * committee-relative finality (the per-round committee is not available at recovery), so a recovering node
-  * cannot, on its own, distinguish the canonical chain from a minority/Byzantine fork that is internally
-  * consistent and validly signed by a few peers. When a checkpoint is configured, the node follows ONLY the
-  * chain that passes through this exact `(ordinal, snapshotHash)`; the checkpoint is not claiming finality,
-  * it records that the trusted recovery authority (a seedlist majority) chose this fork.
+  * This is a SEPARATE TRUST DOMAIN from protocol finality. The recovery download path cannot reconstruct committee-relative finality (the
+  * per-round committee is not available at recovery), so a recovering node cannot, on its own, distinguish the canonical chain from a
+  * minority/Byzantine fork that is internally consistent and validly signed by a few peers. When a checkpoint is configured, the node
+  * follows ONLY the chain that passes through this exact `(ordinal, snapshotHash)`; the checkpoint is not claiming finality, it records
+  * that the trusted recovery authority (a seedlist majority) chose this fork.
   *
-  * `network` binds the checkpoint to a specific network/environment so a signature cannot be replayed across
-  * networks (domain separation); the dedicated type already separates it from other signed payloads.
+  * `network` binds the checkpoint to a specific network/environment so a signature cannot be replayed across networks (domain separation);
+  * the dedicated type already separates it from other signed payloads.
   */
 @derive(eqv, show, encoder, decoder)
 case class RecoveryCheckpoint(
@@ -37,13 +36,12 @@ case class RecoveryCheckpoint(
 
 object RecoveryCheckpoint {
 
-  /** Fork decision at a single ordinal, shared by every checkpoint enforcement site (download forward walk,
-    * already-persisted local state, and observe/fetch-next) so the rule cannot drift between them.
+  /** Fork decision at a single ordinal, shared by every checkpoint enforcement site (download forward walk, already-persisted local state,
+    * and observe/fetch-next) so the rule cannot drift between them.
     *
-    * Returns `Some((expected, got))` when a checkpoint is configured for exactly `ordinal` and pins it to a
-    * hash other than `hash` -- i.e. this chain forks from the trusted anchor at the checkpoint ordinal.
-    * Returns `None` when there is no checkpoint, the checkpoint is for a different ordinal, or the hash
-    * matches.
+    * Returns `Some((expected, got))` when a checkpoint is configured for exactly `ordinal` and pins it to a hash other than `hash` -- i.e.
+    * this chain forks from the trusted anchor at the checkpoint ordinal. Returns `None` when there is no checkpoint, the checkpoint is for
+    * a different ordinal, or the hash matches.
     */
   def mismatchAt(checkpoint: Option[RecoveryCheckpoint], ordinal: SnapshotOrdinal, hash: Hash): Option[(Hash, Hash)] =
     checkpoint.collect {
@@ -63,13 +61,11 @@ object RecoveryCheckpoint {
     def message = s"recovery checkpoint signature validation failed: $reason"
   }
 
-  /** Verify a seedlist-signed checkpoint: bound to the expected network, all proofs cryptographically valid,
-    * every signer in the seedlist, no duplicate signers, and signed by a strict majority of the seedlist
-    * (quorum intersection: two majority-signed checkpoints at the same ordinal cannot disagree without a
-    * seedlist member double-signing).
+  /** Verify a seedlist-signed checkpoint: bound to the expected network, all proofs cryptographically valid, every signer in the seedlist,
+    * no duplicate signers, and signed by a strict majority of the seedlist (quorum intersection: two majority-signed checkpoints at the
+    * same ordinal cannot disagree without a seedlist member double-signing).
     *
-    * The checkpoint is off-chain, so signer and verifier must agree on the hasher; the caller supplies the
-    * current hasher.
+    * The checkpoint is off-chain, so signer and verifier must agree on the hasher; the caller supplies the current hasher.
     */
   def verify[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
