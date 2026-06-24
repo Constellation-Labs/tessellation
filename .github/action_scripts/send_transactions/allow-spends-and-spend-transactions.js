@@ -71,6 +71,38 @@ const transferTokensToCurrencyId = async (urls) => {
 
     await account.transferDag(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
     await metagraphClient.transfer(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
+
+    // Every spend bundle includes a metagraph self-spend leg (createMetagraphSpendTransaction) whose
+    // allowSpendRef is null and currencyId is unset, so SpendActionValidator validates it against the
+    // currencyId address's plain DAG balance (the allowSpendRef=None branch -> allBalances(None)(currencyId)).
+    // The transfers above only submit; if the scenario continues before transferDag commits, that balance is
+    // still 0 and the whole SpendAction is rejected with NotEnoughCurrencyIdBalance, dragging the otherwise
+    // valid user leg down with it. Wait until the funding is reflected in the global snapshot balance before
+    // proceeding. getRandomAmounts().spend is at most 50, the most a metagraph leg can require.
+    const minCurrencyIdDagBalance = 50
+    await withRetry(
+        async () => {
+            const { data: snapshot } = await axios.get(
+                `${urls.globalL0Url}/global-snapshots/latest/combined`,
+                {
+                    headers: {
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        Pragma: 'no-cache',
+                        Expires: '0',
+                    },
+                }
+            )
+            const balance = snapshot[1]?.balances?.[CONSTANTS.CURRENCY_TOKEN_ID] || 0
+            if (balance < minCurrencyIdDagBalance) {
+                throw new Error(
+                    `currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} DAG balance not funded yet: ${balance} < ${minCurrencyIdDagBalance}`
+                )
+            }
+            logWorkflow.info(`currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} funded with DAG balance ${balance}`)
+            return balance
+        },
+        { name: 'waitForCurrencyIdFunding' }
+    )
 }
 
 const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0Url, isCurrency = false) => {
@@ -1379,12 +1411,10 @@ const verifyAllowSpendIsInactive = async (address, hash, l0Url) => {
 
         const { data: snapshot } = await axios.get(`${l0Url}/global-snapshots/latest/combined`);
 
-        if (!snapshot.activeAllowSpends) {
-            logWorkflow.info('No active allow spends found in snapshot');
-            return true;
-        }
-
-        const addressAllowSpends = snapshot.activeAllowSpends[address] || [];
+        // activeAllowSpends lives on the snapshot info (element [1]), nested token -> address; DAG allow-spends
+        // use the '' token bucket (mirrors verifyDoubleSpendInL0). The previous read of snapshot.activeAllowSpends
+        // (element-0 / unkeyed) was always undefined, so this check passed vacuously.
+        const addressAllowSpends = snapshot[1]?.activeAllowSpends?.['']?.[address] || [];
 
         if (addressAllowSpends.length === 0) {
             logWorkflow.info(`No active allow spends found for address ${address}`);
@@ -1546,60 +1576,76 @@ const verifySpendActionInGlobalL0 = async (urls, metagraphId, update) => {
 };
 
 const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) => {
-    try {
-        logWorkflow.info('Verifying unauthorized spend action in global L0');
+    logWorkflow.info('Verifying the double-use spend action is NOT accepted in global L0');
 
-        return await withRetry(
-            async () => {
-                const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+    const { spendTransactionA, spendTransactionB } = update.UsageUpdateWithSpendTransaction;
 
-                if (!snapshot.spendActions) {
-                    logWorkflow.info('No spend actions found in snapshot, which is expected for unauthorized spend');
-                    return true;
-                }
+    // Negative check: a reused allow-spend must be rejected, so its SpendAction must never land in a committed
+    // global snapshot. Absence cannot be proven in a single read, so watch a window of global ordinals; if the
+    // matching action ever appears it was wrongly accepted (throw -> the caller fails the test), otherwise it
+    // was correctly rejected. Reads the same artifact field as verifySpendActionInGlobalL0:
+    // snapshot[0].value.spendActions[tokenId]. The previous version read snapshot.spendActions (always
+    // undefined on the combined [signed, info] response) and so passed vacuously.
+    const ordinalsToConfirmAbsence = 15;
+    let startOrdinal = null;
+    let lastOrdinal = null;
 
-                const spendTransactionA = update.UsageUpdateWithSpendTransaction.spendTransactionA;
-                const allowSpendRef = spendTransactionA.allowSpendRef;
-
-                logWorkflow.info(`Checking that no spend action exists with allowSpendRef: ${allowSpendRef}`);
-
-                const spendActionExists = snapshot.spendActions.some(action => {
-                    if (!action.value) return false;
-
-                    const actionValue = action.value;
-                    const hasMatchingAllowSpendRef = actionValue.allowSpendRef === allowSpendRef;
-
-                    if (hasMatchingAllowSpendRef) {
-                        throw new Error(`Found matching spend action which should not exist: ${JSON.stringify(actionValue)}`);
-                    }
-
-                    return hasMatchingAllowSpendRef;
-                });
-
-                if (spendActionExists) {
-                    throw new Error('Unauthorized spend action was incorrectly found in global L0');
-                } else {
-                    logWorkflow.success('No unauthorized spend action found in global L0 as expected');
-                    return true;
-                }
-            },
+    for (let attempt = 1; attempt <= CONSTANTS.MAX_VERIFICATION_ATTEMPTS; attempt++) {
+        const { data: snapshot } = await axios.get(
+            `${urls.globalL0Url}/global-snapshots/latest/combined`,
             {
-                name: 'Verify unauthorized spend action',
-                maxAttempts: CONSTANTS.MAX_VERIFICATION_ATTEMPTS,
-                interval: CONSTANTS.VERIFICATION_INTERVAL_MS,
-                handleError: (error, attempt) => {
-                    if (attempt < CONSTANTS.MAX_VERIFICATION_ATTEMPTS) {
-                        logWorkflow.warning(`Attempt ${attempt}: ${error.message}. Retrying...`);
-                    } else {
-                        logWorkflow.error(`Failed after ${attempt} attempts: ${error.message}`);
-                    }
-                }
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    Pragma: 'no-cache',
+                    Expires: '0',
+                },
             }
         );
-    } catch (error) {
-        logWorkflow.error(`Error verifying unauthorized spend action in global L0: ${error.message}`);
-        throw error;
+
+        const currentOrdinal = snapshot[0]?.value?.ordinal;
+        if (startOrdinal === null) {
+            startOrdinal = currentOrdinal;
+        }
+
+        const spendActions = [...(snapshot[0]?.value?.spendActions?.[tokenId] || [])];
+        if (lastOrdinal && currentOrdinal > lastOrdinal + 1) {
+            for (let ordinal = lastOrdinal + 1; ordinal < currentOrdinal; ordinal++) {
+                try {
+                    const { data: missingSnapshot } = await axios.get(
+                        `${urls.globalL0Url}/global-snapshots/${ordinal}`
+                    );
+                    spendActions.push(...(missingSnapshot?.value?.spendActions?.[tokenId] || []));
+                } catch (error) {
+                    logWorkflow.warn(`Failed to fetch snapshot for ordinal ${ordinal}: ${error.message}`);
+                }
+            }
+        }
+        lastOrdinal = currentOrdinal;
+
+        const wronglyAccepted = spendActions.find(action => {
+            const [firstSpendTransaction, secondSpendTransaction] = action.spendTransactions || [];
+            return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransactionA) &&
+                sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(spendTransactionB);
+        });
+
+        if (wronglyAccepted) {
+            throw new Error(
+                `Double-use spend action was accepted in global L0 but should have been rejected: ${JSON.stringify(wronglyAccepted)}`
+            );
+        }
+
+        if (startOrdinal !== null && currentOrdinal - startOrdinal >= ordinalsToConfirmAbsence) {
+            logWorkflow.success(
+                `Double-use spend action correctly absent across ${ordinalsToConfirmAbsence}+ ordinals in global L0`
+            );
+            return true;
+        }
+
+        await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS);
     }
+
+    logWorkflow.success('Double-use spend action correctly absent in global L0');
+    return true;
 };
 
 const waitForAllAllowSpendsToExpire = async (l0Url) => {
