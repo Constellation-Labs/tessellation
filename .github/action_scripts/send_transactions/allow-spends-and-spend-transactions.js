@@ -1586,14 +1586,21 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
     // was correctly rejected. Reads the same artifact field as verifySpendActionInGlobalL0:
     // snapshot[0].value.spendActions[tokenId]. The previous version read snapshot.spendActions (always
     // undefined on the combined [signed, info] response) and so passed vacuously.
-    // Keep small enough to be reached within the MAX_VERIFICATION_ATTEMPTS budget at normal snapshot cadence:
-    // the loop below raises if the chain does not advance this many ordinals, so too large a value would turn a
-    // healthy but slower chain into a false failure. The double-use spend is processed within a few ordinals.
+    // Confirming absence needs FRESH global ordinals, not a fixed amount of wall-clock time. gl0 cadence can
+    // degrade to tens of seconds per ordinal under a heavy double-use/double-spend block backlog late in a run,
+    // so a fixed attempt budget would turn a slow-but-live chain into a false failure. Instead, poll until
+    // `ordinalsToConfirmAbsence` NEW ordinals accrue (generous overall cap for a crawling chain), and RAISE only
+    // when absence is genuinely unverifiable: the chain serves no ordinal, or produces no new ordinal for
+    // `maxStallPolls` consecutive polls (stuck/forked). A slow chain is not a failure; a stalled one is. The
+    // double-use spend, if wrongly accepted, lands within a few ordinals.
     const ordinalsToConfirmAbsence = 5;
+    const maxStallPolls = 120;    // ~120s with zero ordinal progress => stuck; absence cannot be confirmed
+    const maxAbsencePolls = 600;  // ~10min hard cap so even a crawling (~minute/ordinal) chain reaches the window
     let startOrdinal = null;
     let lastOrdinal = null;
+    let pollsSinceProgress = 0;
 
-    for (let attempt = 1; attempt <= CONSTANTS.MAX_VERIFICATION_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= maxAbsencePolls; attempt++) {
         const { data: snapshot } = await axios.get(
             `${urls.globalL0Url}/global-snapshots/latest/combined`,
             {
@@ -1627,6 +1634,14 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
                 }
             }
         }
+
+        // Track fresh-ordinal progress: reset on advance so a slow-but-live chain keeps waiting, while a chain
+        // that stops producing ordinals trips the stall guard below.
+        if (lastOrdinal === null || currentOrdinal > lastOrdinal) {
+            pollsSinceProgress = 0;
+        } else {
+            pollsSinceProgress++;
+        }
         lastOrdinal = currentOrdinal;
 
         const wronglyAccepted = spendActions.find(action => {
@@ -1641,19 +1656,26 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
             );
         }
 
-        if (startOrdinal !== null && currentOrdinal - startOrdinal >= ordinalsToConfirmAbsence) {
+        if (currentOrdinal - startOrdinal >= ordinalsToConfirmAbsence) {
             logWorkflow.success(
                 `Double-use spend action correctly absent across ${ordinalsToConfirmAbsence}+ ordinals in global L0`
             );
             return true;
         }
 
+        if (pollsSinceProgress >= maxStallPolls) {
+            throw new Error(
+                `Global L0 produced no new ordinal for ${maxStallPolls} polls while checking double-use absence ` +
+                `(stuck at ${currentOrdinal}, start=${startOrdinal}); cannot confirm the double-use spend was rejected`
+            );
+        }
+
         await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS);
     }
 
     throw new Error(
-        `Global L0 did not advance ${ordinalsToConfirmAbsence} ordinals while checking double-use absence ` +
-        `(start=${startOrdinal}, last=${lastOrdinal})`
+        `Global L0 advanced only ${lastOrdinal - startOrdinal} of ${ordinalsToConfirmAbsence} ordinals needed to ` +
+        `confirm double-use absence within ${maxAbsencePolls} polls (start=${startOrdinal}, last=${lastOrdinal})`
     );
 };
 
