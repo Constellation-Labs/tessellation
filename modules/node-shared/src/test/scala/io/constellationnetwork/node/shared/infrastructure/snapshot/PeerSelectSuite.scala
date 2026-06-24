@@ -4,11 +4,13 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 
 import weaver.FunSuite
 
-/** Unit tests for the recovery forward source-corroboration gate (`PeerSelect.corroboratedAheadPool`).
+/** Unit tests for the recovery forward source-corroboration heuristic (`PeerSelect.corroboratedAheadPool`) and the `peersAtOrAbove` probe
+  * filter.
   *
-  * The gate must only let a recovering node follow a higher chain when a STRICT MAJORITY of responders corroborate the SAME ahead ordinal;
-  * otherwise it must fail closed (return all responders unchanged) so the node never converges onto an uncorroborated minority higher tip.
-  * (`String` stands in for the peer.)
+  * This is a LIVENESS / efficiency heuristic, not a fork-safety boundary (fork-safety on recovery is enforced on download: snapshot
+  * signature validation against the seedlist plus the optional seedlist-signed recovery checkpoint). The heuristic keeps the responders at
+  * the single most-common ahead ordinal only when that ordinal has a strict majority -- biasing sourcing away from a lone raced-ahead peer
+  * -- otherwise returns all responders unchanged. (`String` stands in for the peer.)
   */
 object PeerSelectSuite extends FunSuite {
 
@@ -48,5 +50,25 @@ object PeerSelectSuite extends FunSuite {
       PeerSelect.corroboratedAheadPool(responders, Some(ord(100L))) == responders,
       "with no ahead responder the gate must be inert so rollback recovery is unaffected"
     )
+  }
+
+  test("peersAtOrAbove keeps peers at or above the ordinal and drops those below") {
+    val responded = List(at("a", 255L), at("b", 255L), at("c", 199L), at("d", 154L))
+    val result = PeerSelect.peersAtOrAbove(responded, ord(255L))
+    expect(result.toSet == Set("a", "b"), s"only peers with tip >= 255 can serve ord 255, got $result")
+  }
+
+  test("peersAtOrAbove is inclusive at the boundary ordinal") {
+    val responded = List(at("a", 100L), at("b", 101L), at("c", 99L))
+    val result = PeerSelect.peersAtOrAbove(responded, ord(100L))
+    expect(result.toSet == Set("a", "b"), s"a tip == the target ordinal must be kept, got $result")
+  }
+
+  test("peersAtOrAbove drops a behind stale-Ready source so the hash probe cannot wedge on its 503") {
+    // Mutual-503 scenario: 2 Ready peers at the tip (255) plus 2 recovering peers behind (199, 154) that would
+    // 503 the /255/hash probe. The corroboration probe must target only the at-tip peers.
+    val responded = List(at("ready1", 255L), at("ready2", 255L), at("recovering1", 199L), at("recovering2", 154L))
+    val result = PeerSelect.peersAtOrAbove(responded, ord(255L))
+    expect(result.toSet == Set("ready1", "ready2"), s"must drop the behind recovering peers, got $result")
   }
 }

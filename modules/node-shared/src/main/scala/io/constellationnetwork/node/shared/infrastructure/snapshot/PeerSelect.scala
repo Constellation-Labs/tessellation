@@ -58,18 +58,22 @@ object PeerSelect {
   case object NoValidPeersForRecoverySource extends NoStackTrace
   case object NoHashes extends NoStackTrace
 
-  /** Recovery forward source-corroboration gate (pure; unit-tested in PeerSelectSuite).
+  /** Recovery forward source-corroboration heuristic (pure; unit-tested in PeerSelectSuite).
+    *
+    * LIVENESS / EFFICIENCY ONLY -- this is NOT a fork-safety boundary. Fork-safety on recovery is enforced at the download/validation
+    * layer: every downloaded snapshot is cryptographically signature-validated against the seedlist (see
+    * `Download.validateSnapshotSignatures`), and an optional seedlist-signed recovery checkpoint pins the canonical `(ordinal, hash)` the
+    * chain must pass through (see `RecoveryCheckpoint`). Source selection only chooses WHICH peer to download from; it cannot, on its own,
+    * distinguish the canonical chain from a minority fork (the per-round committee is not available here), so it does not try to -- a
+    * chosen source's snapshots are still fully validated on download.
     *
     * Given each responder's latest ordinal and the caller's local ordinal, decide which responders to keep as download-source candidates.
-    * Returns the responders at the single most-common AHEAD ordinal ONLY when that ordinal is reported by a STRICT MAJORITY of all
-    * responders; otherwise returns the full responder list unchanged (FAIL CLOSED). So a sub-quorum minority that has run ahead (a fork),
-    * or an ahead set split across ordinals, never causes us to follow it -- we do not converge the majority onto an uncorroborated minority
-    * higher tip. The caller's existing majority-(ordinal,hash) validation then runs on whatever pool is returned, validating the hash at
-    * the corroborated ordinal. Inert when `minOrdinalExclusive` is `None`, or when no responder is strictly ahead (rollback / already
-    * caught up).
+    * Returns the responders at the single most-common AHEAD ordinal when that ordinal is reported by a strict majority of responders;
+    * otherwise returns the full responder list unchanged. This biases sourcing away from a lone peer that has raced ahead (avoids wasting a
+    * download attempt on an uncorroborated tip), but it is a heuristic, not a safety guarantee. Inert when `minOrdinalExclusive` is `None`,
+    * or when no responder is strictly ahead (rollback / already caught up).
     *
-    * Determinism note: at most one ordinal can be a strict majority, so the `maxByOption` tiebreak only matters among sub-majority groups,
-    * which are all rejected by the filter -- the OUTCOME is fail-closed regardless of the tiebreak.
+    * Determinism note: at most one ordinal can be a strict majority, so the `maxByOption` tiebreak only matters among sub-majority groups.
     */
   def corroboratedAheadPool[A](
     responded: List[(A, SnapshotOrdinal)],
@@ -83,6 +87,15 @@ object PeerSelect {
       }.map { case (_, peersAtOrdinal) => peersAtOrdinal }
         .getOrElse(responded)
     }
+
+  /** Keep only the peers whose advertised latest ordinal is at or above `ordinal` -- i.e. the peers that can actually serve the (ordinal,
+    * hash) corroboration probe. A peer below it cannot: a recovering (not-Ready) peer returns 503 and a Ready-but-behind peer returns 404.
+    * Sourcing the probe set from these live tips (rather than the ClusterStorage-state pool, which can be stale) avoids querying peers that
+    * will fail; the point is that a stale-"Ready" laggard's 503 must not abort source selection (the mutual-503 recovery wedge). Pure;
+    * unit-tested in PeerSelectSuite.
+    */
+  def peersAtOrAbove[A](responded: List[(A, SnapshotOrdinal)], ordinal: SnapshotOrdinal): List[A] =
+    responded.collect { case (peer, peerOrdinal) if peerOrdinal.value.value >= ordinal.value.value => peer }
 
   def make[F[_]: Async: Random, S <: Snapshot, SI <: SnapshotInfo[_]](
     storage: ClusterStorage[F],
@@ -144,22 +157,27 @@ object PeerSelect {
           snapshotClient.getLatestOrdinal(peer).map(ordinal => Option((peer, ordinal))).handleError(_ => Option.empty)
         }
         .map(_.flatten)
-        // Recovery forward source-corroboration: when `minOrdinalExclusive` is set (recovery path), keep
-        // only the corroborated ahead pool -- the responders at the single most-common ahead ordinal, and
-        // only if that ordinal is a STRICT MAJORITY of responders -- else the full responder list (fail
-        // closed). Breaks the mutual-503 deadlock where equally-stuck peers pick each other, without ever
-        // following an uncorroborated minority higher tip. Inert for normal `select` (None). See
-        // `corroboratedAheadPool`.
+        // Recovery forward source-corroboration (LIVENESS heuristic, not fork-safety -- downloaded snapshots
+        // are signature-validated and optionally checkpoint-gated regardless of source; see
+        // `corroboratedAheadPool`): when `minOrdinalExclusive` is set (recovery path), keep only the
+        // responders at the single most-common ahead ordinal when that ordinal has a strict majority -- else
+        // the full responder list. Biases sourcing away from a lone raced-ahead peer and breaks the
+        // mutual-503 deadlock where equally-stuck peers pick each other. Inert for normal `select` (None).
         .map(corroboratedAheadPool(_, minOrdinalExclusive))
         .flatMap(responded => MonadThrow[F].fromOption(responded.toNel, NoPeersToSelect))
       latestOrdinals = peerOrdinals.map { case (_, ordinal) => ordinal }
       ordinalDistribution = peerOrdinals.groupMap { case (_, ordinal) => ordinal } { case (peer, _) => peer }
       (majorityOrdinal, _) = latestOrdinals.groupBy(identity).maxBy { case (_, ordinals) => ordinals.size }
-      peerDistribution <- peers
-        .parTraverseN(maxConcurrentPeerInquiries)(getSnapshotHashByPeer(_, majorityOrdinal))
+      // Validate the (ordinal, hash) only against peers whose advertised tip is >= majorityOrdinal
+      // (peersAtOrAbove): a peer below it cannot serve that ordinal. Crucially this also tolerates per-peer
+      // failures -- mirroring the getLatestOrdinal probe above -- so one stale-"Ready" laggard's 503 cannot
+      // abort the whole selection and wedge recovery (the mutual-503 deadlock). The source set is peerOrdinals
+      // (the live tips just probed), not the possibly-stale ClusterStorage `peers` pool.
+      peerDistribution <- peersAtOrAbove(peerOrdinals.toList, majorityOrdinal)
+        .parTraverseN(maxConcurrentPeerInquiries)(peer => getSnapshotHashByPeer(peer, majorityOrdinal).handleError(_ => Option.empty))
         .flatMap { maybePeerSnapshotHashes =>
           MonadThrow[F].fromOption(
-            maybePeerSnapshotHashes.toList.flatten.toNel,
+            maybePeerSnapshotHashes.flatten.toNel,
             NoHashes
           )
         }
