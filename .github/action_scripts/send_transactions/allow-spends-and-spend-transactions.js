@@ -1586,7 +1586,10 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
     // was correctly rejected. Reads the same artifact field as verifySpendActionInGlobalL0:
     // snapshot[0].value.spendActions[tokenId]. The previous version read snapshot.spendActions (always
     // undefined on the combined [signed, info] response) and so passed vacuously.
-    const ordinalsToConfirmAbsence = 15;
+    // Keep small enough to be reached within the MAX_VERIFICATION_ATTEMPTS budget at normal snapshot cadence:
+    // the loop below raises if the chain does not advance this many ordinals, so too large a value would turn a
+    // healthy but slower chain into a false failure. The double-use spend is processed within a few ordinals.
+    const ordinalsToConfirmAbsence = 5;
     let startOrdinal = null;
     let lastOrdinal = null;
 
@@ -1603,6 +1606,10 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
         );
 
         const currentOrdinal = snapshot[0]?.value?.ordinal;
+        if (currentOrdinal === undefined || currentOrdinal === null) {
+            throw new Error(`Global L0 latest combined snapshot did not include an ordinal: ${JSON.stringify(snapshot[0])}`);
+        }
+
         if (startOrdinal === null) {
             startOrdinal = currentOrdinal;
         }
@@ -1616,7 +1623,7 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
                     );
                     spendActions.push(...(missingSnapshot?.value?.spendActions?.[tokenId] || []));
                 } catch (error) {
-                    logWorkflow.warn(`Failed to fetch snapshot for ordinal ${ordinal}: ${error.message}`);
+                    throw new Error(`Failed to fetch snapshot for ordinal ${ordinal}: ${error.message}`);
                 }
             }
         }
@@ -1644,8 +1651,10 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
         await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS);
     }
 
-    logWorkflow.success('Double-use spend action correctly absent in global L0');
-    return true;
+    throw new Error(
+        `Global L0 did not advance ${ordinalsToConfirmAbsence} ordinals while checking double-use absence ` +
+        `(start=${startOrdinal}, last=${lastOrdinal})`
+    );
 };
 
 const waitForAllAllowSpendsToExpire = async (l0Url) => {
