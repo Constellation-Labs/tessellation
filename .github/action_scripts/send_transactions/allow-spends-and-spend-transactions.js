@@ -80,29 +80,56 @@ const transferTokensToCurrencyId = async (urls) => {
     // valid user leg down with it. Wait until the funding is reflected in the global snapshot balance before
     // proceeding. getRandomAmounts().spend is at most 50, the most a metagraph leg can require.
     const minCurrencyIdDagBalance = 50
-    await withRetry(
-        async () => {
-            const { data: snapshot } = await axios.get(
-                `${urls.globalL0Url}/global-snapshots/latest/combined`,
-                {
-                    headers: {
-                        'Cache-Control': 'no-cache, no-store, must-revalidate',
-                        Pragma: 'no-cache',
-                        Expires: '0',
-                    },
-                }
-            )
-            const balance = snapshot[1]?.balances?.[CONSTANTS.CURRENCY_TOKEN_ID] || 0
-            if (balance < minCurrencyIdDagBalance) {
-                throw new Error(
-                    `currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} DAG balance not funded yet: ${balance} < ${minCurrencyIdDagBalance}`
-                )
+    // Progress-aware wait: the funding transferDag must commit into a global snapshot, but gl0 cadence can crawl
+    // under heavy CI load, so a fixed attempt budget false-fails a slow-but-live chain. Keep polling while gl0
+    // keeps producing new ordinals; fail only if it is genuinely stuck (no new ordinal for maxStallPolls) or the
+    // generous overall cap is reached. The combined-snapshot fetch already carries the ordinal, so no extra query.
+    const maxFundingPolls = 600  // ~10min generous cap so a crawling-but-live chain still commits the funding tx
+    const maxStallPolls = 120    // ~120s with no new gl0 ordinal => stuck; funding cannot land
+    let lastOrdinal = null
+    let pollsSinceProgress = 0
+    let funded = false
+    for (let attempt = 1; attempt <= maxFundingPolls; attempt++) {
+        const { data: snapshot } = await axios.get(
+            `${urls.globalL0Url}/global-snapshots/latest/combined`,
+            {
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    Pragma: 'no-cache',
+                    Expires: '0',
+                },
             }
+        )
+        const currentOrdinal = snapshot[0]?.value?.ordinal ?? null
+        const balance = snapshot[1]?.balances?.[CONSTANTS.CURRENCY_TOKEN_ID] || 0
+        if (balance >= minCurrencyIdDagBalance) {
             logWorkflow.info(`currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} funded with DAG balance ${balance}`)
-            return balance
-        },
-        { name: 'waitForCurrencyIdFunding' }
-    )
+            funded = true
+            break
+        }
+
+        if (currentOrdinal !== null && (lastOrdinal === null || currentOrdinal > lastOrdinal)) {
+            lastOrdinal = currentOrdinal
+            pollsSinceProgress = 0
+        } else {
+            pollsSinceProgress++
+        }
+        if (pollsSinceProgress >= maxStallPolls) {
+            throw new Error(
+                `currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} not funded and global L0 produced no new ordinal for ` +
+                `${maxStallPolls} polls (stuck at ${lastOrdinal}); funding tx did not commit`
+            )
+        }
+        logWorkflow.info(
+            `waitForCurrencyIdFunding attempt ${attempt}: DAG balance ${balance} < ${minCurrencyIdDagBalance} (gl0 ordinal ${currentOrdinal})`
+        )
+        await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS)
+    }
+    if (!funded) {
+        throw new Error(
+            `currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} not funded within ${maxFundingPolls} polls; funding tx did not commit`
+        )
+    }
 }
 
 const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0Url, isCurrency = false) => {

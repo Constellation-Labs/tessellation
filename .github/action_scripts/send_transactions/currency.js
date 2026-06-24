@@ -74,10 +74,20 @@ const waitForBalances = async (label, fetchBalances, expectedBalances) => {
   )
 }
 
-const waitForAnyBalanceMatch = async (label, fetchBalances, predicates) => {
-  const deadline = Date.now() + BALANCE_QUERY_TIMEOUT
+// `progress` (optional): { getOrdinal, stallMs, maxMs } makes the wait tolerant of a slow-but-live chain.
+// Instead of a fixed wall-clock deadline, keep polling while the chain keeps producing new ordinals; give up
+// only if it is genuinely stuck (no new ordinal for stallMs) or the generous maxMs cap is reached. gl0 cadence
+// can crawl under heavy CI load, so a fixed window false-fails a healthy chain whose double-spend winner simply
+// has not finalized yet. A slow chain is not a failure; a stalled one is.
+const waitForAnyBalanceMatch = async (label, fetchBalances, predicates, progress = null) => {
+  const useProgress = progress && typeof progress.getOrdinal === 'function'
+  const stallMs = (progress && progress.stallMs) || 120 * 1000
+  const maxMs = (progress && progress.maxMs) || 10 * 60 * 1000
+  const deadline = Date.now() + (useProgress ? maxMs : BALANCE_QUERY_TIMEOUT)
   let lastBalances = []
   let attempt = 0
+  let lastOrdinal = null
+  let lastProgressAt = Date.now()
 
   while (Date.now() <= deadline) {
     attempt += 1
@@ -93,18 +103,38 @@ const waitForAnyBalanceMatch = async (label, fetchBalances, predicates) => {
       return { balances: lastBalances, matched }
     }
 
+    if (useProgress) {
+      let currentOrdinal = null
+      try {
+        currentOrdinal = await progress.getOrdinal()
+      } catch (e) {
+        // transient fetch error: treat as no progress this poll
+      }
+      if (currentOrdinal !== null && (lastOrdinal === null || currentOrdinal > lastOrdinal)) {
+        lastOrdinal = currentOrdinal
+        lastProgressAt = Date.now()
+      }
+      if (Date.now() - lastProgressAt >= stallMs) {
+        throw Error(
+          `${label} balances did not settle and global L0 produced no new ordinal for ${Math.round(
+            stallMs / 1000,
+          )}s (stuck at ${lastOrdinal}); got ${lastBalances.join(', ')}`,
+        )
+      }
+    }
+
     logMessage(
       `${label} balances not ready on attempt ${attempt}; got ${lastBalances.join(
         ', ',
-      )}`,
+      )}${useProgress ? ` (gl0 ordinal ${lastOrdinal})` : ''}`,
     )
     await sleep(BALANCE_QUERY_INTERVAL)
   }
 
   throw Error(
-    `${label} balances did not reach any expected state within ${BALANCE_QUERY_TIMEOUT} ms; got ${lastBalances.join(
-      ', ',
-    )}`,
+    `${label} balances did not reach any expected state within ${
+      useProgress ? maxMs : BALANCE_QUERY_TIMEOUT
+    } ms; got ${lastBalances.join(', ')}`,
   )
 }
 
@@ -400,6 +430,18 @@ const doubleSpendTest = async (networkOptions, isMetagraph) => {
         await sendingClient.getBalanceFor(THIRD_WALLET_ADDRESS),
       ],
       [secondWalletState, thirdWalletState],
+      {
+        // Treat the global L0 ordinal as the cluster-liveness signal: a double-spend winner can take many
+        // ordinals to finalize when gl0 cadence is slow under load, so wait as long as gl0 keeps advancing
+        // and fail only if it genuinely stalls.
+        getOrdinal: async () => {
+          const { data } = await axios.get(
+            `${networkOptions.l0GlobalUrl}/global-snapshots/latest/combined`,
+            { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache', Expires: '0' } },
+          )
+          return data?.[0]?.value?.ordinal ?? null
+        },
+      },
     )
 
     logMessage(`FirstWalletBalance: ${balance1}`)
