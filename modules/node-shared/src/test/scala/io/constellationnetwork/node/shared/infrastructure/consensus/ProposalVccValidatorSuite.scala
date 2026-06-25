@@ -137,7 +137,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view3_proposal_missing_view_cert")),
+      result == Left(ProposalRejection("view3_proposal_missing_view_cert", ProposalRejection.Kind.MissingViewCert)),
       s"post-seed no-cert must be rejected, got $result"
     )
   }
@@ -164,7 +164,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view1_proposal_missing_view_cert")),
+      result == Left(ProposalRejection("view1_proposal_missing_view_cert", ProposalRejection.Kind.MissingViewCert)),
       s"view-1 no-cert at initialView=0 must be rejected, got $result"
     )
   }
@@ -199,7 +199,8 @@ object ProposalVccValidatorSuite extends FunSuite {
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
     )
-    val expected = ProposalRejection("vcc_view_mismatch vccFromView=0 vccToView=1 proposalView=2")
+    val expected =
+      ProposalRejection("vcc_view_mismatch vccFromView=0 vccToView=1 proposalView=2", ProposalRejection.Kind.VccViewMismatch)
     expect(result == Left(expected), s"stale 0->1 VCC on view-2 proposal must be rejected, got $result")
   }
 

@@ -116,8 +116,9 @@ object ProposalVccValidator {
       (proposalVcc, proposalTimeoutCertificate) match {
         case (None, None) if isSoloCore       => Right(())
         case (None, None) if isRoundStartView => Right(())
-        case (None, None)                     => Left(ProposalRejection(s"view${proposalView}_proposal_missing_view_cert"))
-        case (Some(_), Some(_))               => Left(ProposalRejection(s"view${proposalView}_proposal_multiple_view_certs"))
+        case (None, None) =>
+          Left(ProposalRejection(s"view${proposalView}_proposal_missing_view_cert", ProposalRejection.Kind.MissingViewCert))
+        case (Some(_), Some(_)) => Left(ProposalRejection(s"view${proposalView}_proposal_multiple_view_certs"))
         // alpha.90 issue 2: enforce vcc.toView == proposal.view (and consequently
         // vcc.fromView == proposal.view - 1) before any other Some(vcc) checks. The VCC
         // assembly path in `StateTransitions.checkViewChangeAssembly` is strict --
@@ -131,7 +132,8 @@ object ProposalVccValidator {
         case (Some(vcc), None) if vcc.toView =!= proposalView || vcc.fromView =!= (proposalView - 1L) =>
           Left(
             ProposalRejection(
-              s"vcc_view_mismatch vccFromView=${vcc.fromView} vccToView=${vcc.toView} proposalView=$proposalView"
+              s"vcc_view_mismatch vccFromView=${vcc.fromView} vccToView=${vcc.toView} proposalView=$proposalView",
+              ProposalRejection.Kind.VccViewMismatch
             )
           )
         case (Some(vcc), None) if !certQuorumMet(vcc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)) =>
@@ -184,7 +186,8 @@ object ProposalVccValidator {
         case (None, Some(tc)) if tc.toView =!= proposalView || tc.fromView =!= (proposalView - 1L) =>
           Left(
             ProposalRejection(
-              s"tc_view_mismatch tcFromView=${tc.fromView} tcToView=${tc.toView} proposalView=$proposalView"
+              s"tc_view_mismatch tcFromView=${tc.fromView} tcToView=${tc.toView} proposalView=$proposalView",
+              ProposalRejection.Kind.TcViewMismatch
             )
           )
         case (None, Some(tc)) if !certQuorumMet(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)) =>

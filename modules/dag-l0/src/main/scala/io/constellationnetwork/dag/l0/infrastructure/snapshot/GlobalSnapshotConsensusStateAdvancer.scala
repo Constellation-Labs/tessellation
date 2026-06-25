@@ -2069,19 +2069,14 @@ object GlobalSnapshotConsensusStateAdvancer {
             leaderProposal.view < state.initialViewNumber.toLong &&
               leaderProposal.vcc.isEmpty &&
               leaderProposal.timeoutCertificate.isEmpty &&
-              rejection.code.startsWith("view") &&
-              rejection.code.endsWith("_proposal_missing_view_cert")
+              rejection.isMissingViewCert
           // Alpha.97 stale-local-view detection. Distinct from the stale-slot pattern
           // above: the stale-slot fires when our recorded `initialViewNumber` advanced
           // past the leader's proposalView (the slot self-heals via prune). Stale-local-
           // view fires the opposite way: leader is AHEAD of our local view, our local
           // round state is the wedge. Recover via the in-place soft reset.
           val isStaleLocalViewPattern =
-            !isStaleSlotPattern && (
-              (rejection.code.startsWith("view") && rejection.code.endsWith("_proposal_missing_view_cert")) ||
-                rejection.code.startsWith("vcc_view_mismatch") ||
-                rejection.code.startsWith("tc_view_mismatch")
-            )
+            !isStaleSlotPattern && rejection.triggersStaleViewRecovery
           val maybePruneAndMeter =
             if (isStaleSlotPattern)
               Metrics[F].incrementCounter(

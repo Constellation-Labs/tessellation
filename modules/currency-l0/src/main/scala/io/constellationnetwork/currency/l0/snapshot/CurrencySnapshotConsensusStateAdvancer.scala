@@ -1273,8 +1273,7 @@ object CurrencySnapshotConsensusStateAdvancer {
             leaderProposal.view < state.initialViewNumber.toLong &&
               leaderProposal.vcc.isEmpty &&
               leaderProposal.timeoutCertificate.isEmpty &&
-              rejection.code.startsWith("view") &&
-              rejection.code.endsWith("_proposal_missing_view_cert")
+              rejection.isMissingViewCert
           val maybePruneAndMeter =
             if (isStaleSlotPattern)
               Metrics[F].incrementCounter(
