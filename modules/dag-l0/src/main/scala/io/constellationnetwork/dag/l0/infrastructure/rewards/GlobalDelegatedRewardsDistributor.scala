@@ -512,10 +512,17 @@ object GlobalDelegatedRewardsDistributor {
               case (address, withdrawals) =>
                 withdrawals.toList.mapFilter { withdrawal =>
                   Option.when(withdrawal.rewards.value > Balance.empty.value) {
-                    (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
+                    address -> withdrawal.rewards.value.value
                   }
                 }
-            }.toMap
+            }
+              // A single address can have several delegated-stake positions whose withdrawals
+              // expire in the same snapshot. Sum their rewards per address so every position is
+              // paid out; the previous `.toMap` kept only the last entry and silently dropped
+              // the rewards of the other positions.
+              .groupMapReduce { case (address, _) => address } { case (_, reward) => reward }(_ + _).view
+              .mapValues(total => Amount(NonNegLong.unsafeFrom(total)))
+              .toMap
           )
 
         totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(
