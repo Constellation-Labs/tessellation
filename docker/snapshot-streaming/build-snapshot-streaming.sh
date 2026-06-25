@@ -41,8 +41,10 @@ else
 
   # Apply compatibility patch if present (breaks circular dependency with tessellation)
   # Uses --check first to skip gracefully if already applied upstream.
-  # The patch drops the obsolete tessellation3Migration arg from CurrencySnapshotValidator.make
-  # so snapshot-streaming compiles against tessellation v4.1.0 (the validator dropped that param).
+  # The patch adapts snapshot-streaming (release/testnet) to the tessellation v4.1.0 API:
+  #   - drops the obsolete tessellation3Migration arg from CurrencySnapshotValidator.make
+  #   - passes the whole FieldsAddedOrdinals + environment to GlobalSnapshotStateChannelEventsProcessor.make
+  #     (v4.1.0 resolves scFeeBalanceFromContext internally instead of taking a pre-resolved ordinal).
   # release/testnet's SharedConfig already has forkInfoStorage removed; on a local tessellation
   # that still carries forkInfoStorage (develop, feature branches),
   # applying it leaves the constructor one arg short — detect and skip in that case.
