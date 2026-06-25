@@ -6,16 +6,10 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 
 object ActiveFacilitatorAdmission {
-  private val ParticipationRatioScale = 1000000L
-
-  private def minParticipationRatioScaled(minParticipationRatio: Double): Long =
-    math.round(minParticipationRatio * ParticipationRatioScale)
-
-  private def participationRatioScaled(completed: Int, participated: Int): Long =
-    if (participated <= 0) 0L else completed.toLong * ParticipationRatioScale / participated.toLong
-
-  private def meetsParticipationRatio(completed: Int, participated: Int, minParticipationRatioScaled: Long): Boolean =
-    participated > 0 && completed.toLong * ParticipationRatioScale >= minParticipationRatioScaled * participated.toLong
+  // Participation-ratio math is the shared, integer-only PeerQualityClassifier so the dag-l0 operator committee
+  // view cannot drift from this admission filter (feedback_share_logic_no_drift). Imported so the call sites
+  // below read unchanged.
+  import PeerQualityClassifier.{meetsParticipationRatio, minParticipationRatioScaled, participationRatioScaled}
 
   sealed abstract class ExclusionReason(val label: String)
   object ExclusionReason {

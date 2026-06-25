@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLi
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
+import io.constellationnetwork.node.shared.infrastructure.consensus.PeerQualityClassifier
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
@@ -163,16 +164,15 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   // time → reflects the most recently finalized round. Returns empty map until the first round
   // finalizes.
   //
-  // TODO(cleanup-pass): extract the chronic-classifier predicate to a shared helper called by
-  // BOTH GlobalSnapshotConsensusStateCreator:255 AND this lookup. Today the threshold logic is
-  // duplicated here as hard-coded defaults to avoid plumbing ConsensusConfig through
-  // HttpApi.make. The defaults below match the production ConsensusConfig defaults (see
-  // node-shared/.../config/types.scala — minObservationHistoryFloor=30, minParticipationRatio=0.5).
-  // If an operator tunes consensus thresholds away from defaults, the served `status` field
-  // drifts from the consensus-side decision until the refactor lands. `completed`,
-  // `participated`, `ratio`, `probationRoundsRemaining` are always authoritative regardless.
-  // Shape of the cleanup: PeerQualityClassifier.isChronic(completed, participated, config),
-  // plus passing ConsensusConfig through HttpApi.make → Main.scala wires cfg.snapshot.consensus.
+  // The chronic PREDICATE is the shared, integer-only PeerQualityClassifier.isChronic — identical to the
+  // consensus admission filter (ActiveFacilitatorAdmission), so the served `status` classification cannot drift
+  // from or disagree with the consensus-side decision (feedback_share_logic_no_drift). The two thresholds below
+  // are view-specific display knobs: the observation floor (30) is intentionally higher than the consensus
+  // minParticipationObservations so the UI does not flag peers with little history; the ratio (0.5) mirrors the
+  // ConsensusConfig.minParticipationRatio default. Residual (smaller, separate): an operator who tunes
+  // minParticipationRatio away from its default still drifts here until ConsensusConfig is plumbed through
+  // HttpApi.make → Main.scala. `completed`/`participated`/`ratio`/`probationRoundsRemaining` are always
+  // authoritative regardless of `status`.
   private val ChronicMinObservationHistoryFloor: Int = 30
   private val ChronicMinParticipationRatio: Double = 0.5
 
@@ -186,8 +186,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
           val (completed, participated) = outcome.peerQuality.getOrElse(pid, (0, 0))
           val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
           val isChronic =
-            participated >= ChronicMinObservationHistoryFloor &&
-              ratio < ChronicMinParticipationRatio
+            PeerQualityClassifier.isChronic(completed, participated, ChronicMinObservationHistoryFloor, ChronicMinParticipationRatio)
           val onProbation = probation.contains(pid)
           val status: PeerCommitteeStatus =
             if (onProbation) PeerCommitteeStatus.Probation
