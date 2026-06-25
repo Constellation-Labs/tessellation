@@ -410,16 +410,17 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       acceptedTokenUnlocks
     )
 
-    updatedBalancesByTokenLocks = tokenLockOps.updateBalancesByTokenLocks(
-      lastGlobalSnapshotEpochProgress,
-      updatedBalancesByFeeTransactions,
-      acceptedTokenLocks,
-      activeTokenLocks,
-      acceptedTokenUnlocks
-    ) match {
-      case Right(balances) => balances
-      case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString)
-    }
+    updatedBalancesByTokenLocks <- Async[F].fromEither(
+      tokenLockOps
+        .updateBalancesByTokenLocks(
+          lastGlobalSnapshotEpochProgress,
+          updatedBalancesByFeeTransactions,
+          acceptedTokenLocks,
+          activeTokenLocks,
+          acceptedTokenUnlocks
+        )
+        .leftMap(error => SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString))
+    )
 
     acceptedCurrencyAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
     incomingCurrencyAllowSpends = acceptedCurrencyAllowSpends
@@ -464,14 +465,15 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         allowSpends.toList.traverse(_.toHashed).map(hashedAllowSpends => address -> hashedAllowSpends)
     }.map(_.toSortedMap)
 
-    updatedBalancesBySpendTransactions = allowSpendOps.updateCurrencyBalancesBySpendTransactions(
-      updatedBalancesByAllowSpends,
-      allActiveCurrencyAllowSpends,
-      metagraphIdSpendTransactions
-    ) match {
-      case Right(balances) => balances
-      case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString)
-    }
+    updatedBalancesBySpendTransactions <- Async[F].fromEither(
+      allowSpendOps
+        .updateCurrencyBalancesBySpendTransactions(
+          updatedBalancesByAllowSpends,
+          allActiveCurrencyAllowSpends,
+          metagraphIdSpendTransactions
+        )
+        .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
+    )
 
     updatedAllowSpendsCleaned = updatedAllowSpends.filter { case (_, allowSpends) => allowSpends.nonEmpty }
     updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }

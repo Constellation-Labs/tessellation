@@ -938,16 +938,17 @@ object GlobalSnapshotAcceptanceManager {
                 lastSnapshotContext.tokenLockBalances
               )
 
-            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
-              epochProgress,
-              updatedBalancesByAllowSpends,
-              globalTokenLocks,
-              globalActiveTokenLocks,
-              generatedTokenUnlocks
-            ) match {
-              case Right(balances) => balances
-              case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString)
-            }
+            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) <- Async[F].fromEither(
+              tokenLockStateManager
+                .updateGlobalBalancesByTokenLocks(
+                  epochProgress,
+                  updatedBalancesByAllowSpends,
+                  globalTokenLocks,
+                  globalActiveTokenLocks,
+                  generatedTokenUnlocks
+                )
+                .leftMap(error => SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString))
+            )
 
             lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
 
@@ -998,15 +999,15 @@ object GlobalSnapshotAcceptanceManager {
                   .filter(_.currencyId.isEmpty)
             }.toList
 
-            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) = spendTransactionBalanceManager
-              .updateGlobalBalancesBySpendTransactions(
-                updatedBalancesByTokenLocks,
-                allGlobalAllowSpends,
-                globalSpendTransactions
-              ) match {
-              case Right(balances) => balances
-              case Left(error)     => throw SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString)
-            }
+            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) <- Async[F].fromEither(
+              spendTransactionBalanceManager
+                .updateGlobalBalancesBySpendTransactions(
+                  updatedBalancesByTokenLocks,
+                  allGlobalAllowSpends,
+                  globalSpendTransactions
+                )
+                .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
+            )
 
             MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
               ordinal,
