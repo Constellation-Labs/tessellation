@@ -7,7 +7,6 @@
  * - Reset Euclid to run again (`hydra stop && hydra start-genesis`)
  */
 
-const path = require('path')
 const axios = require('axios')
 const { dag4 } = require('@stardust-collective/dag4')
 
@@ -40,6 +39,7 @@ const {
   fetchSnapshot,
   assertRewardTxnInSnapshot,
   assertTokenUnlockInSnapshot,
+  resolveNodeKeyPath,
 } = require('./lib')
 
 const throwUsage = () => {
@@ -260,31 +260,19 @@ const testCreateNodeParameters = async (urls) => {
     privateKeyString: privateKeyString1,
     nodeId: nodeId1,
     account: account1,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci'
-      ? '../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex'
-      : path.join(__dirname, 'keys', 'genesis-node.hex'),
-  )
+  } = extractKeysAndAccount(resolveNodeKeyPath('genesis-node', 0))
 
   const {
     privateKeyString: privateKeyString2,
     nodeId: nodeId2,
     account: account2,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci'
-      ? '../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex'
-      : path.join(__dirname, 'keys', 'validator-1-node.hex'),
-  )
+  } = extractKeysAndAccount(resolveNodeKeyPath('validator-1', 1))
 
   const {
     privateKeyString: privateKeyString3,
     nodeId: nodeId3,
     account: account3,
-  } = extractKeysAndAccount(
-    RUN_ENV === 'ci'
-      ? '../../code/hypergraph/dag-l0/validator-2/id_ecdsa.hex'
-      : path.join(__dirname, 'keys', 'validator-2-node.hex'),
-  )
+  } = extractKeysAndAccount(resolveNodeKeyPath('validator-2', 2))
 
   await checkInitialNodeParamsNode(urls, nodeId1)
   logWorkflow.info('Check initial node params is OK')
