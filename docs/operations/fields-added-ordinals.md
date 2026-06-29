@@ -42,7 +42,7 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `fixing-allow-spend-and-token-lock-validation` | 5058096 | 9999999 | 9999999 | 0 |
 | `set-sum-fix` | 9999999 | 9999999 | 9999999 | 0 |
 | `sc-fee-balance-from-context` | 9999999 | 3101393 | 9999999 | 0 |
-| `sub-trie-roots` | 9999999 | 9999999 | 9999999 | 0 |
+| `sub-trie-roots` | 9999999 | 9999999 | 9999999 | 9999999 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
@@ -114,6 +114,8 @@ The `DustSweep` config carries the threshold and the disposition (`config/types.
 ## Third example: subTrieRoots
 
 `subTrieRoots` (`config/types.scala:43-46`) is a threshold gate over the per-field MPT roots carried in `GlobalSnapshotStateProof`. Below the gate, MPT-format proofs keep the legacy shape: the overall `mptRoot` is present and the per-field proof slots remain empty. At and after the gate, those slots carry per-`GlobalStateFieldId` roots so a state-root mismatch can be localized to the divergent field (`GlobalSnapshotInfo.assembleMptProof`). This changes signed proof bytes, so public networks use `9999999` placeholders until a coordinated cold-restart ordinal is selected. `TessellationIOApp` resolves the environment entry once and passes it into `GlobalStateProofSelector`; absent environments fail closed to `SnapshotOrdinal.MaxValue`.
+
+Unlike its sibling gates, `dev` is also `9999999` (OFF) rather than `0`. This is the only `fields-added-ordinals` gate that alters the signed `GlobalSnapshotStateProof` itself, which `snapshot-streaming` independently re-derives and validates. Its release/testnet build constructs a 1-arg `GlobalStateProofSelector` (sub-trie roots OFF), so a dev cluster signing sub-trie-enabled proofs fails `snapshot-streaming` validation on every ordinal. Keep `dev` OFF until `snapshot-streaming` honors `subTrieRootsActivationOrdinal` too (a coordinated change in the `snapshot-streaming` repo, made when a network actually activates the gate).
 
 ## Operator checklist
 
