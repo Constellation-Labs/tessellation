@@ -40,6 +40,9 @@ object types {
     // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. testnet is
     // 0 (the fix is already live there); the mainnet entry is a placeholder to set to the coordinated launch ordinal.
     scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
+    // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.
+    subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with

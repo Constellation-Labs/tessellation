@@ -9,7 +9,7 @@ Snapshots are signed. Once an ordinal is finalized, its artifact bytes are fixed
 
 ## Mechanism
 
-`FieldsAddedOrdinals` is a flat record of maps, one per gated behavior (`config/types.scala:27-48`):
+`FieldsAddedOrdinals` is a flat record of maps, one per gated behavior (`config/types.scala:27-49`):
 
 ```scala
 case class FieldsAddedOrdinals(
@@ -24,6 +24,7 @@ case class FieldsAddedOrdinals(
   fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
   setSumFix: Map[AppEnvironment, SnapshotOrdinal],
   scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
 )
 ```
@@ -41,6 +42,7 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `fixing-allow-spend-and-token-lock-validation` | 5058096 | 9999999 | 9999999 | 0 |
 | `set-sum-fix` | 9999999 | 9999999 | 9999999 | 0 |
 | `sc-fee-balance-from-context` | 9999999 | 3101393 | 9999999 | 0 |
+| `sub-trie-roots` | 9999999 | 9999999 | 9999999 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
@@ -109,11 +111,16 @@ The `DustSweep` config carries the threshold and the disposition (`config/types.
 
 `scFeeBalanceFromContext` (`config/types.scala:38-42`) is a threshold gate over the balance source used by the state-channel fee-affordability check. At and after the gate the check reads the metagraph owner's balance from the deterministic `accept()` context (`lastGlobalSnapshotInfo.balances`); below it from the pre-fix `mptStore.getBalance` path, so already-signed history re-derives byte-identically (`GlobalSnapshotStateChannelEventsProcessor.scala:325`). testnet is `3101393` -- the exact ordinal where testnet switched from the v4.0.0 `mptStore` build to the alpha.0 context build (it stalled at 3101392 on 2026-03-17 and resumed at 3101393 on 2026-04-02), so the v4.0.0 `mptStore` window below the gate replays correctly. mainnet and integrationnet are `9999999` placeholders (both still on the pre-context `mptStore` path -- 3.5.x and 4.0.0-rc respectively), to be set to each network's context-deploy ordinal at deploy (`application.conf:275-284`).
 
+## Third example: subTrieRoots
+
+`subTrieRoots` (`config/types.scala:43-46`) is a threshold gate over the per-field MPT roots carried in `GlobalSnapshotStateProof`. Below the gate, MPT-format proofs keep the legacy shape: the overall `mptRoot` is present and the per-field proof slots remain empty. At and after the gate, those slots carry per-`GlobalStateFieldId` roots so a state-root mismatch can be localized to the divergent field (`GlobalSnapshotInfo.assembleMptProof`). This changes signed proof bytes, so public networks use `9999999` placeholders until a coordinated cold-restart ordinal is selected. `TessellationIOApp` resolves the environment entry once and passes it into `GlobalStateProofSelector`; absent environments fail closed to `SnapshotOrdinal.MaxValue`.
+
 ## Operator checklist
 
 - Ordinal gates are **consensus-critical** and must match cluster-wide. They live in `application.conf` and are packaged into the assembly jar (compile-time literals), so changing one is itself a coordinated jar redeploy.
 - Before launch, replace every mainnet placeholder with the real coordinated launch ordinal:
   - `sc-fee-balance-from-context.mainnet` and `.integrationnet` (both `9999999`, `application.conf:275-284`): set each to its context-deploy ordinal. testnet is already pinned to its real cutover (`3101393`). An unset env fails closed to the `mptStore` path.
+  - `sub-trie-roots.mainnet`, `.testnet`, and `.integrationnet` (all `9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. For a cold restart at checkpoint `N`, use `N + 1`.
   - `dust-sweeps` has no mainnet entry yet (`application.conf:286-292`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf:281-285`). Bump it up if the chain nears it before the coordinated cold restart completes.
 - These gates do NOT participate in `deterministicConfigHash`, so a wrong ordinal is NOT caught at handshake. It forks the chain when the gate is crossed. Verify them by inspection before deploy.
@@ -129,5 +136,7 @@ The `DustSweep` config carries the threshold and the disposition (`config/types.
 | Dust sweep acceptance wiring + `syncFull` | `GlobalSnapshotAcceptanceManager.scala:1086-1160` |
 | `scFeeBalanceFromContext` read site | `GlobalSnapshotStateChannelEventsProcessor.scala:325` |
 | `scFeeBalanceFromContext` resolution | `GlobalSnapshotConsensus.scala:150`, `SharedServices.scala:193` |
+| `subTrieRoots` proof assembly | `GlobalSnapshotInfo.scala:274-323` |
+| `subTrieRoots` selector wiring | `TessellationIOApp.scala:117-121`, `StateProofSelector.scala:33-41` |
 | `deterministicConfigHash` folded string | `config/types.scala:950-1044` (folded string ends `:1043`) |
 | `consensusSchemaVersion` | `config/types.scala:830` |

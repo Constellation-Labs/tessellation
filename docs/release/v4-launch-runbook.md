@@ -94,7 +94,14 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       and integrationnet to the coordinated context-deploy ordinal at deploy. Leaving an env unset
       keeps the pre-fix `mptStore` balance source.
 
-- [ ] **`dust-sweeps`** (`application.conf:286-292`, `config/types.scala:43-61`). Per-environment,
+- [ ] **`sub-trie-roots`** (`application.conf:285-294`, `config/types.scala:43-46`). At/after this
+      ordinal, MPT-format `GlobalSnapshotStateProof` carries per-`GlobalStateFieldId` roots in addition
+      to the overall `mptRoot`, making state-root divergence field-localizable. This changes signed proof
+      bytes, so mainnet/testnet/integrationnet are `9999999` placeholders until each network deliberately
+      activates the proof shape at a coordinated cold-restart ordinal. For a restart checkpoint `N`, use
+      `N + 1`.
+
+- [ ] **`dust-sweeps`** (`application.conf:295-301`, `config/types.scala:47-65`). Per-environment,
       keyed by the exact ordinal each one-time GSI dust sweep fires at. Only `testnet` has an entry today
       (`3154700` with `threshold: 100000`); there is **no mainnet entry**. If a sweep is part of the
       launch, add the environment's entry and **finalize the ordinal right before deploy** so it is one

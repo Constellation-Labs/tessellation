@@ -115,7 +115,10 @@ abstract class TessellationIOApp[A <: CliMethod](
         }
 
         implicit val _globalStateProofSelector: GlobalStateProofSelector =
-          GlobalStateProofSelector(cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.unsafeApply(Long.MaxValue)))
+          GlobalStateProofSelector(
+            cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue),
+            cfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue)
+          )
 
         implicit val _currencyStateProofSelector: CurrencyStateProofSelector =
           CurrencyStateProofSelector.instance
