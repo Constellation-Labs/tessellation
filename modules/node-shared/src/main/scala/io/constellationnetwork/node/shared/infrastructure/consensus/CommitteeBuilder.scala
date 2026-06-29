@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 
 /** Deterministic derivation of the three v19 committees from a flat candidate set, the carried-forward per-peer tier map, AND the
@@ -13,9 +12,9 @@ import io.constellationnetwork.schema.peer.PeerId
   *   - '''Core''' (Tier 2): full facilitators. The CERT quorum (B1 / B2 / VCC builders) is gated on Core: `q = ceil(coreFacilitators.size *
   *     quorumThresholdFraction)`. Core peers also form the leader pool (only Core peers are eligible to lead a round).
   *   - '''Tier1''': witness-eligible (B1/B2/VCC witness pool). Tier 1 peers DO sign each round's `signedMajorityArtifact` and earn rewards
-  *     proportionally. They cannot lead, and they do NOT count toward the cert quorum denominator -- a Tier 1 peer being silent cannot
-  *     wedge a B1/B2/VCC certificate. The SNAPSHOT finalization threshold is a separate, more permissive `(roundStartFacilitators.size / 2)
-  *     + 1` computed over Core + Tier 1; safety in finalization is enforced via VoteLock + VCC, not by tightening the threshold.
+  *     proportionally. They cannot lead, and they do NOT count toward the normal liveness denominator -- a Tier 1 peer being silent cannot
+  *     wedge leader rotation. Snapshot finalization is a separate gate: outside bootstrap it is clamped to the frozen round-start committee
+  *     floor, so a cluster-minority Core can rotate leaders but cannot finalize a divergent snapshot.
   *   - '''Witness''' (Tier 0): observation only. Open membership; peers fall here only via explicit eviction outside this builder. In
   *     practice the v19 tier-transition path never writes Witness; this tier is reserved for future explicit-eviction policy.
   *

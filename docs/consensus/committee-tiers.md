@@ -43,8 +43,8 @@ The tier integers are defined in `TierTransitions.scala:42-49`:
 
 | Tier | Constant | Value | What it can do |
 |------|----------|-------|----------------|
-| Core | `TierTransitions.Core` | `2` | Full facilitator. In the **liveness quorum**; the cert quorum (B1/B2/VCC) and the snapshot-finalization threshold are computed against the Core size. Only Core peers are eligible to **lead** a round. |
-| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and **earn** rewards proportionally. They cannot lead, and they do **not** count toward the cert quorum denominator, so a silent Tier-1 peer cannot wedge a certificate. |
+| Core | `TierTransitions.Core` | `2` | Full facilitator. In the **liveness quorum**; phase transitions and liveness certificates derive their normal denominator from Core. Only Core peers are eligible to **lead** a round. |
+| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and **earn** rewards proportionally. They cannot lead, and they do **not** count toward the normal liveness denominator, so a silent Tier-1 peer cannot wedge leader rotation. |
 | Witness | `TierTransitions.Witness` | `0` | Observation only. Open membership; in the v19 transition path peers fall here only via explicit eviction. |
 
 The key safety property: **the liveness quorum is gated on Core only.** The
@@ -57,10 +57,12 @@ comment at `GlobalSnapshotConsensusStateCreator.scala:61-66` states the contract
 quorum threshold is computed against `coreFacilitators.value.size`, NOT the full
 round-start committee.
 
-The snapshot-finalization threshold is a separate, more permissive
-`(roundStartFacilitators.size / 2) + 1` computed over Core + Tier 1; safety in
-finalization is enforced via VoteLock + VCC, not by tightening that threshold
-(`CommitteeBuilder.scala:16-18`).
+Snapshot finalization is a separate gate. During bootstrap it preserves the legacy
+Core-sized/strict-majority behavior. Outside bootstrap, finality uses the frozen
+`roundStartFacilitators` committee floor (`quorumFinalityDecision`), so a Core that has
+shrunk to a cluster minority can still rotate leaders or assemble liveness certificates
+but cannot finalize a divergent snapshot. The counted signer set is the frozen
+committee, not a locally mutated post-eviction subset.
 
 ### Reward and signer pool
 

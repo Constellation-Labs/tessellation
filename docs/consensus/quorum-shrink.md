@@ -130,15 +130,14 @@ With `q0 = max(1, QuorumPolicy.fromFraction(coreSize, fraction))` and `a = ancho
   anchor majority `a / 2 + 1`. Two conflicting shrunken certs are impossible here:
   shrunken-margin votes must come from anchor members, and two disjoint anchor subsets
   of size `> a/2` cannot exist (`QuorumDenominatorShrink.scala:63-65`).
-- **Stage 2 (liveness over partition safety).** Below the anchor majority, one further
-  reduction per `SubMajorityStepCost` steps, down to the hard floor `MinQuorumFloor`.
-  This is the regime that unwedges "half the anchor is dead" (the live 3-of-6 case). It
-  knowingly trades partition safety for liveness: two disjoint healthy anchor halves
-  under a full partition could each close a divergent round. That window requires BOTH
-  halves alive-but-partitioned for the entire escalation period (activation + stage-1 +
-  five steps per peer of stage 2), which at testnet values is tens of minutes of total
-  silence. It is accepted for testnet; mainnet keeps the rung disabled
-  (`QuorumDenominatorShrink.scala:66-71`).
+- **Stage 2 (liveness over partition safety, certificate paths only).** Below the anchor
+  majority, one further reduction per `SubMajorityStepCost` steps, down to the hard floor
+  `MinQuorumFloor`. This reduction can help liveness mechanisms such as VCC/TC leader
+  rotation and B1/B2 certificate assembly continue to move under a deeply degraded Core.
+  Post-bootstrap snapshot finalization does **not** follow this denominator all the way
+  down: finality applies the frozen-round-committee floor, so a cluster-minority Core may
+  rotate leaders or assemble liveness certificates but cannot finalize a divergent
+  snapshot by itself.
 
 Constants (`QuorumDenominatorShrink.scala:78-89`):
 
@@ -149,7 +148,11 @@ Constants (`QuorumDenominatorShrink.scala:78-89`):
   reduction; stage-2 reductions are deliberately 5x slower than stage-1 because they
   surrender the intersection guarantee.
 
-`requiredQuorum` is always clamped to `[MinQuorumFloor, baseQuorum]`.
+For shrink/liveness decisions, `requiredQuorum` is clamped to
+`[MinQuorumFloor, baseQuorum]`. For finality decisions, callers pass
+`applyClusterFloor = true`, which additionally clamps the quorum to the
+supermajority/unanimity floor of the frozen `roundStartFacilitators` committee outside
+bootstrap.
 
 ---
 
@@ -261,15 +264,17 @@ in `dag-l0.conf:177` and `currency-l0.conf:39`:
 
 ```hocon
 quorum-shrink-activation-views {
+  mainnet: 0
+  integrationnet: 0
+  dev: 0
   testnet: 10
 }
 ```
 
 `testnet: 10` means roughly 10 minutes of dead air at the 60s `viewInterval` before the
-first reduction; the post-restart 3-of-6 wedge unwedges at `required = 3` after roughly
-15 minutes of total silence (`dag-l0.conf:170-180`). Mainnet and dev are deliberately
-absent, so the rung is disabled there: the stage-2 regime trades partition safety for
-liveness and must be opted into per environment. Because the knob is in
+first reduction. The reduction applies to liveness/certificate paths; post-bootstrap
+snapshot finality remains fenced by the frozen committee floor. Mainnet, integrationnet,
+and dev are explicitly disabled (`0`) for a conservative launch. Because the knob is in
 `deterministicConfigHash`, changing it requires a coordinated cluster-wide redeploy.
 
 ---

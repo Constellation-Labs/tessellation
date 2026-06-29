@@ -549,7 +549,7 @@ case class TimeoutVote(
 )
 ```
 
-`TimeoutReason` is `NoProgress` (round elapsed with no advance) or `QuorumInfeasible` (too few responsive committee members), computed by `StallDetector` and threaded through `performViewChange`. A `TimeoutCertificate` carries the same `(fromView, toView)`, `facilitatorsHash`, `lastSnapshotHash`, `reason`, and the `NonEmptySet[Signed[TimeoutVote]]` it assembled from.
+`TimeoutReason` is `NoProgress` (round elapsed with no advance) or `QuorumInfeasible` (too few responsive committee members). Today, in-tree `StallDetector` call sites emit the default `NoProgress`; `QuorumInfeasible` is reserved for a future path or explicit caller. A `TimeoutCertificate` carries the same `(fromView, toView)`, `facilitatorsHash`, `lastSnapshotHash`, `reason`, and the `NonEmptySet[Signed[TimeoutVote]]` it assembled from.
 
 ### EvictionVote (B1)
 
@@ -565,7 +565,7 @@ Symmetric positive-evidence: every committee member that observes a probation pe
 
 ### CollectingFacilities → CollectingProposals
 
-**Trigger**: All facilitators have sent `Facility` declarations
+**Trigger**: quorum of eligible gate peers has sent matching `Facility` declarations
 
 **Actions**:
 1. Pick **majority trigger** from all facilities
@@ -590,7 +590,7 @@ private def toProposalsPhase(
 
 ### CollectingProposals → CollectingSignatures
 
-**Trigger**: All facilitators have sent `Proposal` declarations
+**Trigger**: quorum of eligible gate peers has sent matching `Proposal` declarations
 
 **Actions**:
 1. Collect all proposal **hashes**
@@ -617,7 +617,7 @@ private def toSignaturesPhase(
 
 ### CollectingSignatures → Finished
 
-**Trigger**: All valid signatures collected
+**Trigger**: finality quorum reached and the signature-grace decision no longer waits
 
 **Actions**:
 1. Collect all `MajoritySignature` declarations
@@ -905,8 +905,8 @@ Poll (100ms-1000ms adaptive)
         Facility on capped exp-backoff schedule (5s / 10s / 20s / 30s / 30s, max 5 attempts)
       → Quorum infeasible AND missing peers Unresponsive: emit EvictionVote(s) for
         selectEvictionTargets candidates, queue CheckEvictionAssembly, then performViewChange
-      → Proposal phase, all declared but no proposal: performViewChange
-      → Other phases, all declared but no advance: count toward abandon
+      → Proposal phase, quorum declared but no proposal: performViewChange
+      → Other phases, quorum declared but no advance: count toward abandon
   → Every performViewChange ALSO emits a signed TimeoutVote with a TimeoutReason
     (NoProgress | QuorumInfeasible) and queues CheckTimeoutCertificateAssembly,
     in parallel with the ViewChangeVote / CheckViewChangeAssembly (two-track view advance)
@@ -1140,6 +1140,7 @@ Recovery can be triggered by three independent paths, all converging on `Waiting
      - Clear in-memory caches (lastN, lastGlobal) — NOT disk
      - Fetch latest tip from peers (preferring `RecoveryPeerHint` targets when set)
      - Download only the gap (walk back from tip, stop at persisted hash on disk)
+     - Enforce any configured seedlist-signed recovery checkpoint: the checkpoint file is verified at startup, downloaded/observed snapshots must pass the checkpoint hash at the checkpoint ordinal, and a local persisted chain whose resolved anchor is already at/above the checkpoint must also prove the checkpoint locally.
      - `setForRecovery` bypasses sequential prepend requirement on `SnapshotStorage`
    - **Full path** (`download.download`): used when a node has never run before.
    - **Full → recovery switch**: if a full download fails with an error tagged `RecoveryFallbackEligible` (currently `CannotFetchGenesisSnapshot` and `InvalidChain` in dag-l0; `InvalidChain` in currency-l0), the daemon sets `isRecoveryDownload` and retries with the recovery path. Detection uses the `RecoveryFallbackEligible` marker trait — a `getClass.getSimpleName` match would silently break on rename (`RecoveryFallbackEligible.scala`).
@@ -1342,16 +1343,18 @@ chance to land for reward inclusion, instead of concentrating rewards on Core.
 
 Two distinctions matter:
 
-- **The quorum denominator is the Core committee**, not the flat facilitator set. The
-  finalization safety-quorum is `max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))`
-  over Core (integer `unanimity` / `(2*coreSize + 2) / 3` supermajority); the more-permissive snapshot-finalization threshold
-  `(roundStartFacilitators.size / 2) + 1` spans Core + Tier 1. Safety in finalization
-  is enforced via `VoteLock` + the VCC/TC view-advance certificates, not by tightening
-  this threshold (`CommitteeBuilder.scala:13-18`).
-- **Config split.** `signatureGracePeriod` is the short Tier-1 grace window; the
-  Core-incomplete case waits the longer full window. The grace machine is the pure
-  decision; the caller owns the per-round `Stamp` in a `Ref` and applies the returned
-  `StampUpdate`.
+- **The normal liveness denominator is the Core committee**, not the flat facilitator
+  set. Phase transitions and VCC/TC/B1/B2 liveness certificates use
+  `max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))` over Core
+  (integer `unanimity` / `(2*coreSize + 2) / 3` supermajority), with the quorum-shrink
+  decision allowed to reduce liveness thresholds at a wedged key. Post-bootstrap
+  snapshot finality is stricter: it uses `quorumFinalityDecision`, counting signatures
+  over the frozen `roundStartFacilitators` committee and clamping the required quorum to
+  the frozen-committee floor.
+- **Config split.** `tier1SignatureGracePeriod` is the short Tier-1 grace window;
+  `signatureGracePeriod` is the longer Core-incomplete window. The grace machine is the
+  pure decision; the caller owns the per-round `Stamp` in a `Ref` and applies the
+  returned `StampUpdate`.
 
 The Core-quorum requirement still prevents a view-change minority from producing a
 fork snapshot: a minority that followed a view change while the majority continued

@@ -91,9 +91,11 @@ round-start committee and the valid signatures collected so far
 - `coreSize = state.coreFacilitators.value.size`.
 - `coreComplete` -- every Core member has signed.
 - `fullCommitteeSigned` -- `validSignatures.size >= fullCommittee`.
-- `canFinalize` -- `validSignatures.size >= quorumThreshold` (the `(coreSize/2)+1`
-  Core-only finalization threshold), or the v33 quorum-denominator-shrink
-  `shrunkPath` admits the signer set (`...Advancer.scala:3216`).
+- `canFinalize` -- the current finality gate admits the signer set. During bootstrap
+  this is the legacy Core-sized / strict-majority path. Outside bootstrap it is the
+  committee-floored `quorumFinalityDecision`: the signer set is counted over the frozen
+  `roundStartFacilitators` committee, and the required quorum cannot shrink below that
+  frozen-committee floor.
 
 It then calls `evaluate` inside `signatureQuorumFirstSeenRef.modify`, folding the
 returned `StampUpdate` into the map and reading `waitMore` /`firstObserved` /

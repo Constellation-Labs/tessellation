@@ -73,7 +73,7 @@ digraph RecoveryDecisionTree {
     Backoff -> CheckTotalAttempts;
 
     // Recovery download steps
-    RecoveryDownload [label="recoveryDownload()\n\n1. Clear in-memory caches (NOT disk)\n2. Fetch latest tip from peers\n   (prefer RecoveryPeerHint)\n3. Walk back from tip, stop at persisted hash\n4. setForRecovery bypasses sequential prepend", style="rounded,filled", fillcolor="lightcyan"];
+    RecoveryDownload [label="recoveryDownload()\n\n1. Clear in-memory caches (NOT disk)\n2. Fetch latest tip from peers\n   (prefer RecoveryPeerHint)\n3. Walk back from tip, stop at persisted hash\n4. Enforce configured recovery checkpoint\n5. setForRecovery bypasses sequential prepend", style="rounded,filled", fillcolor="lightcyan"];
 
     RecoveryDownload -> DownloadResult;
 
