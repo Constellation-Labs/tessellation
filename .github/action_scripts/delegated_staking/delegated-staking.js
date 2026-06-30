@@ -826,6 +826,7 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   const expectedWalletBalance = initialBalance + originalStake.totalBalance
   const balanceUlp = Math.max(1, 2 ** (Math.floor(Math.log2(Math.abs(expectedWalletBalance) || 1)) - 52))
   const roundingSlack = balanceUlp * 16
+  const balanceCheckMaxAttempts = 60
   await withRetry(
     async () => {
       const balance = dagToDatum(await account.getBalance())
@@ -838,9 +839,16 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
     },
     {
       name: 'assertWalletBalanceAfterWithdrawal',
-      maxAttempts: 60,
+      maxAttempts: balanceCheckMaxAttempts,
       interval: 2000,
-      handleError: () => {},
+      // Surface the constructed balance detail on genuine failure: withRetry throws a generic
+      // "Max attempts reached" on exhaustion, discarding the operation's error, so log it on the
+      // final attempt (silent during normal transient retries to avoid spamming the CI log).
+      handleError: (error, attempt) => {
+        if (attempt === balanceCheckMaxAttempts) {
+          logWorkflow.error('assertWalletBalanceAfterWithdrawal', error.message)
+        }
+      },
     },
   )
   logWorkflow.info('Wallet balance updated')
