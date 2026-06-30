@@ -35,7 +35,6 @@ const {
   assertDelegatedStakes,
   fetchStakeWithRewardsBalance,
   createTokenLock,
-  assertBalanceChange,
   getNodeParams,
   fetchSnapshot,
   assertRewardTxnInSnapshot,
@@ -804,13 +803,46 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   )
   logWorkflow.info('Stake removed from pendingWithdrawal')
 
-  // Datum balances here exceed Number.MAX_SAFE_INTEGER (~9e15); JS Number arithmetic on them
-  // loses integer precision (representable values spaced 2/4/8 datum apart above 2^53), which is
-  // exactly the ±2/±4/±8 drift observed — a test float-ulp artifact, not a node discrepancy.
-  // Tolerate a few ulps of the expected magnitude.
+  // The withdrawn stake's principal + rewards return to the wallet, so the balance rises by
+  // originalStake.totalBalance. But this account also holds the still-active otherStake (and, as a
+  // node operator, may earn committee delegated rewards), both of which accrue reward credits during
+  // the multi-ordinal withdrawal-delay window. That income lands non-deterministically relative to
+  // this read, so the wallet can sit ABOVE the exact expected value -- rewards only ever add (same
+  // phenomenon handled in assertBalanceChangeAfterTokenLock). A tight equality flaked here: on slow
+  // runs an accrued-reward credit pushed the balance over the +-ulp tolerance; on fast runs it had
+  // not landed yet. Assert the withdrawn value DID return (lower bound, with a small rounding slack
+  // for reward-math integer drift) and tolerate upward drift above it. Reward AMOUNT correctness is
+  // verified separately by the reward-txn scan below.
+  //
+  // Trade-off: this is a lower-bound check, so it intentionally does NOT catch an over-credit
+  // (e.g. a stake principal or reward paid out twice) -- the balance only ever exceeding expected is
+  // treated as benign accrued rewards. Such a regression must instead be caught by the reward-txn /
+  // TokenUnlock scan below, which verifies the emitted AMOUNTS. A tight upper bound was rejected on
+  // purpose: accrued-reward income scales with the (variable) withdrawal-delay window, so any fixed
+  // ceiling would either re-introduce the flake or be an arbitrary magic number.
+  //
+  // Datum balances here exceed Number.MAX_SAFE_INTEGER (~9e15); JS Number arithmetic loses integer
+  // precision above 2^53 (values spaced 2/4/8 datum apart), so the rounding slack is sized in ulps.
   const expectedWalletBalance = initialBalance + originalStake.totalBalance
   const balanceUlp = Math.max(1, 2 ** (Math.floor(Math.log2(Math.abs(expectedWalletBalance) || 1)) - 52))
-  await assertBalanceChange(account, expectedWalletBalance, balanceUlp * 16)
+  const roundingSlack = balanceUlp * 16
+  await withRetry(
+    async () => {
+      const balance = dagToDatum(await account.getBalance())
+      if (balance < expectedWalletBalance - roundingSlack) {
+        throw new Error(
+          `Balance after withdrawal = ${balance}, expected at least ${expectedWalletBalance - roundingSlack} ` +
+            '(withdrawn stake value returned; accrued rewards may push it higher)',
+        )
+      }
+    },
+    {
+      name: 'assertWalletBalanceAfterWithdrawal',
+      maxAttempts: 60,
+      interval: 2000,
+      handleError: () => {},
+    },
+  )
   logWorkflow.info('Wallet balance updated')
 
   // The reward txn + TokenUnlock are emitted once, in the withdrawal-finalization
