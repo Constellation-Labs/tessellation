@@ -30,6 +30,7 @@ A bundle of ordinal-gated, content-aware mechanisms:
 - Byte-identical replay across node versions; divergence is detected and prevented at the acceptance path rather than discovered ordinals later.
 - The dust sweep cleans state without forking.
 - **Cost:** every deterministic behavior change now requires an ordinal gate plus a per-environment pin -- real operational discipline (`docs/operations/fields-added-ordinals.md`). A mis-set gate ordinal forks the chain. The config surface is large.
+- **Cross-repo coupling (sub-trie roots):** the sub-trie-roots gate changes SIGNED `GlobalSnapshotStateProof` bytes, which the snapshot-streaming indexer re-derives and validates. It must stay inert (`9999999`) on every network until that indexer honors `subTrieRootsActivationOrdinal`; flipping any network's activation ordinal first reintroduces the proof mismatch this ADR prevents. Captured in the `application.conf` gate comment.
 - Relates to / supersedes parts of ADR-0010 and ADR-0014. Built on ADR-0016 (determinism) and ADR-0024 (order-independent root).
 
 The per-environment gate values are tabulated in `docs/operations/fields-added-ordinals.md` (e.g. testnet `sc-fee-balance-from-context = 3101393`) and configured in the `fields-added-ordinals` block of `application.conf`.
