@@ -2,9 +2,11 @@
 
 Date: 2023-04-18
 
+> **Superseded by ADR-0023 (Layered recovery / download fork-safety gate)**, with state-verification aspects subsumed by ADR-0025 (MPT replay-safety). The recursive incremental-chain validation described below is replaced by signature/seedlist verification plus MPT state-proof checking. The body below is retained as historical context.
+
 ## Status
 
-Accepted
+Superseded
 
 ## Context
 
