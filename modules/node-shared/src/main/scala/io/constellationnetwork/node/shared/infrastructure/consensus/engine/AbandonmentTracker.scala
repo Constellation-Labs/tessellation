@@ -2,7 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.effect.kernel.{Async, Ref}
 import cats.syntax.all._
-import cats.{Order, Show}
+import cats.{Eq, Order, Show}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -25,28 +25,34 @@ sealed trait AbandonReason {
     * recovery download.
     */
   def retriable: Boolean
+
+  /** When the abandonment carries a (active, required) facilitator-count pair, expose it. The retriable path in `AbandonmentTracker` reads
+    * this to classify the escalation cause (isolated vs quorum-impossible). Only `QuorumInfeasible` carries this signal today.
+    */
+  def quorumPair: Option[(Int, Int)] = None
 }
 
 object AbandonReason {
 
-  /** Not enough peers to reach quorum — wait for peers to come back. */
+  /** Not enough peers to reach quorum -- wait for peers to come back.
+    *
+    * Invariant: `active < required`. Constructed only by `StallDetector` inside the `quorumInfeasible = coreRemaining < coreQuorum` branch
+    * with `active = coreRemaining` and `required = coreQuorum` (alpha.91: Core-only gate; pre-alpha.91 the gate used the full-facilitator
+    * set). The retriable handler in `AbandonmentTracker` relies on this invariant for its isolated-vs-quorum-impossible classification.
+    * `clusterSize` carries the round-start full-facilitator count for observability only.
+    */
   final case class QuorumInfeasible(active: Int, required: Int, clusterSize: Int) extends AbandonReason {
-    def message: String = s"quorum infeasible: $active active < $required required (clusterSize=$clusterSize)"
+    def message: String =
+      s"quorum infeasible (Core gate): $active active < $required required (clusterSize=$clusterSize)"
     def label: String = "quorum_infeasible"
     def retriable: Boolean = true
+    override def quorumPair: Option[(Int, Int)] = Some((active, required))
   }
 
   /** This node is behind the network — peers are at a higher ordinal. */
   final case class Lagging(peersAhead: Int, totalPeers: Int, totalRegs: Int) extends AbandonReason {
     def message: String = s"lagging behind network: $peersAhead/$totalPeers ready peers at higher key (totalRegs=$totalRegs)"
     def label: String = "lagging"
-    def retriable: Boolean = false
-  }
-
-  /** Repeated eviction attempts blocked (below minimum facilitators), cycling without progress. */
-  case object EvictionLoopStuck extends AbandonReason {
-    def message: String = "eviction loop: repeated eviction skips (below minimum facilitators), escalating to abandon"
-    def label: String = "eviction_loop"
     def retriable: Boolean = false
   }
 
@@ -62,6 +68,26 @@ object AbandonReason {
     def message: String = s"stuck after $stallCount stall cycles"
     def label: String = "max_stalls"
     def retriable: Boolean = false
+  }
+
+  /** Alpha.98 round-start participation feasibility: the round committee includes peers that are locally observed as NOT Ready AND whose
+    * tip is at or before our `lastOutcome.key`, and excluding them drops the active count below quorum. Emitted purely as a local "I am not
+    * going to burn cycles on a round that cannot make progress" guard -- the committee, the facilitator hash, the quorum derivation, and
+    * the proposal validity rules are unchanged (no determinism implications). Retriable so the next time-trigger can re-evaluate with
+    * possibly fresher peer-state observations; this is NOT counted as an eviction-grade signal and should not heavily penalize the missing
+    * peers.
+    */
+  final case class ReadyParticipationQuorumInfeasible(
+    activeReady: Int,
+    required: Int,
+    excludedCount: Int
+  ) extends AbandonReason {
+    def message: String =
+      s"ready-participation quorum infeasible: $activeReady ready-and-current < $required required, " +
+        s"excluding $excludedCount not-ready-or-behind peers"
+    def label: String = "ready_participation_quorum_infeasible"
+    def retriable: Boolean = true
+    override def quorumPair: Option[(Int, Int)] = Some((activeReady, required))
   }
 
   implicit val show: Show[AbandonReason] = Show.show(_.message)
@@ -90,25 +116,63 @@ object AbandonReason {
   * On every abandonment, stale peer declarations, artifacts, and withdrawal maps are cleared. Without this, abandoned rounds leave
   * resources that poison retries via `.orElse` semantics in `addFacility`.
   */
-class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
+class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   healthRef: Ref[F, ConsensusHealthStatus]
 ) {
 
-  import ctx.{config, logger, peerQualityTracker, queue, storage}
+  import ctx.{clusterStorage, config, logger, peerQualityTracker, queue, storage}
+  import AbandonmentTracker.EscalationCause
+
+  /** Emit a `RoundCompleted` tagged with the current attempt id so the FSM can drop it if the round has since advanced. See Bug A in the
+    * fork-recovery post-mortem: an abandonment-queued `RoundCompleted` fired after a view change had moved the round forward and wiped the
+    * nearly-finished round.
+    */
+  private def offerRoundCompleted: F[Unit] =
+    storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+
+  private def retryAfterRetriableAbandon(key: Key, reason: AbandonReason): F[Unit] = {
+    val shouldBackoff = reason match {
+      case _: AbandonReason.ReadyParticipationQuorumInfeasible => true
+      case _                                                   => false
+    }
+    val retryDelay = config.viewChangeApplyDelay / 2
+
+    offerRoundCompleted >>
+      (if (shouldBackoff)
+         ConsensusLog.info(
+           logger,
+           Category.Lifecycle,
+           key.toString,
+           "n/a",
+           LogEvent.RoundAbandonedTracked,
+           "reason" -> reason.label,
+           "action" -> "delayed_retriable_retry",
+           "retryDelayMs" -> retryDelay.toMillis.toString
+         ) >>
+           Metrics[F].incrementCounter(
+             "dag_consensus_retriable_retry_delayed_total",
+             Seq(Metrics.unsafeLabelName("reason") -> reason.label)
+           ) >>
+           Async[F].start(Async[F].sleep(retryDelay) >> queue.offer(ConsensusCommand.TimeTick)).void
+       else queue.offer(ConsensusCommand.TimeTick))
+  }
 
   /** Tracks consecutive abandonments at the same key to detect infinite stuck loops. */
   private val consecutiveAbandonCountRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
 
   /** Tracks consecutive retriable abandonments at the same key. If the node is stuck at the same ordinal with quorum-infeasible for too
     * long (e.g., post-chaos where one node forked ahead), this escalates to non-retriable after `maxRetriableAtSameKey` attempts.
+    *
+    * Lives on `ConsensusEngineContext` so other components can observe the retry pattern. It must not be used as consensus-critical view
+    * input: nodes can process abandonments at different rates, and seeding `viewNumber` from this local counter fragments VCV/VCC assembly.
     */
-  private val retriableAtSameKeyRef: Ref[F, (Option[Key], Int)] = Ref.unsafe((none[Key], 0))
+  private val retriableAtSameKeyRef: Ref[F, (Option[Key], Int)] = ctx.retriableAtSameKeyRef
 
   /** After this many retriable abandonments at the same ordinal, escalate to recovery. Default: 1x maxConsecutiveAbandonments (5 with
     * default config). This is higher than the non-retriable threshold because quorum-infeasible is expected during transient partitions.
     */
-  private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments * 1
+  private val maxRetriableAtSameKey: Int = config.maxConsecutiveAbandonments
 
   /** Tracks total recovery download attempts across all keys to detect extended recovery loops. */
   private val totalRecoveryAttemptsRef: Ref[F, Int] = Ref.unsafe(0)
@@ -119,7 +183,36 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
   def resetOnSuccessfulRound: F[Unit] =
     totalRecoveryAttemptsRef.set(0) >>
       retriableAtSameKeyRef.set((none[Key], 0)) >>
-      healthRef.update(_.copy(totalRecoveryAttempts = 0))
+      healthRef.update(_.copy(totalRecoveryAttempts = 0, wedgeDetectedAtMs = None))
+
+  /** Threshold for declaring a "sustained wedge": retriable abandonments at the same key with no peer ahead. Set to half the recovery
+    * threshold so the wedge signal fires before recovery would have been triggered if a peer WERE ahead. Read by Cluster.leave() guard.
+    */
+  private val wedgeRetriableThreshold: Int = math.max(2, config.maxConsecutiveAbandonments / 2)
+
+  /** Update health snapshot fields visible to Cluster.leave() guard. Called from the retriable path after `peersAtHigherKey` is computed.
+    * Sets `wedgeDetectedAtMs` once when sustained quorum-infeasible-without-peers-ahead is observed; preserves the timestamp across
+    * subsequent abandonments at the same key so the time-based escape hatch in Cluster.leave() measures from first detection.
+    */
+  private def updateWedgeHealth(
+    retriableCount: Int,
+    peersAtHigherKey: Int,
+    reasonLabel: String
+  ): F[Unit] =
+    Async[F].monotonic.flatMap { now =>
+      healthRef.update { h =>
+        val nextWedgeAt =
+          if (retriableCount >= wedgeRetriableThreshold && peersAtHigherKey == 0)
+            h.wedgeDetectedAtMs.orElse(Some(now.toMillis))
+          else
+            None
+        h.copy(
+          peersAtHigherKey = peersAtHigherKey,
+          lastAbandonReason = Some(reasonLabel),
+          wedgeDetectedAtMs = nextWedgeAt
+        )
+      }
+    }
 
   /** Track a failed initFromDownload attempt. Called by the event loop error handler when InitializeFromDownload exhausts retries. Without
     * this, repeated init failures would loop forever (download → init fail → download) because the recovery counter is only incremented by
@@ -192,7 +285,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          offerRoundCompleted
       } else {
         tryStates(forceLeaveStates).flatMap {
           case true =>
@@ -208,7 +301,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               totalRecoveryAttemptsRef.set(0) >>
               healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
               ctx.pending.clear() >>
-              queue.offer(ConsensusCommand.RoundCompleted)
+              offerRoundCompleted
           case false =>
             ConsensusLog.warn(
               logger,
@@ -225,23 +318,67 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
 
   /** Abandon a round: clear state, track consecutive failures, and either retry or trigger recovery. Quorum-infeasible abandonments are
     * retried without counting toward recovery threshold, since the node isn't stuck or forked — it just needs more peers to reach quorum.
+    *
+    * Bug A guard for the queued abandon (#1): `AbandonRound` is enqueued by the `StallDetector` monitor and drained later on the command
+    * loop. The monitor only decides to abandon when no outcome is ready (see `StallDetector.monitorStep`); re-checking outcome-readiness
+    * here closes the decision-to-drain gap so a round that completed in between is left intact for `ConsensusFinished` rather than wiped.
+    * The check is content-based, not attempt-id-based: it must NOT skip on a bare view advance, because the monitor has already terminated
+    * for this round and a dropped abandon would leave the advanced round with no local monitor.
     */
   def abandonRound(key: Key, reason: AbandonReason): F[Unit] =
-    ConsensusLog.error(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message) >>
+    storage.getState(key).flatMap {
+      case Some(state) if ctx.advancer.getConsensusOutcome(state).isDefined =>
+        ConsensusLog.debug(
+          logger,
+          Category.Lifecycle,
+          key.toString,
+          "n/a",
+          LogEvent.RoundAbandoned,
+          "reason" -> reason.label,
+          "skipped" -> "outcome_ready"
+        ) >>
+          Metrics[F].incrementCounter("dag_consensus_abandon_skipped_outcome_ready_total")
+      case _ =>
+        performAbandon(key, reason)
+    }
+
+  private def performAbandon(key: Key, reason: AbandonReason): F[Unit] =
+    // Retriable abandons (QuorumInfeasible / ReadyParticipationQuorumInfeasible) are routine transient
+    // churn -- the node is not stuck or forked, it just needs more peers; log them at DEBUG. Reserve a
+    // single WARN for the non-retriable cases (MaxStalls / RoundTimeout / Lagging) that an operator
+    // actually wants to see. The dag_consensus_round_abandoned counter (below) is unconditional.
+    (if (reason.retriable)
+       ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)
+     else ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)) >>
       Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
       Metrics[F].incrementCounter("dag_consensus_stall_abandon_reason", Seq((Metrics.unsafeLabelName("reason"), reason.label))) >>
       storage
         .condModifyState[Unit](key) {
           case Some(state) =>
-            peerQualityTracker
-              .recordRoundAbandoned(state.facilitators.value.toSet)
-              .as((none[ConsensusState[Key, Status, Outcome, Kind]], ()).some)
+            // Attribute the abandon to its leader so operators can tell whether a flaky community
+            // peer is dragging the cluster down. Pair with dag_consensus_round_completed_total
+            // (same `peer_id` label) for a per-leader success-rate query.
+            Metrics[F].incrementCounter(
+              "dag_consensus_round_abandoned_by_leader_total",
+              Seq(
+                Metrics.unsafeLabelName("peer_id") -> ConsensusLog.pid(state.leader),
+                Metrics.unsafeLabelName("reason") -> reason.label
+              )
+            ) >>
+              peerQualityTracker
+                .recordRoundAbandoned(state.facilitators.value.toSet)
+                .as((none[ConsensusState[Key, Status, Outcome, Kind]], ()).some)
           case _ =>
             none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
         }
         .void
         .handleErrorWith(e => logger.warn(e)("condModifyState failed during abandon, proceeding with resource cleanup")) >>
-      storage.clearResources(key) >>
+      // Preserve peerDeclarationsMap across the abandon/retry cycle. Peers with first-write-wins
+      // storage won't re-send their declarations as duplicates, so clearing them permanently
+      // breaks our ability to collect quorum on retry. See fork-recovery E2E analysis: gl0-0
+      // stuck at progress=1/5 after abandon because it wiped gl0-1/2/3's facilities locally
+      // while those nodes retained gl0-0's declaration.
+      storage.clearResourcesPreservingDeclarations(key) >>
       (if (reason.retriable)
          trackRetriableAtSameKey(key).flatMap { retriableCount =>
            val shouldEscalate = retriableCount >= maxRetriableAtSameKey
@@ -257,76 +394,106 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
              "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
            ) >>
              (if (shouldEscalate)
-                // Stuck at the same ordinal with quorum-infeasible for too long.
-                // ONLY escalate to recovery if majority of Ready peers are at a HIGHER key —
-                // meaning this node is genuinely behind the network. If all peers are stuck at
-                // the same ordinal (e.g. CPU pressure causing slow gossip on a small cluster),
-                // recovery download would cause a kill-4 deadlock: all nodes enter
-                // WaitingForDownload simultaneously with no Ready peers to serve downloads.
-                ctx.clusterStorage.getResponsivePeers.flatMap { responsivePeers =>
-                  storage.getPeerRegistrations.flatMap { peerRegs =>
-                    val readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
-                    val readyPeerRegs = peerRegs.view.filterKeys(readyPeerIds.contains).toMap
-                    val peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
-                    val peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
-                    val totalReadyPeers = readyPeerRegs.size
-                    val peersMajorityAhead = totalReadyPeers >= 2 && peersAtHigherKey > totalReadyPeers / 2
-                    // Isolated node: all registrations are stale (below current key) because
-                    // peers stopped sending declarations when we were cut off. Registrations
-                    // never advance past our own current ordinal, so peersAtHigherKey=0 even
-                    // though the network has moved on. Distinguish this from kill4 (whole
-                    // cluster stuck at same key) by checking if ANY peer has our key registered.
-                    // If zero peers are at our key AND zero are ahead, registrations are stale →
-                    // treat as isolated/lagging and escalate to recovery.
-                    val peersHaveCurrentKey = peersAtSameKey > 0
-                    val shouldEscalateAsLagging = peersMajorityAhead || (!peersHaveCurrentKey && totalReadyPeers > 0)
-                    if (shouldEscalateAsLagging)
-                      // Peers have moved on (majority ahead) OR registrations are stale
-                      // (isolated node) — this node is genuinely behind. Trigger recovery.
+                // Stuck at the same ordinal with QuorumInfeasible for too long. Per the
+                // QuorumInfeasible invariant (`active < required`, see AbandonReason.scala),
+                // every retriable abandonment past this threshold means peers cannot form
+                // quorum at this ordinal -- either the node is isolated (active==1), the node
+                // has fallen behind (peers advanced past this ordinal), or the whole cluster
+                // is stuck at this ordinal (e.g. fresh post-deploy where every facilitator
+                // simultaneously reboots and cannot meet quorum on the first round).
+                //
+                // Apply the same `peersAtHigherKey > 0` gate the
+                // non-retriable path uses. Without it, a fresh deploy where all source nodes
+                // reboot together cascades all of them into WaitingForDownload on the FIRST
+                // failed round at the new ordinal -- and since no peer is ahead, every node
+                // loops in `Discovered 0/1 selectable peers, waiting 1 minute` forever. The
+                // alpha.58 deploy deadlocked at ord 3122551 with exactly this
+                // shape: clusterSize=7, active=3, requiredQuorum=5, no peer ahead. Retain
+                // the original semantics when a peer IS ahead (isolated / lagging cases) by
+                // keeping the same recovery-download trigger; only the cluster-wide-stall
+                // case is suppressed.
+                reason.quorumPair
+                  .liftTo[F](new IllegalStateException(s"Retriable AbandonReason without quorumPair: $reason"))
+                  .flatMap {
+                    case (activeFacilitators, requiredQuorum) =>
+                      val isIsolated = activeFacilitators <= 1
+                      val cause = if (isIsolated) EscalationCause.Isolated else EscalationCause.QuorumImpossible
                       retriableAtSameKeyRef.set((none[Key], 0)) >>
                         trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
-                          ConsensusLog.info(
-                            logger,
-                            Category.Lifecycle,
-                            key.toString,
-                            "n/a",
-                            LogEvent.RetriableEscalated,
-                            "reason" -> reason.label,
-                            "peersAtHigherKey" -> peersAtHigherKey.toString,
-                            "peersAtSameKey" -> peersAtSameKey.toString,
-                            "totalReadyPeers" -> totalReadyPeers.toString
-                          ) >>
-                            healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-                            triggerRecoveryDownload(key, consecutiveCount)
+                          for {
+                            // Mirror the non-retriable path's network-advance probe so the
+                            // same observation drives both escalation paths. `peerCurrentKeys`
+                            // is the live per-peer tip (max seen via incoming keyed rumors);
+                            // `readyPeerIds` filters to peers currently in Ready state because
+                            // a non-Ready peer's reported tip can't be downloaded from.
+                            peerCurrentKeys <- storage.getPeerCurrentKeys
+                            responsivePeers <- clusterStorage.getResponsivePeers
+                            readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+                            readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
+                            peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
+                            networkAdvanced = peersAtHigherKey > 0
+                            _ <- ConsensusLog.info(
+                              logger,
+                              Category.Lifecycle,
+                              key.toString,
+                              "n/a",
+                              LogEvent.RetriableEscalated,
+                              "reason" -> reason.label,
+                              "activeFacilitators" -> activeFacilitators.toString,
+                              "requiredQuorum" -> requiredQuorum.toString,
+                              "escalationCause" -> cause.label,
+                              "peersAtHigherKey" -> peersAtHigherKey.toString,
+                              "readyPeers" -> readyPeerRegs.size.toString,
+                              "triggerRecovery" -> networkAdvanced.toString,
+                              "recoverySuppressed" -> (!networkAdvanced).toString
+                            )
+                            _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
+                            // Update wedge signal for Cluster.leave() guard. Fires when retriable abandonments at the same key
+                            // pile up AND no peer is ahead - the symptom of an orchestration-induced wedge where consensus
+                            // can't close because the committee is structurally short of quorum. Clears when peersAtHigherKey > 0
+                            // (cluster has advanced) or when a round closes (resetOnSuccessfulRound).
+                            _ <- updateWedgeHealth(retriableCount, peersAtHigherKey, reason.label)
+                            _ <-
+                              if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount, reason.label, cause.label)
+                              else retryAfterRetriableAbandon(key, reason)
+                          } yield ()
                         }
-                    else
-                      // Peers are at same key — whole cluster is stuck on the same ordinal,
-                      // not just us. Keep retrying; recovery download would deadlock with no
-                      // peers to serve (kill4 scenario).
-                      ConsensusLog.info(
-                        logger,
-                        Category.Lifecycle,
-                        key.toString,
-                        "n/a",
-                        LogEvent.RoundAbandonedRetriable,
-                        "reason" -> reason.label,
-                        "detail" -> s"escalation suppressed: cluster stuck at same key (peersAtHigherKey=$peersAtHigherKey peersAtSameKey=$peersAtSameKey totalReady=$totalReadyPeers)",
-                        "retriableAtSameKey" -> retriableCount.toString,
-                        "maxRetriableAtSameKey" -> maxRetriableAtSameKey.toString
-                      ) >>
-                        queue.offer(ConsensusCommand.RoundCompleted) >>
-                        queue.offer(ConsensusCommand.TimeTick)
                   }
-                }
               else
-                queue.offer(ConsensusCommand.RoundCompleted) >>
-                  queue.offer(ConsensusCommand.TimeTick))
+                retryAfterRetriableAbandon(key, reason))
          }
        else
+         // Non-retriable path (MaxStalls / RoundTimeout). Historically this
+         // escalated to recovery unconditionally after maxConsecutiveAbandonments. During fork-recovery
+         // E2E, that produced a cascading-recovery deadlock: the 4 active peers all hit max stalls
+         // on the same ordinal (view-change thrashing), each independently entered Observing, and
+         // then competed to download a snapshot the cluster had not produced — only the one remaining
+         // Ready peer could serve, and it had nothing to serve. Quorum permanently broken.
+         //
+         // Distinguish "this node is behind" from "the whole cluster is stuck": only escalate to
+         // recovery when peers have actually advanced past this key (peersAtHigherKey > 0).
+         // Otherwise this is a cluster-wide stall and a recovery cascade would deadlock with no
+         // Ready peers to serve downloads. Keep retrying — when peers do advance, we'll detect
+         // it on a subsequent abandonment.
+         //
+         // `peersAtHigherKey` is read from Ready peers' registered observation keys. Uses the same
+         // signal StallDetector uses for lagging detection (see StallDetector.scala where
+         // `peersAtHigherKey > totalRegisteredPeers / 2` triggers the Lagging AbandonReason).
          trackConsecutiveAbandonments(key).flatMap { consecutiveCount =>
            val shouldRecover = consecutiveCount >= config.maxConsecutiveAbandonments
-           healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount)) >>
-             ConsensusLog.info(
+           for {
+             // `peerCurrentKeys` = live per-peer tip (max seen via incoming keyed rumors).
+             // Supersedes the old `peerRegistrations` read which was a one-time join-ordinal
+             // and left lagging nodes with peersAtHigherKey=0 forever (Bug B).
+             peerCurrentKeys <- storage.getPeerCurrentKeys
+             responsivePeers <- clusterStorage.getResponsivePeers
+             readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+             readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
+             peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
+             networkAdvanced = peersAtHigherKey > 0
+             willRecover = shouldRecover && networkAdvanced
+             _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
+             _ <- ConsensusLog.info(
                logger,
                Category.Lifecycle,
                key.toString,
@@ -335,13 +502,15 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                "reason" -> reason.label,
                "consecutiveAbandonments" -> consecutiveCount.toString,
                "maxConsecutiveAbandonments" -> config.maxConsecutiveAbandonments.toString,
-               "triggerRecovery" -> shouldRecover.toString
-             ) >>
-             (if (shouldRecover)
-                triggerRecoveryDownload(key, consecutiveCount)
-              else
-                queue.offer(ConsensusCommand.RoundCompleted) >>
-                  queue.offer(ConsensusCommand.TimeTick))
+               "peersAtHigherKey" -> peersAtHigherKey.toString,
+               "readyPeers" -> readyPeerRegs.size.toString,
+               "triggerRecovery" -> willRecover.toString,
+               "recoverySuppressed" -> (shouldRecover && !networkAdvanced).toString
+             )
+             _ <-
+               if (willRecover) triggerRecoveryDownload(key, consecutiveCount, reason.label, "non_retriable")
+               else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
+           } yield ()
          })
 
   /** Track consecutive abandonments at the same key. Returns the new count. Resets to 1 when the key changes (different ordinal).
@@ -353,6 +522,17 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
         ((key.some, newCount), newCount)
       case _ =>
         ((key.some, 1), 1)
+    }
+
+  /** Read-only accessor for `StallDetector` (v22): how many consecutive times has THIS key been abandoned? Returns 0 if the last-abandoned
+    * key was a different ordinal (a successful round since then would also leave the tracked key behind, in which case 0 is the right
+    * answer). Used to drive the defensive force-VCV short-circuit in `StallDetector.handleStall` without giving the caller mutate access to
+    * the internal counter.
+    */
+  def consecutiveAbandonmentsFor(key: Key): F[Int] =
+    consecutiveAbandonCountRef.get.map {
+      case (Some(lastKey), count) if lastKey === key => count
+      case _                                         => 0
     }
 
   /** Track retriable abandonments at the same key. If the node keeps getting quorum-infeasible at the same ordinal, something is
@@ -372,7 +552,12 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     */
   private val maxTotalRecoveryAttempts: Int = config.maxConsecutiveAbandonments * 3
 
-  private def triggerRecoveryDownload(key: Key, consecutiveCount: Int): F[Unit] =
+  private def triggerRecoveryDownload(
+    key: Key,
+    consecutiveCount: Int,
+    triggerReason: String,
+    triggerClass: String
+  ): F[Unit] =
     totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
       val shouldForceLeave = totalAttempts >= maxTotalRecoveryAttempts
 
@@ -383,6 +568,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
            key.toString,
            "n/a",
            LogEvent.ForceLeaveTriggered,
+           "trigger" -> triggerReason,
+           "triggerClass" -> triggerClass,
            "consecutiveAbandonments" -> consecutiveCount.toString,
            "totalRecoveryAttempts" -> totalAttempts.toString,
            "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
@@ -395,6 +582,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
            key.toString,
            "n/a",
            LogEvent.RecoveryDownloadTriggered,
+           "trigger" -> triggerReason,
+           "triggerClass" -> triggerClass,
            "consecutiveAbandonments" -> consecutiveCount.toString,
            "totalRecoveryAttempts" -> totalAttempts.toString,
            "maxTotalRecoveryAttempts" -> maxTotalRecoveryAttempts.toString,
@@ -402,11 +591,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
          )) >>
         healthRef.update(_.copy(totalRecoveryAttempts = totalAttempts)) >>
         Metrics[F].incrementCounter("dag_consensus_recovery_download_triggered") >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_recovery_trigger_total",
+          Seq(
+            Metrics.unsafeLabelName("trigger") -> triggerReason,
+            Metrics.unsafeLabelName("trigger_class") -> triggerClass,
+            Metrics.unsafeLabelName("action") -> (if (shouldForceLeave) "force_leave" else "waiting_for_download")
+          )
+        ) >>
         (if (shouldForceLeave)
            Metrics[F].incrementCounter("dag_consensus_force_leave_triggered") >>
              forceLeave(key, totalAttempts)
          else
-           attemptRecoveryDownload(key))
+           attemptRecoveryDownload(key, triggerReason, triggerClass))
     }
 
   /** Force the node to leave the cluster after exhausting all recovery attempts. This breaks pathological loops where downloaded state
@@ -449,7 +646,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+          offerRoundCompleted
       } else {
         tryStates(forceLeaveStates).flatMap {
           case true =>
@@ -466,7 +663,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               totalRecoveryAttemptsRef.set(0) >>
               healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
               ctx.pending.clear() >>
-              queue.offer(ConsensusCommand.RoundCompleted)
+              offerRoundCompleted
           case false =>
             // If we can't transition to Leaving from any state, fall back to recovery download
             ConsensusLog.warn(
@@ -477,13 +674,13 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               LogEvent.ForceLeaveFailed,
               "reason" -> "could not transition to Leaving from any state, falling back to recovery download"
             ) >>
-              attemptRecoveryDownload(key)
+              attemptRecoveryDownload(key, "force_leave_failed", "force_leave_fallback")
         }
       }
     }
   }
 
-  private def attemptRecoveryDownload(key: Key): F[Unit] = {
+  private def attemptRecoveryDownload(key: Key, triggerReason: String, triggerClass: String): F[Unit] = {
     val recoveryStates = List(
       NodeState.Ready,
       NodeState.Observing,
@@ -511,9 +708,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
             key.toString,
             "n/a",
             LogEvent.RecoveryStateTransition,
+            "trigger" -> triggerReason,
+            "triggerClass" -> triggerClass,
             "from" -> fromState.toString,
             "to" -> "WaitingForDownload"
           ) >>
+            Metrics[F].incrementCounter(
+              "dag_consensus_recovery_state_transition_total",
+              Seq(
+                Metrics.unsafeLabelName("trigger") -> triggerReason,
+                Metrics.unsafeLabelName("trigger_class") -> triggerClass,
+                Metrics.unsafeLabelName("outcome") -> "transitioned"
+              )
+            ) >>
             consecutiveAbandonCountRef.set((none[Key], 0)) >>
             healthRef.update(_.copy(consecutiveAbandonments = 0)) >>
             // Clear ALL consensus state (states, resources, peer registrations, scheduling state)
@@ -528,7 +735,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
             storage.clearTimeTrigger >>
             storage.clearObservationKey >>
             ctx.pending.clear() >>
-            queue.offer(ConsensusCommand.RoundCompleted)
+            offerRoundCompleted
         case None =>
           // Check if node is already in Leaving state — if so, just complete the round and stop.
           // CRITICAL: Do NOT queue TimeTick here. The old code queued RoundCompleted + TimeTick,
@@ -543,12 +750,32 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               key.toString,
               "n/a",
               LogEvent.RecoveryTransitionFailed,
+              "trigger" -> triggerReason,
+              "triggerClass" -> triggerClass,
               "reason" -> s"node in $currentState state, not Ready or Observing",
               "nodeState" -> currentState.show
             ) >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_recovery_state_transition_total",
+                Seq(
+                  Metrics.unsafeLabelName("trigger") -> triggerReason,
+                  Metrics.unsafeLabelName("trigger_class") -> triggerClass,
+                  Metrics.unsafeLabelName("outcome") -> "invalid_state"
+                )
+              ) >>
               ctx.pending.clear() >>
-              queue.offer(ConsensusCommand.RoundCompleted)
+              offerRoundCompleted
           }
       }
+  }
+}
+
+object AbandonmentTracker {
+
+  /** Why a retriable abandonment escalated to recovery download. Used as a metric/log label. */
+  private[engine] sealed abstract class EscalationCause(val label: String)
+  private[engine] object EscalationCause {
+    case object Isolated extends EscalationCause("isolated")
+    case object QuorumImpossible extends EscalationCause("quorum_impossible")
   }
 }

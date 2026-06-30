@@ -143,4 +143,131 @@ object ForkRecoveryDetectorSuite extends SimpleIOSuite {
       result <- detector.detectForkDivergence
     } yield expect(result.isEmpty, "Should not detect fork when local hash matches majority")
   }
+
+  // ─── Tier 2: Quorum probe verification ──────────────────────────────────
+
+  /** Build a probe that returns the given hash for any (peer, ordinal) request. */
+  def stubProbe(respondWith: Hash): HashAtOrdinalProbe[IO] = new HashAtOrdinalProbe[IO] {
+    def probe(peerId: PeerId, ordinal: SnapshotOrdinal): IO[Option[Hash]] =
+      respondWith.some.pure[IO]
+  }
+
+  /** Build a probe that returns different hashes per peer, keyed by peerId. */
+  def mappedProbe(responses: Map[PeerId, Option[Hash]]): HashAtOrdinalProbe[IO] =
+    new HashAtOrdinalProbe[IO] {
+      def probe(peerId: PeerId, ordinal: SnapshotOrdinal): IO[Option[Hash]] =
+        responses.getOrElse(peerId, none[Hash]).pure[IO]
+    }
+
+  test("tier 2: probe returns match → no fork (lagging on canonical chain)") {
+    // Local at ord 8, majority peers at ord 10 with hashY. Lag=2 (below threshold=10).
+    // Probe returns local's hash at ord 8 → we're on same chain, just lagging.
+    val localHash = Hash("local-hash-at-8")
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      _ <- (1 to 3).toList.traverse_ { i =>
+        mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(10), Hash("majority-hash-at-10")))
+      }
+
+      detector = ForkRecoveryDetector.make[IO](
+        mesh,
+        localTip(8, "local-hash-at-8"),
+        forkLagThreshold = 10,
+        verifyHashAt = Some(stubProbe(localHash))
+      )
+      result <- detector.detectForkDivergence
+    } yield expect(result.isEmpty, "Probe confirmed same chain — should not flag as fork")
+  }
+
+  test("tier 2: probe returns mismatch → fork detected") {
+    // Local at ord 8 hash=X, majority peers at ord 10. Probe returns hash=Y at ord 8
+    // from majority peers — different from our X, so we're on a fork.
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      _ <- (1 to 3).toList.traverse_ { i =>
+        mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(10), Hash("majority-tip-hash")))
+      }
+
+      detector = ForkRecoveryDetector.make[IO](
+        mesh,
+        localTip(8, "our-fork-hash"),
+        forkLagThreshold = 10,
+        verifyHashAt = Some(stubProbe(Hash("canonical-hash-at-8")))
+      )
+      result <- detector.detectForkDivergence
+    } yield
+      expect(result.isDefined, "Probe detected hash divergence at our ordinal — should flag")
+        .and(expect(result.get.majorityOrdinal == ordinal(10), "Majority ordinal propagated"))
+        .and(expect(result.get.lag == 2L, s"Lag should be 2, got ${result.get.lag}"))
+  }
+
+  test("tier 2: all probes return None → inconclusive → no fork") {
+    // Peers are in majority but don't have our ordinal in history (None).
+    // We can't verify — don't act.
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      _ <- (1 to 3).toList.traverse_ { i =>
+        mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(10), Hash("majority-tip")))
+      }
+
+      probe = new HashAtOrdinalProbe[IO] {
+        def probe(peerId: PeerId, ordinal: SnapshotOrdinal): IO[Option[Hash]] = none[Hash].pure[IO]
+      }
+
+      detector = ForkRecoveryDetector.make[IO](
+        mesh,
+        localTip(8, "local-hash"),
+        forkLagThreshold = 10,
+        verifyHashAt = Some(probe)
+      )
+      result <- detector.detectForkDivergence
+    } yield expect(result.isEmpty, "Probe inconclusive — should NOT flag as fork")
+  }
+
+  test("tier 2: mixed probe responses without quorum → no fork") {
+    // 3 peers probed: one matches, one mismatches, one absent. No clear majority either way.
+    val p1 = makePeerId(1)
+    val p2 = makePeerId(2)
+    val p3 = makePeerId(3)
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      _ <- List(p1, p2, p3).traverse_ { pid =>
+        mesh.updateChainTip(pid, ChainTip(ordinal(10), Hash("majority-tip")))
+      }
+
+      probe = mappedProbe(
+        Map(
+          p1 -> Hash("local-hash").some,
+          p2 -> Hash("divergent-hash").some,
+          p3 -> none[Hash]
+        )
+      )
+
+      detector = ForkRecoveryDetector.make[IO](
+        mesh,
+        localTip(8, "local-hash"),
+        forkLagThreshold = 10,
+        verifyHashAt = Some(probe)
+      )
+      result <- detector.detectForkDivergence
+    } yield expect(result.isEmpty, "No quorum match or mismatch — should NOT flag as fork")
+  }
+
+  test("tier 2: probe not wired → falls back to previous behavior (no detection on small lag)") {
+    // Without probe, small lag on same hash behaves exactly as before — no detection.
+    for {
+      mesh <- MeshState.make[IO](testConfig)
+      _ <- (1 to 3).toList.traverse_ { i =>
+        mesh.updateChainTip(makePeerId(i), ChainTip(ordinal(10), Hash("majority")))
+      }
+
+      detector = ForkRecoveryDetector.make[IO](
+        mesh,
+        localTip(8, "local"),
+        forkLagThreshold = 10,
+        verifyHashAt = None
+      )
+      result <- detector.detectForkDivergence
+    } yield expect(result.isEmpty, "Without probe, behavior must match pre-tier-2 semantics")
+  }
 }

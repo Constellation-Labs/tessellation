@@ -66,7 +66,7 @@ jobs:
           sudo apt-get install -y sbt
 
       - name: Build all JARs
-        run: just build --use-test-metagraph --num-gl0=3 --snapshot-streaming-branch=${{ inputs.snapshot_streaming_branch || 'testing' }} --block-explorer-branch=${{ inputs.block_explorer_branch || 'increase_delegated_stakes' }}
+        run: just build --use-test-metagraph --num-gl0=3 --snapshot-streaming-branch=${{ inputs.snapshot_streaming_branch || 'release/testnet' }} --block-explorer-branch=${{ inputs.block_explorer_branch || 'increase_delegated_stakes' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
@@ -114,9 +114,16 @@ jobs:
       # These flow through docker-compose.test.yaml → container env → HOCON ${?VAR}.
       CL_DECLARATION_TIMEOUT: "60 seconds"
       CL_RE_STALL_TIMEOUT: "25 seconds"
-      CL_TIME_TRIGGER_INTERVAL: "43 seconds"
+      # gl0/ml0 snapshot cadence. Lowered from 43s so global L0 keeps up with the allow-spends suite's
+      # transaction flood: at 43s the per-address tx chain (key1) outran gl0's committed tip by far more than
+      # maxParentOrdinalGap (32), so late transactions (e.g. the DoubleUse currencyId funding) were rejected
+      # ParentOrdinalGapTooLarge and never committed. Faster cadence keeps the gap small.
+      CL_TIME_TRIGGER_INTERVAL: "15 seconds"
       CL_MAX_ROUND_DURATION: "5 minutes"
-      CL_EVENT_TRIGGER_COOLDOWN: "15 seconds"
+      # Cadence when there ARE pending events (the flood): lowered so gl0 drains the chain faster without
+      # spawning empty rounds when idle.
+      CL_EVENT_TRIGGER_COOLDOWN: "5 seconds"
+      CL_QUORUM_THRESHOLD_FRACTION: "1.0"
 
     steps:
       - name: Checkout code
@@ -175,7 +182,7 @@ jobs:
         run: mkdir -p runner-logs
 
       - name: Run E2E tests
-        run: just test --skip-assembly --test=${{ matrix.test-group.tests }} ${{ matrix.test-group.extra-args || '' }} ${{ matrix.test-group.name == 'snapshot-streaming' && format('--snapshot-streaming-branch={0} --block-explorer-branch={1}', inputs.snapshot_streaming_branch || 'testing', inputs.block_explorer_branch || 'increase_delegated_stakes') || '' }}
+        run: just test --skip-assembly --test=${{ matrix.test-group.tests }} ${{ matrix.test-group.extra-args || '' }} ${{ matrix.test-group.name == 'snapshot-streaming' && format('--snapshot-streaming-branch={0} --block-explorer-branch={1}', inputs.snapshot_streaming_branch || 'release/testnet', inputs.block_explorer_branch || 'increase_delegated_stakes') || '' }}
 
       - name: Collect Docker container logs
         if: always()

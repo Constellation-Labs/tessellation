@@ -15,7 +15,8 @@ const {
 
 const checkOk = (response) => {
   if (response.status !== 200) {
-    throw new Error(`Node returned ${response.status} instead of 200`)
+    const body = response.data !== undefined ? JSON.stringify(response.data) : (response.body || '')
+    throw new Error(`Node returned ${response.status} instead of 200: ${String(body).slice(0, 300)}`)
   }
 }
 
@@ -262,6 +263,14 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
 
   if (!hash) {
     throw new Error('Failed to create TokenLock')
+  }
+
+  // Fresh locks: confirm GL0 inclusion ordinal-awarely before the wall-clock balance check below. A fresh lock
+  // can race the dag-L1 token-lock MPT (it trails GL0 by ~1 ordinal), so the balance only drops once the L1
+  // catches up; waiting on ordinal progress avoids a wall-clock timeout. Replacements change the active-lock
+  // hash (a /token-locks TOCTOU), so they rely on the replacement-retry / stake-ref path instead.
+  if (!replaceRef) {
+    await waitForTokenLockInclusion(urls, account.address, hash)
   }
 
   // The account may hold active delegated stakes that accrue reward credits during

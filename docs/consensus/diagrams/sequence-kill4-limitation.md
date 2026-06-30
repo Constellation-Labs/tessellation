@@ -34,15 +34,17 @@ sequenceDiagram
     Network-->>SideA: Network restored
     Network-->>SideB: Network restored
 
-    loop Fork detection fires
+    loop Fork detection fires (gossip + consensus channels)
         SideA->>SideB: Sample chain tips
         SideB-->>SideA: ChainTip(N, hashB)
-        SideA->>SideA: Running fork detected
+        SideA->>SideA: ForkRecoveryDetector:<br/>Tier 1 running fork detected
         
         SideB->>SideA: Sample chain tips
         SideA-->>SideB: ChainTip(N, hashA)
-        SideB->>SideB: Running fork detected
+        SideB->>SideB: ForkRecoveryDetector:<br/>Tier 1 running fork detected
     end
+
+    Note over SideA,SideB: Both sides set RecoveryPeerHint to<br/>their respective majority and transition<br/>to WaitingForDownload
 
     Note over SideA,SideB: PHASE 3: Recovery Attempts
 

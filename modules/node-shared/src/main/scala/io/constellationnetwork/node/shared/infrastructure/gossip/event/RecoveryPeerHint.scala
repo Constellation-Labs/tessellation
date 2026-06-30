@@ -13,7 +13,14 @@ import io.constellationnetwork.schema.peer.PeerId
   */
 trait RecoveryPeerHint[F[_]] {
   def setPreferredPeers(peers: Set[PeerId]): F[Unit]
+
+  /** Read the current preferred-peers hint WITHOUT clearing it. The recovery download path selects a source peer repeatedly (start,
+    * observe, retry ladder), so it peeks the hint on each selection rather than consuming it once; the hint is overwritten by the next fork
+    * detection.
+    */
+  def getPreferredPeers: F[Option[Set[PeerId]]]
   def getAndClearPreferredPeers: F[Option[Set[PeerId]]]
+  def clearPreferredPeers: F[Unit]
 }
 
 object RecoveryPeerHint {
@@ -21,7 +28,9 @@ object RecoveryPeerHint {
     Ref.of[F, Option[Set[PeerId]]](None).map { ref =>
       new RecoveryPeerHint[F] {
         def setPreferredPeers(peers: Set[PeerId]): F[Unit] = ref.set(peers.some)
+        def getPreferredPeers: F[Option[Set[PeerId]]] = ref.get
         def getAndClearPreferredPeers: F[Option[Set[PeerId]]] = ref.getAndSet(None)
+        def clearPreferredPeers: F[Unit] = ref.set(None)
       }
     }
 }

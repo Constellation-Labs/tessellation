@@ -35,6 +35,11 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   val nodeId1 = Id(Hex("1234567890abcdef")).toPeerId
   val nodeId2 = Id(Hex("abcdef1234567890")).toPeerId
 
+  private def delegatorRewards(values: (PeerId, (Address, Amount))*): SortedMap[PeerId, SortedMap[Address, Amount]] =
+    SortedMap.from(
+      values.groupBy(_._1).view.mapValues(entries => SortedMap.from(entries.map(_._2))).toMap
+    )
+
   def createSignedStake(
     source: Address,
     nodeId: PeerId,
@@ -53,9 +58,9 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
     )
 
   test("getUpdatedCreateDelegatedStakes should preserve balance and skip rewards issuance when updating existing delegation records") {
-    val delegatorRewardsMap = Map(
-      nodeId1 -> Map(address1 -> Amount(100L)),
-      nodeId2 -> Map(address2 -> Amount(200L))
+    val delegatorRewardsMap = SortedMap(
+      nodeId1 -> SortedMap(address1 -> Amount(100L)),
+      nodeId2 -> SortedMap(address2 -> Amount(200L))
     )
 
     val stake1A = createSignedStake(address1, nodeId1, 1000L)
@@ -114,11 +119,11 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("getUpdatedCreateDelegatedStakes should update existing balances with new rewards") {
-    val delegatorRewardsMap = Map(
-      nodeId1 -> Map(
+    val delegatorRewardsMap = SortedMap(
+      nodeId1 -> SortedMap(
         address1 -> Amount(50L)
       ),
-      nodeId2 -> Map(
+      nodeId2 -> SortedMap(
         address2 -> Amount(75L)
       )
     )
@@ -187,9 +192,9 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       )
     )
 
-    val delegatorRewardsMap = Map(
-      nodeId1 -> Map(address1 -> Amount(50L)),
-      nodeId2 -> Map(address2 -> Amount(75L))
+    val delegatorRewardsMap = SortedMap(
+      nodeId1 -> SortedMap(address1 -> Amount(50L)),
+      nodeId2 -> SortedMap(address2 -> Amount(75L))
     )
 
     val delegatedStakeDiffs = UpdateDelegatedStakeAcceptanceResult(
@@ -244,9 +249,9 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
   }
 
   test("modified stakes should receive rewards in subsequent rounds") {
-    val firstRoundRewardsMap = Map(
-      nodeId1 -> Map(address1 -> Amount(100L)),
-      nodeId2 -> Map(address2 -> Amount(200L))
+    val firstRoundRewardsMap = SortedMap(
+      nodeId1 -> SortedMap(address1 -> Amount(100L)),
+      nodeId2 -> SortedMap(address2 -> Amount(200L))
     )
 
     val customTokenLockRef = Hash("1234567890abcdef1234567890abcdef")
@@ -290,8 +295,8 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       _ = expect(firstRoundBalance.contains(50L)) // Only the initial 50L, no new rewards
 
       // SECOND ROUND - Previously modified stake should now receive rewards
-      secondRoundRewardsMap = Map(
-        nodeId2 -> Map(address1 -> Amount(150L)) // Now rewards go to nodeId2 for address1
+      secondRoundRewardsMap = SortedMap(
+        nodeId2 -> SortedMap(address1 -> Amount(150L)) // Now rewards go to nodeId2 for address1
       )
 
       secondRoundDiffs = UpdateDelegatedStakeAcceptanceResult(
@@ -410,15 +415,17 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
               delegatedStakeAcceptanceResult.acceptedCreates
             )
 
-            rewardsMap = partitionedRecords.unexpiredCreateDelegatedStakes.flatMap {
-              case (addr, records) =>
-                records.toList.map { record =>
-                  val isModified = modifiedStakes.contains((addr, record.event.value.tokenLockRef))
-                  val nodeId = record.event.value.nodeId
-                  val rewardAmount = if (!isModified) Amount(100L) else Amount(0L)
-                  (nodeId, addr -> rewardAmount)
-                }
-            }.groupBy(_._1).view.mapValues(pairs => pairs.values.toMap).toMap
+            rewardsMap = delegatorRewards(
+              partitionedRecords.unexpiredCreateDelegatedStakes.flatMap {
+                case (addr, records) =>
+                  records.toList.map { record =>
+                    val isModified = modifiedStakes.contains((addr, record.event.value.tokenLockRef))
+                    val nodeId = record.event.value.nodeId
+                    val rewardAmount = if (!isModified) Amount(100L) else Amount(0L)
+                    (nodeId, addr -> rewardAmount)
+                  }
+              }.toSeq: _*
+            )
 
             updatedStakes <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[IO](
               rewardsMap,
@@ -428,7 +435,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
           } yield
             DelegatedRewardsResult(
-              delegatorRewardsMap = SortedMap.from(rewardsMap),
+              delegatorRewardsMap = rewardsMap,
               updatedCreateDelegatedStakes = updatedStakes,
               updatedWithdrawDelegatedStakes = SortedMap.empty,
               nodeOperatorRewards = SortedSet.empty,

@@ -76,6 +76,7 @@ case class GlobalIncrementalSnapshotV1(
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      None,
       version
     )
 }
@@ -107,7 +108,7 @@ case class GlobalIncrementalSnapshot(
   blocks: SortedSet[BlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
-  delegateRewards: Option[SortedMap[PeerId, Map[Address, Amount]]],
+  delegateRewards: Option[SortedMap[PeerId, SortedMap[Address, Amount]]],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
@@ -121,6 +122,13 @@ case class GlobalIncrementalSnapshot(
   delegatedStakesWithdrawals: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Withdraw]]]],
   activeNodeCollaterals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Create]]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Withdraw]]]],
+  // v20: snapshot of the prev round's consensus-derived peer-behavior counters.
+  // `None` for pre-v20 snapshots in storage and during conversions that have no
+  // outcome to carry forward (V1 conversion, fromGlobalSnapshot at chain start).
+  // Populated by the leader from `state.lastOutcome` and re-derived identically by
+  // every validator -- determinism follows from the per-round outcome being
+  // consensus-agreed.
+  peerHistory: Option[ConsensusOperationalState] = None,
   version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
@@ -151,7 +159,8 @@ object GlobalIncrementalSnapshot {
         Some(SortedMap.empty),
         Some(SortedMap.empty),
         Some(SortedMap.empty),
-        Some(SortedMap.empty)
+        Some(SortedMap.empty),
+        None
       )
     }
   }

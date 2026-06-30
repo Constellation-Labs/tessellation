@@ -145,7 +145,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           validationErrorStorage
         )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
+        .make[IO](creator, validators.signedValidator, None, None)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
@@ -165,7 +165,27 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       }
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, feeCalculator, mptStore)
+        .make[IO](
+          validator,
+          manager,
+          currencySnapshotContextFns,
+          feeCalculator,
+          mptStore,
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
+        )
     } yield processor
   }
 

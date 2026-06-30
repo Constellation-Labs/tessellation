@@ -173,6 +173,54 @@ object EventMempoolSuite extends SimpleIOSuite {
     } yield expect(snap.entries.size == 3, s"Snapshot should have 3 events, got ${snap.entries.size}")
   }
 
+  test("suspend hides events from snapshots and hash declarations until reactivated") {
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+      mempool <- EventMempool.make[IO, TestEvent, TestKey](noopExtractor, defaultConfig)
+      active <- mempool.add(fakeSignedEvent("active")).map(_.toOption.get)
+      held <- mempool.add(fakeSignedEvent("held")).map(_.toOption.get)
+      _ <- mempool.suspend(Set(held.hashed.hash))
+      activeSnap <- mempool.snapshot(limit = 10)
+      heldSnap <- mempool.suspendedSnapshot(limit = 10)
+      declaredHashes <- mempool.getEventHashes
+      activeSize <- mempool.size
+      stillRetrievable <- mempool.get(held.hashed.hash)
+      _ <- mempool.reactivate(Set(held.hashed.hash))
+      reactivatedSnap <- mempool.snapshot(limit = 10)
+    } yield
+      expect.all(
+        activeSnap.hashes.contains(active.hashed.hash),
+        !activeSnap.hashes.contains(held.hashed.hash),
+        heldSnap.hashes.contains(held.hashed.hash),
+        !declaredHashes.contains(held.hashed.hash),
+        activeSize == 1,
+        stillRetrievable.isDefined,
+        reactivatedSnap.hashes.contains(held.hashed.hash)
+      )
+  }
+
+  test("clearIncluded removes suspended events") {
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+      mempool <- EventMempool.make[IO, TestEvent, TestKey](noopExtractor, defaultConfig)
+      entry <- mempool.add(fakeSignedEvent("committed-while-suspended")).map(_.toOption.get)
+      _ <- mempool.suspend(Set(entry.hashed.hash))
+      _ <- mempool.clearIncluded(Set(entry.hashed.hash))
+      active <- mempool.snapshot(limit = 10)
+      suspended <- mempool.suspendedSnapshot(limit = 10)
+      found <- mempool.get(entry.hashed.hash)
+      size <- mempool.size
+    } yield
+      expect.all(
+        !active.hashes.contains(entry.hashed.hash),
+        !suspended.hashes.contains(entry.hashed.hash),
+        found.isEmpty,
+        size == 0
+      )
+  }
+
   // ── clear ─────────────────────────────────────────────────────
 
   test("clear empties the mempool") {

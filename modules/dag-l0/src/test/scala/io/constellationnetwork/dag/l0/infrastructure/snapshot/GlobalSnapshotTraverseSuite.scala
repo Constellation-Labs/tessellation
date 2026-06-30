@@ -363,7 +363,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             validationErrorStorage
           )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+        .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
@@ -380,7 +380,21 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           stateChannelManager,
           currencySnapshotContextFns,
           feeCalculator,
-          mptStore
+          mptStore,
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(

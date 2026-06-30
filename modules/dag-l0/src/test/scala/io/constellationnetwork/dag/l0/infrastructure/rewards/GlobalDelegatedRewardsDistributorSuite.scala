@@ -14,7 +14,11 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{DelegatedRewardsResult, PartitionedStakeUpdates}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{
+  DelegatedRewardsDistributor,
+  DelegatedRewardsResult,
+  PartitionedStakeUpdates
+}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.PricingUpdate
@@ -53,8 +57,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     DelegatedRewardsResult(
       delegatorRewardsMap = SortedMap(
-        nodeId1.toPeerId -> Map(address1 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
-        nodeId2.toPeerId -> Map(address2 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
+        nodeId1.toPeerId -> SortedMap(address1 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 10 / 100))),
+        nodeId2.toPeerId -> SortedMap(address2 -> Amount(NonNegLong.unsafeFrom(amount.value.value * 15 / 100)))
       ),
       updatedCreateDelegatedStakes = SortedMap(
         address1 -> SortedSet(
@@ -1601,5 +1605,110 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
               .and(expect(withinErrorMargin(userYNodeCReward, 218747461L)))
         }
     }
+  }
+
+  test("delegator reward uses effective stake amount after token lock replacement") {
+    val testConfig = delegatedRewardsConfig.copy(
+      emissionConfig = Map(
+        AppEnvironment.Dev -> { _: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(100L),
+            iTarget = NonNegFraction.unsafeFrom(1, 100),
+            iInitial = NonNegFraction.unsafeFrom(2, 100),
+            lambda = NonNegFraction.unsafeFrom(1, 10),
+            iImpact = NonNegFraction.unsafeFrom(5, 10),
+            totalSupply = Amount(100_00000000L),
+            dagPrices = SortedMap(EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1)),
+            epochsPerMonth = NonNegLong(100L / 12)
+          )
+        }
+      ),
+      oneTimeRewards = Map(AppEnvironment.Dev -> List.empty)
+    )
+
+    def stakeRecord(source: Address, amount: Long, currentAmount: Option[Long]): DelegatedStakeRecord =
+      DelegatedStakeRecord(
+        Signed(
+          UpdateDelegatedStake.Create(
+            source = source,
+            nodeId = nodeId1,
+            amount = DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)),
+            fee = DelegatedStakeFee(0L),
+            tokenLockRef = Hash.empty
+          ),
+          NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+        ),
+        SnapshotOrdinal(1L),
+        Balance.empty,
+        none,
+        currentAmount.map(amount => DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)))
+      )
+
+    val nodeParams = SortedMap(
+      nodeId1.toId -> (
+        Signed(
+          UpdateNodeParameters(
+            address3,
+            DelegatedStakeRewardParameters(RewardFraction.unsafeFrom(80000000)),
+            NodeMetadataParameters("", ""),
+            UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+          ),
+          NonEmptySet.one[SignatureProof](SignatureProof(nodeId1.toId, Signature(Hex(Hash.empty.value))))
+        ),
+        SnapshotOrdinal.unsafeApply(1L)
+      )
+    )
+
+    val emptyAcceptanceResult = UpdateDelegatedStakeAcceptanceResult(
+      SortedMap.empty,
+      List.empty,
+      SortedMap.empty,
+      List.empty
+    )
+
+    def distributeWithAddress1EffectiveStake(
+      distributor: DelegatedRewardsDistributor[IO],
+      currentAmount: Option[Long]
+    ): IO[Amount] = {
+      val stakes = SortedMap(
+        address1 -> SortedSet(stakeRecord(address1, 1000L, currentAmount)),
+        address2 -> SortedSet(stakeRecord(address2, 1000L, none))
+      )
+
+      val context = GlobalSnapshotInfo.empty.copy(
+        updateNodeParameters = nodeParams.some,
+        activeDelegatedStakes = stakes.some
+      )
+
+      val partitionedUpdates = PartitionedStakeUpdates(
+        unexpiredCreateDelegatedStakes = stakes,
+        unexpiredWithdrawalsDelegatedStaking = SortedMap.empty,
+        expiredWithdrawalsDelegatedStaking = SortedMap.empty
+      )
+
+      distributor
+        .distribute(
+          context,
+          TimeTrigger,
+          EpochProgress(100L),
+          List(address1 -> nodeId1, address2 -> nodeId1),
+          emptyAcceptanceResult,
+          partitionedUpdates
+        )
+        .map(_.delegatorRewardsMap.get(nodeId1).flatMap(_.get(address1)).getOrElse(Amount.empty))
+    }
+
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+
+      rewardWithOriginalStake <- distributeWithAddress1EffectiveStake(distributor, none)
+      rewardWithReplacementStake <- distributeWithAddress1EffectiveStake(distributor, 2000L.some)
+    } yield
+      expect(rewardWithOriginalStake.value.value > 0L) &&
+        expect(rewardWithReplacementStake.value.value > rewardWithOriginalStake.value.value)
   }
 }

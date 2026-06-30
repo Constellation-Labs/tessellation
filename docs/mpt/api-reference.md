@@ -40,7 +40,8 @@ io.constellationnetwork.schema.mpt
 ├── GlobalStateFieldId          # State field enumeration
 ├── PartitionNamespace          # Key namespace types
 ├── GlobalStateConverter        # State → key-value conversion
-└── MptStore                    # Typed MPT storage interface
+├── MptStore                    # Typed MPT storage interface (trait)
+└── MptStoreSavepoint           # Captured store state for rollback
 ```
 
 ## Core Types
@@ -240,19 +241,43 @@ object MerklePatriciaProducer {
 
 ### StatefulMerklePatriciaProducer
 
+Source: `MerklePatriciaProducer.scala:41-75`.
+
 ```scala
 trait StatefulMerklePatriciaProducer[F[_]] {
   def entries: F[Map[Hex, Array[Byte]]]
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
-  
+
+  // Build the trie and cache its root hash under `ordinal` for later retrieval
+  def buildForOrdinal(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
+  // Cached historical root for an ordinal (None if too old or never built)
+  def getRootHashForOrdinal(ordinal: SnapshotOrdinal): F[Option[MptRoot]]
+  // Last-built root without rebuilding (None if never built)
+  def getCurrentRootHash: F[Option[MptRoot]]
+  // Ordinal of the most recent buildForOrdinal (None if never built)
+  def getLastBuiltOrdinal: F[Option[SnapshotOrdinal]]
+
   def insert[A: Encoder](data: Map[Hex, A]): F[Either[MerklePatriciaError, Unit]]
   def insertBytes(data: Map[Hex, Array[Byte]]): F[Either[MerklePatriciaError, Unit]]
   def update[A: Encoder](key: Hex, value: A): F[Either[MerklePatriciaError, Unit]]
   def remove(keys: List[Hex]): F[Either[MerklePatriciaError, Unit]]
   def clear: F[Unit]
-  
+
   def getProver: F[MerklePatriciaSingleInclusionProver[F]]
   def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]]
+
+  // Capture all internal state (entries, trie, pending changes, caches) for rollback
+  def savepoint: F[ProducerSavepoint[F]]
+}
+```
+
+### ProducerSavepoint
+
+A captured snapshot of a `StatefulMerklePatriciaProducer`'s internal state. Used to undo mutations from a failed artifact validation (for example a stateProof divergence). Source: `MerklePatriciaProducer.scala:34-39`.
+
+```scala
+trait ProducerSavepoint[F[_]] {
+  def restore: F[Unit]
 }
 ```
 
@@ -507,7 +532,7 @@ accumulator.toStateEntries[F]  // F[Map[GlobalStateKey, Json]]
 // Build MPT from key-value pairs
 kvPairsF.buildMpt  // F[MptRoot]
 
-// MptStore extensions
+// MptStore extensions (syntax, not trait methods - see MptStore section below)
 mptStore.getBalance(address)                     // F[Option[Balance]]
 mptStore.getBalances(addresses)                  // F[Map[Address, Balance]]
 mptStore.getTxRef(address)                       // F[Option[TransactionReference]]
@@ -523,6 +548,70 @@ mptStore.getCurrencySnapshotInfo(metagraphAddr)  // F[Option[CurrencySnapshotInf
 
 mptStore.syncFromGlobalSnapshotInfo(info, ordinal)   // F[Unit]
 mptStore.syncFromStateChanges(accumulator, ordinal)  // F[Unit]
+```
+
+## MptStore
+
+`MptStore[F, K]` is the typed key-value facade over a `StatefulMerklePatriciaProducer`. Keys of type `K` are turned into trie paths via a caller-supplied `toHex: K => F[Hex]`, and values are JSON-serialized through `JsonSerializer`. The `getBalance`/`syncFromGlobalSnapshotInfo`/etc. members in the section above are syntax extensions layered on top of this trait, not members of it. Source: `MptStore.scala:26-48`.
+
+```scala
+trait MptStore[F[_], K] {
+  // Reads
+  def get[V: Decoder](key: K): F[Option[V]]
+  def getMany[V: Decoder](keys: List[K]): F[Map[K, V]]
+  def contains(key: K): F[Boolean]
+  def isEmpty: F[Boolean]
+
+  // Mutations
+  def insert[V: Encoder](key: K, value: V): F[Unit]
+  def insert[V: Encoder](entries: Map[K, V]): F[Unit]
+  def remove(key: K): F[Unit]
+  def remove(keys: List[K]): F[Unit]
+  def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
+  def clear: F[Unit]
+
+  // Build and sync against a snapshot ordinal
+  def build(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
+  def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
+  def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
+  def syncFullIfNeeded[V: Encoder](
+    newState: => F[Map[K, V]],
+    ordinal: SnapshotOrdinal,
+    expectedRoot: Option[Hash] = None
+  ): F[Unit]
+
+  // Persistence and rollback
+  def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
+  def underlying: StatefulMerklePatriciaProducer[F]
+  def savepoint: F[MptStoreSavepoint[F]]
+}
+```
+
+### Method semantics
+
+| Method | Behavior |
+|--------|----------|
+| `get` / `getMany` | Read the current in-memory entry set, deserialize matched values. `getMany([])` short-circuits to an empty map. |
+| `insert` / `remove` / `update` | Mutate pending producer state. `update` removes then upserts. |
+| `build(ordinal)` | Delegates to `underlying.buildForOrdinal(ordinal)`, caching the root hash under that ordinal. |
+| `sync` | Incremental: applies `newState` as inserts, persists, builds, and records `ordinal` as last-synced. No-op on an empty map. |
+| `syncFull` | Full reset: `clear`, then insert all of `newState`, persist, build, record `ordinal`. An empty `newState` clears the store and records `ordinal`. |
+| `syncFullIfNeeded` | Ordinal-gated `syncFull`. `newState` is a thunk evaluated only when a sync is needed. Skips when already synced at `ordinal`; when `expectedRoot` is supplied it builds and compares the current root, forcing a full resync on mismatch (or on a `Left` build) to avoid emitting a divergent root. |
+| `deleteAbove` | Drops persisted state above `ordinal` (only for persistence-backed producers; otherwise a no-op). |
+| `savepoint` | Captures producer state plus the last-synced ordinal; `MptStoreSavepoint.restore` rolls both back. |
+
+### Concurrency contract
+
+The heavy mutation methods (`syncFull`, `sync`, `update`, `deleteAbove`) and the multi-`Ref` `savepoint` capture/restore are serialized through an internal `Semaphore` (`mutationLock`) so concurrent callers cannot tear the producer's internal state. `insert`/`remove`/`clear`/`build` are NOT lock-wrapped: they are invoked only from inside the locked outer methods, so wrapping them would deadlock. Source: `MptStore.scala:58-69`.
+
+### MptStoreSavepoint
+
+Captured snapshot of an `MptStore`'s internal state (producer state plus last-synced ordinal). Used to undo mutations from a failed artifact validation (for example a stateProof divergence). Source: `MptStore.scala:19-24`.
+
+```scala
+trait MptStoreSavepoint[F[_]] {
+  def restore: F[Unit]
+}
 ```
 
 ## Usage Examples

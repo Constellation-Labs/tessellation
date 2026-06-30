@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.trust.storage.TrustStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
@@ -31,7 +32,7 @@ import fs2.io.file.Files
 
 object Storages {
 
-  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: Supervisor: Files](
+  def make[F[+_]: Async: Parallel: KryoSerializer: JsonSerializer: HasherSelector: Supervisor: Files: Metrics](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],

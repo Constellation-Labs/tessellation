@@ -32,13 +32,14 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.collateral.MptStoreCollateral
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
-import io.constellationnetwork.node.shared.infrastructure.gossip.event.{EventGossipClient, RecoveryPeerHint}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient, RecoveryPeerHint}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
@@ -67,7 +68,9 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     txHasher: Hasher[F],
-    loggerBundle: LoggerBundle[F]
+    loggerBundle: LoggerBundle[F],
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Services[F, R]] =
@@ -139,7 +142,13 @@ object Services {
             eventMempoolService,
             eventGossipClient,
             loggerBundle,
-            queues.rumor
+            queues.rumor,
+            getPeerChainTips,
+            // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
+            // into the SharedServices-owned Ref; Cluster reads from the same Ref via the
+            // consensusHealth thunk passed at Cluster.make time.
+            injectedHealthRef = Some(sharedServices.consensusHealthRef),
+            consensusDispatcher = consensusDispatcher
           )
       }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](

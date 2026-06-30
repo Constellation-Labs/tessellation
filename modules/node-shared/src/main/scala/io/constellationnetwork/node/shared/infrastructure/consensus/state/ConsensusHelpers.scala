@@ -20,8 +20,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
   * }}}
   */
 object ConsensusHelpers {
-  def triggerUpdateIfChanged[F[_]: Async, Key](
-    queue: Queue[F, ConsensusCommand],
+  def triggerUpdateIfChanged[F[_]: Async, Key, Artifact, Ctx, Outcome](
+    queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     key: Key
   )(result: Option[_]): F[Unit] =
     result.fold(Async[F].unit)(_ => queue.offer(CheckUpdate(key)))

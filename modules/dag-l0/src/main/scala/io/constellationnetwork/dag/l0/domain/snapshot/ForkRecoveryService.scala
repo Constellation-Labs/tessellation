@@ -53,8 +53,12 @@ object ForkRecoveryService {
                 s"majority=${info.majorityOrdinal.value.value} lag=${info.lag} " +
                 s"majorityPeers=${info.majorityPeers.size}"
             ) >>
-              // Attempt state transition first. Only set recovery flags if the transition
-              // succeeds — avoids leaving stale flags when the node is in an unexpected state.
+              // IMPORTANT: Set recovery flags BEFORE the state transition.
+              // This prevents a race condition where DownloadDaemon sees WaitingForDownload
+              // before setRecoveryDownload is called, causing isRecovery=false and a 43s
+              // deferral instead of immediate recovery.
+              recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
+              nodeStorage.setRecoveryDownload >>
               nodeStorage
                 .tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
                 .recoverWith {
@@ -64,16 +68,21 @@ object ForkRecoveryService {
                 .attempt
                 .flatMap {
                   case Right(_) =>
-                    recoveryPeerHint.setPreferredPeers(info.majorityPeers) >>
-                      nodeStorage.setRecoveryDownload
+                    // Flags already set above; state transition succeeded
+                    Async[F].unit
                   case Left(_: InvalidNodeStateTransition) =>
                     // Node is in a non-operational state (Leaving, Offline, Initial, etc.) —
-                    // fork recovery is not applicable. Suppress to avoid misleading heartbeat error log.
-                    logger.debug(
-                      s"Fork divergence suppressed: state transition not possible from $currentState — node not in recoverable state"
-                    )
+                    // fork recovery is not applicable. Clear the flags we just set.
+                    nodeStorage.clearRecoveryDownload >>
+                      recoveryPeerHint.clearPreferredPeers >>
+                      logger.debug(
+                        s"Fork divergence suppressed: state transition not possible from $currentState — node not in recoverable state"
+                      )
                   case Left(err) =>
-                    Async[F].raiseError(err)
+                    // Clear flags on unexpected error too
+                    nodeStorage.clearRecoveryDownload >>
+                      recoveryPeerHint.clearPreferredPeers >>
+                      Async[F].raiseError(err)
                 }
           }
         }

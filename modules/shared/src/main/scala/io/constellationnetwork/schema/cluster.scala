@@ -67,6 +67,13 @@ object cluster {
     override val getMessage = s"Peer not on seedlist: ${id.show}"
   }
 
+  // Raised by Cluster.leave() when its wedge guard refuses a leave request. The HTTP layer
+  // catches this and returns 409 Conflict with the reason in the body. Operators can override
+  // via the route's `force=true` query parameter when a legitimate leave is needed during a wedge.
+  case class ClusterLeaveRefused(reason: String) extends NoStackTrace {
+    override val getMessage = s"Cluster leave refused: $reason"
+  }
+
   @derive(decoder, encoder, order, show)
   @newtype
   case class SessionToken(value: Generation)

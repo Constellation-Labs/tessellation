@@ -1,7 +1,5 @@
 package io.constellationnetwork.currency.l0.infrastructure.snapshot
 
-import java.nio.file.NoSuchFileException
-
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -10,6 +8,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, CurrencySnapshotStateProof}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   SnapshotInfoLocalFileSystemStorage,
   SnapshotLocalFileSystemStorage
@@ -66,9 +65,7 @@ object CurrencySnapshotCleanupStorage {
             .flatMap { remainingFiles =>
               if (remainingFiles > 0) {
                 logger.error(s"Cleanup incomplete: $remainingFiles files still remain above ordinal ${ordinal.show}") >>
-                  Async[F].raiseError[Unit](
-                    new IllegalStateException(s"Cleanup incomplete: $remainingFiles files still remain above ordinal ${ordinal.show}")
-                  )
+                  Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(remainingFiles, ordinal))
               } else {
                 logger.info(s"Cleanup successful: No files remain above ordinal ${ordinal.show}") >> ().pure
               }

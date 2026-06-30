@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 
 import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.effect.std.Mutex
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow, Parallel}
 
@@ -27,7 +28,7 @@ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.tokenLock.{TokenLockBlock, TokenLockReference}
-import io.constellationnetwork.schema.transaction.TransactionReference
+import io.constellationnetwork.schema.transaction.{Transaction, TransactionReference}
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
@@ -87,7 +88,8 @@ abstract class SnapshotProcessor[
     tokenLockStorage: TokenLockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    storageMutationLock: Mutex[F]
   )(
     implicit hasher: Hasher[F],
     stateProofSelector: StateProofSelector
@@ -129,9 +131,29 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          markTxRefsAsMajority >>
-          setSnapshot >>
+        // Commit the in-memory storage mutations under the shared lock so they cannot interleave with a concurrent
+        // block-acceptance commit (BlockService.accept). The MPT build and lastN update stay OUTSIDE the lock.
+        // Validate the majority-ref preconditions BEFORE any mutation (still under the lock). If local state drifted
+        // from the reconciliation snapshot (a concurrent accept landed between checkAlignment's lock-free read and
+        // this apply), abort with nothing mutated and let the caller schedule a redownload -- rather than mutating
+        // block storage in adjustToMajority and only then having advanceMajorityRefs raise (a cross-store partial
+        // commit that cannot be cleanly retried).
+        val checkMajorityRefPreconditions: F[Unit] =
+          (
+            transactionStorage.majorityRefsViolations(txRefsToMarkMajority),
+            allowSpendStorage.majorityRefsViolations(allowSpendRefsToMarkMajority),
+            tokenLockStorage.majorityRefsViolations(tokenLockRefsToMarkMajority)
+          ).mapN(_ ++ _ ++ _).flatMap {
+            case Nil        => Async[F].unit
+            case violations => MajorityRefsDiverged(violations).raiseError[F, Unit]
+          }
+
+        storageMutationLock.lock.surround {
+          checkMajorityRefPreconditions >>
+            adjustToMajority >>
+            markTxRefsAsMajority >>
+            setSnapshot
+        } >>
           updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
@@ -176,9 +198,24 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          markTxRefsAsMajority >>
-          setSnapshot >>
+        // See AlignedAtNewOrdinal: validate majority-ref preconditions before any mutation to avoid a cross-store
+        // partial commit when local state drifted since the lock-free reconciliation read.
+        val checkMajorityRefPreconditions: F[Unit] =
+          (
+            transactionStorage.majorityRefsViolations(txRefsToMarkMajority),
+            allowSpendStorage.majorityRefsViolations(allowSpendRefsToMarkMajority),
+            tokenLockStorage.majorityRefsViolations(tokenLockRefsToMarkMajority)
+          ).mapN(_ ++ _ ++ _).flatMap {
+            case Nil        => Async[F].unit
+            case violations => MajorityRefsDiverged(violations).raiseError[F, Unit]
+          }
+
+        storageMutationLock.lock.surround {
+          checkMajorityRefPreconditions >>
+            adjustToMajority >>
+            markTxRefsAsMajority >>
+            setSnapshot
+        } >>
           updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
@@ -198,8 +235,7 @@ abstract class SnapshotProcessor[
           ) >> onDownload(snapshot, state)
 
         val setBalances: F[Unit] =
-          addressStorage.clean >>
-            addressStorage.updateBalances(state.balances)
+          addressStorage.replaceAll(state.balances)
 
         val setTransactionRefs: F[Unit] =
           transactionStorage.initByRefs(state.lastTxRefs, snapshot.ordinal)
@@ -216,10 +252,12 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          setBalances >>
-          setTransactionRefs >>
-          setInitialSnapshot >>
+        storageMutationLock.lock.surround {
+          adjustToMajority >>
+            setBalances >>
+            setTransactionRefs >>
+            setInitialSnapshot
+        } >>
           updateMptStorage >>
           setInitialLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             DownloadPerformed(
@@ -254,8 +292,7 @@ abstract class SnapshotProcessor[
           ) >> onRedownload(snapshot, state)
 
         val setBalances: F[Unit] =
-          addressStorage.clean >>
-            addressStorage.updateBalances(state.balances)
+          addressStorage.replaceAll(state.balances)
 
         val setTransactionRefs: F[Unit] =
           transactionStorage.replaceByRefs(state.lastTxRefs, snapshot.ordinal)
@@ -269,10 +306,12 @@ abstract class SnapshotProcessor[
           case _ => Async[F].unit
         }
 
-        adjustToMajority >>
-          setBalances >>
-          setTransactionRefs >>
-          setSnapshot >>
+        storageMutationLock.lock.surround {
+          adjustToMajority >>
+            setBalances >>
+            setTransactionRefs >>
+            setSnapshot
+        } >>
           updateMptStorage >>
           setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             RedownloadPerformed(
@@ -417,11 +456,11 @@ abstract class SnapshotProcessor[
                             }
 
                           def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
-                            for {
-                              _ <- logger.info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
-                              _ <- globalL0AlignmentStorage.clean()
-                              alignment = createRedownloadNeeded()
-                            } yield alignment
+                            // The flag was already read-and-cleared atomically by consumeShouldRedownload below,
+                            // so no separate clean() is needed (and a concurrently-raised flag is preserved).
+                            logger
+                              .info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
+                              .as(createRedownloadNeeded())
 
                           def createRedownloadNeeded(): Alignment =
                             RedownloadNeeded(
@@ -450,10 +489,10 @@ abstract class SnapshotProcessor[
                               postponedToWaiting
                             )
 
-                          globalL0AlignmentStorage.getShouldRedownload.flatMap { shouldRedownload =>
-                            validateTipsAlignment() >>
-                              determineAlignment(shouldRedownload)
-                          }
+                          // Validate tips BEFORE consuming the redownload flag: if tips are misaligned (raises),
+                          // we must NOT have cleared a pending redownload request that the next cycle still needs.
+                          validateTipsAlignment() >>
+                            globalL0AlignmentStorage.consumeShouldRedownload.flatMap(determineAlignment)
                       }
                     }
 
@@ -513,11 +552,11 @@ abstract class SnapshotProcessor[
                             onlyInMajority.isEmpty && acceptedToRemove.isEmpty
 
                           def handleRedownloadRequired(shouldRedownload: ShouldRedownload): F[Alignment] =
-                            for {
-                              _ <- logger.info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
-                              _ <- globalL0AlignmentStorage.clean()
-                              alignment = createRedownloadNeeded()
-                            } yield alignment
+                            // The flag was already read-and-cleared atomically by consumeShouldRedownload below,
+                            // so no separate clean() is needed (and a concurrently-raised flag is preserved).
+                            logger
+                              .info(s"Should redownload provided. Reason: ${shouldRedownload.reason.mkString(",")}")
+                              .as(createRedownloadNeeded())
 
                           def createAlignedAtNewHeight(): Alignment =
                             AlignedAtNewHeight(
@@ -547,10 +586,9 @@ abstract class SnapshotProcessor[
                               postponedToWaiting
                             )
 
-                          globalL0AlignmentStorage.getShouldRedownload.flatMap { shouldRedownload =>
-                            validateTipsAlignment() >>
-                              determineHeightAlignment(shouldRedownload)
-                          }
+                          // Validate tips BEFORE consuming the redownload flag (see AlignedAtNewOrdinal branch).
+                          validateTipsAlignment() >>
+                            globalL0AlignmentStorage.consumeShouldRedownload.flatMap(determineHeightAlignment)
                       }
                     }
 
@@ -578,9 +616,9 @@ abstract class SnapshotProcessor[
     acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
     state: SI
   ): Map[Address, TransactionReference] = {
-    val transactions = acceptedInMajority.values.flatMap(_._1.transactions.toSortedSet)
-    val sourceAddresses = transactions.map(_.source).toSet
-    val newDestinationAddresses = transactions.map(_.destination).toSet -- sourceAddresses
+    val transactions: Iterable[Signed[Transaction]] = acceptedInMajority.values.flatMap(_._1.transactions.toSortedSet)
+    val sourceAddresses: Set[Address] = transactions.map(_.source).toSet
+    val newDestinationAddresses: Set[Address] = transactions.map(_.destination).toSet -- sourceAddresses
 
     state.lastTxRefs.view.filterKeys(address => sourceAddresses.contains(address) || newDestinationAddresses.contains(address)).toMap
   }
@@ -731,5 +769,11 @@ object SnapshotProcessor {
   case class TipsGotMisaligned(deprecatedToAdd: Set[ProofsHash], activeToDeprecate: Set[ProofsHash]) extends SnapshotProcessingError {
     override def getMessage: String =
       s"Tips got misaligned! Check the implementation! deprecatedToAdd -> $deprecatedToAdd not equal activeToDeprecate -> $activeToDeprecate"
+  }
+
+  case class MajorityRefsDiverged(violations: List[String]) extends SnapshotProcessingError {
+    override def getMessage: String =
+      s"Majority tx/allow-spend/token-lock refs diverged from local state (drift since reconciliation), scheduling redownload " +
+        s"and mutating nothing: ${violations.mkString(", ")}"
   }
 }

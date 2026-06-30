@@ -1,5 +1,19 @@
 services:
   ml0:
+    environment:
+      # Match gl0's test override (docker-compose.test.yaml:46,51). The metagraph L0
+      # serves /snapshots/latest/combined on host port 9200, and E2E harnesses poll
+      # it from a single host IP at sub-second intervals, tripping the production
+      # 10/60s cap. 0 disables the middleware (SnapshotRoutes.scala:302 predicate).
+      - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW:-0}
+      - CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW:-0}
+      # Concurrency cap returns 503 independently of the per-IP limiters above (see gl0 override in
+      # docker-compose.test.yaml). Raise to effectively-unlimited for the test topology; prod keeps 20.
+      - CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC=${CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC:-100000}
+      - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW:-0}
+      # Widen the active-set recent-signer window (dev default 3) to testnet's 10 so slow-but-healthy
+      # facilitators on a loaded box are not demoted every few rounds (committee-breathing). See gl0 note.
+      - CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW=${CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW:-10}
     # merge in an extra network just for tests
     networks:
       tessellation_common:

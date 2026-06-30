@@ -126,7 +126,7 @@ object RewardsServiceSuite extends SimpleIOSuite {
     rewards = SortedSet.empty,
     delegateRewards = Some(
       SortedMap(
-        testPeerId1 -> Map(testAddress1 -> testAmount100)
+        testPeerId1 -> SortedMap(testAddress1 -> testAmount100)
       )
     ),
     epochProgress = testEpochProgress,

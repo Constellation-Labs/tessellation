@@ -17,6 +17,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.GlobalStateFieldId
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
@@ -183,7 +184,7 @@ case class GlobalSnapshotInfo(
   ): F[GlobalSnapshotStateProof] =
     stateProofSelector.select(ordinal) match {
       case LegacyFormat         => lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
-      case MerklePatriciaFormat => GlobalSnapshotInfo.mptStateProof[F](this)
+      case MerklePatriciaFormat => GlobalSnapshotInfo.mptStateProof[F](this, ordinal)
     }
 
   def stateProof[F[_]: Parallel: Async: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
@@ -228,63 +229,102 @@ object GlobalSnapshotInfo {
             case Some(p) =>
               p.buildForOrdinal(ordinal).flatMap {
                 case Left(err) => err.raiseError[F, GlobalSnapshotStateProof]
-                case Right(trie) =>
+                case Right(_) =>
                   p.getRootHashForOrdinal(ordinal).flatMap {
-                    case Some(value) =>
-                      GlobalSnapshotStateProof
-                        .apply(
-                          Hash.empty,
-                          Hash.empty,
-                          Hash.empty,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          None,
-                          Some(value.value)
-                        )
-                        .pure[F]
-                    case None => MonadThrow[F].raiseError(new RuntimeException(s"Could not get mptRootHash for ordinal $ordinal"))
+                    // mptRoot comes from the pre-built producer trie (leader path); the per-field sub-trie roots
+                    // (when activated) are derived from `info`, identical to the validator's rebuild path below.
+                    case Some(value) => assembleMptProof(info, ordinal, value.value)
+                    case None        => MonadThrow[F].raiseError(new RuntimeException(s"Could not get mptRootHash for ordinal $ordinal"))
                   }
               }
             case None =>
-              mptStateProof[F](info)
+              mptStateProof[F](info, ordinal)
           }
       }
     }
 
-  def mptStateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](info: GlobalSnapshotInfo)(
+  def mptStateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](info: GlobalSnapshotInfo, ordinal: SnapshotOrdinal)(
     implicit stateProofSelector: StateProofSelector
   ): F[GlobalSnapshotStateProof] =
-    info.allStateEntries.buildMpt.map { mptRoot =>
-      GlobalSnapshotStateProof.apply(
-        Hash.empty,
-        Hash.empty,
-        Hash.empty,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(mptRoot.value)
-      )
+    info.allStateEntries.buildMpt.flatMap(mptRoot => assembleMptProof(info, ordinal, mptRoot.value))
+
+  /** Parallelism bound for building the per-field sub-tries (#10). Kept small: each sub-trie build over a large field (e.g. balances) is
+    * memory-heavy, so it runs on the signed snapshot hot path bounded, and only when sub-trie roots are activated for the ordinal.
+    */
+  private val subTrieRootParallelism: Int = 4
+
+  /** Per-`GlobalStateFieldId` Merkle root, built from the SAME merged state-entry map that produces `mptRoot`, grouped by field id -- so
+    * there is no drift between what is hashed into `mptRoot` and what is hashed per field.
+    */
+  def subTrieRoots[F[_]: Parallel: Async: Hasher: JsonSerializer](
+    info: GlobalSnapshotInfo
+  )(implicit stateProofSelector: StateProofSelector): F[Map[GlobalStateFieldId, Hash]] =
+    info.allStateEntries.flatMap { all =>
+      // Bounded concurrency without cats-effect's parTraverseN: build the per-field sub-tries in chunks of
+      // subTrieRootParallelism (parallel within a chunk, chunks sequential). A single large field (e.g.
+      // balances) is memory-heavy, so the cap keeps the signed hot path bounded.
+      all.groupBy { case (k, _) => k.fieldId }.toList
+        .grouped(subTrieRootParallelism)
+        .toList
+        .flatTraverse(_.parTraverse { case (fieldId, entries) => entries.pure[F].buildMpt.map(root => fieldId -> root.value) })
+        .map(_.toMap)
     }
+
+  /** Assemble the MPT-format state proof from the merged `mptRoot`. When sub-trie roots are activated for `ordinal` (see
+    * `StateProofSelector.subTrieRootsEnabled`, default inert), the otherwise-`None` fields carry their per-`GlobalStateFieldId` sub-trie
+    * root so a divergence can be localized to a field. Both proof paths (the leader's pre-built producer trie and the validator's rebuild)
+    * supply the same merged `mptRoot`, and the per-field roots are a pure function of `info`, so both yield identical SIGNED proofs.
+    * `lastCurrencySnapshotsProof` is intentionally left `None` (its type is `Option[MerkleRoot]`, not `Option[Hash]`).
+    */
+  def assembleMptProof[F[_]: Parallel: Async: Hasher: JsonSerializer](
+    info: GlobalSnapshotInfo,
+    ordinal: SnapshotOrdinal,
+    mptRoot: Hash
+  )(implicit stateProofSelector: StateProofSelector): F[GlobalSnapshotStateProof] =
+    if (stateProofSelector.subTrieRootsEnabled(ordinal))
+      subTrieRoots(info).map { roots =>
+        // Qualified field ids (not a wildcard import) so GlobalStateFieldId.UpdateNodeParameters does not
+        // collide with the node.UpdateNodeParameters imported at file scope.
+        GlobalSnapshotStateProof(
+          roots.getOrElse(GlobalStateFieldId.LastStateChannelSnapshotHashes, Hash.empty),
+          roots.getOrElse(GlobalStateFieldId.LastTxRefs, Hash.empty),
+          roots.getOrElse(GlobalStateFieldId.Balances, Hash.empty),
+          None,
+          roots.get(GlobalStateFieldId.ActiveAllowSpends),
+          roots.get(GlobalStateFieldId.ActiveTokenLocks),
+          roots.get(GlobalStateFieldId.TokenLockBalances),
+          roots.get(GlobalStateFieldId.LastAllowSpendRefs),
+          roots.get(GlobalStateFieldId.LastTokenLockRefs),
+          roots.get(GlobalStateFieldId.UpdateNodeParameters),
+          roots.get(GlobalStateFieldId.ActiveDelegatedStakes),
+          roots.get(GlobalStateFieldId.DelegatedStakesWithdrawals),
+          roots.get(GlobalStateFieldId.ActiveNodeCollaterals),
+          roots.get(GlobalStateFieldId.NodeCollateralWithdrawals),
+          roots.get(GlobalStateFieldId.PriceState),
+          roots.get(GlobalStateFieldId.MetagraphSyncData),
+          Some(mptRoot)
+        )
+      }
+    else
+      GlobalSnapshotStateProof(
+        Hash.empty,
+        Hash.empty,
+        Hash.empty,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(mptRoot)
+      ).pure[F]
 
   def legacyStateProof[F[_]: Parallel: Sync: Hasher](
     info: GlobalSnapshotInfo,

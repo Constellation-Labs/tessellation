@@ -36,13 +36,22 @@ trait NodeStorage[F[_]] {
 
   def isInJoiningGracePeriod: F[Boolean]
 
-  /** Flag set by AbandonmentTracker before triggering recovery download. When true, DownloadDaemon uses the incremental recoveryDownload
-    * path (skips cache clearing and observe phase). Cleared after download completes.
+  /** Flag set by AbandonmentTracker before triggering recovery download. When true, DownloadDaemon uses the layer's `recoveryDownload`
+    * implementation rather than full `download`. dag-l0 resyncs MptStore from the downloaded checkpoint; currency-l0 currently delegates to
+    * its full download. Cleared after download completes.
     */
   def setRecoveryDownload: F[Unit]
 
   def clearRecoveryDownload: F[Unit]
 
   def isRecoveryDownload: F[Boolean]
+
+  /** When true, the node must have ≥2 facilitators to complete a consensus round. Set by RunValidator at startup — validators must never
+    * produce solo snapshots because solo production from multiple validators creates divergent forks. RunRollback/RunGenesis nodes leave
+    * this false so they can bootstrap solo.
+    */
+  def setValidatorMode: F[Unit]
+
+  def isValidatorMode: F[Boolean]
 
 }

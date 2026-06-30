@@ -111,6 +111,15 @@ object TokenLockBlockAcceptanceManager {
             case (validList, invalidList) =>
               go(TokenLockBlockAcceptanceState.withRejectedBlocks(invalidList), validList)
                 .map(_.toBlockAcceptanceResult)
+                .flatTap { result =>
+                  result.notAccepted.traverse_ {
+                    case (_, reason) =>
+                      logger.warn(s"[TOKENLOCK_ACCEPT] token lock block NOT accepted, reason: ${reason.show}")
+                  } *>
+                    Async[F].whenA(result.accepted.nonEmpty)(
+                      logger.info(s"[TOKENLOCK_ACCEPT] accepted ${result.accepted.size} token lock block(s)")
+                    )
+                }
           }
       }
 

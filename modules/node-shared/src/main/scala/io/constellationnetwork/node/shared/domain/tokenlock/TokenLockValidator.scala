@@ -93,7 +93,7 @@ object TokenLockValidator {
         currentTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
       ): TokenLockValidationErrorOr[Signed[TokenLock]] = {
         val addressTokenLocks = currentTokenLocks.getOrElse(signedTx.source, SortedSet.empty[Signed[TokenLock]])
-        if (addressTokenLocks.size === tokenLockLimitsConfig.maxTokenLocksPerAddress.value)
+        if (signedTx.replaceTokenLockRef.isEmpty && addressTokenLocks.size >= tokenLockLimitsConfig.maxTokenLocksPerAddress.value)
           TooManyTokenLocksForAddress.invalidNec
         else if (signedTx.amount.value < tokenLockLimitsConfig.minTokenLockAmount)
           TokenLockAmountBelowMinimum.invalidNec

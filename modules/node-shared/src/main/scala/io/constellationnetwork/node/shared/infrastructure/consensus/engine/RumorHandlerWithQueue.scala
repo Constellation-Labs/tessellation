@@ -3,7 +3,6 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 import cats.Applicative
 import cats.data.{Kleisli, OptionT}
 import cats.effect.Async
-import cats.effect.std.Queue
 import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
@@ -48,8 +47,11 @@ import io.circe.Decoder
   */
 object RumorHandlerWithQueue {
 
+  // The helper only emits `RumorReceived` (ConsensusCommand[Nothing, Nothing, Nothing, Nothing]).
+  // Taking a function instead of the Queue lets it stay generic in the queue's specialization
+  // via Function1 contravariance — `queue.offer: K => F[Unit]` is-a `Nothing => F[Unit]`.
   def peer[F[_]: Async, A: TypeTag: Decoder](
-    queue: Queue[F, ConsensusCommand],
+    offer: ConsensusCommand[Nothing, Nothing, Nothing, Nothing] => F[Unit],
     selfOriginPolicy: OriginPolicy = IncludeSelfOrigin
   ): RumorHandler[F] = {
     val expectedType = ContentType.of[A]
@@ -58,13 +60,13 @@ object RumorHandlerWithQueue {
       case (raw: PeerRumorRaw, selfId) if raw.contentType === expectedType && allowOrigin(raw.origin, selfId, selfOriginPolicy) =>
         for {
           decoded <- raw.content.as[A].liftTo[F]
-          _ <- queue.offer(RumorReceived(Left(PeerRumor(raw.origin, raw.ordinal, decoded))))
+          _ <- offer(RumorReceived(Left(PeerRumor(raw.origin, raw.ordinal, decoded))))
         } yield ()
     }
   }
 
   def common[F[_]: Async, A: TypeTag: Decoder](
-    queue: Queue[F, ConsensusCommand]
+    offer: ConsensusCommand[Nothing, Nothing, Nothing, Nothing] => F[Unit]
   ): RumorHandler[F] = {
     val expectedType = ContentType.of[A]
 
@@ -72,7 +74,7 @@ object RumorHandlerWithQueue {
       case (raw: CommonRumorRaw, _) if raw.contentType === expectedType =>
         for {
           decoded <- raw.content.as[A].liftTo[F]
-          _ <- queue.offer(RumorReceived(Right(CommonRumor(decoded))))
+          _ <- offer(RumorReceived(Right(CommonRumor(decoded))))
         } yield ()
     }
   }

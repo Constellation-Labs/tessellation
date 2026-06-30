@@ -62,6 +62,7 @@ export DOCKER_PROFILES=${DOCKER_PROFILES:-""}
 # Test specific settings
 export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
 export SELECTED_TESTS=${SELECTED_TESTS:-""}
+export SKIP_STREAMING=${SKIP_STREAMING:-false}
 export LIST_TESTS=${LIST_TESTS:-false}
 
 
@@ -113,6 +114,9 @@ for arg in "$@"; do
       ;;
     --skip-assembly)
       export SKIP_ASSEMBLY=true
+      ;;
+    --skip-streaming)
+      export SKIP_STREAMING=true
       ;;
     --net-prefix=*)
       export NET_PREFIX="${arg#*=}"

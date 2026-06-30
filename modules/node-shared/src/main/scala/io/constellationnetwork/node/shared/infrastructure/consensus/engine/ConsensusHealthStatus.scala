@@ -51,7 +51,14 @@ final case class ConsensusHealthStatus(
   totalRecoveryAttempts: Int = 0,
   isRunning: Boolean = false,
   missingPeers: List[String] = Nil,
-  facilitatorIds: List[String] = Nil
+  facilitatorIds: List[String] = Nil,
+  // Ready peers reporting a key strictly greater than ours. 0 = cluster-wide stall, not local lag.
+  peersAtHigherKey: Int = 0,
+  // Reason label of the most recent ROUND_ABANDONED event (e.g. "quorum_infeasible", "max_stalls").
+  lastAbandonReason: Option[String] = None,
+  // Monotonic millis when sustained quorum-infeasible-without-peers-ahead was first detected. None = no wedge.
+  // Cluster.leave() guard reads this; cleared on resetOnSuccessfulRound. See AbandonmentTracker for set/clear logic.
+  wedgeDetectedAtMs: Option[Long] = None
 )
 
 object ConsensusHealthStatus {

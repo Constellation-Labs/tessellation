@@ -1,7 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.Validated.Valid
-import cats.data.{NonEmptyChain, Validated, ValidatedNec}
+import cats.data.{Validated, ValidatedNec}
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
@@ -9,7 +8,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -17,7 +15,6 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -43,14 +40,27 @@ trait CurrencySnapshotValidator[F[_]] {
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    peerHistory: Option[ConsensusOperationalState] = None
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
 object CurrencySnapshotValidator {
 
+  /** Whether a re-created currency artifact matches the expected (signed) one, ignoring `globalSyncView`.
+    *
+    * `globalSyncView` is derived from live, time-varying GL0 sync state (the last-seen global snapshot at creation time), so a re-validator
+    * cannot reproduce it deterministically. It is part of the SIGNED artifact, so it is trusted via the signature and pinned to the
+    * expected value before the equality compare -- the same trust-the-signed-field approach the global validator uses. This replaces a
+    * prior ordinal-gated pin (`lastArtifact.ordinal.next < tessellation3Migration`) that compared the per-metagraph currency ordinal
+    * against a GLOBAL migration ordinal: dead under dev (gate 0) and comparing mismatched ordinal spaces, so on dev the recreated
+    * `globalSyncView` (a later GL0 view) diverged from the signed one and every metagraph snapshot was reject-and-skipped from global
+    * state.
+    */
+  def matchesExpected(recreated: CurrencyIncrementalSnapshot, expected: CurrencyIncrementalSnapshot): Boolean =
+    recreated.focus(_.globalSyncView).replace(expected.globalSyncView) === expected
+
   def make[F[_]: Async: KryoSerializer: JsonSerializer](
-    globalSyncViewStartingOrdinal: SnapshotOrdinal,
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
@@ -70,7 +80,12 @@ object CurrencySnapshotValidator {
           lastContext,
           artifact,
           facilitators,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          // Chain-replay path: no live consensus state to consult, so re-feed the
+          // artifact's own claim as the recreation input. The signature-validation
+          // above already binds the value to the signing facilitators -- if it
+          // were tampered with, this would have failed first.
+          artifact.value.peerHistory
         ).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
@@ -81,14 +96,16 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
         lastArtifact,
         lastContext,
         artifact,
         facilitators,
-        getGlobalSnapshotByOrdinal
+        getGlobalSnapshotByOrdinal,
+        peerHistory
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -120,7 +137,8 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -172,7 +190,8 @@ object CurrencySnapshotValidator {
                 expected.artifacts.map(() => _),
                 getGlobalSnapshotByOrdinal,
                 shouldPerformMetagraphSpecificValidations = false,
-                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts)
+                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
+                peerHistory
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
@@ -193,15 +212,12 @@ object CurrencySnapshotValidator {
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
               else creationResult
             }.map { creationResult =>
-              if (lastArtifact.ordinal.next < globalSyncViewStartingOrdinal)
-                creationResult.focus(_.artifact.globalSyncView).replace(expected.globalSyncView)
-              else
-                creationResult
-            }.map { creationResult =>
-              if (creationResult.artifact =!= expected)
-                SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
-              else
+              // Compare ignoring globalSyncView (pinned to the signed value) -- see matchesExpected. The error
+              // reports the un-pinned recreated artifact so a real divergence is still fully visible downstream.
+              if (matchesExpected(creationResult.artifact, expected))
                 creationResult.validNec
+              else
+                SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
             }
 
           check(usingHasher(Hasher.forJson[F]))

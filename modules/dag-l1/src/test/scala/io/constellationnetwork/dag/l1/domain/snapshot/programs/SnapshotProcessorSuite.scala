@@ -4,7 +4,7 @@ import java.security.KeyPair
 
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect._
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -215,7 +215,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validationErrorStorage
                 )
               currencySnapshotValidator = CurrencySnapshotValidator
-                .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+                .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
               mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
               mptStore <- MptStore
@@ -275,7 +275,21 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       globalSnapshotStateChannelManager,
                       currencySnapshotContextFns,
                       feeCalculator,
-                      mptStore
+                      mptStore,
+                      FieldsAddedOrdinals(
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        Map.empty,
+                        scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+                      ),
+                      Dev
                     ),
                   updateNodeParametersAcceptanceManager,
                   updateDelegatedStakeAcceptanceManager,
@@ -301,6 +315,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   SnapshotOrdinal.MinValue
                 )
               }
+              storageMutationLock <- Mutex[IO].asResource
               snapshotProcessor = {
                 val addressStorage = new AddressStorage[IO] {
                   def getState: IO[Map[Address, Balance]] =
@@ -310,6 +325,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     balancesR.get.map(b => b(address))
 
                   def updateBalances(addressBalances: Map[Address, balance.Balance]): IO[Unit] =
+                    balancesR.update(_ ++ addressBalances)
+
+                  def replaceAll(addressBalances: Map[Address, balance.Balance]): IO[Unit] =
                     balancesR.set(addressBalances)
 
                   def clean: IO[Unit] = balancesR.set(Map.empty)
@@ -323,6 +341,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
 
                   override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
+
+                  override def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal, localHash: Hash)
+                    : IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+                  override def queryLatestEpochProgress: IO[Option[io.constellationnetwork.schema.epoch.EpochProgress]] = ???
 
                   override def pullGlobalSnapshots
                     : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
@@ -350,7 +373,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     globalL0Service.pullGlobalSnapshot,
                     globalL0Service,
                     globalL0AlignmentStorage,
-                    mptStore
+                    mptStore,
+                    storageMutationLock
                   )
               }
               keys <- (

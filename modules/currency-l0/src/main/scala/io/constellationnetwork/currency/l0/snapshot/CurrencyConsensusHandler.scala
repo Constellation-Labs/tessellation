@@ -16,7 +16,7 @@ import io.circe.Decoder
 
 object CurrencyConsensusHandler {
   def make[F[_]: Async: HasherSelector](
-    queue: Queue[F, ConsensusCommand]
+    queue: Queue[F, ConsensusCommand[CurrencySnapshotKey, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencyConsensusOutcome]]
   )(implicit eventDecoder: Decoder[CurrencySnapshotEvent]): RumorHandler[F] = {
     val all = new ConsensusRumorHandlers[
       F,
@@ -35,6 +35,11 @@ object CurrencyConsensusHandler {
       all.binarySignatureHandler <+>
       all.ackHandler <+>
       all.artifactHandler <+>
-      all.withdrawHandler
+      all.withdrawHandler <+>
+      all.viewChangeVoteHandler <+>
+      all.timeoutVoteHandler <+>
+      all.evictionVoteHandler <+>
+      all.admissionVoteHandler <+>
+      all.assembledVccHandler
   }
 }

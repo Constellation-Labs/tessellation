@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
 }
 import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator.PricingUpdateValidationError
 import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
@@ -146,7 +147,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       Map[Address, List[SpendAction]],
       SortedMap[Id, Signed[UpdateNodeParameters]],
       SortedSet[SharedArtifact],
-      SortedMap[PeerId, Map[Address, Amount]]
+      SortedMap[PeerId, SortedMap[Address, Amount]]
     )
   ]
 }
@@ -613,7 +614,7 @@ object GlobalSnapshotAcceptanceManager {
           Map[Address, List[SpendAction]],
           SortedMap[Id, Signed[UpdateNodeParameters]],
           SortedSet[SharedArtifact],
-          SortedMap[PeerId, Map[Address, Amount]]
+          SortedMap[PeerId, SortedMap[Address, Amount]]
         )
       ] = {
         implicit val hasher: Hasher[F] = HasherSelector[F].getForOrdinal(ordinal)
@@ -632,7 +633,7 @@ object GlobalSnapshotAcceptanceManager {
 
         loggerBundle.app.withOrdinal(ordinal) {
           for {
-            _ <- loggerBundle.app.info(
+            _ <- loggerBundle.app.debug(
               s"[ACCEPTANCE] ordinal=$ordinal epoch=${epochProgress.show} ENTER " +
                 s"blocks=${blocksForAcceptance.size} allowSpend=${allowSpendBlocksForAcceptance.size} " +
                 s"tokenLock=${tokenLockBlocksForAcceptance.size} sc=${scEvents.size} unp=${unpEvents.size} " +
@@ -888,7 +889,7 @@ object GlobalSnapshotAcceptanceManager {
                   globalAllowSpends,
                   globalActiveAllowSpends
                 )
-                .leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
+                .leftMap(ex => SnapshotFailure.BalanceArithmeticError.AllowSpends(ex.toString))
             )
 
             unexpiredNodeCollateralsRaw = nodeCollateralStateManager.acceptNodeCollaterals(
@@ -915,7 +916,7 @@ object GlobalSnapshotAcceptanceManager {
                 acceptedGlobalTokenLocks,
                 globalActiveTokenLocksByRef
               )
-              .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
+              .leftMap(error => SnapshotFailure.TokenUnlockGenerationFailed(error.toString))
               .liftTo[F]
 
             TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas, removedTokenLockKeys) <- tokenLockStateManager
@@ -937,16 +938,17 @@ object GlobalSnapshotAcceptanceManager {
                 lastSnapshotContext.tokenLockBalances
               )
 
-            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
-              epochProgress,
-              updatedBalancesByAllowSpends,
-              globalTokenLocks,
-              globalActiveTokenLocks,
-              generatedTokenUnlocks
-            ) match {
-              case Right(balances) => balances
-              case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
-            }
+            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) <- Async[F].fromEither(
+              tokenLockStateManager
+                .updateGlobalBalancesByTokenLocks(
+                  epochProgress,
+                  updatedBalancesByAllowSpends,
+                  globalTokenLocks,
+                  globalActiveTokenLocks,
+                  generatedTokenUnlocks
+                )
+                .leftMap(error => SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString))
+            )
 
             lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
 
@@ -997,15 +999,15 @@ object GlobalSnapshotAcceptanceManager {
                   .filter(_.currencyId.isEmpty)
             }.toList
 
-            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) = spendTransactionBalanceManager
-              .updateGlobalBalancesBySpendTransactions(
-                updatedBalancesByTokenLocks,
-                allGlobalAllowSpends,
-                globalSpendTransactions
-              ) match {
-              case Right(balances) => balances
-              case Left(error) => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
-            }
+            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) <- Async[F].fromEither(
+              spendTransactionBalanceManager
+                .updateGlobalBalancesBySpendTransactions(
+                  updatedBalancesByTokenLocks,
+                  allGlobalAllowSpends,
+                  globalSpendTransactions
+                )
+                .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
+            )
 
             MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
               ordinal,
@@ -1082,6 +1084,19 @@ object GlobalSnapshotAcceptanceManager {
               updatedAcceptedMetagraphSyncData
             )
 
+            // CONSENSUS-CRITICAL ordinal-gated dust sweep (state deflation).
+            // Applied to the fully-built GSI BEFORE the MPT sync and proof so that the returned GSI, the MPT-sync input,
+            // and buildProof all derive from the SAME swept state (sweptGsi == gsi2). Off the sweep ordinal this is a no-op
+            // (didSweep = false) and gsi2 is the same value as gsi, so the normal incremental MPT path is unchanged.
+            (sweptGsi, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(gsi, ordinal, environment, fieldsAddedOrdinals.dustSweeps)
+
+            _ <- loggerBundle.app
+              .info(
+                s"[ACCEPTANCE] ordinal=$ordinal DUST_SWEEP removed=${gsi.balances.size - sweptGsi.balances.size} " +
+                  s"balancesBefore=${gsi.balances.size} balancesAfter=${sweptGsi.balances.size}"
+              )
+              .whenA(didSweep)
+
             balanceChanges: SortedMap[Address, Balance] =
               initialData.blockResult.contextUpdate.balances.toSortedMap ++
                 currencyAcceptanceBalanceUpdate.toSortedMap ++
@@ -1137,8 +1152,39 @@ object GlobalSnapshotAcceptanceManager {
                 s"nc=${removedNodeCollateralKeys.size},ncw=${removedNodeCollateralWithdrawalKeys.size})"
             )
 
-            _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-            stateProof <- builder.buildProof(gsi, ordinal)
+            // At the sweep ordinal, rebuild the MPT in one shot from the swept state (sub-second on the pruned ~hundreds of entries)
+            // rather than streaming hundreds of thousands of incremental deletions. syncFull yields the identical canonical root the
+            // incremental path would produce for the same entry set (the MPT root is a pure function of the entry set), so consensus
+            // still agrees, and the producer resumes correct incremental syncs from the pruned base afterward.
+            _ <-
+              if (didSweep) sweptGsi.allStateEntries[F].flatMap(mptStore.syncFull[Json](_, ordinal))
+              else mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
+            stateProof <- builder.buildProof(sweptGsi, ordinal)
+
+            // DIAGNOSTIC (opt-in via CL_MPT_VERIFY_INCREMENTAL=true; log-only, off by default; lazy so it costs
+            // nothing when off). On the incremental path, independently rebuild the full MPT root from the swept
+            // GSI (a standalone trie -- does NOT touch the shared store) and compare to the incremental store root
+            // that buildProof just produced. A mismatch means syncFromStateChanges drifted from the canonical
+            // entry set: the live, in-memory analogue of the historical "MptStore carries wrong state incrementally"
+            // divergence. Catches drift at its source, the same ordinal it is introduced, before it propagates.
+            _ <- GlobalSnapshotInfo
+              .mptStateProof[F](sweptGsi, ordinal)
+              .map(_.mptRoot)
+              .flatMap { fullRebuildRoot =>
+                loggerBundle.app
+                  .error(
+                    s"[MPT.VERIFY] ordinal=$ordinal INCREMENTAL DRIFT detected: " +
+                      s"incrementalRoot=${stateProof.mptRoot.map(_.show.take(12)).getOrElse("none")} != " +
+                      s"fullRebuildRoot=${fullRebuildRoot.map(_.show.take(12)).getOrElse("none")}"
+                  )
+                  .whenA(stateProof.mptRoot =!= fullRebuildRoot)
+              }
+              // Diagnostic must never affect acceptance: swallow any rebuild/serialization failure so a node with
+              // the flag set cannot fail or diverge from nodes without it. Log-only by contract.
+              .handleErrorWith(e =>
+                loggerBundle.app.warn(s"[MPT.VERIFY] ordinal=$ordinal diagnostic rebuild failed (ignored): ${e.getMessage}")
+              )
+              .whenA(!didSweep && sys.env.get("CL_MPT_VERIFY_INCREMENTAL").exists(_.equalsIgnoreCase("true")))
 
             _ <- loggerBundle.app.info(
               s"[ACCEPTANCE] ordinal=$ordinal EXIT stateProof: " +
@@ -1150,7 +1196,7 @@ object GlobalSnapshotAcceptanceManager {
                 s"delegWithdrawals=${stateProof.delegatedStakesWithdrawals.map(_.show.take(12)).getOrElse("none")} " +
                 s"nodeCollaterals=${stateProof.activeNodeCollaterals.map(_.show.take(12)).getOrElse("none")} " +
                 s"collateralWithdrawals=${stateProof.nodeCollateralWithdrawals.map(_.show.take(12)).getOrElse("none")} " +
-                s"gsi.balances=${gsi.balances.size} gsi.currSnapshots=${gsi.lastCurrencySnapshots.size}"
+                s"gsi.balances=${sweptGsi.balances.size} gsi.currSnapshots=${sweptGsi.lastCurrencySnapshots.size}"
             )
 
             (expiredAllowSpends, expiredTokenLocks) = (
@@ -1188,7 +1234,7 @@ object GlobalSnapshotAcceptanceManager {
               scSnapshots,
               returnedSCEvents,
               acceptedRewardTxs,
-              gsi,
+              sweptGsi,
               stateProof,
               acceptedSpendActions,
               updatedUpdateNodeParameters.view.mapValues(_._1).toSortedMap,

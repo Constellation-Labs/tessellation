@@ -16,8 +16,10 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
+import io.constellationnetwork.node.shared.infrastructure.consensus.PeerQualityClassifier
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
@@ -26,7 +28,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{PeerCommitteeStatus, PeerCommitteeView, PeerId}
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -57,18 +59,22 @@ object HttpApi {
       GlobalIncrementalSnapshot,
       GlobalSnapshotInfo
     ],
+    lastNGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getLocalChainTip: Option[F[Option[ChainTip]]] = None,
     maybeMarkSeen: Option[Hash => F[Unit]] = None
   ): F[HttpApi[F, R]] =
     SnapshotRoutes
       .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         storages.globalSnapshot,
+        lastNGlobalSnapshotStorage.some,
         storages.fullGlobalSnapshot.some,
         "/global-snapshots",
         storages.node,
         HasherSelector[F],
         sharedConfig.snapshotTimeoutsConfig,
-        combinedSnapshotCheckpointFileSystemStorage
+        combinedSnapshotCheckpointFileSystemStorage,
+        sharedConfig.snapshotServingConfig,
+        httpCfg.externalIp.toString.some
       )
       .map { snapshotRoutes =>
         new HttpApi[F, R](
@@ -153,9 +159,59 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       )
       .apply(L0CellInput.HandleNodeCollateral(data))
 
+  // Per-request committee-view lookup. Builds a PeerCommitteeView for every peer present in the
+  // latest ConsensusOutcome's peerQuality OR readmissionCountdown maps. Read at HTTP-handler
+  // time → reflects the most recently finalized round. Returns empty map until the first round
+  // finalizes.
+  //
+  // The chronic PREDICATE is the shared, integer-only PeerQualityClassifier.isChronic — identical to the
+  // consensus admission filter (ActiveFacilitatorAdmission), so the served `status` classification cannot drift
+  // from or disagree with the consensus-side decision (feedback_share_logic_no_drift). The two thresholds below
+  // are view-specific display knobs: the observation floor (30) is intentionally higher than the consensus
+  // minParticipationObservations so the UI does not flag peers with little history; the ratio (0.5) mirrors the
+  // ConsensusConfig.minParticipationRatio default. Residual (smaller, separate): an operator who tunes
+  // minParticipationRatio away from its default still drifts here until ConsensusConfig is plumbed through
+  // HttpApi.make → Main.scala. `completed`/`participated`/`ratio`/`probationRoundsRemaining` are always
+  // authoritative regardless of `status`.
+  private val ChronicMinObservationHistoryFloor: Int = 30
+  private val ChronicMinParticipationRatio: Double = 0.5
+
+  private val getCommitteeView: F[Map[PeerId, PeerCommitteeView]] =
+    services.consensus.storage.getLastConsensusOutcome.map {
+      case None => Map.empty[PeerId, PeerCommitteeView]
+      case Some(outcome) =>
+        val probation = outcome.readmissionCountdown
+        val all = outcome.peerQuality.keySet ++ probation.keySet
+        all.iterator.map { pid =>
+          val (completed, participated) = outcome.peerQuality.getOrElse(pid, (0, 0))
+          val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
+          val isChronic =
+            PeerQualityClassifier.isChronic(completed, participated, ChronicMinObservationHistoryFloor, ChronicMinParticipationRatio)
+          val onProbation = probation.contains(pid)
+          val status: PeerCommitteeStatus =
+            if (onProbation) PeerCommitteeStatus.Probation
+            else if (isChronic) PeerCommitteeStatus.Chronic
+            else PeerCommitteeStatus.Active
+          pid -> PeerCommitteeView(
+            status = status,
+            completed = completed,
+            participated = participated,
+            ratio = ratio,
+            probationRoundsRemaining = if (onProbation) probation.get(pid) else None
+          )
+        }.toMap
+    }
+
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
-      ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+      ClusterRoutes[F](
+        programs.joining,
+        programs.peerDiscovery,
+        storages.cluster,
+        services.cluster,
+        services.collateral,
+        getCommitteeView = Some(getCommitteeView)
+      )
     }
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
@@ -171,7 +227,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     HasherSelector[F].withCurrent { implicit hasher =>
       StateChannelRoutes[F](services.stateChannel, storages.globalSnapshot, sharedConfig.snapshotBinarySenderTimeouts)
     }
-  private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
+  private val dagRoutes = DAGBlockRoutes[F](mkDagCell, storages.globalSnapshot)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
   private val tokenLockBlockRoutes = TokenLockBlockRoutes[F](queues.l1TokenLockOutput)
   private val nodeParametersRoutes = HasherSelector[F].withCurrent { implicit hasher =>
@@ -205,7 +261,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       storages.mptStore
     )
   }
-  private val tokenLockRoutes = GL0TokenLockRoutes(storages.globalSnapshot)
+  private val tokenLockRoutes = HasherSelector[F].withCurrent { implicit hasher =>
+    GL0TokenLockRoutes(storages.globalSnapshot, storages.mptStore)
+  }
 
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
