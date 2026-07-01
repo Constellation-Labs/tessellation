@@ -35,6 +35,8 @@ final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: Json
       case None           => SnapshotNotFoundInTempStorage(ordinal).raiseError[F, Signed[CurrencyIncrementalSnapshot]]
     }
 
+  // exists-then-write is a non-atomic check-then-act, safe only because callers traverse
+  // ordinals strictly sequentially over a single per-run temp dir (no concurrent writers).
   def write(ordinal: SnapshotOrdinal, snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit] = {
     val name = toOrdinalName(ordinal)
 
