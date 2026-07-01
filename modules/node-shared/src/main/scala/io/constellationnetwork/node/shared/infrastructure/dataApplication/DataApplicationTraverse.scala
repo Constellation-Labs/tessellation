@@ -181,13 +181,16 @@ object DataApplicationTraverse {
         // Serves each replayed snapshot's true predecessor as getLastCurrencySnapshot, so a
         // metagraph's combine that reads only the plain accessor sees the same last snapshot
         // it saw at consensus time and its recomputed calculated state matches the original
-        // byte for byte. getLastCurrencySnapshotCombined is pinned to the true predecessor's
-        // ordinal/hash as well, but its CurrencySnapshotInfo still comes from the live node
-        // context (the rollback tip) because the traverse doesn't reconstruct historical
-        // CurrencySnapshotInfo. Metagraphs whose combine derives state from that info (e.g.
-        // amm-metagraph, voting-poll via L0CombinerService.combine) are therefore NOT
-        // byte-exact under replay - this is a known, currently out-of-scope limitation.
-        // Everything else delegates to the node context.
+        // byte for byte. getLastCurrencySnapshotCombined is NOT fixed by this change: the
+        // traverse doesn't reconstruct historical CurrencySnapshotInfo, so both the snapshot
+        // and the info it returns still come from the live node context (the rollback tip),
+        // constant across every replayed ordinal. We deliberately don't pin just the snapshot
+        // half to the predecessor here - that would make the pair look ordinal-consistent
+        // while info still doesn't correspond to it, which is a worse trap than today's fully
+        // tip-based pair. Metagraphs whose combine reads this accessor (e.g. amm-metagraph,
+        // voting-poll via L0CombinerService.combine, or the default getTokenUnlocks/balances
+        // helpers) are therefore NOT byte-exact under replay - a known, out-of-scope
+        // limitation. Everything else delegates to the node context.
         def replayScopedContext(predecessor: Signed[CurrencyIncrementalSnapshot]): F[L0NodeContext[F]] =
           HasherSelector[F].forOrdinal(predecessor.value.ordinal) { implicit hasher =>
             predecessor.toHashed.map { hashedPredecessor =>
@@ -196,10 +199,7 @@ object DataApplicationTraverse {
                 def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
                   context.getCurrencySnapshot(ordinal)
                 def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]] =
-                  // Pins the snapshot half to the true predecessor so its ordinal/hash agree with
-                  // getLastCurrencySnapshot above. The info half is still the tip's, not the
-                  // predecessor's - see the limitation noted in the comment above.
-                  context.getLastCurrencySnapshotCombined.map(_.map { case (_, info) => (hashedPredecessor, info) })
+                  context.getLastCurrencySnapshotCombined
                 def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]] =
                   context.getLastSynchronizedGlobalSnapshot
                 def getLastSynchronizedGlobalSnapshotCombined: F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] =
