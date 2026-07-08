@@ -6,8 +6,6 @@ on:
   push:
     branches:
       - develop
-      - release/testnet
-      - nightly_monitoring_service
   workflow_dispatch:
     inputs:
       branch:
