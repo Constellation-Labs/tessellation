@@ -1,14 +1,14 @@
-# Discord Announcement Draft - IntegrationNet v4.1.0
+# Discord Announcement Draft - IntegrationNet v4.1.0-rc.0
 
 > Copy the section below for posting to `#announcements`. Post by **Friday 2026-07-10** to satisfy the
 > 3-day advance-notice requirement for the 2026-07-13 network update.
 
 ---
 
-## Tessellation v4.1.0 - IntegrationNet Release
+## Tessellation v4.1.0-rc.0 - IntegrationNet Release
 
 **Environment:** IntegrationNet
-**Version:** v4.1.0
+**Version:** v4.1.0-rc.0
 **Network Update:** Monday 2026-07-13 (coordinated cold restart)
 **Hard fork:** Yes - coordinated cold restart, all nodes on the same jar and config
 
@@ -30,7 +30,7 @@ catching up a slow peer cannot starve the consensus loop.
 |------|-------|
 | **Since 2026-06-16** | Validating on Testnet (v4.1.0-alpha.159) |
 | **Friday 2026-07-10** | Advance notice (this announcement) |
-| **Monday 2026-07-13** | IntegrationNet coordinated cold restart to v4.1.0 |
+| **Monday 2026-07-13** | IntegrationNet coordinated cold restart to v4.1.0-rc.0 |
 
 > ⚠️ **This is a coordinated cold restart, not a rolling upgrade.** All nodes must run the same jar and
 > consensus config. A node on a mismatched version or config is refused at the connection handshake.
@@ -60,7 +60,7 @@ advance notice, and again when it triggers.
 
 ### For Metagraph Operators (Action Required)
 
-> ⚠️ **Metagraph operators must update their Tessellation dependency to v4.1.0 and rebuild before
+> ⚠️ **Metagraph operators must update their Tessellation dependency to v4.1.0-rc.0 and rebuild before
 > Monday 2026-07-13** to remain connected to the upgraded IntegrationNet Global L0.
 
 The consensus rebuild is confined to Global L0 and metagraph (currency) snapshot formats are not
@@ -91,11 +91,11 @@ https://github.com/Constellation-Labs/tessellation/releases
 > The release policy treats the advance jar notice (above) and the at-restart Network Update as separate
 > announcements. Post the section below to `#announcements` when the cold restart begins.
 
-**Tessellation v4.1.0 is now live on IntegrationNet.**
+**Tessellation v4.1.0-rc.0 is now live on IntegrationNet.**
 
-IntegrationNet has completed the coordinated cold restart to v4.1.0 (advance notice posted 2026-07-10).
+IntegrationNet has completed the coordinated cold restart to v4.1.0-rc.0 (advance notice posted 2026-07-10).
 
-- **Hard fork:** Yes. Every node is on the v4.1.0 jar; mixed-version peers are refused at the handshake.
+- **Hard fork:** Yes. Every node is on the v4.1.0-rc.0 jar; mixed-version peers are refused at the handshake.
 - **Feature flags:** None activated at restart. The next expected activation on IntegrationNet will be
   announced separately with at least 1 day of notice.
 - **Release notes:** https://github.com/Constellation-Labs/tessellation/blob/develop/docs/release/v4.1.0-testnet.md
