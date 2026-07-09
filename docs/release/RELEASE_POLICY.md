@@ -12,11 +12,21 @@ Releases flow through environments in sequence: **Testnet -> IntegrationNet -> M
 
 All network upgrades require coordination with the auto-restart lambda and confirmation that source nodes have reached READY state before re-enabling automated monitoring.
 
+Before performing a release or merging a PR with breaking changes, ensure you have this document and its references on hand and understand the purpose of each stage.
+
 | Environment | Notice Period | Breaking Changes | Feature Epoch | Discord |
 |-------------|---------------|------------------|---------------|---------|
 | Testnet     | N/A           | N/A              | N/A           | Network Update |
 | IntNet      | 3 days        | Minimal Docs     | R+1 day       | All Stages |
 | MainNet     | 7 days        | Complete         | R+3 days      | All Stages |
+
+## References
+
+- Network Monitoring Service (auto-restart lambda)
+- Network Monitoring dashboards
+- Release Process (internal runbook)
+- [Tessellation GitHub Releases](https://github.com/Constellation-Labs/tessellation/releases)
+- [Conventional Commits](https://www.conventionalcommits.org/) (see also [`docs/adr/0015-conventional-commits.md`](../adr/0015-conventional-commits.md))
 
 ## Functionality Definitions
 
@@ -41,7 +51,7 @@ Several `fields-added-ordinals` gates require the deploy-time rule that **the ch
 
 ### Rollback
 
-For non-mainnet environments, sometimes required to rollback to a much earlier snapshot ordinal due to breaking changes or reversions. This is a manual process.
+For non-mainnet environments, sometimes required to rollback to a much earlier snapshot ordinal due to breaking changes or reversions. This is a manual process; contact @Marcus Sousa for the procedure.
 
 ### Snapshot Streaming Consistency
 
