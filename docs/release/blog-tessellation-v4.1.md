@@ -24,8 +24,8 @@ hashes, therefore they finalize incompatible artifacts. The chain forks. No node
 is no single faulty line to point at. The design tied safety to a timing assumption, and that is a
 mistake careful coding cannot fix.
 
-This never surfaced on Testnet or IntegrationNet because on a small, fast, lightly loaded network the
-timing assumption effectively always holds. The defect was latent, not absent. It needed a network slow
+This failed to surface on Testnet or IntegrationNet because on these relatively small, fast, lightly loaded networks the
+timing assumption effectively always held. The defect was latent, not absent. It needed a network slow
 enough, for long enough, to expose it.
 
 MainNet was that network.
@@ -34,26 +34,25 @@ MainNet was that network.
 
 ## MainNet
 
-I want to be exact about what we know and what we don't, because the temptation to narrate a clean root
+Let us be exact about what we know and what we don't, because the temptation to narrate a clean root
 cause after the fact is strong and usually dishonest.
 
 What we observed:
 
-- The network ran normally for several hours.
+- The network ran normally for several hours post v4.0.0 launch
 - Then it degraded monotonically. Nodes became resource-constrained, fell behind the frontier, and did
   not recover.
 - Coordinated cold restarts did not restabilize the cluster. We tried more than once.
 - The pressure tracked the size of the state each node had to carry and move.
 
-What we did not establish: the precise triggering mechanism. We did not isolate a single cause, and I
-am not going to invent one. The Merkle Patricia Trie is the largest new load on the state footprint and
-the leading suspect; the state-transfer path is where we later found the clearest resource contention
+While we are unable to isolate a single root cause, the recently introduced Merkle Patricia Trie is 
+the largest new load on the state footprint and the leading suspect; the state-transfer path is where we later found the clearest resource contention
 (more on that below). But "leading suspect" is not "confirmed," and this release does not depend on the
 distinction.
 
 That last point is the important one. Whatever pushed nodes into degradation, a correct consensus
-protocol has to survive it, because degradation is not an exceptional condition on a real network of
-independent operators. It is the normal condition. v4.0's engine could not survive it, and the reason it
+protocol must survive it, because degradation is not an exceptional condition on a real network of
+independent operators. It is the normal condition. v4.0's engine was unable to survive it, and the reason it
 could not is the construction defect above, not the specific trigger. So we fixed the construction.
 
 We reverted MainNet to v3.5.12 while we did.
@@ -128,10 +127,6 @@ the chain quietly, and we are done with quiet forks.
 - Testnet: validating since mid-June.
 - IntegrationNet: targeted for Monday, July 13, 2026, via coordinated cold restart.
 - MainNet: after IntegrationNet validation, announced separately with full notice.
-
-We are not putting a date on MainNet. The last time we committed to one, the engine was wrong in a way
-our smaller networks could not show us. The version that goes to MainNet will be the version that has
-already held up under IntegrationNet load. Proving it there first is the whole point of the sequence.
 
 ---
 

@@ -51,18 +51,24 @@ catching up a slow peer cannot starve the consensus loop.
 - **No Java change** from v4.0.0 (Java 21 / Scala 2.13.18 unchanged; IntegrationNet is already on the
   v4.0.0-rc.10 line).
 
-<!-- TODO(confirm before posting): metagraph-operator impact. The consensus rebuild is confined to
-     Global L0 and metagraph snapshot formats are unaffected, but per Release Policy we MUST confirm
-     whether metagraph nodes need to update their Tessellation dependency to v4.1.0 to remain connected
-     to the v4.1.0 GL0, or whether v4.0.0-rc.10 metagraph nodes stay compatible. Fill in the section
-     below once confirmed. -->
+### Feature Flags
 
-### For Metagraph Operators
+No ordinal or epoch feature flags activate as part of this restart. All `fields-added-ordinals` gates
+remain at their IntegrationNet placeholder values (not yet scheduled). Any later gate activation on
+IntegrationNet (for example `sub-trie-roots`) will be announced separately with at least 1 day of
+advance notice, and again when it triggers.
 
-The consensus rebuild is confined to Global L0; metagraph (currency) snapshot formats are not changed.
-**[CONFIRM] Whether a Tessellation dependency update to v4.1.0 is required to remain connected to the
-upgraded GL0 will be stated here before this notice is posted.** If your metagraph connects to
-IntegrationNet GL0, watch this channel for the confirmed guidance.
+### For Metagraph Operators (Action Required)
+
+> ⚠️ **Metagraph operators must update their Tessellation dependency to v4.1.0 and rebuild before
+> Monday 2026-07-13** to remain connected to the upgraded IntegrationNet Global L0.
+
+The consensus rebuild is confined to Global L0 and metagraph (currency) snapshot formats are not
+changed, so no application-code changes are expected beyond the dependency bump and rebuild.
+IntegrationNet is already on the v4.0.0 line, so the Java 21 runtime and build changes from v4.0.0 are
+already in place; this is a version bump, not a platform migration.
+
+Upgrade guide: https://github.com/Constellation-Labs/tessellation/blob/develop/docs/release/metagraph-upgrade-guide.md
 
 ### Release Notes
 
@@ -77,3 +83,20 @@ https://github.com/Constellation-Labs/tessellation/releases
 > **Note:** Per release policy, IntegrationNet releases require 3-day advance notice; this announcement
 > serves as that notice for the 2026-07-13 network update. MainNet promotion will follow with a 7-day
 > advance announcement after IntegrationNet validation.
+
+---
+
+## Second post: Network Update (publish on 2026-07-13 at restart)
+
+> The release policy treats the advance jar notice (above) and the at-restart Network Update as separate
+> announcements. Post the section below to `#announcements` when the cold restart begins.
+
+**Tessellation v4.1.0 is now live on IntegrationNet.**
+
+IntegrationNet has completed the coordinated cold restart to v4.1.0 (advance notice posted 2026-07-10).
+
+- **Hard fork:** Yes. Every node is on the v4.1.0 jar; mixed-version peers are refused at the handshake.
+- **Feature flags:** None activated at restart. The next expected activation on IntegrationNet will be
+  announced separately with at least 1 day of notice.
+- **Release notes:** https://github.com/Constellation-Labs/tessellation/blob/develop/docs/release/v4.1.0-testnet.md
+- **Release:** https://github.com/Constellation-Labs/tessellation/releases
