@@ -4,20 +4,25 @@ import cats.data._
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.DurationInt
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdates
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.storage._
-import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.swap.{AllowSpend, CurrencyId}
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -29,9 +34,22 @@ import retry.implicits.retrySyntaxError
 
 trait DataApplicationTraverse[F[_]] {
   def loadChain(): F[Option[(DataState.Base, SnapshotOrdinal)]]
+
+  // Exposed (beyond loadChain's own use) so tests can exercise predecessor-context replay
+  // directly, without needing to fabricate a full global-snapshot discovery chain.
+  def applyCache(
+    storage: TraverseLocalFileSystemTempStorage[F],
+    startingState: DataState.Base,
+    startingSnapshot: Signed[CurrencyIncrementalSnapshot]
+  ): F[(DataState.Base, SnapshotOrdinal)]
 }
 
 object DataApplicationTraverse {
+
+  case class NonContiguousReplayPredecessor(predecessorOrdinal: SnapshotOrdinal, currentOrdinal: SnapshotOrdinal) extends NoStackTrace {
+    override def getMessage: String =
+      s"Expected replay predecessor ordinal=${predecessorOrdinal.next.show} but got currentOrdinal=${currentOrdinal.show}"
+  }
 
   def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
@@ -48,6 +66,104 @@ object DataApplicationTraverse {
       val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
       def cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
+
+      def cutoffPersistedCalculatedStates(ordinal: SnapshotOrdinal) =
+        logger.info(s"Cleaning persisted calculated states using logarithmic cutoff for ordinal=${ordinal.show}") >> {
+          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
+
+          calculatedStateStorage.listStoredOrdinals.flatMap {
+            _.compile.toList
+              .map(_.toSet.diff(toKeep).toList)
+              .flatMap(_.traverse(calculatedStateStorage.delete))
+          }
+        }
+
+      // Serves each replayed snapshot's true predecessor as getLastCurrencySnapshot, so a
+      // metagraph's combine that reads only the plain accessor sees the same last snapshot
+      // it saw at consensus time and its recomputed calculated state matches the original
+      // byte for byte. getLastCurrencySnapshotCombined is NOT fixed by this change: the
+      // traverse doesn't reconstruct historical CurrencySnapshotInfo, so both the snapshot
+      // and the info it returns still come from the live node context (the rollback tip),
+      // constant across every replayed ordinal. We deliberately don't pin just the snapshot
+      // half to the predecessor here - that would make the pair look ordinal-consistent
+      // while info still doesn't correspond to it, which is a worse trap than today's fully
+      // tip-based pair. Metagraphs whose combine reads this accessor (e.g. amm-metagraph,
+      // voting-poll via L0CombinerService.combine, or the default getTokenUnlocks/balances
+      // helpers) are therefore NOT byte-exact under replay - a known, out-of-scope
+      // limitation. Everything else delegates to the node context.
+      // Hashed via forOrdinal (not the live L0NodeContext's alwaysCurrent/JSON shortcut) so the
+      // predecessor's hash is its true canonical, ordinal-correct one - matching what the rest
+      // of the chain (e.g. the next snapshot's lastSnapshotHash) expects. alwaysCurrent is a
+      // live-path shortcut valid only because the tip is always past any real hash-migration
+      // cutover; it doesn't define the canonical hash of an arbitrary historical predecessor.
+      def replayScopedContext(predecessor: Signed[CurrencyIncrementalSnapshot]): F[L0NodeContext[F]] =
+        HasherSelector[F].forOrdinal(predecessor.value.ordinal) { implicit hasher =>
+          predecessor.toHashed.map { hashedPredecessor =>
+            new L0NodeContext[F] {
+              def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] = hashedPredecessor.some.pure[F]
+              def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
+                context.getCurrencySnapshot(ordinal)
+              def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]] =
+                context.getLastCurrencySnapshotCombined
+              def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]] =
+                context.getLastSynchronizedGlobalSnapshot
+              def getLastSynchronizedGlobalSnapshotCombined: F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] =
+                context.getLastSynchronizedGlobalSnapshotCombined
+              def getLastSynchronizedAllowSpends: F[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]] =
+                context.getLastSynchronizedAllowSpends
+              def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
+                context.getLastSynchronizedTokenLocks
+              def securityProvider: SecurityProvider[F] = context.securityProvider
+              def getCurrencyId: F[CurrencyId] = context.getCurrencyId
+              def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = context.getMetagraphL0Seedlist
+            }
+          }
+        }
+
+      def applyCache(
+        storage: TraverseLocalFileSystemTempStorage[F],
+        startingState: DataState.Base,
+        startingSnapshot: Signed[CurrencyIncrementalSnapshot]
+      ): F[(DataState.Base, SnapshotOrdinal)] =
+        storage.listStoredOrdinals.flatMap(_.compile.toList).flatMap { ordinals =>
+          logger.info(s"Applying cache built during traversing, size=${ordinals.size.show}") >>
+            ordinals.sorted
+              .foldLeftM((startingState, startingSnapshot)) {
+                case ((state, predecessor), currentOrdinal) =>
+                  Async[F].raiseUnless(currentOrdinal === predecessor.value.ordinal.next)(
+                    NonContiguousReplayPredecessor(predecessor.value.ordinal, currentOrdinal)
+                  ) >>
+                    storage.read(currentOrdinal).flatMap { snapshot =>
+                      if (snapshot.value.dataApplication.isEmpty) {
+                        logger.debug(s"Skipping ordinal=${currentOrdinal.show} with no data application section") >>
+                          (state, snapshot).pure[F]
+                      } else
+                        snapshot.value.dataApplication
+                          .map(_.blocks)
+                          .traverse {
+                            _.traverse { blockBytes =>
+                              dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])
+                            }
+                          }
+                          .map(_.toList.flatten)
+                          .map(_.flatMap(_.dataTransactions.toList))
+                          .map(getDataUpdates)
+                          .flatMap { dataUpdates =>
+                            replayScopedContext(predecessor).flatMap { replayContext =>
+                              dataApplication.combine(state, dataUpdates)(replayContext)
+                            }
+                          }
+                          .flatTap {
+                            case DataState(_, calculatedState, _) =>
+                              logger.info(s"Persisting calculated state for ordinal=${currentOrdinal.show}") >>
+                                calculatedStateStorage.write(currentOrdinal, calculatedState)(dataApplication.serializeCalculatedState) >>
+                                cutoffPersistedCalculatedStates(currentOrdinal)
+                          }
+                          .map((_, snapshot))
+                    }
+              }
+              .map { case (state, lastSnapshot) => (state, lastSnapshot.value.ordinal) }
+        }
 
       private def getGlobalSnapshotWithRetry(
         ordinal: SnapshotOrdinal,
@@ -164,66 +280,19 @@ object DataApplicationTraverse {
               })
           }
 
-        def cutoffPersistedCalculatedStates(ordinal: SnapshotOrdinal) =
-          logger.info(s"Cleaning persisted calculated states using logarithmic cutoff for ordinal=${ordinal.show}") >> {
-            val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
-
-            calculatedStateStorage.listStoredOrdinals.flatMap {
-              _.compile.toList
-                .map(_.toSet.diff(toKeep).toList)
-                .flatMap(_.traverse(calculatedStateStorage.delete))
-            }
-          }
-
-        def applyCache(
-          startingState: DataState.Base,
-          startingOrdinal: SnapshotOrdinal
-        ): F[(DataState.Base, SnapshotOrdinal)] =
-          storage.listStoredOrdinals.flatMap(_.compile.toList).flatMap { ordinals =>
-            logger.info(s"Applying cache built during traversing, size=${ordinals.size.show}") >>
-              ordinals.sorted
-                .foldLeftM((startingState, startingOrdinal)) {
-                  case ((state, _), currentOrdinal) =>
-                    storage.read(currentOrdinal).flatMap { snapshot =>
-                      if (snapshot.dataApplication.isEmpty) {
-                        logger.debug(s"Skipping ordinal=${currentOrdinal.show} with no data application section") >>
-                          (state, currentOrdinal).pure[F]
-                      } else
-                        snapshot.dataApplication
-                          .map(_.blocks)
-                          .traverse {
-                            _.traverse { blockBytes =>
-                              dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])
-                            }
-                          }
-                          .map(_.toList.flatten)
-                          .map(_.flatMap(_.dataTransactions.toList))
-                          .map(getDataUpdates)
-                          .flatMap(dataApplication.combine(state, _))
-                          .flatTap {
-                            case DataState(_, calculatedState, _) =>
-                              logger.info(s"Persisting calculated state for ordinal=${currentOrdinal.show}") >>
-                                calculatedStateStorage.write(currentOrdinal, calculatedState)(dataApplication.serializeCalculatedState) >>
-                                cutoffPersistedCalculatedStates(currentOrdinal)
-                          }
-                          .map((_, currentOrdinal))
-                    }
-                }
-          }
-
-        def discover: F[Option[(DataState.Base, CurrencyIncrementalSnapshot, SnapshotOrdinal)]] = {
-          type Output = Option[(DataState.Base, CurrencyIncrementalSnapshot, SnapshotOrdinal)]
+        def discover: F[Option[(DataState.Base, Signed[CurrencyIncrementalSnapshot], SnapshotOrdinal)]] = {
+          type Output = Option[(DataState.Base, Signed[CurrencyIncrementalSnapshot], SnapshotOrdinal)]
           type Acc = Hashed[GlobalIncrementalSnapshot]
 
           def nestedRecursion(
             snapshots: NonEmptyList[Hashed[CurrencyIncrementalSnapshot]],
             globalOrdinal: SnapshotOrdinal
           ): F[Either[Unit, Output]] = {
-            type NestedAcc = List[CurrencyIncrementalSnapshot]
+            type NestedAcc = List[Signed[CurrencyIncrementalSnapshot]]
 
-            def sortedSnapshots = snapshots.map(_.signed.value).sortBy(_.ordinal).reverse
+            def sortedSnapshots = snapshots.map(_.signed).sortBy(_.value.ordinal).reverse
 
-            def updateCache(snapshot: CurrencyIncrementalSnapshot): F[Unit] = storage.write(snapshot.ordinal, snapshot)
+            def updateCache(snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit] = storage.write(snapshot.value.ordinal, snapshot)
 
             def readOnChainState(snapshot: CurrencyIncrementalSnapshot) =
               snapshot.dataApplication.map(_.onChainState).traverse(dataApplication.deserializeState(_).rethrow)
@@ -231,19 +300,19 @@ object DataApplicationTraverse {
             sortedSnapshots.toList
               .tailRecM[F, Output] {
                 case Nil =>
-                  none[(DataState.Base, CurrencyIncrementalSnapshot, SnapshotOrdinal)].asRight[NestedAcc].pure[F]
+                  none[(DataState.Base, Signed[CurrencyIncrementalSnapshot], SnapshotOrdinal)].asRight[NestedAcc].pure[F]
                 case snapshot :: tail =>
-                  if (isIncrementalGenesis(snapshot))
+                  if (isIncrementalGenesis(snapshot.value))
                     logger.debug(s"Found metagraph genesis").as {
                       (dataApplication.genesis, snapshot, globalOrdinal).some.asRight[NestedAcc]
                     }
                   else
-                    readCalculatedState(snapshot).flatMap {
+                    readCalculatedState(snapshot.value).flatMap {
                       case Some(calculatedState) =>
-                        readOnChainState(snapshot).flatMap {
+                        readOnChainState(snapshot.value).flatMap {
                           case Some(onChainState) =>
                             (
-                              DataState(onChainState, calculatedState, snapshot.artifacts.getOrElse(SortedSet.empty)),
+                              DataState(onChainState, calculatedState, snapshot.value.artifacts.getOrElse(SortedSet.empty)),
                               snapshot,
                               globalOrdinal
                             ).some
@@ -257,7 +326,7 @@ object DataApplicationTraverse {
                         }
 
                       case _ =>
-                        logger.info(s"Could not get calculated state of ordinal=${snapshot.ordinal.show}, updating cache") >>
+                        logger.info(s"Could not get calculated state of ordinal=${snapshot.value.ordinal.show}, updating cache") >>
                           updateCache(snapshot).as(tail.asLeft[Output])
                     }
               } >>= {
@@ -273,7 +342,7 @@ object DataApplicationTraverse {
               logger.warn(
                 s"Reached global genesis (ordinal=${globalSnapshot.ordinal.show}) without finding a valid metagraph starting state"
               ) >>
-                none[(DataState.Base, CurrencyIncrementalSnapshot, SnapshotOrdinal)].asRight[Acc].pure[F]
+                none[(DataState.Base, Signed[CurrencyIncrementalSnapshot], SnapshotOrdinal)].asRight[Acc].pure[F]
             } else
               fetchCurrencySnapshots(globalSnapshot)
                 .flatMap(_.traverse {
@@ -305,15 +374,15 @@ object DataApplicationTraverse {
         discover >>= {
           case Some((state, currencyIncrementalSnapshot, globalOrdinal)) =>
             for {
-              _ <- logger.info(s"Discovered calculated state at metagraph ordinal=${currencyIncrementalSnapshot.ordinal.show}")
+              _ <- logger.info(s"Discovered calculated state at metagraph ordinal=${currencyIncrementalSnapshot.value.ordinal.show}")
               latestStoredOrdinal <- globalSnapshotsWithStateLocalFileSystemStorage.getLatestOrdinal
-              lastSnapshotGlobalSyncView = currencyIncrementalSnapshot.globalSyncView
+              lastSnapshotGlobalSyncView = currencyIncrementalSnapshot.value.globalSyncView
               _ <- HasherSelector[F].withCurrent { implicit hasher =>
                 (latestStoredOrdinal, lastSnapshotGlobalSyncView).mapN { (latestOrdinal, lastGlobalSyncView) =>
                   backfillMissingSnapshots(latestOrdinal, lastGlobalSyncView.ordinal)
                 }.getOrElse(Async[F].unit)
               }
-              result <- applyCache(state, currencyIncrementalSnapshot.ordinal) >>= {
+              result <- applyCache(storage, state, currencyIncrementalSnapshot) >>= {
                 case (latestState, latestOrdinal) =>
                   dataApplication.setCalculatedState(latestOrdinal, latestState.calculated).flatMap {
                     case true =>
