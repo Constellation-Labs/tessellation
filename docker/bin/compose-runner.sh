@@ -94,7 +94,16 @@ fi
 
 REMOTE_HOST=${TEST_HOST:-}
 
-if [ -n "$REMOTE_HOST" ] && [ "$REMOTE_HOST" != "http://localhost" ]; then
+if [ -n "$REMOTE_NODES" ] && [ -z "$REMOTE_HOST" -o "$REMOTE_HOST" = "http://localhost" ]; then
+  # Remote deployment (deploy-cluster.sh / nightly / testnet-deploy): hand off to
+  # remote-deploy.sh, which builds-or-pulls per IMAGE_SOURCE and drives the cluster
+  # over ssh. Must run instead of the local `docker build` path below — otherwise a
+  # runner without Java 21 hits assembly.sh's sbt (build.sbt asserts Java 21).
+  echo "------------------------------------------------"
+  echo "Remote deployment to: $REMOTE_NODES"
+  echo "------------------------------------------------"
+  source ./docker/bin/remote-deploy.sh
+elif [ -n "$REMOTE_HOST" ] && [ "$REMOTE_HOST" != "http://localhost" ]; then
   echo "------------------------------------------------"
   echo "Remote host provided ($REMOTE_HOST), skipping docker setup"
   echo "------------------------------------------------"
