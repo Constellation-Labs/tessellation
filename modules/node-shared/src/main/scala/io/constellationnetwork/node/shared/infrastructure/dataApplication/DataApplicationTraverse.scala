@@ -116,6 +116,7 @@ object DataApplicationTraverse {
               def securityProvider: SecurityProvider[F] = context.securityProvider
               def getCurrencyId: F[CurrencyId] = context.getCurrencyId
               def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = context.getMetagraphL0Seedlist
+              def getSnapshotFeeTransactions: F[Map[Hash, Signed[FeeTransaction]]] = context.getSnapshotFeeTransactions
             }
           }
         }

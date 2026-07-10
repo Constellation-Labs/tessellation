@@ -101,8 +101,7 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
     def getLastSynchronizedGlobalSnapshot: IO[Option[GlobalIncrementalSnapshot]] = IO.raiseError(new NotImplementedError)
     def getLastSynchronizedGlobalSnapshotCombined: IO[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] =
       IO.raiseError(new NotImplementedError)
-    def getLastSynchronizedAllowSpends
-      : IO[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]] =
+    def getLastSynchronizedAllowSpends: IO[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]] =
       IO.raiseError(new NotImplementedError)
     def getLastSynchronizedTokenLocks: IO[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
       IO.raiseError(new NotImplementedError)
@@ -115,6 +114,7 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
     def securityProvider: SecurityProvider[IO] = throw new NotImplementedError
     def getCurrencyId: IO[CurrencyId] = IO.raiseError(new NotImplementedError)
     def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = None
+    def getSnapshotFeeTransactions: IO[Map[Hash, Signed[FeeTransaction]]] = IO.pure(Map.empty)
   }
 
   def fakeDataApplication(observed: Ref[IO, List[Option[SnapshotOrdinal]]]): BaseDataApplicationL0Service[IO] =
@@ -194,7 +194,7 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
             traverse.applyCache(storage, DataState(TestOnChain, TestCalculated, SortedSet.empty), startingSnapshot)
         }
         seen <- observed.get
-      } yield expect(seen == List(Some(ord(10L)), Some(ord(11L)))) and expect(result._2 == ord(12L))
+      } yield expect(seen == List(Some(ord(10L)), Some(ord(11L)))).and(expect(result._2 == ord(12L)))
   }
 
   test("applyCache rejects a non-contiguous cache (guards the predecessor-threading invariant)") {
