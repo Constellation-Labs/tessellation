@@ -1,0 +1,60 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    container_name: clickhouse
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-clickhouse}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./clickhouse/enable_json.xml:/etc/clickhouse-server/users.d/enable_json.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=0'
+      - '--web.listen-address=:9090'
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: grafana
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=UTC
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - GF_SERVER_HTTP_PORT=3000
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  clickhouse-data:
+    name: monitoring-clickhouse-data
+  prometheus-data:
+    name: monitoring-prometheus-data
+  grafana-data:
+    name: monitoring-grafana-data

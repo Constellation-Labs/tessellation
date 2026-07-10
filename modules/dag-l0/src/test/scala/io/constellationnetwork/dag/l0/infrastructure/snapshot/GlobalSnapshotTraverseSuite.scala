@@ -363,7 +363,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             validationErrorStorage
           )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+        .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
@@ -380,7 +380,21 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           stateChannelManager,
           currencySnapshotContextFns,
           feeCalculator,
-          mptStore
+          mptStore,
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
@@ -438,6 +452,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         def getOrdinal: IO[Option[SnapshotOrdinal]] = ???
 
         def getHeight: IO[Option[height.Height]] = ???
+
+        def clear: IO[Unit] = ().pure[IO]
+
+        def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ().pure[IO]
       }
       globalSnapshotStorage = new SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -460,11 +478,17 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         override def getHash(ordinal: GlobalSnapshotKey)(
           implicit hasher: Hasher[GlobalSnapshotTraverseSuite.F]
         ): GlobalSnapshotTraverseSuite.F[Option[Hash]] = ???
+
+        override def setHeadForRecovery(snapshot: Signed[GlobalSnapshotArtifact], state: GlobalSnapshotContext)(
+          implicit hasher: Hasher[GlobalSnapshotTraverseSuite.F]
+        ): GlobalSnapshotTraverseSuite.F[Unit] = ().pure
       }
 
       download = new Download[IO, GlobalIncrementalSnapshot] {
 
         override def download(implicit hasherSelector: HasherSelector[IO]): IO[Unit] = ???
+
+        override def recoveryDownload(implicit hasherSelector: HasherSelector[IO]): IO[Unit] = ???
 
         override def fetchSnapshot(hash: Option[Hash], ordinal: GlobalSnapshotKey)(
           implicit hasher: Hasher[IO]
@@ -545,7 +569,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
             lastTxns.traverse(TransactionReference.of(_))
           }
-        } yield expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L))), (lastTxRefs, totalBalance))
+          // info.lastTxRefs may include destination-only addresses (with TransactionReference.empty)
+          // that were added by TransactionReferenceManager; filter to only source addresses for comparison.
+          sourceOnlyInfoLastTxRefs = info.lastTxRefs.view.filterKeys(lastTxRefs.contains).toSortedMap
+        } yield expect.eql((sourceOnlyInfoLastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L))), (lastTxRefs, totalBalance))
 
       }
   }
@@ -575,8 +602,14 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             implicit val hasher = Hasher.forKryo[IO]
             lastTxns.traverse(TransactionReference.of(_))
           }
+          // info.lastTxRefs may include destination-only addresses (with TransactionReference.empty)
+          // that were added by TransactionReferenceManager; filter to only source addresses for comparison.
+          sourceOnlyInfoLastTxRefs = info.lastTxRefs.view.filterKeys(lastTxRefs.contains).toSortedMap
         } yield
-          expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L - txnsSize * 1L))), (lastTxRefs, totalBalance))
+          expect.eql(
+            (sourceOnlyInfoLastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L - txnsSize * 1L))),
+            (lastTxRefs, totalBalance)
+          )
 
       }
   }

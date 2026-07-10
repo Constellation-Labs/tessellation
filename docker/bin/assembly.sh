@@ -1,8 +1,22 @@
 
 assemble_all() {
-  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly
+  sbt dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly tools/assembly
 }
 
+# Fast path: skip all assembly when docker/jars/ is pre-populated (e.g., from CI artifact cache)
+if [ "$SKIP_ASSEMBLY" = "true" ] && [ -f "$PROJECT_ROOT/docker/jars/gl0.jar" ] && [ -s "$PROJECT_ROOT/docker/jars/gl0.jar" ]; then
+  if [ -z "$METAGRAPH" ] || { [ -f "$PROJECT_ROOT/docker/jars/ml0.jar" ] && [ -s "$PROJECT_ROOT/docker/jars/ml0.jar" ]; }; then
+    echo "Pre-built JARs found in docker/jars/, skipping assembly"
+    if [ -z "$METAGRAPH" ]; then
+      touch "$PROJECT_ROOT/docker/jars/ml0.jar"
+      touch "$PROJECT_ROOT/docker/jars/cl1.jar"
+      touch "$PROJECT_ROOT/docker/jars/dl1.jar"
+    fi
+    show_time "Assembly (skipped - using pre-built JARs)"
+    cd $PROJECT_ROOT
+    return 0 2>/dev/null || true
+  fi
+fi
 
 show_time "Starting assembly"
 
@@ -29,7 +43,7 @@ if [ "$SKIP_HYPERGRAPH_BUILD" != "true" ]; then
   else
     missing=false
 
-    for module in dag-l0 dag-l1 keytool wallet; do
+    for module in dag-l0 dag-l1 keytool wallet tools; do
       set +e
       jar_path=$(ls -1t modules/"$module"/target/scala-2.13/tessellation-"$module"-assembly*.jar 2>/dev/null | head -n1)
       set -e
@@ -71,7 +85,7 @@ if [ "$SKIP_HYPERGRAPH_BUILD" != "true" ]; then
   rm -rf ./docker/jars/ > /dev/null 2>&1 || true;
   mkdir -p ./docker/jars/
 
-  for module in "dag-l0" "dag-l1" "keytool" "wallet"
+  for module in "dag-l0" "dag-l1" "keytool" "wallet" "tools"
   do
     path=$(ls -1t modules/${module}/target/scala-2.13/tessellation-${module}-assembly*.jar | head -n1)
     dest="$PROJECT_ROOT/docker/jars/${module}.jar"
@@ -89,8 +103,8 @@ if [ "$PUBLISH" == "true" ]; then
     echo "  Note: Metagraph builds require tessellation-sdk ${HYPERGRAPH_RELEASE#v} from Maven Central."
     echo "  SNAPSHOT versions are not published - use a tagged release."
   else
-    echo "Publishing local"
-    sbt --error sdk/publishLocal
+    echo "Publishing local with version: $TESSELLATION_VERSION"
+    sbt --error "set ThisBuild / version := \"$TESSELLATION_VERSION\"" sdk/publishLocal
   fi
 fi
 

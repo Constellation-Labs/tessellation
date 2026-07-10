@@ -1,0 +1,82 @@
+{
+  "network": {
+    "name": "nightly",
+    "file_system": {
+      "base_directory": "/opt/tessellation"
+    },
+    "block_explorer_base_url": "http://77.42.16.251:3001",
+    "default_restart_conditions": [
+      "SnapshotsStopped",
+      "UnhealthyNodes",
+      "L0ForkedNodes",
+      "L1ForkedNodes",
+      "EpochProgressStuck"
+    ],
+    "nodes": [
+      {
+        "ip": "89.167.66.37",
+        "ssh_username": "admin",
+        "instance_id": "",
+        "layers": {
+          "l0": {
+            "peer_id": "1b4b9f98190ede0d26ec1a2ce736638ffa556b08135403256d47d3c405e08e3bb272fb9172c7bd9f96008dd380ceb6201e965498bc9115bbdf905ad9781dbf18",
+            "ports": { "public": 9000, "p2p": 9001, "cli": 9002 }
+          },
+          "l1": {
+            "peer_id": "1b4b9f98190ede0d26ec1a2ce736638ffa556b08135403256d47d3c405e08e3bb272fb9172c7bd9f96008dd380ceb6201e965498bc9115bbdf905ad9781dbf18",
+            "ports": { "public": 9010, "p2p": 9011, "cli": 9012 }
+          }
+        }
+      },
+      {
+        "ip": "204.168.198.218",
+        "ssh_username": "admin",
+        "instance_id": "",
+        "layers": {
+          "l0": {
+            "peer_id": "8dc987df37287cbfeb177e1593878a74db4e658506c491022187cb5c9cd840b8d788c938fd03e69d33f48d093d4cfc64591d04e1cf5553d8d7f65381ec93011e",
+            "ports": { "public": 9000, "p2p": 9001, "cli": 9002 }
+          },
+          "l1": {
+            "peer_id": "8dc987df37287cbfeb177e1593878a74db4e658506c491022187cb5c9cd840b8d788c938fd03e69d33f48d093d4cfc64591d04e1cf5553d8d7f65381ec93011e",
+            "ports": { "public": 9010, "p2p": 9011, "cli": 9012 }
+          }
+        }
+      },
+      {
+        "ip": "204.168.169.217",
+        "ssh_username": "admin",
+        "instance_id": "",
+        "layers": {
+          "l0": {
+            "peer_id": "96410098053654f15a6db714c7457264c3b0358f04f86d4dc636cb7d549461c76a0ce948d1458acfa07a24e806fbda0635ded465d867e521c8d8d14fc0ac9c47",
+            "ports": { "public": 9000, "p2p": 9001, "cli": 9002 }
+          },
+          "l1": {
+            "peer_id": "96410098053654f15a6db714c7457264c3b0358f04f86d4dc636cb7d549461c76a0ce948d1458acfa07a24e806fbda0635ded465d867e521c8d8d14fc0ac9c47",
+            "ports": { "public": 9010, "p2p": 9011, "cli": 9012 }
+          }
+        }
+      }
+    ],
+    "snapshot_streaming": {
+      "ip": "89.167.66.37",
+      "ssh_username": "admin",
+      "base_directory": "/opt/tessellation"
+    }
+  },
+  "check_healthy_interval_in_minutes": 5,
+  "check_if_node_is_ready_number": 500,
+  "check_if_node_is_ready_interval_in_seconds": 1,
+  "max_minutes_without_new_snapshots": 5,
+  "max_snapshots_delay": 100,
+  "min_snapshots_delay_accepted": 15,
+  "max_sequential_individual_l1_restarts": 4,
+  "monitoring_wallets_fork_detection_l1": [],
+  "enable_state_channel_snapshot_monitoring": false,
+  "ssh_private_key_path": ".ssh/id_rsa",
+  "system_maintenance": {
+    "enabled": false,
+    "interval_in_hours": 24
+  }
+}

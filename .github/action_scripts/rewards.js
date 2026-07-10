@@ -37,7 +37,8 @@ const fetchData = async (url) => {
 
 const main = async () => {
   const { metagraphL0PortPrefix } = createConfig()
-  const snapshotUrl = `http://localhost:${metagraphL0PortPrefix}00/snapshots/latest`
+  const host = process.env.TEST_HOST || 'http://localhost';
+  const snapshotUrl = process.env.ML0_URL ? `${process.env.ML0_URL}/snapshots/latest` : `${host}:${metagraphL0PortPrefix}00/snapshots/latest`
 
   const { value } = await fetchData(snapshotUrl)
   if (!value) {

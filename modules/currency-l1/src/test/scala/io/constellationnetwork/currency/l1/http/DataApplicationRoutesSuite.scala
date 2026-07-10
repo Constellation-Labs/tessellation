@@ -133,6 +133,10 @@ object DataApplicationRoutesSuite extends HttpSuite {
       override def getOrdinal: IO[Option[SnapshotOrdinal]] = getOrdinalFn
 
       override def getHeight: IO[Option[height.Height]] = ???
+
+      override def setForRecovery(snapshot: Hashed[A], state: B): IO[Unit] = ???
+
+      override def clear: IO[Unit] = ???
     }
 
   def mockL0ClusterStorage: IO[L0ClusterStorage[IO]] = IO.pure(

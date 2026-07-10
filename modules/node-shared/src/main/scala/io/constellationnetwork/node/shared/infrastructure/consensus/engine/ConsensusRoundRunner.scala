@@ -1,57 +1,151 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
-import cats.effect.kernel.{Async, Temporal}
+import cats.effect.Fiber
+import cats.effect.kernel.{Outcome => _, _}
 import cats.effect.std.Supervisor
-import cats.kernel.{Eq, Next}
+import cats.kernel.Next
 import cats.syntax.all._
 
-import scala.concurrent.duration._
-
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusResources
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
+import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import monocle.Lens
 
-/** Handles consensus round facilitation, post-consensus scheduling, and stall detection.
+/** Handles consensus round facilitation and post-consensus scheduling.
   *
-  * Runs a single stall detection loop per round (not per status) to avoid fiber leaks.
+  * Stall detection is delegated to StallDetector for separation of concerns and testability.
   *
+  * @see
+  *   StallDetector for stall monitoring logic
   * @see
   *   StateTransitions for state advancement logic
   * @see
   *   ConsensusFSM for command routing
   */
-class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx, Status: Eq, Outcome, Kind](
-  ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
-)(implicit outcomeKey: Lens[Outcome, Key], supervisor: Supervisor[F]) {
+class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx, Status, Outcome, Kind](
+  ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
+  stallDetector: StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
+  roundFibersRef: Ref[F, List[Fiber[F, Throwable, Unit]]],
+  cancelSignalRef: Ref[F, Option[Deferred[F, Unit]]]
+)(
+  implicit outcomeKey: Lens[Outcome, Key],
+  outcomeArtifact: Lens[Outcome, Signed[Artifact]],
+  supervisor: Supervisor[F]
+) {
 
-  import ctx.{advancer, config, creator, logger, ops, queue, storage, updater}
+  import ctx.{advancer, config, creator, logger, queue, storage, updater}
+
+  /** Spawn a fiber tracked by the round lifecycle. Cancelled on round cleanup. */
+  private def spawnTracked(task: F[Unit]): F[Unit] =
+    supervisor.supervise(task).flatMap { fiber =>
+      roundFibersRef.update(fiber :: _)
+    }
+
+  /** Cancel all fibers spawned during the current round. */
+  private def cancelRoundFibers: F[Unit] =
+    roundFibersRef.getAndSet(Nil).flatMap(_.traverse_(_.cancel))
+
+  /** Clean up the current round: signal monitor to stop and cancel all tracked fibers. */
+  def cleanupRound: F[Unit] =
+    cancelSignalRef.getAndSet(None).flatMap(_.traverse_(_.complete(()).attempt.void)) >>
+      cancelRoundFibers
 
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
-        logger.warn("No previous outcome; cannot start round.") >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+        // No outcome exists yet — round cannot run. Unconditional (no attempt-id): the queue is
+        // already quiescent and the FSM must Idle cleanly.
+        ConsensusLog.warn(logger, Category.Lifecycle, "n/a", "n/a", LogEvent.NoPreviousOutcome) >>
+          Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
+          queue.offer(ConsensusCommand.RoundCompleted(None))
 
       case Some(outcome) =>
         val nextKey = outcomeKey.get(outcome).next
-        logger.info(s"Facilitating consensus round at key=$nextKey with trigger=$trigger") >>
+        val lastKey = outcomeKey.get(outcome)
+        val lastArtifact = outcomeArtifact.get(outcome)
+        val lastSignerIds = lastArtifact.proofs.toList.map(p => ConsensusLog.pid(p.id.toPeerId)).sorted.mkString(",")
+        ConsensusLog.debug(
+          logger,
+          Category.Lifecycle,
+          nextKey.toString,
+          "n/a",
+          LogEvent.RoundFacilitating,
+          "trigger" -> trigger.toString,
+          "lastKey" -> lastKey.toString,
+          "lastSigners" -> lastSignerIds,
+          "lastSignerCount" -> lastArtifact.proofs.size.toString,
+          "declarationTimeout" -> config.declarationTimeout.toString,
+          "timeTriggerInterval" -> config.timeTriggerInterval.toString
+        ) >>
           facilitateRound(outcome, nextKey, trigger)
     }
 
   private def facilitateRound(lastOutcome: Outcome, key: Key, trigger: Option[ConsensusTrigger]): F[Unit] =
     for {
       resources <- storage.getResources(key)
-      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources)
+      // Retry/view-change history is passed as a compatibility and diagnostic signal only. Consensus
+      // implementations must not treat a local counter or single VCV as quorum evidence for
+      // proposal-critical view/leader seeding.
+      priorAbandonmentCount = (resources.viewChangeVotes.keys.map(_._2).maxOption match {
+        case Some(maxToView) => maxToView + 1
+        case None            => 0L
+      }).toInt
+      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources, priorAbandonmentCount)
 
+      // Validators must not produce solo — solo production from multiple validators creates
+      // divergent forks when they restart simultaneously. Abort the round if this is a
+      // validator node and the facilitator set is just self.
+      // Note: only block when selfId IS in the facilitator set. If selfId is NOT a facilitator
+      // (e.g., a joining node observing rounds before candidate registration), let it follow
+      // the round as an observer - it won't produce its own snapshot.
+      isValidator <- ctx.nodeStorage.isValidatorMode
       _ <- facilitated match {
         case Some(_) =>
-          logger.info(s"Facilitated consensus at key=$key") >>
-            startRoundMonitor(key) >>
-            doInitialCheck(key)
+          storage.getState(key).flatMap { maybeState =>
+            val leaderInfo = maybeState.map(s => ConsensusLog.pid(s.leader)).getOrElse("unknown")
+            val count = maybeState.map(_.facilitators.value.size).getOrElse(0)
+            val role = maybeState.map(s => ConsensusLog.role(ctx.selfId, s.leader)).getOrElse("n/a")
+            val selfIsFacilitator = maybeState.exists(_.facilitators.value.contains(ctx.selfId))
+
+            if (isValidator && count <= 1 && selfIsFacilitator) {
+              // Validator refused to facilitate solo: snapshot current attemptId so the FSM drops
+              // this RoundCompleted if another node's gossip advances our round before dequeue.
+              ConsensusLog.warn(
+                logger,
+                Category.Lifecycle,
+                key.toString,
+                role,
+                LogEvent.RoundBlockedByState,
+                "reason" -> "validator_solo_blocked",
+                "facilitators" -> count.toString
+              ) >>
+                Metrics[F].incrementCounter("dag_consensus_validator_solo_blocked") >>
+                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+            } else {
+              Metrics[F].incrementCounter(
+                "dag_consensus_round_facilitated",
+                Seq(unsafeLabelName("outcome") -> "success")
+              ) >>
+                ConsensusLog.info(
+                  logger,
+                  Category.Lifecycle,
+                  key.toString,
+                  role,
+                  LogEvent.RoundFacilitated,
+                  "leader" -> leaderInfo,
+                  "facilitators" -> count.toString
+                ) >>
+                startRoundMonitor(key) >>
+                doInitialCheck(key)
+            }
+          }
 
         case None =>
           handleExistingOrMissingState(key)
@@ -60,14 +154,32 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
 
   private def handleExistingOrMissingState(key: Key): F[Unit] =
     storage.getState(key).flatMap {
-      case Some(_) =>
-        logger.debug(s"State already exists for key=$key, checking progress") >>
+      case Some(state) =>
+        val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
+        Metrics[F].incrementCounter(
+          "dag_consensus_round_facilitated",
+          Seq(unsafeLabelName("outcome") -> "existing")
+        ) >>
+          ConsensusLog.debug(
+            logger,
+            Category.Lifecycle,
+            key.toString,
+            ConsensusLog.role(ctx.selfId, state.leader),
+            LogEvent.StateExists,
+            "status" -> statusName
+          ) >>
           startRoundMonitor(key) >>
           doInitialCheck(key)
 
       case None =>
-        logger.warn(s"Could not facilitate and no existing state for key=$key") >>
-          queue.offer(ConsensusCommand.RoundCompleted)
+        // No state for this key — state may have been wiped mid-facilitate, or the creator never
+        // produced one. Snapshot attemptId; a concurrent advance should override this completion.
+        Metrics[F].incrementCounter(
+          "dag_consensus_round_facilitated",
+          Seq(unsafeLabelName("outcome") -> "no_state")
+        ) >>
+          ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.NoState) >>
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
     }
 
   private def doInitialCheck(key: Key): F[Unit] =
@@ -77,9 +189,20 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
 
       _ <- maybeUpdate.traverse_ {
         case (_, newState) =>
+          val statusName = newState.status.getClass.getSimpleName.stripSuffix("$")
           advancer.getConsensusOutcome(newState) match {
             case Some(_) => queue.offer(ConsensusCommand.CheckUpdate(key))
-            case None    => logger.debug(s"Initial check: updated to ${newState.status}, waiting for declarations")
+            case None =>
+              ConsensusLog.debug(
+                logger,
+                Category.Lifecycle,
+                key.toString,
+                ConsensusLog.role(ctx.selfId, newState.leader),
+                LogEvent.InitialCheck,
+                "phase" -> statusName,
+                "facilitators" -> newState.facilitators.value.size.toString,
+                "leader" -> ConsensusLog.pid(newState.leader)
+              )
           }
       }
     } yield ()
@@ -94,26 +217,29 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
     for {
       maybeTimeTrigger <- storage.getTimeTrigger
       currentTime <- Async[F].monotonic
-      containsTriggerEvent <- storage.containsTriggerEvent
 
       _ <-
         if (maybeTimeTrigger.exists(currentTime >= _))
           queue.offer(ConsensusCommand.StartRound(Some(TimeTrigger)))
         else if (maybeTimeTrigger.isEmpty)
           scheduleTimeTrigger >> queue.offer(ConsensusCommand.StartRound(None))
-        else if (containsTriggerEvent)
-          queue.offer(ConsensusCommand.StartRound(Some(EventTrigger)))
         else
+          // No timer expired, timer is scheduled — the supervised timer fiber
+          // will fire TimeTick when the interval elapses. New events will offer
+          // FacilitateByEvent directly via GlobalSnapshotEventsPublisherDaemon.
           Async[F].unit
     } yield ()
 
   private def afterTimeTrigger: F[Unit] =
-    for {
-      _ <- scheduleTimeTrigger
-      containsTriggerEvent <- storage.containsTriggerEvent
-      _ <- queue.offer(ConsensusCommand.StartRound(Some(EventTrigger))).whenA(containsTriggerEvent)
-    } yield ()
+    scheduleTimeTrigger
 
+  /** Schedule the next time-triggered round.
+    *
+    * CRITICAL: Uses `supervisor.supervise` directly instead of `spawnTracked` because the timer fiber must survive round cleanup.
+    * `spawnTracked` adds fibers to `roundFibersRef`, which `cleanupRound` cancels at the start of the NEXT round's completion. If the timer
+    * fires between rounds (e.g., an EventTrigger round runs before the timer expires), `cleanupRound` would cancel the timer fiber, leaving
+    * `storage.timeTrigger` set but no fiber alive to fire `TimeTick` — permanently deadlocking consensus.
+    */
   private def scheduleTimeTrigger: F[Unit] =
     for {
       nextTime <- Async[F].monotonic.map(_ + config.timeTriggerInterval)
@@ -131,149 +257,14 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       _ <- queue.offer(ConsensusCommand.TimeTick).whenA(maybeTimeTrigger.exists(currentTime >= _))
     } yield ()
 
-  private def getCurrentDeclarationTimeout: F[FiniteDuration] =
-    ctx.nodeStorage.isInJoiningGracePeriod.map { isInJoiningGracePeriod =>
-      if (isInJoiningGracePeriod) config.timeTriggerInterval else config.declarationTimeout
-    }
-
   private def startRoundMonitor(key: Key): F[Unit] =
-    supervisor.supervise {
-      roundMonitor(key)
-        .handleErrorWith(err => logger.error(err)(s"Error in round monitor for key=$key"))
-    }.void
-
-  private def roundMonitor(key: Key): F[Unit] = {
-    case class MonitorState(
-      lastResourcesHash: Int,
-      lastStatus: Option[Status],
-      statusStartTime: FiniteDuration,
-      lockedForStatus: Boolean
-    )
-
-    val pollInterval = 100.millis
-
-    def getResourcesHash(
-      state: ConsensusState[Key, Status, Outcome, Kind],
-      resources: ConsensusResources[Artifact, Kind]
-    ): Int = {
-      val active = state.facilitators.value.toSet -- state.withdrawnFacilitators.value
-      ops.maybeCollectingKind(state.status) match {
-        case Some(kind) =>
-          val getter = ops.kindGetter(kind)
-          val respondedPeers = resources.peerDeclarationsMap.collect {
-            case (pid, decls) if active.contains(pid) && getter(decls).isDefined => pid
-          }
-          respondedPeers.toSet.hashCode()
-        case None =>
-          resources.peerDeclarationsMap.keySet.hashCode()
-      }
-    }
-
-    def monitorStep(ms: MonitorState): F[Either[MonitorState, Unit]] =
-      storage.getState(key).flatMap {
-        case None =>
-          logger.debug(s"Round monitor: state gone for key=$key, stopping") >>
-            Async[F].pure(Right(()))
-
-        case Some(state) =>
-          advancer.getConsensusOutcome(state) match {
-            case Some(_) =>
-              logger.debug(s"Round monitor: outcome ready for key=$key, stopping") >>
-                Async[F].pure(Right(()))
-
-            case None =>
-              for {
-                now <- Async[F].monotonic
-                resources <- storage.getResources(key)
-
-                currentHash = getResourcesHash(state, resources)
-                statusChanged = !ms.lastStatus.contains(state.status)
-                resourcesChanged = currentHash != ms.lastResourcesHash
-
-                newStatusStartTime = if (statusChanged) now else ms.statusStartTime
-                statusDuration = now - newStatusStartTime
-
-                newLockedForStatus = if (statusChanged) false else ms.lockedForStatus
-
-                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(resourcesChanged || statusChanged)
-
-                declarationTimeout <- getCurrentDeclarationTimeout
-                didLock <- handleStall(
-                  key = key,
-                  state = state,
-                  declarationTimeout = declarationTimeout,
-                  statusDuration = statusDuration,
-                  alreadyLocked = newLockedForStatus
-                )
-
-                _ <- Temporal[F].sleep(pollInterval)
-
-              } yield
-                Left(
-                  MonitorState(
-                    lastResourcesHash = currentHash,
-                    lastStatus = Some(state.status),
-                    statusStartTime = newStatusStartTime,
-                    lockedForStatus = didLock
-                  )
-                )
-          }
-      }
-
     for {
-      now <- Async[F].monotonic
-      _ <- Async[F].tailRecM(MonitorState(0, None, now, lockedForStatus = false))(monitorStep)
+      signal <- Deferred[F, Unit]
+      _ <- cancelSignalRef.set(Some(signal))
+      _ <- spawnTracked {
+        stallDetector
+          .monitor(key, signal)
+          .handleErrorWith(err => logger.error(err)(s"Error in round monitor for key=$key"))
+      }
     } yield ()
-  }
-
-  private def handleStall(
-    key: Key,
-    state: ConsensusState[Key, Status, Outcome, Kind],
-    declarationTimeout: FiniteDuration,
-    statusDuration: FiniteDuration,
-    alreadyLocked: Boolean
-  ): F[Boolean] = {
-    val shouldLock = statusDuration >= declarationTimeout && !alreadyLocked
-
-    if (shouldLock) {
-      logger.debug(s"Stall detected at key=$key after ${statusDuration.toSeconds}s, locking and spreading ack") >>
-        tryLockAndSpreadAck(key, state).as(true)
-    } else {
-      alreadyLocked.pure[F]
-    }
-  }
-
-  private def tryLockAndSpreadAck(
-    key: Key,
-    state: ConsensusState[Key, Status, Outcome, Kind]
-  ): F[Unit] =
-    updater.tryLockConsensus(key, state).flatMap {
-      case Some((_, lockedState)) =>
-        logger.info(s"Locked consensus at key=$key") >>
-          spreadAckIfCollecting(key, lockedState) >>
-          queue.offer(ConsensusCommand.CheckUpdate(key))
-
-      case None =>
-        logger.debug(s"Could not lock consensus at key=$key, spreading ack anyway") >>
-          spreadAckIfCollecting(key, state) >>
-          queue.offer(ConsensusCommand.CheckUpdate(key))
-    }
-
-  private def spreadAckIfCollecting(
-    key: Key,
-    state: ConsensusState[Key, Status, Outcome, Kind]
-  ): F[Unit] =
-    ops.maybeCollectingKind(state.status) match {
-      case Some(ackKind) =>
-        if (!state.spreadAckKinds.contains(ackKind)) {
-          logger.debug(s"Spreading ack for key=$key, kind=$ackKind") >>
-            storage.getResources(key).flatMap { resources =>
-              updater.trySpreadAck(key, ackKind, resources).void
-            }
-        } else {
-          Async[F].unit
-        }
-      case None =>
-        Async[F].unit
-    }
 }

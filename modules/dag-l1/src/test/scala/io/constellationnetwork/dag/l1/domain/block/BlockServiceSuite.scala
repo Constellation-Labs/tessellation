@@ -84,6 +84,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
       override def updateBalances(addressBalances: Map[Address, Balance]): IO[Unit] = IO.unit
 
+      override def replaceAll(addressBalances: Map[Address, Balance]): IO[Unit] = IO.unit
+
       override def clean: IO[Unit] = ???
 
     }
@@ -111,6 +113,10 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         override def getOrdinal: IO[Option[SnapshotOrdinal]] = IO.pure(SnapshotOrdinal.MinValue.some)
 
         override def getHeight: IO[Option[height.Height]] = ???
+
+        override def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+        override def clear: IO[Unit] = ???
       }
       BlockService
         .make[IO](

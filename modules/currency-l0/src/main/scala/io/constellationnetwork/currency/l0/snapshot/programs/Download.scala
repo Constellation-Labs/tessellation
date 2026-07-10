@@ -21,6 +21,7 @@ import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Se
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensus
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
@@ -29,8 +30,11 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
+import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
@@ -62,7 +66,8 @@ object Download {
       F,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
-    ]
+    ],
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -73,52 +78,70 @@ object Download {
     type DownloadResult = (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
+    // Currency L0 recovery delegates to the full download path for now.
+    // The download walker is already incremental (fetches only the gap),
+    // so the main cost is cache clearing + observe phase — acceptable
+    // until a dedicated recovery path is warranted.
+    def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = download
+
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       implicit val hasher = hasherSelector.getCurrent
 
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
-        .flatTap { downloadResult =>
-          val (incrementalSnapshot, _) = downloadResult
-          logger
-            .info(s"[Download] Cleanup for snapshots greater than ${incrementalSnapshot.ordinal}") >>
-            currencySnapshotCleanupStorage.cleanupAbove(incrementalSnapshot.ordinal) >>
-            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(incrementalSnapshot.ordinal)
-        }
         .flatMap(observe)
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
 
-          def setCalculatedState = maybeDataApplication.map { da =>
-            implicit val d = da.calculatedStateDecoder
-
-            clusterStorage.getResponsivePeers
-              .map(NodeState.ready)
-              .map(_.toList)
-              .flatMap(Random[F].shuffleList)
-              .flatMap {
-                case Nil => (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
-                case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
-              }
-              .flatTap {
-                case (_, calculatedState) =>
-                  da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
-                    (new Exception(s"Downloaded calculated state does not match the proof stored in snapshot")
-                      .raiseError[F, Unit])
-                      .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
-                  }
-              }
-              .flatMap { case (ordinal, calculatedState) => da.setCalculatedState(ordinal, calculatedState) }
-          }.getOrElse(Applicative[F].unit)
-
-          snapshotStorage.prepend(snapshot, context) >>
-            setCalculatedState >>
+          logger.info(s"[Download] Cleanup for snapshots greater than ${snapshot.ordinal}") >>
+            currencySnapshotCleanupStorage.cleanupAbove(snapshot.ordinal) >>
+            combinedSnapshotCheckpointFileSystemStorage.deleteAbove(snapshot.ordinal) >>
+            eventMempool.clear >>
+            logger.info("[Download] Cleared event mempool for recovery") >>
+            snapshotStorage.prepend(snapshot, context).flatMap { prepended =>
+              if (!prepended)
+                (new Exception(s"Failed to prepend currency snapshot ordinal=${snapshot.ordinal} to storage")).raiseError[F, Unit]
+              else
+                Applicative[F].unit
+            } >>
+            fetchAndSetCalculatedState(snapshot) >>
             identifierStorage.get.flatMap { currencyAddress =>
               consensus.manager
                 .startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
             }
         }
     }
+
+    private def fetchAndSetCalculatedState(snapshot: Signed[CurrencyIncrementalSnapshot])(implicit hasher: Hasher[F]): F[Unit] =
+      maybeDataApplication.map { da =>
+        implicit val d = da.calculatedStateDecoder
+
+        val retryPolicy = RetryPolicies.limitRetries[F](3).join(RetryPolicies.exponentialBackoff(2.seconds))
+
+        retryingOnAllErrors[(SnapshotOrdinal, DataCalculatedState)](
+          policy = retryPolicy,
+          onError = (err: Throwable, retryDetails: RetryDetails) =>
+            logger.warn(err)(s"Error fetching calculated state (attempt=${retryDetails.retriesSoFar}), selecting new peer")
+        ) {
+          clusterStorage.getResponsivePeers
+            .map(NodeState.ready)
+            .map(_.toList)
+            .flatMap(Random[F].shuffleList)
+            .flatMap {
+              case Nil =>
+                (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
+              case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
+            }
+            .flatTap {
+              case (_, calculatedState) =>
+                da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
+                  (new Exception(s"Downloaded calculated state does not match the proof stored in snapshot")
+                    .raiseError[F, Unit])
+                    .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
+                }
+            }
+        }.flatMap { case (ordinal, calculatedState) => da.setCalculatedState(ordinal, calculatedState) }.void
+      }.getOrElse(Applicative[F].unit)
 
     def start: F[DownloadResult] = {
       val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
@@ -151,7 +174,7 @@ object Download {
     }
 
     def fetchNextSnapshot(result: DownloadResult)(implicit hasher: Hasher[F]): F[DownloadResult] = {
-      def retryPolicy = constantDelay(fetchSnapshotDelayBetweenTrials)
+      def retryPolicy = constantDelay(fetchSnapshotDelayBetweenTrials).join(limitRetries(30))
 
       def isWorthRetrying(err: Throwable): F[Boolean] = err match {
         case CannotFetchSnapshot | InvalidChain => true.pure[F]
@@ -220,5 +243,5 @@ object Download {
 
   case object CannotFetchSnapshot extends NoStackTrace
 
-  case object InvalidChain extends NoStackTrace
+  case object InvalidChain extends NoStackTrace with RecoveryFallbackEligible
 }

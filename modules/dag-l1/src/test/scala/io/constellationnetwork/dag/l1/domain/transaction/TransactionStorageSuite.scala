@@ -132,7 +132,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     }
   }
 
-  test("pull should take transactions in correct order minding the fees - large amount of transactions") {
+  test("pull should take parent-closed transactions before higher-fee children") {
     testResources.use {
       case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, key3, address3) =>
         implicit val securityProvider = sp
@@ -167,7 +167,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
 
           pulled <- transactionStorage.pull(50L)
-        } yield expect.same(NonEmptyList.fromList(txsA.toList ::: txsBHigherFee.toList ::: txsB.take(48)), pulled)
+        } yield expect.same(NonEmptyList.fromList(txsA.toList ::: txsB.take(49)), pulled)
     }
   }
 
@@ -214,6 +214,34 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
           pulled <- transactionStorage.pull(4L)
 
         } yield expect.same(NonEmptyList.fromList(txsA.toList ::: txsB.toList), pulled)
+    }
+  }
+
+  // Regression (B3): replaceByRefs (the RedownloadNeeded reset) must PRESERVE in-flight Waiting/Processing txs
+  // strictly above the new majority ref. The old blind `.set` wiped a ProcessingTx that a concurrently-cancelled
+  // consensus round was about to return via putBack (putBack only restores ProcessingTx), silently losing a valid
+  // in-flight client tx.
+  test("replaceByRefs preserves an in-flight ProcessingTx above the new majority ref") {
+    testResources.use {
+      case (transactionStorage, _, key1, address1, _, address2, sp, h, txHasher, _, _) =>
+        implicit val securityProvider = sp
+        implicit val hasher = h
+
+        for {
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L), kHasher = txHasher, jHasher = h)
+          _ <- txsA.toList.traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
+          // Waiting -> Processing for the whole chain (as a started consensus round would do).
+          _ <- transactionStorage.pull(10L)
+          // Majority advanced only to the FIRST tx; the second is still an in-flight ProcessingTx.
+          majorityRef = TransactionReference(txsA.head.ordinal, txsA.head.hash)
+          _ <- transactionStorage.replaceByRefs(Map(address1 -> majorityRef), SnapshotOrdinal.MinValue)
+          state <- transactionStorage.getState
+          stored = state.getOrElse(address1, SortedMap.empty[TransactionOrdinal, StoredTransaction])
+        } yield
+          expect.all(
+            stored.get(txsA.head.ordinal).exists { case _: MajorityTx => true; case _ => false },
+            stored.get(txsA.last.ordinal).exists { case _: ProcessingTx => true; case _ => false }
+          )
     }
   }
 }

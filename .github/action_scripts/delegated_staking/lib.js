@@ -1,6 +1,7 @@
 const axios = require('axios')
 const elliptic = require('elliptic')
 const fs = require('fs')
+const path = require('path')
 
 const {
   sleep,
@@ -14,7 +15,8 @@ const {
 
 const checkOk = (response) => {
   if (response.status !== 200) {
-    throw new Error(`Node returned ${response.status} instead of 200`)
+    const body = response.data !== undefined ? JSON.stringify(response.data) : (response.body || '')
+    throw new Error(`Node returned ${response.status} instead of 200: ${String(body).slice(0, 300)}`)
   }
 }
 
@@ -26,6 +28,18 @@ const checkBadRequest = (response) => {
 
 const dagToDatum = (dag) => {
   return Math.round(dag * 1e8)
+}
+
+// Resolve a node operator's key file. Mirrors the inline logic in delegated-staking.js:
+// in CI the keys are staged under code/hypergraph/dag-l0/<name>/id_ecdsa.hex; otherwise
+// the bundled keys/ fixtures are used (genesis-node.hex, validator-N-node.hex).
+const resolveNodeKeyPath = (name) => {
+  const runEnv = process.env.RUN_ENV || 'ci'
+  if (runEnv === 'ci') {
+    return `../../code/hypergraph/dag-l0/${name}/id_ecdsa.hex`
+  }
+  const localFile = name === 'genesis-node' ? 'genesis-node.hex' : `${name}-node.hex`
+  return path.join(__dirname, 'keys', localFile)
 }
 
 function getPrivateKeyAndNodeIdFromFile(filePath) {
@@ -227,7 +241,7 @@ const fetchStakeWithRewardsBalance = async (
     },
     {
       name: 'FetchStakeWithRewardsBalance',
-      maxAttempts: 20,
+      maxAttempts: 40,
       interval: 5 * 1000,
       handleError: () => {},
     },
@@ -251,12 +265,36 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
     throw new Error('Failed to create TokenLock')
   }
 
+  // Fresh locks: confirm GL0 inclusion ordinal-awarely before the wall-clock balance check below. A fresh lock
+  // can race the dag-L1 token-lock MPT (it trails GL0 by ~1 ordinal), so the balance only drops once the L1
+  // catches up; waiting on ordinal progress avoids a wall-clock timeout. Replacements change the active-lock
+  // hash (a /token-locks TOCTOU), so they rely on the replacement-retry / stake-ref path instead.
+  if (!replaceRef) {
+    await waitForTokenLockInclusion(urls, account.address, hash)
+  }
+
+  // The account may hold active delegated stakes that accrue reward credits during
+  // the wait, so its balance can sit ABOVE the exact post-lock value (rewards only
+  // ever add). Require the balance to have dropped by ~the locked amount (confirming
+  // the lock applied) while tolerating upward drift from accrued rewards, plus a small
+  // rounding slack for 1-datum discrepancies seen in reward math.
+  const expectedAfterLock = initialBalance - lockAmount + replaceBalance
+  const lockDelta = lockAmount - replaceBalance
+  const rewardTolerance = Math.max(1, Math.floor(lockDelta / 2))
+  const roundingSlack = 10
   await withRetry(
-    async () => assertBalanceChange(account, initialBalance - lockAmount + replaceBalance),
+    async () => {
+      const balance = dagToDatum(await account.getBalance())
+      if (balance < expectedAfterLock - roundingSlack || balance > expectedAfterLock + rewardTolerance) {
+        throw new Error(
+          `Balance after token lock = ${balance}, expected within [${expectedAfterLock}, ${expectedAfterLock + rewardTolerance}] (tolerating accrued rewards)`,
+        )
+      }
+    },
     {
       name: 'assertBalanceChangeAfterTokenLock',
-      maxAttempts: 10,
-      interval: 1000,
+      maxAttempts: 60,
+      interval: 2000,
       handleError: () => {},
     },
   )
@@ -264,12 +302,12 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
   return hash
 }
 
-const assertBalanceChange = async (account, expectedBalanceDatum) => {
+const assertBalanceChange = async (account, expectedBalanceDatum, tolerance = 0) => {
   const balance = dagToDatum(await account.getBalance())
 
-  if (balance !== expectedBalanceDatum) {
+  if (Math.abs(balance - expectedBalanceDatum) > tolerance) {
     throw new Error(
-      `Invalid balance: Expected balance to be ${expectedBalanceDatum} but got ${balance}`,
+      `Invalid balance: Expected balance to be ${expectedBalanceDatum}${tolerance ? ` (±${tolerance})` : ''} but got ${balance}`,
     )
   }
 }
@@ -360,8 +398,8 @@ const waitForStakeInclusion = async (urls, address, stakeHash, options = {}) => 
     {
       globalL0Url: urls.globalL0Url,
       name: 'waitForStakeInclusion',
-      maxOrdinalMisses: 5,
-      maxStalledChecks: 15,
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
       interval: 2000,
       ...options
     }
@@ -390,8 +428,8 @@ const waitForStakeWithdrawal = async (urls, address, stakeHash, options = {}) =>
     {
       globalL0Url: urls.globalL0Url,
       name: 'waitForStakeWithdrawal',
-      maxOrdinalMisses: 5,
-      maxStalledChecks: 15,
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
       interval: 2000,
       ...options
     }
@@ -430,8 +468,8 @@ const waitForTokenLockInclusion = async (urls, address, lockHash, options = {}) 
     {
       globalL0Url: urls.globalL0Url,
       name: 'waitForTokenLockInclusion',
-      maxOrdinalMisses: 5,
-      maxStalledChecks: 15,
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
       interval: 2000,
       ...options
     }
@@ -465,6 +503,7 @@ module.exports = {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
+  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,

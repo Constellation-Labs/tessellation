@@ -67,6 +67,20 @@ fi
 # maybe re-enable later -- these are the current mainnet defaults
 # CL_DOCKER_JAVA_OPTS="-Xms512M -Xss256K -Xmx8192M"
 
+# ClickHouse logging (optional — enabled when CLICKHOUSE_HOST is set)
+if [ -n "$CLICKHOUSE_HOST" ]; then
+  cat >> ./nodes/.env <<CHEOF
+
+CLICKHOUSE_HOST=${CLICKHOUSE_HOST}
+CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-8443}
+CLICKHOUSE_DATABASE=${CLICKHOUSE_DATABASE:-default}
+CLICKHOUSE_PROTOCOL=${CLICKHOUSE_PROTOCOL:-https}
+CLICKHOUSE_LOGS_TABLE_NAME=${CLICKHOUSE_LOGS_TABLE_NAME:-nightly_logs}
+CHEOF
+fi
+
 # Append any CL_TEST_* environment variables from the current bash environment
 echo "" >> ./nodes/.env
 echo "# Test environment variables from host" >> ./nodes/.env
@@ -76,7 +90,7 @@ if env | grep -q "^CL_TEST_"; then
   done
 fi
 
-for i in 0 1 2; do
+for i in $(seq 0 $((MAX_NODES - 1))); do
   cp ./nodes/.env ./nodes/$i/.env
   cp ./nodes/.envrc ./nodes/$i/.envrc
 done
@@ -105,7 +119,7 @@ cd ../../
 
 
 
-for i in 0 1 2; do
+for i in $(seq 0 $((MAX_NODES - 1))); do
   cd ./nodes/$i
 
   # if i != 0:

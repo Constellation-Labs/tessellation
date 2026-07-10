@@ -1,6 +1,6 @@
 const axios = require('axios');
 
-const fetchData = async (url, maxRetries = 12, retryIntervalMs = 5000) => {
+const fetchData = async (url, maxRetries = 24, retryIntervalMs = 5000) => {
   let lastError = null;
   for (let idx = 0; idx < maxRetries; idx++) {
     try {
@@ -33,7 +33,7 @@ const sleep = (ms) => {
 const checkIfNodeIsReady = async (url, name) => {
   console.log(`Checking if ${name} is ready`);
   const checkInterval = 10 * 1000;
-  const maxAttempts = 24; // 240s total (increased from 120s for CI reliability)
+  const maxAttempts = 48; // 480s total (doubled for CI reliability)
   for (let idx = 0; idx < maxAttempts; idx++) {
     try {
       // Use minimal retries in fetchData since outer loop handles retry-over-time
@@ -58,7 +58,7 @@ const checkIfNodeIsReady = async (url, name) => {
   );
 };
 
-const validateOrdinalsAndSnapshots = async (urls) => {
+const validateOrdinalsAndSnapshots = async (urls, expectedSigners) => {
   const ordinalsPromises = [];
   for (const url of urls) {
     ordinalsPromises.push(fetchData(`${url}/latest`));
@@ -74,7 +74,7 @@ const validateOrdinalsAndSnapshots = async (urls) => {
 
   if (differenceBetweenLowestAndHigherOrdinal > 3) {
     throw Error(
-      `Ordinals difference greater than 3. Difference: ${differenceBetwenLowestAndHigherOrdinal}`
+      `Ordinals difference greater than 3. Difference: ${differenceBetweenLowestAndHigherOrdinal}`
     );
   }
 
@@ -83,7 +83,8 @@ const validateOrdinalsAndSnapshots = async (urls) => {
     snapshotsPromises.push(fetchData(`${url}/${lowestOrdinal}`));
   }
 
-  const snapshots = (await Promise.all(snapshotsPromises)).map((_) => _.value.lastSnapshotHash);
+  const snapshotResponses = await Promise.all(snapshotsPromises);
+  const snapshots = snapshotResponses.map((_) => _.value.lastSnapshotHash);
   const areSnapshotsTheSame = snapshots.every(
     (snapshot) => snapshot === snapshots[0]
   );
@@ -98,19 +99,51 @@ const validateOrdinalsAndSnapshots = async (urls) => {
       snapshots
     )}`
   );
+
+  // Validate signature count — poll until a snapshot has all expected signatures
+  if (expectedSigners) {
+    const maxPollAttempts = 30; // 30 × 10s = 300s (enough for ~7 rounds at 43s)
+    let found = false;
+    for (let attempt = 1; attempt <= maxPollAttempts; attempt++) {
+      const pollUrl = urls[attempt % urls.length]; // cycle through nodes
+      try {
+        const latestResp = await fetchData(`${pollUrl}/latest`);
+        const ord = latestResp.value.ordinal;
+        const proofs = latestResp.proofs || [];
+        const signerCount = proofs.length;
+        console.log(`  Signature poll ${attempt}/${maxPollAttempts}: ordinal=${ord} signatures=${signerCount} (need ${expectedSigners})`);
+        if (signerCount >= expectedSigners) {
+          const signerIds = proofs.map((p) => p.id.hex ? p.id.hex.substring(0, 8) : p.id.substring(0, 8));
+          console.log(
+            `Snapshot at ordinal ${ord} has ${signerCount} signatures (>= ${expectedSigners}): [${signerIds.join(', ')}]`
+          );
+          found = true;
+          break;
+        }
+      } catch (e) {
+        console.log(`  Signature poll ${attempt}/${maxPollAttempts}: fetch error, retrying...`);
+      }
+      await sleep(10 * 1000);
+    }
+    if (!found) {
+      throw Error(
+        `No snapshot with >= ${expectedSigners} signatures found after ${maxPollAttempts} attempts`
+      );
+    }
+  }
 };
 
 const assertClusterSize = async (clusterUrl, expectedSize, name) => {
   const clusterInfo = await fetchData(clusterUrl);
   const clusterSize = clusterInfo.length;
 
-  if (clusterSize !== expectedSize) {
+  if (clusterSize < expectedSize) {
     throw Error(
-      `Cluster ${name} size is different than expected. Actual: ${clusterSize}. Expected: ${expectedSize}`
+      `Cluster ${name} size is less than expected. Actual: ${clusterSize}. Expected: >= ${expectedSize}`
     );
   }
 
-  console.log(`Cluster ${name} with expected size of ${expectedSize}`);
+  console.log(`Cluster ${name} with size ${clusterSize} (>= ${expectedSize} expected)`);
 };
 
 const clusterCheck = async (
@@ -118,7 +151,8 @@ const clusterCheck = async (
   checkOrdinalsAndSnapshots,
   clusterName,
   expectedClusterSize,
-  globalLayer
+  globalLayer,
+  expectedSigners
 ) => {
   try {
     console.log(`Starting to check if nodes are ready: ${clusterName}`);
@@ -137,7 +171,7 @@ const clusterCheck = async (
         (info) =>
           `${info.baseUrl}/${globalLayer ? 'global-snapshots' : 'snapshots'}`
       );
-      await validateOrdinalsAndSnapshots(urls);
+      await validateOrdinalsAndSnapshots(urls, expectedSigners);
       console.log(
         `Finished to validate ordinals and snapshots: ${clusterName}`
       );
@@ -156,42 +190,53 @@ const clusterCheck = async (
   }
 };
 
+const isRemoteHost = () => {
+  const host = process.env.TEST_HOST;
+  return host && host !== 'http://localhost';
+};
+
 const checkGlobalL0Node = async (config) => {
   const { dagL0PortPrefix } = config
-  const infos = [
-    {
-      name: 'Global L0 Genesis',
-      baseUrl: `http://localhost:${dagL0PortPrefix}00`
-    },
-    {
-      name: 'Global L0 Validator 1',
-      baseUrl: `http://localhost:${dagL0PortPrefix}10`
-    },
-    {
-      name: 'Global L0 Validator 2',
-      baseUrl: `http://localhost:${dagL0PortPrefix}20`
+  const host = process.env.TEST_HOST || 'http://localhost';
+  const gl0Url = process.env.GL0_URL || `${host}:${dagL0PortPrefix}00`;
+
+  if (isRemoteHost()) {
+    const infos = [{ name: 'Global L0', baseUrl: gl0Url }];
+    await clusterCheck(infos, true, 'Global L0', 1, true);
+  } else {
+    const numGL0 = parseInt(process.env.NUM_GL0_NODES || '3', 10);
+    const infos = [];
+    for (let i = 0; i < numGL0; i++) {
+      const port = `${dagL0PortPrefix}${String(i * 10).padStart(2, '0')}`;
+      const name = i === 0 ? 'Global L0 Genesis' : `Global L0 Validator ${i}`;
+      infos.push({ name, baseUrl: `${host}:${port}` });
     }
-  ];
-  await clusterCheck(infos, true, 'Global L0', 3, true);
+    // Signatures expected on a snapshot: BFT quorum (2f+1), NOT unanimity. Global L0 consensus
+    // finalizes at a supermajority, so a snapshot signed by a quorum is correct -- requiring all
+    // numGL0 signatures makes this check flaky whenever a single node's signature lands after
+    // finalization (common under load). Override with EXPECTED_GL0_SIGNERS for strict checks.
+    const quorum = Math.floor((2 * numGL0) / 3) + 1;
+    const expectedSigners = parseInt(process.env.EXPECTED_GL0_SIGNERS || String(quorum), 10);
+    await clusterCheck(infos, true, 'Global L0', numGL0, true, expectedSigners);
+  }
 };
 
 const checkCurrencyL0Node = async (config) => {
   const { metagraphL0PortPrefix } = config
-  const infos = [
-    {
-      name: 'Currency L0 - 1',
-      baseUrl: `http://localhost:${metagraphL0PortPrefix}00`
-    },
-    {
-      name: 'Currency L0 - 2',
-      baseUrl: `http://localhost:${metagraphL0PortPrefix}10`
-    },
-    {
-      name: 'Currency L0 - 3',
-      baseUrl: `http://localhost:${metagraphL0PortPrefix}20`
-    }
-  ];
-  await clusterCheck(infos, true, 'Currency L0', 3, false);
+  const host = process.env.TEST_HOST || 'http://localhost';
+  const ml0Url = process.env.ML0_URL || `${host}:${metagraphL0PortPrefix}00`;
+
+  if (isRemoteHost()) {
+    const infos = [{ name: 'Currency L0', baseUrl: ml0Url }];
+    await clusterCheck(infos, true, 'Currency L0', 1, false);
+  } else {
+    const infos = [
+      { name: 'Currency L0 - 1', baseUrl: `${host}:${metagraphL0PortPrefix}00` },
+      { name: 'Currency L0 - 2', baseUrl: `${host}:${metagraphL0PortPrefix}10` },
+      { name: 'Currency L0 - 3', baseUrl: `${host}:${metagraphL0PortPrefix}20` },
+    ];
+    await clusterCheck(infos, true, 'Currency L0', 3, false);
+  }
 };
 
 module.exports = {

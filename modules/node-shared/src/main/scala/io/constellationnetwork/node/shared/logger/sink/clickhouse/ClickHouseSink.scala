@@ -2,7 +2,10 @@ package io.constellationnetwork.node.shared.logger.sink.clickhouse
 
 import cats.effect._
 import cats.effect.std.Queue
+import cats.effect.syntax.all._
 import cats.syntax.all._
+
+import scala.concurrent.duration._
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.logger.{LogEntry, LogSink}
@@ -20,7 +23,7 @@ object ClickHouseSink {
 
   private case class QueuedEntry(entry: LogEntry, retryCount: Int = 0, retryAfter: Long = 0L)
 
-  val createTableDDL: String => String = tableName => s"""CREATE TABLE IF NOT EXISTS $tableName (
+  val createTableDDL: (String, Int) => String = (tableName, retentionPeriodInDays) => s"""CREATE TABLE IF NOT EXISTS $tableName (
        |    timestamp DateTime64(3),
        |    node_id LowCardinality(String),
        |    network_id LowCardinality(String),
@@ -29,7 +32,7 @@ object ClickHouseSink {
        |) ENGINE = MergeTree()
        |PARTITION BY (network_id, toYYYYMM(timestamp))
        |ORDER BY (node_id, timestamp)
-       |TTL toDateTime(timestamp) + INTERVAL 90 DAY""".stripMargin
+       |TTL toDateTime(timestamp) + INTERVAL $retentionPeriodInDays DAY""".stripMargin
 
   def make[F[_]: Async](
     config: ClickHouseConfig,
@@ -39,11 +42,11 @@ object ClickHouseSink {
     for {
       logger <- Resource.eval(Slf4jLogger.create[F])
       ds <- makeDataSource[F](config)
-      _ <- Resource.eval(initTable(ds, config.tableName))
+      _ <- Resource.eval(initTable(ds, config.tableName, config.retentionPeriodInDays))
       queue <- Resource.eval(Queue.bounded[F, QueuedEntry](config.maxQueueSize))
       pausedUntil <- Resource.eval(Ref.of[F, Long](0L))
       writer = new BatchWriter[F](ds, config, nodeId, networkId, logger, queue, pausedUntil)
-      _ <- startFlusher(queue, writer, config, logger, pausedUntil)
+      _ <- startFlusher(queue, writer, config, pausedUntil)
     } yield new Impl[F](queue, logger, config.tableName)
 
   def makeWithDataSource[F[_]: Async](
@@ -57,34 +60,67 @@ object ClickHouseSink {
       queue <- Resource.eval(Queue.bounded[F, QueuedEntry](config.maxQueueSize))
       pausedUntil <- Resource.eval(Ref.of[F, Long](0L))
       writer = new BatchWriter[F](ds, config, nodeId, networkId, logger, queue, pausedUntil)
-      _ <- startFlusher(queue, writer, config, logger, pausedUntil)
+      _ <- startFlusher(queue, writer, config, pausedUntil)
     } yield new Impl[F](queue, logger, config.tableName)
 
   // === DataSource Management ===
 
-  def makeDataSource[F[_]: Async](config: ClickHouseConfig): Resource[F, HikariDataSource] =
-    Resource.make(Async[F].blocking {
+  // ClickHouse JDBC driver does not enforce a default socket-connect timeout, so
+  // `new HikariDataSource(hc)` can block indefinitely if the configured host is
+  // unreachable. A testnet incident saw .193 silent for 35-45 minutes
+  // per restart with no further log lines after "Jar hash" -- the JVM was stuck inside
+  // HikariCP pool construction waiting on a TCP SYN-ACK to a dead ClickHouse host.
+  // The `handleErrorWith` chains in MetricsFactory + ClickHouseLoggerBundle never
+  // fired because there was no error to handle, just a hang.
+  //
+  // Three layered defenses, each protecting the next inward layer:
+  //   1. cats-effect `.timeout(connectTimeout)` on the whole acquire — converts a
+  //      hang into a TimeoutException that the outer handleErrorWith can catch.
+  //   2. HikariCP `setInitializationFailTimeout(...)` — fast-fail at the pool layer
+  //      if the validation query can't establish.
+  //   3. Driver-level `socket_timeout` / `connection_timeout` properties — fast-fail
+  //      at the actual socket layer.
+  //
+  // Defaults are intentionally tight (15s connect, 10s socket) because metrics
+  // and consensus-logging are best-effort sinks; on testnet, falling back to
+  // Prometheus-only is far better than wedging the JVM.
+  private val connectTimeout: FiniteDuration = 15.seconds
+  private val initFailTimeoutMillis: Long = 10000L
+  private val socketTimeoutMillis: Long = 10000L
+  private val driverConnectTimeoutMillis: Long = 5000L
+
+  def makeDataSource[F[_]: Async](config: ClickHouseConfig): Resource[F, HikariDataSource] = {
+    val jdbcUrl = s"jdbc:clickhouse:${config.protocol}://${config.host}:${config.port}/${config.database}"
+    val acquire = Async[F].blocking {
       val hc = new HConfig()
-      hc.setJdbcUrl(s"jdbc:clickhouse:https://${config.host}:${config.port}/${config.database}")
+      hc.setJdbcUrl(jdbcUrl)
       hc.setUsername(config.user)
       hc.setPassword(config.password)
       hc.setMinimumIdle(2)
       hc.setMaximumPoolSize(10)
       hc.setConnectionTimeout(30000)
+      hc.setInitializationFailTimeout(initFailTimeoutMillis)
       hc.setPoolName("clickhouse-logger-pool")
       hc.setConnectionTestQuery("SELECT 1")
+      hc.addDataSourceProperty("socket_timeout", socketTimeoutMillis.toString)
+      hc.addDataSourceProperty("connection_timeout", driverConnectTimeoutMillis.toString)
       new HikariDataSource(hc)
-    })(ds => Async[F].blocking(ds.close()).handleError(_ => ()))
+    }.timeout(connectTimeout)
+      .adaptError(e => new RuntimeException(s"Failed to connect to ClickHouse at $jdbcUrl: ${e.getMessage}", e))
+    Resource.make(acquire)(ds => Async[F].blocking(ds.close()).handleError(_ => ()))
+  }
 
-  private def initTable[F[_]: Async](ds: HikariDataSource, tableName: String): F[Unit] =
+  private def initTable[F[_]: Async](ds: HikariDataSource, tableName: String, retentionPeriodInDays: Int): F[Unit] =
     Async[F].blocking {
       val conn = ds.getConnection
       try {
         val stmt = conn.createStatement()
-        try stmt.execute(createTableDDL(tableName))
+        try stmt.execute(createTableDDL(tableName, retentionPeriodInDays))
         finally stmt.close()
       } finally conn.close()
-    }.void
+    }
+      .timeout(connectTimeout)
+      .void
 
   // === Background Flusher ===
 
@@ -92,7 +128,6 @@ object ClickHouseSink {
     queue: Queue[F, QueuedEntry],
     writer: BatchWriter[F],
     config: ClickHouseConfig,
-    logger: SelfAwareStructuredLogger[F],
     pausedUntil: Ref[F, Long]
   ): Resource[F, Unit] = {
     val flush: F[Unit] = for {

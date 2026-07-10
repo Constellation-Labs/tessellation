@@ -13,7 +13,7 @@ import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.ext.http4s.refined.RefinedRequestDecoder
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.cluster._
-import io.constellationnetwork.schema.peer.JoinRequest
+import io.constellationnetwork.schema.peer.{JoinRequest, PeerCommitteeView, PeerId}
 import io.constellationnetwork.security.Hasher
 
 import eu.timepit.refined.auto._
@@ -31,7 +31,12 @@ final case class ClusterRoutes[F[_]: Async: Hasher](
   peerDiscovery: PeerDiscovery[F],
   clusterStorage: ClusterStorage[F],
   cluster: Cluster[F],
-  collateral: Collateral[F]
+  collateral: Collateral[F],
+  // Optional per-request committee-view lookup. Returns a snapshot map of peer-id → status +
+  // peerQuality + probation-remaining. Wired in dag-l0 to read from the latest ConsensusOutcome;
+  // other modules (currency-l0, dag-l1) pass `None` and `/cluster/info` returns PeerInfo with
+  // peerCommittee = None for every peer.
+  getCommitteeView: Option[F[Map[PeerId, PeerCommitteeView]]] = None
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F]
@@ -56,8 +61,18 @@ final case class ClusterRoutes[F[_]: Async: Hasher](
             case _                                              => InternalServerError("Unknown error.")
           }
       }
-    case POST -> Root / "leave" =>
-      cluster.leave() >> Ok()
+    case req @ POST -> Root / "leave" =>
+      // `?force=true` bypasses the wedge guard. Operators with legitimate need-to-leave during a
+      // sustained quorum-infeasible wedge should include the flag; orchestration tooling (node-pilot,
+      // nodectl) that POSTs unadorned gets refused via 409 with reason, defending against
+      // healthcheck-driven leave loops that misread consensus stalls as unhealthiness.
+      val force = req.uri.query.params.get("force").exists(_.equalsIgnoreCase("true"))
+      cluster
+        .leave(force)
+        .flatMap(_ => Ok())
+        .recoverWith {
+          case ClusterLeaveRefused(reason) => Conflict(reason)
+        }
   }
 
   protected val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
@@ -94,7 +109,19 @@ final case class ClusterRoutes[F[_]: Async: Hasher](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
-      Ok(cluster.info)
+      // Enrich each PeerInfo with the per-request committee view when the lookup is wired
+      // (currently dag-l0 only). When the lookup is absent (currency-l0, dag-l1, or anywhere
+      // not yet wired) the response is identical to the pre-Tier-2 shape: peerCommittee = None
+      // for every peer.
+      Ok(
+        getCommitteeView.fold(cluster.info) { fetch =>
+          cluster.info.flatMap { peers =>
+            fetch.map { view =>
+              peers.map(p => p.copy(peerCommittee = view.get(p.id)))
+            }
+          }
+        }
+      )
     case GET -> Root / "session" =>
       clusterStorage.getToken.flatMap {
         case Some(token) => Ok(("token" ->> token) :: HNil)

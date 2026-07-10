@@ -33,7 +33,16 @@ object TrustStorageUpdater {
     } yield ()
   }
 
+  /** Trust-update cadence. Was previously 1.minute; lowered to 1.hour because the only remaining live consumer of trust scores is
+    * `PeerSelect.getPeerSublist`, which weights download-peer selection during recovery downloads -- a rare event (cold start or
+    * `updateShouldRedownload` triggers) that does not need minute-fresh trust data.
+    *
+    * Pre-cleanup audit: `SnapshotOrdinalPublicTrust` rumor accounted for ~20% of cluster gossip traffic at the 1-minute cadence to feed a
+    * consumer that runs maybe a few times per day. `ForkDetect` was a second consumer on paper but never wired into any service. The
+    * `/trust/current` HTTP endpoint receives ~0 external traffic. Hourly cadence captures the bandwidth win (~60x reduction) while
+    * preserving recovery-download-selection behavior.
+    */
   def daemon[F[_]: Async: Supervisor](updater: TrustStorageUpdater[F]): Daemon[F] =
-    Daemon.periodic(updater.update, 1.minute)
+    Daemon.periodic(updater.update, 1.hour)
 
 }

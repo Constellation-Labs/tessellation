@@ -1,3 +1,4 @@
+const axios = require('axios')
 const { dag4 } = require('@stardust-collective/dag4')
 const { parseSharedArgs, logWorkflow } = require('../shared')
 
@@ -14,7 +15,8 @@ const createConfig = () => {
   return { ...sharedArgs }
 }
 
-const SLEEP_TIME_UNTIL_QUERY = 30 * 1000
+const BALANCE_QUERY_TIMEOUT = 4 * 60 * 1000
+const BALANCE_QUERY_INTERVAL = 5 * 1000
 
 const FIRST_WALLET_SEED_PHRASE =
   'right off artist rare copy zebra shuffle excite evidence mercy isolate raise'
@@ -31,6 +33,142 @@ const logMessage = (message) => {
 
 const sleep = (ms) => {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const balancesMatch = (actualBalances, expectedBalances) =>
+  actualBalances.length === expectedBalances.length &&
+  actualBalances.every(
+    (balance, idx) => Number(balance) === Number(expectedBalances[idx]),
+  )
+
+const waitForBalances = async (label, fetchBalances, expectedBalances) => {
+  const deadline = Date.now() + BALANCE_QUERY_TIMEOUT
+  let lastBalances = []
+  let attempt = 0
+
+  while (Date.now() <= deadline) {
+    attempt += 1
+    lastBalances = await fetchBalances()
+
+    if (balancesMatch(lastBalances, expectedBalances)) {
+      logMessage(
+        `${label} balances reached expected values on attempt ${attempt}: ${lastBalances.join(
+          ', ',
+        )}`,
+      )
+      return lastBalances
+    }
+
+    logMessage(
+      `${label} balances not ready on attempt ${attempt}; expected ${expectedBalances.join(
+        ', ',
+      )}, got ${lastBalances.join(', ')}`,
+    )
+    await sleep(BALANCE_QUERY_INTERVAL)
+  }
+
+  throw Error(
+    `${label} balances did not reach expected values within ${BALANCE_QUERY_TIMEOUT} ms; expected ${expectedBalances.join(
+      ', ',
+    )}, got ${lastBalances.join(', ')}`,
+  )
+}
+
+// `progress` (optional): { getOrdinal, stallMs, maxMs } makes the wait tolerant of a slow-but-live chain.
+// Instead of a fixed wall-clock deadline, keep polling while the chain keeps producing new ordinals; give up
+// only if it is genuinely stuck (no new ordinal for stallMs) or the generous maxMs cap is reached. gl0 cadence
+// can crawl under heavy CI load, so a fixed window false-fails a healthy chain whose double-spend winner simply
+// has not finalized yet. A slow chain is not a failure; a stalled one is.
+const waitForAnyBalanceMatch = async (label, fetchBalances, predicates, progress = null) => {
+  const useProgress = progress && typeof progress.getOrdinal === 'function'
+  const stallMs = (progress && progress.stallMs) || 120 * 1000
+  const maxMs = (progress && progress.maxMs) || 10 * 60 * 1000
+  const deadline = Date.now() + (useProgress ? maxMs : BALANCE_QUERY_TIMEOUT)
+  let lastBalances = []
+  let attempt = 0
+  let lastOrdinal = null
+  let lastProgressAt = Date.now()
+
+  while (Date.now() <= deadline) {
+    attempt += 1
+    lastBalances = await fetchBalances()
+    const matched = predicates.find(({ matches }) => matches(lastBalances))
+
+    if (matched) {
+      logMessage(
+        `${label} balances reached expected ${matched.description} state on attempt ${attempt}: ${lastBalances.join(
+          ', ',
+        )}`,
+      )
+      return { balances: lastBalances, matched }
+    }
+
+    if (useProgress) {
+      let currentOrdinal = null
+      try {
+        currentOrdinal = await progress.getOrdinal()
+      } catch (e) {
+        // transient fetch error: treat as no progress this poll
+      }
+      if (currentOrdinal !== null && (lastOrdinal === null || currentOrdinal > lastOrdinal)) {
+        lastOrdinal = currentOrdinal
+        lastProgressAt = Date.now()
+      }
+      if (Date.now() - lastProgressAt >= stallMs) {
+        throw Error(
+          `${label} balances did not settle and global L0 produced no new ordinal for ${Math.round(
+            stallMs / 1000,
+          )}s (stuck at ${lastOrdinal}); got ${lastBalances.join(', ')}`,
+        )
+      }
+    }
+
+    logMessage(
+      `${label} balances not ready on attempt ${attempt}; got ${lastBalances.join(
+        ', ',
+      )}${useProgress ? ` (gl0 ordinal ${lastOrdinal})` : ''}`,
+    )
+    await sleep(BALANCE_QUERY_INTERVAL)
+  }
+
+  throw Error(
+    `${label} balances did not reach any expected state within ${
+      useProgress ? maxMs : BALANCE_QUERY_TIMEOUT
+    } ms; got ${lastBalances.join(', ')}`,
+  )
+}
+
+const getMetagraphOrdinal = async (networkOptions) => {
+  const response = await axios.get(`${networkOptions.l0MetagraphUrl}/snapshots/latest`)
+  return response.data.value.ordinal
+}
+
+const waitForMetagraphOrdinalProgression = async (networkOptions, label) => {
+  const startingOrdinal = await getMetagraphOrdinal(networkOptions)
+  const deadline = Date.now() + BALANCE_QUERY_TIMEOUT
+  let lastOrdinal = startingOrdinal
+  let attempt = 0
+
+  while (Date.now() <= deadline) {
+    attempt += 1
+    lastOrdinal = await getMetagraphOrdinal(networkOptions)
+
+    if (lastOrdinal > startingOrdinal) {
+      logMessage(
+        `${label} metagraph ordinal advanced from ${startingOrdinal} to ${lastOrdinal} on attempt ${attempt}`,
+      )
+      return lastOrdinal
+    }
+
+    logMessage(
+      `${label} waiting for metagraph ordinal to advance past ${startingOrdinal}; current ${lastOrdinal}`,
+    )
+    await sleep(BALANCE_QUERY_INTERVAL)
+  }
+
+  throw Error(
+    `${label} metagraph ordinal did not advance within ${BALANCE_QUERY_TIMEOUT} ms; last ordinal ${lastOrdinal}`,
+  )
 }
 
 const batchTransaction = async (
@@ -97,7 +235,9 @@ const batchMetagraphTransaction = async (
     )
 
     logMessage(
-      `L0 token transaction from: ${origin.address} sent - batch of ${num}.`,
+      `L0 token transaction from: ${origin.address} sent - batch of ${num}. Hashes: ${hashes.join(
+        ', ',
+      )}`,
     )
 
     return hashes
@@ -113,6 +253,8 @@ const handleBatchTransactions = async (
   amount,
   fee,
   txnCount,
+  expectedOriginBalance,
+  expectedDestinationBalance,
 ) => {
   if (networkOptions) {
     await origin.connect({
@@ -126,11 +268,11 @@ const handleBatchTransactions = async (
   try {
     await batchTransaction(origin, destination, amount, fee, txnCount)
 
-    logMessage(`Waiting ${SLEEP_TIME_UNTIL_QUERY} ms to fetch wallet balances`)
-    await sleep(SLEEP_TIME_UNTIL_QUERY)
-
-    const originBalance = await origin.getBalance()
-    const destinationBalance = await destination.getBalance()
+    const [originBalance, destinationBalance] = await waitForBalances(
+      'DAG transfer',
+      async () => [await origin.getBalance(), await destination.getBalance()],
+      [expectedOriginBalance, expectedDestinationBalance],
+    )
 
     return { originBalance, destinationBalance }
   } catch (error) {
@@ -147,6 +289,8 @@ const handleMetagraphBatchTransactions = async (
   amount,
   fee,
   txnCount,
+  expectedOriginBalance,
+  expectedDestinationBalance,
 ) => {
   try {
     await origin.connect({
@@ -172,12 +316,13 @@ const handleMetagraphBatchTransactions = async (
       txnCount,
     )
 
-    logMessage(`Waiting ${SLEEP_TIME_UNTIL_QUERY} ms to fetch wallet balances`)
-    await sleep(SLEEP_TIME_UNTIL_QUERY)
-
-    const originBalance = await metagraphTokenClient.getBalance()
-    const destinationBalance = await metagraphTokenClient.getBalanceFor(
-      destination.address,
+    const [originBalance, destinationBalance] = await waitForBalances(
+      'Metagraph transfer',
+      async () => [
+        await metagraphTokenClient.getBalance(),
+        await metagraphTokenClient.getBalanceFor(destination.address),
+      ],
+      [expectedOriginBalance, expectedDestinationBalance],
     )
 
     return { originBalance, destinationBalance }
@@ -261,14 +406,43 @@ const doubleSpendTest = async (networkOptions, isMetagraph) => {
         .catch((e) => false),
     ])
 
-    logMessage(
-      `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances`,
+    const secondWalletState = {
+      description: 'second-wallet',
+      matches: ([balance1, balance2, balance3]) =>
+        firstToSecondSucceeded &&
+        balance1 === startBalance1 - sendAmount - sendFee &&
+        balance2 === startBalance2 + sendAmount &&
+        balance3 === startBalance3,
+    }
+    const thirdWalletState = {
+      description: 'third-wallet',
+      matches: ([balance1, balance2, balance3]) =>
+        firstToThirdSucceeded &&
+        balance1 === startBalance1 - sendAmount - sendFee &&
+        balance2 === startBalance2 &&
+        balance3 === startBalance3 + sendAmount,
+    }
+    const { balances: [balance1, balance2, balance3], matched } = await waitForAnyBalanceMatch(
+      'Double-spend',
+      async () => [
+        await sendingClient.getBalanceFor(FIRST_WALLET_ADDRESS),
+        await sendingClient.getBalanceFor(SECOND_WALLET_ADDRESS),
+        await sendingClient.getBalanceFor(THIRD_WALLET_ADDRESS),
+      ],
+      [secondWalletState, thirdWalletState],
+      {
+        // Treat the global L0 ordinal as the cluster-liveness signal: a double-spend winner can take many
+        // ordinals to finalize when gl0 cadence is slow under load, so wait as long as gl0 keeps advancing
+        // and fail only if it genuinely stalls.
+        getOrdinal: async () => {
+          const { data } = await axios.get(
+            `${networkOptions.l0GlobalUrl}/global-snapshots/latest/combined`,
+            { headers: { 'Cache-Control': 'no-cache, no-store, must-revalidate', Pragma: 'no-cache', Expires: '0' } },
+          )
+          return data?.[0]?.value?.ordinal ?? null
+        },
+      },
     )
-    await sleep(SLEEP_TIME_UNTIL_QUERY)
-
-    const balance1 = await sendingClient.getBalanceFor(FIRST_WALLET_ADDRESS)
-    const balance2 = await sendingClient.getBalanceFor(SECOND_WALLET_ADDRESS)
-    const balance3 = await sendingClient.getBalanceFor(THIRD_WALLET_ADDRESS)
 
     logMessage(`FirstWalletBalance: ${balance1}`)
     logMessage(`SecondWalletBalance: ${balance2}`)
@@ -276,22 +450,12 @@ const doubleSpendTest = async (networkOptions, isMetagraph) => {
     logMessage(`firstToSecondSucceeded: ${firstToSecondSucceeded}`)
     logMessage(`firstToThirdSucceeded: ${firstToThirdSucceeded}`)
 
-    if (
-      firstToSecondSucceeded &&
-      balance1 === startBalance1 - sendAmount - sendFee &&
-      balance2 === startBalance2 + sendAmount &&
-      balance3 === startBalance3
-    ) {
+    if (matched === secondWalletState) {
       logMessage(`No double spend: Amount sent to second wallet`)
       return
     }
 
-    if (
-      firstToThirdSucceeded &&
-      balance1 === startBalance1 - sendAmount - sendFee &&
-      balance2 === startBalance2 &&
-      balance3 === startBalance3 + sendAmount
-    ) {
+    if (matched === thirdWalletState) {
       logMessage(`No double spend: Amount sent to third wallet`)
       return
     }
@@ -360,6 +524,11 @@ const transferTest = async (
     ? handleMetagraphBatchTransactions
     : handleBatchTransactions
 
+  const totalAmount = txnCount * amount
+  const totalFee = txnCount * fee
+  const expectedFromBalance = fromAccountStart - totalAmount - totalFee
+  const expectedToBalance = toAccountStart + totalAmount
+
   const { originBalance, destinationBalance } = await batchFunc(
     metagraphOpts,
     fromAccount,
@@ -367,13 +536,9 @@ const transferTest = async (
     amount,
     fee,
     txnCount,
+    expectedFromBalance,
+    expectedToBalance,
   )
-
-  const totalAmount = txnCount * amount
-  const totalFee = txnCount * fee
-
-  const expectedFromBalance = fromAccountStart - totalAmount - totalFee
-  const expectedToBalance = toAccountStart + totalAmount
 
   await assertBalances(
     originBalance,
@@ -381,6 +546,13 @@ const transferTest = async (
     expectedFromBalance,
     expectedToBalance,
   )
+
+  if (metagraphOpts) {
+    await waitForMetagraphOrdinalProgression(
+      metagraphOpts,
+      'Metagraph transfer settle',
+    )
+  }
 }
 
 const sendTransactionsUsingUrls = async (networkOptions) => {
@@ -431,10 +603,10 @@ const sendTransactions = async () => {
 
   const networkOptions = {
     metagraphId: 'custom_id',
-    l0GlobalUrl: `http://localhost:${dagL0PortPrefix}00`,
-    dagL1UrlFirstNode: `http://localhost:${dagL1PortPrefix}00`,
-    l0MetagraphUrl: `http://localhost:${metagraphL0PortPrefix}00`,
-    l1MetagraphUrl: `http://localhost:${currencyL1PortPrefix}00`,
+    l0GlobalUrl: process.env.GL0_URL || `${process.env.TEST_HOST || 'http://localhost'}:${dagL0PortPrefix}00`,
+    dagL1UrlFirstNode: process.env.GL1_URL || `${process.env.TEST_HOST || 'http://localhost'}:${dagL1PortPrefix}00`,
+    l0MetagraphUrl: process.env.ML0_URL || `${process.env.TEST_HOST || 'http://localhost'}:${metagraphL0PortPrefix}00`,
+    l1MetagraphUrl: process.env.CL1_URL || `${process.env.TEST_HOST || 'http://localhost'}:${currencyL1PortPrefix}00`,
   }
 
   await sendTransactionsUsingUrls(networkOptions)

@@ -1,0 +1,42 @@
+services:
+  snapshot-streaming-postgres:
+    image: postgres:15-alpine
+    container_name: snapshot-streaming-postgres
+    environment:
+      POSTGRES_USER: snapshot_streaming
+      POSTGRES_PASSWORD: snapshot_streaming
+      POSTGRES_DB: snapshot_streaming
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U snapshot_streaming"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      tessellation_common:
+        ipv4_address: ${NET_PREFIX}.60
+    volumes:
+      - ss-pgdata:/var/lib/postgresql/data
+
+  snapshot-streaming:
+    image: eclipse-temurin:21-jre
+    container_name: snapshot-streaming
+    depends_on:
+      snapshot-streaming-postgres:
+        condition: service_healthy
+    command: ["java", "-Xmx1g", "-Xms256m", "--add-opens", "java.base/java.util=ALL-UNNAMED", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED", "--add-opens", "java.base/java.security=ALL-UNNAMED", "-Dconfig.file=/app/application.conf", "-cp", "/app/snapshot-streaming.jar", "org.constellation.snapshotstreaming.App"]
+    volumes:
+      - ${SS_JAR_PATH}:/app/snapshot-streaming.jar:ro
+      - ${SS_CONFIG_PATH}:/app/application.conf:ro
+      - ${SS_DATA_PATH}:/app/data
+    networks:
+      tessellation_common:
+        ipv4_address: ${NET_PREFIX}.61
+
+volumes:
+  ss-pgdata:
+    name: ss-pgdata
+
+networks:
+  tessellation_common:
+    external: true

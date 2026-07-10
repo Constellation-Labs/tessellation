@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics._
 import better.files.File
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.refineV
 import eu.timepit.refined.string.MatchesRegex
 import io.chrisdavenport.mapref.MapRef
 import io.micrometer.core.instrument.binder.jvm._
@@ -107,6 +108,7 @@ object Metrics {
   type TagSeq = Seq[(LabelName, String)]
   type AtomicDouble = AtomicReference[Double]
   def unsafeLabelName(s: String): LabelName = Refined.unsafeApply(s)
+  def safeLabelName(s: String): Option[LabelName] = refineV[MatchesRegex["[a-z0-9]+(?:_[a-z0-9]+)*"]](s).toOption
 
   private def toMicrometerTags(tags: TagSeq): JList[Tag] =
     tags.map { case (k, v) => Tag.of(k, v) }.asJava
@@ -139,8 +141,15 @@ object Metrics {
         })
     }(_ => Applicative[F].unit)
 
-  def forAsync[F[_]: Async](commonTags: TagSeq): Resource[F, Metrics[F]] = make(commonTags).map {
-    case (gaugesR, registry) =>
+  def forAsync[F[_]: Async](commonTags: TagSeq): Resource[F, Metrics[F]] = make(commonTags).flatMap {
+    case (gaugesR, registry) => forAsync(gaugesR, registry)
+  }
+
+  def forAsync[F[_]: Async](
+    gaugesR: MapRef[F, (MetricKey, TagSeq), Option[AtomicDouble]],
+    registry: PrometheusMeterRegistry
+  ): Resource[F, Metrics[F]] = {
+    Resource.pure(
       new Metrics[F] {
 
         def recordTimeHistogram(
@@ -334,6 +343,7 @@ object Metrics {
           registry.scrape(CONTENT_TYPE_OPENMETRICS_100)
         }
       }
+    )
   }
 
 }

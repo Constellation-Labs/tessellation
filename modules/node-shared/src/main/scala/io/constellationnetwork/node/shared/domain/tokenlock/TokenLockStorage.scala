@@ -78,24 +78,51 @@ class TokenLockStorage[F[_]: Async: Hasher](
   def advanceMajorityRefs(refs: Map[Address, TokenLockReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
     refs.toList.traverse_ {
       case (source, majorityTxRef) =>
-        tokenLocksR(source).modify[Either[MarkingTokenLockReferenceAsMajorityError, Unit]] { maybeStored =>
-          val stored = maybeStored.getOrElse(SortedMap.empty[TokenLockOrdinal, StoredTokenLock])
+        tokenLocksR(source)
+          .modify[Either[MarkingTokenLockReferenceAsMajorityError, Unit]] { maybeStored =>
+            val stored = maybeStored.getOrElse(SortedMap.empty[TokenLockOrdinal, StoredTokenLock])
 
-          if (stored.isEmpty && majorityTxRef === TokenLockReference.empty) {
-            val updated = stored + (majorityTxRef.ordinal -> MajorityTokenLock(majorityTxRef, snapshotOrdinal))
-            (updated.some, ().asRight)
-          } else {
-            stored.collectFirst { case (_, a @ AcceptedTokenLock(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
-              val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
+            if (stored.isEmpty && majorityTxRef === TokenLockReference.empty) {
+              val updated = stored + (majorityTxRef.ordinal -> MajorityTokenLock(majorityTxRef, snapshotOrdinal))
+              (updated.some, ().asRight)
+            } else {
+              stored.collectFirst { case (_, a @ AcceptedTokenLock(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
+                val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
 
-              remaining + (majorityTx.ordinal -> MajorityTokenLock(TokenLockReference.of(majorityTx), snapshotOrdinal))
-            } match {
-              case Some(updated) => (updated.some, ().asRight)
-              case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+                remaining + (majorityTx.ordinal -> MajorityTokenLock(TokenLockReference.of(majorityTx), snapshotOrdinal))
+              } match {
+                case Some(updated) => (updated.some, ().asRight)
+                // Idempotent re-mark: the ref is already stored as MajorityTokenLock (advanced by a prior alignment).
+                case None if stored.exists { case (_, m: MajorityTokenLock) => m.ref === majorityTxRef; case _ => false } =>
+                  (maybeStored, ().asRight)
+                case None =>
+                  (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+              }
             }
           }
-        }
+          .flatMap {
+            case Right(_) => Async[F].unit
+            // Surface the divergence (do not swallow the Left): a stale local-vs-majority token-lock ref must escalate
+            // to a redownload, consistent with TransactionStorage.advanceMajorityRefs.
+            case Left(e) =>
+              logger.warn(s"advanceMajorityRefs could not mark majority token-lock ref for source=${source.show}: ${e.getMessage}") >>
+                e.raiseError[F, Unit]
+          }
     }
+
+  /** Pure precondition check (no mutation) for `advanceMajorityRefs`; see TransactionStorage.majorityRefsViolations. */
+  def majorityRefsViolations(refs: Map[Address, TokenLockReference]): F[List[String]] =
+    refs.toList.traverse {
+      case (source, majorityTxRef) =>
+        tokenLocksR(source).get.map { maybeStored =>
+          val stored = maybeStored.getOrElse(SortedMap.empty[TokenLockOrdinal, StoredTokenLock])
+          val ok =
+            (stored.isEmpty && majorityTxRef === TokenLockReference.empty) ||
+              stored.exists { case (_, a: AcceptedTokenLock) => a.ref === majorityTxRef; case _ => false } ||
+              stored.exists { case (_, m: MajorityTokenLock) => m.ref === majorityTxRef; case _ => false }
+          if (ok) none[String] else s"tokenLock:${source.show}->${majorityTxRef.show}".some
+        }
+    }.map(_.flatten)
 
   def accept(hashedTx: Hashed[TokenLock]): F[Unit] = {
     val parent = hashedTx.signed.value.parent

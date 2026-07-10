@@ -31,6 +31,13 @@ trait MerklePatriciaProducer[F[_]] {
   def getProver(trie: MerklePatriciaTrie): F[MerklePatriciaSingleInclusionProver[F]]
 }
 
+/** Captured snapshot of a producer's internal state. Call `restore` to roll back the producer to the state at the time this savepoint was
+  * created. Used to undo mutations from failed artifact validation (e.g. stateProof divergence).
+  */
+trait ProducerSavepoint[F[_]] {
+  def restore: F[Unit]
+}
+
 trait StatefulMerklePatriciaProducer[F[_]] {
   def entries: F[Map[Hex, Array[Byte]]]
   def build: F[Either[MerklePatriciaError, MerklePatriciaTrie]]
@@ -60,6 +67,11 @@ trait StatefulMerklePatriciaProducer[F[_]] {
   def clear: F[Unit]
   def getProver: F[MerklePatriciaSingleInclusionProver[F]]
   def buildHexMap(data: Map[GlobalStateKey, Json]): F[Map[Hex, Array[Byte]]]
+
+  /** Capture a snapshot of all internal state (entries, trie, pending changes, caches). The returned savepoint can restore the producer to
+    * this exact state.
+    */
+  def savepoint: F[ProducerSavepoint[F]]
 }
 
 trait StatefulWithPersistenceMerklePatriciaProducer[F[_]] extends StatefulMerklePatriciaProducer[F] {

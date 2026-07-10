@@ -144,6 +144,16 @@ object LastNGlobalSnapshotStorage {
         logger.info("Filling lastNGlobalSnapshots, this might need to download more snapshots from the network") >>
           setInitialInternal(snapshot, state, globalSnapshotFetcher, fetchGL0Function)
 
+      def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
+        logger.info(s"[LastNGlobalSnapshotStorage] Recovery reset at ordinal=${snapshot.ordinal}") >>
+          combinedSnapshotsR.set((snapshot, state).some) >>
+          incrementalSnapshotsR.set(SortedMap(snapshot.ordinal -> snapshot))
+
+      def clear: F[Unit] =
+        logger.info("[LastNGlobalSnapshotStorage] Clearing for recovery download") >>
+          combinedSnapshotsR.set(none) >>
+          incrementalSnapshotsR.set(SortedMap.empty)
+
       def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] = for {
         _ <- combinedSnapshotsR.modify {
           case Some((current, _)) if isNextSnapshot(current, snapshot.signed.value) => ((snapshot, state).some, Applicative[F].unit)

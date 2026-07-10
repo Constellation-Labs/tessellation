@@ -1,7 +1,5 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global
 
-import scala.collection.immutable.SortedSet
-
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.schema._
 

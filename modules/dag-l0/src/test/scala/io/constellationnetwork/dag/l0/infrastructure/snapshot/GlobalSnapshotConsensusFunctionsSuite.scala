@@ -9,7 +9,6 @@ import cats.syntax.applicative._
 import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
@@ -32,8 +31,6 @@ import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceResult,
   UpdateDelegatedStakeValidator
 }
-import io.constellationnetwork.node.shared.domain.fork.ForkInfo
-import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.nodeCollateral.{UpdateNodeCollateralAcceptanceManager, UpdateNodeCollateralValidator}
 import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
@@ -83,15 +80,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   type Res = (Supervisor[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
-  def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
-    new Gossip[IO] {
-      override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
-        spreadRef.update(rumorContent.asInstanceOf[B] :: _)
-
-      override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
-        IO.raiseError(new Exception("spreadCommon: Unexpected call"))
-    }
-
   def mkSignedArtifacts()(
     implicit sp: SecurityProvider[IO],
     h: Hasher[IO],
@@ -111,7 +99,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO].asResource
     h = Hasher.forJson[IO]
-    m <- Metrics.forAsync[IO](Seq(("application", name)))
+    m <- Metrics.forAsync[IO](Seq((Metrics.unsafeLabelName("application"), name)))
 
   } yield (supervisor, j, h, sp, m)
 
@@ -196,7 +184,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap,
         SortedMap.empty,
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty
       )
     )
@@ -207,7 +195,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): IO[
-      SortedMap[Address, (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], Map[Address, Balance])]
+      SortedMap[
+        Address,
+        (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], SortedMap[Address, Balance])
+      ]
     ] = ???
 
   }
@@ -471,27 +462,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     } yield expect.same(true, result.isLeft)
   }
 
-  test("gossip signed artifacts") { res =>
-    implicit val (_, j, h, sp, m) = res
-
-    for {
-      gossiped <- Ref.of(List.empty[ForkInfo])
-      mockGossip = mkMockGossip(gossiped)
-
-      (signedLastArtifact, _) <- mkSignedArtifacts()
-
-      _ <- SnapshotConsensusFunctions.gossipForkInfo(mockGossip, signedLastArtifact)
-
-      expected <- h
-        .hash(signedLastArtifact)
-        .map { h =>
-          List(ForkInfo(signedLastArtifact.value.ordinal, h))
-        }
-        .handleError(_ => List.empty)
-      actual <- gossiped.get
-    } yield expect.eql(expected, actual)
-  }
-
   test("shouldUseDelegatedRewards - verifies reward selection logic based on ordinal and epoch thresholds") { res =>
     implicit val (_, j, h, sp, m) = res
 
@@ -731,6 +701,58 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 //      expect(delegatedCalledScenario2).description("Delegated rewards should be called for after migration and epoch")
 //    }
 //  }
+
+  test("createProposalArtifact - deterministic: two independent calls with same inputs produce identical artifacts") { res =>
+    implicit val (_, j, h, sp, m) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+
+      genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+
+      scEvent <- mkStateChannelEvent()
+
+      facilitators = Set.empty[PeerId]
+      context = signedGenesis.value.info.toGlobalSnapshotInfo
+
+      // Build two independent consensus function instances (each with its own MptStore)
+      // to ensure no shared mutable state affects the output
+      gscf1 <- mkGlobalSnapshotConsensusFunctions
+      gscf2 <- mkGlobalSnapshotConsensusFunctions
+
+      (artifact1, ctx1, _) <- gscf1.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        context,
+        h,
+        EventTrigger,
+        Set(scEvent),
+        facilitators,
+        _ => None.pure[IO]
+      )
+
+      (artifact2, ctx2, _) <- gscf2.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        context,
+        h,
+        EventTrigger,
+        Set(scEvent),
+        facilitators,
+        _ => None.pure[IO]
+      )
+
+      hash1 <- h.hash(artifact1)
+      hash2 <- h.hash(artifact2)
+    } yield
+      expect.same(hash1, hash2) &&
+        expect.same(artifact1.ordinal, artifact2.ordinal) &&
+        expect.same(artifact1.stateProof, artifact2.stateProof)
+  }
 
   def mkStateChannelEvent()(implicit S: SecurityProvider[IO], H: Hasher[IO]): IO[StateChannelEvent] = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]

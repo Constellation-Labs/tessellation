@@ -164,7 +164,7 @@ object Mocks {
         accepted = SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
         calculatedCurrencyState = SortedMap.empty[Address, CurrencySnapshotWithState],
         returned = Set.empty[StateChannelOutput],
-        balanceUpdate = Map.empty[Address, Balance],
+        balanceUpdate = SortedMap.empty[Address, Balance],
         incomingCurrencySnapshotsWithState = SortedMap.empty[Address, List[CurrencySnapshotWithState]]
       ).pure[IO]
 
@@ -730,7 +730,7 @@ object Mocks {
       }
 
       private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
-        stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
+        stakeRecord.amount.value.value + stakeRecord.rewards.value
 
       private def getTotalActiveStake(
         activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
@@ -947,7 +947,7 @@ object Mocks {
               lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
               delegatorRewardPool,
               delegatedStakeDiffs.acceptedCreates
-            ).map(_.toSortedMap)
+            ).map(_.map { case (k, v) => k -> SortedMap.from(v) }.toSortedMap)
 
           nodeOperatorRewards <-
             calculateNodeOperatorRewards(

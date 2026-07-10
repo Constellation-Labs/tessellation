@@ -1,0 +1,29 @@
+-- Pre-create tables without TTL — logs are kept indefinitely.
+-- Nodes use CREATE TABLE IF NOT EXISTS, so they will reuse these tables.
+
+CREATE TABLE IF NOT EXISTS nightly_logs (
+    timestamp DateTime64(3),
+    node_id LowCardinality(String),
+    network_id LowCardinality(String),
+    log_type LowCardinality(String),
+    data JSON
+) ENGINE = MergeTree()
+PARTITION BY (network_id, toYYYYMM(timestamp))
+ORDER BY (node_id, timestamp);
+
+CREATE TABLE IF NOT EXISTS nightly_logs_consensus (
+    timestamp DateTime64(3),
+    node_id LowCardinality(String),
+    network_id LowCardinality(String),
+    ordinal UInt64,
+    event_type LowCardinality(String),
+    facilitators Array(String),
+    INDEX idx_ordinal ordinal TYPE minmax GRANULARITY 1,
+    INDEX idx_event_type event_type TYPE set(20) GRANULARITY 1
+) ENGINE = MergeTree()
+PARTITION BY (network_id, toYYYYMM(timestamp))
+ORDER BY (node_id, ordinal, timestamp);
+
+-- Drop any existing TTL on pre-existing tables (idempotent; no-op if no TTL).
+ALTER TABLE nightly_logs REMOVE TTL;
+ALTER TABLE nightly_logs_consensus REMOVE TTL;

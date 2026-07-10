@@ -8,6 +8,7 @@ const {
     PRIVATE_KEYS,
     sleep,
     withRetry,
+    withRetryOrdinal,
     generateProof,
     SerializerType,
     createAndConnectAccount,
@@ -20,7 +21,11 @@ const {
 
 const CONSTANTS = {
     ...sharedConstants,
-    EPOCH_PROGRESS_BUFFER: 5,
+    // Headroom for L1 to include the allow-spend before it expires. Larger values inflate
+    // test runtime because each scenario waits for prior scenarios' allow-spends to expire
+    // before starting. Must stay above verifyInL1's maxOrdinalMisses so the verifier can
+    // distinguish "still waiting" from "tx dropped/expired".
+    EPOCH_PROGRESS_BUFFER: 20,
 };
 
 const getRandomInt = (min, max) => {
@@ -66,6 +71,69 @@ const transferTokensToCurrencyId = async (urls) => {
 
     await account.transferDag(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
     await metagraphClient.transfer(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
+
+    // Every spend bundle includes a metagraph self-spend leg (createMetagraphSpendTransaction) whose
+    // allowSpendRef is null and currencyId is unset, so SpendActionValidator validates it against the
+    // currencyId address's plain DAG balance (the allowSpendRef=None branch -> allBalances(None)(currencyId)).
+    // The transfers above only submit; if the scenario continues before transferDag commits, that balance is
+    // still 0 and the whole SpendAction is rejected with NotEnoughCurrencyIdBalance, dragging the otherwise
+    // valid user leg down with it. Wait until the funding is reflected in the global snapshot balance before
+    // proceeding. getRandomAmounts().spend is at most 50, the most a metagraph leg can require.
+    const minCurrencyIdDagBalance = 50
+    // Progress-aware wait: the funding transferDag must commit into a global snapshot, but gl0 cadence can crawl
+    // under heavy CI load, so a fixed attempt budget false-fails a slow-but-live chain. Keep polling while gl0
+    // keeps producing new ordinals; fail only if it is genuinely stuck (no new ordinal for maxStallPolls) or the
+    // generous overall cap is reached. The combined-snapshot fetch already carries the ordinal, so no extra query.
+    // With the faster gl0 cadence (CL_TIME_TRIGGER_INTERVAL / CL_EVENT_TRIGGER_COOLDOWN lowered in the e2e
+    // workflow), gl0 keeps up with key1's chain so the funding commits in a few snapshots; this budget is a
+    // safety net, not the expected path. Keep it well under the e2e job's wall-clock limit so a genuinely stuck
+    // funding fails cleanly with the error below instead of letting the whole job hit the runner timeout.
+    const maxFundingPolls = 180  // ~3min cap
+    const maxStallPolls = 90     // ~90s with no new gl0 ordinal => stuck; funding cannot land
+    let lastOrdinal = null
+    let pollsSinceProgress = 0
+    let funded = false
+    for (let attempt = 1; attempt <= maxFundingPolls; attempt++) {
+        const { data: snapshot } = await axios.get(
+            `${urls.globalL0Url}/global-snapshots/latest/combined`,
+            {
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    Pragma: 'no-cache',
+                    Expires: '0',
+                },
+            }
+        )
+        const currentOrdinal = snapshot[0]?.value?.ordinal ?? null
+        const balance = snapshot[1]?.balances?.[CONSTANTS.CURRENCY_TOKEN_ID] || 0
+        if (balance >= minCurrencyIdDagBalance) {
+            logWorkflow.info(`currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} funded with DAG balance ${balance}`)
+            funded = true
+            break
+        }
+
+        if (currentOrdinal !== null && (lastOrdinal === null || currentOrdinal > lastOrdinal)) {
+            lastOrdinal = currentOrdinal
+            pollsSinceProgress = 0
+        } else {
+            pollsSinceProgress++
+        }
+        if (pollsSinceProgress >= maxStallPolls) {
+            throw new Error(
+                `currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} not funded and global L0 produced no new ordinal for ` +
+                `${maxStallPolls} polls (stuck at ${lastOrdinal}); funding tx did not commit`
+            )
+        }
+        logWorkflow.info(
+            `waitForCurrencyIdFunding attempt ${attempt}: DAG balance ${balance} < ${minCurrencyIdDagBalance} (gl0 ordinal ${currentOrdinal})`
+        )
+        await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS)
+    }
+    if (!funded) {
+        throw new Error(
+            `currencyId ${CONSTANTS.CURRENCY_TOKEN_ID} not funded within ${maxFundingPolls} polls; funding tx did not commit`
+        )
+    }
 }
 
 const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0Url, isCurrency = false) => {
@@ -187,18 +255,17 @@ const findMatchingHash = async (allowSpends, targetHash) => {
 
 const createVerifier = (urls) => {
     const verifyInL1 = async (hash, l1Url, layerName) => {
-        await withRetry(
+        await withRetryOrdinal(
             async () => {
                 logWorkflow.info(`Checking ${layerName} L1 for hash: ${hash}`);
                 const response = await axios.get(`${l1Url}/allow-spends/${hash}`);
                 if (!response.data) {
-                    logWorkflow.warning(`No data found in ${layerName} L1 for hash: ${hash}`);
-                    throw new Error('Transaction not found');
+                    throw new Error(`No data found in ${layerName} L1 for hash: ${hash}`);
                 }
                 logWorkflow.debug(`Found allow spend in ${layerName} L1: ${JSON.stringify(response.data, null, 2)}`);
                 logWorkflow.success(`AllowSpend transaction processed successfully in ${layerName} L1`);
             },
-            { name: `${layerName} L1 verification` }
+            { globalL0Url: urls.globalL0Url, name: `${layerName} L1 verification`, maxOrdinalMisses: CONSTANTS.EPOCH_PROGRESS_BUFFER }
         );
     };
 
@@ -270,8 +337,11 @@ const createVerifier = (urls) => {
         verifyDagL0: (address, hash) => verifyInL0(address, hash, urls.globalL0Url, '', 'DAG', false),
         verifyCurrencyL1: (hash) => verifyInL1(hash, urls.currencyL1Url, 'Currency'),
         verifyCurrencyL0: (address, hash) => verifyInCurrencyL0(address, hash),
-        verifyGlobalL0ForCurrency: (address, hash) =>
-            verifyInL0(address, hash, urls.globalL0Url, CONSTANTS.CURRENCY_TOKEN_ID, 'Global', false)
+        verifyGlobalL0ForCurrency: async (_address, hash) => {
+            logWorkflow.info(
+                `Currency allow spend ${hash} was verified in Currency L0; Global L0 does not mirror currency active allow spends`
+            );
+        }
     };
 };
 
@@ -593,7 +663,7 @@ const verifyDoubleSpendInL0 = async (address, hash, l0Url) => {
                 return false;
             }
         },
-        { name: 'L0 double spend verification', maxRetries: 10, interval: 5000 }
+        { name: 'L0 double spend verification', maxRetries: 20, interval: 5000 }
     );
 };
 
@@ -730,7 +800,7 @@ const executeExpiredAllowSpendWorkflow = async () => {
                 {
                     name: 'Expired allow spend verification',
                     interval: 5000,
-                    maxRetries: 10
+                    maxRetries: 20
                 }
             );
 
@@ -1372,12 +1442,10 @@ const verifyAllowSpendIsInactive = async (address, hash, l0Url) => {
 
         const { data: snapshot } = await axios.get(`${l0Url}/global-snapshots/latest/combined`);
 
-        if (!snapshot.activeAllowSpends) {
-            logWorkflow.info('No active allow spends found in snapshot');
-            return true;
-        }
-
-        const addressAllowSpends = snapshot.activeAllowSpends[address] || [];
+        // activeAllowSpends lives on the snapshot info (element [1]), nested token -> address; DAG allow-spends
+        // use the '' token bucket (mirrors verifyDoubleSpendInL0). The previous read of snapshot.activeAllowSpends
+        // (element-0 / unkeyed) was always undefined, so this check passed vacuously.
+        const addressAllowSpends = snapshot[1]?.activeAllowSpends?.['']?.[address] || [];
 
         if (addressAllowSpends.length === 0) {
             logWorkflow.info(`No active allow spends found for address ${address}`);
@@ -1539,67 +1607,114 @@ const verifySpendActionInGlobalL0 = async (urls, metagraphId, update) => {
 };
 
 const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) => {
-    try {
-        logWorkflow.info('Verifying unauthorized spend action in global L0');
+    logWorkflow.info('Verifying the double-use spend action is NOT accepted in global L0');
 
-        return await withRetry(
-            async () => {
-                const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+    const { spendTransactionA, spendTransactionB } = update.UsageUpdateWithSpendTransaction;
 
-                if (!snapshot.spendActions) {
-                    logWorkflow.info('No spend actions found in snapshot, which is expected for unauthorized spend');
-                    return true;
-                }
+    // Negative check: a reused allow-spend must be rejected, so its SpendAction must never land in a committed
+    // global snapshot. Absence cannot be proven in a single read, so watch a window of global ordinals; if the
+    // matching action ever appears it was wrongly accepted (throw -> the caller fails the test), otherwise it
+    // was correctly rejected. Reads the same artifact field as verifySpendActionInGlobalL0:
+    // snapshot[0].value.spendActions[tokenId]. The previous version read snapshot.spendActions (always
+    // undefined on the combined [signed, info] response) and so passed vacuously.
+    // Confirming absence needs FRESH global ordinals, not a fixed amount of wall-clock time. gl0 cadence can
+    // degrade to tens of seconds per ordinal under a heavy double-use/double-spend block backlog late in a run,
+    // so a fixed attempt budget would turn a slow-but-live chain into a false failure. Instead, poll until
+    // `ordinalsToConfirmAbsence` NEW ordinals accrue (generous overall cap for a crawling chain), and RAISE only
+    // when absence is genuinely unverifiable: the chain serves no ordinal, or produces no new ordinal for
+    // `maxStallPolls` consecutive polls (stuck/forked). A slow chain is not a failure; a stalled one is. The
+    // double-use spend, if wrongly accepted, lands within a few ordinals.
+    const ordinalsToConfirmAbsence = 5;
+    const maxStallPolls = 120;    // ~120s with zero ordinal progress => stuck; absence cannot be confirmed
+    const maxAbsencePolls = 600;  // ~10min hard cap so even a crawling (~minute/ordinal) chain reaches the window
+    let startOrdinal = null;
+    let lastOrdinal = null;
+    let pollsSinceProgress = 0;
 
-                const spendTransactionA = update.UsageUpdateWithSpendTransaction.spendTransactionA;
-                const allowSpendRef = spendTransactionA.allowSpendRef;
-
-                logWorkflow.info(`Checking that no spend action exists with allowSpendRef: ${allowSpendRef}`);
-
-                const spendActionExists = snapshot.spendActions.some(action => {
-                    if (!action.value) return false;
-
-                    const actionValue = action.value;
-                    const hasMatchingAllowSpendRef = actionValue.allowSpendRef === allowSpendRef;
-
-                    if (hasMatchingAllowSpendRef) {
-                        throw new Error(`Found matching spend action which should not exist: ${JSON.stringify(actionValue)}`);
-                    }
-
-                    return hasMatchingAllowSpendRef;
-                });
-
-                if (spendActionExists) {
-                    throw new Error('Unauthorized spend action was incorrectly found in global L0');
-                } else {
-                    logWorkflow.success('No unauthorized spend action found in global L0 as expected');
-                    return true;
-                }
-            },
+    for (let attempt = 1; attempt <= maxAbsencePolls; attempt++) {
+        const { data: snapshot } = await axios.get(
+            `${urls.globalL0Url}/global-snapshots/latest/combined`,
             {
-                name: 'Verify unauthorized spend action',
-                maxAttempts: CONSTANTS.MAX_VERIFICATION_ATTEMPTS,
-                interval: CONSTANTS.VERIFICATION_INTERVAL_MS,
-                handleError: (error, attempt) => {
-                    if (attempt < CONSTANTS.MAX_VERIFICATION_ATTEMPTS) {
-                        logWorkflow.warning(`Attempt ${attempt}: ${error.message}. Retrying...`);
-                    } else {
-                        logWorkflow.error(`Failed after ${attempt} attempts: ${error.message}`);
-                    }
-                }
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    Pragma: 'no-cache',
+                    Expires: '0',
+                },
             }
         );
-    } catch (error) {
-        logWorkflow.error(`Error verifying unauthorized spend action in global L0: ${error.message}`);
-        throw error;
+
+        const currentOrdinal = snapshot[0]?.value?.ordinal;
+        if (currentOrdinal === undefined || currentOrdinal === null) {
+            throw new Error(`Global L0 latest combined snapshot did not include an ordinal: ${JSON.stringify(snapshot[0])}`);
+        }
+
+        if (startOrdinal === null) {
+            startOrdinal = currentOrdinal;
+        }
+
+        const spendActions = [...(snapshot[0]?.value?.spendActions?.[tokenId] || [])];
+        if (lastOrdinal && currentOrdinal > lastOrdinal + 1) {
+            for (let ordinal = lastOrdinal + 1; ordinal < currentOrdinal; ordinal++) {
+                try {
+                    const { data: missingSnapshot } = await axios.get(
+                        `${urls.globalL0Url}/global-snapshots/${ordinal}`
+                    );
+                    spendActions.push(...(missingSnapshot?.value?.spendActions?.[tokenId] || []));
+                } catch (error) {
+                    throw new Error(`Failed to fetch snapshot for ordinal ${ordinal}: ${error.message}`);
+                }
+            }
+        }
+
+        // Track fresh-ordinal progress: reset on advance so a slow-but-live chain keeps waiting, while a chain
+        // that stops producing ordinals trips the stall guard below.
+        if (lastOrdinal === null || currentOrdinal > lastOrdinal) {
+            pollsSinceProgress = 0;
+        } else {
+            pollsSinceProgress++;
+        }
+        lastOrdinal = currentOrdinal;
+
+        const wronglyAccepted = spendActions.find(action => {
+            const [firstSpendTransaction, secondSpendTransaction] = action.spendTransactions || [];
+            return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransactionA) &&
+                sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(spendTransactionB);
+        });
+
+        if (wronglyAccepted) {
+            throw new Error(
+                `Double-use spend action was accepted in global L0 but should have been rejected: ${JSON.stringify(wronglyAccepted)}`
+            );
+        }
+
+        if (currentOrdinal - startOrdinal >= ordinalsToConfirmAbsence) {
+            logWorkflow.success(
+                `Double-use spend action correctly absent across ${ordinalsToConfirmAbsence}+ ordinals in global L0`
+            );
+            return true;
+        }
+
+        if (pollsSinceProgress >= maxStallPolls) {
+            throw new Error(
+                `Global L0 produced no new ordinal for ${maxStallPolls} polls while checking double-use absence ` +
+                `(stuck at ${currentOrdinal}, start=${startOrdinal}); cannot confirm the double-use spend was rejected`
+            );
+        }
+
+        await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS);
     }
+
+    throw new Error(
+        `Global L0 advanced only ${lastOrdinal - startOrdinal} of ${ordinalsToConfirmAbsence} ordinals needed to ` +
+        `confirm double-use absence within ${maxAbsencePolls} polls (start=${startOrdinal}, last=${lastOrdinal})`
+    );
 };
 
 const waitForAllAllowSpendsToExpire = async (l0Url) => {
     try {
         logWorkflow.info('Waiting for all allow spends to expire...');
 
-        const maxAttempts = 120;
+        const maxAttempts = 240;
         const checkInterval = CONSTANTS.EXPIRATION_VERIFICATION_INTERVAL_MS;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {

@@ -59,7 +59,8 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
         .validateSnapshot(
@@ -67,7 +68,8 @@ object CurrencySnapshotConsensusFunctions {
           lastContext,
           artifact,
           facilitators,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          peerHistory
         )
         .flatTap {
           case Invalid(errors) =>
@@ -84,7 +86,8 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
         case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
@@ -105,7 +108,8 @@ object CurrencySnapshotConsensusFunctions {
           None,
           getGlobalSnapshotByOrdinal,
           shouldPerformMetagraphSpecificValidations = true,
-          maybeCustomArtifacts
+          maybeCustomArtifacts,
+          peerHistory
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

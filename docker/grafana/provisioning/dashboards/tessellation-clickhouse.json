@@ -1,0 +1,416 @@
+{
+  "uid": "tessellation-clickhouse",
+  "title": "Tessellation (ClickHouse)",
+  "tags": ["tessellation", "clickhouse"],
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "node_id",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+        "query": "SELECT DISTINCT node_id FROM tessellation_metrics WHERE timestamp >= now() - INTERVAL 1 DAY ORDER BY node_id",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" },
+        "refresh": 2
+      },
+      {
+        "name": "network_id",
+        "type": "query",
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+        "query": "SELECT DISTINCT network_id FROM tessellation_metrics WHERE timestamp >= now() - INTERVAL 1 DAY ORDER BY network_id",
+        "multi": false,
+        "includeAll": false,
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "title": "Cluster Info",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 1,
+      "title": "Active Nodes",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT count(DISTINCT node_id) AS value FROM tessellation_metrics WHERE timestamp >= now() - INTERVAL 5 MINUTE",
+        "format": 1, "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "green", "value": null }] } } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "title": "Metrics Ingestion Rate (rows/min)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT count() / (dateDiff('second', min(timestamp), max(timestamp)) / 60) AS value FROM tessellation_metrics WHERE timestamp >= now() - INTERVAL 5 MINUTE",
+        "format": 1, "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "decimals": 0, "thresholds": { "steps": [{ "color": "green", "value": null }] } } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Distinct Metric Names",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT count(DISTINCT metric_name) AS value FROM tessellation_metrics WHERE timestamp >= now() - INTERVAL 5 MINUTE",
+        "format": 1, "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "thresholds": { "steps": [{ "color": "blue", "value": null }] } } },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "Latest Snapshot Ordinal",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_ordinal' AND timestamp >= now() - INTERVAL 5 MINUTE",
+        "format": 1, "refId": "A"
+      }],
+      "fieldConfig": { "defaults": { "decimals": 0, "thresholds": { "steps": [{ "color": "green", "value": null }] } } },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 101,
+      "title": "Global Snapshot",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+    {
+      "id": 10,
+      "title": "Snapshot Ordinal",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_ordinal' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 11,
+      "title": "Snapshot Height",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_height' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 12,
+      "title": "Active Tips",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_tips_count' AND tags['tip_type'] = 'active' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 13,
+      "title": "Consensus Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_consensus_duration' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 14,
+      "title": "Transactions per Snapshot",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_transactions_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 15,
+      "title": "Blocks per Snapshot",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_blocks_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 16,
+      "title": "Proposal Affinity",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 30 SECOND) AS time, substring(node_id, 1, 8) AS node, avg(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_consensus_proposal_affinity' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "decimals": 2, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "mean"] } }
+    },
+    {
+      "id": 17,
+      "title": "Signature Count",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_signature_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 18,
+      "title": "State Channel Snapshots",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 38 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_global_snapshot_state_channel_snapshots_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 102,
+      "title": "Gossip",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 46 }
+    },
+    {
+      "id": 20,
+      "title": "Rumor Spreads by Content Type",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 47 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT tags['content_type_short'] AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_rumors_spread_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) AND tags['content_type_short'] != '' GROUP BY node ORDER BY value DESC",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "options": { "displayLabels": ["percent"], "legend": { "displayMode": "list", "placement": "right" }, "pieType": "pie", "reduceOptions": { "calcs": ["sum"] } }
+    },
+    {
+      "id": 21,
+      "title": "Rumor Spreads by Rumor Type",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 47 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT tags['rumor_type'] AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_rumors_spread_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) AND tags['rumor_type'] != '' GROUP BY node ORDER BY value DESC",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "options": { "displayLabels": ["percent"], "legend": { "displayMode": "list", "placement": "right" }, "pieType": "pie", "reduceOptions": { "calcs": ["sum"] } }
+    },
+    {
+      "id": 22,
+      "title": "Gossip Rounds/min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 47 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, substring(node_id, 1, 8) AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_gossip_round_succeeded_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 23,
+      "title": "Rumors Spread/min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 55 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, substring(node_id, 1, 8) AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_rumors_spread_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+    {
+      "id": 24,
+      "title": "Rumors Consumed/min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 55 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, substring(node_id, 1, 8) AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_rumors_consumed_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+    {
+      "id": 25,
+      "title": "Gossip Round Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 63 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_gossip_round_duration' AND tags['round_label'] = 'peer' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 26,
+      "title": "Rumors Received/min",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 63 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, substring(node_id, 1, 8) AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_rumors_received_total' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 0 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] } }
+    },
+
+    {
+      "id": 103,
+      "title": "HTTP",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 71 }
+    },
+    {
+      "id": 30,
+      "title": "HTTP Server Request Rate (req/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 72 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, substring(node_id, 1, 8) AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_http_request_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 31,
+      "title": "HTTP Server Request Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 72 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_http_request_time' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 32,
+      "title": "HTTP Client Request Rate (req/min)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 80 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, substring(node_id, 1, 8) AS node, sum(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_http_client_request_count' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 33,
+      "title": "HTTP Client Request Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 80 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 15 SECOND) AS time, substring(node_id, 1, 8) AS node, max(value) AS value FROM tessellation_metrics WHERE metric_name = 'dag_http_client_request_time' AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 34,
+      "title": "Request / Response Sizes",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 88 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT toStartOfInterval(timestamp, INTERVAL 1 MINUTE) AS time, metric_name AS node, avg(value) AS value FROM tessellation_metrics WHERE metric_name IN ('dag_http_request_size', 'dag_http_response_size', 'dag_http_client_request_size', 'dag_http_client_response_size') AND timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY time, node ORDER BY time",
+        "format": 1, "refId": "A"
+      }],
+      "transformations": [{ "id": "partitionByValues", "options": { "fields": ["node"] } }],
+      "fieldConfig": { "defaults": { "unit": "decbytes", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } } },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } }
+    },
+    {
+      "id": 35,
+      "title": "All Metrics (explorer)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 88 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "" },
+      "targets": [{
+        "rawSql": "SELECT metric_name, metric_type, count() AS samples, min(value) AS min_val, avg(value) AS avg_val, max(value) AS max_val, max(timestamp) AS last_seen FROM tessellation_metrics WHERE timestamp BETWEEN $__fromTime AND $__toTime AND ($__conditionalAll(node_id IN ($node_id), $node_id)) GROUP BY metric_name, metric_type ORDER BY metric_name",
+        "format": 1, "refId": "A"
+      }]
+    }
+  ],
+  "schemaVersion": 39
+}

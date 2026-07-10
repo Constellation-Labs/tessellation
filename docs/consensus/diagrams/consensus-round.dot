@@ -1,0 +1,70 @@
+// Consensus Round Protocol
+// Reflects current quorum-based phase transitions, the B1/B2 cert pipelines that
+// piggy-back on Proposal, and the StallDetector responses (capped-exp Facility
+// retransmit, view-change voting, abandonment).
+//
+// Render: dot -Tpng consensus-round.dot -o consensus-round.png
+
+digraph ConsensusRound {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Phases
+    subgraph cluster_phases {
+        label="Consensus Phases";
+        style=rounded;
+
+        CollectingFacilities [label="CollectingFacilities\n\nAll active peers gossip:\n• Event hashes\n• Candidates\n• Trigger\n• facilitatorsHash (round-start)\n• lastSnapshotHash", style="rounded,filled", fillcolor="lightblue"];
+        CollectingProposals [label="CollectingProposals\n\nLeader builds artifact +\n  embeds VCC / EvictionCerts / AdmissionCerts\n  + observedResponders\nValidators verify and gossip Proposal", style="rounded,filled", fillcolor="lightyellow"];
+        CollectingSignatures [label="CollectingSignatures\n\nAll sign majority hash:\n• MajoritySignature\n• signatureGracePeriod for stragglers", style="rounded,filled", fillcolor="lightpink"];
+        Finished [label="Finished\n\nOutcome persisted with\nfacilitators / removed / admitted /\npeerQuality / readmissionCountdown", style="rounded,filled", fillcolor="lightgreen"];
+    }
+
+    // Transitions: quorum-based, not all-N (default fraction = 1.0 still equals all)
+    CollectingFacilities -> CollectingProposals [label="quorum facilities"];
+    CollectingProposals -> CollectingSignatures [label="quorum proposals"];
+    CollectingSignatures -> Finished [label="quorum signatures\n(grace-period)"];
+
+    // StallDetector orchestrates several reactions
+    StallDetector [shape=ellipse, label="StallDetector\n(adaptive 100-1000ms poll)", style=filled, fillcolor="lightsalmon"];
+
+    // Capped-exp Facility retransmit (v13)
+    Retransmit [shape=note, label="Retransmit own Facility\n5s/10s/20s/30s/30s\n(MaxFacilityRetransmits=5)", style=filled, fillcolor="moccasin"];
+    StallDetector -> Retransmit [label="phase 0 stall,\nquorum still feasible", style=dashed];
+    Retransmit -> CollectingFacilities [style=dotted];
+
+    // Quorum-certified view change (Phase 2)
+    ViewChange [label="ViewChangeManager\n→ ViewChangeVoter.emitViewChangeVote\n→ CheckViewChangeAssembly\n→ VCC quorum → state.viewNumber++ /\nfresh CollectingFacilities", style="rounded,filled", fillcolor="orange"];
+    StallDetector -> ViewChange [label="leader unresponsive\nor proposal-phase stall\nor self recovery cooldown", style=dashed, color="red"];
+    ViewChange -> CollectingFacilities [label="VCC accepted\n(reset to phase 0)", style=dashed];
+
+    // B1 eviction cert pipeline (no mid-round committee mutation)
+    Eviction [label="EvictionVoter\n→ CheckEvictionAssembly\n→ EvictionCertificateBuilder\n→ embedded in next Proposal", style="rounded,filled", fillcolor="lightcoral"];
+    StallDetector -> Eviction [label="quorumInfeasible\n+ Unresponsive missing\n(stallCount ≥ 1)", style=dashed, color="red"];
+    Eviction -> CollectingProposals [label="next round's leader\nembeds + applies", style=dashed];
+
+    // B2 admission cert pipeline (sticky probation)
+    Admission [label="AdmissionVoter\n(every tick when probation peer\nat tip + streak met)\n→ CheckAdmissionAssembly\n→ AdmissionCertificateBuilder\n→ embedded in next Proposal", style="rounded,filled", fillcolor="palegreen"];
+    StallDetector -> Admission [label="probation peer at tip", style=dashed];
+    Admission -> CollectingProposals [label="next round's leader\nembeds + applies", style=dashed];
+
+    // Abandon
+    Abandon [shape=diamond, label="Abandon?", style=filled, fillcolor="orange"];
+    StallDetector -> Abandon [label="maxStallCycles\nor maxRoundDuration(view)\nor QuorumInfeasible\nor Lagging"];
+    Abandon -> Recovery [label="non-retriable threshold\nor escalated retriable"];
+    Abandon -> CollectingFacilities [label="retry next round", style=dashed];
+
+    Recovery [shape=box, label="AbandonmentTracker\n→ WaitingForDownload", style="rounded,filled", fillcolor="lightcoral"];
+
+    // Legend
+    subgraph cluster_legend {
+        label="Legend";
+        style=dashed;
+        fontsize=10;
+
+        l1 [shape=plaintext, label="Solid: phase transitions on quorum"];
+        l2 [shape=plaintext, label="Dashed Red: stall reactions"];
+        l3 [shape=plaintext, label="Dashed: cert pipelines (next round)"];
+    }
+}

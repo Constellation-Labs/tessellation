@@ -18,8 +18,6 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
-import io.constellationnetwork.node.shared.domain.fork.ForkInfo
-import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema._
@@ -67,7 +65,8 @@ abstract class SnapshotConsensusFunctions[
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    peerHistory: Option[ConsensusOperationalState] = None
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(
@@ -125,12 +124,4 @@ abstract class SnapshotConsensusFunctions[
     } yield (height, subHeight)
   }
 
-}
-
-object SnapshotConsensusFunctions {
-  def gossipForkInfo[F[_]: MonadThrow: Hasher, Artifact <: Snapshot: Encoder](
-    gossip: Gossip[F],
-    signed: Signed[Artifact]
-  ): F[Unit] =
-    signed.hash.flatMap(h => gossip.spread(ForkInfo(signed.value.ordinal, h)))
 }

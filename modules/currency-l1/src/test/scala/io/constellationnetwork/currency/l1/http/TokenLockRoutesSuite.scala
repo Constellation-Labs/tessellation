@@ -126,6 +126,10 @@ object TokenLockRoutesSuite extends HttpSuite {
       override def getLatestBalances: IO[Option[Map[Address, balance.Balance]]] = ???
 
       override def getLatestBalancesStream: fs2.Stream[IO, Map[Address, balance.Balance]] = ???
+
+      override def setForRecovery(snapshot: Hashed[A], state: B): IO[Unit] = ???
+
+      override def clear: IO[Unit] = ???
     }
 
   def mockTokenLockService: IO[TokenLockService[IO]] = IO.pure(

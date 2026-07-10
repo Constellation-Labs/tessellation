@@ -58,10 +58,15 @@ object RestartService {
             .map(_.toNel.map(_.toNes))
             .flatMap {
               case Some(majorityPeersToJoin) => restartSignal.set(method(majorityPeersToJoin.map(toP2PContext)).some)
-              case None => new Throwable("Unexpected state. Couldn't find P2P Context of majority fork peers.").raiseError
-
+              case None =>
+                logger.warn(
+                  s"Could not find P2P Context for majority fork peers (${majorityForkPeers.size} peers). " +
+                    s"Falling back to cluster leave restart."
+                ) >> signalClusterLeaveRestart()
             }
-        case None => logger.warn(s"Restart method for node forked is not set! The initial run method will be used as a default.")
+        case None =>
+          logger.warn(s"Restart method for node forked is not set! Falling back to cluster leave restart.") >>
+            signalClusterLeaveRestart()
       }
 
     }

@@ -3,7 +3,7 @@ package io.constellationnetwork.node.shared.http.p2p.middlewares
 import java.util.concurrent.TimeUnit
 
 import cats.data.{Kleisli, OptionT}
-import cats.effect.kernel.{Async, Clock}
+import cats.effect.kernel.{Async, Clock, Ref}
 import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
@@ -17,7 +17,8 @@ import org.http4s.headers.`X-Forwarded-For`
 object MetricsMiddleware {
 
   def isHistogramRoute(path: String): Boolean =
-    path.contains("rumor")
+    // allow all routes to send metrics
+    true
 
   def bucketName: Metrics.LabelName = Metrics.unsafeLabelName("time_bucket")
 
@@ -77,9 +78,6 @@ object MetricsMiddleware {
                   Metrics[F].recordTimeHistogram(durationMetricKey, duration, histogramTagsSeq) >>
                     req.contentLength.traverse_ { size =>
                       Metrics[F].recordSizeHistogram(requestSizeMetricKey, size, histogramTagsSeq)
-                    } >>
-                    response.contentLength.traverse_ { size =>
-                      Metrics[F].recordSizeHistogram(responseSizeMetricKey, size, histogramTagsSeq)
                     }
                 } else {
                   Async[F].unit
@@ -88,7 +86,23 @@ object MetricsMiddleware {
 
             } yield ()
             _ <- Async[F].start(metricsRecording)
-          } yield response
+            finalResponse <-
+              if (isHistogramRoute(req.pathInfo.renderString))
+                Ref[F].of(0L).map { bytesRef =>
+                  response.withBodyStream(
+                    response.body.chunks
+                      .evalTap(chunk => bytesRef.update(_ + chunk.size.toLong))
+                      .unchunks
+                      .onFinalize(
+                        bytesRef.get.flatMap { total =>
+                          Metrics[F].recordSizeHistogram(responseSizeMetricKey, total, histogramTagsSeq)
+                        }
+                          .handleErrorWith(_ => Async[F].unit)
+                      )
+                  )
+                }
+              else response.pure[F]
+          } yield finalResponse
         }
       }
     }

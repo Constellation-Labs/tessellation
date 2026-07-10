@@ -145,7 +145,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           validationErrorStorage
         )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
+        .make[IO](creator, validators.signedValidator, None, None)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
@@ -165,7 +165,27 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       }
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, feeCalculator, mptStore)
+        .make[IO](
+          validator,
+          manager,
+          currencySnapshotContextFns,
+          feeCalculator,
+          mptStore,
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
+        )
     } yield processor
   }
 
@@ -183,7 +203,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap((address, NonEmptyList.one(output.snapshotBinary))),
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
@@ -216,7 +236,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap((address1, NonEmptyList.of(output1.snapshotBinary)), (address2, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(
@@ -250,7 +270,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap((address2, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
-        Map.empty,
+        SortedMap.empty,
         SortedMap.empty[Address, List[StateChannelAcceptanceResult.CurrencySnapshotWithState]]
       )
       result <- service.process(

@@ -4,8 +4,8 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.kernel.{Async, Fiber}
-import cats.effect.std.{Random, Supervisor}
+import cats.effect.kernel.{Async, Fiber, Ref}
+import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -37,9 +37,12 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusEventLoop, _}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
+import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient}
+import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -48,12 +51,15 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.PeerHistorySidecarStorage
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
@@ -61,6 +67,7 @@ import io.constellationnetwork.security._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Json
 import org.http4s.client.Client
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Factory for creating the Global L0 consensus engine.
   *
@@ -98,7 +105,28 @@ object GlobalSnapshotConsensus {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     mptStore: MptStore[F, GlobalStateKey],
-    loggerBundle: LoggerBundle[F]
+    eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
+    eventGossipClient: EventGossipClient[F, GlobalSnapshotEvent],
+    loggerBundle: LoggerBundle[F],
+    rumorQueue: Queue[F, Hashed[RumorRaw]],
+    // B2 witness channel: probation-peer chain tips from the mesh gossip layer. See
+    // StallDetector.maybeEmitAdmissionVotes for usage. Injected as a thunk because
+    // EventGossipDaemon is constructed after consensus in Main.scala — the Ref pattern in
+    // Main.scala populates the real getter once the daemon is up; before that it returns
+    // Map.empty and no admission votes fire (safe default).
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    // Shared consensus-health Ref from SharedServices. When provided, the engine's
+    // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
+    // reads, activating the leave-refusal behavior. When None, the engine creates its own
+    // internal Ref and the cluster-level guard sees only the empty default (inert).
+    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None,
+    // Dedicated dispatcher (EC + EC-scoped supervisor) for the FSM consume fiber. When provided,
+    // the whole `loop.run.compile.drain` is shifted onto its EC via `Async[F].evalOn` and the fiber
+    // is supervised by the dispatcher's supervisor (finalized before the EC, so the fiber is
+    // cancelled while the pool is still alive). When None (default, and what tests use) the loop
+    // runs on the ambient runtime under the outer supervisor -- same behaviour as before PR-2's
+    // executor isolation. See `ConsensusExecutor`.
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(implicit supervisor: Supervisor[F], globalStateProofSelector: GlobalStateProofSelector): F[GlobalSnapshotConsensus[F]] =
     for {
       globalStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -119,7 +147,9 @@ object GlobalSnapshotConsensus {
             globalStateChannelManager,
             sharedServices.currencySnapshotContextFns,
             feeCalculator,
-            mptStore
+            mptStore,
+            sharedCfg.fieldsAddedOrdinals,
+            sharedCfg.environment
           ),
           sharedServices.updateNodeParametersAcceptanceManager,
           sharedServices.updateDelegatedStakeAcceptanceManager,
@@ -134,6 +164,37 @@ object GlobalSnapshotConsensus {
           loggerBundle
         )
 
+      // v20: env-resolved Core committee size threaded into `ConsensusConfig.coreCommitteeSize`
+      // so it folds into `deterministicConfigHash`. Resolution happens here (single point) and
+      // the resulting `effectiveConsensusConfig` is what every downstream component reads --
+      // ConsensusStorage, consensusFunctions, stateAdvancer, stateCreator, ConsensusEventLoop.
+      // The default `3` mirrors the dev-environment value used by
+      // `GlobalSnapshotConsensusStateCreator.make` and `CurrencySnapshotConsensus`.
+      resolvedCoreCommitteeSize = appConfig.snapshot.coreCommitteeSize.get(appConfig.environment).map(_.value).getOrElse(3)
+      // v33: env-resolved quorum-denominator-shrink activation threshold (absent env entry = 0 =
+      // rung disabled). Folded into `deterministicConfigHash` via the consensus config copy below.
+      resolvedQuorumShrinkActivationViews = appConfig.snapshot.quorumShrinkActivationViews
+        .get(appConfig.environment)
+        .getOrElse(0)
+      // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry =
+      // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
+      resolvedActiveAdmissionMinProbationReentrySlots = appConfig.snapshot.activeAdmissionMinProbationReentrySlots
+        .get(appConfig.environment)
+        .getOrElse(0)
+      // Recent-signer pool lookback depth: env-resolved, floored to the DemotionConsecutiveMisses
+      // constant (3) so a low operator value cannot disable the recent-signer path (Codex review #2).
+      // Absent env entry resolves to that floor (the pre-change lookback). Folded into the copy below.
+      resolvedActiveAdmissionRecentSignerWindow = math.max(
+        3,
+        appConfig.snapshot.activeAdmissionRecentSignerWindow.get(appConfig.environment).getOrElse(3)
+      )
+      effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
+        coreCommitteeSize = Some(resolvedCoreCommitteeSize),
+        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
+        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow
+      )
+
       consensusStorage <- ConsensusStorage.make[
         F,
         GlobalSnapshotEvent,
@@ -143,7 +204,7 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](appConfig.snapshot.consensus)
+      ](effectiveConsensusConfig)
 
       consensusFunctions =
         GlobalSnapshotConsensusFunctions.make[F](
@@ -151,10 +212,10 @@ object GlobalSnapshotConsensus {
           collateral,
           rewardsService,
           GlobalSnapshotEventCutter.make(
-            appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
+            effectiveConsensusConfig.eventCutter.maxBinarySizeBytes,
             SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs, mptStore)
           ),
-          UpdateNodeParametersCutter.make(appConfig.snapshot.consensus.eventCutter.maxUpdateNodeParametersSize),
+          UpdateNodeParametersCutter.make(effectiveConsensusConfig.eventCutter.maxUpdateNodeParametersSize),
           appConfig.environment,
           DefaultDelegatedRewardsConfigProvider,
           sharedCfg.fieldsAddedOrdinals.tessellation3Migration
@@ -166,9 +227,20 @@ object GlobalSnapshotConsensus {
           mptStore
         )
 
+      facilitatorSelector = FacilitatorSelector.make(
+        appConfig.snapshot.maxFacilitatorCount.get(appConfig.environment).map(_.value)
+      )
+
+      // Alpha.94: node-local sidecar for the post-finalization `ConsensusOperationalState`.
+      // Closes the one-round-stale `snapshot.peerHistory` gap surfaced in `project_alpha92_wedge_may21.md`.
+      // Co-located under the snapshot path so retention sweeps can clean both with the same ordinal
+      // discriminator. Best-effort writes; rollback reads fall back to `snapshot.peerHistory` when
+      // the sidecar is absent or malformed.
+      peerHistorySidecar <- PeerHistorySidecarStorage.make[F](appConfig.snapshot.snapshotPath / "peerHistory")
+
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
-          appConfig.snapshot.consensus,
+          effectiveConsensusConfig,
           keyPair,
           consensusStorage,
           globalSnapshotStorage,
@@ -181,12 +253,17 @@ object GlobalSnapshotConsensus {
           lastGlobalSnapshotStorage,
           getGlobalSnapshotByOrdinal,
           clusterStorage,
-          loggerBundle
+          eventMempool,
+          eventGossipClient,
+          loggerBundle,
+          mptStore,
+          facilitatorSelector,
+          peerHistorySidecar
         )
 
-      facilitatorSelector = FacilitatorSelector.make(
-        appConfig.snapshot.consensus.maxFacilitatorCount.map(_.value)
-      )
+      peerQualityTracker <- PeerQualityTracker.make[F]
+
+      tcaFilter = TrailingCommonAncestorFilter.make[F]
 
       stateCreator =
         GlobalSnapshotConsensusStateCreator.make(
@@ -195,7 +272,17 @@ object GlobalSnapshotConsensus {
           gossip,
           selfId,
           seedlist,
-          facilitatorSelector
+          facilitatorSelector,
+          effectiveConsensusConfig.deterministicConfigHash,
+          effectiveConsensusConfig,
+          peerQualityTracker,
+          tcaFilter,
+          eventMempool,
+          sharedServices.localHealthMonitor,
+          // v19 per-environment Core floor. v20 routes the env-resolved value through
+          // `effectiveConsensusConfig.coreCommitteeSize`, so this single binding is what
+          // both the state creator and `deterministicConfigHash` see.
+          resolvedCoreCommitteeSize
         )
 
       stateRemover =
@@ -210,11 +297,85 @@ object GlobalSnapshotConsensus {
         ConsensusStateUpdater.make(
           stateAdvancer,
           consensusStorage,
-          gossip,
           consensusOps
         )
 
       consensusClient = ConsensusClient.make[F, GlobalSnapshotKey, GlobalConsensusOutcome](client, session)
+
+      directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
+      _ <- gossip.setDirectPushFn(directPushFn)
+
+      viewChangeVoter = new GossipingViewChangeVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
+
+      timeoutVoter = new GossipingTimeoutVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
+
+      evictionVoter = new GossipingEvictionVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
+
+      admissionVoter = new GossipingAdmissionVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
 
       loop <-
         ConsensusEventLoop.build[
@@ -227,6 +388,8 @@ object GlobalSnapshotConsensus {
           GlobalConsensusOutcome,
           GlobalConsensusKind
         ](
+          selfId,
+          gossip,
           consensusStorage,
           stateCreator,
           stateUpdater,
@@ -237,7 +400,20 @@ object GlobalSnapshotConsensus {
           clusterStorage,
           consensusFunctions,
           consensusClient,
-          appConfig.snapshot.consensus
+          effectiveConsensusConfig,
+          facilitatorSelector,
+          peerQualityTracker,
+          viewChangeVoter,
+          timeoutVoter,
+          evictionVoter,
+          admissionVoter,
+          (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
+          (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+          (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
+          (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
+          getPeerChainTips,
+          injectedHealthRef
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
@@ -250,9 +426,27 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](consensusStorage)
+      ](consensusStorage, rumorQueue)
 
-      _ <- supervisor.supervise(loop.run.compile.drain)
-      consensus = new Consensus(handler, consensusStorage, loop.manager, routes, consensusFunctions)
+      triggerEvent = loop.queue.offer(ConsensusCommand.FacilitateByEvent)
+
+      // Pin the consume fiber onto the dedicated consensus EC when one was provided, supervised by
+      // that dispatcher's EC-scoped supervisor so it is cancelled before the pool is shut down.
+      // The shift covers the entire stream's compile-drain so queue.take blocks on the consensus
+      // pool rather than the global runtime; downstream effects that elect to shift back via
+      // `evalOn` (gossip emits, P2P calls) are not forced onto the consensus pool. Without a
+      // dispatcher: run on the ambient runtime under the outer supervisor (test/default behaviour).
+      _ <- consensusDispatcher.fold(supervisor.supervise(loop.run.compile.drain)) { d =>
+        d.supervisor.supervise(Async[F].evalOn(loop.run.compile.drain, d.ec))
+      }
+      consensus = new Consensus(
+        handler,
+        consensusStorage,
+        loop.manager,
+        routes,
+        consensusFunctions,
+        Some(loop.healthRef),
+        Some(triggerEvent)
+      )
     } yield consensus
 }

@@ -14,6 +14,9 @@ export RELEASE_TAG=${RELEASE_TAG:-""}
 
 export EXTRA_ENV_PATH=${EXTRA_ENV_PATH:-""}
 export EXIT_CODE=${EXIT_CODE:-0}
+export SNAPSHOT_STREAMING_JAR=${SNAPSHOT_STREAMING_JAR:-""}
+export SNAPSHOT_STREAMING_BRANCH=${SNAPSHOT_STREAMING_BRANCH:-"testing"}
+export BLOCK_EXPLORER_BRANCH=${BLOCK_EXPLORER_BRANCH:-"increase_delegated_stakes"}
 export CL_DOCKER_BIND_INTERFACE=${CL_DOCKER_BIND_INTERFACE:-""}
 export CLEAN_ASSEMBLY=${CLEAN_ASSEMBLY:-false}
 export DO_EXIT=${DO_EXIT:-false}
@@ -30,12 +33,19 @@ export CLEANUP_DOCKER_AT_END=${CLEANUP_DOCKER_AT_END:-false}
 export REGENERATE_TEST_KEYS=${REGENERATE_TEST_KEYS:-false}
 export BUILD_ONLY=${BUILD_ONLY:-false}
 
+# Remote deployment settings
+export REMOTE_NODES=${REMOTE_NODES:-""}
+export REMOTE_CLEAN=${REMOTE_CLEAN:-false}
+export REMOTE_DIR=${REMOTE_DIR:-"/opt/tessellation"}
 
 export DAG_L0_PORT_PREFIX=${DAG_L0_PORT_PREFIX:-90}
 export DAG_L1_PORT_PREFIX=${DAG_L1_PORT_PREFIX:-91}
 export ML0_PORT_PREFIX=${ML0_PORT_PREFIX:-92}
 export CL1_PORT_PREFIX=${CL1_PORT_PREFIX:-93}
 export DL1_PORT_PREFIX=${DL1_PORT_PREFIX:-94}
+
+# Configurable base host for test URLs (used with port prefixes)
+export TEST_HOST=${TEST_HOST:-"http://localhost"}
 
 # Metagraph specific settings
 export METAGRAPH_ML0=${METAGRAPH_ML0:-true}
@@ -51,6 +61,9 @@ export DOCKER_PROFILES=${DOCKER_PROFILES:-""}
 
 # Test specific settings
 export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
+export SELECTED_TESTS=${SELECTED_TESTS:-""}
+export SKIP_STREAMING=${SKIP_STREAMING:-false}
+export LIST_TESTS=${LIST_TESTS:-false}
 
 
 # Store any explicitly-set TESSELLATION_VERSION from environment
@@ -102,6 +115,9 @@ for arg in "$@"; do
     --skip-assembly)
       export SKIP_ASSEMBLY=true
       ;;
+    --skip-streaming)
+      export SKIP_STREAMING=true
+      ;;
     --net-prefix=*)
       export NET_PREFIX="${arg#*=}"
       ;;
@@ -135,6 +151,15 @@ for arg in "$@"; do
     --hypergraph-release=*)
       export HYPERGRAPH_RELEASE="${arg#*=}"
       ;;
+    --snapshot-streaming-jar=*)
+      export SNAPSHOT_STREAMING_JAR="${arg#*=}"
+      ;;
+    --snapshot-streaming-branch=*)
+      export SNAPSHOT_STREAMING_BRANCH="${arg#*=}"
+      ;;
+    --block-explorer-branch=*)
+      export BLOCK_EXPLORER_BRANCH="${arg#*=}"
+      ;;
     --ml0-path=*)
       export METAGRAPH_ML0_RELATIVE_PATH="${arg#*=}"
       ;;
@@ -155,18 +180,23 @@ for arg in "$@"; do
       ;;  
     --num-gl0=*)
       export NUM_GL0_NODES="${arg#*=}"
+      export NUM_GL0_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-gl1=*)
       export NUM_GL1_NODES="${arg#*=}"
+      export NUM_GL1_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-ml0=*)
       export NUM_ML0_NODES="${arg#*=}"
+      export NUM_ML0_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-cl1=*)
       export NUM_CL1_NODES="${arg#*=}"
+      export NUM_CL1_NODES_EXPLICIT="${arg#*=}"
       ;;
     --num-dl1=*)
       export NUM_DL1_NODES="${arg#*=}"
+      export NUM_DL1_NODES_EXPLICIT="${arg#*=}"
       ;;
     --skip-metagraph-assembly)
       export SKIP_METAGRAPH_ASSEMBLY=true
@@ -179,6 +209,41 @@ for arg in "$@"; do
       ;;
     --up)
       export DOCKER_UP=true
+      ;;
+    --gl0-url=*)
+      export GL0_URL="${arg#*=}"
+      ;;
+    --gl1-url=*)
+      export GL1_URL="${arg#*=}"
+      ;;
+    --ml0-url=*)
+      export ML0_URL="${arg#*=}"
+      ;;
+    --cl1-url=*)
+      export CL1_URL="${arg#*=}"
+      ;;
+    --dl1-url=*)
+      export DL1_URL="${arg#*=}"
+      ;;
+    --host=*)
+      export TEST_HOST="${arg#*=}"
+      ;;
+    --test=*)
+      test_val="${arg#*=}"
+      if [ -n "$SELECTED_TESTS" ]; then
+        export SELECTED_TESTS="$SELECTED_TESTS,$test_val"
+      else
+        export SELECTED_TESTS="$test_val"
+      fi
+      ;;
+    --list-tests)
+      export LIST_TESTS=true
+      ;;
+    --remote=*)
+      export REMOTE_NODES="${arg#*=}"
+      ;;
+    --clean)
+      export REMOTE_CLEAN=true
       ;;
     *)
       echo "Unknown argument: $arg"
@@ -321,8 +386,43 @@ if [ -z "$METAGRAPH" ]; then
     export NUM_DL1_NODES="0"
 fi
 
+# Remote host: default to 1 gl0 node, 1 gl1 node, 0 metagraph nodes for health check
+# unless explicitly overridden via --num-* args
+if [ "$TEST_HOST" != "http://localhost" ]; then
+    export NUM_GL0_NODES=${NUM_GL0_NODES_EXPLICIT:-1}
+    export NUM_GL1_NODES=${NUM_GL1_NODES_EXPLICIT:-1}
+    export NUM_ML0_NODES=${NUM_ML0_NODES_EXPLICIT:-0}
+    export NUM_CL1_NODES=${NUM_CL1_NODES_EXPLICIT:-0}
+    export NUM_DL1_NODES=${NUM_DL1_NODES_EXPLICIT:-0}
+fi
+
 if [ -n "$METAGRAPH" ]; then
     if [ -z "$PUBLISH" ]; then
         export PUBLISH=true
     fi
 fi
+
+# Compute MAX_NODES as the maximum of all NUM_*_NODES values (capped at 10)
+# This drives how many node directories, keys, and configs are created
+_max_of() { [ "$1" -gt "$2" ] && echo "$1" || echo "$2"; }
+MAX_NODES=$(_max_of ${NUM_GL0_NODES:-0} ${NUM_GL1_NODES:-0})
+MAX_NODES=$(_max_of $MAX_NODES ${NUM_ML0_NODES:-0})
+MAX_NODES=$(_max_of $MAX_NODES ${NUM_CL1_NODES:-0})
+MAX_NODES=$(_max_of $MAX_NODES ${NUM_DL1_NODES:-0})
+# Ensure at least 3 (legacy default) and at most 9 (single-digit IP/port offset limit)
+MAX_NODES=$(_max_of $MAX_NODES 3)
+[ "$MAX_NODES" -gt 9 ] && MAX_NODES=9
+export MAX_NODES
+
+# Layer URLs: explicit overrides take priority, otherwise built from TEST_HOST + port prefix
+# When using a remote host, GL1 defaults to port 9010 instead of 9100
+if [ "$TEST_HOST" != "http://localhost" ]; then
+  GL1_DEFAULT_PORT=9010
+else
+  GL1_DEFAULT_PORT="${DAG_L1_PORT_PREFIX}00"
+fi
+export GL0_URL=${GL0_URL:-"${TEST_HOST}:${DAG_L0_PORT_PREFIX}00"}
+export GL1_URL=${GL1_URL:-"${TEST_HOST}:${GL1_DEFAULT_PORT}"}
+export ML0_URL=${ML0_URL:-"${TEST_HOST}:${ML0_PORT_PREFIX}00"}
+export CL1_URL=${CL1_URL:-"${TEST_HOST}:${CL1_PORT_PREFIX}00"}
+export DL1_URL=${DL1_URL:-"${TEST_HOST}:${DL1_PORT_PREFIX}00"}

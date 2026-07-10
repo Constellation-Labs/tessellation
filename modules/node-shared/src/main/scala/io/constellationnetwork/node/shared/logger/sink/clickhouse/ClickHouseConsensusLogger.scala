@@ -67,13 +67,12 @@ object ClickHouseConsensusLogger {
     for {
       queue <- Resource.eval(Queue.bounded[F, ConsensusEvent](maxQueueSize))
       writer = new BatchWriter[F](ds, tableName, nodeId, networkId, logger)
-      _ <- startFlusher(queue, writer, logger)
+      _ <- startFlusher(queue, writer)
     } yield new Impl[F](queue, ctxRef)
 
   private def startFlusher[F[_]: Async](
     queue: Queue[F, ConsensusEvent],
-    writer: BatchWriter[F],
-    logger: SelfAwareStructuredLogger[F]
+    writer: BatchWriter[F]
   ): Resource[F, Unit] = {
     val flush: F[Unit] = for {
       _ <- Temporal[F].sleep(FlushInterval)

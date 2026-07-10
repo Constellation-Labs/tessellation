@@ -1,0 +1,93 @@
+// Node State Machine
+// Render: dot -Tpng node-state-machine.dot -o node-state-machine.png
+//
+// Source of truth: NodeState ADT in modules/shared/.../schema/node.scala
+// Transitions sourced from:
+//   - dag-l0/Main.scala            (Initial -> ReadyToJoin, RollbackInProgress -> RollbackDone)
+//   - dag-l1/Main.scala            (Initial -> ReadyToJoin, SessionStarted -> Ready)
+//   - currency-l0/CurrencyL0App    (Initial -> ReadyToJoin)
+//   - currency-l1/CurrencyL1App    (Initial -> ReadyToJoin, SessionStarted -> Ready)
+//   - cluster/services/Session     ({GenesisReady, RollbackDone, ReadyToJoin} -> StartingSession -> SessionStarted)
+//   - consensus/engine/ConsensusManager        (WaitingForObserving -> Observing)
+//   - consensus/state/StateTransitions         (Observing -> WaitingForReady -> Ready, Observing -> Ready shortcut)
+//   - consensus/engine/ConsensusEventLoop      (Observing|Ready -> WaitingForDownload on fork)
+//   - consensus/engine/AbandonmentTracker      (-> Leaving on shutdown, -> WaitingForDownload on abandonments)
+//   - dag-l0/snapshot/programs/Download        (WaitingForDownload -> DownloadInProgress -> WaitingForObserving)
+//   - dag-l0/snapshot/ForkRecoveryService      (Ready/WaitingForReady -> WaitingForDownload)
+
+digraph NodeStateMachine {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // States
+    Offline [label="Offline"];
+    Initial [label="Initial"];
+    ReadyToJoin [label="ReadyToJoin"];
+    LoadingGenesis [label="LoadingGenesis"];
+    GenesisReady [label="GenesisReady"];
+    RollbackInProgress [label="RollbackInProgress"];
+    RollbackDone [label="RollbackDone"];
+    StartingSession [label="StartingSession"];
+    SessionStarted [label="SessionStarted"];
+    WaitingForDownload [label="WaitingForDownload", style="rounded,bold"];
+    DownloadInProgress [label="DownloadInProgress", style="rounded,bold"];
+    WaitingForObserving [label="WaitingForObserving"];
+    Observing [label="Observing", style="rounded,bold"];
+    WaitingForReady [label="WaitingForReady"];
+    Ready [label="Ready", style="rounded,filled", fillcolor="lightgreen"];
+    Leaving [label="Leaving", fillcolor="lightyellow", style="rounded,filled"];
+
+    // Bootstrap (black arrows)
+    Offline -> Initial;
+    Initial -> ReadyToJoin;
+
+    // Genesis path (genesis node only)
+    ReadyToJoin -> LoadingGenesis;
+    LoadingGenesis -> GenesisReady;
+
+    // Rollback path (L0 lead-rollback only)
+    Initial -> RollbackInProgress [label="rollback"];
+    RollbackInProgress -> RollbackDone;
+
+    // Session start (Session.scala — from any of three precursor states)
+    GenesisReady -> StartingSession;
+    RollbackDone -> StartingSession;
+    ReadyToJoin -> StartingSession [label="join cluster"];
+    StartingSession -> SessionStarted;
+
+    // Join / observe / ready
+    SessionStarted -> WaitingForDownload;
+    WaitingForDownload -> DownloadInProgress [label="DownloadDaemon"];
+    DownloadInProgress -> WaitingForObserving [label="download complete"];
+    WaitingForObserving -> Observing [label="observe starts"];
+    Observing -> WaitingForReady [label="observe offset reached"];
+    WaitingForReady -> Ready [label="first round completes"];
+    Observing -> Ready [label="observe shortcut\n(caught up to stable tip)"];
+
+    // Recovery flow (red arrows)
+    Ready -> WaitingForDownload [label="fork detected\nor 5+ abandonments", color="red", fontcolor="red"];
+    WaitingForReady -> WaitingForDownload [label="fork detected", color="red", fontcolor="red"];
+    Observing -> WaitingForDownload [label="abandonments\n(post-bootstrap)", color="red", fontcolor="red"];
+
+    // Leaving flow (orange arrows)
+    Ready -> Leaving [label="shutdown\nor force-leave", color="orange", fontcolor="orange"];
+    Leaving -> Offline [color="orange"];
+
+    // Suppressed transitions (dashed gray)
+    Observing -> Observing [label="fork detection\nsuppressed", style="dashed", color="gray", fontcolor="gray"];
+
+    // Legend - compact HTML table at bottom
+    Legend [shape=plaintext, label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+        <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>
+        <TR><TD>-&gt;</TD><TD>Normal flow</TD></TR>
+        <TR><TD><FONT COLOR="red">-&gt;</FONT></TD><TD><FONT COLOR="red">Recovery flow</FONT></TD></TR>
+        <TR><TD><FONT COLOR="orange">-&gt;</FONT></TD><TD><FONT COLOR="orange">Leaving flow</FONT></TD></TR>
+        <TR><TD><FONT COLOR="gray">--&gt;</FONT></TD><TD><FONT COLOR="gray">Suppressed</FONT></TD></TR>
+        <TR><TD><B>bold</B></TD><TD>Recovery-relevant state</TD></TR>
+        </TABLE>
+    >];
+
+    Leaving -> Legend [style=invis];
+}

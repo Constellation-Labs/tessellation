@@ -11,7 +11,7 @@ This guide covers upgrading metagraphs from Tessellation v3.x to v4.0.0.
 | `project/build.properties` | `sbt.version=1.8.0` -> `sbt.version=1.9.8` |
 | `build.sbt` | `scalaVersion := "2.13.10"` -> `scalaVersion := "2.13.18"` |
 | `build.sbt` | Add OSGI-INF merge strategy (see below) |
-| `project/Dependencies.scala` | `tessellation = "3.x.x"` -> `tessellation = "4.0.0-rc.2"` |
+| `project/Dependencies.scala` | `tessellation = "3.x.x"` -> `tessellation = "4.0.0-rc.10"` |
 | `project/Dependencies.scala` | `kind-projector` `0.13.2` -> `0.13.4` |
 | `project/Dependencies.scala` | `semanticdb-scalac` `4.7.1` -> `4.14.2` |
 
@@ -100,7 +100,7 @@ State proof validation is performed during snapshot acceptance. Expect:
 - [ ] Update `project/build.properties` - sbt 1.9.8
 - [ ] Update `build.sbt` - Scala 2.13.18
 - [ ] Update `build.sbt` - Add OSGI-INF merge strategy
-- [ ] Update `project/Dependencies.scala` - tessellation version
+- [ ] Update `project/Dependencies.scala` - tessellation version to `4.0.0-rc.10`
 - [ ] Update `project/Dependencies.scala` - kind-projector 0.13.4
 - [ ] Update `project/Dependencies.scala` - semanticdb-scalac 4.14.2
 - [ ] Search codebase for `new URL(` and update to `URI.create().toURL`

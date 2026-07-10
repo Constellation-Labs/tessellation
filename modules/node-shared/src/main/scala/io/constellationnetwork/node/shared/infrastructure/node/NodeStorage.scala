@@ -10,24 +10,34 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.schema.node.{InvalidNodeStateTransition, NodeState, NodeStateTransition}
 
 import fs2.Stream
-import fs2.concurrent.{SignallingRef, Topic}
+import fs2.concurrent.Topic
 
 object NodeStorage {
 
   private val maxQueuedNodeStates = 1000
 
+  /** Number of consensus rounds to keep joining grace period active after download. During grace, facilitatorsHash fork checks are
+    * suppressed because PeerQualityTracker scores haven't converged yet — different nodes exclude different peers, causing false-positive
+    * FORK_DETECTED that evicts freshly-joined nodes.
+    */
+  private val joiningGraceRounds = 3
+
   def make[F[_]: Concurrent: Ref.Make]: F[NodeStorage[F]] =
     for {
       stateRef <- Ref.of[F, NodeState](NodeState.Initial)
       stateTopic <- Topic[F, NodeState]
-      graceRef <- SignallingRef[F, Boolean](true) // ← true = joining grace period active
+      graceRef <- Ref.of[F, Int](joiningGraceRounds)
+      recoveryRef <- Ref.of[F, Boolean](false)
+      validatorRef <- Ref.of[F, Boolean](false)
       _ <- stateTopic.publish1(NodeState.Initial)
-    } yield make(stateRef, stateTopic, graceRef)
+    } yield make(stateRef, stateTopic, graceRef, recoveryRef, validatorRef)
 
   def make[F[_]: Concurrent](
     nodeState: Ref[F, NodeState],
     nodeStateTopic: Topic[F, NodeState],
-    joiningGracePeriod: SignallingRef[F, Boolean]
+    joiningGracePeriod: Ref[F, Int],
+    recoveryDownloadRef: Ref[F, Boolean],
+    validatorModeRef: Ref[F, Boolean]
   ): NodeStorage[F] =
     new NodeStorage[F] {
       def getNodeState: F[NodeState] = nodeState.get
@@ -80,12 +90,30 @@ object NodeStorage {
           }
 
       def setJoiningGracePeriod: F[Unit] =
-        joiningGracePeriod.set(true)
+        joiningGracePeriod.set(joiningGraceRounds)
 
       def clearJoiningGracePeriod: F[Unit] =
-        joiningGracePeriod.set(false)
+        joiningGracePeriod.set(0)
+
+      def decrementJoiningGracePeriod: F[Unit] =
+        joiningGracePeriod.update(n => math.max(0, n - 1))
 
       def isInJoiningGracePeriod: F[Boolean] =
-        joiningGracePeriod.get
+        joiningGracePeriod.get.map(_ > 0)
+
+      def setRecoveryDownload: F[Unit] =
+        recoveryDownloadRef.set(true)
+
+      def clearRecoveryDownload: F[Unit] =
+        recoveryDownloadRef.set(false)
+
+      def isRecoveryDownload: F[Boolean] =
+        recoveryDownloadRef.get
+
+      def setValidatorMode: F[Unit] =
+        validatorModeRef.set(true)
+
+      def isValidatorMode: F[Boolean] =
+        validatorModeRef.get
     }
 }

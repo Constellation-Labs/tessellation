@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  # Default 3-node local cluster (NET_PREFIX=172.32.0, DAG_L0_PORT_PREFIX=90, DAG_L1_PORT_PREFIX=91)
+  # Node i GL0: IP 172.32.0.1{i}, port 90{i}0
+  # Node i GL1: IP 172.32.0.2{i}, port 91{i}0
+  - job_name: tessellation-gl0
+    http_sd_configs:
+      - url: http://172.32.0.10:9000/targets
+      - url: http://172.32.0.11:9010/targets
+      - url: http://172.32.0.12:9020/targets
+    relabel_configs:
+      - target_label: layer
+        replacement: gl0_mainnet
+
+  - job_name: tessellation-dagl1
+    http_sd_configs:
+      - url: http://172.32.0.20:9100/targets
+      - url: http://172.32.0.21:9110/targets
+      - url: http://172.32.0.22:9120/targets
+    relabel_configs:
+      - target_label: layer
+        replacement: dagl1_mainnet

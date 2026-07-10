@@ -26,7 +26,7 @@ import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.infrastructure.allowance_list.{Loader => AllowanceListLoader}
 import io.constellationnetwork.node.shared.infrastructure.cluster.services.Session
 import io.constellationnetwork.node.shared.infrastructure.logs.LoggerConfigurator
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.MetricsFactory
 import io.constellationnetwork.node.shared.infrastructure.seedlist.{Loader => SeedlistLoader}
 import io.constellationnetwork.node.shared.infrastructure.trust.TrustRatingCsvLoader
 import io.constellationnetwork.node.shared.logger.{ClickHouseLoggerBundle, Slf4jLoggerBundle}
@@ -115,7 +115,10 @@ abstract class TessellationIOApp[A <: CliMethod](
         }
 
         implicit val _globalStateProofSelector: GlobalStateProofSelector =
-          GlobalStateProofSelector(cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.unsafeApply(Long.MaxValue)))
+          GlobalStateProofSelector(
+            cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue),
+            cfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue)
+          )
 
         implicit val _currencyStateProofSelector: CurrencyStateProofSelector =
           CurrencyStateProofSelector.instance
@@ -137,209 +140,211 @@ abstract class TessellationIOApp[A <: CliMethod](
                 logger.info(s"App environment: ${cfg.environment}") >>
                 logger.info(s"App version: ${version.show}") >>
                 logger.info(s"App collateral: ${cfg.collateral.amount.show}") >>
+                TessellationIOApp.logHeapCheck(logger) >>
                 jarHash(cfg.environment).flatMap { jarHash =>
                   logger.info(s"Jar hash: ${jarHash.value}") >>
                     KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                       JsonSerializer.forAsync[IO].asResource.use { implicit _jsonSerializer =>
                         implicit val _hasherSelector = HasherSelector.forSync[IO](Hasher.forJson, Hasher.forKryo, _hashSelect)
-                        Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
-                          SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
-                            SignallingRef.of[IO, Option[A]](None).flatMap { _restartSignal =>
-                              Ref.of[IO, Option[A]](None).flatMap { _restartMethodR =>
-                                def mkNodeShared =
-                                  Supervisor[IO].flatMap { implicit _supervisor =>
-                                    def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[SeedlistEntry]]] =
-                                      seedlistPath
-                                        .traverse(SeedlistLoader.make[IO].load)
-                                        .flatTap { seedlist =>
-                                          seedlist
-                                            .map(_.size)
-                                            .fold(logger.info(s"$name disabled.")) { size =>
-                                              logger.info(s"$name enabled. Allowed nodes: $size")
-                                            }
+                        MetricsFactory.make[IO](Seq(("application", name)), selfId, cfg.environment, cfg.clickHouseConfig).use {
+                          implicit _metrics =>
+                            SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
+                              SignallingRef.of[IO, Option[A]](None).flatMap { _restartSignal =>
+                                Ref.of[IO, Option[A]](None).flatMap { _restartMethodR =>
+                                  def mkNodeShared =
+                                    Supervisor[IO].flatMap { implicit _supervisor =>
+                                      def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[SeedlistEntry]]] =
+                                        seedlistPath
+                                          .traverse(SeedlistLoader.make[IO].load)
+                                          .flatTap { seedlist =>
+                                            seedlist
+                                              .map(_.size)
+                                              .fold(logger.info(s"$name disabled.")) { size =>
+                                                logger.info(s"$name enabled. Allowed nodes: $size")
+                                              }
+                                          }
+
+                                      def loadAllowanceList(name: String, allowanceListPath: Option[AllowanceListPath])
+                                        : IO[Option[Set[AllowanceListEntry]]] =
+                                        allowanceListPath
+                                          .traverse(AllowanceListLoader.make[IO].load)
+                                          .flatTap { allowanceList =>
+                                            allowanceList
+                                              .map(_.size)
+                                              .fold(logger.info(s"$name disabled.")) { size =>
+                                                logger.info(s"$name enabled. Allowed nodes: $size")
+                                              }
+                                          }
+
+                                      for {
+                                        _ <- logger.info(s"Self peerId: $selfId").asResource
+                                        tokenIdentifierOpt: Option[Address] =
+                                          sys.env.get("CL_L0_TOKEN_IDENTIFIER").flatMap { s =>
+                                            refineV[DAGAddressRefined](s).toOption.map(Address(_))
+                                          }
+                                        _generation <- Generation.make[IO].asResource
+                                        versionHash <- _hasherSelector
+                                          .withCurrent(_.hash(version))
+                                          .asResource
+                                          .map(x => sys.env.get("CL_VERSION_HASH").map(Hash(_)).getOrElse(x))
+                                        metagraphVersionHash <- _hasherSelector
+                                          .withCurrent(_.hash(metagraphVersion))
+                                          .asResource
+                                          .map(x => sys.env.get("CL_METAGRAPH_VERSION_HASH").map(Hash(_)).getOrElse(x))
+                                        _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
+                                        _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
+                                        _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
+                                        _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
+                                        maybeCustomAllowanceList <- loadAllowanceList("allowanceList", method.allowanceListPath).asResource
+                                        storages <- _hasherSelector
+                                          .withCurrent(implicit hasher => SharedStorages.make[IO](clusterId, cfg))
+                                          .asResource
+                                        res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
+                                        session = Session.make[IO](storages.session, storages.node, storages.cluster)
+                                        p2pClient = SharedP2PClient.make[IO](res.client, session, cfg)
+                                        queues <- SharedQueues.make[IO].asResource
+
+                                        _loggerBundle <- {
+                                          val useClickHouse = layer == DagL0 || layer == DagL1
+
+                                          if (useClickHouse) {
+                                            ClickHouseLoggerBundle
+                                              .make[IO](selfId, cfg.environment, cfg.clickHouseConfig)
+                                              .recoverWith {
+                                                case ClickHouseLoggerBundle.NotConfigured =>
+                                                  Resource.eval(logger.info("ClickHouse not configured. Using console logger.")) >>
+                                                    Slf4jLoggerBundle.make[IO]
+                                                case ClickHouseLoggerBundle.ConfigError(e) =>
+                                                  Resource.eval(
+                                                    logger.warn(s"ClickHouse config invalid: ${e.getMessage}. Using console logger.")
+                                                  ) >>
+                                                    Slf4jLoggerBundle.make[IO]
+                                                case ClickHouseLoggerBundle.ConnectionError(e) =>
+                                                  Resource.eval(
+                                                    logger.warn(s"ClickHouse connection failed: ${e.getMessage}. Using console logger.")
+                                                  ) >>
+                                                    Slf4jLoggerBundle.make[IO]
+                                              }
+                                          } else {
+                                            Slf4jLoggerBundle.make[IO]
+                                          }
                                         }
 
-                                    def loadAllowanceList(name: String, allowanceListPath: Option[AllowanceListPath])
-                                      : IO[Option[Set[AllowanceListEntry]]] =
-                                      allowanceListPath
-                                        .traverse(AllowanceListLoader.make[IO].load)
-                                        .flatTap { allowanceList =>
-                                          allowanceList
-                                            .map(_.size)
-                                            .fold(logger.info(s"$name disabled.")) { size =>
-                                              logger.info(s"$name enabled. Allowed nodes: $size")
-                                            }
+                                        validators = _hasherSelector.withCurrent { implicit hasher =>
+                                          SharedValidators.make[IO](
+                                            cfg.environment,
+                                            cfg.addresses,
+                                            _l0Seedlist,
+                                            _seedlist,
+                                            method.stateChannelAllowanceLists,
+                                            cfg.feeConfigs,
+                                            cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes,
+                                            Hasher.forKryo[IO],
+                                            cfg.delegatedStaking,
+                                            cfg.priceOracle,
+                                            Some(storages.mptStore)
+                                          )
                                         }
+                                        services <- SharedServices
+                                          .make[IO, A](
+                                            cfg,
+                                            selfId,
+                                            _generation,
+                                            _keyPair,
+                                            storages,
+                                            queues,
+                                            session,
+                                            p2pClient.node,
+                                            validators,
+                                            _seedlist,
+                                            _restartSignal,
+                                            versionHash,
+                                            metagraphVersionHash,
+                                            jarHash,
+                                            cfg.collateral,
+                                            method.stateChannelAllowanceLists,
+                                            cfg.environment,
+                                            Hasher.forKryo[IO],
+                                            maybeCustomAllowanceList,
+                                            tokenIdentifierOpt,
+                                            _loggerBundle
+                                          )
+                                          .asResource
 
-                                    for {
-                                      _ <- logger.info(s"Self peerId: $selfId").asResource
-                                      tokenIdentifierOpt: Option[Address] =
-                                        sys.env.get("CL_L0_TOKEN_IDENTIFIER").flatMap { s =>
-                                          refineV[DAGAddressRefined](s).toOption.map(Address(_))
+                                        programs <- SharedPrograms
+                                          .make[IO, A](
+                                            cfg,
+                                            storages,
+                                            services,
+                                            p2pClient.cluster,
+                                            p2pClient.sign,
+                                            services.localHealthcheck,
+                                            _seedlist,
+                                            selfId,
+                                            versionHash,
+                                            metagraphVersionHash,
+                                            maybeCustomAllowanceList,
+                                            tokenIdentifierOpt
+                                          )
+                                          .asResource
+
+                                        nodeShared = new NodeShared[IO, A] {
+                                          val random = _random
+                                          val securityProvider = _securityProvider
+                                          val kryoPool = _kryoPool
+                                          val jsonSerializer = _jsonSerializer
+                                          val metrics = _metrics
+                                          val supervisor = _supervisor
+                                          val hasherSelector = _hasherSelector
+                                          val globalStateProofSelector = _globalStateProofSelector
+                                          val currencyStateProofSelector = _currencyStateProofSelector
+
+                                          val keyPair = _keyPair
+                                          val seedlist = _seedlist
+                                          val generation = _generation
+                                          val trustRatings = _trustRatings
+
+                                          val sharedConfig = cfg
+
+                                          val hashSelect = _hashSelect
+
+                                          val sharedResources = res
+                                          val sharedP2PClient = p2pClient
+                                          val sharedQueues = queues
+                                          val sharedStorages = storages
+                                          val sharedServices = services
+                                          val sharedPrograms = programs
+                                          val sharedValidators = validators
+                                          val prioritySeedlist = _prioritySeedlist
+                                          val customAllowanceList = maybeCustomAllowanceList
+
+                                          val loggerBundle = _loggerBundle
+
+                                          def restartSignal = _restartSignal
+
+                                          def stopSignal = _stopSignal
                                         }
-                                      _generation <- Generation.make[IO].asResource
-                                      versionHash <- _hasherSelector
-                                        .withCurrent(_.hash(version))
-                                        .asResource
-                                        .map(x => sys.env.get("CL_VERSION_HASH").map(Hash(_)).getOrElse(x))
-                                      metagraphVersionHash <- _hasherSelector
-                                        .withCurrent(_.hash(metagraphVersion))
-                                        .asResource
-                                        .map(x => sys.env.get("CL_METAGRAPH_VERSION_HASH").map(Hash(_)).getOrElse(x))
-                                      _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
-                                      _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
-                                      _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
-                                      _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
-                                      maybeCustomAllowanceList <- loadAllowanceList("allowanceList", method.allowanceListPath).asResource
-                                      storages <- _hasherSelector
-                                        .withCurrent(implicit hasher => SharedStorages.make[IO](clusterId, cfg))
-                                        .asResource
-                                      res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
-                                      session = Session.make[IO](storages.session, storages.node, storages.cluster)
-                                      p2pClient = SharedP2PClient.make[IO](res.client, session, cfg)
-                                      queues <- SharedQueues.make[IO].asResource
-
-                                      _loggerBundle <- {
-                                        val useClickHouse = layer == DagL0 || layer == DagL1
-
-                                        if (useClickHouse) {
-                                          ClickHouseLoggerBundle
-                                            .make[IO](selfId, cfg.environment, cfg.clickHouseConfig)
-                                            .recoverWith {
-                                              case ClickHouseLoggerBundle.NotConfigured =>
-                                                Resource.eval(logger.info("ClickHouse not configured. Using console logger.")) >>
-                                                  Slf4jLoggerBundle.make[IO]
-                                              case ClickHouseLoggerBundle.ConfigError(e) =>
-                                                Resource.eval(
-                                                  logger.warn(s"ClickHouse config invalid: ${e.getMessage}. Using console logger.")
-                                                ) >>
-                                                  Slf4jLoggerBundle.make[IO]
-                                              case ClickHouseLoggerBundle.ConnectionError(e) =>
-                                                Resource.eval(
-                                                  logger.warn(s"ClickHouse connection failed: ${e.getMessage}. Using console logger.")
-                                                ) >>
-                                                  Slf4jLoggerBundle.make[IO]
-                                            }
-                                        } else {
-                                          Slf4jLoggerBundle.make[IO]
-                                        }
-                                      }
-
-                                      validators = _hasherSelector.withCurrent { implicit hasher =>
-                                        SharedValidators.make[IO](
-                                          cfg.environment,
-                                          cfg.addresses,
-                                          _l0Seedlist,
-                                          _seedlist,
-                                          method.stateChannelAllowanceLists,
-                                          cfg.feeConfigs,
-                                          cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes,
-                                          Hasher.forKryo[IO],
-                                          cfg.delegatedStaking,
-                                          cfg.priceOracle,
-                                          Some(storages.mptStore)
-                                        )
-                                      }
-                                      services <- SharedServices
-                                        .make[IO, A](
-                                          cfg,
-                                          selfId,
-                                          _generation,
-                                          _keyPair,
-                                          storages,
-                                          queues,
-                                          session,
-                                          p2pClient.node,
-                                          validators,
-                                          _seedlist,
-                                          _restartSignal,
-                                          versionHash,
-                                          metagraphVersionHash,
-                                          jarHash,
-                                          cfg.collateral,
-                                          method.stateChannelAllowanceLists,
-                                          cfg.environment,
-                                          Hasher.forKryo[IO],
-                                          maybeCustomAllowanceList,
-                                          tokenIdentifierOpt,
-                                          _loggerBundle
-                                        )
-                                        .asResource
-
-                                      programs <- SharedPrograms
-                                        .make[IO, A](
-                                          cfg,
-                                          storages,
-                                          services,
-                                          p2pClient.cluster,
-                                          p2pClient.sign,
-                                          services.localHealthcheck,
-                                          _seedlist,
-                                          selfId,
-                                          versionHash,
-                                          metagraphVersionHash,
-                                          maybeCustomAllowanceList,
-                                          tokenIdentifierOpt
-                                        )
-                                        .asResource
-
-                                      nodeShared = new NodeShared[IO, A] {
-                                        val random = _random
-                                        val securityProvider = _securityProvider
-                                        val kryoPool = _kryoPool
-                                        val jsonSerializer = _jsonSerializer
-                                        val metrics = _metrics
-                                        val supervisor = _supervisor
-                                        val hasherSelector = _hasherSelector
-                                        val globalStateProofSelector = _globalStateProofSelector
-                                        val currencyStateProofSelector = _currencyStateProofSelector
-
-                                        val keyPair = _keyPair
-                                        val seedlist = _seedlist
-                                        val generation = _generation
-                                        val trustRatings = _trustRatings
-
-                                        val sharedConfig = cfg
-
-                                        val hashSelect = _hashSelect
-
-                                        val sharedResources = res
-                                        val sharedP2PClient = p2pClient
-                                        val sharedQueues = queues
-                                        val sharedStorages = storages
-                                        val sharedServices = services
-                                        val sharedPrograms = programs
-                                        val sharedValidators = validators
-                                        val prioritySeedlist = _prioritySeedlist
-                                        val customAllowanceList = maybeCustomAllowanceList
-
-                                        val loggerBundle = _loggerBundle
-
-                                        def restartSignal = _restartSignal
-
-                                        def stopSignal = _stopSignal
-                                      }
-                                    } yield nodeShared
-                                  }
-
-                                def startup(method: A): Resource[IO, Unit] =
-                                  mkNodeShared.handleErrorWith { (e: Throwable) =>
-                                    (logger.error(e)(s"Unhandled exception during initialization.") >> IO
-                                      .raiseError[NodeShared[IO, A]](e)).asResource
-                                  }.flatMap { nodeShared =>
-                                    run(method, nodeShared).handleErrorWith { (e: Throwable) =>
-                                      (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                                      } yield nodeShared
                                     }
-                                  }
 
-                                _restartSignal.discrete.switchMap { restartMethod =>
-                                  Stream.eval(startup(restartMethod.getOrElse(method)).useForever)
-                                }.interruptWhen {
-                                  _stopSignal.discrete
-                                }.compile.drain.as(ExitCode.Success)
+                                  def startup(method: A): Resource[IO, Unit] =
+                                    mkNodeShared.handleErrorWith { (e: Throwable) =>
+                                      (logger.error(e)(s"Unhandled exception during initialization.") >> IO
+                                        .raiseError[NodeShared[IO, A]](e)).asResource
+                                    }.flatMap { nodeShared =>
+                                      run(method, nodeShared).handleErrorWith { (e: Throwable) =>
+                                        (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                                      }
+                                    }
+
+                                  _restartSignal.discrete.switchMap { restartMethod =>
+                                    Stream.eval(startup(restartMethod.getOrElse(method)).useForever)
+                                  }.interruptWhen {
+                                    _stopSignal.discrete
+                                  }.compile.drain.as(ExitCode.Success)
+                                }
                               }
                             }
-                          }
                         }
                       }
                     }
@@ -372,5 +377,36 @@ abstract class TessellationIOApp[A <: CliMethod](
         password.value.value.toCharArray,
         password.value.value.toCharArray
       )
+
+}
+
+object TessellationIOApp {
+
+  /** Recommended JVM max heap (megabytes) for a validator participating in global consensus.
+    *
+    * Matches the mainnet default documented in `docker/bin/docker-env-setup.sh` (-Xmx8192M = 8 GB).
+    *
+    * Under-provisioned heap causes long stop-the-world GC pauses -- observed on testnet: a validator with an undersized heap stalled for
+    * 21.5 seconds in a single GC event, backing up the consensus command queue and indirectly draining neighbor peers that were waiting on
+    * its HTTP responses. This constant is the threshold we log a warning at; it is not enforced (operators may still run under-provisioned
+    * nodes, they just see a loud startup message).
+    */
+  private val RecommendedHeapMb: Long = 8192L
+
+  /** Emit a startup log line describing the JVM max heap, and a loud error if it is below the recommended floor. Operators see this on
+    * every startup regardless of launcher (docker, systemd, bare JVM, etc.) because it reads `Runtime.getRuntime.maxMemory()` directly.
+    */
+  def logHeapCheck(logger: org.typelevel.log4cats.SelfAwareStructuredLogger[IO]): IO[Unit] =
+    IO(Runtime.getRuntime.maxMemory() / (1024L * 1024L)).flatMap { heapMaxMb =>
+      if (heapMaxMb < RecommendedHeapMb)
+        logger.error(
+          s"JVM max heap = ${heapMaxMb}MB, below recommended ${RecommendedHeapMb}MB. " +
+            s"Undersized heap causes long GC pauses which stall consensus and degrade cluster " +
+            s"throughput. Set JVM max heap to at least ${RecommendedHeapMb}m via your launcher " +
+            s"(e.g. -Xmx${RecommendedHeapMb}m, JAVA_OPTS, or jvm.options)."
+        )
+      else
+        logger.info(s"JVM max heap = ${heapMaxMb}MB (recommended >= ${RecommendedHeapMb}MB).")
+    }
 
 }

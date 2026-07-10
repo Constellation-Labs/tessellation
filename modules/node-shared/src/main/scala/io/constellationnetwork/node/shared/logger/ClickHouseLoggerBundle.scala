@@ -3,9 +3,11 @@ package io.constellationnetwork.node.shared.logger
 import cats.effect._
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.ClickHouseAppConfig
-import io.constellationnetwork.node.shared.logger.sink.clickhouse.{ClickHouseConfig, ClickHouseConsensusLogger, ClickHouseSink}
+import io.constellationnetwork.node.shared.logger.sink.clickhouse._
 import io.constellationnetwork.schema.peer.PeerId
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -25,7 +27,7 @@ object ClickHouseLoggerBundle {
   ): Resource[F, LoggerBundle[F]] =
     for {
       maybeConfig <- Resource.eval(
-        Async[F].fromEither(ClickHouseConfig.fromAppConfig(appConfig).leftMap(ConfigError))
+        Async[F].fromEither(ClickHouseConfig.makeLogConfig(appConfig).leftMap(ConfigError))
       )
       config <- maybeConfig match {
         case Some(c) => Resource.pure[F, ClickHouseConfig](c)
@@ -60,8 +62,30 @@ object ClickHouseLoggerBundle {
         config.maxQueueSize,
         ctxRef
       )
+
+      // Forward logback events (captured by ClickHouseLogbackAppender) into the
+      // same logs table via the general appLogger -> sink path.
+      _ <- startLogBridgeDrain[F](appLogger, config)
     } yield LoggerBundle(appLogger, consensusLogger)
 
+  // The logback appender enqueues into the process-wide LogBridge; this fiber is the only consumer.
+  // It writes through appLogger so bridged WARN/ERROR rows reuse the existing batching/retry sink
+  // and land in the same `logsTableName` table (log_type = WARN/ERROR).
+  private def startLogBridgeDrain[F[_]: Async](
+    appLogger: AppLogger[F],
+    config: ClickHouseConfig
+  ): Resource[F, Unit] = {
+    val step = for {
+      _ <- Temporal[F].sleep(config.flushInterval)
+      batch <- Async[F].delay(LogBridge.drain(config.batchSize))
+      _ <- batch.traverse_(entry => appLogger.log(entry.level, entry))
+    } yield ()
+
+    Spawn[F].background(step.foreverM).void
+  }
+
+  // 15s timeout matches ClickHouseSink.connectTimeout — guards against `getConnection`
+  // or DDL execution stalling indefinitely.
   private def initTables[F[_]: Async](
     ds: com.zaxxer.hikari.HikariDataSource,
     config: ClickHouseConfig
@@ -71,7 +95,7 @@ object ClickHouseLoggerBundle {
       try {
         val stmt = conn.createStatement()
         try {
-          stmt.execute(ClickHouseSink.createTableDDL(config.tableName))
+          stmt.execute(ClickHouseSink.createTableDDL(config.tableName, config.retentionPeriodInDays))
           stmt.execute(ClickHouseConsensusLogger.createTableDDL(s"${config.tableName}_consensus"))
           ()
         } finally stmt.close()

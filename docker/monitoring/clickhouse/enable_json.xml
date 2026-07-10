@@ -1,0 +1,7 @@
+<clickhouse>
+    <profiles>
+        <default>
+            <enable_json_type>1</enable_json_type>
+        </default>
+    </profiles>
+</clickhouse>

@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.domain.swap.ContextualAllowSpendValid
   ContextualAllowSpendValidationError,
   NonContextualValidationError
 }
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -38,7 +39,7 @@ object AllowSpendService {
 
     import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 
-    private def getBalance(si: SI, address: io.constellationnetwork.schema.address.Address): F[Balance] =
+    private def getBalance(si: SI, address: Address): F[Balance] =
       maybeMptStore match {
         case Some(mptStore) => mptStore.getBalance(address).map(_.getOrElse(Balance.empty))
         case None           => si.balances.getOrElse(address, Balance.empty).pure[F]

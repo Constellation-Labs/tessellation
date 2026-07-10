@@ -56,6 +56,14 @@ object LastSnapshotStorage {
             )
         }.flatten
 
+      def setForRecovery(snapshot: Hashed[S], state: SI): F[Unit] =
+        logger.info(s"[LastSnapshotStorage] Recovery reset at ordinal=${snapshot.ordinal}") >>
+          snapshotR.set((snapshot, state).some)
+
+      def clear: F[Unit] =
+        logger.info("[LastSnapshotStorage] Clearing for recovery download") >>
+          snapshotR.set(none)
+
       def get: F[Option[Hashed[S]]] =
         snapshotR.get.map(_.map(_._1))
 

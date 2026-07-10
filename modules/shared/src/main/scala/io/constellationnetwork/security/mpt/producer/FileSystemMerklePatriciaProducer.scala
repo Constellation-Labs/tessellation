@@ -92,6 +92,25 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
           logger.debug("[MPT] Returning cached trie (no pending changes)") >>
             trie.asRight[MerklePatriciaError].pure[F]
 
+        case (Some(_), _, false) =>
+          // Pending removes -> canonical from-scratch rebuild, NOT incremental.
+          //
+          // The incremental remove path (IncrementalTrieOps.removeMultiple) can leave a trie that
+          // is logically correct but STRUCTURALLY non-canonical for some branch/extension collapse
+          // shapes -- it produces a different root hash than a from-scratch build of the same final
+          // key-set. Inserts are unaffected (proven equal by MptInsertionOrderDeterminismSuite), so
+          // only the remove path is fragile here.
+          //
+          // This matters because recovery (MptStore.syncFull) rebuilds from scratch (fullBuild) and
+          // then validates its root against the incrementally-built, consensus-signed root. When an
+          // ordinal had removes, those two roots diverged -> StateProofValidator "StateProof Broken"
+          // -> the recovering node can never converge (observed: fork-recovery gl0-2 stuck in
+          // WaitingForDownload, InvalidStateProof at the same ordinal forever). Routing
+          // remove-bearing ordinals through the canonical fullBuild makes the signed root match what
+          // recovery reconstructs. Cost: a full rebuild on remove ordinals; insert-only ordinals keep
+          // the incremental fast path.
+          fullBuild(state)
+
         case (Some(trie), _, _) =>
           applyIncrementalUpdates(trie, pendingInserts, pendingRemoves)
 
@@ -340,6 +359,25 @@ class FileSystemMerklePatriciaProducer[F[_]: Async: Parallel: Hasher: JsonSerial
 
   override def applyCutoff(currentOrdinal: SnapshotOrdinal): F[Unit] =
     logger.info(s"[MPT] Applying cutoff at ordinal=$currentOrdinal") >> storage.applyCutoff(currentOrdinal)
+
+  override def savepoint: F[ProducerSavepoint[F]] =
+    for {
+      savedState <- stateRef.get
+      savedTrie <- trieRef.get
+      savedPendingInserts <- pendingInsertsRef.get
+      savedPendingRemoves <- pendingRemovesRef.get
+      savedRootHashCache <- rootHashCacheRef.get
+      savedLastBuiltOrdinal <- lastBuiltOrdinalRef.get
+    } yield
+      new ProducerSavepoint[F] {
+        def restore: F[Unit] =
+          stateRef.set(savedState) >>
+            trieRef.set(savedTrie) >>
+            pendingInsertsRef.set(savedPendingInserts) >>
+            pendingRemovesRef.set(savedPendingRemoves) >>
+            rootHashCacheRef.set(savedRootHashCache) >>
+            lastBuiltOrdinalRef.set(savedLastBuiltOrdinal)
+      }
 }
 
 object FileSystemMerklePatriciaProducer {

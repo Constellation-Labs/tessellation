@@ -13,6 +13,12 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
+/** Event types that can be included in a Global Snapshot.
+  *
+  * '''Ordering note''': These events do NOT have `Order` instances. They are collected into `Set[GlobalSnapshotEvent]` which has
+  * non-deterministic iteration order. When extracted from the Set for processing, they MUST be sorted at the point of consumption (e.g. via
+  * `Signed[T].order` on the wrapped values) to ensure deterministic acceptance across peers.
+  */
 object event {
 
   @derive(eqv, decoder, encoder, show)

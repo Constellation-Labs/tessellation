@@ -1,0 +1,2842 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 16,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "GL0 - Snapshot At-a-Glance",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_ordinal{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Ordinal",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_blocks_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Blocks (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_transactions_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Txns (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_sc_addresses_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "SC Addresses (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_sc_binaries_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "SC Binaries (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 1
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_rewards_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Rewards (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 1048576
+              },
+              {
+                "color": "red",
+                "value": 10485760
+              }
+            ]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_sc_binary_total_bytes{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "SC Binary Size (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_signature_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "{{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Signatures",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 80,
+      "panels": [],
+      "title": "GL0 - Metagraph Activity (Incoming SC Snapshots)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Time since each metagraph last submitted a state channel snapshot to GL0. Shows (now - last_activity_epoch) in human-readable duration. High values indicate a metagraph has stopped submitting.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "#EAB839",
+                "value": 300
+              },
+              {
+                "color": "orange",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 3600
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 81,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "time() - dag_global_snapshot_sc_address_last_activity_epoch{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "instant": true,
+          "legendFormat": "{{metagraph_address}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Last Activity per Metagraph (time since last submission)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM",
+            "renamePattern": "Alkimi (pnCuM)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7ChnhUF7uKgn8tXy45aj4zn9AFuhaZr8VXY43",
+            "renamePattern": "DOR (VXY43)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7fwxZJpqBpXeHqjomVkvUfC9NgZeQ11qjmB5e",
+            "renamePattern": "Lattice (jmB5e)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG6oJ5BgUbxjeSYKxgjT1YEUZ3QBS1MN5XkstfT",
+            "renamePattern": "Elpaca (kstfT)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG06z64ifT2HzXoHfMexRfrcnpYFEwMqjFiPKze",
+            "renamePattern": "Dextery (iPKze)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1",
+            "renamePattern": "Banano (rgaW1)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0S16WDgdAvh8VvroR6MWLdjmHYdzAF5S181xh",
+            "renamePattern": "USDC (181xh)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0rgR8sdn8u2YBYb5Ftjy4zmuqUX3v9XsE2j94",
+            "renamePattern": "Cyberlete (E2j94)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
+            "renamePattern": "PacaSwap (UUB2W)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0eQr94qUQSUhmYGNXt6CoBKWu5K6htvRMGC6M",
+            "renamePattern": "DeD (MGC6M)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG4QSG19fPchE5xVpEDA6Y1fE2F7XcSFXJvzvHo",
+            "renamePattern": "PriceOracle (vzvHo)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG55nwjLR1JhY4a2Wri6Cni2GWPL7Vupu5znnJi",
+            "renamePattern": "ValidVote (znnJi)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG1YTmwkBqCBrW8JLFquAmadozEqSWSxJ2mKKcT",
+            "renamePattern": "CNS (mKKcT)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG2LFocye7MvTN3V2bmt4kiJG7SxhMz6sbCaJdn",
+            "renamePattern": "StarVault (CaJdn)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "(DAG[A-Za-z0-9]{39})([A-Za-z0-9]{5})",
+            "renamePattern": "$2"
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Rate of SC binary submissions per metagraph. Shows how many binaries each metagraph submits over time. Use this to spot metagraphs that submit frequently vs rarely.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "submissions / interval",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 82,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "mean",
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_sc_address_submissions_count_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "{{metagraph_address}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Submission Rate by Metagraph",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Average submissions per hour for each metagraph over the last 24h. Indicates typical submission frequency. A metagraph submitting ~360/hr is submitting roughly every GL0 snapshot (~10s).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 1
+              },
+              {
+                "color": "super-light-green",
+                "value": 100
+              },
+              {
+                "color": "light-blue",
+                "value": 300
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "id": 83,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(dag_global_snapshot_sc_address_submissions_count_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[24h]) * 3600",
+          "instant": true,
+          "legendFormat": "{{metagraph_address}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Avg Submissions / Hour (last 24h)",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM",
+            "renamePattern": "Alkimi (pnCuM)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7ChnhUF7uKgn8tXy45aj4zn9AFuhaZr8VXY43",
+            "renamePattern": "DOR (VXY43)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7fwxZJpqBpXeHqjomVkvUfC9NgZeQ11qjmB5e",
+            "renamePattern": "Lattice (jmB5e)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG6oJ5BgUbxjeSYKxgjT1YEUZ3QBS1MN5XkstfT",
+            "renamePattern": "Elpaca (kstfT)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG06z64ifT2HzXoHfMexRfrcnpYFEwMqjFiPKze",
+            "renamePattern": "Dextery (iPKze)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1",
+            "renamePattern": "Banano (rgaW1)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0S16WDgdAvh8VvroR6MWLdjmHYdzAF5S181xh",
+            "renamePattern": "USDC (181xh)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0rgR8sdn8u2YBYb5Ftjy4zmuqUX3v9XsE2j94",
+            "renamePattern": "Cyberlete (E2j94)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
+            "renamePattern": "PacaSwap (UUB2W)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG0eQr94qUQSUhmYGNXt6CoBKWu5K6htvRMGC6M",
+            "renamePattern": "DeD (MGC6M)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG4QSG19fPchE5xVpEDA6Y1fE2F7XcSFXJvzvHo",
+            "renamePattern": "PriceOracle (vzvHo)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG55nwjLR1JhY4a2Wri6Cni2GWPL7Vupu5znnJi",
+            "renamePattern": "ValidVote (znnJi)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG1YTmwkBqCBrW8JLFquAmadozEqSWSxJ2mKKcT",
+            "renamePattern": "CNS (mKKcT)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "DAG2LFocye7MvTN3V2bmt4kiJG7SxhMz6sbCaJdn",
+            "renamePattern": "StarVault (CaJdn)"
+          }
+        },
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "(DAG[A-Za-z0-9]{39})([A-Za-z0-9]{5})",
+            "renamePattern": "$2"
+          }
+        }
+      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Total bytes submitted by each metagraph over the last 7 days. Shows which metagraphs are producing the most data volume.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": [],
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 84,
+      "options": {
+        "displayLabels": [
+          "name",
+          "value"
+        ],
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_sc_address_bytes_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[7d])",
+          "instant": true,
+          "legendFormat": "{{metagraph_address}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Weekly Bytes Volume by Metagraph (7d)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Total number of SC binary submissions per metagraph over the last 7 days. Shows which metagraphs are the most active.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 85,
+      "options": {
+        "displayLabels": [
+          "name",
+          "value"
+        ],
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.1.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_sc_address_submissions_count_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[7d])",
+          "instant": true,
+          "legendFormat": "{{metagraph_address}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Weekly Submissions Count by Metagraph (7d)",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 10,
+      "panels": [],
+      "title": "GL0 - Per-Snapshot Counts (Gauges)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "count",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_blocks_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "blocks {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_transactions_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "transactions {{ip}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Blocks & Transactions (per snapshot)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "count",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_sc_addresses_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "sc addresses {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_sc_binaries_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "sc binaries {{ip}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_rewards_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "rewards {{ip}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Incoming State Channel Data (per snapshot)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "bytes",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_sc_binary_total_bytes{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "sc binary total {{ip}}",
+          "refId": "A"
+        }
+      ],
+      "title": "SC Binary Total Size (per snapshot)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "count",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_rewards_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "rewards {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_delegate_rewards_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "delegate rewards {{ip}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_incremental_active_delegated_stakes_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "active delegated stakes {{ip}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Rewards & Delegation (per snapshot)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 20,
+      "panels": [],
+      "title": "GL0 - Cumulative Volumes (Counters)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "datum (raw)",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fee.*"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 44
+      },
+      "id": 50,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_transaction_amount_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "tx amount {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_transaction_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "tx fee {{ip}}",
+          "refId": "B"
+        }
+      ],
+      "title": "DAG Transaction Amounts & Fees (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "datum (raw)",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fee.*"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 44
+      },
+      "id": 51,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_rewards_amount_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "rewards amount {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_allow_spend_amount_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "allow spend amount {{ip}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_allow_spend_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "allow spend fee {{ip}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_token_lock_amount_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "token lock amount {{ip}}",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_token_lock_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "token lock fee {{ip}}",
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "increase(dag_global_snapshot_sc_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+          "legendFormat": "sc fee {{ip}}",
+          "refId": "F"
+        }
+      ],
+      "title": "Rewards, Swap & Lock Volumes (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "cumulative total (datum)",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*fee.*"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    10,
+                    10
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "id": 52,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_transaction_amount_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "tx amount total {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_transaction_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "tx fee total {{ip}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_rewards_amount_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "rewards total {{ip}}",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_sc_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "sc fee total {{ip}}",
+          "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_sc_binary_bytes_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "sc bytes total {{ip}}",
+          "refId": "E"
+        }
+      ],
+      "title": "Cumulative Totals (since node start)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisLabel": "count",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "off",
+            "steps": []
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "id": 53,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_blocks_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "blocks total {{ip}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_transactions_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "transactions total {{ip}}",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "dag_global_snapshot_state_channel_snapshots_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+          "legendFormat": "sc snapshots total {{ip}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Cumulative Counts (since node start)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 60
+      },
+      "id": 60,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "count",
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 61
+          },
+          "id": 61,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_sc_address_binaries_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "SC Binaries Count by Metagraph",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "bytes",
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              },
+              "unit": "decbytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 61
+          },
+          "id": 62,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_sc_address_binary_bytes{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "SC Binary Size by Metagraph",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "datum (raw)",
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 71
+          },
+          "id": 63,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "increase(dag_global_snapshot_sc_address_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[$__rate_interval])",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "SC Fee by Metagraph (rate)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 6,
+            "x": 12,
+            "y": 71
+          },
+          "id": 64,
+          "options": {
+            "displayLabels": [
+              "name",
+              "value"
+            ],
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "pieType": "donut",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_sc_address_fee_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "SC Fee Share (cumulative)",
+          "type": "piechart"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green"
+                  }
+                ]
+              },
+              "unit": "decbytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 6,
+            "x": 18,
+            "y": 71
+          },
+          "id": 65,
+          "options": {
+            "displayLabels": [
+              "name",
+              "value"
+            ],
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "pieType": "donut",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_sc_address_bytes_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "SC Binary Size Share (cumulative)",
+          "type": "piechart"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Time since each metagraph last submitted, shown as a timeseries. Useful to see patterns of inactivity over time.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "seconds since last submission",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 81
+          },
+          "id": 66,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "time() - dag_global_snapshot_sc_address_last_activity_epoch{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Last Activity Timeline (seconds since last submission)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Average bytes per submission for each metagraph. Computed as total bytes / total submissions over the last hour.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "bytes / submission",
+                "drawStyle": "line",
+                "fillOpacity": 15,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              },
+              "unit": "decbytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 81
+          },
+          "id": 67,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "increase(dag_global_snapshot_sc_address_bytes_cumulative_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[1h]) / clamp_min(increase(dag_global_snapshot_sc_address_submissions_count_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[1h]), 1)",
+              "legendFormat": "{{metagraph_address}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Avg Bytes per Submission (1h window)",
+          "type": "timeseries"
+        }
+      ],
+      "title": "GL0 - Per-Metagraph Breakdown (Incoming SC Snapshots)",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 61
+      },
+      "id": 70,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "count",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 62
+          },
+          "id": 71,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_allow_spend_blocks_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "allow spend blocks {{ip}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_allow_spend_tx_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "allow spend txns {{ip}}",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_token_lock_blocks_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "token lock blocks {{ip}}",
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_token_lock_tx_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "token lock txns {{ip}}",
+              "refId": "D"
+            }
+          ],
+          "title": "Allow Spend & Token Lock Blocks",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "count",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 62
+          },
+          "id": 72,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_spend_actions_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "spend actions {{ip}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_update_node_params_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "update node params {{ip}}",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_artifacts_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "artifacts {{ip}}",
+              "refId": "C"
+            }
+          ],
+          "title": "Spend Actions, Node Params & Artifacts",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "count",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 70
+          },
+          "id": 73,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_active_node_collaterals_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "active node collaterals {{ip}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_node_collateral_withdrawals_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "node collateral withdrawals {{ip}}",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_incremental_delegated_stakes_withdrawals_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}",
+              "legendFormat": "delegated stakes withdrawals {{ip}}",
+              "refId": "C"
+            }
+          ],
+          "title": "Node Collaterals & Delegated Stakes",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisLabel": "count",
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "off",
+                "steps": []
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 70
+          },
+          "id": 74,
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_tips_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\", tip_type=\"active\"}",
+              "legendFormat": "active tips {{ip}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "dag_global_snapshot_tips_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\", tip_type=\"deprecated\"}",
+              "legendFormat": "deprecated tips {{ip}}",
+              "refId": "B"
+            }
+          ],
+          "title": "Tips (Active vs Deprecated)",
+          "type": "timeseries"
+        }
+      ],
+      "title": "GL0 - Extended Fields",
+      "type": "row"
+    }
+  ],
+  "preload": false,
+  "refresh": "10s",
+  "schemaVersion": 41,
+  "tags": [
+    "tessellation",
+    "debug",
+    "gl0",
+    "incremental-snapshots",
+    "metagraph"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(application)",
+        "includeAll": true,
+        "label": "Application",
+        "name": "application",
+        "options": [],
+        "query": {
+          "query": "label_values(application)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_uptime_seconds{application=~\"$application\"}, ip)",
+        "includeAll": true,
+        "label": "IP",
+        "name": "ip",
+        "options": [],
+        "query": {
+          "query": "label_values(process_uptime_seconds{application=~\"$application\"}, ip)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 3,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(process_uptime_seconds{application=~\"$application\", ip=~\"$ip\"}, peer_id)",
+        "includeAll": true,
+        "label": "PeerId",
+        "name": "peer_id",
+        "options": [],
+        "query": {
+          "query": "label_values(process_uptime_seconds{application=~\"$application\", ip=~\"$ip\"}, peer_id)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Tessellation Debug - GL0 Incremental Snapshots",
+  "uid": "tess-debug-incremental-snapshots",
+  "version": 1
+}

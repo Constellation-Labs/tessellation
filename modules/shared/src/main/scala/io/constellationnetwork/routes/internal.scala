@@ -70,6 +70,8 @@ object internal {
       :: Equal["/metagraph"]
       :: Equal["/delegated-stakes"]
       :: Equal["/node-collateral"]
+      :: Equal["/events"]
+      :: Equal["/mempool"]
       :: HNil
   ]
 

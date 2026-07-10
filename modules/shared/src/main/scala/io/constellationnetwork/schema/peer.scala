@@ -119,6 +119,38 @@ object peer {
     def isResponsive: Boolean = value.responsiveness === Responsive
   }
 
+  /** Per-peer committee membership status. JSON wire form is the lowercase label ("active"/"chronic"/"probation"); preserved verbatim
+    * across the type-tightening from `String` so dashboards and downstream consumers continue working unchanged.
+    *
+    * Semantics:
+    *   - `Active` — passing chronic threshold AND not on probation
+    *   - `Chronic` — peerQuality ratio below `minParticipationRatio` after `minObservationHistoryFloor` observations
+    *   - `Probation` — entry in `readmissionCountdown`, awaiting an AdmissionCertificate
+    */
+  sealed abstract class PeerCommitteeStatus(val label: String)
+  object PeerCommitteeStatus {
+    case object Active extends PeerCommitteeStatus("active")
+    case object Chronic extends PeerCommitteeStatus("chronic")
+    case object Probation extends PeerCommitteeStatus("probation")
+
+    val all: Set[PeerCommitteeStatus] = Set(Active, Chronic, Probation)
+
+    implicit val encoder: Encoder[PeerCommitteeStatus] = Encoder[String].contramap(_.label)
+    implicit val decoder: Decoder[PeerCommitteeStatus] = Decoder[String].emap { s =>
+      all.find(_.label == s).toRight(s"unknown peerCommitteeStatus: $s")
+    }
+    implicit val show: Show[PeerCommitteeStatus] = Show.show(_.label)
+  }
+
+  @derive(encoder, decoder, show)
+  case class PeerCommitteeView(
+    status: PeerCommitteeStatus,
+    completed: Int,
+    participated: Int,
+    ratio: Double,
+    probationRoundsRemaining: Option[Int]
+  )
+
   @derive(encoder, decoder, show)
   case class PeerInfo(
     id: PeerId,
@@ -128,7 +160,11 @@ object peer {
     clusterSession: String,
     session: String,
     state: NodeState,
-    jar: Hash
+    jar: Hash,
+    // Optional per-peer committee view. Only populated by the dag-l0 `/cluster/info` endpoint
+    // (other modules omit it, leaving `None`). Backwards-compat additive field — circe leniently
+    // ignores unknown fields, so old clients with old PeerInfo decoders still parse this response.
+    peerCommittee: Option[PeerCommitteeView] = None
   )
 
   object PeerInfo {
@@ -141,7 +177,8 @@ object peer {
         peer.clusterSession.toString,
         peer.session.value.toString,
         peer.state,
-        peer.jar
+        peer.jar,
+        peerCommittee = None
       )
   }
 
@@ -180,7 +217,8 @@ object peer {
     jar: Hash,
     environment: AppEnvironment,
     allowanceList: Hash,
-    metagraphId: Option[Address]
+    metagraphId: Option[Address],
+    consensusConfigHash: Option[Hash] = None
   )
 
   @derive(eqv, decoder, encoder, show)

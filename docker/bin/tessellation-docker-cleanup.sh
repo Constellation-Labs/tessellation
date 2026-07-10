@@ -16,13 +16,16 @@ cleanup_container() {
 }
 
 cleanup() {
-    for i in 0 1 2; do
+    for i in $(seq 0 9); do
         cleanup_container gl0-$i gl0-data-$i &
         cleanup_container gl1-$i gl1-data-$i &
         cleanup_container dl1-$i dl1-data-$i &
         cleanup_container ml0-$i ml0-data-$i &
         cleanup_container cl1-$i cl1-data-$i &
     done
+    cleanup_container snapshot-streaming-postgres ss-pgdata &
+    cleanup_container snapshot-streaming "" &
+    rm -rf "$(dirname "$0")/../snapshot-streaming/data" 2>/dev/null || true &
     LAST_PID=$!
     wait $LAST_PID
 }

@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  - job_name: tessellation-gl0
+    http_sd_configs:
+      - url: http://${NODE_IP_0}:9000/targets
+      - url: http://${NODE_IP_1}:9000/targets
+      - url: http://${NODE_IP_2}:9000/targets
+    relabel_configs:
+      - target_label: layer
+        replacement: gl0_mainnet
+
+  - job_name: tessellation-dagl1
+    http_sd_configs:
+      - url: http://${NODE_IP_0}:9010/targets
+      - url: http://${NODE_IP_1}:9010/targets
+      - url: http://${NODE_IP_2}:9010/targets
+    relabel_configs:
+      - target_label: layer
+        replacement: dagl1_mainnet
+
+  # Per-process CPU/memory/IO metrics from ncabatoff/process-exporter
+  # deployed on each tessellation node by deploy-monitoring.sh.
+  - job_name: process-exporter
+    static_configs:
+      - targets:
+          - ${NODE_IP_0}:9256
+          - ${NODE_IP_1}:9256
+          - ${NODE_IP_2}:9256
+
+  # Per-process network bytes (eBPF) from network_process_exporter.py
+  # deployed on each tessellation node by deploy-monitoring.sh.
+  - job_name: network-process-exporter
+    static_configs:
+      - targets:
+          - ${NODE_IP_0}:9435
+          - ${NODE_IP_1}:9435
+          - ${NODE_IP_2}:9435

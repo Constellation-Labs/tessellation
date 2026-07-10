@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.logger.sink
 
+import cats.Applicative
 import cats.effect._
 import cats.syntax.all._
 
@@ -8,7 +9,10 @@ import io.constellationnetwork.schema.peer.PeerId
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 
-/** Simple consensus logger that writes to Slf4j. Used as fallback when ClickHouse is not configured.
+/** Simple consensus logger that writes to Slf4j.
+  *
+  * Collecting-phase methods are intentionally no-ops to avoid log spam. The round monitor in ConsensusRoundRunner provides periodic summary
+  * logging with declaration counts, missing peers, and stall detection instead.
   */
 object Slf4jConsensusLogger {
 
@@ -18,15 +22,14 @@ object Slf4jConsensusLogger {
   ): ConsensusLogger[F] =
     new ConsensusLogger[F] {
 
-      private def log(event: String, facilitators: List[PeerId]): F[Unit] =
+      def collectingFacilities(fs: List[PeerId]): F[Unit] = Applicative[F].unit
+      def collectingProposals(fs: List[PeerId]): F[Unit] = Applicative[F].unit
+      def collectingSignatures(fs: List[PeerId]): F[Unit] = Applicative[F].unit
+
+      def roundFinished(fs: List[PeerId]): F[Unit] =
         ctxRef.get.flatMap { ctx =>
           val ordStr = ctx.ordinal.fold("unknown")(_.value.value.toString)
-          logger.info(s"[CONSENSUS] $event ordinal=$ordStr facilitators=${facilitators.size}")
+          logger.info(s"[CONSENSUS] Round finished ordinal=$ordStr facilitators=${fs.size}")
         }
-
-      def collectingFacilities(fs: List[PeerId]): F[Unit] = log("Collecting facilities", fs)
-      def collectingProposals(fs: List[PeerId]): F[Unit] = log("Collecting proposals", fs)
-      def collectingSignatures(fs: List[PeerId]): F[Unit] = log("Collecting signatures", fs)
-      def roundFinished(fs: List[PeerId]): F[Unit] = log("Round finished", fs)
     }
 }

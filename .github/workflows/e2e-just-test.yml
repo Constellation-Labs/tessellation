@@ -11,14 +11,22 @@ on:
         description: 'Enable debug logging (sets BASH_DEBUG_MODE=true)'
         required: false
         default: false
+      snapshot_streaming_branch:
+        type: string
+        description: 'snapshot-streaming branch to build from'
+        required: false
+        default: 'release/mainnet'
+      block_explorer_branch:
+        type: string
+        description: 'block_explorer branch for DB migrations'
+        required: false
+        default: 'increase_delegated_stakes'
 
 jobs:
-  e2e-just-test:
-    runs-on: ubuntu-latest-m
-    timeout-minutes: 40
-
-    env:
-      BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
+  build:
+    name: Build JARs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -31,21 +39,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-
-      - name: Setup Node.js 18
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Installing node dependencies
-        shell: bash
-        run: |
-          npm i @stardust-collective/dag4@v2.8.0 
-          npm i js-sha256
-          npm i axios
-          npm i brotli
-          npm i zod
-          npm i elliptic
 
       - name: Cache SBT dependencies
         uses: actions/cache@v4
@@ -72,29 +65,162 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sbt
 
+      - name: Build all JARs
+        run: just build --use-test-metagraph --num-gl0=3 --snapshot-streaming-branch=${{ inputs.snapshot_streaming_branch || 'release/testnet' }} --block-explorer-branch=${{ inputs.block_explorer_branch || 'increase_delegated_stakes' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_STREAMING_REPO: https://github.com/Constellation-Labs/snapshot-streaming.git
+
+      - name: Upload JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+          retention-days: 1
+
+      - name: Upload snapshot-streaming JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/snapshot-streaming.jar
+          retention-days: 1
+
+  e2e-test:
+    name: E2E - ${{ matrix.test-group.name }}
+    needs: build
+    runs-on: ${{ matrix.test-group.runner || 'Ubuntu-22-64-core' }}
+    timeout-minutes: ${{ matrix.test-group.timeout || 30 }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test-group:
+          - { name: dag-cluster,            tests: "dag-cluster" }
+          - { name: delegated-staking,      tests: "delegated-staking" }
+          - { name: token-lock-replacement, tests: "token-lock-replacement" }
+          # TODO: re-enable once PR #1485 is merged
+          # - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
+          - { name: currency,               tests: "currency" }
+          - { name: rewards,                tests: "rewards" }
+          - { name: token-locks,            tests: "token-locks" }
+          - { name: allow-spends,           tests: "allow-spends", timeout: 45 }
+          - { name: spend,                  tests: "spend", timeout: 45 }
+          - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
+
+    env:
+      BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Consensus timing overrides for CI — give slow runners more breathing room.
+      # These flow through docker-compose.test.yaml → container env → HOCON ${?VAR}.
+      CL_DECLARATION_TIMEOUT: "60 seconds"
+      CL_RE_STALL_TIMEOUT: "25 seconds"
+      # gl0/ml0 snapshot cadence. Lowered from 43s so global L0 keeps up with the allow-spends suite's
+      # transaction flood: at 43s the per-address tx chain (key1) outran gl0's committed tip by far more than
+      # maxParentOrdinalGap (32), so late transactions (e.g. the DoubleUse currencyId funding) were rejected
+      # ParentOrdinalGapTooLarge and never committed. Faster cadence keeps the gap small.
+      CL_TIME_TRIGGER_INTERVAL: "15 seconds"
+      CL_MAX_ROUND_DURATION: "5 minutes"
+      # Cadence when there ARE pending events (the flood): lowered so gl0 drains the chain faster without
+      # spawning empty rounds when idle.
+      CL_EVENT_TRIGGER_COOLDOWN: "5 seconds"
+      CL_QUORUM_THRESHOLD_FRACTION: "1.0"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Installing node dependencies
+        shell: bash
+        run: |
+          npm i @stardust-collective/dag4@v2.8.0
+          npm i js-sha256
+          npm i axios
+          npm i brotli
+          npm i zod
+          npm i elliptic
+
+      - name: Install just
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Install sbt
+        run: |
+          echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo gpg --dearmor -o /usr/share/keyrings/sbt-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/sbt-archive-keyring.gpg] https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+          sudo apt-get update
+          sudo apt-get install -y sbt
+
+      - name: Download pre-built JARs
+        uses: actions/download-artifact@v4
+        with:
+          name: tessellation-jars
+          path: docker/jars/
+
+      - name: Download snapshot-streaming JAR
+        if: matrix.test-group.name == 'snapshot-streaming'
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-streaming-jar
+          path: docker/snapshot-streaming/
+
       - name: Create runner-logs directory
         run: mkdir -p runner-logs
 
       - name: Run E2E tests
-        run: just test
+        run: just test --skip-assembly --test=${{ matrix.test-group.tests }} ${{ matrix.test-group.extra-args || '' }} ${{ matrix.test-group.name == 'snapshot-streaming' && format('--snapshot-streaming-branch={0} --block-explorer-branch={1}', inputs.snapshot_streaming_branch || 'release/testnet', inputs.block_explorer_branch || 'increase_delegated_stakes') || '' }}
 
       - name: Collect Docker container logs
         if: always()
         run: |
           echo "=== Collecting Docker Container Logs ==="
+          mkdir -p runner-logs
 
           # Container status
           docker ps -a > runner-logs/container-status.txt 2>&1
 
-          # GL0 node logs
-          for i in 0 1 2; do
-            docker logs "gl0-$i" > "runner-logs/gl0-$i.log" 2>&1 || echo "No gl0-$i container"
+          # GL0 node logs (up to 9 nodes)
+          for i in $(seq 0 9); do
+            docker logs "gl0-$i" > "runner-logs/gl0-$i.log" 2>&1 || true
           done
 
           # GL1 node logs
-          for i in 0 1 2; do
-            docker logs "gl1-$i" > "runner-logs/gl1-$i.log" 2>&1 || echo "No gl1-$i container"
+          for i in $(seq 0 9); do
+            docker logs "gl1-$i" > "runner-logs/gl1-$i.log" 2>&1 || true
           done
+
+          # ML0 node logs
+          for i in 0 1 2; do
+            docker logs "ml0-$i" > "runner-logs/ml0-$i.log" 2>&1 || echo "No ml0-$i container"
+          done
+
+          # CL1 node logs
+          for i in 0 1 2; do
+            docker logs "cl1-$i" > "runner-logs/cl1-$i.log" 2>&1 || echo "No cl1-$i container"
+          done
+
+          # DL1 node logs
+          for i in 0 1 2; do
+            docker logs "dl1-$i" > "runner-logs/dl1-$i.log" 2>&1 || echo "No dl1-$i container"
+          done
+
+          # Snapshot-streaming logs
+          docker logs "snapshot-streaming" > "runner-logs/snapshot-streaming.log" 2>&1 || echo "No snapshot-streaming container"
+          docker logs "snapshot-streaming-postgres" > "runner-logs/snapshot-streaming-postgres.log" 2>&1 || echo "No snapshot-streaming-postgres container"
 
           # Collect node log directories (mounted volumes)
           for i in 0 1 2; do
@@ -106,7 +232,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-just-test-logs-${{ github.run_number }}
+          name: e2e-${{ matrix.test-group.name }}-logs-${{ github.run_number }}
           path: runner-logs/
           if-no-files-found: warn
           retention-days: 7

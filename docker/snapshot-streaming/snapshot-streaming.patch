@@ -1,0 +1,23 @@
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+index 9bc76dc..2e0472c 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+@@ -107,7 +107,7 @@ object TessellationServices {
+                 validationErrorStorage
+               )
+             val currencySnapshotValidator = CurrencySnapshotValidator
+-              .make[F](tessellation3Migration, currencySnapshotCreator, SignedValidator.make[F], None, None)
++              .make[F](currencySnapshotCreator, SignedValidator.make[F], None, None)
+             CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+           }
+         }
+@@ -125,7 +125,8 @@ object TessellationServices {
+             currencySnapshotContextFns,
+             feeCalculator,
+             mptStore,
+-            configuration.fieldsAddedOrdinals.scFeeBalanceFromContext(env)
++            configuration.fieldsAddedOrdinals,
++            env
+           )
+         val priceOracle = configuration.priceOracle.getOrElse(env, PriceOracleConfig.default)
+         val globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F] = GlobalSnapshotAcceptanceManager.make(

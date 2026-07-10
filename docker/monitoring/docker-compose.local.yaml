@@ -1,0 +1,75 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.12
+    container_name: clickhouse
+    restart: unless-stopped
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=clickhouse
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./clickhouse/enable_json.xml:/etc/clickhouse-server/users.d/enable_json.xml:ro
+    networks:
+      tessellation_common:
+        ipv4_address: 172.32.0.200
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--password", "clickhouse", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.local.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yaml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=0'
+      - '--web.listen-address=:9090'
+    ports:
+      - "9090:9090"
+    networks:
+      tessellation_common:
+        ipv4_address: 172.32.0.201
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=UTC
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+      - GF_SERVER_HTTP_PORT=3000
+    volumes:
+      - ./grafana/provisioning/datasources/datasources.local.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      tessellation_common:
+        ipv4_address: 172.32.0.202
+
+volumes:
+  clickhouse-data:
+    name: monitoring-clickhouse-data
+  prometheus-data:
+    name: monitoring-prometheus-data
+  grafana-data:
+    name: monitoring-grafana-data
+
+networks:
+  tessellation_common:
+    external: true

@@ -1,5 +1,77 @@
 services:
   gl0:
+    # NET_ADMIN required for tc-based network isolation in fork recovery tests
+    cap_add:
+      - NET_ADMIN
+    environment:
+      # Test-only JVM thread-pool cap. Five sibling JVMs share the host (laptop or
+      # CI runner). Without this cap each JVM sees the full host CPU count and
+      # spins up matching FJP / Cats-Effect / GC pools, which thrash the scheduler
+      # under contention and produce overlapping multi-second pauses (the wedge
+      # profile observed in the 2026-05-05 fork-recovery flake). Production
+      # validators run alone on dedicated hardware, so this cap is intentionally
+      # NOT in entrypoint.sh -- it lives here, scoped to the multi-node test
+      # topology only. Appended to entrypoint's defaults via env-merge.
+      - CL_DOCKER_JAVA_OPTS=${CL_DOCKER_JAVA_OPTS:-} -XX:ActiveProcessorCount=8
+      # Consensus timing overrides — HOCON ${?VAR} in conf files reads these.
+      # Defaults baked in so local `just test` runs don't require shell exports;
+      # CI / shell can still override by setting the var explicitly.
+      # HOCON ${?VAR} fails to parse empty strings — never pass empty values.
+      - CL_DECLARATION_TIMEOUT=${CL_DECLARATION_TIMEOUT:-90 seconds}
+      - CL_RE_STALL_TIMEOUT=${CL_RE_STALL_TIMEOUT:-40 seconds}
+      # Bare-form pass-through: only forwarded when explicitly set in shell.
+      - CL_TIME_TRIGGER_INTERVAL
+      - CL_MAX_ROUND_DURATION
+      - CL_EVENT_TRIGGER_COOLDOWN
+      # Chronic-non-signer thresholds — disabled for fork-recovery test.
+      #
+      # Background: the chronic-non-signer filter classifies a peer as silent if
+      # `participated >= floor` AND `(completed/participated) < ratio`. `participated`
+      # counts FACILITATOR-INCLUSION rounds, not wall-clock time. In production
+      # (~25-30s/round) the floor=30 default = ~12-15 min of cluster activity. But
+      # in local E2E (~10-12s/round, no real network latency) floor=30 fires after
+      # ~6 minutes — well inside Phase 1 stabilization.
+      #
+      # The 2026-04-29 local E2E run reproduced this: gl0-4 had a slow JVM warmup +
+      # fork-divergence cycle at ord 4, accumulated participated=30 with completed=1,
+      # got chronic-classified at ord 34, committee shrank to 4. Then gl0-0 itself
+      # entered recovery, returned with ratio=34/69=0.493 (0.7pp under threshold),
+      # got self-classified at ord 71, committee shrank to 3, deadlocked.
+      #
+      # The fork-recovery test verifies cluster recovery from network ISOLATION,
+      # not chronic classification. Setting the floor very high keeps chronic
+      # dormant for the entire test window so the test exercises only its own
+      # subject. Chronic-classification dynamics belong in a dedicated test suite.
+      #
+      # Floor 10000 = effectively infinite for any conceivable test runtime
+      # (cluster would need to run 10000 facilitator-rounds = >24h at local cadence).
+      - CL_MIN_OBSERVATION_HISTORY_FLOOR=${CL_MIN_OBSERVATION_HISTORY_FLOOR:-10000}
+      # Active-set recent-signer window: dev default is 3, but on a loaded multi-JVM box the round
+      # cadence stretches (signatures arrive late), so a window of 3 demotes slow-but-healthy peers
+      # from the active facilitator set every few rounds -> the committee "breathes" 3<->5 and the
+      # fork-recovery pre-isolation gate (spread<=1, fac stable, 3 consecutive rounds) never opens.
+      # Widen to testnet's value (10), which exists for the same slow-signing reason on a latent network.
+      - CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW=${CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW:-10}
+      # v9 (2026-04-29) bandwidth limiter is dormant in test by design — the test cluster
+      # snapshot bodies are tiny (kB-MB) and run at low cadence, nowhere near the 300 MB/min
+      # default cap. Setting explicitly to 0 here makes the middleware unambiguously off
+      # so any future E2E debug can rule it out without grep-checking logs. Operators can
+      # still set CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW>0 via shell to exercise it.
+      - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_WINDOW:-0}
+      # Per-IP request-count limiter: same rationale as the bandwidth limiter above.
+      # E2E harnesses and the snapshot-streaming consumer poll public snapshot routes
+      # from a single host IP at sub-second intervals, which trips the production 10/60s
+      # cap immediately. 0 disables the middleware (predicate at SnapshotRoutes.scala:302).
+      - CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW:-0}
+      # Concurrency cap (ConcurrencyLimitMiddleware) returns 503 INDEPENDENTLY of the per-IP
+      # limiters above -- application.conf notes "concurrency cap still applies" even when the
+      # per-IP limits are 0. The E2E harness, the snapshot-streaming consumer, and recovering
+      # peers poll/serve the public snapshot routes heavily enough to saturate the production cap
+      # of 20, producing transient 503s mid-test (e.g. "Failed to fetch snapshot ordinal: 503").
+      # Raise it to effectively-unlimited for the multi-node test topology; production keeps 20.
+      - CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC=${CL_SNAPSHOT_MAX_CONCURRENT_PUBLIC:-100000}
+      # Long-window per-IP bandwidth limiter: same test rationale as the per-window limiter above; off.
+      - CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW=${CL_SNAPSHOT_PER_IP_MAX_BYTES_PER_LONG_WINDOW:-0}
     # merge in an extra network just for tests
     networks:
       tessellation_common:

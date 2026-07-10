@@ -218,10 +218,13 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
         for {
           dataBlockSize: Int <- dataBlocks.lastOption.map(a => JsonSerializer[IO].serialize(a).map(_.length)).getOrElse(0.pure[IO])
           blockSize: Int <- blocks.lastOption.map(a => JsonSerializer[IO].serialize(a).map(_.length)).getOrElse(0.pure[IO])
+          tokenLockBlockSize: Int <- tokenLockBlocks.lastOption
+            .map(a => JsonSerializer[IO].serialize(a).map(_.length))
+            .getOrElse(0.pure[IO])
           result <- cutter.cut(SnapshotOrdinal.MinValue, blocks, tokenLockBlocks, dataBlocks, messages)
           expected = result match {
             case Some((remaining, rejected)) =>
-              if (dataBlockSize > blockSize)
+              if (dataBlockSize > blockSize && dataBlockSize > tokenLockBlockSize)
                 DataApplicationBlockEvent(dataBlocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected && remaining === (dataBlocks
                   .map(DataApplicationBlockEvent(_))
                   .widen[CurrencySnapshotEvent]
@@ -229,7 +232,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
                   .map(CurrencyMessageEvent(_))
                   .widen[CurrencySnapshotEvent])
                   .filterNot(_ === rejected)
-              else if (dataBlockSize < blockSize)
+              else if (blockSize > dataBlockSize && blockSize > tokenLockBlockSize)
                 BlockEvent(blocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected && remaining === (blocks
                   .map(BlockEvent(_))
                   .widen[CurrencySnapshotEvent]
@@ -237,7 +240,15 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
                   .map(CurrencyMessageEvent(_))
                   .widen[CurrencySnapshotEvent])
                   .filterNot(_ === rejected)
-              else true
+              else if (tokenLockBlockSize > blockSize && tokenLockBlockSize > dataBlockSize)
+                TokenLockBlockEvent(tokenLockBlocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected && remaining === (tokenLockBlocks
+                  .map(TokenLockBlockEvent(_))
+                  .widen[CurrencySnapshotEvent]
+                  .toSet ++ messages
+                  .map(CurrencyMessageEvent(_))
+                  .widen[CurrencySnapshotEvent])
+                  .filterNot(_ === rejected)
+              else true // tie — cutter picks randomly, we just verify it returned something
             case None => false
           }
         } yield expect.same(true, expected)

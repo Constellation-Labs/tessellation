@@ -1,0 +1,124 @@
+// Consensus Finite State Machine
+// Reflects ConsensusFSM.scala: parameterized ConsensusCommand[+Key,+Artifact,+Ctx,+Outcome],
+// always-handled assembly checks, and the BUSY-state recovery escape hatch.
+//
+// Render with: dot -Tpng consensus-fsm.dot -o consensus-fsm.png
+
+digraph ConsensusFSM {
+    rankdir=TB;
+    compound=true;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=11];
+    edge [fontname="Helvetica", fontsize=9];
+    splines=true;
+    nodesep=0.6;
+    ranksep=0.8;
+
+    // Title
+    labelloc="t";
+    label="Consensus State Machine";
+    fontsize=16;
+
+    // ========================================
+    // HIGH-LEVEL FSM STATES
+    // ========================================
+
+    UNINITIALIZED [shape=ellipse, style=filled, fillcolor=lightgray,
+                   label="Uninitialized"];
+
+    IDLE [shape=ellipse, style=filled, fillcolor=lightgreen,
+          label="IDLE\n(isRunning=false)"];
+
+    BUSY [shape=ellipse, style=filled, fillcolor=lightyellow,
+          label="BUSY\n(isRunning=true)"];
+
+    // ========================================
+    // CONSENSUS ROUND PHASES (Status)
+    // ========================================
+
+    subgraph cluster_round {
+        label="Consensus Round Phases";
+        style=rounded;
+        color=dodgerblue;
+        bgcolor=aliceblue;
+
+        CollectingFacilities [shape=box, style="rounded,filled", fillcolor=lightblue,
+            label="CollectingFacilities\nGather peer facility info"];
+
+        CollectingProposals [shape=box, style="rounded,filled", fillcolor=lightblue,
+            label="CollectingProposals\nGather artifact proposals"];
+
+        CollectingSignatures [shape=box, style="rounded,filled", fillcolor=lightblue,
+            label="CollectingSignatures\nGather majority signatures"];
+
+        CollectingBinarySignatures [shape=box, style="rounded,filled", fillcolor=lightblue,
+            label="CollectingBinarySignatures\nGather binary signatures"];
+
+        Finished [shape=box, style="rounded,filled", fillcolor=palegreen,
+            label="Finished\nOutcome ready"];
+
+        // Phase transitions
+        CollectingFacilities -> CollectingProposals [label="majority facilities"];
+        CollectingProposals -> CollectingSignatures [label="majority proposals"];
+        CollectingSignatures -> CollectingBinarySignatures [label="majority signatures"];
+        CollectingBinarySignatures -> Finished [label="binary signatures"];
+    }
+
+    // ========================================
+    // TRIGGERS
+    // ========================================
+
+    TimeTrigger [shape=diamond, style=filled, fillcolor=khaki,
+                 label="TimeTrigger"];
+    EventTrigger [shape=diamond, style=filled, fillcolor=khaki,
+                  label="EventTrigger"];
+
+    // ========================================
+    // PENDING TRIGGERS (while BUSY)
+    // ========================================
+
+    PendingTriggers [shape=box, style="rounded,filled", fillcolor=moccasin,
+                     label="PendingTriggers\n(queue for next round)"];
+
+    // ========================================
+    // TRANSITIONS
+    // ========================================
+
+    // Initialization
+    UNINITIALIZED -> IDLE [label="InitializeFromDownload\nor InitializeFromRollback"];
+
+    // Triggers to IDLE
+    TimeTrigger -> IDLE [label="TimeTick", color=darkgreen];
+    EventTrigger -> IDLE [label="FacilitateByEvent", color=darkgreen];
+
+    // IDLE -> BUSY (start round)
+    IDLE -> BUSY [label="StartRound(trigger)", color=darkgreen, penwidth=2];
+
+    // BUSY starts the round phases
+    BUSY -> CollectingFacilities [label="runRound()", style=dashed, color=blue];
+
+    // Round completion
+    Finished -> IDLE [label="ConsensusFinished", color=darkgreen, penwidth=2];
+
+    // Pending triggers while BUSY
+    TimeTrigger -> PendingTriggers [label="while BUSY", style=dashed, color=orange];
+    EventTrigger -> PendingTriggers [label="while BUSY", style=dashed, color=orange];
+
+    // After round completes, check pending
+    PendingTriggers -> IDLE [label="pullNext()\n-> StartRound", style=dashed, color=purple];
+
+    // Always-handled commands (independent of IDLE/BUSY).
+    // RumorReceived stores rumor; CheckUpdate / CheckXxxAssembly drive state advance.
+    AlwaysHandled [shape=parallelogram, style=filled, fillcolor=lavender,
+                   label="Always handled\n(IDLE or BUSY)\nRumorReceived\nCheckUpdate(key)\nCheckViewChangeAssembly(key)\nCheckEvictionAssembly(key,target)\nCheckAdmissionAssembly(key,target)\nPeerObserved(peer)\nInternalScheduled(inner)"];
+
+    AlwaysHandled -> BUSY [label="dispatch", style=dashed, color=gray50];
+    AlwaysHandled -> IDLE [label="dispatch", style=dashed, color=gray50];
+
+    // Stale-round recovery escape hatch: InitializeFromDownload arrives while BUSY in Observing.
+    BUSY -> IDLE [label="InitializeFromDownload\n+ NodeState=Observing\n→ force completeRound", style=dashed, color=red];
+
+    // Layout hints
+    { rank=same; TimeTrigger; EventTrigger; UNINITIALIZED; }
+    { rank=same; IDLE; BUSY; }
+}

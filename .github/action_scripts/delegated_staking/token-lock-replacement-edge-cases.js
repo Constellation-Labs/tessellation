@@ -124,6 +124,38 @@ const createTokenLockExpectError = async (account, urls, lockAmount, replaceRef,
 }
 
 /**
+ * Create a REPLACEMENT token lock, tolerating the dag-L1's MPT trailing the global L0.
+ *
+ * A dag-L1 validates token-lock replacements against its own MPT, which it syncs from
+ * global snapshots on a ~10s loop while GL0 finalizes ordinals ~20s apart, so the L1
+ * steadily trails GL0 by ~1 ordinal. Immediately after a lock is confirmed in GL0 state,
+ * posting its replacement can race ahead of the L1's MPT and be rejected at admission
+ * with NothingToReplace. The parent lock IS in global state -- this is pure propagation
+ * lag -- so retry across ordinal progressions until the L1 catches up. (testReplaceSameAmount
+ * / testReplaceLessAmount already apply this on their expected-error path; the success
+ * paths need the same tolerance.)
+ */
+const createReplacementTokenLock = (account, urls, lockAmount, replaceRef, replaceBalance) =>
+  withRetryOrdinal(
+    async () => {
+      try {
+        return await createTokenLock(account, urls, lockAmount, replaceRef, replaceBalance)
+      } catch (e) {
+        if (e.message && e.message.includes('NothingToReplace')) {
+          logWorkflow.info('Replacement parent not yet in L1 MPT, waiting for ordinal progression...')
+        }
+        throw e
+      }
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'createReplacementTokenLock',
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
+    },
+  )
+
+/**
  * Test 1: Replace with same amount (should fail)
  * Also sets up the initial token lock and stake for subsequent tests
  */
@@ -195,7 +227,7 @@ const testReplaceSameAmount = async (urls, account, nodeIds) => {
         throw e // Other errors propagate
       }
     },
-    { globalL0Url: urls.globalL0Url, name: 'replaceWithSameAmount', maxOrdinalMisses: 5 }
+    { globalL0Url: urls.globalL0Url, name: 'replaceWithSameAmount', maxOrdinalMisses: 10 }
   )
 
   // Verify stake unchanged using ordinal-aware retry
@@ -206,7 +238,7 @@ const testReplaceSameAmount = async (urls, account, nodeIds) => {
       if (!stake) throw new Error('Stake not found')
       return true
     },
-    { globalL0Url: urls.globalL0Url, name: 'verifyStakeExists', maxOrdinalMisses: 3 }
+    { globalL0Url: urls.globalL0Url, name: 'verifyStakeExists', maxOrdinalMisses: 6 }
   )
 
   logWorkflow.info('---- End testReplaceSameAmount ----')
@@ -242,7 +274,7 @@ const testReplaceLessAmount = async (urls, account, existingLockHash, existingAm
         throw e
       }
     },
-    { globalL0Url: urls.globalL0Url, name: 'replaceWithLessAmount', maxOrdinalMisses: 5 }
+    { globalL0Url: urls.globalL0Url, name: 'replaceWithLessAmount', maxOrdinalMisses: 10 }
   )
 
   logWorkflow.info('---- End testReplaceLessAmount ----')
@@ -276,7 +308,7 @@ const testReplaceMinimumIncrease = async (urls, account, existingLockHash, exist
 
   const minIncrease = existingAmount + 1 // Minimum valid increase
   
-  const newLockHash = await createTokenLock(account, urls, minIncrease, existingLockHash, existingAmount)
+  const newLockHash = await createReplacementTokenLock(account, urls, minIncrease, existingLockHash, existingAmount)
   logWorkflow.info(`Created replacement with +1 datum: ${newLockHash}`)
 
   // Verify delegated stake updated using ordinal-aware retry
@@ -294,7 +326,7 @@ const testReplaceMinimumIncrease = async (urls, account, existingLockHash, exist
       }
       return true
     },
-    { globalL0Url: urls.globalL0Url, name: 'verifyMinIncreaseUpdate', maxOrdinalMisses: 5, maxStalledChecks: 15 }
+    { globalL0Url: urls.globalL0Url, name: 'verifyMinIncreaseUpdate', maxOrdinalMisses: 10, maxStalledChecks: 30 }
   )
   
   // Brief wait for L1 sync after ordinal progression confirmed
@@ -322,7 +354,7 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     logWorkflow.info(`Sequential replacement ${i}: ${amount} -> ${newAmount}`)
     logWorkflow.info(`  Replacing lock: ${lockHash.substring(0, 16)}...`)
 
-    const newLockHash = await createTokenLock(account, urls, newAmount, lockHash, amount)
+    const newLockHash = await createReplacementTokenLock(account, urls, newAmount, lockHash, amount)
     logWorkflow.info(`  Created replacement ${i}: ${newLockHash.substring(0, 16)}...`)
 
     // Verify delegated stake updated using ordinal-aware retry
@@ -339,7 +371,7 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
         }
         return true
       },
-      { globalL0Url: urls.globalL0Url, name: `verifySequentialReplacement${i}`, maxOrdinalMisses: 5 }
+      { globalL0Url: urls.globalL0Url, name: `verifySequentialReplacement${i}`, maxOrdinalMisses: 10 }
     )
 
     // IMPORTANT: Update lockHash to the NEW lock for the next iteration
@@ -347,10 +379,18 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     amount = newAmount
     logWorkflow.info(`  Sequential replacement ${i} verified ✓`)
     
-    // Brief wait for L1 sync before next replacement
+    // Wait for ordinal progression + L1 sync before next replacement
     if (i < 3) {
-      logWorkflow.info('  Waiting for GL0 sync before next replacement...')
-      await sleep(5000)
+      logWorkflow.info('  Waiting for ordinal progression before next replacement...')
+      await withRetryOrdinal(
+        async ({ ordinal, prevOrdinal }) => {
+          if (!prevOrdinal) throw new Error('Waiting for first ordinal')
+          if (ordinal - prevOrdinal < 1) throw new Error(`Waiting for ordinal progression: ${ordinal}`)
+          return true
+        },
+        { globalL0Url: urls.globalL0Url, name: `waitBeforeReplacement${i + 1}`, maxOrdinalMisses: 10, maxStalledChecks: 30 }
+      )
+      await sleep(5000) // Extra buffer for L1 to process the snapshot
     }
   }
 
@@ -368,12 +408,12 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   // Retry on Conflict errors which can happen when L1 hasn't yet synced the latest GL0 state
   const lockAmount = 600000000000 // 6000 DAG
   let lockHash
-  for (let attempt = 1; attempt <= 5; attempt++) {
+  for (let attempt = 1; attempt <= 10; attempt++) {
     try {
       lockHash = await createTokenLock(account, urls, lockAmount)
       break
     } catch (err) {
-      if (err.message && err.message.includes('Conflict') && attempt < 5) {
+      if (err.message && err.message.includes('Conflict') && attempt < 10) {
         logWorkflow.info(`Token lock creation hit Conflict (attempt ${attempt}/5), waiting for L1 sync...`)
         await sleep(5000)
       } else {
@@ -408,10 +448,7 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   // - Token lock may still be active (replacement succeeds)
   // - Token lock may be removed (NothingToReplace)
   const activeTokenLocks = await getActiveTokenLocks(urls, account.address)
-  const isLockActive = activeTokenLocks.some(lock => {
-    // Compare by amount since we don't have direct hash access
-    return lock.amount === lockAmount
-  })
+  const isLockActive = activeTokenLocks.some(lock => lock.hash === lockHash)
   logWorkflow.info(`Token lock active status after withdrawal: ${isLockActive}`)
 
   const newAmount = lockAmount + 100000000000 // +1000 DAG
@@ -499,11 +536,15 @@ const setupNodeParameters = async (urls) => {
     'EdgeCaseTestNode2', 6000000
   )
   checkOk(ur2)
-  
-  await sleep(5000)
 
-  const nodeParams = await getNodeParams(urls)
-  logWorkflow.info(`Node parameters configured: ${nodeParams.length} nodes`)
+  // Wait for node-params to be included in a snapshot (up to 120s = ~3 consensus rounds at 43s each)
+  let nodeParams = []
+  for (let attempt = 1; attempt <= 12; attempt++) {
+    await sleep(10000)
+    nodeParams = await getNodeParams(urls)
+    logWorkflow.info(`Node parameters configured: ${nodeParams.length} nodes (attempt ${attempt}/12)`)
+    if (nodeParams.length >= 2) break
+  }
 
   return nodeParams
 }
@@ -539,6 +580,28 @@ const testTokenLockReplacementEdgeCases = async (urls) => {
   const { newLockHash, newAmount } = await testReplaceMinimumIncrease(
     urls, account, lockHash, lockAmount, stakeHash
   )
+
+  // Wait for 2 ordinal progressions to ensure lock is fully propagated to L1.
+  // One progression isn't enough with slow rounds (43s): the lock lands in ordinal N,
+  // the global snapshot for N needs to reach L1, and L1 needs to process it.
+  // Two progressions guarantees the lock's snapshot has been accepted and L1 is current.
+  logWorkflow.info('Waiting for 2 ordinal progressions before sequential replacements...')
+  // Compare against a FIXED baseline (first observed ordinal), not the previous
+  // poll: on slow networks the ordinal advances by exactly 1 between polls, so
+  // a consecutive-poll delta of 2 is unsatisfiable even though rounds progress.
+  let baselineOrdinal = null
+  await withRetryOrdinal(
+    async ({ ordinal }) => {
+      if (baselineOrdinal === null) {
+        baselineOrdinal = ordinal
+        throw new Error('Waiting for first ordinal')
+      }
+      if (ordinal - baselineOrdinal < 2) throw new Error(`Waiting for 2 ordinal progressions: ${ordinal}`)
+      return true
+    },
+    { globalL0Url: urls.globalL0Url, name: 'waitForLockPropagation', maxOrdinalMisses: 10, maxStalledChecks: 60 }
+  )
+  await sleep(5000) // Extra buffer for L1 to process the snapshot
 
   // Test 5: Multiple sequential replacements
   await testMultipleSequentialReplacements(urls, account, newLockHash, newAmount, stakeHash)

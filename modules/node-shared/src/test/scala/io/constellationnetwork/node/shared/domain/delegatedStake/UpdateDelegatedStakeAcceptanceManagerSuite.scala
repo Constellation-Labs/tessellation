@@ -78,15 +78,22 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
         acceptedTokenLocks = List.empty
       )
-    } yield
+    } yield {
+      // After defensive sorting, the first-wins duplicate resolution may accept either one.
+      // We verify that exactly one is accepted and the other is rejected with DuplicatedParent.
+      val allAcceptedCreates = res.acceptedCreates.values.flatten.map(_._1).toList
+      val allRejectedCreates = res.notAcceptedCreates.map(_._1)
       expect.all(
-        res == UpdateDelegatedStakeAcceptanceResult(
-          acceptedCreates = SortedMap(sourceAddress -> List((valid1, SnapshotOrdinal.unsafeApply(2)))),
-          notAcceptedCreates = List((invalid, NonEmptyChain.of(DuplicatedParent(invalid.parent)))),
-          acceptedWithdrawals = SortedMap.empty,
-          notAcceptedWithdrawals = List.empty
-        )
+        allAcceptedCreates.size == 1,
+        allRejectedCreates.size == 1,
+        Set(valid1, invalid).contains(allAcceptedCreates.head),
+        Set(valid1, invalid).contains(allRejectedCreates.head),
+        allAcceptedCreates.head != allRejectedCreates.head,
+        res.notAcceptedCreates.head._2 == NonEmptyChain.of(DuplicatedParent(lastRef1)),
+        res.acceptedWithdrawals.isEmpty,
+        res.notAcceptedWithdrawals.isEmpty
       )
+    }
   }
 
   test("should reject withdrawals with the same parent") { res =>
@@ -109,25 +116,31 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           )
         )
       )
-      valid1 <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, lastRef1.hash), kp)
-      invalid <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, lastRef1.hash), kp)
+      withdraw1 <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, lastRef1.hash), kp)
+      withdraw2 <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, lastRef1.hash), kp)
       res <- acceptanceManager.accept(
         creates = List.empty,
-        withdrawals = List(valid1, invalid),
+        withdrawals = List(withdraw1, withdraw2),
         lastSnapshotContext = context,
         currentGlobalEpochProgress = EpochProgress.apply(NonNegLong(1)),
         currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
         acceptedTokenLocks = List.empty
       )
-    } yield
+    } yield {
+      // After defensive sorting, first-wins duplicate resolution may accept either one.
+      val allAcceptedWithdrawals = res.acceptedWithdrawals.values.flatten.map(_._1).toList
+      val allRejectedWithdrawals = res.notAcceptedWithdrawals.map(_._1)
       expect.all(
-        res == UpdateDelegatedStakeAcceptanceResult(
-          acceptedCreates = SortedMap.empty,
-          notAcceptedCreates = List.empty,
-          acceptedWithdrawals = SortedMap(sourceAddress -> List((valid1, EpochProgress.apply(NonNegLong(1))))),
-          notAcceptedWithdrawals = List((invalid, NonEmptyChain.of(DuplicatedStake(invalid.stakeRef))))
-        )
+        res.acceptedCreates.isEmpty,
+        res.notAcceptedCreates.isEmpty,
+        allAcceptedWithdrawals.size == 1,
+        allRejectedWithdrawals.size == 1,
+        Set(withdraw1, withdraw2).contains(allAcceptedWithdrawals.head),
+        Set(withdraw1, withdraw2).contains(allRejectedWithdrawals.head),
+        allAcceptedWithdrawals.head != allRejectedWithdrawals.head,
+        res.notAcceptedWithdrawals.head._2 == NonEmptyChain.of(DuplicatedStake(withdraw1.stakeRef))
       )
+    }
   }
 
   test("should accept withdrawals with different parents") { res =>
@@ -163,16 +176,17 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2),
         acceptedTokenLocks = List.empty
       )
-    } yield
+    } yield {
+      val allAcceptedWithdrawals = res.acceptedWithdrawals.values.flatten.map(_._1).toSet
       expect.all(
-        res == UpdateDelegatedStakeAcceptanceResult(
-          acceptedCreates = SortedMap.empty,
-          notAcceptedCreates = List.empty,
-          acceptedWithdrawals =
-            SortedMap(sourceAddress -> List((valid2, EpochProgress.apply(NonNegLong(1))), (valid1, EpochProgress.apply(NonNegLong(1))))),
-          notAcceptedWithdrawals = List.empty
-        )
+        res.acceptedCreates.isEmpty,
+        res.notAcceptedCreates.isEmpty,
+        allAcceptedWithdrawals.size == 2,
+        allAcceptedWithdrawals.contains(valid1),
+        allAcceptedWithdrawals.contains(valid2),
+        res.notAcceptedWithdrawals.isEmpty
       )
+    }
   }
 
   def testCreateDelegatedStake(

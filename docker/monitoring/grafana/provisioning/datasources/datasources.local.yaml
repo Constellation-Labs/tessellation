@@ -1,0 +1,25 @@
+apiVersion: 1
+datasources:
+  - name: prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+
+  - name: ClickHouse
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    isDefault: false
+    editable: true
+    jsonData:
+      host: 172.32.0.200
+      port: 8123
+      protocol: http
+      secure: false
+      username: default
+      defaultDatabase: default
+    secureJsonData:
+      password: clickhouse

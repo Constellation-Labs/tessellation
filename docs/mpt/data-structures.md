@@ -236,7 +236,7 @@ case class HashNamespace(hash)            // Hash-indexed
 object GlobalStateFieldId {
   case object Balances                    // 2
   case object LastTxRefs                  // 1
-  case object LastStateChannelSnapshots   // 0
+  case object LastStateChannelSnapshotHashes  // 0
   case object ActiveAllowSpends           // 7
   case object ActiveTokenLocks            // 8
   case object ActiveDelegatedStakes       // 13
@@ -315,6 +315,12 @@ private[mpt] val ExtensionPrefix: Array[Byte] = Array(2: Byte)
 // Hash computation
 Hasher[F].prefixedHash(commitment.asJson, LeafPrefix)
 ```
+
+## Determinism: Order-Independent Root
+
+The trie root is a pure function of the key/value set: any two nodes holding the same entries compute the same root regardless of the order in which keys were inserted. This is a correctness requirement, since the root participates in stateProof agreement across the cluster.
+
+Incremental updates preserve this property by reproducing the canonical full-build structure. Before applying a batch, `FileSystemMerklePatriciaProducer` sorts both removes and inserts by `CompactNibblePath` ordering so the in-place mutation follows the same key order a full rebuild would (`FileSystemMerklePatriciaProducer.scala:158, 190-191`). The `MptInsertionOrderDeterminismSuite` guards this invariant.
 
 ## Serialization Format
 

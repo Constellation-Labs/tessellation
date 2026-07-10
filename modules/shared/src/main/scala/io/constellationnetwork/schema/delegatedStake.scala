@@ -92,7 +92,7 @@ object delegatedStake {
       def ordinal: DelegatedStakeOrdinal = parent.ordinal.next
     }
 
-    @derive(eqv, show, encoder, decoder)
+    @derive(eqv, show, encoder, decoder, order)
     case class Withdraw(
       source: Address,
       stakeRef: Hash

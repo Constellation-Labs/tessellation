@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.domain.nodeCollateral.{
 }
 import io.constellationnetwork.node.shared.domain.priceOracle.PricingUpdateValidator.PricingUpdateValidationError
 import io.constellationnetwork.node.shared.domain.priceOracle.{PriceStateUpdater, PricingUpdateValidator}
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
@@ -65,8 +66,6 @@ import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedS
 import fs2.Stream
 import io.circe.Json
 import io.circe.disjunctionCodecs._
-import org.typelevel.log4cats.SelfAwareStructuredLogger
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class PartitionedRecords[A, B](
   existing: SortedMap[Address, A],
@@ -102,6 +101,18 @@ case class CleanedStateMapsResult(
   removedNodeCollateralWithdrawalKeys: Set[Address]
 )
 
+/** Orchestrates acceptance of all event types into a new global snapshot.
+  *
+  * This is the main pipeline that processes blocks, state channel events, delegated stakes, node collaterals, allow spends, token locks,
+  * rewards, and spend transactions to produce the next `GlobalSnapshotInfo` and `GlobalSnapshotStateProof`.
+  *
+  * '''Determinism contract''': All input lists MUST be in canonical (sorted) order. The pipeline uses `foldLeft`/`foldLeftM` with stateful
+  * accumulation in several places, making the output dependent on input ordering. Internal intermediate collections use `SortedMap` to
+  * prevent iteration-order divergence across peers.
+  *
+  * '''MptStore side effects''': Calls `mptStore.syncFromStateChanges` at the end, mutating the shared Merkle Patricia Trie. On validation
+  * failure, the caller must restore from a savepoint to prevent partial state from leaking to future rounds.
+  */
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
     ordinal: SnapshotOrdinal,
@@ -136,7 +147,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       Map[Address, List[SpendAction]],
       SortedMap[Id, Signed[UpdateNodeParameters]],
       SortedSet[SharedArtifact],
-      SortedMap[PeerId, Map[Address, Amount]]
+      SortedMap[PeerId, SortedMap[Address, Amount]]
     )
   ]
 }
@@ -186,7 +197,6 @@ object GlobalSnapshotAcceptanceManager {
     )
 
     new GlobalSnapshotAcceptanceManager[F] {
-      val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](this.getClass)
       private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
 
       case class InitialData(
@@ -314,6 +324,11 @@ object GlobalSnapshotAcceptanceManager {
         }
       }
 
+      /** Validates spend actions and pricing updates, returning accepted and rejected results.
+        *
+        * Always uses sequential execution to guarantee deterministic error ordering across all peers. Previously used conditional
+        * parallelism (parMapN when size > 100) which could produce different error orderings depending on thread scheduling.
+        */
       private def validateArtifacts(
         epochProgress: EpochProgress,
         spendActions: Map[Address, List[SpendAction]],
@@ -322,41 +337,26 @@ object GlobalSnapshotAcceptanceManager {
         currencyBalances: Map[Option[Address], SortedMap[Address, Balance]],
         globalBalances: Map[Option[Address], SortedMap[Address, Balance]],
         lastSnapshotContext: GlobalSnapshotInfo
-      ): F[ArtifactValidationResult] = {
-        val shouldParallelize = spendActions.size > 100 || pricingUpdates.size > 100
+      ): F[ArtifactValidationResult] =
+        for {
+          (acceptedSpend, rejectedSpend) <- spendActionValidator.validateReturningAcceptedAndRejected(
+            spendActions,
+            lastActiveAllowSpends,
+            currencyBalances ++ globalBalances
+          )
+          (acceptedPricing, rejectedPricing) <- pricingUpdateValidator.validateReturningAcceptedAndRejected(
+            pricingUpdates,
+            lastSnapshotContext,
+            epochProgress
+          )
+        } yield ArtifactValidationResult(acceptedSpend, rejectedSpend, acceptedPricing, rejectedPricing)
 
-        if (shouldParallelize) {
-          (
-            spendActionValidator.validateReturningAcceptedAndRejected(
-              spendActions,
-              lastActiveAllowSpends,
-              currencyBalances ++ globalBalances
-            ),
-            pricingUpdateValidator.validateReturningAcceptedAndRejected(
-              pricingUpdates,
-              lastSnapshotContext,
-              epochProgress
-            )
-          ).parMapN {
-            case ((acceptedSpend, rejectedSpend), (acceptedPricing, rejectedPricing)) =>
-              ArtifactValidationResult(acceptedSpend, rejectedSpend, acceptedPricing, rejectedPricing)
-          }
-        } else {
-          for {
-            (acceptedSpend, rejectedSpend) <- spendActionValidator.validateReturningAcceptedAndRejected(
-              spendActions,
-              lastActiveAllowSpends,
-              currencyBalances ++ globalBalances
-            )
-            (acceptedPricing, rejectedPricing) <- pricingUpdateValidator.validateReturningAcceptedAndRejected(
-              pricingUpdates,
-              lastSnapshotContext,
-              epochProgress
-            )
-          } yield ArtifactValidationResult(acceptedSpend, rejectedSpend, acceptedPricing, rejectedPricing)
-        }
-      }
-
+      /** Accepts allow-spend and token-lock blocks sequentially to ensure deterministic results.
+        *
+        * Uses sequential execution to guarantee identical acceptance results across all peers. AllowSpend and TokenLock acceptance are
+        * independent (no shared state), but sequential execution avoids any risk of non-deterministic error ordering from parallel
+        * scheduling.
+        */
       private def acceptAllowSpendAndTokenLockBlocks(
         ordinal: SnapshotOrdinal,
         epochProgress: EpochProgress,
@@ -364,48 +364,23 @@ object GlobalSnapshotAcceptanceManager {
         tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
         lastSnapshotContext: GlobalSnapshotInfo,
         fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal
-      )(implicit hasher: Hasher[F]): F[(AllowSpendBlockAcceptanceResult, TokenLockBlockAcceptanceResult)] = {
-        val shouldParallelize =
-          allowSpendBlocksForAcceptance.nonEmpty &&
-            tokenLockBlocksForAcceptance.nonEmpty &&
-            (allowSpendBlocksForAcceptance.size + tokenLockBlocksForAcceptance.size) > 20
-
-        if (shouldParallelize) {
-          (
-            blockAcceptanceCoordinatorManager.acceptAllowSpendBlocks(
-              allowSpendBlocksForAcceptance,
-              lastSnapshotContext,
-              ordinal,
-              fixingAllowSpendAndTokenLockValidation,
-              epochProgress
-            ),
-            blockAcceptanceCoordinatorManager.acceptTokenLockBlocks(
-              tokenLockBlocksForAcceptance,
-              lastSnapshotContext,
-              ordinal,
-              fixingAllowSpendAndTokenLockValidation,
-              epochProgress
-            )
-          ).parTupled
-        } else {
-          for {
-            allowSpend <- blockAcceptanceCoordinatorManager.acceptAllowSpendBlocks(
-              allowSpendBlocksForAcceptance,
-              lastSnapshotContext,
-              ordinal,
-              fixingAllowSpendAndTokenLockValidation,
-              epochProgress
-            )
-            tokenLock <- blockAcceptanceCoordinatorManager.acceptTokenLockBlocks(
-              tokenLockBlocksForAcceptance,
-              lastSnapshotContext,
-              ordinal,
-              fixingAllowSpendAndTokenLockValidation,
-              epochProgress
-            )
-          } yield (allowSpend, tokenLock)
-        }
-      }
+      )(implicit hasher: Hasher[F]): F[(AllowSpendBlockAcceptanceResult, TokenLockBlockAcceptanceResult)] =
+        for {
+          allowSpend <- blockAcceptanceCoordinatorManager.acceptAllowSpendBlocks(
+            allowSpendBlocksForAcceptance,
+            lastSnapshotContext,
+            ordinal,
+            fixingAllowSpendAndTokenLockValidation,
+            epochProgress
+          )
+          tokenLock <- blockAcceptanceCoordinatorManager.acceptTokenLockBlocks(
+            tokenLockBlocksForAcceptance,
+            lastSnapshotContext,
+            ordinal,
+            fixingAllowSpendAndTokenLockValidation,
+            epochProgress
+          )
+        } yield (allowSpend, tokenLock)
 
       private def buildMerkleTreeAndProofs(
         ordinal: SnapshotOrdinal,
@@ -639,7 +614,7 @@ object GlobalSnapshotAcceptanceManager {
           Map[Address, List[SpendAction]],
           SortedMap[Id, Signed[UpdateNodeParameters]],
           SortedSet[SharedArtifact],
-          SortedMap[PeerId, Map[Address, Amount]]
+          SortedMap[PeerId, SortedMap[Address, Amount]]
         )
       ] = {
         implicit val hasher: Hasher[F] = HasherSelector[F].getForOrdinal(ordinal)
@@ -658,6 +633,17 @@ object GlobalSnapshotAcceptanceManager {
 
         loggerBundle.app.withOrdinal(ordinal) {
           for {
+            _ <- loggerBundle.app.debug(
+              s"[ACCEPTANCE] ordinal=$ordinal epoch=${epochProgress.show} ENTER " +
+                s"blocks=${blocksForAcceptance.size} allowSpend=${allowSpendBlocksForAcceptance.size} " +
+                s"tokenLock=${tokenLockBlocksForAcceptance.size} sc=${scEvents.size} unp=${unpEvents.size} " +
+                s"cds=${cdsEvents.size} wds=${wdsEvents.size} cnc=${cncEvents.size} wnc=${wncEvents.size} " +
+                s"context.balances=${lastSnapshotContext.balances.size} " +
+                s"context.currSnapshots=${lastSnapshotContext.lastCurrencySnapshots.size} " +
+                s"context.delegStakes=${lastSnapshotContext.activeDelegatedStakes.map(_.values.map(_.size).sum).getOrElse(0)} " +
+                s"context.nodeCollaterals=${lastSnapshotContext.activeNodeCollaterals.map(_.values.map(_.size).sum).getOrElse(0)}"
+            )
+
             (allowSpendBlockAcceptanceResult, tokenLockBlockAcceptanceResult) <-
               acceptAllowSpendAndTokenLockBlocks(
                 ordinal,
@@ -728,10 +714,12 @@ object GlobalSnapshotAcceptanceManager {
               acceptedTransactions
             )
 
+            // Use SortedMap to guarantee deterministic iteration order for downstream processing.
+            // Previously used unordered Map which could cause different validation ordering per node.
             currencyBalances = currencySnapshots.toList.map {
-              case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
-              case (address, Right((_, si))) => Map(address.some -> si.balances)
-            }.foldLeft(Map.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
+              case (_, Left(_))              => SortedMap.empty[Option[Address], SortedMap[Address, Balance]]
+              case (address, Right((_, si))) => SortedMap(address.some -> si.balances)
+            }.foldLeft(SortedMap.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
 
             sharedArtifacts = incomingCurrencySnapshots.toList.map {
               case (address, snapshots) =>
@@ -739,12 +727,12 @@ object GlobalSnapshotAcceptanceManager {
                   case Left(_)       => Nil
                   case Right((s, _)) => s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList
                 }
-                Map(address -> artifacts)
-            }.foldLeft(Map.empty[Address, List[SharedArtifact]])(_ |+| _).view
+                SortedMap(address -> artifacts)
+            }.foldLeft(SortedMap.empty[Address, List[SharedArtifact]])(_ |+| _).view
 
             sCSnapshotHashes <- scSnapshots.toList.traverse {
               case (address, nel) => nel.last.toHashed.map(address -> _.hash)
-            }.map(_.toMap)
+            }.map(_.toSortedMap)
 
             DelegatedRewardsResult(
               delegatorRewardsMap,
@@ -764,27 +752,35 @@ object GlobalSnapshotAcceptanceManager {
               calculateRewardsFn
             )
 
+            _ <- loggerBundle.app.info(
+              s"[ACCEPTANCE] ordinal=$ordinal REWARDS: " +
+                s"nodeOperator=${nodeOperatorRewards.size} reserved=${reservedAddressRewards.size} " +
+                s"withdrawal=${withdrawalRewardTxs.size} delegatorRewards=${delegatorRewardsMap.size} " +
+                s"updatedDelegStakes=${updatedCreateDelegatedStakes.size} updatedDelegWithdrawals=${updatedWithdrawDelegatedStakes.size}"
+            )
+
             (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) = rewardAcceptanceManager.acceptRewardTxs(
               updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
               withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
             )
 
-            globalBalances = Map(none[Address] -> updatedBalancesByRewards)
+            globalBalances = SortedMap(none[Address] -> updatedBalancesByRewards)
 
+            // Use SortedMap for deterministic validation ordering across all peers.
             spendActions = sharedArtifacts
               .mapValues(_.collect { case sa: SpendAction => sa })
               .filter { case (_, actions) => actions.nonEmpty }
-              .toMap
+              .toSortedMap
 
             pricingUpdates = sharedArtifacts
               .mapValues(_.collect { case pu: PricingUpdate => pu })
               .filter { case (_, updates) => updates.nonEmpty }
-              .toMap
+              .toSortedMap
 
             globalSnapshotsProcessed = sharedArtifacts.view
               .mapValues(_.collect { case pu: GlobalSnapshotsProcessed => pu })
               .filter { case (_, updates) => updates.nonEmpty }
-              .toMap
+              .toSortedMap
 
             lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
               SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
@@ -804,15 +800,12 @@ object GlobalSnapshotAcceptanceManager {
               globalBalances,
               lastSnapshotContext
             )
-            acceptedSpendActionsMessage = s"[ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
-            rejectedSpendActionMessage = s"[ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
-            acceptedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
-            rejectedPricingUpdatesMessage = s"[ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
-
-            _ <- logger.debug(acceptedSpendActionsMessage)
-            _ <- logger.debug(rejectedSpendActionMessage)
-            _ <- logger.debug(acceptedPricingUpdatesMessage)
-            _ <- logger.debug(rejectedPricingUpdatesMessage)
+            acceptedSpendActionsMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
+            rejectedSpendActionMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"
+            acceptedPricingUpdatesMessage =
+              s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Accepted pricing updates: ${acceptedPricingUpdates.show}"
+            rejectedPricingUpdatesMessage =
+              s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Rejected pricing updates: ${rejectedPricingUpdates.show}"
 
             _ <- loggerBundle.app.info(acceptedSpendActionsMessage)
             _ <- loggerBundle.app.info(rejectedSpendActionMessage)
@@ -837,7 +830,7 @@ object GlobalSnapshotAcceptanceManager {
               .mapValues(SortedSet.from(_))
               .to(SortedMap)
 
-            allAcceptedSpendTxns = acceptedSpendActions.values.flatten
+            allAcceptedSpendTxns = acceptedSpendActions.toSortedMap.values.flatten
               .flatMap(spendAction => spendAction.spendTransactions.toList)
               .toList
 
@@ -896,7 +889,7 @@ object GlobalSnapshotAcceptanceManager {
                   globalAllowSpends,
                   globalActiveAllowSpends
                 )
-                .leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
+                .leftMap(ex => SnapshotFailure.BalanceArithmeticError.AllowSpends(ex.toString))
             )
 
             unexpiredNodeCollateralsRaw = nodeCollateralStateManager.acceptNodeCollaterals(
@@ -923,7 +916,7 @@ object GlobalSnapshotAcceptanceManager {
                 acceptedGlobalTokenLocks,
                 globalActiveTokenLocksByRef
               )
-              .leftMap(error => new RuntimeException(s"Error generating token unlocks: $error"))
+              .leftMap(error => SnapshotFailure.TokenUnlockGenerationFailed(error.toString))
               .liftTo[F]
 
             TokenLockAcceptanceResult(updatedGlobalTokenLocks, tokenLocksDeltas, removedTokenLockKeys) <- tokenLockStateManager
@@ -945,16 +938,17 @@ object GlobalSnapshotAcceptanceManager {
                 lastSnapshotContext.tokenLockBalances
               )
 
-            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) = tokenLockStateManager.updateGlobalBalancesByTokenLocks(
-              epochProgress,
-              updatedBalancesByAllowSpends,
-              globalTokenLocks,
-              globalActiveTokenLocks,
-              generatedTokenUnlocks
-            ) match {
-              case Right(balances) => balances
-              case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
-            }
+            (updatedBalancesByTokenLocks, updatedBalancesByTokenLocksDeltas) <- Async[F].fromEither(
+              tokenLockStateManager
+                .updateGlobalBalancesByTokenLocks(
+                  epochProgress,
+                  updatedBalancesByAllowSpends,
+                  globalTokenLocks,
+                  globalActiveTokenLocks,
+                  generatedTokenUnlocks
+                )
+                .leftMap(error => SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString))
+            )
 
             lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
 
@@ -998,22 +992,22 @@ object GlobalSnapshotAcceptanceManager {
                   }
               }
 
-            globalSpendTransactions = acceptedSpendActions.flatMap {
+            globalSpendTransactions = acceptedSpendActions.toSortedMap.flatMap {
               case (_, spendActions) =>
                 spendActions
                   .flatMap(_.spendTransactions.toList)
                   .filter(_.currencyId.isEmpty)
             }.toList
 
-            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) = spendTransactionBalanceManager
-              .updateGlobalBalancesBySpendTransactions(
-                updatedBalancesByTokenLocks,
-                allGlobalAllowSpends,
-                globalSpendTransactions
-              ) match {
-              case Right(balances) => balances
-              case Left(error) => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
-            }
+            (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) <- Async[F].fromEither(
+              spendTransactionBalanceManager
+                .updateGlobalBalancesBySpendTransactions(
+                  updatedBalancesByTokenLocks,
+                  allGlobalAllowSpends,
+                  globalSpendTransactions
+                )
+                .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
+            )
 
             MerkleTreeResult(_, updatedLastCurrencySnapshotProofs) <- buildMerkleTreeAndProofs(
               ordinal,
@@ -1090,6 +1084,19 @@ object GlobalSnapshotAcceptanceManager {
               updatedAcceptedMetagraphSyncData
             )
 
+            // CONSENSUS-CRITICAL ordinal-gated dust sweep (state deflation).
+            // Applied to the fully-built GSI BEFORE the MPT sync and proof so that the returned GSI, the MPT-sync input,
+            // and buildProof all derive from the SAME swept state (sweptGsi == gsi2). Off the sweep ordinal this is a no-op
+            // (didSweep = false) and gsi2 is the same value as gsi, so the normal incremental MPT path is unchanged.
+            (sweptGsi, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(gsi, ordinal, environment, fieldsAddedOrdinals.dustSweeps)
+
+            _ <- loggerBundle.app
+              .info(
+                s"[ACCEPTANCE] ordinal=$ordinal DUST_SWEEP removed=${gsi.balances.size - sweptGsi.balances.size} " +
+                  s"balancesBefore=${gsi.balances.size} balancesAfter=${sweptGsi.balances.size}"
+              )
+              .whenA(didSweep)
+
             balanceChanges: SortedMap[Address, Balance] =
               initialData.blockResult.contextUpdate.balances.toSortedMap ++
                 currencyAcceptanceBalanceUpdate.toSortedMap ++
@@ -1131,8 +1138,66 @@ object GlobalSnapshotAcceptanceManager {
               removedNodeCollateralWithdrawalKeys = removedNodeCollateralWithdrawalKeys
             )
 
-            _ <- mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
-            stateProof <- builder.buildProof(gsi, ordinal)
+            _ <- loggerBundle.app.info(
+              s"[ACCEPTANCE] ordinal=$ordinal MPT_SYNC: " +
+                s"balanceChanges=${balanceChanges.size} " +
+                s"scHashChanges=${sCSnapshotHashes.size} " +
+                s"txRefChanges=${transactionsRefsDeltas.size} " +
+                s"currSnapshotChanges=${currencySnapshotsDeltas.size} " +
+                s"delegStakeAddrs=${updatedCreateDelegatedStakesCleaned.size} " +
+                s"delegWithdrawAddrs=${updatedWithdrawDelegatedStakesCleaned.size} " +
+                s"nodeCollAddrs=${updatedCreateNodeCollateralsCleaned.size} " +
+                s"nodeCollWithdrawAddrs=${updatedWithdrawNodeCollateralsCleaned.size} " +
+                s"removedKeys(ds=${removedDelegatedStakeKeys.size},dsw=${removedDelegatedStakeWithdrawalKeys.size}," +
+                s"nc=${removedNodeCollateralKeys.size},ncw=${removedNodeCollateralWithdrawalKeys.size})"
+            )
+
+            // At the sweep ordinal, rebuild the MPT in one shot from the swept state (sub-second on the pruned ~hundreds of entries)
+            // rather than streaming hundreds of thousands of incremental deletions. syncFull yields the identical canonical root the
+            // incremental path would produce for the same entry set (the MPT root is a pure function of the entry set), so consensus
+            // still agrees, and the producer resumes correct incremental syncs from the pruned base afterward.
+            _ <-
+              if (didSweep) sweptGsi.allStateEntries[F].flatMap(mptStore.syncFull[Json](_, ordinal))
+              else mptStore.syncFromStateChanges(stateChangesAccumulator, ordinal)
+            stateProof <- builder.buildProof(sweptGsi, ordinal)
+
+            // DIAGNOSTIC (opt-in via CL_MPT_VERIFY_INCREMENTAL=true; log-only, off by default; lazy so it costs
+            // nothing when off). On the incremental path, independently rebuild the full MPT root from the swept
+            // GSI (a standalone trie -- does NOT touch the shared store) and compare to the incremental store root
+            // that buildProof just produced. A mismatch means syncFromStateChanges drifted from the canonical
+            // entry set: the live, in-memory analogue of the historical "MptStore carries wrong state incrementally"
+            // divergence. Catches drift at its source, the same ordinal it is introduced, before it propagates.
+            _ <- GlobalSnapshotInfo
+              .mptStateProof[F](sweptGsi, ordinal)
+              .map(_.mptRoot)
+              .flatMap { fullRebuildRoot =>
+                loggerBundle.app
+                  .error(
+                    s"[MPT.VERIFY] ordinal=$ordinal INCREMENTAL DRIFT detected: " +
+                      s"incrementalRoot=${stateProof.mptRoot.map(_.show.take(12)).getOrElse("none")} != " +
+                      s"fullRebuildRoot=${fullRebuildRoot.map(_.show.take(12)).getOrElse("none")}"
+                  )
+                  .whenA(stateProof.mptRoot =!= fullRebuildRoot)
+              }
+              // Diagnostic must never affect acceptance: swallow any rebuild/serialization failure so a node with
+              // the flag set cannot fail or diverge from nodes without it. Log-only by contract.
+              .handleErrorWith(e =>
+                loggerBundle.app.warn(s"[MPT.VERIFY] ordinal=$ordinal diagnostic rebuild failed (ignored): ${e.getMessage}")
+              )
+              .whenA(!didSweep && sys.env.get("CL_MPT_VERIFY_INCREMENTAL").exists(_.equalsIgnoreCase("true")))
+
+            _ <- loggerBundle.app.info(
+              s"[ACCEPTANCE] ordinal=$ordinal EXIT stateProof: " +
+                s"mptRoot=${stateProof.mptRoot.map(_.show.take(12)).getOrElse("none")} " +
+                s"balances=${stateProof.balancesProof.show.take(12)} " +
+                s"txRefs=${stateProof.lastTxRefsProof.show.take(12)} " +
+                s"scHashes=${stateProof.lastStateChannelSnapshotHashesProof.show.take(12)} " +
+                s"delegStakes=${stateProof.activeDelegatedStakes.map(_.show.take(12)).getOrElse("none")} " +
+                s"delegWithdrawals=${stateProof.delegatedStakesWithdrawals.map(_.show.take(12)).getOrElse("none")} " +
+                s"nodeCollaterals=${stateProof.activeNodeCollaterals.map(_.show.take(12)).getOrElse("none")} " +
+                s"collateralWithdrawals=${stateProof.nodeCollateralWithdrawals.map(_.show.take(12)).getOrElse("none")} " +
+                s"gsi.balances=${sweptGsi.balances.size} gsi.currSnapshots=${sweptGsi.lastCurrencySnapshots.size}"
+            )
 
             (expiredAllowSpends, expiredTokenLocks) = (
               allowSpendStateManager.filterExpiredAllowSpends(
@@ -1169,7 +1234,7 @@ object GlobalSnapshotAcceptanceManager {
               scSnapshots,
               returnedSCEvents,
               acceptedRewardTxs,
-              gsi,
+              sweptGsi,
               stateProof,
               acceptedSpendActions,
               updatedUpdateNodeParameters.view.mapValues(_._1).toSortedMap,

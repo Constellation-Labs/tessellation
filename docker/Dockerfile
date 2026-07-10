@@ -3,7 +3,7 @@ FROM ubuntu:22.04
 RUN apt update && apt install -y openjdk-21-jre
 
 # Dev tools
-RUN apt install -y curl iproute2 iputils-ping jq
+RUN apt install -y curl iproute2 iputils-ping iptables jq
 
 RUN mkdir -p /tessellation/jars
 

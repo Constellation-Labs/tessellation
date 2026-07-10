@@ -1,0 +1,59 @@
+flowchart TB
+    subgraph Storage["ConsensusStorage (Shared State)"]
+        direction TB
+        LastOutcome["lastOutcome: Ref[Option[Outcome]]<br/>Most recent completed outcome.<br/>Carries roundStartFacilitators-derived<br/>facilitators, peerQuality,<br/>readmissionCountdown (B2 sticky)."]
+        StateMap["statesR: Ref[Map[Key, ConsensusState]]<br/>In-progress rounds keyed by ordinal"]
+        Resources["Resources per Key<br/>peerDeclarationsMap, acksMap, artifacts,<br/>viewChangeVotes, evictionVotes (per target),<br/>admissionVotes (per target), assembled certs"]
+    end
+
+    subgraph Loop1["Loop 1: Command Stream (Event Loop)"]
+        direction TB
+        Queue["Command Queue<br/>(unbounded)<br/>parameterized commands"]
+        Take["queue.take"]
+        FSM["fsm.handle(cmd)<br/>routes RumorReceived /<br/>CheckUpdate / Check{ViewChange,<br/>Eviction, Admission}Assembly /<br/>round-control / lifecycle"]
+        Queue --> Take --> FSM
+    end
+
+    subgraph Loop2["Loop 2: Gossip Processing"]
+        direction TB
+        GossipStream["Gossip Stream<br/>(rumors from peers)"]
+        RHQ["RumorHandlerWithQueue"]
+        Decode["Decode + allowOrigin"]
+        GossipStream --> RHQ --> Decode
+    end
+
+    subgraph Loop3["Loop 3: Stall Detection<br/>(per-round, supervised fiber)"]
+        direction TB
+        StallLoop["StallDetector.monitor(key, signal)"]
+        Adaptive["Adaptive poll 100-1000ms"]
+        Reactions["Capped-exp Facility retransmit<br/>(5s/10s/20s/30s/30s, max 5)<br/>+ ViewChangeVote emit on stall<br/>+ EvictionVote on quorum-infeasible<br/>+ AdmissionVote per tick when<br/>probation peer at tip + streak met"]
+        StallLoop --> Adaptive --> Reactions
+    end
+
+    subgraph Loop4["Loop 4: Time Trigger<br/>(supervisor.supervise — survives round cleanup)"]
+        direction TB
+        Sleep["sleep(timeTriggerInterval)"]
+        CheckTime["checkAndTriggerTime"]
+        Sleep --> CheckTime
+    end
+
+    subgraph Loop5["Loop 5: Peer Registration"]
+        direction TB
+        PeerChanges["clusterStorage.peerChanges<br/>(filter to NodeState.Observing)"]
+        CollectReg["collectRegistration<br/>(GET /consensus/registration,<br/>3s retry on first None)"]
+        PeerChanges --> CollectReg
+    end
+
+    Decode -->|"offer(RumorReceived)"| Queue
+    Reactions -->|"offer(CheckUpdate)<br/>offer(CheckViewChangeAssembly)<br/>offer(CheckEvictionAssembly)<br/>offer(CheckAdmissionAssembly)"| Queue
+    CheckTime -->|"offer(TimeTick)"| Queue
+    CollectReg -->|"offer(PeerObserved)"| Queue
+
+    FSM -->|"read/write"| Storage
+
+    style Storage fill:#e8f4ea,stroke:#2d5a3d
+    style Loop1 fill:#e8eef4,stroke:#2d4a5a
+    style Loop2 fill:#f4e8f4,stroke:#5a2d5a
+    style Loop3 fill:#f4f4e8,stroke:#5a5a2d
+    style Loop4 fill:#f4e8e8,stroke:#5a2d2d
+    style Loop5 fill:#e8f4f4,stroke:#2d5a5a

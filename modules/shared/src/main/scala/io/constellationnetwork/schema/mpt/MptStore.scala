@@ -1,18 +1,27 @@
 package io.constellationnetwork.schema.mpt
 
 import cats.Parallel
+import cats.effect.std.Semaphore
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.mpt._
 import io.constellationnetwork.security.mpt.producer._
 
 import io.circe.{Decoder, Encoder, Json}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+/** Captured snapshot of an MptStore's internal state. Call `restore` to roll back the store to the state at the time this savepoint was
+  * created. Used to undo mutations from failed artifact validation (e.g. stateProof divergence).
+  */
+trait MptStoreSavepoint[F[_]] {
+  def restore: F[Unit]
+}
 
 trait MptStore[F[_], K] {
   def get[V: Decoder](key: K): F[Option[V]]
@@ -27,10 +36,15 @@ trait MptStore[F[_], K] {
   def build(ordinal: SnapshotOrdinal): F[Either[MerklePatriciaError, MerklePatriciaTrie]]
   def sync[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
   def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit]
-  def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit]
+  def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal, expectedRoot: Option[Hash] = None): F[Unit]
   def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit]
   def underlying: StatefulMerklePatriciaProducer[F]
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
+
+  /** Capture a snapshot of all internal state (producer state + last synced ordinal). The returned savepoint can restore the store to this
+    * exact state, undoing any mutations that occurred after the savepoint was created.
+    */
+  def savepoint: F[MptStoreSavepoint[F]]
 }
 
 object MptStore {
@@ -39,15 +53,29 @@ object MptStore {
     producer: StatefulMerklePatriciaProducer[F],
     toHex: K => F[Hex]
   ): F[MptStore[F, K]] =
-    Ref.of[F, Option[SnapshotOrdinal]](None).map { lastSyncedOrdinalRef =>
-      new Impl[F, K](producer, toHex, lastSyncedOrdinalRef): MptStore[F, K]
-    }
+    for {
+      lastSyncedOrdinalRef <- Ref.of[F, Option[SnapshotOrdinal]](None)
+      // Serializes the heavy mutation methods (syncFull/sync/update/deleteAbove) and the
+      // multi-Ref savepoint capture+restore so that concurrent callers (FSM proposal path,
+      // download path, state-channel sync) cannot tear the producer's internal state.
+      // Today the consensus state machine implicitly prevents overlap by filtering
+      // commands during WaitingForDownload / DownloadInProgress, but that invariant is
+      // fragile: this Semaphore makes the API self-protecting regardless of caller fiber.
+      // Note: insert/remove/clear/build are NOT externally invoked (verified by grep) and
+      // are called only from inside the wrapped outer methods, so wrapping them would
+      // deadlock. If a new external caller appears, wrap that method too or add an
+      // unsafe-internal variant.
+      mutationLock <- Semaphore[F](1)
+    } yield new Impl[F, K](producer, toHex, lastSyncedOrdinalRef, mutationLock): MptStore[F, K]
 
   private final class Impl[F[_]: Async: Parallel: Hasher: JsonSerializer, K](
     producer: StatefulMerklePatriciaProducer[F],
     toHex: K => F[Hex],
-    lastSyncedOrdinalRef: Ref[F, Option[SnapshotOrdinal]]
+    lastSyncedOrdinalRef: Ref[F, Option[SnapshotOrdinal]],
+    mutationLock: Semaphore[F]
   ) extends MptStore[F, K] {
+
+    private def withLock[A](fa: F[A]): F[A] = mutationLock.permit.use(_ => fa)
 
     private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
     private val BatchSize = 5000
@@ -195,64 +223,120 @@ object MptStore {
       producer.buildForOrdinal(snapshotOrdinal)
 
     override def syncFull[V: Encoder](newState: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
-      if (newState.isEmpty) {
-        logger.info("[MptStore] Empty sync, skipping") >>
-          clear >> lastSyncedOrdinalRef.set(Some(ordinal))
-      } else
-        for {
-          _ <- logger.info(s"[MptStore] Full sync with ${newState.size} entries")
-          _ <- clear
-          newEntries <- toHexEntries(newState)
-          _ <- producer.insertBytes(newEntries).void
-          _ <- persistAsync(ordinal)
-          _ <- build(ordinal)
-          _ <- lastSyncedOrdinalRef.set(Some(ordinal))
-        } yield ()
+      withLock {
+        if (newState.isEmpty) {
+          logger.info("[MptStore] Empty sync, skipping") >>
+            clear >> lastSyncedOrdinalRef.set(Some(ordinal))
+        } else
+          for {
+            _ <- logger.info(s"[MptStore] Full sync with ${newState.size} entries")
+            _ <- clear
+            newEntries <- toHexEntries(newState)
+            _ <- producer.insertBytes(newEntries).void
+            _ <- persistAsync(ordinal)
+            _ <- build(ordinal)
+            _ <- lastSyncedOrdinalRef.set(Some(ordinal))
+          } yield ()
+      }
 
-    override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal): F[Unit] =
-      // Use atomic modify to prevent race condition where two threads both see needsSync=true
+    override def syncFullIfNeeded[V: Encoder](newState: => F[Map[K, V]], ordinal: SnapshotOrdinal, expectedRoot: Option[Hash]): F[Unit] =
+      // Use atomic modify to prevent race condition where two threads both see needsSync=true.
+      // Returns (priorLastOrdinal, needsSync) so the caller can log the decision input
+      // alongside the resulting branch. This diagnostic targets the per-retry full-build
+      // cycle observed during the alpha.83 wedge: if priorLastSynced is consistently None
+      // across retries at the same ordinal, something is resetting lastSyncedOrdinalRef
+      // between rounds (a savepoint restore on the failed-round path is the prime suspect).
       lastSyncedOrdinalRef.modify { lastOrdinal =>
         val needsSync = lastOrdinal.forall(_ =!= ordinal)
         if (needsSync) {
           // Mark as syncing with this ordinal immediately to prevent concurrent syncs
-          (Some(ordinal), true)
+          (Some(ordinal), (lastOrdinal, true))
         } else {
-          (lastOrdinal, false)
+          (lastOrdinal, (lastOrdinal, false))
         }
-      }.flatMap { needsSync =>
-        if (needsSync)
-          newState.flatMap(syncFull(_, ordinal))
-        else
-          logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
+      }.flatMap {
+        case (priorLastOrdinal, needsSync) =>
+          logger.debug(
+            s"[MptStore.syncFullIfNeeded] ordinal=$ordinal priorLastSynced=$priorLastOrdinal needsSync=$needsSync"
+          ) >>
+            (if (needsSync) newState.flatMap(syncFull(_, ordinal))
+             else
+               // Content-aware skip. The ordinal tag says we are already synced here, but an abandoned-round
+               // mutation or a savepoint restore can leave the in-memory entry set stale while the tag persists,
+               // so a pure ordinal check can build a proposal/proof off divergent state. When the caller knows
+               // the expected stateProof root, verify the producer's current root matches before trusting the
+               // no-op; on mismatch force a full resync so we never emit a divergent root.
+               expectedRoot match {
+                 case None =>
+                   logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal")
+                 case Some(expected) =>
+                   // Build (not getCurrentRootHash) so pending inserts/removes are applied before reading the
+                   // root -- getCurrentRootHash returns the last-built trie root and would miss pending mutations,
+                   // letting a stale state pass the check. A Left build is treated as a mismatch (force resync).
+                   // M3: hold the mutation lock around this verification build so it cannot read a trie that a
+                   // concurrent syncFull/sync/update is midway through mutating (a torn read would yield a bogus
+                   // root and either mask a real divergence or force a spurious resync). The lock is released
+                   // before the flatMap continuation, so the resync branch's syncFull takes it fresh -- no
+                   // re-entrant deadlock against the non-reentrant Semaphore.
+                   withLock(build(ordinal)).flatMap { built =>
+                     val currentRoot = built.toOption.map(_.rootHash.value)
+                     if (currentRoot.contains(expected))
+                       logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal (root verified)")
+                     else
+                       logger.warn(
+                         s"[MptStore] lastSynced tag matches ordinal=$ordinal but current root " +
+                           s"${currentRoot.map(_.show.take(8)).getOrElse("none")} != expected " +
+                           s"${expected.show.take(8)}; forcing full resync to avoid divergence"
+                       ) >> newState.flatMap(syncFull(_, ordinal))
+                   }
+               })
       }
 
     override def sync[V: Encoder](updates: Map[K, V], ordinal: SnapshotOrdinal): F[Unit] =
       if (updates.isEmpty) Async[F].unit
       else
-        for {
-          _ <- logger.debug(s"[MptStore] Incremental sync with ${updates.size} entries at ordinal=$ordinal")
-          _ <- insert(updates)
-          _ <- persistAsync(ordinal)
-          // Build the trie and cache root hash for this ordinal
-          // This is critical for validation - without this, getRootHashForOrdinal returns None
-          _ <- build(ordinal).void
-          _ <- lastSyncedOrdinalRef.set(Some(ordinal))
-        } yield ()
+        withLock {
+          for {
+            _ <- logger.debug(s"[MptStore] Incremental sync with ${updates.size} entries at ordinal=$ordinal")
+            _ <- insert(updates)
+            _ <- persistAsync(ordinal)
+            // Build the trie and cache root hash for this ordinal
+            // This is critical for validation - without this, getRootHashForOrdinal returns None
+            _ <- build(ordinal).void
+            _ <- lastSyncedOrdinalRef.set(Some(ordinal))
+          } yield ()
+        }
 
     override def update[V: Encoder](toUpsert: Map[K, V], toRemove: Set[K]): F[Unit] =
-      for {
-        _ <- remove(toRemove.toList)
-        _ <- insert(toUpsert)
-      } yield ()
+      withLock {
+        for {
+          _ <- remove(toRemove.toList)
+          _ <- insert(toUpsert)
+        } yield ()
+      }
 
     override def underlying: StatefulMerklePatriciaProducer[F] = producer
 
     override def deleteAbove(ordinal: SnapshotOrdinal): F[Unit] =
-      producer match {
-        case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
-          logger.info(s"[MptStore] Deleting above ordinal=$ordinal") >> p.deleteAbove(ordinal)
-        case _ =>
-          Async[F].unit
+      withLock {
+        producer match {
+          case p: StatefulWithPersistenceMerklePatriciaProducer[F] =>
+            logger.info(s"[MptStore] Deleting above ordinal=$ordinal") >> p.deleteAbove(ordinal)
+          case _ =>
+            Async[F].unit
+        }
+      }
+
+    override def savepoint: F[MptStoreSavepoint[F]] =
+      withLock {
+        for {
+          producerSP <- producer.savepoint
+          savedOrdinal <- lastSyncedOrdinalRef.get
+        } yield
+          new MptStoreSavepoint[F] {
+            def restore: F[Unit] =
+              withLock(producerSP.restore >> lastSyncedOrdinalRef.set(savedOrdinal))
+          }
       }
   }
 }

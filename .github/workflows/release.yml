@@ -49,6 +49,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Remove prerelease tags for stable releases
+        if: github.ref_name == 'release/mainnet'
+        run: |
+          # Remove prerelease tags from the local clone so commit-and-tag-version
+          # compares against the last stable tag instead of the nearest rc/alpha.
+          # This only affects the ephemeral CI runner, not the remote.
+          TAGS=$(git tag -l '*-rc.*' '*-alpha.*')
+          if [ -n "$TAGS" ]; then
+            echo "$TAGS" | xargs git tag -d
+            echo "Removed $(echo "$TAGS" | wc -l) prerelease tags locally"
+          fi
+
       - name: Get the release version
         id: get_version
         run: |
@@ -63,9 +75,14 @@ jobs:
       - name: Build Changelog
         id: get_changelog
         run: |
+          if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
+            DRY_RUN=$(npx commit-and-tag-version --dry-run)
+          elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
+            DRY_RUN=$(npx commit-and-tag-version --dry-run --prerelease rc)
+          fi
           {
             echo "CHANGELOG<<EOF"
-            npx commit-and-tag-version --dry-run | sed -n '/---/,/---/p' | sed '1d;$d'
+            echo "$DRY_RUN" | sed -n '/---/,/---/p' | sed '1d;$d'
             echo EOF
           } >> "$GITHUB_OUTPUT"
 

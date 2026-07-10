@@ -1,7 +1,5 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
-import java.nio.file.NoSuchFileException
-
 import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
@@ -10,6 +8,8 @@ import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   CombinedSnapshotCheckpointFileSystemStorage,
   SnapshotInfoLocalFileSystemStorage,
@@ -23,11 +23,12 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.validator.StateProofValidator
 
+import eu.timepit.refined.auto._
 import io.circe.Json
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer: JsonSerializer](
+  def make[F[_]: Async: Parallel: HasherSelector: KryoSerializer: JsonSerializer: Metrics](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
@@ -113,8 +114,33 @@ object SnapshotDownloadStorage {
                   validator.validate(snapshot, gsi).map(_.isValid)
               }).ifM(
                 (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
-                new Exception("Persisted snapshot info does not match the persisted snapshot")
-                  .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+                // Self-heal: persisted (snapshot, info) at this ordinal don't agree on the state proof.
+                // Causes include MPT drift, stale rollback artifacts, or cross-version persistence. The
+                // pair is unrecoverable in place -- delete both files and return None so the caller falls
+                // back to genesis re-download. Safe because canonical state is always re-fetchable from
+                // source nodes; the alternative (raise + cycle WFD<->DLI forever) wedges the peer.
+                logger.warn(
+                  s"[readCombined] persisted (snapshot, info) at ordinal=${ordinal.show} state-proof mismatch -- " +
+                    s"discarding both files for fresh re-download"
+                ) >>
+                  Metrics[F]
+                    .incrementCounter("dag_download_persisted_state_self_heal_total", Seq.empty) >>
+                  snapshotInfoStorage.delete(ordinal).handleErrorWith {
+                    case _: java.nio.file.NoSuchFileException => Async[F].unit
+                    case err =>
+                      logger.warn(err)(s"[readCombined] failed to delete persisted info (json) at ordinal=${ordinal.show}")
+                  } >>
+                  snapshotInfoKryoStorage.delete(ordinal).handleErrorWith {
+                    case _: java.nio.file.NoSuchFileException => Async[F].unit
+                    case err =>
+                      logger.warn(err)(s"[readCombined] failed to delete persisted info (kryo) at ordinal=${ordinal.show}")
+                  } >>
+                  persistedStorage.delete(ordinal).handleErrorWith {
+                    case _: java.nio.file.NoSuchFileException => Async[F].unit
+                    case err =>
+                      logger.warn(err)(s"[readCombined] failed to delete persisted snapshot at ordinal=${ordinal.show}")
+                  } >>
+                  none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
               )
             } yield result
           case _ => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
@@ -164,15 +190,72 @@ object SnapshotDownloadStorage {
 
         val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)
 
+        // Fallback direct-deletion when the standard cleanupAboveOrdinal path leaves files behind.
+        // Triggered when persistedStorage.cleanupAboveOrdinal's movePersistedToTmp fails (e.g. tmp
+        // destination directories don't exist for orphaned hashes -- the failure is swallowed by
+        // processFileChunk as NoSuchFileException, so the ordinal hardlinks survive on disk).
+        // findAbove enumerates only the ordinal/ subtree, so deleting each ordinal hardlink is
+        // sufficient to satisfy the verify check. Any orphaned hash/ files are left in place; they
+        // are unreachable from normal lookup paths since the ordinal hardlink is gone, and an
+        // operator can collect them later. Bounded: a max-iteration cap prevents infinite loops if
+        // the deletion itself fails permission-wise.
+        val maxFallbackIterations = 3
+
+        def fallbackDirectDelete: F[Long] =
+          persistedStorage
+            .findAbove(ordinal)
+            .evalMap { file =>
+              file.name.toLongOption.flatMap(SnapshotOrdinal(_)) match {
+                case Some(ord) =>
+                  persistedStorage.delete(ord).handleErrorWith {
+                    case _: java.nio.file.NoSuchFileException => Async[F].unit
+                    case err =>
+                      logger.warn(err)(s"[cleanupAbove] fallback delete failed for ordinal=${ord.show}")
+                  }
+                case None =>
+                  logger.debug(s"[cleanupAbove] skipping non-ordinal file in fallback: ${file.pathAsString}")
+              }
+            }
+            .compile
+            .drain >>
+            persistedStorage.findAbove(ordinal).compile.count
+
+        def fallbackLoop(iteration: Int): F[Long] =
+          fallbackDirectDelete.flatMap { remaining =>
+            if (remaining === 0L || iteration >= maxFallbackIterations) remaining.pure[F]
+            else
+              logger.warn(
+                s"[cleanupAbove] fallback iteration=$iteration still has $remaining files; retrying (max=$maxFallbackIterations)"
+              ) >> fallbackLoop(iteration + 1)
+          }
+
         val verify = for {
           remainingFiles <- persistedStorage
             .findAbove(ordinal)
             .compile
             .count
 
+          // Always update the gauge so /metrics on a remote community peer can answer
+          // "how many files refused to clean up?" without log access. 0 on success.
+          _ <- Metrics[F].updateGauge("dag_download_cleanup_remaining_files", remainingFiles.toDouble)
+
           _ <-
             if (remainingFiles > 0) {
-              throw new RuntimeException(s"Cleanup incomplete: $remainingFiles files still remain above ordinal ${ordinal.show}")
+              logger.warn(
+                s"[cleanupAbove] $remainingFiles files remain above ordinal=${ordinal.show} after standard cleanup; " +
+                  s"attempting fallback direct deletion"
+              ) >>
+                Metrics[F].incrementCounter("dag_download_cleanup_fallback_total", Seq.empty) >>
+                fallbackLoop(iteration = 1).flatMap { stillRemaining =>
+                  Metrics[F].updateGauge("dag_download_cleanup_remaining_files", stillRemaining.toDouble) >> {
+                    if (stillRemaining > 0L)
+                      Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(stillRemaining, ordinal))
+                    else
+                      logger.info(
+                        s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"
+                      )
+                  }
+                }
             } else {
               logger.info(s"Cleanup successful: No files remain above ordinal ${ordinal.show}")
             }

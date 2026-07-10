@@ -64,7 +64,8 @@ object Rollback {
       F,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
-    ]
+    ],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
@@ -112,6 +113,15 @@ object Rollback {
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
+      _ <- snapshotStorage.prepend(lastIncremental, lastInfo).flatMap { prepended =>
+        if (prepended)
+          logger.info(s"Prepended last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage before loadChain")
+        else
+          logger.warn(
+            s"Could not prepend last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage (already at different head); loadChain may diverge"
+          )
+      }
+
       _ <- dataApplication.map {
         case (da, cs) =>
           val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) =>
@@ -125,6 +135,12 @@ object Rollback {
                 onError = (err, retryDetails) =>
                   logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
               )
+              .flatMap {
+                case Some(snapshot) => snapshot.some.pure[F]
+                case None =>
+                  new Exception(s"Global snapshot not found for hash=${hash.show} after retries")
+                    .raiseError[F, Option[Hashed[GlobalIncrementalSnapshot]]]
+              }
 
           val dat = DataApplicationTraverse
             .make[F](

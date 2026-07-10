@@ -22,6 +22,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.L0GlobalSnapshotClient
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
@@ -39,6 +40,21 @@ trait GlobalL0Service[F[_]] {
   type LatestSnapshotTuple = (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
   def pullLatestSnapshot: F[LatestSnapshotTuple]
   def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
+
+  /** Conditional variant: returns `None` when the chosen L0 peer reports the same immutable identity `(ordinal, hash)` as the caller's
+    * local snapshot (304 NotModified at the HTTP layer); returns `Some(tuple)` when the peer has advanced or has a different content at the
+    * same ordinal (fork-recovery). Eliminates the redundant ~60 MB combined-snapshot body when a metagraph or follower is already aligned
+    * with the L0 cluster's tip — the steady-state case.
+    */
+  def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal, localHash: Hash): F[Option[LatestSnapshotTuple]]
+
+  /** Cheap "what's the latest epoch progress?" query for sync-check loops that don't need the snapshot body. Hits the tiny
+    * `/global-snapshots/latest/metadata` endpoint (~232 bytes) and returns the `epochProgress` field added in v10.x.
+    *
+    * Returns `None` when the responding L0 peer is on an older version that doesn't include `epochProgress` in `SnapshotMetadata` — callers
+    * should fall back to `pullLatestSnapshotIfNewer` (304-conditional) or `pullLatestSnapshot` for those mixed-version cases.
+    */
+  def queryLatestEpochProgress: F[Option[EpochProgress]]
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshots(ordinal: SnapshotOrdinal): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -81,6 +97,28 @@ object GlobalL0Service {
 
       def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
         globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
+
+      def pullLatestSnapshotIfNewer(localOrdinal: SnapshotOrdinal, localHash: Hash): F[Option[LatestSnapshotTuple]] =
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          l0GlobalSnapshotClient.getLatestConditional(localOrdinal, localHash).run(l0Peer).flatMap {
+            case Left(_) =>
+              logger
+                .debug(
+                  s"L0 peer ${l0Peer.id.show} matches our identity (ord=${localOrdinal.show}, hash=${localHash.show}); skipping combined-snapshot fetch"
+                )
+                .as(none)
+            case Right((snapshot, state)) =>
+              HasherSelector[F]
+                .withCurrent(implicit hasher => snapshot.toHashedWithSignatureCheck)
+                .flatMap(_.liftTo[F])
+                .map(hashed => (hashed, state).some)
+          }
+        }
+
+      def queryLatestEpochProgress: F[Option[EpochProgress]] =
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          l0GlobalSnapshotClient.getLatestMetadata.run(l0Peer).map(_.epochProgress)
+        }
 
       def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>

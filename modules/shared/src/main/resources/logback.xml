@@ -5,8 +5,16 @@
         </encoder>
     </appender>
 
+    <!-- Forwards WARN/ERROR to ClickHouse (no-op unless the drain fiber runs, i.e. ClickHouse is configured). -->
+    <appender name="CLICKHOUSE" class="io.constellationnetwork.node.shared.logger.sink.clickhouse.ClickHouseLogbackAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>WARN</level>
+        </filter>
+    </appender>
+
     <root level="INFO">
         <appender-ref ref="STDOUT" />
+        <appender-ref ref="CLICKHOUSE" />
     </root>
 
     <logger name="io.constellationnetwork" level="DEBUG" />

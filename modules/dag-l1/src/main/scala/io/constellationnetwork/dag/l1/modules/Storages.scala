@@ -2,7 +2,7 @@ package io.constellationnetwork.dag.l1.modules
 
 import cats.Parallel
 import cats.effect.kernel.Async
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -51,6 +51,7 @@ object Storages {
       tokenLockStorage <- TokenLockStorage.make[F](TokenLockReference.empty, contextualTokenLockValidator)
       tokenLockBlockStorage <- TokenLockBlockStorage.make[F]
       globalL0AlignmentStorage <- GlobalL0AlignmentStorage.make[F]
+      mutationLock <- Mutex[F]
     } yield
       new Storages[F, P, S, SI] {
         val address = addressStorage
@@ -68,6 +69,7 @@ object Storages {
         val tokenLock = tokenLockStorage
         val tokenLockBlock = tokenLockBlockStorage
         val globalL0Alignment = globalL0AlignmentStorage
+        val storageMutationLock = mutationLock
       }
 }
 
@@ -87,4 +89,14 @@ trait Storages[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] {
   val tokenLock: TokenLockStorage[F]
   val tokenLockBlock: TokenLockBlockStorage[F]
   val globalL0Alignment: GlobalL0AlignmentStorage[F]
+
+  /** Single fair-FIFO lock serializing live DAG/swap/token-lock block acceptance against the L0->L1 alignment commit
+    * (SnapshotProcessor.processAlignment), so the two never interleave their storage mutations. Scope is asymmetric by design: the
+    * ALIGNMENT side holds it only across in-memory Ref/MapRef writes (the MPT trie build, createContext and lastN update stay OUTSIDE),
+    * while the ACCEPTANCE side holds it across the whole accept -- including block/tx hashing and signature verification -- so each
+    * read-compute-write of shared balances/refs is atomic w.r.t. alignment (acceptable because acceptance is a serial tick stream; network
+    * I/O and the MPT build are never under the lock). Lock ordering: the per-stream semaphores are always acquired OUTSIDE this mutex and
+    * it is never re-acquired reentrantly, so there is no cycle.
+    */
+  val storageMutationLock: Mutex[F]
 }

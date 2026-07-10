@@ -18,6 +18,14 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+/** Accepts or rejects delegated stake create/withdraw events for inclusion in a global snapshot.
+  *
+  * '''Determinism''': Uses `foldLeftM` with first-wins duplicate tracking (`parentRefsSeen`, `tokenLockRefsSeen`, `stakeRefsSeen`). The
+  * input lists MUST be in canonical order — if two creates share the same parent, only the first in iteration order is accepted. Callers
+  * must sort events before passing them to `accept()`.
+  */
 trait UpdateDelegatedStakeAcceptanceManager[F[_]] {
 
   def accept(
@@ -54,6 +62,7 @@ object UpdateDelegatedStakeAcceptanceManager {
 
   def make[F[_]: Async: SecurityProvider](validator: UpdateDelegatedStakeValidator[F]) =
     new UpdateDelegatedStakeAcceptanceManager[F] {
+      private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
 
       private def processCreateValidation(
         acc: CreateDelegatedStakeAcceptanceResult,
@@ -134,13 +143,18 @@ object UpdateDelegatedStakeAcceptanceManager {
             .traverse(record => record.event.toHashed.map(_.hash -> record))
             .map(_.toMap)
 
-          createResult <- creates.foldLeftM(CreateDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>
+          // Defensive sort: ensure deterministic first-wins duplicate resolution.
+          // foldLeftM with parentRefsSeen/tokenLockRefsSeen is order-dependent.
+          sortedCreates = creates.sortBy(_.show)
+          sortedWithdrawals = withdrawals.sortBy(_.show)
+
+          createResult <- sortedCreates.foldLeftM(CreateDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>
             validator
               .validateCreateDelegatedStake(signed, lastSnapshotContext)
               .map(processCreateValidation(acc, signed, _, acceptedTokenLocks))
           }
 
-          withdrawResult <- withdrawals.foldLeftM(WithdrawDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>
+          withdrawResult <- sortedWithdrawals.foldLeftM(WithdrawDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>
             validator
               .validateWithdrawDelegatedStake(signed, lastSnapshotContext)
               .map(processWithdrawValidation(acc, signed, _, hashedExistingDelegatedStakes, acceptedTokenLocks))
@@ -156,6 +170,21 @@ object UpdateDelegatedStakeAcceptanceManager {
             .traverse { case (signed, epoch) => signed.proofs.head.id.toAddress.map((_, (signed, epoch))) }
             .map(_.groupBy(_._1).view.mapValues(_.map(_._2)).toSortedMap)
 
+          _ <- logger.debug(
+            s"[DELEG_STAKE] ordinal=${currentSnapshotOrdinal.show} " +
+              s"input: creates=${creates.size} withdrawals=${withdrawals.size} " +
+              s"existing=${hashedExistingDelegatedStakes.size} acceptedTokenLocks=${acceptedTokenLocks.size} | " +
+              s"result: acceptedCreates=${createResult.accepted.size} rejectedCreates=${createResult.rejected.size} " +
+              s"acceptedWithdrawals=${withdrawResult.accepted.size} rejectedWithdrawals=${withdrawResult.rejected.size} " +
+              s"duplicateParents=${createResult.parentRefsSeen.size} duplicateTokenLocks=${createResult.tokenLockRefsSeen.size} " +
+              s"duplicateStakes=${withdrawResult.stakeRefsSeen.size}" +
+              (if (createResult.rejected.nonEmpty)
+                 s" rejectReasons=[${createResult.rejected.map(_._2.head.getClass.getSimpleName).distinct.mkString(",")}]"
+               else "") +
+              (if (withdrawResult.rejected.nonEmpty)
+                 s" withdrawRejectReasons=[${withdrawResult.rejected.map(_._2.head.getClass.getSimpleName).distinct.mkString(",")}]"
+               else "")
+          )
         } yield
           UpdateDelegatedStakeAcceptanceResult(
             acceptedCreatesMap,

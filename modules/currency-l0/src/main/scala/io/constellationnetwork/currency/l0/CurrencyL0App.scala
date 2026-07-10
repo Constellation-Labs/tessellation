@@ -1,11 +1,11 @@
 package io.constellationnetwork.currency.l0
 
-import cats.effect.{IO, Resource}
+import cats.effect.{IO, Ref, Resource}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
@@ -14,7 +14,9 @@ import io.constellationnetwork.currency.l0.config.types._
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
+import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
+import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -24,17 +26,21 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastCheckpointInfo
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
-import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
+import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.gossip.{Ordinal => GossipOrdinal}
 import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -43,6 +49,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
 import fs2.concurrent.SignallingRef
+import io.circe.{Decoder => CirceDecoder, Encoder => CirceEncoder}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import pureconfig.generic.auto._
@@ -104,6 +111,17 @@ abstract class CurrencyL0App(
       hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
 
       queues <- Queues.make[IO](sharedQueues).asResource
+
+      // B2 witness channel ref: see dag-l0 Main for full rationale. Default Map.empty —
+      // admission votes don't fire until eventGossipDaemon populates this post-startup.
+      peerChainTipsGetterRef <-
+        Ref
+          .of[IO, IO[Map[PeerId, ChainTip]]](
+            Map.empty[PeerId, ChainTip].pure[IO]
+          )
+          .asResource
+      getPeerChainTips = peerChainTipsGetterRef.get.flatten
+
       storages <- Storages
         .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
         .asResource
@@ -118,6 +136,10 @@ abstract class CurrencyL0App(
 
       mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
+      // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Mirrors the
+      // dag-l0 setup. Isolates round-timing from HTTP serving load on the default global
+      // compute pool. See ConsensusExecutor.
+      consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -141,7 +163,10 @@ abstract class CurrencyL0App(
           maybeAllowanceList,
           nodeShared.customAllowanceList,
           mkCell,
-          Some(customArtifacts)
+          Some(customArtifacts),
+          queues,
+          getPeerChainTips,
+          consensusEc
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -166,11 +191,66 @@ abstract class CurrencyL0App(
         dataApplicationService.zip(storages.calculatedStateStorage)
       )
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck)
         .handlers <+>
         services.consensus.handler
+
+      // Chain tip getter used by IHave HTTP endpoint (EventGossipRoutes, passed to HttpApi at line 231).
+      // Intentionally NOT passed to EventGossipDaemon -- fork detection is deferred for currency-l0.
+      // The combined-checkpoint store is the primary source, but it is only written on the production
+      // path, so a node that stays caught up by FOLLOWING/downloading (e.g. a 2nd metagraph-L0 node
+      // before it is promoted) has an empty checkpoint even while its currency chain head advances
+      // every round. Without an advertised tip the B2 admission gate never witnesses it as at-tip and
+      // never promotes it to facilitator -- a deadlock for the joining node. Fall back to the latest
+      // currency snapshot we hold so a caught-up follower becomes a witnessable admission candidate.
+      getLocalChainTip = storages.combinedCurrencySnapshotCheckpointStorage.getLatestCheckpointInfo.flatMap { info =>
+        if (info.hash =!= Hash.empty) ChainTip(info.ordinal, info.hash).some.pure[IO]
+        else
+          storages.snapshot.headSnapshot.flatMap {
+            _.flatTraverse { signed =>
+              hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+                signed.toHashed[IO].map(hashed => ChainTip(signed.value.ordinal, hashed.hash).some)
+              }
+            }
+          }
+      }
+
+      eventGossipDaemon <- {
+        implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
+        implicit val dtDecoder: CirceDecoder[DataTransaction] = DataTransactionCodecs.decoder(dataApplicationService)
+        // TODO: Wire ForkRecoveryService for currency-l0 (deferred).
+        // getLocalChainTip and onForkDetected are left as None to avoid chain-tip sampling
+        // overhead until the recovery callback is implemented for metagraph nodes.
+        EventGossipDaemon
+          .make[IO, CurrencySnapshotEvent, CurrencyStateKey](
+            storages.eventMempool,
+            storages.cluster,
+            storages.node,
+            sharedResources.gossipClient,
+            sharedServices.session,
+            config = EventGossipConfig(
+              heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
+              pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+            )
+          )
+          .asResource
+      }
+      // B2 witness channel: publish peer chain tips into the Ref that consensus reads from.
+      _ <- Resource.eval(peerChainTipsGetterRef.set(eventGossipDaemon.getPeerChainTips))
+
       _ <- Daemons
-        .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
+        .start(
+          storages,
+          services,
+          programs,
+          queues,
+          keyPair,
+          services.dataApplication,
+          eventGossipDaemon,
+          cfg,
+          hasherSelectorAlwaysCurrent,
+          sharedServices.stateEntryAtRef
+        )
         .asResource
 
       api <- Resource.eval(
@@ -190,12 +270,16 @@ abstract class CurrencyL0App(
             metagraphVersion.some,
             queues,
             sharedConfig,
-            storages.combinedCurrencySnapshotCheckpointStorage
+            storages.combinedCurrencySnapshotCheckpointStorage,
+            getLocalChainTip = Some(getLocalChainTip),
+            maybeMarkSeen = Some(eventGossipDaemon.markSeen)
           )
       )
-      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
-      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
-      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
+      // Alpha.95: env-resolved listener caps; see HttpMaxConnectionsDefaults.
+      httpResolved = cfg.http.envResolved(cfg.environment)
+      _ <- MkHttpServer[IO].newEmber(ServerName("public"), httpResolved.publicHttp, api.publicApp)
+      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), httpResolved.p2pHttp, api.p2pApp)
+      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), httpResolved.cliHttp, api.cliApp)
 
       gossipDaemon = GossipDaemon.make[IO](
         storages.rumor,
@@ -334,14 +418,65 @@ abstract class CurrencyL0App(
                         )
                       }
                       hashedSnapshot <- currencySnapshot.toHashed[IO]
+                      // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
+                      // every node rolling back seeds an IDENTICAL outcome. If this node was NOT a
+                      // signer, fall back to self-only so it can solo-produce. See dag-l0 Main.scala
+                      // for full rationale.
+                      signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                      bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
+                      // Restore consensus-derived peer-behavior counters from the rollback
+                      // snapshot if present. Older snapshots have `peerHistory = None` and the
+                      // cluster bootstraps from zero just as before. See dag-l0 mirror for the
+                      // known one-round off-by-one (we accept it; drift is below chronic floors).
+                      seedOperational = currencySnapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
+                      seedPeerQuality = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.quality != ((0, 0)) => pid -> r.quality
+                      })
+                      seedRemovalPenalties = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.removalPenalty > 0 => pid -> r.removalPenalty
+                      })
+                      seedCumulativeMissCounts = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.cumulativeMissCount > 0L => pid -> r.cumulativeMissCount
+                      })
+                      seedReadmissionCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.readmissionCountdown > 0 => pid -> r.readmissionCountdown
+                      })
+                      seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
+                        case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
+                      })
+                      // v16: per-peer cumulative view-change-caused. Mirror of dag-l0 seed
+                      // pattern; see dag-l0 Main for full rationale. viewChangesCaused is
+                      // Option[Long] for pre-v16 back-compat at decode time.
+                      seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                        case (pid, r) => r.viewChangesCaused.filter(_ > 0L).map(v => pid -> v)
+                      })
+                      rollbackRecentProofSizes =
+                        if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
+                        else
+                          SortedMap(
+                            currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                          )
+                      // Recent-signers window unwrap mirror of dag-l0 Main.scala.
+                      seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
+                      // v19: per-peer tier classification seeded from PerPeerOperationalRecord.tier.
+                      // Mirror of dag-l0 Main.scala.
+                      seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                        case (pid, r) => r.tier.map(t => pid -> t)
+                      })
+                      seedActiveAdmissionScores = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
+                        case (pid, r) => r.activeAdmissionScore.filter(_ > 0).map(score => pid -> score)
+                      })
+                      // v19 phase 2: view-from-time window unwrap mirror of dag-l0 Main.scala.
+                      seedRecentRoundEndTimes =
+                        seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
                       _ <- services.consensus.manager.startFacilitatingAfterRollback(
                         currencySnapshot.ordinal,
                         CurrencyConsensusOutcome(
                           currencySnapshot.ordinal,
-                          Facilitators(List(nodeId)),
+                          Facilitators(bootstrapFacilitators),
                           RemovedFacilitators.empty,
                           WithdrawnFacilitators.empty,
-                          EligibleFacilitators.empty,
+                          EligibleFacilitators(bootstrapFacilitators),
                           Finished(
                             currencySnapshot,
                             lastBinaryHash,
@@ -350,7 +485,18 @@ abstract class CurrencyL0App(
                             Candidates.empty,
                             Hash.empty,
                             hashedSnapshot.hash
-                          )
+                          ),
+                          removalPenalties = seedRemovalPenalties,
+                          deferralCountdown = seedDeferralCountdown,
+                          peerQuality = seedPeerQuality,
+                          cumulativeMissCounts = seedCumulativeMissCounts,
+                          recentProofSizes = rollbackRecentProofSizes,
+                          readmissionCountdown = seedReadmissionCountdown,
+                          peerViewChanges = seedPeerViewChanges,
+                          recentSigners = seedRecentSigners,
+                          peerTiers = seedPeerTiers,
+                          activeAdmissionScores = seedActiveAdmissionScores,
+                          recentRoundEndTimes = seedRecentRoundEndTimes
                         )
                       )
                     } yield ()
@@ -426,21 +572,35 @@ abstract class CurrencyL0App(
                           maybeOwnerEvent <- services.currencyMessages.validateInitialCurrencyOwner(m.metagraphOwnerMessagePath)
                           _ <- logger.info(s"Owner address set")
                           _ <- maybeOwnerEvent.traverse_ { event =>
-                            services.consensus.storage.addEvents(
-                              Map(nodeId -> List((GossipOrdinal.MinValue, event)))
-                            )
+                            implicit val dtEnc: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
+                            hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+                              Signed.forAsyncHasher[IO, CurrencySnapshotEvent](event, keyPair).flatMap { signedEvent =>
+                                signedEvent.toHashed[IO].flatMap { hashedEvent =>
+                                  storages.eventMempool.add(signedEvent).flatMap {
+                                    case Right(_) => eventGossipDaemon.publish(hashedEvent)
+                                    case Left(_)  => IO.unit
+                                  }
+                                }
+                              }
+                            }
                           }
                         } yield ()
                       } else IO.unit
                     hashedSnapshot <- currencySnapshot.toHashed[IO]
+                    genesisSigners = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                    // Genesis path — seed window with the genesis snapshot's proof count.
+                    // See dag-l0 mirror for rationale.
+                    genesisRecentProofSizes = SortedMap(
+                      currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                    )
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
                       CurrencyConsensusOutcome(
                         currencySnapshot.ordinal,
-                        Facilitators(List(nodeId)),
+                        Facilitators(genesisSigners),
                         RemovedFacilitators.empty,
                         WithdrawnFacilitators.empty,
-                        EligibleFacilitators.empty,
+                        EligibleFacilitators(genesisSigners),
                         Finished(
                           currencySnapshot,
                           hash,
@@ -449,7 +609,8 @@ abstract class CurrencyL0App(
                           Candidates.empty,
                           Hash.empty,
                           hashedSnapshot.hash
-                        )
+                        ),
+                        recentProofSizes = genesisRecentProofSizes
                       )
                     )
                   } yield ()

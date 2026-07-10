@@ -62,8 +62,17 @@ object node {
 
     val all: Set[NodeState] = NodeState.values.toSet
 
+    /** States broadcast via gossip to peers. WaitingForDownload and DownloadInProgress are excluded - nodes cycling through recovery
+      * generate excessive gossip traffic (2 broadcasts per cycle x N stuck peers x every 60s). Peers learn about recovering nodes via
+      * WaitingForObserving (broadcast when download completes) or stall detection (when the peer stops responding to consensus). Node state
+      * is still visible via /node/info API.
+      *
+      * WaitingForReady is broadcast so downstream PeerSelect / SelectablePeerDiscoveryDelay / fetchOutcomeFromCluster filters can include
+      * post-download peers in the candidate pool. Without this, joining peers funnel through the lone Ready peer for snapshot downloads
+      * because every other source node sits in WaitingForReady awaiting its first round to close.
+      */
     val toBroadcast: Set[NodeState] =
-      Set(WaitingForDownload, DownloadInProgress, WaitingForObserving, Observing, Ready, Leaving, Offline)
+      Set(WaitingForObserving, Observing, WaitingForReady, Ready, Leaving, Offline)
 
     def is(states: Set[NodeState])(peer: Peer) = states.contains(peer.state)
 

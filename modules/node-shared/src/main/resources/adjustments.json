@@ -1021,5 +1021,3964 @@
         "deduct": -90000000000.0
       }
     ]
+  },
+  {
+    "currencyId": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
+    "snapshotOrdinal": 145000,
+    "adjustments": [
+      {
+        "address": "DAG09tkvpazCUBp9KZxcYCp8WaphkKFvpH1ZYtGx",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "80b6b92101f766f84e59873fa27a70a80931a320ea22617cc0a7f1421c7c2705",
+          "bb37bb080605782ec532b0b53f93e5390f1082ceb9b04f2f7f13d44439323e5e"
+        ],
+        "increase": 5234237.0
+      },
+      {
+        "address": "DAG0CQBBTeP7TUQ9JJnsLS4f8ePnWFfoyxMdudr8",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "91f02f5d34cba6998a75fd45f64c04c4cdfb2eba1f271b0a013975bd48ea826e"
+        ],
+        "deduct": -1205397679341.0
+      },
+      {
+        "address": "DAG1oGjBKE8PwiwnfmdCkQi6wCXcSbhia5abBFky",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "1c8edd71c3590c2658a1a505171d1ca582008edfc20b685b06c8732e6ded4c31"
+        ],
+        "deduct": -1035914878924.0
+      },
+      {
+        "address": "DAG3mnhR7SqUP8H2wEDe4LychWdxLbSZAeQmFASs",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "67b58a42a1b5e1770a47a7b7efeac86cec6daf1c5f8a1cafa0c109d82204ea68",
+          "22f6fab11c72343aa2cacd1d8ca6ef53710b4386732c9eeb939489a32810f705"
+        ],
+        "increase": 7159257.0
+      },
+      {
+        "address": "DAG3puQaFAiV3LUvrfDUWFpprBF5ZPS9tmWpR4qM",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "39cb6d192f4f2906be67de3039c7dc1e0b827c87006ba84ac8fdc07a62dfe955",
+          "c7860f7ca9e15123a25740b54dba7ce541e818f97a510f556857f656c63655fa",
+          "84e515f4b4eebd360636121edbc3333f2bbdc1f6412b6e9eb30d816ae17e38c9"
+        ],
+        "increase": 2181204.0
+      },
+      {
+        "address": "DAG6MsXGpenxYvx24aSnuXKRjCuSvo1qixHX7j1J",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "dfc433b964e25892c185284f7514a80e69bf6697f6ab49f045137ede0b871375",
+          "456bcaf91dfc81839edc9da16b18be7a2de925c762b86283e1b64dfd5f3cb3af"
+        ],
+        "increase": 3579309.0
+      },
+      {
+        "address": "DAG7QdoJUPjsSkrjZcjRbS4fMn6zifFXBY79p8EJ",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "49adfecd2d21f5be2be131be26db9ed6243f14a91e9af1106c2de84bc71eded8",
+          "582a021566a296f2bffe507c5bbde7edfea89cfcef335dab34ab2bee4dd42714",
+          "7a7b885ee3d1e4b1da4088d789225386d474cd65c8cf14bd5a605a7bc0f94091",
+          "6ec25af2076938105eb08141a7681c8e12277cb523016f11a86eb24665b8e3a8"
+        ],
+        "increase": 2399623.0
+      },
+      {
+        "address": "DAG7Xh3B7R3wngYG6R3GbaAotfKwcjGGcVithwE3",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "e09b7040f57cea8948a2115aa9a8155a7cdf0897097a0763d1471907246d1679",
+          "911a702fad5b1604b6063b6c3d7b85cd1e902a59ea48fae643b8cbc604aa62fe",
+          "5adc485a93814e16797f19ee01df18ade3ba869bae2caf33046d22ded6f329d2"
+        ],
+        "increase": 16417608.0
+      },
+      {
+        "address": "DAG7fnUei2keAZDbAuvqkqMZxS5jrj5v3vmQB1VA",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "69b11684213be36ef9d18abf6f41fe7c43f421dd230b1d64f6550ced6cb07d8b"
+        ],
+        "deduct": -463381407073.0
+      },
+      {
+        "address": "DAG7sHH5hm8MHDLVcz6Lo39kNVZave6u6vHLTwcu",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "45723020df6c2b60847737a0470d23447e877b9125a61155cfc49bd915b6fa0d"
+        ],
+        "deduct": -463381407073.0
+      },
+      {
+        "address": "DAG873pmYeXi4Bm9pEnjQyR23roXjqo5yMYcJ38B",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "3ac87046d061657b16f5be423ae3a2385caac150f6c2cae118256a8e5b7f983d"
+        ],
+        "increase": 377397485700.0
+      },
+      {
+        "address": "DAG87NWMMXNKXA3jGbN8ZeSL6XuwmzziKzzBYgC2",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "191051dcab3153de9047df4fc745aff400f4b9c40564f7e28df166db13687f81"
+        ],
+        "deduct": -49427350088.0
+      },
+      {
+        "address": "DAG8SUXU5j7Utdi9miubkcVgBrLy4S5h5PZuvHGu",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "9b24f28b706c4b1cd7ced802413d22903f7ee71fa3e476c5ae86481db234c3b1"
+        ],
+        "deduct": -67862606371.0
+      },
+      {
+        "reference": [
+          "0f7a773794e06a2a7e603d628d7c70c5c8dd6d208d46714190354950ad50b49b"
+        ],
+        "increase": 55810912759,
+        "address": "DAG6rj2o5Ac95qRq8Jrzy4zqcY2Xh6Dut4yQH6Qg",
+        "reason": "SpendTransactionSourceNotApplied"
+      }
+    ]
+  },
+  {
+    "currencyId": "DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1",
+    "snapshotOrdinal": 419000,
+    "adjustments": [
+      {
+        "address": "DAG0GydJBpZzLcC8rea3Tv7R8a28UbHwewDGsALH",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "73bc016400b31a436b3cc1b29b13dfaad541d1a0e2270def7115d307d8253cc6"
+        ],
+        "deduct": -668267519427.0
+      },
+      {
+        "address": "DAG4QhKtxd9iCENAqDqhU5vHUEb8EPWUgQFxyvTM",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "81a16e31bc1556df09f3681d596c0f07c12e0745026772b1f9d0b12edf2d4ad7"
+        ],
+        "deduct": -57951008856336.0
+      }
+    ]
+  },
+  {
+    "currencyId": "DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM",
+    "snapshotOrdinal": 17850158,
+    "adjustments": [
+      {
+        "address": "DAG1juwdY2QJdkmnVoAaQwJ2myUVB6Kohuxrazpn",
+        "reason": "SpendTransactionSourceNotApplied",
+        "reference": [
+          "edd9d1fa742654f5d9593c68279d9e164ba1876333d260b9022ac1de68278eeb"
+        ],
+        "deduct": -22837225000000.0
+      }
+    ]
+  },
+  {
+    "currencyId": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
+    "snapshotOrdinal": 472325,
+    "adjustments": [
+      {
+        "address": "DAG042v1StpF7dDCzpkyQHkwt4JEFvpVZxYUvvDp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG04AL8jRLmqgL2j3WRGvjYgU4qwPxJbUE5PWV1",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG06XxKVkSzaoYDajdniWz1PFQsEac3sq8XVDrD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG08c2j1UNGCeit2V2LPsJCzN2NX1RQbkWBaURZ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG09pzAYGA9yunSdpoxSYXcGksEApBPpMkVJCYW",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0A3xe4YgMPX33dSAfjXNsZHb5qKrSVweCqSSw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0AKGxQwSjFnEf2wVRkm9RDJ3ahwXYPHUusB49",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0BPUshM1VAWAhLX3kMS1tZgMxuqU7EZoJ6mWa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0BYD5FLBhvLg2tkdjcUv4USf77yzmv2HoHTHL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0DtJkgSMq1pv63HP3z6W8myNLMomDgVvkJCri",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0E81B36BabwUCSySRLTXZDDLEDHfEEJEjWasK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0EUpewFZ1qT6neKoqAFxNCBEUsE3h9cpNjr89",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0GsQ2BkHEBgkBB8hAsj6VpXcVPqSn2kBmXHSu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0GydJBpZzLcC8rea3Tv7R8a28UbHwewDGsALH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0HBRtAopj9TbfqyaviHYoogmdhMXBesmdWaWa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0Hin9tp3Hbf5DXQZdLirs5oPw2eTR71zmPZ4t",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0HjztLvFFxTxGXooUXQSGmUtkgqYNwbxukRVv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0JF45JGn8VMEuCNahTjfYFw1wyWD9whJRYtFR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0Pte3EFBz3hs2j6NE9uEken8mYH7Hp4KSPxb3",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0QeBSMQvGLwpm5VTrSR2FNTjd4VNezgp7CEVU",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0S2cA3GbJGsmtBJqVum68rsDPEHqLcBbk8ZrJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0TczjogdGXsbaneyVs59WxFQMvCQMiestbrc4",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0U3yARJe31W9Ej8tDimCAwHEU9Jp7BCX77iCk",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0UdRzj9MJMhMAgyF6W3QnSPprLrfCbZZkpFzR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0VZfBpdsvrCkRvZyZbS2GUrxDZ6wJ18U1rKaz",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0VhHLtHUJ2q9fzH3rvRKBy6JKp8uqqXX8mAwn",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0aBsFRLewqv9968tnwAGZREwEZ4YyFqAhZbkh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0axhGH2x5cpjAjtKgy8j1TFvoQB4CU59jy2Ga",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0dN8hyUjkQcxf8gdn51jfgHvyJRbwYskMRW5q",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0fNmxAvUJh5133TttDC9tm1Lx4bdY1GuuPZCK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0ftwCjdbhRc7V9zSuJxLXGH9MzxhTgy2XTmmp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0gdysxMi4sqiwj8tf6bwZZUWiqQutoG9NzJAQ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0iTzAtQpBvbuTBHq7vUVi33tDCP2isf64F2gd",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0ijyQZgUjDgNcMcttDCX9TcgwSpXkykNyCNLh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0kN6JPuR7emjQjqVmrSuTDXEAC9DNVyHWez5u",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0kqYrVJa2aUHNTJrwHsxHyRsrrxudjwd7Ukar",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0nex3RB6aULcYe4SwNN8avspbcvz6HCvDdCqQ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0rUk6Yv6YnwtFvmp4HFHza2rYher9tmMGaLhR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0ravapvkTBL76eLZPE5ZC2q4Bxx5EoVppQq7d",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0sEsozZhJrFnvVfaYn2W8DE7yz1Y1drdn8gbC",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0saL879SPp4NUCNtDjvKge7LyQ3DSC6BbUrE1",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0t2QEjb9cJZ7vbvYZDM1oLqsuHSm3KhUH5WQy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0tdipSytao7V3zL7EBVv261GiPkQVz7Men3uF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0toTpVqTxSvv8RQ9yUeEAs9M8mdVyiLZ2CArH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0vMg9x7U9YgHuWuGH83vuyvVEmdudvnxdvHRS",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0wu8YW64HEFifkHHvnoa7QTJ83h75igREM6bh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0xJ8xQWXaezQ8V1fdyseNkFVBmGfErL28zFUw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG0yjWTM9ztBxyJ2bJo8SQx6v2jBTxCWVfAYNnm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG13xocuhDSNNYe3FX9V1WUoAQn8LGbDrKF4LBQ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG15MGPwnPqemrgUkZCaYeukC63u1UYaq3WXze1",
+        "reason": "TokenUnlockBugDeduction",
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ],
+        "deduct": -1000000000000
+      },
+      {
+        "address": "DAG15WU5REVgZTWgMTzKPpeEdQvu8Ct3wDKWG7RA",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1CT4YerbEhk6UgPP7LidCb2h4K4zuhm2TNTH8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1DXZwADXGPawp1GYBrTHfSCZfKQScJAYFppoq",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1GTJNGJZW9L3eiNQtinyZ9BBmmwQV6Cu1axQK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1HByTvwCE589eG1J6sVGSpk73cBCMVmsGwJY7",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1SJ6MAvfKayTSTXHuotNSUZa9vZbjKNSDzM4a",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1STKSBgqduAqXfvG4Habixd4Bjse4TtNNXE7a",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1SYqQMXnU4VdatGRrS1JoUQT7XGFMiQCjV7xB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1TumApu4dycbNSfhkdJ7opHkSJJPJUY8mhsco",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1XDeg2W4svwU16gkJYyuBvXqu4Q3r4tL58VTu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1YbKxXY6D71wUEfESefTnuMUGfhLjG5XoBWqB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1aJivEYsaJFM9c4SMPZxVNgPmRC3qYKwVEG3x",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1c6voRe62pLfsj9w3UKWemsSeUDeHJp6k5igw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1gQ3W8oEGSznHDJG58u3a9A5hewoP14TmhrPr",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1gr6DgT78sgkYhdewoTR6XqVUTEh2PAv9pq8m",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1kGq8a8tZJn9xrhvbHjSTMxPqhvexJ9QQ4f8q",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1kQ4LFTvybQ1YYC5VhwEHsVbdMburwQwEKkzx",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1kgv2e6gY7aUFSzBrBKrJs67UHKvycFwxZgcB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1kq66wsaWAtZP6fmHvNwyXJ4ykX6EiEwngUpZ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1mNUiMRG46BvJMDGD6ToPiEJpXSgdacgTkU3K",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1poZsvgKaTrDgY9Tq7VpcZjTpvZuKr3eykNJL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1qemaNxXk2xBuBNvmfr7r1PTEyyLK9XDVLZpL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1qeupp5WP17mxSxXm2gZ5r8qGkn1Xy98hTZem",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1qmN6fbp8a7fdQcQxo4WZQf8QjTEa4zAjNU54",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1uDMfXiX1nQrjVbNntrRHDoaKSvPhJTPV9fUu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1uoBCcgDxPNDqnNSaftmH38Y47RtWS78FFpXG",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1xfNUuFZ8UHqpFRpnJms9axLkn3FedBCjYie8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG1zeugbzZSUFDU3GkvQj7YcKqbSZLcqxuQgwYa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG21ZmQ2SUbEQbzGrKnfJi1fwvcrNn7VwYDkPET",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG237znHopsb5roCiWpoJxYd2U9jeLUYD9Qi3Bt",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG23gR1EUKmnqUTrQaT4UnP6qE7yRAVdiuz8SoN",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG24UaHDfZbcFi6GkUCKsSm4SEANGYF8K7yLgLB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG26qp3CFqUWiSxyr9rSDBqGJEqzjYHJbjX7P4t",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG28opEQSQvm6nKuZdJsZbDHVaXRdeVRDA85zy2",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG28rPqcmKYwna77rtYGrVxrR1MRiC23aG3v7Mu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2Bcd7WBrskK8bxKQeYEyTg8Sosa36x6hKxYdV",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2DhkitPCz8eqJ3AtEQbRSfd1ahFiW4rVQ4Whp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2EbaUj9XDran9JU67ykUP9Y8WcZXguz8TpGrW",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2G2TmWWu7sBi7anN43MFa5iFpMTvoc1TUZue9",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2Gy7kvUjBA6fmDdWWWAyLBXtQqwdtdGc52V9j",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2Jkm2XPfhCL7R7u8rAUfj5j3xDadHsJVQh24g",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2KtsZ55D6fPWdsgSifudd7PxuScpR6eWriXtB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2PFjUdGeSaRJ7WvLC6H8gwnD62ZRLaYJqZn9N",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2Pgkq4VmmESJtfL5bj1cwuUSjqQkrd7gmS3ze",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2Pgz166dCzyJbPsn81XY9dbZpZaxUTy7CLhxY",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2QoXSnjTFZWywWZWv5cTd6pVHziDTpGqo9Ebw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2R9oX9DhxnBEyAbNmbZUcyRHGpbbFbkhxpTn2",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2RiX6jaEHFdVTKTuZaDXZ8vCayQ9Zg2fLHXr4",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2RufXpKZkhD9sryLmiFfCzPySZp2jCNs18bgc",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2SGB3Zn8tCe6Bv5ndTXyBvgur2oDEhekp6uo8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2T6bVHiYSiBCw4SWYAPEeof6xZhCwN4cLcqwU",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2TFqT8gD9RXp8spKrnSyCQ5YdnPSCgKyoTuL8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2UFqjpxYNnzwpbDPUmyhiz9gC53MYUooj77R7",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2UuPh5oYwfE5yMTivz1PJGhqfST2Y439DXRBA",
+        "reason": "TokenUnlockBugDeduction",
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ],
+        "deduct": -2002272560617
+      },
+      {
+        "address": "DAG2WA5YDY2jWPF81W1DLo37DUj5C9B6oUFznktS",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2YJaDPMEjnmophkr7igk9s5wDbqQu89LSoHWf",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2ZymmRHSwXcUvdjLbUWUiGkixMX7azEdZFaH4",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2bBsQiAbicsSzNCJkFoKrak4Z7EoKaSrFxFLp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2fEkmsmMrwUvx1ouYZfgSvXKz5P3L2pgSCnJh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2g2r67CYAG8SZFMXnc5St3yUGFBerHeeG349u",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2gYTzYueoB5g8NbAPp69WcyT1dgmy9kJRMGfj",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2hD2HkTN2yz6Kw4jTkv1Q26x78DGrpsgPLoRR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2hdvvuuLSGXH8mvFkbtqFxup2V42iK4oPasmK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2j4CDRBk5TAsCYjMGz6xhcnA8L1q8ne7xppp8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2mC7SzbD2FUDeQBEEa4MMNAkwSPycXxG295JZ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2pJjg7AfSYxXL4hxRsYe23fKiaWM68SG8bSeq",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2qtZtgkgLsCDsKKZWyEDDwtsW3F3nR5itxMLc",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2sSbzKv4Y17F2XUiWBqeaApf9DkG33UbXUdYJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2ukVEBpwSh5CpMz9wTwAVw5Y7Wa1bSePZ7Kr4",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG2x7nrXAo2hikNGar3JBMhzJErzhVSGQh8hMsE",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG32BNL11KFUitJKCiDtEDw4hwfsVEy6fZUv7MU",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG32aDJfPZeQmL91yjmS4Q7H8sjqzS6SKP2BuGD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG32oAXDQWqiqXQtX6NQ1t6qFPYnthZv5nJ1siZ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG36UqCfpaRQHFXxna2zSY4btv82Ez8ggmYobbF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG37nSDXT4dvy8oGD4v57DbnyjZvQJW22adPios",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG38rdbdmPieT82u2zSTdRBAD82VcRPveEmoqkC",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG39C5mCYRZLnjypY43qYBvgVjKFJAJzTdCyKGt",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3Ae5Zshdjxe7HXtzafEPNwhKTjcwsG9yRAVWo",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3B6ErNDnypVzkqZxCqq1i5nTYKVmUVCdKzzHz",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3C2AVC6ZaFmRcwegJjsydX9vHyeZDLQzaceC4",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3Ci2hd6BhzjcfFMBh3HuhYt6zEm83ph3ERrW8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3E9WpBQ4eQ2qvcwVbsaewrvkEsUj3sQduvtV3",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3Fb4ZaaN3p1gciSi4VBryaV8HYbcda3F7SzsL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3GSihfDVfPt2NJseum5TSCPCV1EvrZFVjv4WR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3Hp1AC9BbTih2gHj8S1bagcRR7uaNxEC2iHXU",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3JNiPs5JLZ5a8zXd967qNBzXWxjYZv6G1a1Ao",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3KitPWZa4JhXxWqc3dNcij51a3EDm38mVD3hQ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3NdRaUqgf8SiFTr3n6hMXc4RcBvKpnzoMgHNJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3P51chSACPMWSvWZLfgeNzqJXpmr1WTkGav5U",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3SKsuWMjzNWpXU3uoEJzbYXbcXTatswcoTPiv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3TMGd3r9HCLethkgBcuSEgp9UiHrFvofxJZHw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3UAQYcMjafU3XtVd8hPRH6MyTwPo9fNaEK4FX",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3UxcZamxZ7AYWrCLc8evDQx55vrMLbxt5qjqV",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3VSGrCKkJ5QjXoN55DU1tpZ7Wyuu7UktVWUcv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3XFZhREnHQFpaAkxK3nFgQMrSSAwSMCpzZHUK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3Xvu91fTB8CTBQiDmg4A48DUfcnP5WysQkSXw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3ZUU4Ke1UgdD2UtRiXxFPMHU4Mmt37opcjFLu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3aM17U6s3hdh338xLgJxC3DNvBiMAJ3nSzb2N",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3aWAMzzLLFdRiBnfKvTFLjxwF1a9h7yST4BWk",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3b2rRjXFHBRWe7r6oejgjvDZFLuW25AxMz8aL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3bHk3xfE8feWdsUUAZrL3937s9VpTi9i2Bc4e",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3bPQU9KJKgN1Wi8pbxMMWdrJQTXCNX5sh7zwX",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3cUSexjMhTwFNypUSxJargB3wU7C83YSvNgBU",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3dxDZJMqfFaWR3dUHr4P1t3GXtPcfXZ8eeND2",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3h14Pw9Knr6gdcxd2p1Mfnvcqsy7nxqEPguPT",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3hqbaqWaH9guCJFPfJyX6yhNjn9sSs8ZajZ7M",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3intbQtFhERRBjmosmHBj3GSVUFConUbySXps",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3jrpsW4ABhnAu8T1yLFtxdK9tqREQvvNQ8Huu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3r7cxaymfB7W2xrcKSgnf8UJvVymGnUrN6HEs",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3rac7xn8iYvuAW54vyimJxgxQyE3R437x7roF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3sE767QmmYRGaZ9TYTfMrG3omkci7qpaMJxSP",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3szTgid9yiUtGi2Z1XyTXnpGwSNNdmTTpLJbd",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3wMKoWoka6uMQgaex6C9ESPHAetvPboUkrpBA",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3xrqpcWKNbhMFSvg95r2Xpkz82Aq5Bmyxwzg8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG3yqDiYsksi1L4RWcEUgsPavnWG1Jiu8oU9f16",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG41ozcocaxpPmKYeWL85w5b6yQWs6sSupunBht",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG42T8RQ9oTsC4cG2wDrnDLK1fQTUoFMm5R9HfE",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG44APUn5ftsfm12y1AZKjfMEtLbNvNLSVMSB72",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG46MgF3AkJnFY1hCPdC4Pywe2fT8H7yUjkiXkp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG47ZxXteZpsWs5MkD4AqkAZGokFMCGRav6SKgj",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG47nt8RdGftj9CfiU8sAYe46dvguZPFL9dUp7z",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG47wZjTVcSDHWi15uNusoyd2dpR75uYr4QNSWm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4AqNNL2E7TWBUvQRxSPhraS2Lnr5xPM6xtVbs",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4AqS5C5A4MF1qSXiqWGisotrGoTxYPv7ipYCi",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4AwJMxezcqezDWr3hk2EVhtcn2N5Pzh37Acnw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4BYsTHbHrZhKEajZ5vHkksnScQxXhaoe935tj",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4FWTiFtTpKPdYAXR8yRC2SDYnBScuPDN6S3t3",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4GzciNMvB1jEdmMHaseMzha7sjT6rtey8mShe",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4JBN98m2DtRv9MKcUkVvqTHbs3zon1Mtbs8jr",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4LDzVvU9v1uBnFpEfgDLpPwYtsnx3pS9ieote",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4LWnpjmXfUrbM1VpTXqPH4NzdFYzd6TTSnD74",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4MjV16j5aiitzkUKDbUrheL8hsmpKK36A2d9U",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4QhKtxd9iCENAqDqhU5vHUEb8EPWUgQFxyvTM",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4QkjkSp9e7STFbWSeRLx1bATufmzrFvYE4Q1q",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4RFJ2BovzdCCKGwtC8yauWHDqLUs4HU8pfYam",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4S6iWn3cEA88naiw28k4KEszm1pVKfVLgRxKm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4Sxdv9YvtVjG6F2o1RatfrD6k3xFkEnpEh8f5",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4TLaCeJoEtC93rjbsfDoy1wJc4Zxe247pD1Mk",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4UqgFqgDtTSnDfeFzuKGpT4rDveUyykBydwVN",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4VzKnYUFn3KB4c68sQiBWDJw3Mh2xoj4B1Wkt",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4WEFyw6c4MneQdTf9r5x6U37m6jiFL9rX3yLJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4XNzTuvLXRrCqorJRyPhDmNb9XFmzSCqBL4tw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4aSVeJfGsA4ovvH6z3H9UCXEhtgfQDCxfaaEw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4b3BxNBpcnTd3G7ZiZxYT4DjcVuTxMEB23gJz",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4b6ujVgv3z3kRiDkLrx3eXiH5WBUw2TETacbK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4bPTBrUyMeWupjU8KMTB68vUNdJKVPoUKTEoL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4bY9zdoXf614h6vuauKJcw9cH4JsivSmN1a18",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4d76xtNSKMYv2veL3TRD5fCZ9PXqJY35QmAqk",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4dcwr7FaLTG9yfpjxa64a9gafttjfBZ5hRxaG",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4fPEhG2TDu7YziUwekVFD4TEuEJAkfRShXsqb",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4fw6dR2ewsFRcB35RYz2vmzB4zLMDZZoZgQbA",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4jPQY3kKm9cLFZYKhowUvG3kEnUdYEnVZj7dR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4jWvjPdpvUqbpUXUobcQG6Js7XGfzZzhvxFmS",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4jYAsTT5qu5dxSBcZxPyTUaLk7P5kASBAh9xF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4jhGpwxTvUV5GPYQng2jucTGWB8eBUfu52jge",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4kfRPpcPSh4cMn8ZgdMuTEfdu3yz4veZFrv3L",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4m15TnUjnyUzR2e6vc6eWQSF9YQPFVqeb11Sc",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4n79bg3YjfKf1WP2AnucjBWivSdVsFkWFQoEF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4nT5Yt43L7YhBYhn8TBL3dNGQP57rt2Ss5GAD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4oBpm22PvsE3RVokWV4EbYesbLxGxgovD2KYr",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4oU83jjwV3iPKzbv3hCDMTXXJL9fYy8mg87Yg",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4qdf7cKgHz8BPfUsm8kQZdUikcKgV72Wxmi89",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4qryfcjfEqcyC2eUi3WbQikXviNQjLv8DH9ST",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4tBDTdCbXG8GowPgBYHa5BtJSX1h3RRVWm5To",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4ugWkuonDktaUuUNQYRTCWmE75oQy47bdiPA8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4vdjDMu8qUWwRqmh5iNzxsZWj7eyDjvxrW2m9",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4xhwiokH61BtsMJeB5XKi7wdn6ag8qf7Ye9JW",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4xjCkH7LhbBmJ8RAgHNDymNJfUf2Cs6Qo8BKk",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG4xwfDK7gxur31zZZ8biVH7ih78hgt3cNgA5At",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG51XJfY2wqcyQjeZXoWzc6wQjgQwU7DATWkET7",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG54kb5vEB9GdXcH5L7ezbx2kEJxrTvyFKcapqC",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG55YSi4chg8iYJ7eJBenn5R6C6cXnwZjWpxXmm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG55tARx9J3ko6ijZ4B7zMXWsZnXdv52qSwXHnR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG56UmE4W6wV4rd8sDHTFcpQvwWJ19xY3CjWTEq",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG57fYKCRs9CtcrMZT7Lx43yJvVVUwmbqj3Tzp8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG58se1Ev79MDd4vmakxN23co4VoiJ3nwV9PerD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5AxKCqpguEXhMrc4x1Zr5U5R7m3T52KzhGkdH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5CetR1XLUrCDpS4pzn44kxN8YDqXxyi2sbLpa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5GCPGYnxTA7DgycrrQ1XqS8a4EHh4ySJYyU8m",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5MJ2s1kev8Uqh5XH6TrCm5c5wKoSizpXNZZKA",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5P6xnPXJU4R3poxrYCaaheBxaW3s185Wj2fDD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5PDYvg8YKXZm5kYHB3kqQVTQyj7enRPcempzn",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5QfGw5np9PAM6EjpyPmc6wEMRHAaw78zZThwG",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5RP8tjSCkAkKkB95a1tGytRFr8576vLQA1Ynf",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5RRAUmdxRwMrkrEUYJ8XDFeFkrS366wBWrNTT",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5S6vhUB8sndp4SZFnFF6W4Y1piqCW9vt3Spdv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5V5mqD3jPZWUHMsv4x8h3vDQGCcJgRdzqmCVv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5VDyD3omHc4CBYwgKm8LLqVLfq3mR7g7pzpNw",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5VzbigydnfiW87QdYDeqfWyox3fqaobZBXtu5",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5WrEeR2PgaM2NxnefgAfMqV1dxXGjcVvbYLiR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5aRCSR4BGaXDFXBJLg24u21AWrbVmH1BsfXhe",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5d5GcZJNMkfPtmb1u9cyb8EehQnefKVTavLza",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5eXARMfov4oNfBfrr5tMTDvRYvPV4nbFTBk1N",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5fY5cjoDFMAH86e1bApDteJGVkSAD84qJtSYj",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5fxoQQ4e5iK3RtTKgGe18Zh6tZmbHmBP5ZRta",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5gV58ZyBgJ6DRZ5p2Sk5iik2SKs2L8AZWrW7K",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5i22FUu4uvuqBareo5DeC9NJe5zeDrDwruv5P",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5iKfYLqVRK9F358nL3SgVKjBZz1QD3SzdYiEH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5kUMHYvphwDRwNbjgjdY9Zy1g5sHCC7R1vbve",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5qXrZw1YsqQUeXik4zmstZYhKNq2q7poYESDB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5sDEGt6ruHRfo97XnEaTTWcy3eNfe2J5Dikor",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5t27Eywv7u91sB3VWBmKjjc9ZveNbvECHr3Ms",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5tB1U3kT6y4bcjfqughLcCKmNDP3vrUh6hCfx",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5tigXd5XiETucyroSKHCBPqDrrcfZWzwUyPSy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5tnw9tfFU3b3jUpEFVND5jhvpHqntz5cJ7ZLu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5ueNsbXgbrLVbkuKFyep2N1rv1GaefX5WGi5i",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5ueftgfRUkr9Ek3cJL1SX1pvXocu9GvJyKvos",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5ujsy8vV5ZhTz1GppzDjUTH6pe2DV1WecvPhE",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5umyBCN51WbAqeDpp9613hYTNteaCY9DhF7eH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5w8KRbV2EDCs9yo9fNS8cxLFRnXWTZH2W2cP1",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5xDHTWYShyfmofoPabebY8Zh4CHkKPc65Tojx",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5xhseJK88KvJknxh9NsUSNDiQVF7WZRzTYHts",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5y6TtwPxP4BssnCtZmY2L92YEpFwpHCecsBFB",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5yH9YA5jdBuqLgoSBzBddutKBxaBtFQgHXhri",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5yMdDrYgAUz1k6VbcjYZxKD2uauyB93Z2XaTb",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG5yyEbvs7resExKtTdsmrdDJMR7aYBGmshpHxT",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG61KfWEhnwriyKQdCz6DgJZFnstL2Jf1t32PdQ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG61RZYTQyj4F6vruDxMimNrSX22oronJnLsZXR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG61eacmgpVsNmLTMjENtp12y7ngvHtG4L9NWYs",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG62DnauEbG9HTWe7RbSQYVwCihtwxgFCCw6waz",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG65r87jeLsCCAcHNJr323fV5jrwXeKMzmVvxBu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG66TVgswYjnUJvtuGCdqetgEJyiCJFDiJXEXak",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG66yAdFSYiNVBc5nV3TkCN8j1yL4xzXaM1Nd59",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG67HsLzd9v6DWzhzjL82PvHHYQLukS397eqEwe",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG67eVhUd6SqGrcKyVFNNvsYiisGrZztBD291d8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG68REzFtASZXcxpgzD5NPUAGC2RsLwgSVtTKch",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG698vYX1EfkqUxuyzkCnWfNqunX6TyE9RdteHy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6AECtWbVEWt6eD8HR2RNaJPV8e8aECea1jdKQ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6ANwjtao8gdoQHsY7zQeCeWMLWN972dKFXGZK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6GVCjLeeqBFZgezafw3uMyY8dA9uMuEMKLG4t",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6GgUdrHeAWqa4dM2KxfmMCwzy22mVtdB6DY8Z",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6HFHrmhgBnScwJ35zsKBN2buGZ9513gWVEY5B",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6HwZdkmH5wqMwztFR2dKZ2NTRtn25T614789x",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6JM9XpyCJzUb3ZrxQ7fsTjYZkHnB5xxFTG9MH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6JUetcXeSWtV86Rjvbjg1kRvVRcQNkckamiPF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6KapAXef42gfUj1W9EzpEnq6UzJ71cG4P9U26",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6Kcxjs8omnShvUdYXDG694s91u6npN8fopyPJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6Lsj1t5WQLbtqCdVkJxwdBzuBUzkCiaJzENUq",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6MTu5YGvfYfXFvr5r4iJNooPRemZiJj1uYZGt",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6MaWjmTTnSovNL2sLpYiZgh4HFJWkEdPyYVdM",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6NaSNh3sJDFpWrnvDpFcDo9PuEMaVj3nVHkDW",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6Pr5deXTczNM9Dpok3h7MR3AVtgKsVU6QWxAE",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6QW4G4aqieASZGfVv5yEnpB2tGqGEetAJ9kVy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6QpVzH3armwF9fPaoAh2ddTWjc55YhtkKVfP9",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6QtRYcDYVXrXVYNnhYCg2ACdvDNehz4abjLFe",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6RFKafVyasqKvfbPsLymejpD29SBZ14Qnq8zS",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6SFiC9pPP7Qj8NQWonpZguEGpUvZUwbPRUEQy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6SdphHz3H55d2qKbmJ8wLQDf1mXmvFwTBJQwa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6Seta15NTR2uVZRKAJpUpAQDBhkU89f8BoZhM",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6SrfL6P6y5NwFbSEPBduJMW3vRSD2zifRCL2r",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6THmb5mWbynAcyk4Fixrtsk5geyQnAy1gHWmc",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6VK7DGpnBbEQdpMXx6N5AoRyMxa7Gvw8XsKdi",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6YNTjV8D8KNrncWY4JWxczPv8XdWVYv5ztxuf",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6aA37R4vMWhqYh3dPye8nVP1SNhrT5EJu29Li",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6byAu2DvKYnQ8HJVUk8ksnMSed5vexQqMH4r6",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6ebEuT4hvhq7KYTYwWHYmy4DeDraXjSMTrtbS",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6eebta4aJ68U4gVQchhbuY55MApGCYCJRxY1g",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6ffgkVNx6g17g3nKPCSxN79upipLKaqLnWspS",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6g65DZ1NEQTNaarGVyro8hqF6cofXKmr7suSp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6gg1Dq7RNpFhHo1VSrakLifLHCLXTykfL6XQv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6jYbrhGQ6CM3K6t9upQB7xwm3a2Kve55QG5Wh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6kS4Up4uuRaNaDSqonpEd54gZY8HMRK8Yqmzf",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6kp1ZP5hUJJMq5GGYZ6ZoTZsSzPo3cDPqr4ny",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6mHuxKtBLgB7tbzavUenGXq8wtpgDGXXGSXxZ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6npi39pofKtkVAgDmfYCVra774vCW9W3gUMqH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6nuE7gfyDe8KMe45CBeJkwGsDpkxHehQVemPa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6o5rXWJAYQzra3BcMnvakqqUmzUboCZZCCb7u",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6oMM3RdhYbrgJBG3gjicTEF5iTBsjpzs4czPY",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6pvRsWjTzmPSGgNZUu6MGgsQDNQHdnzNGNhzf",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6qWERv6BdrEztpc7ufXmpgJAjDKdF2RKZAqXY",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6qyCvhka9rX9SsAMouHmAoKmADuGW415anB59",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6rj2o5Ac95qRq8Jrzy4zqcY2Xh6Dut4yQH6Qg",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6uMonm6vCaG8vvaWLERAfrtQuoU4Pmm6V46G8",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6uyPyAkjbi537BXf4WRJRNysVyenovrbDy5Ag",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6v6RMCxBs9X7niBrxykosXy6vXEGuGL6G6N74",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6wyV27YvGGAsixbdhqqmZHMKSMxwbKYAYvgB6",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6wyfBQD47CLE69cPJFtWk4SCtdtUacPyf7hA5",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG71MuwvpNCSY8x8mWEa7YH4zy7rBu89jHVTRQi",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG72p8NoXWgy1ENjNT9nF9GrkTSdd5EuchefobL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG74tTfHQBscZkNmjuo9ZnvqBJhw7y5TGhYgCKR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG75HGmyoCXsN5P4cgNV5nMhTK8Dro43otBqgbf",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG77HNgXx8kWRP544TvqbcuBLhPPzgoxsUmh96E",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG79rrXP2qc41iFCDVPj1zxiqBg8hQtsRCipsTK",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7AfpvAN6PuzvkPTQDAQ1p5QBgPEdNJwmzHbw4",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7Ct48WxydacrorPmE5YGmDGFxc44JifmvJjny",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7D9D1oXta8rcUwSXnsVP876PCaunRsm4mnhem",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7GhLXNZWDEpFCL53BGHm42TkFaX6kAyrv5eNZ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7GhbfubDJduQGdWLnMSZyyfAS2YJGGQ5SkrHr",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7HHNQkMsPuNPneivdGCXgtkxwYUKceDEmHuA7",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7K9pS37YqVVbr6vx8dMGTUw9LSC9wxpa793iX",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7KjLMqwrvtBKAQhmXDUFWHUrtfkp2u5DnrJWP",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7MZgaQWbC4YCA3J6F1d1msin9VQhigF9xYRQ1",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7MigmpXkAHwFmYBL1JuUKX6LgicRVHcVmDMpx",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7Rfx1R7H2jnrvr9NwXr7N5nfXu3bdU9yn9jin",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7SwMpkexkGFTyQ1yPhwjnUFYaUoA33UR9mVqF",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7Tid3kAcMmJU3D9Zv4i9tbHNtsZtDUnCx6pKX",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7UP1hSA2Ve7i9T7MhYYhpzeJW1DMpRngqk7vv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7Vn5pTLd6RwEh56X8Ebyb2woZqCR5g2w1nV3N",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7W7U9xPsvzbcH1dAU6E934usU4JAwchDYU18f",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7WxaM8Bbn232qHnuS6W1a7AhC6Zyhs7Exad1R",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7a14KsJHneGvAg2RKX9djZANTEKUwpFqnWepd",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7asRxpJWytZjzZDYP7VPjpfEnse8PrhNFRvF1",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7bYKBqBhGpXwPhMJ2qe8pezgXFcb1kVtN5Wat",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7bqQ2LkLi2qbLhTZrxwd8aUc4mcztAHJvCgmn",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7bvYBXmtgt3oQvGPg4YuxUspdmbFCUMYCEPZJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7ccQiWC4YZcs5HBqXk3rY7MUrSJpn6kNxf9qR",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7ck5Uu8PaCr39oNrDnDWvXCaTgSpmhMhrtLjz",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7eFgW4tepA47dtQn5XbBJvA7any7SbkqThgBY",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7pQmXqVfZzkF4FZQK4VixMyJgFTK8ZVTRQktk",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7sXNiKukzZeBy5vx6jxW3rXjv9hB4inkK7byL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7th6bTLnbhDf7bF4g5nk5wJcGwu4akW3DFGNy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7tovDF5dnix7thJqPtzUDtQroVYEWiR55Ttc3",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7uHRz6stwzsEnSHB2w1VxVHsCq7PDuDhTbjNP",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7urMgfRgQks92ZebPkd6DBijdUCivaX61E1fm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7xvBrygDMSkjFpxL5Yni6Px3eQNiCpBft2kkD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7yFtVWsNVN53knqtcaYoNg56sG8zXq79eUYLv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7yV5dy6e4MgqdMFchwYKt5gvA3kaaL2xtMUiL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7yhDHD3Rmy1HUu7TfrEvVWP5mRtcudCoDJChp",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG7zHewPiP9Bd2f4b3mJ7RNpHwSqBmUrCnryxFj",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG81L7PJjn292dz4YFeGL9iQf7FUxdUN78kED78",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG82V11cut7WF3oH93oeKzSassfZp77DQ4Zrfyn",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG832uu4PTXa1rjjHVcCnMA3FrYGuS4hVKuEqjm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG83y861xJ2SjehtHQnJZ9DuZ2kF1iivChhZ5D7",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG84q6TTiBn9eE4bxcAFp9rF7yijGrec2vvPu3g",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG87a9w2Nq6P53TPMS4usiG4UcFkAY1gG1zNyb2",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG88uz9MmUKL6BGeguzzFpzBXUcKbes822UeeCD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8CcNscU23nngw7eE18MHxYLvo7hh773EK1s7T",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8Eyr6SGvLorNU4rQspeUXZLZi3wt84CwbV1Ep",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8F8tKgVR95LZXj3CgC4VqijroPaPwrZvoB96w",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8FY4GpTopjhdLsk9Ki44h4ZiojfMaE7zfc3uv",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8H8JQf8zWEZXGZ5eckNBS3Z3tyuM4zhPeB4iL",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8HcvzzmsxerTSHjNwZf3e8xob3QPv3YbeSeQa",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8PLFYEqKjJp22ErLfKLjStQQURfA2gTCL8e3U",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8PhNnnSGpE1ATUh5LC6FUU5Kb4LNjJAisVY5t",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8Q2wiBuMVQw6XydGVijAFFez4sZzsJh5LTDzY",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8SNPTLhKLJytZU27se3zY5md5FtZoiXe4E9KD",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8Tq2ueGuZX29iG5CC333kDTKRTcq3fUNHWgB5",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8Vxk7AJ2sqEfanFieTp7mi42dx2dKNMc2MwHn",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8VxoXRAyDgcEZZ2YWatkRVdYeUx3zPhbNWb3r",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8XAJWbPhg96nJvHPKF9BCgDZPWUphSopmAL2r",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8XQVGK1cM6wCWWGsDRyx1aSYVVQkyCPbijngH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8ZgKDJRFa2XjFzkphxQEhAfmnA6CShnaZNbME",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8aANKSgdDFiEsvwSRkrVGU4PYWYnUExm4UoYm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8aGAE8h5Lgfw4MqDXsWVaVwdzVDRqCNpFFubx",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8bejG1ryLzDN8is4vGNFVxX3YrazXZstAD1Qh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8eDayaNsb2JHDx89pmqsp9ooRNLqnPJU7MkwV",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8eQFjrdRapLSwmFXuNcKTMbXXPEmx7XZ3e7dJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8eY1SzVAi5WSjoWTnNYCsKkBeKhKgtmQ2kGrE",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8etcx9fua84ovfFYwmxLTTv1xB4hAcCQzkUd9",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8faWgEoJ5Xo4QDiCXujm8VPhnHCyRZZCLWjJm",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8h6PrXwHXyfprbDdodUsVYPP9bvf434uUxnCE",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8ifCcNyzwSLdqvLype6NfTJESvXrVoj3Dq8zU",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8izqMWQQtiXuwZ7cMbH6PA3qsLyMpuxNe19cT",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8jWbkVMxsNxh8kGvXHASEvMPkE9XVHVBTMerV",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8kDWKh9bP6NE7TS9QHo1bJ7ikniFDqi11aG3W",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8nG4NkBuXeppJjaEjUATnG9DbF9An3Lk1agNq",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8nGW9scUuJWYjuPQD55HR3aNu8ghg5GYNNpoY",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8qDrivtQAo7yGY4r5Ua3Y9HgVDDa7mbLToR9q",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8qbc3WDKPuTTEyBLE9EgAkQMECzbjVxbVc4T1",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8qxiSUk4kZJ5oDu1sQRh5hhzDA6yLpaVCZh59",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8szQATLH7rXQVdN91NJzQvMibMLGHJrZ81jwy",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8tHN3B2KaNzyeRboPqoger9Dezmr84ZjVgze9",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8tLFiYZi1S1a6V7pWNQynWgu2KxhKiXehTduJ",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8uLAWrGyVZLQgeydcgcq54s2e2m4MEajzuSci",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8w5shfy1JN5XtxSBkfuxAcyeKenWK6HsHMXUN",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8wStr9cSpMxjar6AHQyXpEgw6eVVRnEobxK5r",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8wtzr1pSwfkoSWZgBJrCJxwLzCuVDT5KZ2QJH",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8xvGpwgNi2id8zkvxf87xh6zeSEN2YBt6KP5S",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      },
+      {
+        "address": "DAG8ysdcJDuMtBszLoLFce6Ztr47ErHtDFCVUW9D",
+        "reason": "TokenUnlockBugDeduction",
+        "deduct": -3002272560617,
+        "reference": [
+          "bfd733e92aa71b2186955a4d7186301b27602621f0ee890159a8678032769f11",
+          "dbe69291991d4495ead034a1815c8d9d3b6c9ea20e5c6873136052e89601da11"
+        ]
+      }
+    ]
   }
 ]

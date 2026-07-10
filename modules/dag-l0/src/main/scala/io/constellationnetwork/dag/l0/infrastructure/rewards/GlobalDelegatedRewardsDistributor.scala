@@ -258,7 +258,7 @@ object GlobalDelegatedRewardsDistributor {
     }
 
     private def getStakedAmount(stakeRecord: DelegatedStakeRecord): Long =
-      stakeRecord.event.value.amount.value.value + stakeRecord.rewards.value
+      stakeRecord.amount.value.value + stakeRecord.rewards.value
 
     private def getTotalActiveStake(
       activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]]
@@ -285,8 +285,8 @@ object GlobalDelegatedRewardsDistributor {
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal,
       acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
-    ): F[Map[PeerId, Map[Address, Amount]]] =
-      if (totalDelegationRewardPool === BigDecimal(0.0)) Map.empty[PeerId, Map[Address, Amount]].pure[F]
+    ): F[SortedMap[PeerId, SortedMap[Address, Amount]]] =
+      if (totalDelegationRewardPool === BigDecimal(0.0)) SortedMap.empty[PeerId, SortedMap[Address, Amount]].pure[F]
       else {
         val modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
         val filteredActiveStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
@@ -301,11 +301,12 @@ object GlobalDelegatedRewardsDistributor {
         getTotalActiveStake(filteredActiveStakes).flatMap { totalStakeAmount =>
           val totalStakeBD = BigDecimal(totalStakeAmount.value.value, mc)
 
-          if (activeDelegatedStakes.isEmpty || totalStakeBD === 0) Map.empty[PeerId, Map[Address, Amount]].pure[F]
+          if (activeDelegatedStakes.isEmpty || totalStakeBD === 0) SortedMap.empty[PeerId, SortedMap[Address, Amount]].pure[F]
           else {
-            adjustedActiveStakes
+            adjustedActiveStakes.toList
               .groupBy(_._1)
               .toList
+              .sortBy(_._1) // Deterministic iteration order by node Id
               .flatTraverse {
                 case (nodeId, nodeStakes) =>
                   for {
@@ -327,9 +328,9 @@ object GlobalDelegatedRewardsDistributor {
                         Async[F].raiseError(new RuntimeException("Unexpected delegate rewards percentage. Got value less than zero."))
                       else Async[F].unit
 
-                    delegatorStakes = nodeStakes.groupBy(_._2).map {
+                    delegatorStakes = SortedMap.from(nodeStakes.groupBy(_._2).map {
                       case (address, stakeTuples) => (address, stakeTuples.map(_._3))
-                    }
+                    })
 
                     addressRewards <- delegatorStakes.toList.traverse {
                       case (address, stakes) =>
@@ -349,7 +350,12 @@ object GlobalDelegatedRewardsDistributor {
                     }
                   } yield addressRewards
               }
-              .map(_.groupBy(_._1).view.mapValues(_.map(_._2).toMap).toMap)
+              .map { pairs =>
+                // Use SortedMap at both levels; delegateRewards is part of the signed snapshot artifact.
+                SortedMap.from(
+                  pairs.groupBy(_._1).view.mapValues(kvs => SortedMap.from(kvs.map(_._2))).toMap
+                )
+              }
           }
         }
       }
@@ -392,11 +398,13 @@ object GlobalDelegatedRewardsDistributor {
           staticRewards <- staticRewardsF
           modifiedStakes = DelegatedRewardsDistributor.identifyModifiedStakes(activeDelegatedStakes, acceptedCreates)
           filteredActiveDelegatedStakes = DelegatedRewardsDistributor.filterOutModifiedStakes(activeDelegatedStakes, modifiedStakes)
-          nodeStakes = filteredActiveDelegatedStakes.values.flatten
-            .groupBy(_.event.value.nodeId.toId)
-            .view
-            .mapValues(stakes => stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum)
-            .toMap
+          nodeStakes = SortedMap.from(
+            filteredActiveDelegatedStakes.values.flatten
+              .groupBy(_.event.value.nodeId.toId)
+              .view
+              .mapValues(stakes => stakes.map(s => BigDecimal(getStakedAmount(s), mc)).sum)
+              .toMap
+          )
 
           facilitatorStakes = facilitators.map {
             case (_, id) =>
@@ -512,10 +520,17 @@ object GlobalDelegatedRewardsDistributor {
               case (address, withdrawals) =>
                 withdrawals.toList.mapFilter { withdrawal =>
                   Option.when(withdrawal.rewards.value > Balance.empty.value) {
-                    (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
+                    address -> withdrawal.rewards.value.value
                   }
                 }
-            }.toMap
+            }
+              // A single address can have several delegated-stake positions whose withdrawals
+              // expire in the same snapshot. Sum their rewards per address so every position is
+              // paid out; the previous `.toMap` kept only the last entry and silently dropped
+              // the rewards of the other positions.
+              .groupMapReduce { case (address, _) => address } { case (_, reward) => reward }(_ + _).view
+              .mapValues(total => Amount(NonNegLong.unsafeFrom(total)))
+              .toMap
           )
 
         totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(

@@ -57,7 +57,8 @@ object Programs {
         services.globalL0.pullGlobalSnapshot,
         storages.snapshot,
         storages.currencySnapshotCleanup,
-        storages.combinedCurrencySnapshotCheckpointStorage
+        storages.combinedCurrencySnapshotCheckpointStorage,
+        storages.eventMempool
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -89,7 +90,8 @@ object Programs {
       storages.globalSnapshotsWithStateFileStorage,
       storages.globalSnapshotsWithStateDeltasFileStorage,
       services.globalSnapshotContextFunctions,
-      storages.combinedCurrencySnapshotCheckpointStorage
+      storages.combinedCurrencySnapshotCheckpointStorage,
+      storages.snapshot
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}

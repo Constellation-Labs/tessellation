@@ -69,7 +69,7 @@ object ClusterStorage {
       def addPeer(peer: Peer): F[Boolean] =
         updatePeerAndGet(peer.id) { maybeCurrPeer =>
           maybeCurrPeer.filter { currPeer =>
-            currPeer.session >= peer.session
+            currPeer.session > peer.session
           }.orElse(peer.some)
         }.map {
           case (_, newValue) =>

@@ -69,7 +69,10 @@ trait CurrencySnapshotCreator[F[_]] {
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     shouldPerformMetagraphSpecificValidations: Boolean,
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+    // v20: see ConsensusFunctions for full rationale -- packed by caller from
+    // the consensus-agreed previous round outcome.
+    peerHistory: Option[ConsensusOperationalState] = None
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -104,7 +107,8 @@ object CurrencySnapshotCreator {
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       shouldPerformMetagraphSpecificValidations: Boolean,
-      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+      peerHistory: Option[ConsensusOperationalState] = None
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -288,7 +292,8 @@ object CurrencySnapshotCreator {
             if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
             if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
-            else currencySnapshotAcceptanceResult.globalSyncView.some
+            else currencySnapshotAcceptanceResult.globalSyncView.some,
+            peerHistory
           )
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)

@@ -11,6 +11,8 @@ case class ClickHouseConfig(
   user: String,
   password: String,
   tableName: String,
+  retentionPeriodInDays: Int,
+  protocol: String = "https",
   // Batching settings
   maxQueueSize: Int = 10000,
   batchSize: Int = 100,
@@ -46,9 +48,9 @@ object ClickHouseConfig {
   private val ipv6Pattern = "^\\[?([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\\]?$".r
   private val identifierPattern = "^[a-zA-Z_][a-zA-Z0-9_]{0,63}$".r
 
-  def fromAppConfig(config: ClickHouseAppConfig): Either[ValidationError, Option[ClickHouseConfig]] = {
+  def makeLogConfig(config: ClickHouseAppConfig): Either[ValidationError, Option[ClickHouseConfig]] = {
     val allMissing = config.host.isEmpty && config.user.isEmpty &&
-      config.password.isEmpty && config.tableName.isEmpty
+      config.password.isEmpty && config.logsTableName.isEmpty
 
     if (allMissing) Right(None)
     else
@@ -58,7 +60,7 @@ object ClickHouseConfig {
         database <- config.database.toRight(MissingConfig).flatMap(validateId("database", _))
         user <- config.user.toRight(MissingConfig)
         password <- config.password.toRight(MissingConfig)
-        tableName <- config.tableName.toRight(MissingConfig).flatMap(validateId("tableName", _))
+        tableName <- config.logsTableName.toRight(MissingConfig).flatMap(validateId("logsTableName", _))
       } yield
         Some(
           ClickHouseConfig(
@@ -68,6 +70,42 @@ object ClickHouseConfig {
             user = user,
             password = password,
             tableName = tableName,
+            retentionPeriodInDays = config.retentionPeriodInDays,
+            protocol = config.protocol.getOrElse("https"),
+            maxQueueSize = config.maxQueueSize,
+            batchSize = config.batchSize,
+            flushInterval = config.flushInterval,
+            maxRetries = config.maxRetries,
+            retryBaseDelay = config.retryBaseDelay,
+            errorPauseDuration = config.errorPauseDuration
+          )
+        )
+  }
+
+  def makeMetricsConfig(config: ClickHouseAppConfig): Either[ValidationError, Option[ClickHouseConfig]] = {
+    val allMissing = config.host.isEmpty && config.user.isEmpty &&
+      config.password.isEmpty && config.metricsTableName.isEmpty
+
+    if (allMissing) Right(None)
+    else
+      for {
+        host <- config.host.toRight(MissingConfig).flatMap(validateHost)
+        port <- config.port.toRight(MissingConfig).flatMap(validatePort)
+        database <- config.database.toRight(MissingConfig).flatMap(validateId("database", _))
+        user <- config.user.toRight(MissingConfig)
+        password <- config.password.toRight(MissingConfig)
+        tableName <- config.metricsTableName.toRight(MissingConfig).flatMap(validateId("metricsTableName", _))
+      } yield
+        Some(
+          ClickHouseConfig(
+            host = host,
+            port = port,
+            database = database,
+            user = user,
+            password = password,
+            tableName = tableName,
+            retentionPeriodInDays = config.retentionPeriodInDays,
+            protocol = config.protocol.getOrElse("https"),
             maxQueueSize = config.maxQueueSize,
             batchSize = config.batchSize,
             flushInterval = config.flushInterval,

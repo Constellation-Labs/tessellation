@@ -23,7 +23,7 @@ import io.constellationnetwork.security.signature.Signed
   * `InitializeFromDownload` which fetches the full outcome from peers and starts participating.
   *
   * '''startFacilitatingAfterRollback(key, outcome):''' Called after node rolls back to a previous state. Enqueues `InitializeFromRollback`
-  * to resume consensus from the given outcome.
+  * to resume consensus from the given outcome, optionally deferring the first round.
   *
   * '''withdrawFromConsensus():''' Called when node wants to leave. Enqueues `WithdrawFromConsensus` which spreads withdrawal declaration
   * and cleans up state.
@@ -36,15 +36,16 @@ import io.constellationnetwork.security.signature.Signed
 
 trait ConsensusManager[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind] {
   def registerForConsensus(observationKey: Key): F[Unit]
-  def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
-  def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit]
+  def resetForRecovery: F[Unit]
+  def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context, isRecovery: Boolean = false): F[Unit]
+  def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome, deferFirstRound: Boolean = false): F[Unit]
   def withdrawFromConsensus: F[Unit]
 }
 
 object ConsensusManager {
 
   def make[F[_]: Async, Event, Key, Artifact, Context, Status, Outcome, Kind](
-    queue: Queue[F, ConsensusCommand],
+    queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
     storage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
     nodeStorage: NodeStorage[F]
   ): F[ConsensusManager[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] =
@@ -59,11 +60,19 @@ object ConsensusManager {
               ifFalse = new Throwable("Registration failed: already registered at different key").raiseError[F, Unit]
             )
 
-        def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit] =
-          queue.offer(InitializeFromDownload(key, lastArtifact, lastContext))
+        def resetForRecovery: F[Unit] =
+          storage.clearObservationKey >> storage.clearAndGetLastConsensusOutcome.void
 
-        def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit] =
-          queue.offer(InitializeFromRollback(lastKey, initialOutcome))
+        def startFacilitatingAfterDownload(
+          key: Key,
+          lastArtifact: Signed[Artifact],
+          lastContext: Context,
+          isRecovery: Boolean = false
+        ): F[Unit] =
+          queue.offer(InitializeFromDownload(key, lastArtifact, lastContext, isRecovery))
+
+        def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome, deferFirstRound: Boolean = false): F[Unit] =
+          queue.offer(InitializeFromRollback(lastKey, initialOutcome, deferFirstRound))
 
         def withdrawFromConsensus: F[Unit] =
           queue.offer(WithdrawFromConsensus)

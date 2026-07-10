@@ -2,7 +2,6 @@ package io.constellationnetwork.currency.l0.snapshot.services
 
 import java.security.KeyPair
 
-import cats.Applicative
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.Supervisor
@@ -33,12 +32,14 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait StateChannelSnapshotService[F[_]] {
+  // Returns whether the snapshot was persisted to storage, so the caller can gate finalize-time
+  // work (mempool clearing) on a confirmed persist of the winning artifact.
   def consume(
     signedArtifact: Signed[CurrencySnapshotArtifact],
     binaryHashed: Hashed[StateChannelSnapshotBinary],
     lastOutcomeFacilitators: List[PeerId],
     context: CurrencySnapshotContext
-  )(implicit hasher: Hasher[F]): F[Unit]
+  )(implicit hasher: Hasher[F]): F[Boolean]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]]
   def createBinary(
     snapshot: Signed[CurrencySnapshotArtifact],
@@ -117,24 +118,22 @@ object StateChannelSnapshotService {
         binaryHashed: Hashed[StateChannelSnapshotBinary],
         lastOutcomeFacilitators: List[PeerId],
         context: CurrencySnapshotContext
-      )(implicit hasher: Hasher[F]): F[Unit] = for {
+      )(implicit hasher: Hasher[F]): F[Boolean] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
             lastSnapshot.flatMap { case (value, _) => value.dataApplication }
           }.flatMap(manager.consumeSignedMajorityArtifact(_, signedArtifact))
         }
-        _ <- snapshotStorage
-          .prepend(signedArtifact, context.snapshotInfo)
-          .ifM(
-            Applicative[F].unit,
-            logger.error(
-              s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
-            )
+        persisted <- snapshotStorage.prepend(signedArtifact, context.snapshotInfo)
+        _ <- logger
+          .error(
+            s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
           )
+          .unlessA(persisted)
         lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
         lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
         _ <- stateChannelBinarySender.enqueue(binaryHashed, signedArtifact.ordinal, lastGlobalSnapshotSigners)
-      } yield ()
+      } yield persisted
 
     }
 }

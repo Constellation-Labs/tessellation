@@ -184,8 +184,8 @@ const bulkSubmitTest = async () => {
   }
   
   const networkConfig = {
-    l0Url: `http://localhost:${dagL0PortPrefix}00`,
-    l1Url: `http://localhost:${dagL1PortPrefix}00`,
+    l0Url: process.env.GL0_URL || `${process.env.TEST_HOST || 'http://localhost'}:${dagL0PortPrefix}00`,
+    l1Url: process.env.GL1_URL || `${process.env.TEST_HOST || 'http://localhost'}:${dagL1PortPrefix}00`,
   }
   
   logMessage('Loading private keys...')

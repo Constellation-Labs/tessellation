@@ -2,10 +2,9 @@ package io.constellationnetwork.dag.l1
 
 import java.security.KeyPair
 
-import cats.Applicative
 import cats.data.OptionT
-import cats.effect.Async
 import cats.effect.std.{Random, Semaphore}
+import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -19,27 +18,33 @@ import cats.syntax.traverseFilter._
 import scala.concurrent.duration.DurationInt
 
 import io.constellationnetwork.dag.l1.config.types.AppConfig
+import io.constellationnetwork.dag.l1.domain.block.BlockStorage._
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput._
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock, NoData}
 import io.constellationnetwork.dag.l1.domain.consensus.block.Validator.{canStartInspectionTrigger, canStartOwnConsensus, isPeerInputValid}
 import io.constellationnetwork.dag.l1.domain.consensus.block._
+import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult
+import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient.L1OutputSubmissionResult._
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.fs2.StreamOps
 import io.constellationnetwork.kernel.CellError
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[
-  F[_]: Async: HasherSelector: SecurityProvider: Random,
+  F[_]: Async: HasherSelector: SecurityProvider: Random: Metrics,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P],
@@ -49,6 +54,7 @@ class StateChannel[
   blockAcceptanceS: Semaphore[F],
   blockCreationS: Semaphore[F],
   blockStoringS: Semaphore[F],
+  l0ResendBuffer: Ref[F, Vector[Signed[Block]]],
   keyPair: KeyPair,
   p2PClient: P2PClient[F],
   programs: Programs[F, P, S, SI],
@@ -167,33 +173,204 @@ class StateChannel[
 
   private val storeBlock: Pipe[F, FinalBlock, Unit] =
     _.evalMapLocked(blockStoringS) { fb =>
-      storages.lastSnapshot.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
-        if (lastSnapshotHeight < fb.hashedBlock.height)
-          storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
-        else
-          logger.debug(
-            s"Block can't be stored! Block height not above last snapshot height! block:${fb.hashedBlock.height} <= snapshot: $lastSnapshotHeight"
-          )
+      // Hold the storage-mutation lock across the height-check AND the store so the decision cannot race
+      // alignment's setSnapshot + adjustToMajority (which together move the snapshot height and the block set).
+      storages.storageMutationLock.lock.surround {
+        storages.lastSnapshot.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
+          if (lastSnapshotHeight < fb.hashedBlock.height)
+            storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
+          else
+            logger.debug(
+              s"Block can't be stored! Block height not above last snapshot height! block:${fb.hashedBlock.height} <= snapshot: $lastSnapshotHeight"
+            )
+        }
       }
     }
 
-  private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
-    _.evalTap { fb =>
-      storages.l0Cluster.getPeers
-        .map(_.toNonEmptyList.toList)
-        .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
-        .flatMap(peers => Random[F].shuffleList(peers))
-        .map(peers => peers.headOption)
-        .flatMap { maybeL0Peer =>
-          maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
-            p2PClient.l0BlockOutputClient
-              .sendL1Output(fb.hashedBlock.signed)(l0Peer)
-              .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+  // Maximum number of undelivered blocks retained for re-send. Bounds memory if L0 is unreachable.
+  private val maxL0ResendBuffer: Int = 1024
+  private val maxL0BackfillBlocksPerGap: Int = 256
+  private val l0OutputOutcomeLabel = Metrics.unsafeLabelName("outcome")
+  private val l0OutputReasonLabel = Metrics.unsafeLabelName("reason")
+  private val l0OutputSourceLabel = Metrics.unsafeLabelName("source")
+
+  private def submissionOutcome(result: L1OutputSubmissionResult): String =
+    result match {
+      case Accepted                    => "accepted"
+      case _: AwaitingParent           => "awaiting_parent"
+      case _: ParentOrdinalGapTooLarge => "parent_ordinal_gap_too_large"
+      case _: Rejected                 => "rejected"
+    }
+
+  private def recordL0Submission(result: L1OutputSubmissionResult, source: String): F[Unit] =
+    Metrics[F].incrementCounterBy(
+      "dag_l1_l0_output_submission_total",
+      1L,
+      Seq(
+        l0OutputOutcomeLabel -> submissionOutcome(result),
+        l0OutputSourceLabel -> source
+      )
+    )
+
+  /** Attempt a single delivery of a block to a collateralized L0 peer. Returns the classified response so the L1 can distinguish
+    * gap-rejections from generic transport/non-2xx failures.
+    */
+  private def trySendToL0(block: Signed[Block]): F[L1OutputSubmissionResult] =
+    storages.l0Cluster.getPeers
+      .flatMap(_.toNonEmptyList.toList.filterA(p => services.collateral.hasCollateral(p.id)))
+      .flatMap(peers => Random[F].shuffleList(peers))
+      .map(_.headOption)
+      .flatMap {
+        case None         => logger.warn("No available L0 peer").as(Rejected(0, "NoAvailableL0Peer", ""): L1OutputSubmissionResult)
+        case Some(l0Peer) => p2PClient.l0BlockOutputClient.sendL1OutputDetailed(block)(l0Peer)
+      }
+      .handleErrorWith(err =>
+        logger.error(err)("Error sending block to L0").as(Rejected(0, "TransportError", err.getMessage): L1OutputSubmissionResult)
+      )
+
+  private def txParentOrdinals(block: Signed[Block]): List[Long] =
+    block.value.transactions.toNonEmptyList.toList.map(_.value.parent.ordinal.value.value)
+
+  private def lowestParentOrdinal(block: Signed[Block]): Long =
+    txParentOrdinals(block).minOption.getOrElse(Long.MaxValue)
+
+  private def storedSignedBlock(stored: StoredBlock): Option[Signed[Block]] =
+    stored match {
+      case WaitingBlock(block)   => Some(block)
+      case PostponedBlock(block) => Some(block)
+      case AcceptedBlock(block)  => Some(block.signed)
+      case _: MajorityBlock      => None
+    }
+
+  private def appendToL0ResendBuffer(blocks: List[Signed[Block]], reason: String): F[Unit] =
+    if (blocks.isEmpty) Async[F].unit
+    else
+      l0ResendBuffer.modify { buf =>
+        val merged = (buf ++ blocks).distinct.sortBy(lowestParentOrdinal)
+        val overflow = (merged.size - maxL0ResendBuffer).max(0)
+        val retained = merged.take(maxL0ResendBuffer)
+
+        (retained, (overflow, retained.size))
+      }.flatMap {
+        case (dropped, retainedSize) =>
+          logger
+            .warn(
+              s"L0 re-send buffer full ($maxL0ResendBuffer): dropped $dropped furthest-ahead undelivered block(s). " +
+                "GL0 is likely badly unhealthy (deep finalization stall) and may need a restart."
+            )
+            .whenA(dropped > 0) >>
+            Metrics[F].incrementCounterBy(
+              "dag_l1_l0_output_buffered_total",
+              blocks.size.toLong,
+              Seq(l0OutputReasonLabel -> reason)
+            ) >>
+            Metrics[F]
+              .incrementCounterBy(
+                "dag_l1_l0_output_buffer_overflow_dropped_total",
+                dropped.toLong,
+                Seq(l0OutputReasonLabel -> reason)
+              )
+              .whenA(dropped > 0) >>
+            Metrics[F].updateGauge("dag_l1_l0_output_resend_buffer_size", retainedSize.toLong) >>
+            logger.debug(s"Buffered ${blocks.size} block(s) for L0 re-send; reason=$reason")
+      }
+
+  private def bufferBackfillForGap(failedBlock: Signed[Block], gap: ParentOrdinalGapTooLarge): F[Unit] = {
+    val lower = gap.currentLastTxOrdinal
+    val upper = math.min(gap.parentOrdinal - 1L, gap.currentLastTxOrdinal + gap.maxAcceptedParentOrdinalGap)
+    val gapSources = failedBlock.value.transactions.toNonEmptyList.toList
+      .filter(_.value.parent.ordinal.value.value === gap.parentOrdinal)
+      .map(_.value.source)
+      .toSet
+
+    storages.block
+      .getState()
+      .map(_.values.toList.flatMap(storedSignedBlock))
+      .map { blocks =>
+        blocks.filter { block =>
+          block.value.transactions.toNonEmptyList.toList.exists { tx =>
+            val ordinal = tx.value.parent.ordinal.value.value
+            val sourceMatches = gapSources.isEmpty || gapSources.contains(tx.value.source)
+
+            sourceMatches && ordinal > lower && ordinal <= upper
           }
         }
-        .handleErrorWith { err =>
-          logger.error(err)("Error sending block to L0")
-        }
+          .sortBy(lowestParentOrdinal)
+          .take(maxL0BackfillBlocksPerGap)
+      }
+      .flatMap { backfill =>
+        val toBuffer = (backfill :+ failedBlock).distinct.sortBy(lowestParentOrdinal)
+
+        logger.info(
+          s"L0 rejected DAG block with ParentOrdinalGapTooLarge: currentLastTxOrdinal=${gap.currentLastTxOrdinal} " +
+            s"parentOrdinal=${gap.parentOrdinal} gap=${gap.parentOrdinalGap} maxAcceptedGap=${gap.maxAcceptedParentOrdinalGap}. " +
+            s"Buffered ${backfill.size} locally stored bridge block(s) plus failed block; scanWindow=(${lower + 1}..$upper) " +
+            s"sourceScoped=${gapSources.nonEmpty} backfillCap=$maxL0BackfillBlocksPerGap."
+        ) >>
+          Metrics[F].incrementCounterBy(
+            "dag_l1_l0_output_backfill_blocks_total",
+            backfill.size.toLong,
+            Seq(l0OutputReasonLabel -> "parent_ordinal_gap_too_large")
+          ) >>
+          Metrics[F].updateGauge("dag_l1_l0_output_parent_gap", gap.parentOrdinalGap.toLong) >>
+          Metrics[F].updateGauge("dag_l1_l0_output_backfill_scan_window_size", math.max(0L, upper - lower)) >>
+          appendToL0ResendBuffer(toBuffer, "parent_gap_backfill")
+      }
+  }
+
+  private def bufferFailedL0Delivery(block: Signed[Block], result: L1OutputSubmissionResult): F[Unit] =
+    result match {
+      case Accepted => Async[F].unit
+      // 202: L0 holds it awaiting a parent. Keep it buffered and re-send until L0 includes it (200) -- otherwise
+      // L0's TTL/overflow eviction silently loses it and the address chain stalls.
+      case _: AwaitingParent =>
+        appendToL0ResendBuffer(List(block), "awaiting_parent")
+      case gap: ParentOrdinalGapTooLarge =>
+        bufferBackfillForGap(block, gap)
+      case _: Rejected =>
+        appendToL0ResendBuffer(List(block), "delivery_failed")
+    }
+
+  // Send each finalized block to L0 once. On failure the block is NOT dropped -- dropping leaves a
+  // permanent ordinal gap that L0 can never advance past once its finalization falls behind -- but is
+  // retained for ordered re-send by `resendToL0`. Local storage downstream is unaffected.
+  private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
+    _.evalTap { fb =>
+      val block = fb.hashedBlock.signed
+      trySendToL0(block).flatMap {
+        case Accepted => recordL0Submission(Accepted, "initial")
+        case result   => recordL0Submission(result, "initial") >> bufferFailedL0Delivery(block, result)
+      }
+    }
+
+  // Re-deliver buffered blocks oldest-first as L0's finalization frontier catches up. Stops at the
+  // first failure each tick -- for the observed ParentOrdinalGapTooLarge wedge the head is the binding
+  // block, so this paces re-delivery to the frontier. (Classifying the failure to stop only on a gap
+  // reject, and trying another L0 peer on transport errors, is a follow-up.) Caps per-tick work.
+  private val resendToL0: Stream[F, Unit] =
+    Stream.awakeEvery(2.seconds).evalMap { _ =>
+      def loop(remaining: Int): F[Unit] =
+        if (remaining <= 0) Async[F].unit
+        else
+          l0ResendBuffer.get.map(_.headOption).flatMap {
+            case None => Async[F].unit
+            case Some(block) =>
+              trySendToL0(block).flatMap {
+                case Accepted =>
+                  // Remove the just-delivered block only if it is still the head, so a concurrent
+                  // overflow drop+append on the failure path cannot make us delete a different,
+                  // not-yet-sent block.
+                  recordL0Submission(Accepted, "resend") >>
+                    l0ResendBuffer.update {
+                      case buf if buf.headOption.contains(block) => buf.drop(1)
+                      case buf                                   => buf
+                    } >>
+                    l0ResendBuffer.get.flatMap(buf => Metrics[F].updateGauge("dag_l1_l0_output_resend_buffer_size", buf.size.toLong)) >>
+                    loop(remaining - 1)
+                case result => recordL0Submission(result, "resend") >> bufferFailedL0Delivery(block, result)
+              }
+          }
+      loop(64)
     }
 
   private val blockAcceptance: Stream[F, Unit] = Stream
@@ -209,8 +386,18 @@ class StateChannel[
             case (hash, signedBlock) =>
               logger.debug(s"Acceptance of a block $hash starts!") >>
                 HasherSelector[F].withCurrent { implicit hasher =>
-                  services.block
-                    .accept(signedBlock)
+                  // Serialize the whole accept against the alignment commit (processAlignment) on the shared
+                  // storageMutationLock. NOTE: this region is deliberately COARSE -- it includes block hashing and
+                  // ECDSA signature verification (blockAcceptanceManager.acceptBlock) and per-tx hashing, not only the
+                  // in-memory writes -- so the read-balance / compute / write-balance step is atomic w.r.t. alignment
+                  // (closing the balance-divergence and block-state races). This is acceptable because blockAcceptance
+                  // is a single serial 1s-tick stream whose only contender for the lock is the 10s alignment commit.
+                  // The heavy MPT trie build and all network I/O are NOT under this lock (they stay outside, in
+                  // processAlignment's updateMptStorage and in the L0 output/pull paths).
+                  storages.storageMutationLock.lock.surround {
+                    services.block
+                      .accept(signedBlock)
+                  }
                 }.handleErrorWith { error =>
                   for {
                     _ <- logger.warn(error)(s"Failed acceptance of a block with ${hash.show}")
@@ -236,13 +423,14 @@ class StateChannel[
   val runtime: Stream[F, Unit] =
     blockConsensus
       .merge(blockAcceptance)
+      .merge(resendToL0)
 
 }
 
 object StateChannel {
 
   def make[
-    F[_]: Async: HasherSelector: SecurityProvider: Random,
+    F[_]: Async: HasherSelector: SecurityProvider: Random: Metrics,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P],
@@ -260,15 +448,21 @@ object StateChannel {
     txHasher: Hasher[F]
   ): F[StateChannel[F, P, S, SI, R]] =
     for {
+      // These per-stream semaphores guard each consensus stream against SELF-overlap (a tick starting before the
+      // previous one finished). Cross-path serialization between the acceptance/store commit and the L0->L1 alignment
+      // commit is a separate concern handled by storages.storageMutationLock, which is always acquired INNERMOST
+      // (inside these semaphores), so the two locking layers never form a cycle.
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
+      l0ResendBuffer <- Ref.of[F, Vector[Signed[Block]]](Vector.empty)
     } yield
       new StateChannel[F, P, S, SI, R](
         appConfig,
         blockAcceptanceS,
         blockCreationS,
         blockStoringS,
+        l0ResendBuffer,
         keyPair,
         p2PClient,
         programs,

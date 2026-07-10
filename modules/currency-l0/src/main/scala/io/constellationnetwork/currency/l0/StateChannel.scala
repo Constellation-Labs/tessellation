@@ -59,19 +59,19 @@ object StateChannel {
             dataApplicationService,
             selfKeyPair,
             enqueueConsensusEventFn
-          )
+          ).handleErrorWith { error =>
+            logger.error(error)("Error during global L0 snapshot processing")
+          }
         )
-        .handleErrorWith { error =>
-          Stream.eval(logger.error(error)("Error during global L0 snapshot processing"))
-        }
 
     val globalL0PeerDiscovery: Stream[F, Unit] =
       Stream
         .awakeEvery[F](awakePeriod)
-        .evalMap(_ => performGlobalL0PeerDiscovery(storages, programs))
-        .handleErrorWith { error =>
-          Stream.eval(logger.error(error)("Error during global L0 peer discovery")) >> Stream.empty
-        }
+        .evalMap(_ =>
+          performGlobalL0PeerDiscovery(storages, programs).handleErrorWith { error =>
+            logger.error(error)("Error during global L0 peer discovery")
+          }
+        )
 
     Stream(globalL0SnapshotProcessing, globalL0PeerDiscovery).parJoin(2)
   }
@@ -184,7 +184,11 @@ object StateChannel {
         case snapshot :: nextSnapshots =>
           storages.lastSyncGlobalSnapshot.get.flatMap {
             case Some(lastSnapshot) if !Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value) =>
-              Applicative[F].pure(nextSnapshots.asLeft[Unit])
+              logger
+                .warn(
+                  s"Skipping non-next global snapshot ordinal=${snapshot.ordinal.show} (last=${lastSnapshot.ordinal.show}), dropping ${nextSnapshots.size + 1} remaining"
+                )
+                .as(().asRight[List[Hashed[GlobalIncrementalSnapshot]]])
 
             case _ =>
               storages.lastSyncGlobalSnapshot.getCombined.flatMap {
@@ -193,7 +197,11 @@ object StateChannel {
                     .as(nextSnapshots.asLeft[Unit])
 
                 case None =>
-                  Applicative[F].pure(nextSnapshots.asLeft[Unit])
+                  logger
+                    .warn(
+                      s"Cannot process global snapshot ordinal=${snapshot.ordinal.show}: lastSyncGlobalSnapshot is empty, dropping ${nextSnapshots.size + 1} remaining"
+                    )
+                    .as(().asRight[List[Hashed[GlobalIncrementalSnapshot]]])
               }
           }
       }

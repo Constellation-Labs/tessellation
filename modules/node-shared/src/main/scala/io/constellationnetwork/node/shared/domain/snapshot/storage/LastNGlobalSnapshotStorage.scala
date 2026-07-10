@@ -11,6 +11,8 @@ trait LastNGlobalSnapshotStorage[F[_]] extends LastSnapshotStorage[F, GlobalIncr
   type FetchFunction = (Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]
 
   def getLastN: F[List[Hashed[GlobalIncrementalSnapshot]]]
+  def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit]
+  def clear: F[Unit]
   def setInitialFetchingGL0(
     snapshot: Hashed[GlobalIncrementalSnapshot],
     state: GlobalSnapshotInfo,

@@ -10,6 +10,8 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.generators.addressGen
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.GlobalStateFieldId
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -164,6 +166,106 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
               legacy.balancesProof =!= Hash.empty, // Legacy proof has balance proof
               mpt.mptRoot.isDefined, // MPT proof has MPT root
               mpt.balancesProof == Hash.empty // MPT proof has empty legacy fields
+            )
+        }
+      }
+    }
+  }
+
+  // ---- #10: per-sub-trie roots in the MPT state proof ----
+
+  private def mkInfo(scsh: SortedMap[Address, Hash], balances: SortedMap[Address, Balance]): GlobalSnapshotInfo =
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes = scsh,
+      lastTxRefs = SortedMap.empty,
+      balances = balances,
+      lastCurrencySnapshots = SortedMap.empty,
+      lastCurrencySnapshotsProofs = SortedMap.empty,
+      activeAllowSpends = Some(SortedMap.empty),
+      activeTokenLocks = Some(SortedMap.empty),
+      tokenLockBalances = Some(SortedMap.empty),
+      lastAllowSpendRefs = Some(SortedMap.empty),
+      lastTokenLockRefs = Some(SortedMap.empty),
+      updateNodeParameters = Some(SortedMap.empty),
+      activeDelegatedStakes = Some(SortedMap.empty),
+      delegatedStakesWithdrawals = Some(SortedMap.empty),
+      activeNodeCollaterals = Some(SortedMap.empty),
+      nodeCollateralWithdrawals = Some(SortedMap.empty),
+      priceState = Some(SortedMap.empty),
+      metagraphSyncData = Some(SortedMap.empty)
+    )
+
+  test("sub-trie roots inert by default: MPT proof leaves per-field fields empty/None") { implicit res =>
+    forall(addressGen) { address =>
+      implicit val (hs, js) = res
+      hs.withCurrent { implicit hasher =>
+        // default selector: subTrieRootsActivationOrdinal = MaxValue (never) -> inert, today's behavior
+        implicit val selector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(0))
+        val info = mkInfo(SortedMap(address -> Hash.empty), SortedMap(address -> Balance(100L)))
+        info.stateProof[IO](SnapshotOrdinal.unsafeApply(10)).map { proof =>
+          expect.all(
+            proof.mptRoot.isDefined,
+            proof.balancesProof == Hash.empty,
+            proof.lastStateChannelSnapshotHashesProof == Hash.empty,
+            proof.lastTxRefsProof == Hash.empty,
+            proof.activeAllowSpends.isEmpty,
+            proof.priceState.isEmpty,
+            proof.lastGlobalSnapshotsWithCurrency.isEmpty
+          )
+        }
+      }
+    }
+  }
+
+  test("sub-trie roots activated: per-field roots populate the correct proof fields") { implicit res =>
+    forall(addressGen) { address =>
+      implicit val (hs, js) = res
+      hs.withCurrent { implicit hasher =>
+        // activation = 0: at ordinal 10 the proof is MPT-format with sub-trie roots ON
+        implicit val selector: GlobalStateProofSelector =
+          GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(0), SnapshotOrdinal.unsafeApply(0))
+        val info = mkInfo(SortedMap(address -> Hash.empty), SortedMap(address -> Balance(100L)))
+        (
+          info.stateProof[IO](SnapshotOrdinal.unsafeApply(10)),
+          GlobalSnapshotInfo.subTrieRoots[IO](info),
+          info.allStateEntries[IO].buildMpt
+        ).tupled.map {
+          case (proof, roots, merged) =>
+            expect.all(
+              // mptRoot is the merged root over all entries
+              proof.mptRoot.contains(merged.value),
+              // each populated proof field is wired to the matching GlobalStateFieldId sub-trie root
+              proof.balancesProof == roots(GlobalStateFieldId.Balances),
+              proof.lastStateChannelSnapshotHashesProof == roots(GlobalStateFieldId.LastStateChannelSnapshotHashes),
+              // empty fields stay empty/None
+              proof.lastTxRefsProof == Hash.empty,
+              proof.activeAllowSpends.isEmpty,
+              // lastCurrencySnapshotsProof is intentionally left None (MerkleRoot-typed)
+              proof.lastCurrencySnapshotsProof.isEmpty
+            )
+        }
+      }
+    }
+  }
+
+  test("sub-trie roots activated: changing one field changes only that field's root") { implicit res =>
+    forall(addressGen) { address =>
+      implicit val (hs, js) = res
+      hs.withCurrent { implicit hasher =>
+        implicit val selector: GlobalStateProofSelector =
+          GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(0), SnapshotOrdinal.unsafeApply(0))
+        val scsh = SortedMap(address -> Hash.empty)
+        val info1 = mkInfo(scsh, SortedMap(address -> Balance(100L)))
+        val info2 = mkInfo(scsh, SortedMap(address -> Balance(999L)))
+        (
+          info1.stateProof[IO](SnapshotOrdinal.unsafeApply(10)),
+          info2.stateProof[IO](SnapshotOrdinal.unsafeApply(10))
+        ).tupled.map {
+          case (p1, p2) =>
+            expect.all(
+              p1.balancesProof =!= p2.balancesProof, // the changed field's root differs
+              p1.lastStateChannelSnapshotHashesProof == p2.lastStateChannelSnapshotHashesProof, // unchanged field stable
+              p1.mptRoot =!= p2.mptRoot // and the overall root differs too
             )
         }
       }

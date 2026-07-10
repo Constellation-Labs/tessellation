@@ -34,6 +34,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.{AddressServ
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -41,6 +42,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.curr
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
+import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -77,7 +79,10 @@ object Services {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+    queues: Queues[F],
+    getPeerChainTips: F[Map[PeerId, ChainTip]],
+    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -93,7 +98,8 @@ object Services {
         stateChannelAllowanceLists,
         selfId,
         cfg.environment,
-        customPeersAllowanceList
+        customPeersAllowanceList,
+        storages.cluster
       )
 
       l0NodeContext = L0NodeContext
@@ -128,7 +134,6 @@ object Services {
       )
 
       validator = CurrencySnapshotValidator.make[F](
-        SnapshotOrdinal.MinValue,
         creator,
         signedValidator,
         maybeRewards,
@@ -165,6 +170,7 @@ object Services {
           storages.lastSyncGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
+          cfg.environment,
           client,
           session,
           stateChannelSnapshotService,
@@ -175,7 +181,12 @@ object Services {
           sharedServices.restart,
           cfg.shared.leavingDelay,
           globalL0Service.pullGlobalSnapshot,
-          maybeCustomArtifacts
+          maybeCustomArtifacts,
+          storages.eventMempool,
+          queues.rumor,
+          getPeerChainTips,
+          sharedServices.localHealthMonitor,
+          consensusDispatcher
         )
     } yield
       new Services[F, R](

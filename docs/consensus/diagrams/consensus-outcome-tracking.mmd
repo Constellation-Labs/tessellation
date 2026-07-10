@@ -1,0 +1,54 @@
+sequenceDiagram
+    autonumber
+    participant S as Storage
+    participant RR as RoundRunner
+    participant Creator as StateCreator
+    participant Advancer as StateAdvancer
+    participant Trans as StateTransitions
+
+    Note over S: lastOutcome = Outcome(key=41, artifact41, ctx41)
+
+    rect rgb(220, 240, 220)
+        Note over S,Trans: ROUND N+1 (key=42)
+
+        RR->>S: getLastConsensusOutcome()
+        S-->>RR: Some(Outcome(key=41, ...))
+
+        Note over RR: nextKey = outcomeKey.get(outcome).next<br/>= 41.next = 42
+
+        RR->>Creator: tryFacilitateConsensus(key=42, lastOutcome)
+
+        Note over Creator: Creates ConsensusState with<br/>key: 42, lastOutcome: Outcome(key=41),<br/>status: CollectingFacilities
+
+        Creator->>S: store state for key=42
+    end
+
+    rect rgb(230, 230, 250)
+        Note over S,Trans: Declarations arrive via gossip...
+
+        Note over Advancer: advanceStatus() called repeatedly<br/>CollectingFacilities to CollectingProposals<br/>to CollectingSignatures to Finished
+
+        Advancer->>Advancer: getConsensusOutcome(state)
+
+        Note over Advancer: state.status match case Finished<br/>returns Some((Previous(41), newOutcome))
+    end
+
+    rect rgb(250, 240, 220)
+        Note over S,Trans: FINALIZATION
+
+        Trans->>Trans: finalizeAndNotify(newState, prevKey, outcome)
+
+        Note over Trans: prevKey = Previous(41)<br/>outcome = Outcome(key=42, artifact42, ctx42)
+
+        Trans->>S: tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome)
+
+        Note over S: Validates current lastOutcome.key == prevKey<br/>(prevents double-update)
+
+        S->>S: lastOutcome = Outcome(key=42, ...)
+        S->>S: cleanup old state for key=42
+
+        Trans->>Trans: queue.offer(ConsensusFinished(42, outcome, trigger))
+    end
+
+    Note over S: lastOutcome = Outcome(key=42, artifact42, ctx42)
+    Note over S: Ready for round N+2 (key=43)

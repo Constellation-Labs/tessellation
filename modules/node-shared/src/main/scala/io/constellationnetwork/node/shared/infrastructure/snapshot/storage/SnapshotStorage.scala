@@ -6,6 +6,8 @@ import cats.effect.{Async, Ref}
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.cats.syntax.partialPrevious._
@@ -20,6 +22,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, HasherSelector}
 
+import com.github.blemale.scaffeine.{Cache, Scaffeine}
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
 import fs2.concurrent.SignallingRef
@@ -28,6 +31,15 @@ import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotStorage {
+
+  /** Scaffeine cache for negative ordinal lookups. Caches ordinals confirmed absent from filesystem to avoid repeated stat() calls from
+    * community nodes requesting pruned snapshots. Short TTL (30s) ensures new snapshots become visible quickly.
+    */
+  private def mkNegativeOrdinalCache: Cache[SnapshotOrdinal, Boolean] =
+    Scaffeine()
+      .expireAfterWrite(30.seconds)
+      .maximumSize(10000)
+      .build[SnapshotOrdinal, Boolean]()
 
   private def makeResources[F[_]: Async, S <: Snapshot, C <: SnapshotInfo[_]]() = {
     def mkHeadRef = SignallingRef.of[F, Option[(Signed[S], Hasher[F], C)]](none)
@@ -164,12 +176,19 @@ object SnapshotStorage {
                 notPersistedCache.update(current => current + snapshot.ordinal)
             )
           } >>
-          snapshotInfoLocalFileSystemStorage.write(snapshot.ordinal, snapshotInfo) >>
-          snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
-          snapshot.ordinal
-            .partialPreviousN(inMemoryCapacity)
-            .fold(Applicative[F].unit)(offloadQueue.offer) >>
-          combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
+          snapshotInfoLocalFileSystemStorage
+            .write(snapshot.ordinal, snapshotInfo)
+            .attempt
+            .flatMap {
+              case Right(_) =>
+                snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
+                  snapshot.ordinal
+                    .partialPreviousN(inMemoryCapacity)
+                    .fold(Applicative[F].unit)(offloadQueue.offer) >>
+                  combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
+              case Left(e) =>
+                logger.error(e)(s"Failed writing snapshot info to disk! ordinal=${snapshot.ordinal}. Skipping cutoff and checkpoint.")
+            }
       }
 
     def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =
@@ -209,30 +228,32 @@ object SnapshotStorage {
         def head: F[Option[(Signed[S], C)]] = headRef.get.map(_.map { case (snapshot, _, info) => (snapshot, info) })
         def headSnapshot: F[Option[Signed[S]]] = headRef.get.map(_.map(_._1))
 
+        private val negativeCache: Cache[SnapshotOrdinal, Boolean] = mkNegativeOrdinalCache
+
+        /** Read-through with negative caching: if the ordinal is known-absent (cached negative), skip filesystem entirely. On filesystem
+          * miss, cache the negative result.
+          */
+        private def readFromDiskWithNegativeCache(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
+          Async[F].delay(negativeCache.getIfPresent(ordinal)).flatMap {
+            case Some(_) => none[Signed[S]].pure[F] // known absent
+            case None =>
+              snapshotLocalFileSystemStorage.read(ordinal).flatTap {
+                case None    => Async[F].delay(negativeCache.put(ordinal, true))
+                case Some(_) => Async[F].unit
+              }
+          }
+
         def get(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
           ordinalCache(ordinal).get.flatMap {
             case Some(hash) => get(hash)
-            case None       => snapshotLocalFileSystemStorage.read(ordinal)
+            case None       => readFromDiskWithNegativeCache(ordinal)
           }
 
         def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hashed[S]]] =
           ordinalCache(ordinal).get.flatMap {
             case Some(hash) => get(hash).flatMap(_.traverse(_.toHashed))
-            case None       => snapshotLocalFileSystemStorage.read(ordinal).flatMap(_.traverse(_.toHashed))
+            case None       => readFromDiskWithNegativeCache(ordinal).flatMap(_.traverse(_.toHashed))
           }
-
-        def getLastN(ordinal: SnapshotOrdinal, n: Int): F[Option[List[Signed[S]]]] = {
-          val ordinalsToFetch = (0 until n)
-            .flatMap(i => SnapshotOrdinal(ordinal.value.value - i))
-            .toList
-
-          ordinalsToFetch.traverse(get).map { results =>
-            val snapshots = results.flatten
-
-            if (snapshots.isEmpty) None
-            else Some(snapshots)
-          }
-        }
 
         def get(hash: Hash): F[Option[Signed[S]]] =
           hashCache(hash).get.flatMap {
@@ -244,6 +265,11 @@ object SnapshotStorage {
           get(ordinal).flatMap {
             _.traverse(_.toHashed.map(_.hash))
           }
+
+        def setHeadForRecovery(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] =
+          logger.info(s"[SnapshotStorage] Recovery: setting head to ordinal=${snapshot.ordinal.show}") >>
+            enqueue(snapshot, state) >>
+            headRef.set((snapshot, hasher, state).some).void
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
           headRef.get.map(_.map(_._3.balances))

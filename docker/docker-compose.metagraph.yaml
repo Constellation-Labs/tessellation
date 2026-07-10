@@ -25,6 +25,17 @@ services:
       - CL_DOCKER_GENESIS=${CL_DOCKER_ML0_GENESIS:-false}
       - CL_DOCKER_ROLLBACK=${CL_DOCKER_ROLLBACK:-false}
       - CL_DOCKER_ROLLBACK_HASH=${CL_DOCKER_ROLLBACK_HASH:-}
+      # Consensus timing overrides (set in CI to relax timeouts on slow runners)
+      - CL_DECLARATION_TIMEOUT
+      - CL_RE_STALL_TIMEOUT
+      - CL_MAX_ROUND_DURATION
+      # Pin the metagraph L0 snapshot cadence to the original 43s/15s. The job-level
+      # CL_TIME_TRIGGER_INTERVAL/CL_EVENT_TRIGGER_COOLDOWN are lowered to speed up the global L0 (so it keeps
+      # pace with the allow-spends tx flood), but a faster ml0 cadence creates more snapshot boundaries and drops
+      # currency transfer blocks before they are accepted (ParentHashNotEqLastTxHash chain breaks), regressing
+      # the currency metagraph-transfer test. ml0 does not need the speedup, so override it back here.
+      - CL_TIME_TRIGGER_INTERVAL=43 seconds
+      - CL_EVENT_TRIGGER_COOLDOWN=15 seconds
     ports:
       - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_ML0_PUBLIC:-9020}:${CL_DOCKER_INTERNAL_ML0_PUBLIC:-9020}"  # Public HTTP
       - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_ML0_P2P:-9021}:${CL_DOCKER_INTERNAL_ML0_P2P:-9021}"  # P2P HTTP

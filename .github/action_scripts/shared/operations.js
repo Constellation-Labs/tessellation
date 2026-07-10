@@ -93,7 +93,7 @@ const getLatestSnapshotInfo = async (globalL0Url) => {
  *     maxOrdinalMisses: 3,
  *     onOrdinalMiss: async ({ ordinalsMissed }) => {
  *       if (ordinalsMissed >= 2) {
- *         logWorkflow.warn('Stake likely dropped, resubmitting...');
+ *         logWorkflow.warning('Stake likely dropped, resubmitting...');
  *         stakeHash = await resubmitStake();
  *         return stakeHash; // Update tracked hash
  *       }
@@ -104,8 +104,8 @@ const getLatestSnapshotInfo = async (globalL0Url) => {
 const withRetryOrdinal = async (checkFn, {
     globalL0Url,
     name = 'operation',
-    maxOrdinalMisses = 5,
-    maxStalledChecks = 10,
+    maxOrdinalMisses = 10,
+    maxStalledChecks = 20,
     interval = 3000,
     onOrdinalMiss = null,
     onStalled = null,
@@ -127,7 +127,7 @@ const withRetryOrdinal = async (checkFn, {
         try {
             currentSnapshot = await getLatestSnapshotInfo(globalL0Url);
         } catch (error) {
-            logWorkflow.warn(`${name}: Failed to fetch snapshot ordinal: ${error.message}`);
+            logWorkflow.warning(`${name}: Failed to fetch snapshot ordinal: ${error.message}`);
             await sleep(interval);
             continue;
         }
@@ -168,7 +168,7 @@ const withRetryOrdinal = async (checkFn, {
                             error 
                         });
                     } catch (handlerError) {
-                        logWorkflow.warn(`${name}: onOrdinalMiss handler failed: ${handlerError.message}`);
+                        logWorkflow.warning(`${name}: onOrdinalMiss handler failed: ${handlerError.message}`);
                     }
                 }
 
@@ -196,7 +196,7 @@ const withRetryOrdinal = async (checkFn, {
                     try {
                         await onStalled({ ordinal: currentOrdinal, stalledChecks });
                     } catch (handlerError) {
-                        logWorkflow.warn(`${name}: onStalled handler failed: ${handlerError.message}`);
+                        logWorkflow.warning(`${name}: onStalled handler failed: ${handlerError.message}`);
                     }
                 }
 
@@ -239,7 +239,7 @@ const waitForTxInclusion = async (fetchFn, {
             maxOrdinalMisses,
             onOrdinalMiss: resubmitFn ? async ({ ordinalsMissed }) => {
                 if (ordinalsMissed >= resubmitAfterMisses) {
-                    logWorkflow.warn(`${name}: Resubmitting after ${ordinalsMissed} ordinal misses`);
+                    logWorkflow.warning(`${name}: Resubmitting after ${ordinalsMissed} ordinal misses`);
                     await resubmitFn();
                 }
             } : null,

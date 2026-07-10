@@ -36,7 +36,7 @@ object RewardsInfoCalculator {
         lastSnapshot: GlobalIncrementalSnapshot,
         lastSnapshotInfo: GlobalSnapshotInfo
       ): F[Option[RewardsInfo]] =
-        if (lastSnapshot.delegateRewards.getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]]).isEmpty) {
+        if (lastSnapshot.delegateRewards.getOrElse(SortedMap.empty[PeerId, SortedMap[Address, Amount]]).isEmpty) {
           Option.empty[RewardsInfo].pure[F]
         } else {
           for {
@@ -91,11 +91,11 @@ object RewardsInfoCalculator {
       }
 
       private def getLatestDelegateRewardTotal(snapshot: GlobalIncrementalSnapshot, info: GlobalSnapshotInfo): F[Amount] = {
-        val delegateRewards = snapshot.delegateRewards.getOrElse(SortedMap.empty[PeerId, Map[Address, Amount]])
+        val delegateRewards = snapshot.delegateRewards.getOrElse(SortedMap.empty[PeerId, SortedMap[Address, Amount]])
         val nodeParams = info.updateNodeParameters
           .getOrElse(SortedMap.empty[ID.Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)])
 
-        val calcFullReward: (Long, (PeerId, Map[Address, Amount])) => Long = {
+        val calcFullReward: (Long, (PeerId, SortedMap[Address, Amount])) => Long = {
           case (acc, (peerId, rewards)) =>
             val nodeCommissionValue = nodeParams.get(peerId.toId).map(_._1.delegatedStakeRewardParameters.reward).getOrElse(0.0)
             val nodeCommission = BigDecimal(nodeCommissionValue)

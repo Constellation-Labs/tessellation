@@ -1,0 +1,130 @@
+%% Consensus Lifecycle Sequence Diagram
+%% This diagram shows the full flow from gossip through FSM to round completion
+%%
+%% Render with: mmdc -i consensus-sequence.mmd -o consensus-sequence.png -w 2000 -s 2
+
+sequenceDiagram
+    autonumber
+
+    participant Gossip as Gossip Layer
+    participant RHQ as RumorHandlerWithQueue
+    participant Queue as Command Queue
+    participant EL as Event Loop
+    participant FSM as ConsensusFSM
+    participant RR as RoundRunner
+    participant Trans as StateTransitions
+    participant Storage as ConsensusStorage
+
+    Note over Gossip,Storage: INITIALIZATION
+
+    rect rgb(220, 235, 250)
+        Note right of Queue: Node joins cluster
+        Queue->>EL: InitializeFromDownload(key, artifact, ctx)
+        EL->>FSM: handle(cmd)
+        FSM->>Trans: initFromDownload()
+        Trans->>Storage: fetchOutcomeFromCluster()
+        Trans->>Storage: trySetInitialConsensusOutcome()
+        Trans->>Queue: offer(StartRound(none))
+    end
+
+    Note over Gossip,Storage: ROUND START
+
+    rect rgb(220, 250, 220)
+        Note right of Queue: Time or Event trigger
+        Queue->>EL: StartRound(TimeTrigger)
+        EL->>FSM: handle(cmd)
+        Note over FSM: isRunning = false?
+        FSM->>FSM: isRunning.set(true)
+        FSM->>RR: runRound(trigger)
+        RR->>Storage: getLastConsensusOutcome()
+        RR->>RR: facilitateRound(outcome, nextKey, trigger)
+        RR->>Storage: tryFacilitateConsensus()
+        Note over RR: Creates ConsensusState<br/>at CollectingFacilities
+        RR->>RR: startStallDetection(key, state)
+        RR->>Queue: offer(CheckUpdate(key))
+    end
+
+    Note over Gossip,Storage: RUMOR PROCESSING
+
+    rect rgb(230, 230, 250)
+        Note left of Gossip: Peer sends Facility declaration
+        Gossip->>RHQ: PeerRumor(origin, ConsensusPeerDeclaration)
+        RHQ->>RHQ: allowOrigin(origin, selfId, policy)?
+        RHQ->>Queue: offer(RumorReceived(Left(rumor)))
+        Queue->>EL: RumorReceived(rumor)
+        EL->>FSM: handle(cmd)
+        FSM->>FSM: rumorHandler.process(rumor)
+        FSM->>Storage: addFacility(origin, key, facility)
+        FSM->>Queue: offer(CheckUpdate(key))
+    end
+
+    Note over Gossip,Storage: STATE ADVANCEMENT
+
+    rect rgb(250, 230, 250)
+        Queue->>EL: CheckUpdate(key)
+        EL->>FSM: handle(cmd)
+        FSM->>Trans: checkUpdate(key)
+        Trans->>Storage: getResources(key)
+        Trans->>Trans: updater.tryUpdateConsensus()
+        Note over Trans: If majority facilities received:<br/>Status -> CollectingProposals
+        Trans->>Trans: advancer.getConsensusOutcome()
+        alt Outcome not ready
+            Note over Trans: Wait for more declarations
+        else Outcome ready (Finished)
+            Trans->>Trans: finalizeAndNotify()
+            Trans->>Storage: tryUpdateLastConsensusOutcomeWithCleanup()
+            Trans->>Queue: offer(ConsensusFinished(key, outcome, trigger))
+        end
+    end
+
+    Note over Gossip,Storage: ROUND PHASES (repeated per declaration type)
+
+    rect rgb(245, 245, 220)
+        Note over Storage: CollectingFacilities<br/>  | majority facilities<br/>CollectingProposals<br/>  | majority proposals<br/>CollectingSignatures<br/>  | majority signatures<br/>CollectingBinarySignatures<br/>  | binary signatures<br/>Finished
+    end
+
+    Note over Gossip,Storage: ROUND COMPLETION
+
+    rect rgb(220, 250, 220)
+        Queue->>EL: ConsensusFinished(key, outcome, trigger)
+        EL->>FSM: handle(cmd)
+        Note over FSM: isRunning = true (BUSY)
+        FSM->>FSM: completeRound()
+        FSM->>FSM: isRunning.set(false)
+        FSM->>RR: afterConsensusFinish(trigger)
+
+        alt TimeTrigger
+            RR->>RR: scheduleTimeTrigger()
+            RR->>Storage: containsTriggerEvent()?
+            opt Has pending events
+                RR->>Queue: offer(StartRound(EventTrigger))
+            end
+        else EventTrigger
+            RR->>Storage: getTimeTrigger()
+            alt Time trigger ready
+                RR->>Queue: offer(StartRound(TimeTrigger))
+            else Has more events
+                RR->>Queue: offer(StartRound(EventTrigger))
+            end
+        end
+    end
+
+    Note over Gossip,Storage: PENDING TRIGGERS (while BUSY)
+
+    rect rgb(255, 235, 205)
+        Note right of Queue: Trigger arrives while round running
+        Queue->>EL: TimeTick
+        EL->>FSM: handle(cmd)
+        Note over FSM: isRunning = true (BUSY)
+        FSM->>FSM: pending.setTime()
+        Note over FSM: Stored for later
+
+        Note over FSM: ... round completes ...
+
+        FSM->>FSM: pending.pullNext()
+        alt Time pending (higher priority)
+            FSM->>Queue: offer(StartRound(TimeTrigger))
+        else Event pending
+            FSM->>Queue: offer(StartRound(EventTrigger))
+        end
+    end

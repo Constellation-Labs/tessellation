@@ -1,0 +1,129 @@
+// Recovery Decision Tree
+// Render: dot -Tpng recovery-decision-tree.dot -o recovery-decision-tree.png
+
+digraph RecoveryDecisionTree {
+    rankdir=TB;
+    node [shape=box, style=rounded, fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // Triggers
+    subgraph cluster_triggers {
+        label="Recovery Triggers (3 channels)";
+        style=rounded;
+        fillcolor="lightyellow";
+
+        AbandonTrigger [label="AbandonmentTracker\n5 non-retriable\nabandonments", style="rounded,filled", fillcolor="lightyellow"];
+        ForkTrigger [label="ForkRecoveryDetector\n(gossip channel)\nTier 1 + Tier 2\nchain-tip divergence", style="rounded,filled", fillcolor="lightyellow"];
+        ConsensusForkTrigger [label="ConsensusStateUpdater\nrecoverIfForking\n(consensus channel)\nstrict majority +\nforkConfirmationWindow (30s)", style="rounded,filled", fillcolor="lightyellow"];
+    }
+
+    // State guard
+    StateGuard [shape=diamond, label="Node in\nObserving / WaitingForObserving /\nDownloadInProgress / WaitingForDownload?"];
+
+    AbandonTrigger -> StateGuard;
+    ForkTrigger -> StateGuard;
+    ConsensusForkTrigger -> StateGuard;
+
+    StateGuard -> Suppressed [label="yes"];
+    Suppressed [label="Recovery\nSUPPRESSED\n(prevent loops)", style="rounded,filled", fillcolor="lightgray"];
+
+    StateGuard -> SetHint [label="no"];
+
+    // Fork-channel-only: store peer hint
+    SetHint [label="If gossip channel:\nRecoveryPeerHint :=\nmajorityPeers", style="rounded,filled", fillcolor="lightblue"];
+    SetHint -> SetFlag;
+
+    // Recovery initiation
+    SetFlag [label="Set isRecoveryDownload flag\non NodeStorage", style="rounded,filled", fillcolor="lightblue"];
+
+    SetFlag -> Transition;
+
+    Transition [label="Transition to\nWaitingForDownload", style="rounded,filled", fillcolor="lightblue"];
+
+    Transition -> DownloadDaemon;
+
+    // Download daemon path selection
+    DownloadDaemon [label="DownloadDaemon\nattemptDownloadWithRetry\n(checks isRecoveryDownload)", style="rounded,filled", fillcolor="lightyellow"];
+
+    DownloadDaemon -> PathChoice;
+
+    PathChoice [shape=diamond, label="isRecoveryDownload?"];
+
+    PathChoice -> RecoveryDownload [label="true"];
+    PathChoice -> FullDownload [label="false"];
+
+    // Full download with fallback switch
+    FullDownload [label="download.download()\n(full path —\nrequires genesis anchor)", style="rounded,filled", fillcolor="lightcyan"];
+    FullDownload -> FullResult;
+
+    FullResult [shape=diamond, label="Result?"];
+    FullResult -> Rejoin [label="success"];
+    FullResult -> FallbackCheck [label="failure"];
+
+    FallbackCheck [shape=diamond, label="error is\nRecoveryFallbackEligible?\n(CannotFetchGenesisSnapshot,\nInvalidChain)"];
+    FallbackCheck -> SetFallback [label="yes"];
+    FallbackCheck -> RetryFull [label="no"];
+
+    SetFallback [label="setRecoveryDownload\non NodeStorage\n(switch to recovery path\nnext attempt)", style="rounded,filled", fillcolor="orange"];
+    SetFallback -> Backoff;
+
+    RetryFull [label="Sleep capped exp backoff\n(10s → 60s)", style="rounded,filled", fillcolor="orange"];
+    RetryFull -> Backoff;
+    Backoff [label="Re-enter\nattemptDownloadWithRetry", style="rounded,filled", fillcolor="orange"];
+    Backoff -> CheckTotalAttempts;
+
+    // Recovery download steps
+    RecoveryDownload [label="recoveryDownload()\n\n1. Clear in-memory caches (NOT disk)\n2. Fetch latest tip from peers\n   (prefer RecoveryPeerHint)\n3. Walk back from tip, stop at persisted hash\n4. Enforce configured recovery checkpoint\n5. setForRecovery bypasses sequential prepend", style="rounded,filled", fillcolor="lightcyan"];
+
+    RecoveryDownload -> DownloadResult;
+
+    DownloadResult [shape=diamond, label="Download\nSuccess?"];
+
+    DownloadResult -> Rejoin [label="yes"];
+    DownloadResult -> RecoveryRetry [label="no"];
+
+    RecoveryRetry [label="Sleep capped exp backoff\n(10s → 60s)\nRetry recoveryDownload\n(preserve isRecovery flag)", style="rounded,filled", fillcolor="orange"];
+    RecoveryRetry -> CheckTotalAttempts;
+
+    CheckTotalAttempts [shape=diamond, label="Total recovery\nattempts >= 15?"];
+
+    CheckTotalAttempts -> ForceLeave [label="yes"];
+    CheckTotalAttempts -> DownloadDaemon [label="no"];
+
+    ForceLeave [label="FORCE LEAVE\nTransition to Leaving\n(manual restart required)", style="rounded,filled", fillcolor="red", fontcolor="white"];
+
+    // Rejoin
+    Rejoin [label="rejoinAfterRecovery()\n\nSend twoWayHandshake to all known peers\n(restore P2P mesh)", style="rounded,filled", fillcolor="lightgreen"];
+
+    Rejoin -> RecoveryObserve;
+
+    // Recovery observe
+    RecoveryObserve [label="recoveryObserve()\n\n1. Reset storage heads\n2. Observe 1-5 rounds (random offset per node)\n3. Sync SnapshotStorage head", style="rounded,filled", fillcolor="lightgreen"];
+
+    RecoveryObserve -> InitFromDownload;
+
+    // Init from download
+    InitFromDownload [label="initFromDownload(isRecovery=true)\n\nValidator + isRecoveryEffective: skip 43s deferral\nOthers: defer 43s for TimeTrigger alignment\nSet grace period = 3", style="rounded,filled", fillcolor="lightgreen"];
+
+    InitFromDownload -> FirstRound;
+
+    // First round
+    FirstRound [label="First successful round\n\nTransition to Ready\nGrace period: 3→2→1→0", style="rounded,filled", fillcolor="palegreen"];
+
+    // Legend — compact, at bottom
+    Legend [shape=plaintext, label=<
+        <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="4">
+        <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>
+        <TR><TD BGCOLOR="lightyellow">  </TD><TD>Detection / Trigger</TD></TR>
+        <TR><TD BGCOLOR="lightblue">  </TD><TD>State transition</TD></TR>
+        <TR><TD BGCOLOR="lightcyan">  </TD><TD>Download phase</TD></TR>
+        <TR><TD BGCOLOR="lightgreen">  </TD><TD>Recovery / Rejoin</TD></TR>
+        <TR><TD BGCOLOR="orange">  </TD><TD>Retry / Fallback</TD></TR>
+        <TR><TD BGCOLOR="red">  </TD><TD>Force leave</TD></TR>
+        </TABLE>
+    >];
+
+    // Force legend below the flow
+    FirstRound -> Legend [style=invis];
+    ForceLeave -> Legend [style=invis];
+}

@@ -1,0 +1,18 @@
+services:
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: tessellation-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_DATE_FORMATS_DEFAULT_TIMEZONE=UTC
+      - GF_INSTALL_PLUGINS=grafana-clickhouse-datasource
+    volumes:
+      - ./provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - grafana-storage:/var/lib/grafana
+
+volumes:
+  grafana-storage:

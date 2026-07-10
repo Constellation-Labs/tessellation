@@ -4,15 +4,16 @@ const { withRetry } = require("./operations");
 
 const createNetworkConfig = (args) => {
     const { dagL0PortPrefix, dagL1PortPrefix, metagraphL0PortPrefix, currencyL1PortPrefix, dataL1PortPrefix } = args;
+    const host = process.env.TEST_HOST || 'http://localhost';
 
     return {
-        globalL0Url: `http://localhost:${dagL0PortPrefix}00`,
-        dagL1Url: `http://localhost:${dagL1PortPrefix}00`,
-        currencyL0Url: `http://localhost:${metagraphL0PortPrefix}00`,
-        currencyL1Url: `http://localhost:${currencyL1PortPrefix}00`,
-        dataL1Url: `http://localhost:${dataL1PortPrefix}00`,
-        extendedDagL1Url: `http://localhost:${dagL1PortPrefix}50`,
-        extendedDataL1Url: `http://localhost:${dataL1PortPrefix}50`
+        globalL0Url: process.env.GL0_URL || `${host}:${dagL0PortPrefix}00`,
+        dagL1Url: process.env.GL1_URL || `${host}:${dagL1PortPrefix}00`,
+        currencyL0Url: process.env.ML0_URL || `${host}:${metagraphL0PortPrefix}00`,
+        currencyL1Url: process.env.CL1_URL || `${host}:${currencyL1PortPrefix}00`,
+        dataL1Url: process.env.DL1_URL || `${host}:${dataL1PortPrefix}00`,
+        extendedDagL1Url: process.env.EXT_GL1_URL || `${host}:${dagL1PortPrefix}50`,
+        extendedDataL1Url: process.env.EXT_DL1_URL || `${host}:${dataL1PortPrefix}50`
     };
 };
 
