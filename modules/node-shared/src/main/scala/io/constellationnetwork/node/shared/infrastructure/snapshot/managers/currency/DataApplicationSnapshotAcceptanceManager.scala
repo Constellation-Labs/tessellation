@@ -171,9 +171,11 @@ object DataApplicationSnapshotAcceptanceManager {
           // then serve it to combine through a scoped context (no process-wide Ref). Validation and its
           // per-block error handling stay entirely in the fold below - unchanged from develop. A fee on a
           // block that the fold later rejects (or whose combine throws) is present here but absent from
-          // the map rollback replay rebuilds from the stored/accepted blocks; that diverges only for a
-          // metagraph that both reads getSnapshotFeeTransactions and has a colliding dataUpdateRef across
-          // those blocks - which no in-tree runtime metagraph does today.
+          // the map rollback replay rebuilds from the stored/accepted blocks. A metagraph that reads
+          // getSnapshotFeeTransactions can then diverge under replay two ways: on a colliding dataUpdateRef
+          // (last-wins picks a rejected block's fee live but not on replay), or - even with no collision -
+          // if its combine folds over the whole map (sum/iterate .values), since a rejected block's fee is
+          // a phantom key present live but absent on replay. No in-tree runtime metagraph reads it today.
           feeMap <- OptionT.liftF(
             FeeTransaction.buildFeeMap[F](
               blocksToProcess.flatMap(block => getFeeTransactions(block.value.dataTransactions.toList)),

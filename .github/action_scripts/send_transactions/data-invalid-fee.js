@@ -12,8 +12,8 @@ const { PRIVATE_KEYS } = require('../shared/constants');
 // cluster is live (metagraph L0 keeps producing snapshots) and then assert the address has no state.
 
 const SCENARIOS = {
-    insufficient: { key: PRIVATE_KEYS.key2, feeAmount: 50 },
-    missing:      { key: PRIVATE_KEYS.key3, feeAmount: null }
+    insufficient: { key: PRIVATE_KEYS.key2, feeAmount: 50, expectedReason: 'NotEnoughFee' },
+    missing:      { key: PRIVATE_KEYS.key3, feeAmount: null, expectedReason: 'MissingFeeTransaction' }
 };
 
 const createConfig = () => {
@@ -61,7 +61,7 @@ const getMl0LatestOrdinal = async (metagraphL0Url) => {
 };
 
 const submitInvalidUpdate = async (globalL0Url, metagraphL1DataUrl, scenario) => {
-    const {key, feeAmount} = SCENARIOS[scenario];
+    const {key, feeAmount, expectedReason} = SCENARIOS[scenario];
     const account = dag4.createAccount(key);
     account.connect({networkVersion: '2.0', l0Url: globalL0Url, testnet: true});
 
@@ -88,14 +88,27 @@ const submitInvalidUpdate = async (globalL0Url, metagraphL1DataUrl, scenario) =>
         };
     }
 
+    // Primary, deterministic assertion: a bad-fee update must be rejected at submission with the
+    // expected reason. (assertUpdateRejected below is a secondary, end-to-end confirmation.) The old
+    // absence-only check could false-PASS by checking before a wrongly-accepted update materialized.
+    let accepted = false;
+    let rejection = null;
     try {
         console.log(`[${scenario}] Submitting: ${JSON.stringify(body)}`);
         const resp = await axios.post(`${metagraphL1DataUrl}/data`, body);
-        console.log(`[${scenario}] POST /data response: ${JSON.stringify(resp.data)}`);
+        accepted = true;
+        console.log(`[${scenario}] POST /data unexpectedly accepted: ${JSON.stringify(resp.data)}`);
     } catch (e) {
-        // A synchronous rejection at submission is an acceptable (and expected) outcome.
-        console.log(`[${scenario}] POST /data rejected at submission: ${e.response ? JSON.stringify(e.response.data) : e.message}`);
+        rejection = e.response ? JSON.stringify(e.response.data) : String(e.message);
+        console.log(`[${scenario}] POST /data rejected at submission: ${rejection}`);
     }
+    if (accepted) {
+        throw new Error(`[${scenario}] FAIL: bad-fee update was accepted at submission; expected rejection (${expectedReason}).`);
+    }
+    if (!rejection || !rejection.includes(expectedReason)) {
+        throw new Error(`[${scenario}] FAIL: expected rejection reason "${expectedReason}" but POST failed with: ${rejection}`);
+    }
+    console.log(`[${scenario}] Submission correctly rejected with ${expectedReason}`);
     return account.address;
 };
 
