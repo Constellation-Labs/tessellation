@@ -718,6 +718,20 @@ PYEOF
 
   NEED_SEED=true
   if [ "$SS_PRESERVE" = "true" ]; then
+    # Rollback can land the chain BELOW the SS DB tip (SS had ingested a pre-rollback
+    # future that no longer exists). Those rows are orphaned — bulk-drop everything
+    # above the current chain head first, so the per-row hash loop below only has to
+    # reconcile re-forged rows AT/below head (and never asks GL0 for an ordinal that
+    # doesn't exist yet, which was aborting the deploy with "cannot fetch chain hash").
+    chain_head=$(ssh "$SS_NODE" "curl -sf --max-time 5 '$gl0_url/global-snapshots/latest/ordinal'" 2>/dev/null \
+      | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('value',d) if isinstance(d,dict) else d)" 2>/dev/null || echo "")
+    if [ -n "$chain_head" ]; then
+      db_max=$(ssh "$SS_NODE" "$SS_PSQL -t -A -c 'SELECT COALESCE(MAX(ordinal),-1) FROM global_snapshots;'" 2>/dev/null || echo "-1")
+      if [ "$db_max" -gt "$chain_head" ] 2>/dev/null; then
+        log "  SS DB tip ($db_max) is ahead of the rolled-back chain head ($chain_head) — dropping orphaned rows > $chain_head"
+        ssh "$SS_NODE" "$SS_PSQL -c 'DELETE FROM global_snapshots WHERE ordinal > $chain_head;'" >/dev/null
+      fi
+    fi
     # A rollback restart re-forges the tip: global_snapshots.ordinal is UNIQUE but SS
     # inserts are ON CONFLICT (hash) DO NOTHING, so a stale forked row at a re-forged
     # ordinal would crash SS. Trim from the tip until the DB hash matches the chain
