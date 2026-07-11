@@ -1,30 +1,27 @@
 const {dag4} = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
-const { z } = require('zod');
 const { compress } = require("brotli");
 const {parseSharedArgs} = require('../shared');
+const { PRIVATE_KEYS } = require('../shared/constants');
 
-const CliArgsSchema = z.object({
-    privateKey: z.string()
-        .min(1, "Private key cannot be empty"),
-});
+// Scenario: a UsageUpdateWithFee submitted together with an ADEQUATE fee (>= minFee of 100).
+// The update is accepted, and the metagraph's combine looks the fee up via
+// L0NodeContext.getSnapshotFeeTransactions and records it as `feesPaid` on the device. Because the
+// fee travels as a sibling transaction (never inside the update body), a non-zero feesPaid can only
+// come from that lookup -- so asserting feesPaid == fee proves the feature end to end.
 
 const createConfig = () => {
     const args = process.argv.slice(2);
 
-    if (args.length < 6) {
+    if (args.length < 5) {
         throw new Error(
-            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix> <private-key>"
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>"
         );
     }
 
     const sharedArgs = parseSharedArgs(args.slice(0, 5));
-    const [privateKey] = args.slice(5);
-
-    const specificArgs = CliArgsSchema.parse({ privateKey });
-
-    return { ...sharedArgs, ...specificArgs };
+    return { ...sharedArgs, privateKey: PRIVATE_KEYS.key1 };
 };
 
 const sleep = (ms) => {
@@ -149,7 +146,7 @@ const sendDataTransactionsUsingUrls = async (
     return [account.address, estimateFeeResponse];
 };
 
-const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
+const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address, expectedFee) => {
     const maxAttempts = 120
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
@@ -158,11 +155,27 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
 
             if (Object.keys(responseData).length > 0) {
                 console.log(`Transaction processed successfully. Response: ${JSON.stringify(responseData)}`);
+                // The device state must reflect the fee that combine looked up via
+                // getSnapshotFeeTransactions. This is the assertion that proves the feature works.
+                // Coerce both sides in case Amount/NonNegLong serialize as {value: N} rather than N.
+                const numOf = (x) => (x && typeof x === 'object' && 'value' in x) ? Number(x.value) : Number(x);
+                const expected = numOf(expectedFee);
+                const actual = numOf(responseData.feesPaid);
+                if (!(expected > 0) || actual !== expected) {
+                    throw new Error(
+                        `Fee lookup assertion failed: expected feesPaid=${expected} (from getSnapshotFeeTransactions) ` +
+                        `but device state has feesPaid=${actual}. Full state: ${JSON.stringify(responseData)}`
+                    );
+                }
+                console.log(`Fee lookup verified: device feesPaid=${actual} matches submitted fee ${expected}`);
                 return;
             }
 
             console.log(`Data transaction not processed yet. Retrying in 1 seconds (${attempt}/${maxAttempts})`);
         } catch (error) {
+            if (error.message && error.message.startsWith('Fee lookup assertion failed')) {
+                throw error;
+            }
             console.error(`Attempt ${attempt} failed: ${error.message}`);
         }
 
@@ -212,7 +225,7 @@ const sendDataTransaction = async () => {
 
     const [address, estimateFeeResponse] = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
 
-    await checkDataTransactionInMetagraphL0(metagraphL0Url, address);
+    await checkDataTransactionInMetagraphL0(metagraphL0Url, address, estimateFeeResponse.fee);
     await checkFeeTransactionInGlobalL0(globalL0Url, estimateFeeResponse.address);
 };
 

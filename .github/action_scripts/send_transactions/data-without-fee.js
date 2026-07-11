@@ -1,29 +1,21 @@
 const { dag4 } = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
-const { z } = require('zod');
 const { parseSharedArgs } = require('../shared');
+const { PRIVATE_KEYS } = require('../shared/constants');
 
-const CliArgsSchema = z.object({
-    privateKey: z.string()
-        .min(1, "Private key cannot be empty"),
-});
-
+// A UsageUpdateNoFee correctly submitted WITHOUT a fee (none is required for this update type).
 const createConfig = () => {
     const args = process.argv.slice(2);
 
-    if (args.length < 6) {
+    if (args.length < 5) {
         throw new Error(
-            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix> <private-key>"
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>"
         );
     }
 
     const sharedArgs = parseSharedArgs(args.slice(0, 5));
-    const [privateKey] = args.slice(5);
-
-    const specificArgs = CliArgsSchema.parse({ privateKey });
-
-    return { ...sharedArgs, ...specificArgs };
+    return { ...sharedArgs, privateKey: PRIVATE_KEYS.key4 };
 };
 
 const sleep = (ms) => {
