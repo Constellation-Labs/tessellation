@@ -122,180 +122,199 @@ object DataApplicationSnapshotAcceptanceManager {
       lastOrdinal: SnapshotOrdinal,
       currentOrdinal: SnapshotOrdinal
     ): F[Option[DataApplicationAcceptanceResult]] = {
-      // Collect ALL fee transactions from ALL blocks upfront at snapshot level
-      val allFeeTransactions: List[Signed[FeeTransaction]] = dataBlocks.flatMap { block =>
-        getFeeTransactions(block.value.dataTransactions.toList)
-      }
+      // No process-wide Ref: the snapshot fee map is built below from the accepted blocks and served to
+      // combine through a scoped context (see processingResult). Non-combine work uses nodeContext.
+      implicit val context: L0NodeContext[F] = nodeContext
 
-      // Build the snapshot-wide fee map and serve it to combine through a scoped context, so there is
-      // no process-wide Ref whose correctness depends on accept() calls never overlapping.
-      FeeTransaction.buildFeeMap[F](allFeeTransactions, logger).flatMap { feeMap =>
-        implicit val context: L0NodeContext[F] = L0NodeContextOps.withSnapshotFeeTransactions(nodeContext, feeMap)
-
-        val snapshotProcessing: F[Option[DataApplicationAcceptanceResult]] = {
-          val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
-            lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
-              service
-                .deserializeState(lastDataApplication)
-                .flatTap {
-                  case Left(err) => logger.warn(err)("Cannot deserialize custom state")
-                  case Right(_)  => Applicative[F].unit
-                }
-                .map(_.toOption)
-                .handleErrorWith(err =>
-                  logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state").as(none)
-                )
-            }
-            balances <- OptionT.liftF {
-              context.getLastCurrencySnapshotCombined.flatMap { snapshot =>
-                OptionT
-                  .fromOption(snapshot)
-                  .map { case (_, snapshotInfo) => snapshotInfo.balances }
-                  .getOrRaise(new IllegalStateException("Last currency snapshot unavailable"))
+      val snapshotProcessing: F[Option[DataApplicationAcceptanceResult]] = {
+        val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
+          lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
+            service
+              .deserializeState(lastDataApplication)
+              .flatTap {
+                case Left(err) => logger.warn(err)("Cannot deserialize custom state")
+                case Right(_)  => Applicative[F].unit
               }
-            }
-
-            lastCalculatedState <- OptionT.liftF(
-              service.getCalculatedState
-                .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
-            )
-
-            dataState = DataState(lastOnChainState, lastCalculatedState)
-            initialResult = (
-              dataState,
-              List.empty[Signed[FeeTransaction]],
-              List.empty[Signed[DataApplicationBlock]],
-              List.empty[(Signed[DataApplicationBlock], DataBlockNotAccepted)]
-            )
-
-            processingResult <- OptionT.liftF {
-              val blocksToProcess = NonEmptyList
-                .fromList(dataBlocks.sortBy(_.roundId).distinctBy(_.value.roundId))
-                .map(_.toList)
-                .getOrElse(Nil)
-
-              if (blocksToProcess.isEmpty) {
-                val (oldState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks) = initialResult
-                // No blocks to process - call combine with empty updates
-                service.combine(oldState, List.empty).map { newState =>
-                  (newState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks)
-                }
-              } else {
-                logger.info(s"Starting to process ${blocksToProcess.size} blocks with ${allFeeTransactions.size} fee transactions") >>
-                  blocksToProcess.foldLeftM(initialResult) {
-                    case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
-                      val dataTransactions = dataBlock.value.dataTransactions
-
-                      val dataTransactionsValidations =
-                        dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
-
-                      dataTransactionsValidations.flatTap { validation =>
-                        if (validation.isValid)
-                          logger.info(s"Validating block with roundId=${dataBlock.value.roundId}")
-                        else
-                          logger.info(s"Block ${dataBlock.value.roundId} is invalid: ${validation.fold(_.toList.mkString(", "), _ => "")}")
-                      }.flatMap {
-                        case Valid(_) =>
-                          val dataTransactionsAsList = dataTransactions.toList
-                          val dataUpdates = getDataUpdates(dataTransactionsAsList)
-                          val blockFeeTransactions = getFeeTransactions(dataTransactionsAsList)
-
-                          for {
-                            _ <- logger.info(s"Block ${dataBlock.value.roundId} is valid")
-                            result <- service.combine(currentState, dataUpdates).map { newState =>
-                              (
-                                newState,
-                                accFeeTransactions ++ blockFeeTransactions,
-                                accAcceptedBlocks :+ dataBlock,
-                                accNotAcceptedBlocks
-                              )
-                            }
-                            _ <- logger.info(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
-                          } yield result
-
-                        case Invalid(err) =>
-                          Async[F].pure(
-                            (
-                              currentState,
-                              accFeeTransactions,
-                              accAcceptedBlocks,
-                              accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.toString))
-                            )
-                          )
-                      }.handleErrorWith { err =>
-                        logger.error(err)(s"Exception during block validation for roundId=${dataBlock.value.roundId}") >>
-                          Async[F].pure(
-                            (
-                              currentState,
-                              accFeeTransactions,
-                              accAcceptedBlocks,
-                              accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
-                            )
-                          )
-                      }
-                  }
-              }
-            }
-
-            (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
-
-            serializedOnChainState <- OptionT.liftF(
-              service.serializeState(newDataState.onChain)
-            )
-
-            serializedBlocks <- OptionT.liftF(
-              validatedBlocks.traverse(service.serializeBlock)
-            )
-
-            calculatedStateProof <- OptionT.liftF(
-              service.hashCalculatedState(newDataState.calculated)
-            )
-
-            tokenUnlocks <- OptionT.liftF(
-              service
-                .getTokenUnlocks(newDataState)
-                .handleErrorWith(e => logger.error(e)("An error occurred when extracting tokenUnlocks").as(SortedSet.empty[TokenUnlock]))
-            )
-
-            sharedArtifacts = newDataState.sharedArtifacts ++ tokenUnlocks
-
-            updateHashes <- OptionT.liftF(
-              service.hashDataUpdate match {
-                case Some(hashFn) if validatedBlocks.nonEmpty =>
-                  validatedBlocks.flatMap { block =>
-                    getDataUpdates(block.value.dataTransactions.toList)
-                  }.traverse { signedUpdate =>
-                    hashFn(signedUpdate.value)
-                  }.map(hashes => Some(hashes.toSortedSet))
-                case _ =>
-                  Async[F].pure(None: Option[SortedSet[Hash]])
-              }
-            )
-          } yield
-            DataApplicationAcceptanceResult(
-              DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof, updateHashes),
-              newDataState.calculated,
-              validatedFeeTransactions,
-              sharedArtifacts,
-              notAcceptedBlocks
-            )
-
-          newDataState.value.handleErrorWith { err =>
-            logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
-              service.getCalculatedState.map { lastCalculatedState =>
-                maybeLastDataApplication.map(part =>
-                  DataApplicationAcceptanceResult(
-                    part,
-                    lastCalculatedState._2,
-                    notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
-                  )
-                )
-              }
+              .map(_.toOption)
+              .handleErrorWith(err =>
+                logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state").as(none)
+              )
           }
-        }
+          balances <- OptionT.liftF {
+            context.getLastCurrencySnapshotCombined.flatMap { snapshot =>
+              OptionT
+                .fromOption(snapshot)
+                .map { case (_, snapshotInfo) => snapshotInfo.balances }
+                .getOrRaise(new IllegalStateException("Last currency snapshot unavailable"))
+            }
+          }
 
-        snapshotProcessing
+          lastCalculatedState <- OptionT.liftF(
+            service.getCalculatedState
+              .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
+          )
+
+          dataState = DataState(lastOnChainState, lastCalculatedState)
+          initialResult = (
+            dataState,
+            List.empty[Signed[FeeTransaction]],
+            List.empty[Signed[DataApplicationBlock]],
+            List.empty[(Signed[DataApplicationBlock], DataBlockNotAccepted)]
+          )
+
+          blocksToProcess = NonEmptyList
+            .fromList(dataBlocks.sortBy(_.roundId).distinctBy(_.value.roundId))
+            .map(_.toList)
+            .getOrElse(Nil)
+
+          // Determine which blocks pass validation up front. Validation depends only on dataState
+          // (not on the combine fold's threaded state), so we can build the snapshot fee map from the
+          // SAME accepted, deduped blocks - in the same order - that get stored and that rollback
+          // replay reconstructs from. Building it from raw dataBlocks would let fees from rejected or
+          // duplicate-roundId blocks leak in, making getSnapshotFeeTransactions diverge between
+          // consensus time and replay and breaking byte-exact replay.
+          acceptedBlocks <- OptionT.liftF(
+            blocksToProcess.filterA { dataBlock =>
+              dataBlock.value.dataTransactions
+                .traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState))
+                .map(_.reduce.isValid)
+            }
+          )
+
+          feeMap <- OptionT.liftF(
+            FeeTransaction.buildFeeMap[F](
+              acceptedBlocks.flatMap(block => getFeeTransactions(block.value.dataTransactions.toList)),
+              logger
+            )
+          )
+
+          processingResult <- OptionT.liftF {
+            // Passed explicitly to combine below (not implicit) so it doesn't collide with the
+            // nodeContext implicit this method uses for validation and serialization.
+            val feeContext: L0NodeContext[F] =
+              L0NodeContextOps.withSnapshotFeeTransactions(nodeContext, feeMap)
+
+            if (blocksToProcess.isEmpty) {
+              val (oldState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks) = initialResult
+              // No blocks to process - call combine with empty updates
+              service.combine(oldState, List.empty)(feeContext).map { newState =>
+                (newState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks)
+              }
+            } else {
+              logger.info(s"Starting to process ${blocksToProcess.size} blocks with ${feeMap.size} fee transactions") >>
+                blocksToProcess.foldLeftM(initialResult) {
+                  case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
+                    val dataTransactions = dataBlock.value.dataTransactions
+
+                    val dataTransactionsValidations =
+                      dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
+
+                    dataTransactionsValidations.flatTap { validation =>
+                      if (validation.isValid)
+                        logger.info(s"Validating block with roundId=${dataBlock.value.roundId}")
+                      else
+                        logger.info(s"Block ${dataBlock.value.roundId} is invalid: ${validation.fold(_.toList.mkString(", "), _ => "")}")
+                    }.flatMap {
+                      case Valid(_) =>
+                        val dataTransactionsAsList = dataTransactions.toList
+                        val dataUpdates = getDataUpdates(dataTransactionsAsList)
+                        val blockFeeTransactions = getFeeTransactions(dataTransactionsAsList)
+
+                        for {
+                          _ <- logger.info(s"Block ${dataBlock.value.roundId} is valid")
+                          result <- service.combine(currentState, dataUpdates)(feeContext).map { newState =>
+                            (
+                              newState,
+                              accFeeTransactions ++ blockFeeTransactions,
+                              accAcceptedBlocks :+ dataBlock,
+                              accNotAcceptedBlocks
+                            )
+                          }
+                          _ <- logger.info(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
+                        } yield result
+
+                      case Invalid(err) =>
+                        Async[F].pure(
+                          (
+                            currentState,
+                            accFeeTransactions,
+                            accAcceptedBlocks,
+                            accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.toString))
+                          )
+                        )
+                    }.handleErrorWith { err =>
+                      logger.error(err)(s"Exception during block validation for roundId=${dataBlock.value.roundId}") >>
+                        Async[F].pure(
+                          (
+                            currentState,
+                            accFeeTransactions,
+                            accAcceptedBlocks,
+                            accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
+                          )
+                        )
+                    }
+                }
+            }
+          }
+
+          (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
+
+          serializedOnChainState <- OptionT.liftF(
+            service.serializeState(newDataState.onChain)
+          )
+
+          serializedBlocks <- OptionT.liftF(
+            validatedBlocks.traverse(service.serializeBlock)
+          )
+
+          calculatedStateProof <- OptionT.liftF(
+            service.hashCalculatedState(newDataState.calculated)
+          )
+
+          tokenUnlocks <- OptionT.liftF(
+            service
+              .getTokenUnlocks(newDataState)
+              .handleErrorWith(e => logger.error(e)("An error occurred when extracting tokenUnlocks").as(SortedSet.empty[TokenUnlock]))
+          )
+
+          sharedArtifacts = newDataState.sharedArtifacts ++ tokenUnlocks
+
+          updateHashes <- OptionT.liftF(
+            service.hashDataUpdate match {
+              case Some(hashFn) if validatedBlocks.nonEmpty =>
+                validatedBlocks.flatMap { block =>
+                  getDataUpdates(block.value.dataTransactions.toList)
+                }.traverse { signedUpdate =>
+                  hashFn(signedUpdate.value)
+                }.map(hashes => Some(hashes.toSortedSet))
+              case _ =>
+                Async[F].pure(None: Option[SortedSet[Hash]])
+            }
+          )
+        } yield
+          DataApplicationAcceptanceResult(
+            DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof, updateHashes),
+            newDataState.calculated,
+            validatedFeeTransactions,
+            sharedArtifacts,
+            notAcceptedBlocks
+          )
+
+        newDataState.value.handleErrorWith { err =>
+          logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
+            service.getCalculatedState.map { lastCalculatedState =>
+              maybeLastDataApplication.map(part =>
+                DataApplicationAcceptanceResult(
+                  part,
+                  lastCalculatedState._2,
+                  notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
+                )
+              )
+            }
+        }
       }
+
+      snapshotProcessing
     }
   }
 }
