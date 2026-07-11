@@ -141,15 +141,13 @@ abstract class CurrencyL0App(
       // compute pool. See ConsensusExecutor.
       consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
 
-      snapshotFeeTransactionsRef <- Ref.of[IO, Map[Hash, Signed[FeeTransaction]]](Map.empty).toResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
         .make[IO](
           storages.snapshot,
           hasherSelectorAlwaysCurrent,
           storages.lastSyncGlobalSnapshot,
           storages.identifier,
-          nodeShared.seedlist,
-          snapshotFeeTransactionsRef
+          nodeShared.seedlist
         )
       services <- Services
         .make[IO, Run](
@@ -177,7 +175,6 @@ abstract class CurrencyL0App(
           Some(customArtifacts),
           queues,
           getPeerChainTips,
-          snapshotFeeTransactionsRef,
           consensusEc
         )
         .asResource

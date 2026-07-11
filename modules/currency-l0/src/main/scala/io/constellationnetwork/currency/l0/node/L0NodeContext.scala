@@ -1,7 +1,7 @@
 package io.constellationnetwork.currency.l0.node
 
 import cats.data.OptionT
-import cats.effect.{Async, Ref}
+import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -25,8 +25,7 @@ object L0NodeContext {
     hasherSelector: HasherSelector[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     identifierStorage: IdentifierStorage[F],
-    l0Seedlist: Option[Set[SeedlistEntry]],
-    snapshotFeeTransactionsRef: Ref[F, Map[Hash, Signed[FeeTransaction]]]
+    l0Seedlist: Option[Set[SeedlistEntry]]
   ): L0NodeContext[F] = new L0NodeContext[F] {
 
     def getCurrencyId: F[CurrencyId] =
@@ -63,7 +62,9 @@ object L0NodeContext {
     def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
       lastGlobalSnapshotStorage.getLastSynchronizedActiveTokenLocks
 
+    // The base context carries no fee transactions; the snapshot-scoped fee map is supplied by
+    // L0NodeContext.withSnapshotFeeTransactions around each combine (live acceptance and replay).
     def getSnapshotFeeTransactions: F[Map[Hash, Signed[FeeTransaction]]] =
-      snapshotFeeTransactionsRef.get
+      Map.empty[Hash, Signed[FeeTransaction]].pure[F]
   }
 }

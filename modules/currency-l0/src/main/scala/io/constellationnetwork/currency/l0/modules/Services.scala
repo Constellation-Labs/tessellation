@@ -10,7 +10,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, FeeTransaction, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.services.CurrencyMessagesService
@@ -49,7 +49,6 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
 import org.http4s.client.Client
@@ -84,7 +83,6 @@ object Services {
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     queues: Queues[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    snapshotFeeTransactionsRef: Ref[F, Map[Hash, Signed[FeeTransaction]]],
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
@@ -108,7 +106,7 @@ object Services {
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
-          DataApplicationSnapshotAcceptanceManager.make[F](service, nodeContext, storage, snapshotFeeTransactionsRef)
+          DataApplicationSnapshotAcceptanceManager.make[F](service, nodeContext, storage)
       }
 
       feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)
