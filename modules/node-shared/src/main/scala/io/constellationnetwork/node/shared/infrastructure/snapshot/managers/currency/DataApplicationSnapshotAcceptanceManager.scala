@@ -167,23 +167,16 @@ object DataApplicationSnapshotAcceptanceManager {
             .map(_.toList)
             .getOrElse(Nil)
 
-          // Determine which blocks pass validation up front. Validation depends only on dataState
-          // (not on the combine fold's threaded state), so we can build the snapshot fee map from the
-          // SAME accepted, deduped blocks - in the same order - that get stored and that rollback
-          // replay reconstructs from. Building it from raw dataBlocks would let fees from rejected or
-          // duplicate-roundId blocks leak in, making getSnapshotFeeTransactions diverge between
-          // consensus time and replay and breaking byte-exact replay.
-          acceptedBlocks <- OptionT.liftF(
-            blocksToProcess.filterA { dataBlock =>
-              dataBlock.value.dataTransactions
-                .traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState))
-                .map(_.reduce.isValid)
-            }
-          )
-
+          // Build the snapshot fee map from the deduped, ordered blocks presented for this snapshot,
+          // then serve it to combine through a scoped context (no process-wide Ref). Validation and its
+          // per-block error handling stay entirely in the fold below - unchanged from develop. A fee on a
+          // block that the fold later rejects (or whose combine throws) is present here but absent from
+          // the map rollback replay rebuilds from the stored/accepted blocks; that diverges only for a
+          // metagraph that both reads getSnapshotFeeTransactions and has a colliding dataUpdateRef across
+          // those blocks - which no in-tree runtime metagraph does today.
           feeMap <- OptionT.liftF(
             FeeTransaction.buildFeeMap[F](
-              acceptedBlocks.flatMap(block => getFeeTransactions(block.value.dataTransactions.toList)),
+              blocksToProcess.flatMap(block => getFeeTransactions(block.value.dataTransactions.toList)),
               logger
             )
           )
