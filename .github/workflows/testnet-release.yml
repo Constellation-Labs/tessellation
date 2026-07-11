@@ -150,6 +150,29 @@ jobs:
           path: docker/jars/
           retention-days: 3
 
+      # Publish the tessellation SDK to the local ivy repo and upload it as an artifact.
+      # `sdk` bakes every module's classes into one self-contained tessellation-sdk jar
+      # (provided-scope deps + packageBin mappings), so this is a single artifact the
+      # snapshot-streaming image job resolves against — no second SDK compile there.
+      # Runs here where the project is already compiled, so it's incremental and cheap.
+      - name: Publish tessellation SDK locally
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          sbt -batch "set ThisBuild / version := \"$VERSION\"" \
+            "set sdk / Compile / doc / scalacOptions += \"-no-link-warnings\"" \
+            sdk/publishLocal
+          rm -rf sdk-ivy-local
+          mkdir -p sdk-ivy-local
+          cp -r "$HOME/.ivy2/local/." sdk-ivy-local/
+      - name: Upload SDK ivy artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-ivy-local
+          path: sdk-ivy-local/
+          retention-days: 3
+
   # ---------------------------------------------------------------------------
   # Publish the tessellation node image to GHCR, REUSING the jars assembled by the
   # release job (downloaded as an artifact — no second sbt build). Tagged with the
@@ -213,11 +236,17 @@ jobs:
           JAVA_VERSION: 21
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish tessellation SDK locally (@ VER)
+      # Reuse the tessellation SDK published by the release job instead of recompiling
+      # it here — restore the ivy-local artifact so the SS assembly resolves it locally.
+      - name: Download tessellation SDK (from release job)
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-ivy-local
+          path: sdk-ivy-local/
+      - name: Restore SDK into local ivy repo
         run: |
-          sbt -batch "set ThisBuild / version := \"${{ env.VER }}\"" \
-            "set sdk / Compile / doc / scalacOptions += \"-no-link-warnings\"" \
-            sdk/publishLocal
+          mkdir -p "$HOME/.ivy2/local"
+          cp -r sdk-ivy-local/. "$HOME/.ivy2/local/"
       - name: Build snapshot-streaming jar (SS branch release/testnet @ VER)
         env:
           SNAPSHOT_STREAMING_BRANCH: release/testnet
