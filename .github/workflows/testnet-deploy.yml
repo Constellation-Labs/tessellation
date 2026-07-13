@@ -25,7 +25,13 @@ name: Testnet Deploy
 #   vars.TESTNET_HOSTS        "node0,node1,node2,streaming,monitoring" (public IPs, node0 = anchor)
 #   secrets.TESTNET_SSH_KEY   private key for the `admin` user on all cluster hosts
 # Optional:
-#   secrets.TESTNET_SS_DB_URL         external snapshot-streaming postgres URL; unset => local
+#   secrets.TESTNET_SS_DB_URL         external snapshot-streaming postgres URL; unset => local.
+#                                     For the RDS-via-bastion setup, point at the tunnel's
+#                                     loopback (e.g. postgresql://user:pass@127.0.0.1:5432/db).
+#   secrets.TESTNET_SS_DB_TUNNEL_BASTION  bastion ssh target (e.g. ec2-user@1.2.3.4); when set,
+#                                     the SS node maintains a persistent loopback->RDS tunnel.
+#   secrets.TESTNET_SS_DB_TUNNEL_TARGET   RDS endpoint the tunnel forwards to (rds-host:5432).
+#                                     Bastion key must be on the SS node at ~/.ssh/bastion-hetzner.pem.
 #   secrets.TESTNET_GRAFANA_PASSWORD  Grafana admin password
 
 on:
@@ -124,8 +130,13 @@ jobs:
           SNAPSHOT_STORED_PATH: data/incremental_snapshot
           NODE_JAVA_OPTS: "-Xms10g -Xmx10g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
           SKIP_TX_SENDER: "true"
-          # snapshot-streaming DB: unset => local postgres on the streaming node.
+          # snapshot-streaming DB: external AWS RDS reached through a persistent SSH tunnel
+          # on the SS node (bastion -> RDS). SS_DB_URL points at the loopback the tunnel binds
+          # (host 127.0.0.1:5432); the bastion + RDS target drive the tunnel setup. The bastion
+          # key must already be on the SS node at ~/.ssh/bastion-hetzner.pem.
           SS_DB_URL: ${{ secrets.TESTNET_SS_DB_URL }}
+          SS_DB_TUNNEL_BASTION: ${{ secrets.TESTNET_SS_DB_TUNNEL_BASTION }}
+          SS_DB_TUNNEL_TARGET: ${{ secrets.TESTNET_SS_DB_TUNNEL_TARGET }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.TESTNET_GRAFANA_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
