@@ -130,6 +130,12 @@ jobs:
           DEPLOY_APP_ENV: testnet
           SNAPSHOT_STORED_PATH: data/incremental_snapshot
           NODE_JAVA_OPTS: "-Xms10g -Xmx10g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
+          # gl1 JVM profile (tn parity with the old cl-dag-l1: ZGC 5-8g). Without this gl1
+          # falls back to the entrypoint default (G1 2-8g).
+          NODE_GL1_JAVA_OPTS: "-Xms5g -Xmx8g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
+          # snapshot-streaming JVM profile (tn parity with the old ss-test: ZGC 16g). Without
+          # this SS runs the image default (-Xmx1g), too small for full-chain ingestion.
+          SS_JAVA_OPTS: "-Xms16g -Xmx16g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
           SKIP_TX_SENDER: "true"
           # snapshot-streaming DB: external AWS RDS reached through a persistent SSH tunnel
           # on the SS node (bastion -> RDS). The tunnel binds 127.0.0.1:5433 and SS connects

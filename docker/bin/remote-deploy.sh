@@ -184,10 +184,13 @@ CL_KEYALIAS=$NODE_KEY_ALIAS"
 [ -n "$NODE_KEY_PASSWORD" ] && ENV_PROFILE_BLOCK="$ENV_PROFILE_BLOCK
 CL_PASSWORD=$NODE_KEY_PASSWORD"
 # JVM profile for gl0 (tn parity: ZGC 10g). Interpreted by the tooling-shipped
-# entrypoint (default-if-unset G1 2-8g when absent). gl1 keeps the default unless
-# CL_DOCKER_GL1_JAVA_OPTS is used (compose gives gl1 its own override slot).
+# entrypoint (default-if-unset G1 2-8g when absent).
 [ -n "$NODE_JAVA_OPTS" ] && ENV_PROFILE_BLOCK="$ENV_PROFILE_BLOCK
 CL_DOCKER_JAVA_OPTS=$NODE_JAVA_OPTS"
+# JVM profile for gl1 (tn parity: ZGC 5-8g). Without this gl1 falls back to the
+# entrypoint default (G1 2-8g); the compose gives gl1 its own CL_DOCKER_GL1_JAVA_OPTS slot.
+[ -n "$NODE_GL1_JAVA_OPTS" ] && ENV_PROFILE_BLOCK="$ENV_PROFILE_BLOCK
+CL_DOCKER_GL1_JAVA_OPTS=$NODE_GL1_JAVA_OPTS"
 
 cp "$PROJECT_ROOT/docker/docker-compose.yaml" "$STAGING/docker-compose.yaml"
 # The entrypoint is bind-mounted over the image's baked copy so the guard/JVM logic
@@ -446,6 +449,9 @@ PYEOF
   # Bastion private key MATERIAL (PEM contents, from a secret) — installed onto the SS node
   # at a managed path below and used by the tunnel unit; never assumed pre-placed on the node.
   SS_DB_TUNNEL_KEY="${SS_DB_TUNNEL_KEY:-}"
+  # JVM opts for the SS app (registry image honors it via SS_JAVA_OPTS). Empty => image
+  # default. tn parity: large ZGC heap (ss-test ran -Xmx16g). Interpolated into the compose.
+  SS_JAVA_OPTS="${SS_JAVA_OPTS:-}"
   if [ -n "$SS_DB_TUNNEL_BASTION" ]; then
     [ -n "$SS_DB_TUNNEL_TARGET" ] || { log "ERROR: SS_DB_TUNNEL_BASTION set but SS_DB_TUNNEL_TARGET (rds-host:port) is empty"; exit 1; }
     SS_DB_LOCAL=false
@@ -559,6 +565,11 @@ services:
     container_name: snapshot-streaming
     network_mode: host
     restart: unless-stopped
+    environment:
+      # Registry mode uses the image's baked entrypoint, which honors SS_JAVA_OPTS.
+      # docker compose interpolates this from the shell env at `up` time; falls back
+      # to the modest image default when unset (jar-mode ignores it — see command).
+      - SS_JAVA_OPTS=${SS_JAVA_OPTS:--Xms256m -Xmx1g}
     depends_on:
       snapshot-streaming-postgres:
         condition: service_healthy
@@ -863,7 +874,7 @@ print(json.dumps({'snapshot':{'signed':d[0],'hash':'$snapshot_hash','proofsHash'
 
   # Start snapshot-streaming
   log "  Starting snapshot-streaming"
-  ssh "$SS_NODE" "cd $SS_REMOTE_DIR && docker compose up -d snapshot-streaming"
+  ssh "$SS_NODE" "cd $SS_REMOTE_DIR && SS_JAVA_OPTS='$SS_JAVA_OPTS' docker compose up -d snapshot-streaming"
 
   # Wait for indexing to start
   for attempt in $(seq 1 30); do
