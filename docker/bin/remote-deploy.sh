@@ -435,10 +435,23 @@ u = urlsplit(sys.argv[1])
 print(u.hostname or "127.0.0.1", u.port or 5432, unquote(u.username or ""), unquote(u.password or ""), u.path.lstrip("/"))
 PYEOF
 )"
-  case "$SS_DB_HOST" in
-    127.0.0.1|localhost) SS_DB_LOCAL=true ;;
-    *) SS_DB_LOCAL=false; log "  SS database: external at $SS_DB_HOST:$SS_DB_PORT/$SS_DB_NAME (local postgres skipped)" ;;
-  esac
+  # RDS-via-bastion tunnel: when SS_DB_TUNNEL_BASTION is set, the SS DB lives on an AWS
+  # RDS reachable only through a bastion. SS still connects to $SS_DB_HOST:$SS_DB_PORT
+  # (loopback), which a persistent ssh tunnel on the SS node forwards to the RDS. The
+  # tunnel is set up below; here we just force "external" so no local postgres is spun up.
+  SS_DB_TUNNEL_BASTION="${SS_DB_TUNNEL_BASTION:-}"
+  SS_DB_TUNNEL_TARGET="${SS_DB_TUNNEL_TARGET:-}"
+  SS_DB_TUNNEL_KEY="${SS_DB_TUNNEL_KEY:-~/.ssh/bastion-hetzner.pem}"
+  if [ -n "$SS_DB_TUNNEL_BASTION" ]; then
+    [ -n "$SS_DB_TUNNEL_TARGET" ] || { log "ERROR: SS_DB_TUNNEL_BASTION set but SS_DB_TUNNEL_TARGET (rds-host:port) is empty"; exit 1; }
+    SS_DB_LOCAL=false
+    log "  SS database: external RDS via tunnel $SS_DB_TUNNEL_BASTION -> $SS_DB_TUNNEL_TARGET (SS connects to $SS_DB_HOST:$SS_DB_PORT)"
+  else
+    case "$SS_DB_HOST" in
+      127.0.0.1|localhost) SS_DB_LOCAL=true ;;
+      *) SS_DB_LOCAL=false; log "  SS database: external at $SS_DB_HOST:$SS_DB_PORT/$SS_DB_NAME (local postgres skipped)" ;;
+    esac
+  fi
 
   # Re-deploys: the SS/block-explorer containers run as root and leave root-owned files under
   # $SS_REMOTE_DIR (bind mounts) that the login user can't overwrite/rm. Take ownership first.
@@ -621,6 +634,46 @@ PYEOF
   [ "$IMAGE_SOURCE" = "registry" ] || scp -q "$SS_DIR/snapshot-streaming.jar" "$SS_NODE:$SS_REMOTE_DIR/"
   scp -q "$SS_CONFIG" "$SS_NODE:$SS_REMOTE_DIR/application.conf"
   scp -q "$SS_COMPOSE" "$SS_NODE:$SS_REMOTE_DIR/docker-compose.yaml"
+
+  # Persistent RDS tunnel: maintain a loopback -> RDS forward on the SS node via the
+  # bastion (systemd, Restart=always). Host-networked SS reaches the RDS at
+  # $SS_DB_HOST:$SS_DB_PORT. Idempotent — the unit is rewritten and restarted each deploy.
+  # Must be up before the preserve/trim psql and the SS container start below.
+  if [ -n "$SS_DB_TUNNEL_BASTION" ]; then
+    log "  Ensuring RDS tunnel on $SS_NODE ($SS_DB_HOST:$SS_DB_PORT -> $SS_DB_TUNNEL_TARGET via $SS_DB_TUNNEL_BASTION)"
+    _key_abs=$(ssh "$SS_NODE" "eval echo $SS_DB_TUNNEL_KEY")
+    ssh "$SS_NODE" "test -f '$_key_abs'" || { log "ERROR: bastion key not found on $SS_NODE at $_key_abs (set SS_DB_TUNNEL_KEY)"; exit 1; }
+    _svc_user="${SS_NODE%@*}"
+    ssh "$SS_NODE" "sudo tee /etc/systemd/system/rds-tunnel.service >/dev/null" <<UNIT
+[Unit]
+Description=SSH tunnel to RDS via bastion (snapshot-streaming DB)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$_svc_user
+ExecStart=/usr/bin/ssh -N -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -i $_key_abs -L $SS_DB_HOST:$SS_DB_PORT:$SS_DB_TUNNEL_TARGET $SS_DB_TUNNEL_BASTION
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    ssh "$SS_NODE" "sudo systemctl daemon-reload && sudo systemctl enable rds-tunnel.service >/dev/null 2>&1 && sudo systemctl restart rds-tunnel.service"
+    _tun_up=false
+    for _i in $(seq 1 20); do
+      if ssh "$SS_NODE" "timeout 3 bash -c '</dev/tcp/${SS_DB_HOST}/${SS_DB_PORT}'" 2>/dev/null; then _tun_up=true; break; fi
+      sleep 2
+    done
+    if [ "$_tun_up" = "true" ]; then
+      log "  RDS tunnel up ($SS_DB_HOST:$SS_DB_PORT reachable)"
+    else
+      log "ERROR: RDS tunnel did not come up on $SS_NODE ($SS_DB_HOST:$SS_DB_PORT)"
+      ssh "$SS_NODE" "sudo systemctl status rds-tunnel.service --no-pager 2>&1 | tail -20" 2>/dev/null || true
+      exit 1
+    fi
+  fi
 
   # Start postgres
   if [ "$SS_DB_LOCAL" = "true" ]; then
