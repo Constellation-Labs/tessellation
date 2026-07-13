@@ -436,16 +436,22 @@ print(u.hostname or "127.0.0.1", u.port or 5432, unquote(u.username or ""), unqu
 PYEOF
 )"
   # RDS-via-bastion tunnel: when SS_DB_TUNNEL_BASTION is set, the SS DB lives on an AWS
-  # RDS reachable only through a bastion. SS still connects to $SS_DB_HOST:$SS_DB_PORT
-  # (loopback), which a persistent ssh tunnel on the SS node forwards to the RDS. The
-  # tunnel is set up below; here we just force "external" so no local postgres is spun up.
+  # RDS reachable only through a bastion. A persistent ssh tunnel on the SS node binds
+  # 127.0.0.1:$SS_DB_TUNNEL_LOCAL_PORT and forwards it to the RDS; SS + the psql helpers
+  # all connect to that loopback bind. Here we force "external" (no local postgres) and
+  # pin the DB host/port to the tunnel bind, keeping only user/pass/db from SS_DB_URL.
   SS_DB_TUNNEL_BASTION="${SS_DB_TUNNEL_BASTION:-}"
   SS_DB_TUNNEL_TARGET="${SS_DB_TUNNEL_TARGET:-}"
-  SS_DB_TUNNEL_KEY="${SS_DB_TUNNEL_KEY:-~/.ssh/bastion-hetzner.pem}"
+  SS_DB_TUNNEL_LOCAL_PORT="${SS_DB_TUNNEL_LOCAL_PORT:-5433}"
+  # Bastion private key MATERIAL (PEM contents, from a secret) — installed onto the SS node
+  # at a managed path below and used by the tunnel unit; never assumed pre-placed on the node.
+  SS_DB_TUNNEL_KEY="${SS_DB_TUNNEL_KEY:-}"
   if [ -n "$SS_DB_TUNNEL_BASTION" ]; then
     [ -n "$SS_DB_TUNNEL_TARGET" ] || { log "ERROR: SS_DB_TUNNEL_BASTION set but SS_DB_TUNNEL_TARGET (rds-host:port) is empty"; exit 1; }
     SS_DB_LOCAL=false
-    log "  SS database: external RDS via tunnel $SS_DB_TUNNEL_BASTION -> $SS_DB_TUNNEL_TARGET (SS connects to $SS_DB_HOST:$SS_DB_PORT)"
+    SS_DB_HOST=127.0.0.1
+    SS_DB_PORT=$SS_DB_TUNNEL_LOCAL_PORT
+    log "  SS database: external RDS via tunnel $SS_DB_HOST:$SS_DB_PORT -> $SS_DB_TUNNEL_TARGET via $SS_DB_TUNNEL_BASTION"
   else
     case "$SS_DB_HOST" in
       127.0.0.1|localhost) SS_DB_LOCAL=true ;;
@@ -641,8 +647,13 @@ PYEOF
   # Must be up before the preserve/trim psql and the SS container start below.
   if [ -n "$SS_DB_TUNNEL_BASTION" ]; then
     log "  Ensuring RDS tunnel on $SS_NODE ($SS_DB_HOST:$SS_DB_PORT -> $SS_DB_TUNNEL_TARGET via $SS_DB_TUNNEL_BASTION)"
-    _key_abs=$(ssh "$SS_NODE" "eval echo $SS_DB_TUNNEL_KEY")
-    ssh "$SS_NODE" "test -f '$_key_abs'" || { log "ERROR: bastion key not found on $SS_NODE at $_key_abs (set SS_DB_TUNNEL_KEY)"; exit 1; }
+    [ -n "$SS_DB_TUNNEL_KEY" ] || { log "ERROR: SS_DB_TUNNEL_KEY (bastion private key material) is empty — set the secret"; exit 1; }
+    # Install the bastion key from the secret onto the node (never assumed pre-placed).
+    # Piped over stdin so the key never appears in argv/ps; 0600 + owned by the login user
+    # (the tunnel unit runs as that user, and ssh refuses group/world-readable keys).
+    _key_abs="$SS_REMOTE_DIR/.bastion-tunnel-key"
+    printf '%s\n' "$SS_DB_TUNNEL_KEY" | ssh "$SS_NODE" "umask 077; cat > '$_key_abs' && chmod 600 '$_key_abs'" \
+      || { log "ERROR: failed to install bastion key on $SS_NODE"; exit 1; }
     _svc_user="${SS_NODE%@*}"
     ssh "$SS_NODE" "sudo tee /etc/systemd/system/rds-tunnel.service >/dev/null" <<UNIT
 [Unit]
