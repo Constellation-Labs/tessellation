@@ -506,7 +506,7 @@ snapshotStreaming {
     user = "$SS_DB_USER"
     password = "$SS_DB_PASS"
     database = "$SS_DB_NAME"
-    maxSessions = 16
+    maxSessions = 32
   }
   opensearch {
     uri = "http://localhost:9200"
