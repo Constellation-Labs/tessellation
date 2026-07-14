@@ -16,14 +16,17 @@
 # exposes personal keys to the tn boxes. Safe to re-run; each pass is an rsync delta.
 # (Still: delete the authorized_keys line + key after cutover — it outlives the window.)
 #
-# The copy lands in a STAGING dir (default /opt/tessellation/tn-data), NOT gl0-data —
-# the cluster may be running its own chain meanwhile. At cutover (tn services stopped,
-# final `sync` + `verify` clean): stop containers, `mv gl0-data gl0-data.dev &&
-# mv tn-data gl0-data`, then deploy with the migration knobs (see deploy-cluster.sh).
+# The copy lands in a STAGING dir (default /opt/tessellation/tn-data for l0,
+# /opt/tessellation/tn-data-l1 for l1), NOT gl0-data/gl1-data — the cluster may be
+# running its own chain meanwhile. At cutover (tn services stopped, final `sync` +
+# `verify` clean): stop containers, `mv gl0-data gl0-data.dev && mv tn-data gl0-data`
+# (and the same for gl1-data <- tn-data-l1), then deploy with the migration knobs.
+# Mirror BOTH layers by running once per layer:  LAYER=l0 sync  then  LAYER=l1 sync
 #
 # Env overrides:
+#   LAYER     which layer to mirror: l0 (default, ~168G) or l1 (~330M)
 #   BWLIMIT   rsync --bwlimit in KB/s (default 40000 ~ 40MB/s; tn nodes are LIVE)
-#   DEST      staging dir on the Hetzner nodes (default /opt/tessellation/tn-data)
+#   DEST      staging dir on the Hetzner nodes (default per LAYER)
 #   SUBDIR    limit to one data subdir (e.g. SUBDIR=snapshot_info — smoke tests,
 #             targeted re-syncs)
 #   TN_HOSTS  comma-separated source ssh hosts (default tn1,tn2,tn3 from ~/.ssh/config)
@@ -40,12 +43,22 @@ CMD="${1:-plan}"
 ONLY="${2:-}"
 
 BWLIMIT="${BWLIMIT:-40000}"
-DEST="${DEST:-/opt/tessellation/tn-data}"
 SUBDIR="${SUBDIR:-}"
-SRC_BASE="/home/admin/tessellation/l0/data"
 
 log() { printf '\033[1;34m[migrate]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[migrate] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# LAYER selects which layer's chain data to mirror. Each lands in its own staging dir so
+# both can be synced independently (run the tool once per layer):
+#   LAYER=l0 (default) — global-L0, ~168G  -> /opt/tessellation/tn-data
+#   LAYER=l1           — global-L1, ~330M  -> /opt/tessellation/tn-data-l1
+LAYER="${LAYER:-l0}"
+case "$LAYER" in
+  l0) SRC_BASE="/home/admin/tessellation/l0/data"; DEFAULT_DEST="/opt/tessellation/tn-data" ;;
+  l1) SRC_BASE="/home/admin/tessellation/l1/data"; DEFAULT_DEST="/opt/tessellation/tn-data-l1" ;;
+  *) die "unknown LAYER '$LAYER' (l0|l1)" ;;
+esac
+DEST="${DEST:-$DEFAULT_DEST}"
 
 IFS=',' read -r -a TN <<< "${TN_HOSTS:-tn1,tn2,tn3}"
 
