@@ -493,7 +493,7 @@ include classpath("application")
 STATICEOF
   cat >> "$SS_CONFIG" <<CONFEOF
 snapshotStreaming {
-  environment = dev
+  environment = $DEPLOY_APP_ENV
   lastIncrementalSnapshotPath = "/app/data/seed-snapshot.json.gz"
   node {
     l0Peers = [$SS_L0_PEERS]
