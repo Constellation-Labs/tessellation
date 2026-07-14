@@ -256,16 +256,19 @@ jobs:
           # No on-cluster block explorer — external DB owns the schema.
           SKIP_BE_CLONE: "true"
         run: bash docker/snapshot-streaming/build-snapshot-streaming.sh
-      - name: Write snapshot-streaming Dockerfile
-        # release/testnet's tree may not yet carry docker/snapshot-streaming/Dockerfile;
-        # generate it so the build context has it. Identical to the committed file.
+      - name: Ensure snapshot-streaming Dockerfile
+        # Prefer the committed docker/snapshot-streaming/Dockerfile (its entrypoint honors
+        # $SS_JAVA_OPTS so the deploy can size the heap). Only generate a fallback if the
+        # tree lacks one; keep the fallback in sync with the committed file.
         run: |
+          if [ -f docker/snapshot-streaming/Dockerfile ]; then echo "Using committed Dockerfile"; exit 0; fi
           cat > docker/snapshot-streaming/Dockerfile <<'DOCKEREOF'
           FROM eclipse-temurin:21-jre
           WORKDIR /app
           RUN mkdir -p /app/data
           COPY docker/snapshot-streaming/snapshot-streaming.jar /app/snapshot-streaming.jar
-          ENTRYPOINT ["java", "-Xmx1g", "-Xms256m", "--add-opens", "java.base/java.util=ALL-UNNAMED", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED", "--add-opens", "java.base/java.security=ALL-UNNAMED", "-Dconfig.file=/app/application.conf", "-cp", "/app/snapshot-streaming.jar", "org.constellation.snapshotstreaming.App"]
+          ENV SS_JAVA_OPTS="-Xms256m -Xmx1g"
+          ENTRYPOINT ["sh", "-c", "exec java $SS_JAVA_OPTS --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.security=ALL-UNNAMED -Dconfig.file=/app/application.conf -cp /app/snapshot-streaming.jar org.constellation.snapshotstreaming.App"]
           DOCKEREOF
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
