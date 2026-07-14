@@ -141,7 +141,7 @@ esac'
     for i in 0 1 2; do
       [ -n "$ONLY" ] && [ "${TN[$i]}" != "$ONLY" ] && continue
       hn="${HN_IPS[$i]}"
-      log "sync $(pair_desc $i)  (remote log: ~/tn-migrate-sync.log on ${TN[$i]})"
+      log "sync $(pair_desc $i)  (remote log: ~/tn-migrate-sync-${LAYER}.log on ${TN[$i]})"
       ssh -o StrictHostKeyChecking=accept-new "admin@$hn" "mkdir -p $DST_PATH"
       # Stage the command as a script on the tn box, then run it DETACHED in a second
       # ssh call. MUST be two calls: combining them as `cat > f && setsid ... &` makes
@@ -150,7 +150,7 @@ esac'
       ssh -o StrictHostKeyChecking=accept-new "${TN[$i]}" \
         "cat > ~/.migrate-run.sh" <<< "${RSYNC_CMD//__HN_IP__/$hn}"
       ssh -o StrictHostKeyChecking=accept-new "${TN[$i]}" \
-        "test -s ~/.migrate-run.sh || { echo 'EMPTY run script'; exit 1; }; setsid nohup bash ~/.migrate-run.sh > ~/tn-migrate-sync.log 2>&1 < /dev/null & echo detached"
+        "test -s ~/.migrate-run.sh || { echo 'EMPTY run script'; exit 1; }; setsid nohup bash ~/.migrate-run.sh > ~/tn-migrate-sync-${LAYER}.log 2>&1 < /dev/null & echo detached"
     done
     log "transfers launched (detached). Poll with: deploy/migrate-data.sh status"
     ;;
@@ -166,7 +166,7 @@ esac'
         "du -s --block-size=1G $DEST 2>/dev/null | awk '{print \$1}'" || echo "?")
       log "${TN[$i]} -> $hn: rsync running=$running  dest=${dest_size}G"
       ssh -o StrictHostKeyChecking=accept-new "${TN[$i]}" \
-        "tail -3 ~/tn-migrate-sync.log 2>/dev/null" | sed 's/^/    /'
+        "tail -3 ~/tn-migrate-sync-${LAYER}.log 2>/dev/null" | sed 's/^/    /'
     done
     ;;
 
