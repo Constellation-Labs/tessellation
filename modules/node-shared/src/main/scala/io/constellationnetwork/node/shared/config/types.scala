@@ -37,8 +37,9 @@ object types {
     setSumFix: Map[AppEnvironment, SnapshotOrdinal],
     // Ordinal-gated balance source for state-channel fee affordability (commit dd6e83a19). At/after this ordinal the fee
     // check reads the metagraph owner's balance from the deterministic accept() context (lastGlobalSnapshotInfo.balances);
-    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. testnet is
-    // 0 (the fix is already live there); the mainnet entry is a placeholder to set to the coordinated launch ordinal.
+    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. Per-env
+    // activation ordinals live in the `fields-added-ordinals` HOCON (see docs/operations/fields-added-ordinals.md): testnet
+    // activates at its v4.0.0->alpha.0 cutover ordinal, dev at 0 (genesis-fresh), mainnet/integrationnet are placeholders.
     scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
     // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.

@@ -196,7 +196,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     val gateReceivedCount = declarationsMap.keys.count(gateSet.contains)
 
     // Quorum threshold from config. Default: unanimity (1.0 = all must respond).
-    // Testnet/mainnet use 0.67 (supermajority) so community peers don't block rounds.
+    // Testnet/mainnet use 0.6666666666666666 (exact 2/3) so community peers don't block rounds.
     // Dev uses 1.0 (unanimity) for clean E2E convergence. Integer arithmetic via
     // `QuorumPolicy.fromFraction` removes the `Double` from consensus math. The threshold here
     // mirrors `decision.baseQuorum` for the active gate set (Core in bootstrap, committee otherwise).

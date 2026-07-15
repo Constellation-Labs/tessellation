@@ -39,31 +39,48 @@ else
       "$BUILD_DIR/project/Dependencies.scala"
   fi
 
-  # Apply compatibility patch if present (breaks circular dependency with tessellation)
-  # Uses --check first to skip gracefully if already applied upstream.
-  # The patch adapts snapshot-streaming (release/testnet) to the tessellation v4.1.0 API:
-  #   - drops the obsolete tessellation3Migration arg from CurrencySnapshotValidator.make
-  #   - passes the whole FieldsAddedOrdinals + environment to GlobalSnapshotStateChannelEventsProcessor.make
-  #     (v4.1.0 resolves scFeeBalanceFromContext internally instead of taking a pre-resolved ordinal).
-  # release/testnet's SharedConfig already has forkInfoStorage removed; on a local tessellation
-  # that still carries forkInfoStorage (develop, feature branches),
-  # applying it leaves the constructor one arg short — detect and skip in that case.
-  PATCH_FILE="$SS_DIR/snapshot-streaming.patch"
+  # Apply compatibility patches if present (break circular dependency with tessellation).
+  # Each patch down-adapts the snapshot-streaming `testing` branch source — which is
+  # written against the newest tessellation API — to an OLDER tessellation API. Whether
+  # a given patch is needed depends on the LOCAL tessellation tree, not on the
+  # snapshot-streaming source (which always carries the newer call), so each patch is
+  # guarded by a grep against the local tree and applied only when the local API lacks
+  # the corresponding symbol. `git apply --check` then skips gracefully if the source
+  # already differs (e.g. the change landed upstream).
   TYPES_FILE="$SCRIPT_DIR/../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/config/types.scala"
-  if [ -f "$PATCH_FILE" ] && [ -s "$PATCH_FILE" ]; then
-    if [ -f "$TYPES_FILE" ] && grep -q "forkInfoStorage: ForkInfoStorageConfig" "$TYPES_FILE"; then
-      echo "Local SharedConfig still has forkInfoStorage — skipping snapshot-streaming patch"
-    else
-      cd "$BUILD_DIR"
-      if git apply --check "$PATCH_FILE" 2>/dev/null; then
-        echo "Applying snapshot-streaming compatibility patch..."
-        git apply "$PATCH_FILE"
-      else
-        echo "Patch already applied or not needed, skipping..."
-      fi
-      cd "$SCRIPT_DIR"
+
+  # apply_ss_patch <patch_file> <skip_marker> <marker_file> <label>
+  # Skips when <marker_file> contains <skip_marker> (local tessellation already has the
+  # newer API, so the testing-branch source already matches and must not be down-adapted).
+  apply_ss_patch() {
+    local patch_file="$1" skip_marker="$2" marker_file="$3" label="$4"
+    [ -f "$patch_file" ] && [ -s "$patch_file" ] || return 0
+    if [ -f "$marker_file" ] && grep -q "$skip_marker" "$marker_file"; then
+      echo "Local tessellation already has '$skip_marker' — skipping patch ($label)"
+      return 0
     fi
-  fi
+    (
+      cd "$BUILD_DIR"
+      if git apply --check "$patch_file" 2>/dev/null; then
+        echo "Applying snapshot-streaming compatibility patch ($label)..."
+        git apply "$patch_file"
+      else
+        echo "Patch already applied or not needed, skipping ($label)..."
+      fi
+    )
+  }
+
+  # Strip c.forkInfoStorage so positional args line up against a SharedConfig where
+  # forkInfoStorage has been removed (release/testnet). On branches that still carry it
+  # (develop, feature branches) the source already matches, so skip.
+  apply_ss_patch "$SS_DIR/snapshot-streaming.patch" \
+    "forkInfoStorage: ForkInfoStorageConfig" "$TYPES_FILE" "forkInfoStorage"
+
+  # Drop the scFeeBalanceFromContext arg from GlobalSnapshotStateChannelEventsProcessor.make
+  # so the call lines up with tessellation versions whose make takes 5 args (no
+  # state-channel-fee-from-context feature). Skip once that field lands in FieldsAddedOrdinals.
+  apply_ss_patch "$SS_DIR/snapshot-streaming-scfee.patch" \
+    "scFeeBalanceFromContext" "$TYPES_FILE" "scFeeBalanceFromContext"
 
   cd "$BUILD_DIR"
   sbt --error assembly

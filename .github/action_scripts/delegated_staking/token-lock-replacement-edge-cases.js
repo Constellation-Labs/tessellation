@@ -40,6 +40,7 @@ const {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
+  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,
@@ -515,13 +516,13 @@ const setupNodeParameters = async (urls) => {
     privateKeyString: privateKeyString1,
     nodeId: nodeId1,
     account: account1,
-  } = extractKeysAndAccount('../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex')
+  } = extractKeysAndAccount(resolveNodeKeyPath('genesis-node', 0))
 
   const {
     privateKeyString: privateKeyString2,
     nodeId: nodeId2,
     account: account2,
-  } = extractKeysAndAccount('../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex')
+  } = extractKeysAndAccount(resolveNodeKeyPath('validator-1', 1))
 
   // Set up node 1 params
   const ur1 = await postNodeParamsNodeId(
