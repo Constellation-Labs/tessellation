@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.gossip.event
 
 import cats.Parallel
 import cats.effect.std.Supervisor
+import cats.effect.syntax.all._
 import cats.effect.{Async, Clock, Ref}
 import cats.syntax.all._
 
@@ -443,6 +444,7 @@ object EventGossipDaemon {
       seenCache <- SeenHashCache.make[F](config.maxSeenHashes, config.seenHashTtlMs)
       running <- Ref.of[F, Boolean](false)
       witnessCursorRef <- Ref.of[F, Int](0)
+      witnessSweepInFlight <- Ref.of[F, Boolean](false)
       meshConfig = MeshState.MeshConfig(
         targetMeshSize = config.meshDegree,
         minMeshSize = config.meshLow,
@@ -477,7 +479,8 @@ object EventGossipDaemon {
         maybeForkDetector,
         onForkDetected,
         nodeStorage,
-        witnessCursorRef
+        witnessCursorRef,
+        witnessSweepInFlight
       )
 }
 
@@ -496,7 +499,8 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
   maybeForkRecoveryDetector: Option[ForkRecoveryDetector[F]],
   onForkDetected: Option[ForkRecoveryInfo => F[Unit]],
   nodeStorage: NodeStorage[F],
-  witnessCursorRef: Ref[F, Int]
+  witnessCursorRef: Ref[F, Int],
+  witnessSweepInFlight: Ref[F, Boolean]
 )(implicit S: Supervisor[F])
     extends EventGossipDaemon[F, Event, Key] {
 
@@ -632,38 +636,51 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
         val ordered = peers.toVector.sortBy(_.id.value.value)
         val n = ordered.size
         if (n <= 0) Async[F].unit
-        else {
-          val sweepSize = ChainTipWitnessSweep.sweepSize(
-            n,
-            config.meshHigh,
-            config.heartbeatInterval,
-            config.chainTipWitnessRefreshInterval
-          )
-          witnessCursorRef.getAndUpdate(c => (c + sweepSize) % n).flatMap { rawStart =>
-            val sampled = ChainTipWitnessSweep.slice(ordered, rawStart, sweepSize)
-            logger.debug(
-              s"Chain tip witness sweep: availablePeers=$n sweepSize=$sweepSize start=${((rawStart % n) + n) % n}"
-            ) >>
-              sampled.traverse_ { peer =>
-                gossipClient.getIHave
-                  .run(Peer.toP2PContext(peer))
-                  .flatMap { ihave =>
-                    ihave.chainTip match {
-                      case Some(tip) =>
-                        logger.debug(
-                          s"Chain tip from peer ${peer.id.show}: ordinal=${tip.ordinal.value.value} hash=${tip.snapshotHash.show}"
-                        ) >> meshState.updateChainTip(peer.id, tip)
-                      case None =>
-                        logger.debug(s"Peer ${peer.id.show} returned no chain tip in IHave response")
-                    }
-                  }
-                  .handleErrorWith(e =>
-                    logger.debug(s"Chain tip witness sweep failed for peer ${peer.id.show}: ${e.getMessage}") >>
-                      meshState.clearChainTip(peer.id)
-                  )
+        else
+          // Single-flight: skip this tick if the previous sweep is still running so a slow sweep cannot
+          // pile up supervised fibers. The cursor advances only when a sweep actually fires, so no peer
+          // is skipped -- a skipped tick just re-runs the same slice on the next heartbeat.
+          witnessSweepInFlight.getAndSet(true).flatMap {
+            case true => Async[F].unit
+            case false =>
+              val sweepSize = ChainTipWitnessSweep.sweepSize(
+                n,
+                config.meshHigh,
+                config.heartbeatInterval,
+                config.chainTipWitnessRefreshInterval
+              )
+              witnessCursorRef.getAndUpdate(c => (c + sweepSize) % n).flatMap { rawStart =>
+                val sampled = ChainTipWitnessSweep.slice(ordered, rawStart, sweepSize)
+                // Run the fetches OFF the heartbeat critical path: bounded-parallel (maxConcurrentPulls
+                // caps the connection burst on large clusters) with a per-call fetchTimeout, supervised so
+                // slow peers cannot serialize into the graft/prune + fork-detection steps that follow.
+                logger.debug(
+                  s"Chain tip witness sweep: availablePeers=$n sweepSize=$sweepSize start=${((rawStart % n) + n) % n}"
+                ) >>
+                  S.supervise(
+                    sampled
+                      .parTraverseN(config.maxConcurrentPulls.max(1)) { peer =>
+                        Async[F]
+                          .timeout(gossipClient.getIHave.run(Peer.toP2PContext(peer)), config.fetchTimeout)
+                          .flatMap { ihave =>
+                            ihave.chainTip match {
+                              case Some(tip) =>
+                                logger.debug(
+                                  s"Chain tip from peer ${peer.id.show}: ordinal=${tip.ordinal.value.value} hash=${tip.snapshotHash.show}"
+                                ) >> meshState.updateChainTip(peer.id, tip)
+                              case None =>
+                                logger.debug(s"Peer ${peer.id.show} returned no chain tip in IHave response")
+                            }
+                          }
+                          .handleErrorWith(e =>
+                            logger.debug(s"Chain tip witness sweep failed for peer ${peer.id.show}: ${e.getMessage}") >>
+                              meshState.clearChainTip(peer.id)
+                          )
+                      }
+                      .guarantee(witnessSweepInFlight.set(false))
+                  ).void
               }
           }
-        }
       }
       // Proactive fork detection — clear stale mesh before triggering recovery
       _ <- (maybeForkRecoveryDetector, onForkDetected).mapN { (detector, handler) =>
