@@ -104,6 +104,13 @@ object schema {
     * `peerQuality` tracks consensus-agreed quality scores: `(roundsCompleted, roundsParticipated)` per peer. Because all nodes in a round
     * agree on the same facilitator list, removals, and withdrawals, these counters are deterministic across the network — enabling
     * quality-weighted leader selection without local score divergence.
+    *
+    * Decode contract: this derives a circe decoder with `useDefaults = false`, so every NON-`Option` field must be present in the decoded
+    * JSON. The Scala default values below (`= SortedMap.empty`, etc.) apply only to in-code construction -- they do NOT make decode
+    * tolerant of a missing field. `Option`-typed fields are the exception: a missing key decodes to `None` (e.g. `controllerEvidence`).
+    * Decoding an outcome that lacks one of the non-`Option` fields would fail, but that is unreachable today: the jar-hash and
+    * `deterministicConfigHash` handshake stops mixed-version peers from exchanging outcomes at all. Before adding the next field, make it
+    * `Option`-typed or switch the derivation to `useDefaults`, so cross-version / historical decode stays safe (see ADR-0016).
     */
   @derive(encoder, decoder, eqv)
   final case class GlobalConsensusOutcome(
@@ -119,7 +126,7 @@ object schema {
     // Lifetime count of times this peer was evicted/removed. Used to scale the
     // `removalPenaltyRounds` exponentially so repeat offenders get progressively
     // longer bans. Persisted in the signed outcome → consensus-agreed → all nodes
-    // compute the same penalty. Defaults to empty so old outcomes roll over cleanly.
+    // compute the same penalty. Default empty is construction-only, not decode (see the type scaladoc).
     cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
     // Sliding window of (ordinal -> proofs.size) for the last ~10 ordinals. Used to
     // classify whether the chain has completed initial bootstrap (any entry >=
@@ -156,8 +163,9 @@ object schema {
     // resulting peer with one view-change-caused. Used by the next round's
     // selectLeaderWeighted to compute a fork-safe integer qualityScore =
     // completed * (participated - viewChangesCaused) / participated^2 and hard-exclude
-    // peers below the configured floor. Default empty: pre-v16 outcomes decode with no
-    // view-change history (matches v15 peerSelfHealth pattern). Persisted via v20/v21
+    // peers below the configured floor. Default empty is construction-only; cross-version decode is
+    // fenced by the handshake (see the type scaladoc), so pre-v16 outcomes are never decoded here.
+    // Persisted via v20/v21
     // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
     peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
     // v22: rolling K-round signer-set window of (ordinal -> proofs-signer-set) for the
