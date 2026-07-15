@@ -559,6 +559,8 @@ Sparse negative-evidence: when `StallDetector` decides to push a peer toward rem
 
 Symmetric positive-evidence: every committee member that observes a probation peer gossiping the committee's expected tip emits a signed `AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)`. Quorum assembles into an `AdmissionCertificate` via `AdmissionCertificateBuilder`. Reasons are an open ADT; only `AdmissionReason.ReadyAtTip` is wired today.
 
+The observation reads the shared chain-tip view (`getPeerChainTips`), which `EventGossipDaemon` populates by a round-robin **witness sweep across all responsive peers** -- not just the gossip mesh. This observation channel is distinct from the certificate *witness pool* (the voters, `eligibleFacilitators - target`) and is a liveness precondition of B2 (ADR-0022): it must cover the full probation-candidate set independent of the mesh degree (`meshHigh`), sized by `chainTipWitnessRefreshInterval` so every responsive peer's tip is refreshed within the admission tip-validity window. Scoping the observation to the gossip mesh left candidates outside the mesh unobservable and starved B2 on clusters larger than the mesh (IntegrationNet, v4.1.0).
+
 ---
 
 ## 7. Detailed Phase Transitions
@@ -893,8 +895,9 @@ Poll (100ms-1000ms adaptive)
   → Detect status/resource changes → queue CheckUpdate
   → While in any signatures-collecting phase: heartbeat CheckUpdate every tick (re-evaluates
     the signatureGracePeriod gate without waiting for a resource change)
-  → On every tick, if state.lastOutcome carries a probation peer whose mesh-gossiped chain
-    tip matches the committed tip: emit AdmissionVote, queue CheckAdmissionAssembly
+  → On every tick, if state.lastOutcome carries a probation peer whose gossiped chain tip
+    (witnessed by the round-robin sweep over ALL responsive peers, not just the mesh; see §6)
+    matches the committed tip: emit AdmissionVote, queue CheckAdmissionAssembly
   → Reset roundStartTime on view advance (per-view round-duration budget)
   → Calculate phase-adaptive timeout
   → Early view change cases (no stall counted):
