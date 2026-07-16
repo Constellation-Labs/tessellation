@@ -74,9 +74,10 @@ object RewardQualifiedFacilitatorsSuite extends SimpleIOSuite {
       promoteThreshold = PromoteThreshold
     )
 
-    expect.same(SortedSet(a), result) and
-      expect(!result.contains(b), "b is climbing (score 40 < 100) and must not earn yet") and
-      expect(!result.contains(c), "c has no evidence entry (fresh probation seat) and must not earn yet")
+    expect
+      .same(SortedSet(a), result)
+      .and(expect(!result.contains(b), "b is climbing (score 40 < 100) and must not earn yet"))
+      .and(expect(!result.contains(c), "c has no evidence entry (fresh probation seat) and must not earn yet"))
   }
 
   pureTest("falls back to paying everyone when no facilitator meets the threshold (post-restart refill)") {
@@ -115,7 +116,8 @@ object RewardQualifiedFacilitatorsSuite extends SimpleIOSuite {
       promoteThreshold = PromoteThreshold
     )
 
-    expect.same(SortedSet(a), result) and
-      expect(!result.contains(b), "b signed 4/6 with 2 misses (score 50) and must stay below the threshold")
+    expect
+      .same(SortedSet(a), result)
+      .and(expect(!result.contains(b), "b signed 4/6 with 2 misses (score 50) and must stay below the threshold"))
   }
 }
