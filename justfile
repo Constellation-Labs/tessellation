@@ -21,9 +21,10 @@ up *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh --up {{ extra_args }}
 
-# Destroy test environment, alias for clean-docker
+# Destroy test environment: local cleanup, or a chain-preserving remote stop with --remote
+# (compose-runner-down.sh routes on --remote and captures the rollback anchor via remote-stop.sh)
 down *extra_args:
-	@just clean-docker
+	@bash docker/bin/compose-runner-down.sh {{ extra_args }}
 
 # Build the docker images and test environment, without running any containers
 build *extra_args:

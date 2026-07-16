@@ -103,14 +103,17 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
-      - name: Chain-preserving down (saves rollback hash, no data wipe)
+      - name: Chain-preserving down (captures rollback anchor from live head, no data wipe)
         env:
           HOSTS: ${{ vars.TESTNET_HOSTS }}
         run: |
           IFS=',' read -ra H <<< "$HOSTS"
           # nodes + streaming (first 4); monitoring is not a compose target
           REMOTE="admin@${H[0]},admin@${H[1]},admin@${H[2]},admin@${H[3]}"
-          just down --remote="$REMOTE" || true
+          # NO `|| true`: remote-stop.sh aborts if it can't capture a fresh anchor, and we
+          # WANT that to fail the deploy — proceeding with a stale anchor rolls the chain
+          # back hundreds of ordinals and crash-loops snapshot-streaming.
+          just down --remote="$REMOTE"
 
       - name: Deploy (registry images, chain-preserving rollback)
         env:
