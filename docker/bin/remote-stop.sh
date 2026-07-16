@@ -29,12 +29,33 @@ fi
 GENESIS="${NODES[0]}"
 ssh "$GENESIS" "docker rm -f tx-sender 2>/dev/null" || true
 
-# Save latest snapshot hash before stopping (for rollback restarts)
-LAST_HASH=$(ssh "$GENESIS" "curl -sf http://localhost:9000/global-snapshots/latest 2>/dev/null" \
-  | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['value']['lastSnapshotHash'])" 2>/dev/null || echo "")
-if [ -n "$LAST_HASH" ]; then
-  ssh "$GENESIS" "echo '$LAST_HASH' > $DIR/.last-snapshot-hash"
-  echo "Saved snapshot hash for rollback: ${LAST_HASH:0:16}..."
+# Save the CURRENT head's rollback hash before stopping (chain-preserving restarts only).
+# CRITICAL: never leave a STALE .last-snapshot-hash. If this fetch silently fails and an old
+# value survives on disk, run-rollback rolls the WHOLE chain back to that ancient anchor
+# (e.g. the original genesis/cutover ordinal) on the next deploy — discarding progress and
+# breaking downstream consumers (snapshot-streaming re-seeds at the anchor and leaves a gap).
+# So: retry the fetch, validate it, and on a data-preserving down ABORT if we cannot obtain a
+# fresh hash rather than trusting whatever is already on disk.
+if [ "$REMOTE_CLEAN" != "true" ]; then
+  LAST_HASH=""
+  for attempt in 1 2 3 4 5; do
+    LAST_HASH=$(ssh "$GENESIS" "curl -sf --max-time 10 http://localhost:9000/global-snapshots/latest 2>/dev/null" \
+      | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['value']['lastSnapshotHash'])" 2>/dev/null || echo "")
+    if printf '%s' "$LAST_HASH" | grep -Eiq '^[0-9a-f]{64}$'; then break; fi
+    LAST_HASH=""
+    echo "  latest-snapshot fetch attempt ${attempt}/5 failed; retrying in 5s..." >&2
+    sleep 5
+  done
+  if [ -n "$LAST_HASH" ]; then
+    ssh "$GENESIS" "echo '$LAST_HASH' > $DIR/.last-snapshot-hash"
+    echo "Saved snapshot hash for rollback: ${LAST_HASH:0:16}..."
+  else
+    echo "ERROR: could not fetch the current head snapshot hash from $GENESIS after 5 attempts." >&2
+    echo "       Refusing to continue: a stale $DIR/.last-snapshot-hash would make the next" >&2
+    echo "       run-rollback roll the chain back to an ancient anchor. Restore node reachability" >&2
+    echo "       (or pass --clean for a fresh-genesis deploy) and retry." >&2
+    exit 1
+  fi
 fi
 
 for h in "${NODES[@]}"; do
