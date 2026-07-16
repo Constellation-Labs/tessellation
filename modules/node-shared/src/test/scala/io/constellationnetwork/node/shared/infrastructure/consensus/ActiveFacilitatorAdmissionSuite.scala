@@ -576,4 +576,36 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect(floored.recentFilterApplied) &&
     expect.same(List(a, b, c), floored.active)
   }
+
+  // expansionAllowedAtOrdinal is the single source of truth for the expansion cadence: the
+  // StateCreators gate the actual admission on it and the StallDetector gates expansion-candidate
+  // AdmissionVote emission on it, so votes are only spread on rounds where expansion can be applied.
+
+  pureTest("expansionAllowedAtOrdinal admits expansion only on multiples of the interval") {
+    val interval = 5
+    val allowed = (0L to 12L).toList.filter(ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(_, interval))
+    expect
+      .same(List(0L, 5L, 10L), allowed)
+      .and(expect(!ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(4L, interval), "ordinal 4 is not a multiple of 5"))
+      .and(expect(ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(5L, interval), "ordinal 5 is a multiple of 5"))
+  }
+
+  pureTest("expansionAllowedAtOrdinal with interval 1 admits expansion on every round") {
+    expect(
+      (0L to 6L).forall(ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(_, 1)),
+      "interval 1 allows expansion on every ordinal"
+    )
+  }
+
+  pureTest("expansionAllowedAtOrdinal floors a non-positive interval to 1 so expansion is never disabled") {
+    expect(
+      (0L to 4L).forall(ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(_, 0)),
+      "interval 0 floors to 1 -> allowed every round"
+    ).and(
+      expect(
+        (0L to 4L).forall(ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(_, -3)),
+        "negative interval floors to 1 -> allowed every round"
+      )
+    )
+  }
 }

@@ -262,7 +262,10 @@ object CurrencySnapshotConsensusStateCreator {
         targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize)
         maxActiveSize = config.activeFacilitatorMax.getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedFacilitators.size))
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
-        expansionAllowedThisRound = key.value.value % expansionIntervalRounds.toLong === 0L
+        expansionAllowedThisRound = ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+          key.value.value,
+          config.activeAdmissionExpansionIntervalRounds
+        )
         maxExpansionThisRound =
           if (expansionAllowedThisRound) config.activeAdmissionMaxExpansionPerRound
           else 0

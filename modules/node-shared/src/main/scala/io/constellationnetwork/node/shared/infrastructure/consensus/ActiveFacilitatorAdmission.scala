@@ -11,6 +11,34 @@ object ActiveFacilitatorAdmission {
   // below read unchanged.
   import PeerQualityClassifier.{meetsParticipationRatio, minParticipationRatioScaled, participationRatioScaled}
 
+  /** Whether deterministic active-facilitator expansion is admitted on the round at `ordinalValue`.
+    *
+    * Expansion is throttled to one attempt every `expansionIntervalRounds` ordinals so the active set (and therefore the quorum
+    * denominator) grows gradually rather than every round. This is the single source of truth for that cadence: the StateCreators gate the
+    * actual admission on it (`maxExpansionThisRound = if (expansionAllowedThisRound) maxExpansionPerRound else 0`), and the StallDetector
+    * gates expansion-candidate `AdmissionVote` emission on it so votes are only spread on rounds where they can be acted upon -- keeping
+    * the two in lockstep (feedback_share_logic_no_drift). The interval is floored to 1 so a non-positive config value degrades to "every
+    * round".
+    */
+  def expansionAllowedAtOrdinal(ordinalValue: Long, expansionIntervalRounds: Int): Boolean =
+    ordinalValue % math.max(1, expansionIntervalRounds).toLong == 0L
+
+  /** The active-set size the admission machinery grows toward. Single source of truth for the admission deficit gate: the advancers'
+    * pre-proposal certificate wait (`maybeWaitForAdmissionCertificates`) waits only while `roundStartFacilitators.size` is below this, and
+    * the StallDetector emits expansion-candidate `AdmissionVote`s only under the same condition -- so votes are spread exactly when the
+    * consumer can use them and stop when the active set is at capacity (at-capacity voting produced an admit-then-drop churn loop that made
+    * AdmissionVotes ~77% of all gossip on IntegrationNet, v4.1.0). Falls back to `coreCommitteeSize`, then to the caller-supplied current
+    * core size, mirroring the historical inline resolution in both advancers. NOTE: the configured target must exceed the Core floor (see
+    * the scaled per-environment values in dag-l0.conf) or the gate closes before the Core can reach its floor and the committee wedges
+    * below quorum feasibility.
+    */
+  def activeAdmissionTarget(
+    activeFacilitatorTarget: Option[Int],
+    coreCommitteeSize: Option[Int],
+    currentCoreSize: Int
+  ): Int =
+    activeFacilitatorTarget.getOrElse(coreCommitteeSize.getOrElse(currentCoreSize))
+
   sealed abstract class ExclusionReason(val label: String)
   object ExclusionReason {
     case object NotRecentSigner extends ExclusionReason("not_recent_signer")

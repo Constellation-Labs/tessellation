@@ -1161,6 +1161,23 @@ object types {
     // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
     // purpose -- widening is an active-set/reward-breadth change to opt into per environment.
     activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
+    // Active-set growth target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
+    // resolution happens once at the consensus construction site and the resolved value is threaded
+    // into `ConsensusConfig.activeFacilitatorTarget`, which folds into `deterministicConfigHash`).
+    // This is the admission deficit gate's threshold (`ActiveFacilitatorAdmission
+    // .activeAdmissionTarget`): the advancers wait for expansion certificates and the StallDetector
+    // emits expansion AdmissionVotes only while `roundStartFacilitators.size` is below it.
+    // INVARIANT: must EXCEED the environment's `coreCommitteeSize` (Core floor), or the feeder
+    // closes before Core can reach its floor and quorum feasibility wedges (v4.1.0: base scalar 7
+    // vs integrationnet floor 9). Scaled 2c+1 from the environment's Core size in the conf files.
+    // Absent env entries preserve the ConsensusConfig scalar resolution.
+    activeFacilitatorTarget: Map[AppEnvironment, Int] = Map.empty,
+    // Active-set hard cap, keyed by AppEnvironment (same pattern; folds into the hash via
+    // `ConsensusConfig.activeFacilitatorMax`). Bounds the sticky recent-signer pool and the
+    // probation re-entry headroom. INVARIANT: must be >= the environment's `coreCommitteeSize` --
+    // the pre-scaling base scalar 13 was BELOW mainnet's Core floor 15, capping the active set
+    // under the floor: a guaranteed quorum-feasibility wedge. Scaled 4c+1 from Core size.
+    activeFacilitatorMax: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,
