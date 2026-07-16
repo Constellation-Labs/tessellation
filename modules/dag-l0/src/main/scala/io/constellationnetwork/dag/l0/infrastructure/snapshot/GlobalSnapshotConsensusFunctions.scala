@@ -22,9 +22,9 @@ import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegated
 import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ControllerEvidenceDerivation}
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.RewardsInfoStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotAcceptanceManager
@@ -81,7 +81,12 @@ object GlobalSnapshotConsensusFunctions {
     v3MigrationOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal,
     incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    // Admission promote threshold (ConsensusConfig.activeAdmissionPromoteThreshold, member of
+    // deterministicConfigHash): reward qualification bar for
+    // `ControllerEvidenceDerivation.rewardQualifiedFacilitators` -- facilitators below it (e.g.
+    // probation re-entry seats still climbing) are excluded from the node-operator reward pool.
+    activeAdmissionPromoteThreshold: Int
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
@@ -423,7 +428,18 @@ object GlobalSnapshotConsensusFunctions {
         // current-round facilitators is deterministic: all nodes must receive all
         // facility declarations before advancing from CollectingFacilities, so
         // state.facilitators is identical across all consensus participants.
-        lastFacilitators <- facilitators.toList.sorted.traverse { peerId =>
+        // Reward qualification: exclude facilitators whose evidence-derived score is below the
+        // promote threshold (probation re-entry seats climb without earning). Derived from the
+        // SIGNED controllerEvidence window riding `peerHistory`, so the leader and every
+        // validator re-executing this function filter identically; empty-window and
+        // nobody-qualifies regimes fall back to paying all facilitators (pre-change behavior).
+        // See ControllerEvidenceDerivation.rewardQualifiedFacilitators.
+        rewardQualified = ControllerEvidenceDerivation.rewardQualifiedFacilitators(
+          SortedSet.from(facilitators),
+          peerHistory.flatMap(_.controllerEvidence),
+          activeAdmissionPromoteThreshold
+        )
+        lastFacilitators <- rewardQualified.toList.traverse { peerId =>
           PeerId._Id.get(peerId).toAddress.map(_ -> peerId)
         }
         // Sort all event lists before passing to accept() to ensure deterministic ordering.

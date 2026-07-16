@@ -240,6 +240,36 @@ object ControllerEvidenceDerivation {
       )
     }
 
+  /** Reward-qualified subset of the round's facilitators: peers whose evidence-derived controller score meets the admission promote
+    * threshold. The node-operator reward pool splits equally among the round's facilitators, so without this filter probation re-entry
+    * seats (score-0 climbers admitted via `ActiveFacilitatorAdmission.fromRecentSigners`'s probation lane) earn a full share from their
+    * first seated round -- the "idle-pay" trade-off that previously kept the probation lane disabled outside testnet. With it, unproven
+    * peers climb (seat, sign, accrue evidence) without earning until their score reaches the promote threshold (~5 signed rounds at
+    * SignWeight 20).
+    *
+    * Determinism: scores derive from the SIGNED `controllerEvidence` window ONLY (`derive`), the same pure function the StateCreators read
+    * for admission, so the leader and every validator re-executing `createProposalArtifact` filter identically.
+    * `perPeer.activeAdmissionScore` is deliberately NOT consulted: it is excluded from the signed artifact as locally divergent (the
+    * alpha.92/129/147 wedge class).
+    *
+    * Fallbacks (each preserves the pre-change pay-everyone behavior): an absent or empty evidence window (bootstrap / rollback to a
+    * pre-deploy snapshot) qualifies every facilitator; a window in which NO facilitator meets the threshold (e.g. the first rounds after a
+    * cold restart while the window refills) also qualifies everyone rather than zeroing the reward pool.
+    */
+  def rewardQualifiedFacilitators(
+    facilitators: SortedSet[PeerId],
+    evidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
+    promoteThreshold: Int
+  ): SortedSet[PeerId] = {
+    val window = evidence.getOrElse(SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry])
+    if (window.isEmpty) facilitators
+    else {
+      val derived = derive(window)
+      val qualified = facilitators.filter(pid => derived.get(pid).exists(_.derivedScore >= promoteThreshold))
+      if (qualified.isEmpty) facilitators else qualified
+    }
+  }
+
   /** Canonical committee for a finalized round: the frozen round-start committee minus certificate-applied evictions ONLY.
     *
     * This is the denominator both StateAdvancers use for the `recentProofSizes` window (bootstrap classification). It deliberately does NOT

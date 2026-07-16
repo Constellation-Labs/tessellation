@@ -7,9 +7,9 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
+import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionReason, EvictionReason}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ViewFromTime}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -1329,6 +1329,24 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     val coreSize = math.max(1, state.coreFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
     val maxOpenAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
+    // Deficit gate: emit expansion-candidate admission votes only while the active set is below its
+    // admission target -- the SAME condition under which the advancers' pre-proposal certificate
+    // wait (`maybeWaitForAdmissionCertificates`) considers admission evidence worth waiting for.
+    // At/above target every vote feeds an admit-then-drop churn loop (the certificate appends the
+    // target to the next round's facilitator base, the score filter ejects it from the active set,
+    // it drops back out of the base and is re-nominated), which on an 82-peer IntegrationNet made
+    // AdmissionVotes ~77% of all gossip (v4.1.0) without ever growing the committee. Below target,
+    // votes emit every round -- committee regrowth traffic must NOT be throttled (the certificate
+    // lane is the only entry into the facilitator base for new peers). Probation (penalty-expiry)
+    // re-admission below is deliberately NOT gated: it is bounded by `readmissionCountdown` and not
+    // deficit-bound. Requires the configured target to exceed the Core floor (scaled per
+    // environment in dag-l0.conf) -- see `ActiveFacilitatorAdmission.activeAdmissionTarget`.
+    val activeAdmissionTargetSize = ActiveFacilitatorAdmission.activeAdmissionTarget(
+      config.activeFacilitatorTarget,
+      config.coreCommitteeSize,
+      state.coreFacilitators.value.size
+    )
+    val activeBelowTarget = state.roundStartFacilitators.value.size < activeAdmissionTargetSize
     val candidateSupport =
       resources.peerDeclarationsMap.toList.collect { case (peerId, declarations) if committee.contains(peerId) => declarations }
         .flatMap(_.facility.toList)
@@ -1341,7 +1359,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         .mapValues(_.size)
         .toMap
     val quorumObservedCandidates =
-      if (maxOpenAdmissions <= 0) List.empty[PeerId]
+      if (maxOpenAdmissions <= 0 || !activeBelowTarget) List.empty[PeerId]
       else
         candidateSupport.toList.collect {
           case (pid, support) if support >= voteQuorum && !alreadyVotedBySelf.contains(pid) => (pid, support)

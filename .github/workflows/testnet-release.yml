@@ -45,7 +45,7 @@ jobs:
         uses: "./.github/templates/actions/setup_java_and_scala"
 
       - name: Test
-        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+        run: sbt 'scalafmtCheckAll;scalafixAll --check --rules OrganizeImports;test'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
