@@ -23,6 +23,8 @@ jobs:
         uses: "./.github/templates/actions/setup_java_and_scala"
 
       - name: Run with 21 🚀
-        run: sbt --error 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+        # scalafmtCheckAll first: it needs no compilation, so formatting failures
+        # surface in seconds instead of after a full build
+        run: sbt --error 'scalafmtCheckAll;scalafixAll --check --rules OrganizeImports;test'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
