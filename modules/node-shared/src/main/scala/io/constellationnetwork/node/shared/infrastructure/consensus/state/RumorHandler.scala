@@ -107,7 +107,13 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
       case _: ViewChangeVote    => "ViewChangeVote"
       case other                => other.getClass.getSimpleName
     }
-    val logReceipt = ConsensusLog.info(
+    // Per-declaration receipt: one line per (round, declaration) across every peer, so it scales with
+    // committee size * declaration kinds * rounds and was a top log-volume source on large clusters
+    // (IntegrationNet, v4.1.0). Demoted to debug -- aggregate receipt is tracked by the
+    // `dag_rumors_consumed_total` / consensus declaration metrics, and the per-round FACILITATORS and
+    // ADMISSION-gate summaries (still info) carry the diagnostic signal. Flip the
+    // `io.constellationnetwork` logger to DEBUG to restore per-message tracing when deep-diagnosing.
+    val logReceipt = ConsensusLog.debug(
       log,
       Category.Facilitator,
       key.toString,
