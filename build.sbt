@@ -111,8 +111,11 @@ bloopExportJarClassifiers in Global := Some(Set("sources"))
 
 lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-  scalafmtOnCompile := true,
-  scalafixOnCompile := true,
+  // On-compile rewrites are a local dev convenience only. In CI they silently repair
+  // the workspace before *Check tasks run (making them pass vacuously) and dirty the
+  // git tree, which shifts the dynver-derived version mid-publish.
+  scalafmtOnCompile := !sys.env.contains("CI"),
+  scalafixOnCompile := !sys.env.contains("CI"),
   resolvers ++= List(
     Resolver.sonatypeRepo("snapshots")
   )

@@ -1781,10 +1781,10 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
     )
 
     def distributeWithAddress1Stake(
-                                     distributor: DelegatedRewardsDistributor[IO],
-                                     address1Stake: Long,
-                                     incresedAaddress1Stake: Option[Long]
-                                   ): IO[Amount] = {
+      distributor: DelegatedRewardsDistributor[IO],
+      address1Stake: Long,
+      incresedAaddress1Stake: Option[Long]
+    ): IO[Amount] = {
       val stakes = SortedMap(
         address1 -> SortedSet(stakeRecord(address1, address1Stake, incresedAaddress1Stake)),
         address2 -> SortedSet(stakeRecord(address2, 1000L, none))
