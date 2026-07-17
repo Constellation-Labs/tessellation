@@ -17,9 +17,8 @@ import io.constellationnetwork.security.hex.Hex
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
-/** Effectful coverage for the HTTP preflight core (issue #1533): metadata corroboration, sampling
-  * bounds, tolerant per-peer failure handling, at-or-above ordinal comparison, and the
-  * never-confirm-on-degraded timeout posture. The pure decision composition is covered by
+/** Effectful coverage for the HTTP preflight core (issue #1533): metadata corroboration, sampling bounds, tolerant per-peer failure
+  * handling, at-or-above ordinal comparison, and the never-confirm-on-degraded timeout posture. The pure decision composition is covered by
   * `AbandonmentEscalationSignalSuite`; this suite pins the probe boundary itself.
   */
 object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
@@ -47,9 +46,9 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
       PeersCommittedAheadProbe
         .probe[IO](Nil, (_: Peer) => IO.raiseError(new Exception("must not be called")), key)
         .map { result =>
-          expect(!result.confirmedAhead) and
-            expect.same(AbandonmentTracker.ProbeOutcome.Completed, result.outcome) and
-            expect.same(0, result.probedPeers)
+          expect(!result.confirmedAhead)
+            .and(expect.same(AbandonmentTracker.ProbeOutcome.Completed, result.outcome))
+            .and(expect.same(0, result.probedPeers))
         }
     }
   }
@@ -61,9 +60,9 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
         PeersCommittedAheadProbe
           .probe[IO](peers, (_: Peer) => IO.raiseError[SnapshotMetadata](new Exception("503")), key)
           .map { result =>
-            expect(!result.confirmedAhead, "a probe with zero responders must not confirm") and
-              expect.same(3, result.probedPeers) and
-              expect.same(0, result.respondedPeers)
+            expect(!result.confirmedAhead, "a probe with zero responders must not confirm")
+              .and(expect.same(3, result.probedPeers))
+              .and(expect.same(0, result.respondedPeers))
           }
       }
     }
@@ -79,8 +78,7 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
         PeersCommittedAheadProbe
           .probe[IO](peers, fetch, key)
           .map { result =>
-            expect(!result.confirmedAhead, "one peer cannot authorize a recovery transition") and
-              expect.same(1, result.respondedPeers)
+            expect(!result.confirmedAhead, "one peer cannot authorize a recovery transition").and(expect.same(1, result.respondedPeers))
           }
       }
     }
@@ -93,8 +91,8 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
         PeersCommittedAheadProbe
           .probe[IO](peers, (_: Peer) => IO.pure(metadata(99L)), key)
           .map { result =>
-            expect(!result.confirmedAhead, "previous-ordinal answers everywhere = nobody produced the key") and
-              expect.same(3, result.respondedPeers)
+            expect(!result.confirmedAhead, "previous-ordinal answers everywhere = nobody produced the key")
+              .and(expect.same(3, result.respondedPeers))
           }
       }
     }
@@ -108,8 +106,7 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
         PeersCommittedAheadProbe
           .probe[IO](peers, p => IO.pure(if (p.id === minority) metadata(99L) else metadata(100L)), key)
           .map { result =>
-            expect(result.confirmedAhead) and
-              expect.same(2, result.corroboratingPeers)
+            expect(result.confirmedAhead).and(expect.same(2, result.corroboratingPeers))
           }
       }
     }
@@ -119,13 +116,12 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
     forall(peerGen) { base =>
       withRandom { implicit r =>
         val peers = readyPeers(base, 3)
-        val fetch: Peer => IO[SnapshotMetadata] = p =>
-          IO.pure(metadata(100L, p.id.value.value.take(8)))
+        val fetch: Peer => IO[SnapshotMetadata] = p => IO.pure(metadata(100L, p.id.value.value.take(8)))
         PeersCommittedAheadProbe
           .probe[IO](peers, fetch, key)
           .map { result =>
-            expect(!result.confirmedAhead, "ordinal agreement without hash agreement is insufficient") and
-              expect.same(1, result.corroboratingPeers)
+            expect(!result.confirmedAhead, "ordinal agreement without hash agreement is insufficient")
+              .and(expect.same(1, result.corroboratingPeers))
           }
       }
     }
@@ -159,8 +155,7 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
             overallTimeout = 200.millis
           )
           .map { result =>
-            expect(result.confirmedAhead, "a hung peer must not monopolize the only worker slot") and
-              expect.same(2, result.respondedPeers)
+            expect(result.confirmedAhead, "a hung peer must not monopolize the only worker slot").and(expect.same(2, result.respondedPeers))
           }
       }
     }
@@ -179,8 +174,7 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
             overallTimeout = 50.millis
           )
           .map { result =>
-            expect.same(AbandonmentTracker.ProbeOutcome.TimedOut, result.outcome) and
-              expect(!result.confirmedAhead)
+            expect.same(AbandonmentTracker.ProbeOutcome.TimedOut, result.outcome).and(expect(!result.confirmedAhead))
           }
       }
     }
@@ -197,9 +191,9 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
         PeersCommittedAheadProbe
           .probe[IO](peers, (_: Peer) => IO.pure(metadata(101L)), key)
           .map { result =>
-            expect(result.confirmedAhead, "the lone genuine peer must be able to unblock recovery") and
-              expect.same(1, result.corroboratingPeers) and
-              expect.same(1, result.probedPeers)
+            expect(result.confirmedAhead, "the lone genuine peer must be able to unblock recovery")
+              .and(expect.same(1, result.corroboratingPeers))
+              .and(expect.same(1, result.probedPeers))
           }
       }
     }
@@ -219,9 +213,9 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
         PeersCommittedAheadProbe
           .probe[IO](peers, fetch, key)
           .map { result =>
-            expect(!result.confirmedAhead, "one answer of a two-peer sample is not corroboration") and
-              expect.same(1, result.corroboratingPeers) and
-              expect.same(2, result.probedPeers)
+            expect(!result.confirmedAhead, "one answer of a two-peer sample is not corroboration")
+              .and(expect.same(1, result.corroboratingPeers))
+              .and(expect.same(2, result.probedPeers))
           }
       }
     }

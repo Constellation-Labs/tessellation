@@ -15,29 +15,23 @@ import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 
 /** HTTP preflight for the AbandonmentTracker's recovery escalation (issue #1533).
   *
-  * Frozen rumor state cannot prove anything about cluster progress: an isolated node's
-  * `peerCurrentKeys` map may be frozen strictly below the abandoned key, frozen AT it (a single
-  * pre-isolation declaration pins the monotone-max entry with no freshness), or empty
-  * (`clearAllPeerRegistrations` wipes it during recovery) -- and the exact same three shapes occur
-  * on every node of a cluster that stalled together, where escalating would cascade everyone into
-  * WaitingForDownload with nothing to serve (the historical false-lagging cascade recorded in
-  * StallDetector's lagging-detection comment). This probe supplies the discriminating ground truth
-  * over HTTP, which an isolated-but-reachable node still has: ask a bounded random sample of Ready
-  * responsive peers for their latest committed snapshot metadata. Confirmation requires a strict
-  * majority of responders agreeing on the same ahead `(ordinal, hash)`, with at least
-  * `minCorroborators` matching peers on any cluster large enough to provide them (clamped to the
-  * sample size so a two-node metagraph's single peer can still confirm) -- so on real clusters one
-  * faulty or Byzantine scalar response cannot drain validators into recovery. In a genuine
-  * cluster-wide stall nobody can corroborate the abandoned key and every node keeps retrying.
+  * Frozen rumor state cannot prove anything about cluster progress: an isolated node's `peerCurrentKeys` map may be frozen strictly below
+  * the abandoned key, frozen AT it (a single pre-isolation declaration pins the monotone-max entry with no freshness), or empty
+  * (`clearAllPeerRegistrations` wipes it during recovery) -- and the exact same three shapes occur on every node of a cluster that stalled
+  * together, where escalating would cascade everyone into WaitingForDownload with nothing to serve (the historical false-lagging cascade
+  * recorded in StallDetector's lagging-detection comment). This probe supplies the discriminating ground truth over HTTP, which an
+  * isolated-but-reachable node still has: ask a bounded random sample of Ready responsive peers for their latest committed snapshot
+  * metadata. Confirmation requires a strict majority of responders agreeing on the same ahead `(ordinal, hash)`, with at least
+  * `minCorroborators` matching peers on any cluster large enough to provide them (clamped to the sample size so a two-node metagraph's
+  * single peer can still confirm) -- so on real clusters one faulty or Byzantine scalar response cannot drain validators into recovery. In
+  * a genuine cluster-wide stall nobody can corroborate the abandoned key and every node keeps retrying.
   *
-  * Failure-safe by construction: per-peer errors and timeouts drop that peer (a non-Ready peer
-  * 503s on the endpoint), and an overall timeout or any other error returns an explicit
-  * non-confirming outcome. Degraded probes suppress recovery, never trigger it.
+  * Failure-safe by construction: per-peer errors and timeouts drop that peer (a non-Ready peer 503s on the endpoint), and an overall
+  * timeout or any other error returns an explicit non-confirming outcome. Degraded probes suppress recovery, never trigger it.
   *
-  * The constants are local-liveness tuning (jar-hash gated, not consensus-agreed): a sample of 8
-  * bounds fan-out on large clusters while making a false-negative on a genuinely-advanced network
-  * vanishingly unlikely across repeated abandonment cycles; parallelism and timeout mirror the
-  * DownloadDaemon/PeerSelect probe posture.
+  * The constants are local-liveness tuning (jar-hash gated, not consensus-agreed): a sample of 8 bounds fan-out on large clusters while
+  * making a false-negative on a genuinely-advanced network vanishingly unlikely across repeated abandonment cycles; parallelism and timeout
+  * mirror the DownloadDaemon/PeerSelect probe posture.
   */
 object PeersCommittedAheadProbe {
 
@@ -47,8 +41,8 @@ object PeersCommittedAheadProbe {
   val PerPeerTimeout: FiniteDuration = 2.seconds
   val OverallTimeout: FiniteDuration = 10.seconds
 
-  /** Production wiring: Ready responsive peers from `clusterStorage`, defaults for the tuning
-    * knobs. The layers supply `fetchLatestCommittedMetadata` against their own snapshot endpoint.
+  /** Production wiring: Ready responsive peers from `clusterStorage`, defaults for the tuning knobs. The layers supply
+    * `fetchLatestCommittedMetadata` against their own snapshot endpoint.
     */
   def make[F[_]: Async: Random](
     clusterStorage: ClusterStorage[F],
@@ -60,9 +54,8 @@ object PeersCommittedAheadProbe {
     }
   }
 
-  /** Effectful core, parameterized for direct testing: sample, fan out, tolerate per-peer
-    * failures, compare committed ordinals against the abandoned key, and never let a degraded
-    * probe read as confirmation.
+  /** Effectful core, parameterized for direct testing: sample, fan out, tolerate per-peer failures, compare committed ordinals against the
+    * abandoned key, and never let a degraded probe read as confirmation.
     */
   def probe[F[_]: Async: Random](
     readyPeers: List[Peer],
