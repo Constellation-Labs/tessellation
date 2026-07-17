@@ -235,7 +235,7 @@ def selectLeaderWeighted(
 | Lie | Outcome | Net effect |
 |---|---|---|
 | "Healthy" when degraded | Gets elected leader. Round abandons during peer's GC pause. `completed` count stalls relative to `participated`. Quality ratio drops. After ~10-20 rounds the peer crosses below `minLeaderRatioPct` and drops to tier 1 via the existing ratchet. | Self-correcting in O(N) rounds. |
-| "Degraded" when healthy | Always demoted to tier 1. Loses leader opportunities forever. Still participates as facilitator / signer / witness so reward share is mostly preserved. | No advantage to lying. |
+| "Degraded" when healthy | Always demoted to tier 1. Loses leader opportunities forever. Still participates as a facilitator / signer / witness and retains its delegated validator share while seated. | No advantage to lying. |
 | "Critical" when healthy | Even stronger self-penalty. Same direction as above. | No advantage. |
 
 **Incentive-compatible:** every lie either self-corrects or costs the liar. No lie shifts work or rewards onto honest peers in a way the protocol can't recover from.

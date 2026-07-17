@@ -25,6 +25,7 @@ case class FieldsAddedOrdinals(
   setSumFix: Map[AppEnvironment, SnapshotOrdinal],
   scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
 )
 ```
@@ -43,9 +44,27 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `set-sum-fix` | 9999999 | 9999999 | 9999999 | 0 |
 | `sc-fee-balance-from-context` | 9999999 | 3101393 | 9999999 | 0 |
 | `sub-trie-roots` | 9999999 | 9999999 | 9999999 | 9999999 |
+| `delegated-rewards-full-committee` | 9999999 | 9999999 | 9999999 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
+
+## Reward gates: three values with different jobs
+
+Reward-path diagnosis requires an ordinal gate and an epoch gate. They must not be
+conflated with the later delegated-stake record gate:
+
+| Value | IntegrationNet | Comparison | Effect |
+|---|---:|---|---|
+| `fields-added-ordinals.tessellation-3-migration` | 3,330,000 | `ordinal >= gate` | Allows `DelegateRewardsInput` and the delegated snapshot fields |
+| Delegated emission `asOfEpoch` | 751,085 | `epochProgress >= asOfEpoch` | Completes the classic-to-delegated reward switch |
+| `fields-added-ordinals.delegated-rewards-full-committee` | 9,999,999 placeholder | `ordinal >= gate` | Switches delegated recipients from historical evidence filtering to every Core + Tier-1 member |
+| `incremental-delegated-staking-starting-ordinal` | 5,075,000 | `ordinal > gate` | Populates `currentTokenLockRef` and `currentAmount` on incremental delegated-stake records only |
+
+The delegated reward distributor runs only when the first two conditions hold. The
+third changes recipients within delegated rewards. The fourth does not select classic
+versus delegated rewards. See
+[Consensus reward recipients](../consensus/rewards.md).
 
 ## The no-env-gating principle
 
@@ -123,6 +142,7 @@ Unlike its sibling gates, `dev` is also `9999999` (OFF) rather than `0`. This is
 - Before launch, replace every mainnet placeholder with the real coordinated launch ordinal:
   - `sc-fee-balance-from-context.mainnet` and `.integrationnet` (both `9999999`, `application.conf:275-284`): set each to its context-deploy ordinal. testnet is already pinned to its real cutover (`3101393`). An unset env fails closed to the `mptStore` path.
   - `sub-trie-roots.mainnet`, `.testnet`, and `.integrationnet` (all `9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. For a cold restart at checkpoint `N`, use `N + 1`.
+  - `delegated-rewards-full-committee.<env>`: set the deploying environment to the first ordinal produced by the corrected jar. Below it, the historical evidence-score filter must remain available for replay.
   - `dust-sweeps` has no mainnet entry yet (`application.conf:286-292`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf:281-285`). Bump it up if the chain nears it before the coordinated cold restart completes.
 - These gates do NOT participate in `deterministicConfigHash`, so a wrong ordinal is NOT caught at handshake. It forks the chain when the gate is crossed. Verify them by inspection before deploy.

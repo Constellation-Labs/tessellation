@@ -30,7 +30,9 @@ Modeled explicitly on HotStuff / Flow Jolteon / Aptos DiemBFT rather than invent
 
 - Missing peers no longer stall a round; liveness no longer sits behind the slowest BFT peer.
 - Deterministic membership is preserved -- the fork class above is closed by construction.
-- **Cost:** a finalized round may carry fewer than `N` proofs; reward fairness for late-but-honest signers is handled by the signature-grace window (ADR-0020) and the Core/Tier-1 reward split (ADR-0019).
+- **Cost:** a finalized round may carry fewer than `N` proofs. Signature grace improves
+  the finalized evidence set; delegated validator rewards are independently paid to
+  the frozen Core + Tier-1 committee (ADR-0028).
 - Penalty state (`removalPenalties`, `deferralCountdown`, `readmissionCountdown`) becomes outcome state and must obey ADR-0016 (derived only from the consensus-agreed outcome).
 - **Rejected alternatives** are retained in the docs for context: `docs/consensus/eviction-cert-deterministic-shrinkage.md` and `docs/consensus/liveness-shrink-permissioned-fallback.md`.
 

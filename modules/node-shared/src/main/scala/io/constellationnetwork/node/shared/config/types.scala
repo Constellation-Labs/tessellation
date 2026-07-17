@@ -44,6 +44,9 @@ object types {
     // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
     // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.
     subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
+    // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
+    delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
@@ -244,9 +247,10 @@ object types {
     // committee, to collect late-arriving Tier 1 signatures before finalizing. Distinct from
     // `signatureGracePeriod` (which covers the Core-incomplete case): once every Core member has
     // signed, liveness no longer needs the full window, but we still want Tier 1 signatures to
-    // land in `signedArtifact.proofs` so rewards are not collapsed onto Core (the alpha.153
-    // regression where finalizing the INSTANT Core completed dropped every Tier 1 reward). The
-    // bounded wait trades a few ms of finalization latency for reward fairness. Timing-only:
+    // land in `signedArtifact.proofs` and participation evidence (the alpha.153 regression where
+    // finalizing the INSTANT Core completed dropped every Tier 1 proof). Delegated rewards follow
+    // frozen committee membership, not proofs. The bounded wait trades a few ms of finalization
+    // latency for evidence completeness. Timing-only:
     // NOT included in `deterministicConfigHash`, for the SAME reason as `signatureGracePeriod` --
     // the canonical `snapshotHash` is the agreed ARTIFACT hash, not the signed-artifact hash, so
     // two nodes with different grace periods still produce the same downstream snapshotHash; this

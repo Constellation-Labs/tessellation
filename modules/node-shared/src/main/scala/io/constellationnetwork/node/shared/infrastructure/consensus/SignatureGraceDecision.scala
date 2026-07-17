@@ -5,15 +5,15 @@ import scala.concurrent.duration.FiniteDuration
 /** Pure three-way signature-grace decision for snapshot finalization.
   *
   * Once a round crosses the finalization quorum it may keep collecting signatures for a bounded grace window before committing, so the
-  * snapshot's proof set (which determines rewards) is not truncated to whoever happened to sign in the first 1-3ms. The window length
-  * depends on which signatures are still missing:
+  * snapshot's proof and participation-evidence sets are not truncated to whoever happened to sign in the first 1-3ms. Delegated rewards
+  * follow frozen committee membership, not proofs. The window length depends on which signatures are still missing:
   *
   *   1. '''Full committee signed''' (`fullCommitteeSigned`): finalize immediately -- no further signature can arrive. 2. '''Core complete,
   *      committee not full''': only Tier-1 (non-quorum) signatures are outstanding, so wait the SHORT `tier1Window` to let prompt Tier-1
-  *      sigs land (reward inclusion) and then finalize. The window is measured from when Core FIRST completed, NOT from when quorum was
-  *      first seen -- otherwise a round whose Core completes late (more than `tier1Window` after quorum) would skip the Tier-1 collection
-  *      entirely and concentrate rewards on Core (the alpha.153 regression). 3. '''Core incomplete''': a quorum-bearing Core signer is
-  *      still missing, so wait the FULL `fullWindow` (measured from first quorum) for it -- this is the liveness-relevant case.
+  *      sigs land in the artifact/evidence and then finalize. The window is measured from when Core FIRST completed, NOT from when quorum
+  *      was first seen -- otherwise a round whose Core completes late (more than `tier1Window` after quorum) would skip the Tier-1
+  *      collection entirely (the alpha.153 regression). 3. '''Core incomplete''': a quorum-bearing Core signer is still missing, so wait
+  *      the FULL `fullWindow` (measured from first quorum) for it -- this is the liveness-relevant case.
   *
   * This object is the pure decision; the caller owns the per-key [[Stamp]] state (in a `Ref`) and applies [[Eval.update]] to it. Keeping it
   * pure makes the state machine directly testable (the alpha.153 grace failure had no direct coverage).

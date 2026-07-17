@@ -65,7 +65,7 @@ These affect liveness/latency, not what is decided. Mixed values across a networ
 | HOCON key | CL_ override | Type | Default | Meaning |
 |-----------|--------------|------|---------|---------|
 | `signature-grace-period` | `CL_SIGNATURE_GRACE_PERIOD` | Duration | `3 seconds` | The FULL grace window: when Core is incomplete, the round keeps collecting signatures this long (from first quorum) so a quorum-bearing Core signer can still land (`config/types.scala:230-238`). |
-| `tier-1-signature-grace-period` | `CL_TIER_1_SIGNATURE_GRACE_PERIOD` | Duration | `750 milliseconds` | The SHORT grace window used once Core is fully signed but the committee is not, to let late Tier-1 signatures land in `signedArtifact.proofs` for reward fairness. Measured from Core-complete, not first quorum (`config/types.scala:239-251`). |
+| `tier-1-signature-grace-period` | `CL_TIER_1_SIGNATURE_GRACE_PERIOD` | Duration | `750 milliseconds` | The SHORT grace window used once Core is fully signed but the committee is not, to let late Tier-1 signatures land in `signedArtifact.proofs` and participation evidence. It does not select delegated reward recipients. Measured from Core-complete, not first quorum (`config/types.scala:239-251`). |
 | (no key) `view-change-apply-delay` | none | Duration | `7 seconds` | Delay between assembling/receiving a certified view change and locally applying it, so ordinary traffic can arrive first (`config/types.scala:252-259`). |
 | `time-trigger-interval` | `CL_TIME_TRIGGER_INTERVAL` | Duration | `43 seconds` | Regular round-trigger cadence (`dag-l0.conf:11-12`). |
 | `max-round-duration` | `CL_MAX_ROUND_DURATION` | Duration | `5 minutes` | Per-view round-duration safety net; not consensus logic (`dag-l0.conf:20-21`). |
@@ -75,10 +75,10 @@ These affect liveness/latency, not what is decided. Mixed values across a networ
 The grace window length is a pure three-way decision (`SignatureGraceDecision.evaluate`, `infrastructure/consensus/SignatureGraceDecision.scala:58-82`):
 
 1. **Full committee signed** -> finalize immediately; no further signature can arrive.
-2. **Core complete, committee not full** -> wait the short `tier1Window` (`tier-1-signature-grace-period`), anchored at when Core *first* completed, to collect late Tier-1 signatures for reward inclusion.
+2. **Core complete, committee not full** -> wait the short `tier1Window` (`tier-1-signature-grace-period`), anchored at when Core *first* completed, to collect late Tier-1 signatures for artifact/evidence completeness.
 3. **Core incomplete** -> wait the full `fullWindow` (`signature-grace-period`), anchored at first quorum, for the missing quorum-bearing Core signer. This is the liveness-relevant case.
 
-Anchoring case 2 at Core-complete (not first-quorum) is the fix for the alpha.153 reward regression where finalizing the instant Core completed dropped every Tier-1 reward (`SignatureGraceDecision.scala:11-16`).
+Anchoring case 2 at Core-complete (not first-quorum) fixes the alpha.153 regression where finalizing the instant Core completed dropped every Tier-1 proof. Delegated rewards are committee-based (`SignatureGraceDecision.scala:11-16`; ADR-0028).
 
 `b2AdmissionAtTipStreak` (default `2`, `config/types.scala:514`) is also timing-only and NOT in the hash. It has **no HOCON key** (compiled-in default only): it is the number of consecutive monitor ticks a probation peer must present the committed tip before this node emits an `AdmissionVote`. Two honest nodes may diverge in their per-peer streaks without affecting safety; cert assembly still requires quorum-agreed signed votes. Values `<= 0` are clamped to `1` at the read site (`StallDetector.scala:1330`).
 

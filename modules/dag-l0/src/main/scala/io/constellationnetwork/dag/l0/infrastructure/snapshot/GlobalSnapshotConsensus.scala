@@ -258,6 +258,8 @@ object GlobalSnapshotConsensus {
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           sharedCfg.fieldsAddedOrdinals.setSumFix
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+          sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommittee
+            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MaxValue),
           sharedCfg.incrementalDelegatedStakingStartingOrdinal
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           mptStore,

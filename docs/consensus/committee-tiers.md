@@ -44,7 +44,7 @@ The tier integers are defined in `TierTransitions.scala:42-49`:
 | Tier | Constant | Value | What it can do |
 |------|----------|-------|----------------|
 | Core | `TierTransitions.Core` | `2` | Full facilitator. In the **liveness quorum**; phase transitions and liveness certificates derive their normal denominator from Core. Only Core peers are eligible to **lead** a round. |
-| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and **earn** rewards proportionally. They cannot lead, and they do **not** count toward the normal liveness denominator, so a silent Tier-1 peer cannot wedge leader rotation. |
+| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and earn a delegated validator share while seated. They cannot lead, and they do **not** count toward the normal liveness denominator, so a silent Tier-1 peer cannot wedge leader rotation. |
 | Witness | `TierTransitions.Witness` | `0` | Observation only. Open membership; in the v19 transition path peers fall here only via explicit eviction. |
 
 The key safety property: **the liveness quorum is gated on Core only.** The
@@ -66,13 +66,12 @@ committee, not a locally mutated post-eviction subset.
 
 ### Reward and signer pool
 
-Snapshot rewards go to the snapshot **signers**: `Rewards.distribute` splits the
-pool evenly across `lastArtifact.proofs.map(_.id)`. Tier-1 peers are in
-`roundStartFacilitators`, sign just like Core peers, and split the facilitator
-reward pool evenly; there is no Core-vs-Tier-1 stratification in today's reward
-math (`CommitteeBuilder.scala:22-26`). Note that the live reward set is therefore
-the round-start facilitator set that actually signs, not a leader-curated signer
-list; reward share follows signing.
+Delegated rewards go to the frozen round-start signing committee, not the proof
+subset. Core and Tier-1 peers split the static validator pool evenly; there is no
+Core-vs-Tier-1 stratification and no admission-score payout filter. Classic rewards
+retain the historical `lastArtifact.proofs.map(_.id)` signer rule. See
+[rewards.md](rewards.md) for activation gates, including the full-committee correction
+ordinal, and diagnostics.
 
 ---
 
@@ -447,10 +446,11 @@ completion-ratio tiering within the pool and uses rendezvous score plus
 
 ## 8. Rewards and the committee
 
-Rewards are distributed by the delegated-rewards path (mainnet's mechanism) to the
-round committee: `roundStartFacilitators` = Core + Tier 1 + Witness, the same set
-carried as `state.facilitators`. Distribution is health- and quality-gated, and
-every committee member earns an equal share.
+Rewards are distributed by the delegated-rewards path to the frozen round-start
+signing committee. In the current tier-transition path that set is Core + Tier 1;
+Witness is observation-only and is not seated. Every seated Core and Tier-1 peer earns
+an equal validator share. Health, quality, and evidence govern admission and future
+tier membership, not a second payout-time filter.
 
 There is no per-seat reward rotation. An earlier bounded one-slot Tier-1 rotation
 lane was removed; reward fairness is achieved purely by committee **selection**,
