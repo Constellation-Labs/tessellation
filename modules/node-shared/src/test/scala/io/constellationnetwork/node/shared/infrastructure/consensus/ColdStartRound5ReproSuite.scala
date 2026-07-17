@@ -8,11 +8,10 @@ import io.constellationnetwork.security.hex.Hex
 
 import weaver.SimpleIOSuite
 
-/** Replays the E2E dev cold-start round-5 state that produced core=0 and the
-  * selectLeaderWeighted empty-facilitators crash (CI run 29593274327). Pure replay of the
-  * StateCreator pipeline: evidence (3 signed rounds) -> controllerInputsWithFallback ->
-  * chooseActive -> CommitteeBuilder. Prints every intermediate map so the poisoned input is
-  * visible, then asserts the liveness invariant that the crash violated.
+/** Replays the E2E dev cold-start round-5 state that produced core=0 and the selectLeaderWeighted empty-facilitators crash (CI run
+  * 29593274327). Pure replay of the StateCreator pipeline: evidence (3 signed rounds) -> controllerInputsWithFallback -> chooseActive ->
+  * CommitteeBuilder. Prints every intermediate map so the poisoned input is visible, then asserts the liveness invariant that the crash
+  * violated.
   */
 object ColdStartRound5ReproSuite extends SimpleIOSuite {
 
