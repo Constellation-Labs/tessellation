@@ -313,9 +313,11 @@ object types {
     // cleanup. The v22 demotion hysteresis does NOT use it -- it uses the compiled-in
     // `TierTransitions.DemotionConsecutiveMisses` constant instead.
     //
-    // `activeFacilitatorFloor` is still read by the rollback/ready-participation gates. All three
-    // are consensus-critical (in `deterministicConfigHash`) so divergent operator values are
-    // rejected at handshake.
+    // `activeFacilitatorFloor` is the emergency bypass threshold for active admission and is also
+    // read by the rollback/ready-participation gates. Admission score gating remains enabled at
+    // and above this floor; below it the full selected pool is admitted for bootstrap/collapse
+    // recovery. All three values are consensus-critical (in `deterministicConfigHash`) so
+    // divergent operator values are rejected at handshake.
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
@@ -348,13 +350,11 @@ object types {
     activeAdmissionExpansionIntervalRounds: Int = 1,
     // Bounded probation re-entry lane: minimum number of probation (below-promote-threshold,
     // "rehabilitating") peers admitted to the active set per round EVEN WHEN the per-round
-    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. Fixes the structural
-    // catch-22 where peers that dropped out of the recent-signer pool during an outage could never
-    // re-enter the signing set to rebuild their score, because the only re-entry path was throttled
-    // to ~1/round shared with promoted expansion. Decoupled from `activeAdmissionMaxExpansionPerRound`
-    // so a mass return after a cluster-wide outage drains in a bounded number of rounds; capped by
-    // the active-set max (`activeFacilitatorMax`/`coreCommitteeSize`) inside the admission function so
-    // it never overflows the signing set. Probation peers are non-quorum-bearing (routed to
+    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. A probation peer that
+    // signs the latest round keeps competing ahead of fresh candidates for one of these bounded
+    // seats until it reaches the retain band; missing the latest round ends the lease. This avoids
+    // one-round admission churn and lets responsive peers accumulate enough signed evidence to
+    // graduate. Capped by the active-set max. Probation peers are non-quorum-bearing (routed to
     // `nonCorePeers` in `CommitteeBuilder`), so widening the lane cannot affect quorum feasibility.
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
@@ -905,7 +905,7 @@ object types {
       *   - `tighteningWindow`: size of the rolling `recentSigners` window; as of v22 it feeds the tier-demotion hysteresis (LIVE)
       *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
       *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
-      *   - `activeFacilitatorFloor`: floor read by the rollback / ready-participation gates
+      *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
       *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: active facilitator expansion and cap
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
@@ -1146,11 +1146,10 @@ object types {
     // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved scalar is threaded
     // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into
-    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that environment
-    // (resolved scalar 0). Testnet opts into a small value to drain a mass post-outage return of
-    // rehabilitating peers in a bounded number of rounds; mainnet/dev/integrationnet are absent on
-    // purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable if ever needed,
-    // matching the resolved-scalar default.
+    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that
+    // environment (resolved scalar 0). Public GL0 environments configure one Core-sized cohort;
+    // responsive climbers retain bounded priority until they reach the retain band. `Int` (not
+    // `PosInt`) keeps 0 available as an explicit disable.
     activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
     // Recent-signer pool lookback depth (in ordinals), keyed by AppEnvironment (the coreCommitteeSize
     // pattern: env resolution happens once at the consensus construction site and the resolved scalar

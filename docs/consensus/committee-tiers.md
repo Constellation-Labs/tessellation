@@ -112,14 +112,29 @@ Two expansion lanes widen the active set beyond the sticky recent-signer pool:
   remaining `target` slots (`reserveAdmitted`,
   `ActiveFacilitatorAdmission.scala:196-198`).
 - **Probation re-entry lane** -- `minProbationReentrySlots` reserves up to K
-  slots for below-promote-threshold "rehabilitating" peers (`scoreExcluded`)
-  even when the per-round expansion budget is exhausted
-  (`ActiveFacilitatorAdmission.scala:177-193`). This breaks the catch-22 where a
-  peer needs to sign to rebuild its score but the only re-entry path was throttled
-  to ~1/round. Probation-admitted peers are non-quorum-bearing: they flow into
-  `nonCorePeers` in `CommitteeBuilder` (see below) so widening the lane cannot
-  affect quorum feasibility. The lane is inert when `minProbationReentrySlots == 0`
-  (the default).
+  slots for below-promote-threshold rehabilitating peers even when the per-round
+  expansion budget is exhausted. A peer that signed the latest round retains
+  priority for a bounded probation seat until it reaches the retain band; missing
+  the latest round ends that lease. Existing climbers rank ahead of fresh
+  candidates. Probation-admitted peers are non-quorum-bearing: they flow into
+  `nonCorePeers` in `CommitteeBuilder` (see below), so widening the lane cannot
+  affect quorum feasibility. The lane is inert when
+  `minProbationReentrySlots == 0`.
+
+A demoted peer that continues signing may therefore remain active in a
+non-Core probation seat while its score recovers. Demotion still removes Core
+eligibility and, during normal operation, reward qualification: once at least one
+facilitator meets the promote threshold, reward distribution excludes every
+facilitator below it. The existing empty/no-qualified evidence fallback still
+pays all facilitators during bootstrap rather than zeroing the reward pool.
+Keeping responsive peers seated is intentional; purging one would prevent it
+from accumulating the signed evidence needed to rehabilitate.
+
+`dag_consensus_active_facilitator_fresh_probation_starved` reports whether
+sticky candidates consumed the entire probation lane while fresh candidates
+were waiting. A transient `1` is expected while a cohort graduates; persistence
+beyond the configured score-recovery window indicates that recurring penalties
+may be monopolizing the lane and warrants considering a sticky-seat share cap.
 
 The recent-signer lookback depth is `recentSignerWindow`
 (`ActiveFacilitatorAdmission.scala:74-81`), floored internally to

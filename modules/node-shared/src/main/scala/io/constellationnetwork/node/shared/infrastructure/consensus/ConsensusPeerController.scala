@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
@@ -22,9 +23,9 @@ object ConsensusPeerController {
     criticalPenalty: Int,
     passiveDecay: Int,
     maxExpansionPerRound: Int,
-    // Bounded probation re-entry lane (see ActiveFacilitatorAdmission.fromRecentSigners). Default
-    // 0 keeps the lane inert. Threaded from `ConsensusConfig.activeAdmissionMinProbationReentrySlots`
-    // at the StateCreator construction sites.
+    // Bounded sticky probation lane (see ActiveFacilitatorAdmission.fromRecentSigners). A peer
+    // that signed the latest round keeps competing for a non-Core seat while below retain.
+    // Default 0 keeps the lane inert.
     minProbationReentrySlots: Int = 0,
     // Recent-signer pool lookback depth (see ActiveFacilitatorAdmission.fromRecentSigners). Default
     // is the demotion-hysteresis constant (preserves the pre-change 3-ordinal lookback); threaded
@@ -81,14 +82,35 @@ object ConsensusPeerController {
     observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
   )
 
+  final case class AdmissionSizing(
+    emergencyBypassFloor: Int,
+    targetActiveSize: Int,
+    maxActiveSize: Int
+  )
+
+  object AdmissionSizing {
+
+    /** Resolves the active-admission sizing policy once for both GL0 and currency L0.
+      *
+      * `emergencyBypassFloor` controls only the bootstrap/collapse escape hatch. It is deliberately distinct from the normal Core committee
+      * size and the active-set growth target.
+      */
+    def from(config: ConsensusConfig, coreCommitteeSize: Int, selectedSize: Int): AdmissionSizing =
+      AdmissionSizing(
+        emergencyBypassFloor = config.activeFacilitatorFloor,
+        targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize),
+        maxActiveSize = config.activeFacilitatorMax
+          .getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedSize))
+      )
+  }
+
   final case class AdmissionInput(
     selected: List[PeerId],
     recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    latestRoundStartFacilitators: Set[PeerId],
     peerQuality: Map[PeerId, (Int, Int)],
     activeScores: Map[PeerId, Int],
-    minActiveSize: Int,
-    targetActiveSize: Int,
-    maxActiveSize: Int,
+    sizing: AdmissionSizing,
     minParticipationObservations: Int,
     minParticipationRatio: Double,
     config: Config
@@ -131,11 +153,12 @@ object ConsensusPeerController {
     ActiveFacilitatorAdmission.fromRecentSigners(
       selected = input.selected,
       recentSigners = input.recentSigners,
+      latestRoundStartFacilitators = input.latestRoundStartFacilitators,
       peerQuality = input.peerQuality,
       activeScores = input.activeScores,
-      minActiveSize = input.minActiveSize,
-      targetActiveSize = input.targetActiveSize,
-      maxActiveSize = input.maxActiveSize,
+      minActiveSize = input.sizing.emergencyBypassFloor,
+      targetActiveSize = input.sizing.targetActiveSize,
+      maxActiveSize = input.sizing.maxActiveSize,
       minParticipationObservations = input.minParticipationObservations,
       minParticipationRatio = input.minParticipationRatio,
       promoteThreshold = c.promoteThreshold,

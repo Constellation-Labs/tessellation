@@ -46,6 +46,7 @@ object ActiveFacilitatorAdmission {
     case object ScoreBelowPromoteThreshold extends ExclusionReason("score_below_promote_threshold")
     case object ScoreBelowRetainThreshold extends ExclusionReason("score_below_retain_threshold")
     case object ScoreBelowDemoteThreshold extends ExclusionReason("score_below_demote_threshold")
+    case object MissedLatestRound extends ExclusionReason("missed_latest_round")
     case object BeyondTarget extends ExclusionReason("beyond_target")
     case object CertifiedTimeoutMissing extends ExclusionReason("certified_timeout_missing")
   }
@@ -68,6 +69,9 @@ object ActiveFacilitatorAdmission {
     reserveAdmittedSize: Int,
     probationAdmitted: List[PeerId],
     probationAdmittedSize: Int,
+    stickyProbationCandidateSize: Int,
+    freshProbationCandidateSize: Int,
+    freshProbationStarved: Boolean,
     recentSignerMinCount: Int,
     recentSignerMaxCount: Int,
     recentWindowSize: Int,
@@ -88,10 +92,9 @@ object ActiveFacilitatorAdmission {
     retainThreshold: Int = 70,
     demoteThreshold: Int = 40,
     maxExpansionPerRound: Int = Int.MaxValue,
-    // Bounded probation re-entry lane: minimum number of probation slots reserved for
-    // below-promote-threshold "rehabilitating" peers (`scoreExcluded`) EVEN WHEN the per-round
-    // expansion budget is exhausted. Default 0 is fully inert (preserves pre-fix behavior). See
-    // the inline note at the `probationSlots` computation for the catch-22 this breaks.
+    // Bounded probation re-entry lane: minimum number of seats reserved for sticky below-retain
+    // signers and fresh below-promote candidates EVEN WHEN the per-round expansion budget is
+    // exhausted. Default 0 is fully inert.
     minProbationReentrySlots: Int = 0,
     // Lookback depth (in ordinals) of the recent-signer pool: how far back a peer may have last
     // signed and still count as a sticky, score-gated "recent signer" seat rather than churning
@@ -100,7 +103,10 @@ object ActiveFacilitatorAdmission {
     // signers OUT of quorum-bearing Core), so widening this only changes active-set eligibility.
     // Floored internally to DemotionConsecutiveMisses so a low value cannot disable
     // `recentWindowDeepEnough`. Default preserves the pre-change 3-ordinal lookback.
-    recentSignerWindow: Int = TierTransitions.DemotionConsecutiveMisses
+    recentSignerWindow: Int = TierTransitions.DemotionConsecutiveMisses,
+    // Signed round-start set from the latest controller-evidence entry. A peer that was asked to
+    // sign but missed must not be immediately reclassified as a fresh probation candidate.
+    latestRoundStartFacilitators: Set[PeerId] = Set.empty
   ): Result = {
     val minRatioScaled = minParticipationRatioScaled(minParticipationRatio)
 
@@ -129,6 +135,7 @@ object ActiveFacilitatorAdmission {
     // `recentWindowDeepEnough` false and silently disable the recent-signer path (Codex review #2).
     val effectiveRecentSignerWindow = math.max(TierTransitions.DemotionConsecutiveMisses, recentSignerWindow)
     val recentSets = recentSigners.values.toList.takeRight(effectiveRecentSignerWindow)
+    val latestSignerSet = recentSets.lastOption.getOrElse(SortedSet.empty[PeerId])
     def recentSignerCount(pid: PeerId): Int = recentSets.count(_.contains(pid))
     val scoreHistoryAvailable = activeScores.nonEmpty
     def bootstrapScore(pid: PeerId): Int =
@@ -196,23 +203,30 @@ object ActiveFacilitatorAdmission {
     val expansionSlots = math.max(0, target - recentSignerPool.size)
     val expansionLimit = math.min(expansionSlots, maxExpansionPerRound)
     val promotedAdmitted = sortedPromotedExpansionCandidates.take(expansionLimit)
-    // Bounded probation re-entry lane. `expansionProbationSlots` is the legacy budget: whatever
-    // is left of this round's expansion limit after promoted expansion. `minProbationReentrySlots`
-    // guarantees up to K probation slots EVEN WHEN that budget is 0, decoupled from
-    // `maxExpansionPerRound`, so a mass return after a cluster-wide outage drains in a bounded
-    // number of rounds instead of never (the catch-22: rehabilitating peers need to sign to
-    // rebuild their score, but the only re-entry path was throttled to ~1/round shared with
-    // promoted expansion, so the active set ratcheted down to the always-on core and never grew
-    // back). `reentryHeadroom` caps the lane by `configuredMax` (= max(minActiveSize, maxActiveSize),
-    // the floor-wins-over-ceiling active-set bound) so it can never overflow the signing set beyond
-    // what the size config already permits. Probation peers are non-quorum-bearing (they flow to
-    // nonCorePeers in CommitteeBuilder) so widening the lane cannot affect quorum feasibility.
-    // Deterministic: K is a constant and `probationRank` ends in a PeerId tiebreak, so committee
-    // derivation stays fork-safe. Inert when `minProbationReentrySlots == 0`.
+    // Bounded sticky probation lane. A below-retain recent signer that completed the latest round
+    // keeps competing for a probation seat, so it can accumulate the consecutive signed evidence
+    // needed to reach the retain band. Missing the latest round ends that lease immediately.
+    // Existing climbers rank ahead of fresh score-excluded candidates; both remain capped by the
+    // configured probation headroom and are returned in `probationAdmitted`, which keeps them out
+    // of Core in CommitteeBuilder. All inputs are signed evidence and the ranking ends in PeerId.
+    val stickyProbationCandidates =
+      (demotedRecentSigners ++ belowRetainRecentSigners)
+        .filter(latestSignerSet.contains)
+        .distinct
+        .sortBy(probationRank)
+    val latestRoundMisses = latestRoundStartFacilitators -- latestSignerSet
+    val (missedLatestRoundCandidates, eligibleFreshProbationCandidates) =
+      scoreExcluded.partition(latestRoundMisses.contains)
+    val freshProbationCandidates = eligibleFreshProbationCandidates.sortBy(probationRank)
+    val probationCandidates = stickyProbationCandidates ++ freshProbationCandidates
     val expansionProbationSlots = math.max(0, expansionLimit - promotedAdmitted.size)
     val reentryHeadroom = math.max(0, configuredMax - recentSignerPool.size - promotedAdmitted.size)
     val probationSlots = math.min(reentryHeadroom, math.max(expansionProbationSlots, minProbationReentrySlots))
-    val probationAdmitted = scoreExcluded.sortBy(probationRank).take(probationSlots)
+    val probationAdmitted = probationCandidates.take(probationSlots)
+    val freshProbationStarved =
+      probationSlots > 0 &&
+        stickyProbationCandidates.size >= probationSlots &&
+        freshProbationCandidates.nonEmpty
     val expansionAdmitted = promotedAdmitted ++ probationAdmitted
     val expansionAdmittedSet = expansionAdmitted.toSet
     val reserveSlots = math.max(0, target - recentSignerPool.size - expansionAdmitted.size)
@@ -220,7 +234,9 @@ object ActiveFacilitatorAdmission {
     val reserveAdmittedSet = reserveAdmitted.toSet
     val beyondTarget =
       sortedPromotedExpansionCandidates.filterNot(pid => expansionAdmittedSet.contains(pid) || reserveAdmittedSet.contains(pid))
-    val probationRejected = scoreExcluded.filterNot(expansionAdmittedSet.contains)
+    val demotedRejected = demotedRecentSigners.filterNot(expansionAdmittedSet.contains)
+    val belowRetainRejected = belowRetainRecentSigners.filterNot(expansionAdmittedSet.contains)
+    val probationRejected = freshProbationCandidates.filterNot(expansionAdmittedSet.contains)
 
     val active =
       if (useRecentSignerPool)
@@ -229,10 +245,11 @@ object ActiveFacilitatorAdmission {
         selected.take(target)
     val exclusions =
       if (useRecentSignerPool)
-        demotedRecentSigners.map(Exclusion(_, ExclusionReason.ScoreBelowDemoteThreshold)) ++
-          belowRetainRecentSigners.map(Exclusion(_, ExclusionReason.ScoreBelowRetainThreshold)) ++
+        demotedRejected.map(Exclusion(_, ExclusionReason.ScoreBelowDemoteThreshold)) ++
+          belowRetainRejected.map(Exclusion(_, ExclusionReason.ScoreBelowRetainThreshold)) ++
           excludedRecentOverflow ++
           qualityExcluded.map(Exclusion(_, ExclusionReason.QualityBelowThreshold)) ++
+          missedLatestRoundCandidates.map(Exclusion(_, ExclusionReason.MissedLatestRound)) ++
           probationRejected.map(Exclusion(_, ExclusionReason.ScoreBelowPromoteThreshold)) ++
           beyondTarget.map(Exclusion(_, ExclusionReason.BeyondTarget))
       else
@@ -242,7 +259,7 @@ object ActiveFacilitatorAdmission {
       active = active,
       exclusions = exclusions,
       recentSignerPoolSize = uncappedRecentSignerPool.size,
-      candidateSize = recentSignerPool.size + promotedExpansionCandidates.size + scoreExcluded.size,
+      candidateSize = recentSignerPool.size + promotedExpansionCandidates.size + probationCandidates.size,
       targetSize = target,
       promotedCandidateSize = promotedExpansionCandidates.size,
       scoreExcludedSize = scoreExcluded.size,
@@ -254,6 +271,9 @@ object ActiveFacilitatorAdmission {
       reserveAdmittedSize = reserveAdmitted.size,
       probationAdmitted = probationAdmitted,
       probationAdmittedSize = probationAdmitted.size,
+      stickyProbationCandidateSize = stickyProbationCandidates.size,
+      freshProbationCandidateSize = freshProbationCandidates.size,
+      freshProbationStarved = freshProbationStarved,
       recentSignerMinCount = recentSignerMinCount,
       recentSignerMaxCount = recentSignerMaxCount,
       recentWindowSize = recentSets.size,
@@ -299,6 +319,9 @@ object ActiveFacilitatorAdmission {
       reserveAdmittedSize = 0,
       probationAdmitted = List.empty,
       probationAdmittedSize = 0,
+      stickyProbationCandidateSize = 0,
+      freshProbationCandidateSize = 0,
+      freshProbationStarved = false,
       recentSignerMinCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).minOption.getOrElse(0),
       recentSignerMaxCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).maxOption.getOrElse(0),
       recentWindowSize = recentSets.size,
