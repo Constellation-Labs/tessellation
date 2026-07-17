@@ -153,7 +153,7 @@ object ActiveFloorGatingSuite extends SimpleIOSuite {
       )
       val nextOrdinal = ord(step.evidence.lastKey.value.value + 1L)
       val nextEvidence = SortedMap.from(
-        (step.evidence.updated(nextOrdinal, entry(result.active.toSet, result.active.toSet))).toList.takeRight(10)
+        step.evidence.updated(nextOrdinal, entry(result.active.toSet, result.active.toSet)).toList.takeRight(10)
       )
 
       Step(
