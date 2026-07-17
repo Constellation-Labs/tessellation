@@ -97,7 +97,10 @@ object ConsensusPeerController {
       */
     def from(config: ConsensusConfig, coreCommitteeSize: Int, selectedSize: Int): AdmissionSizing =
       AdmissionSizing(
-        emergencyBypassFloor = config.activeFacilitatorFloor,
+        // Floored to 1: a non-positive configured floor would arm the recent-signer gate with an
+        // EMPTY retained pool, sending every candidate through the (non-Core) probation lane and
+        // collapsing the committee to core=0 (the ColdStartRound5ReproSuite crash shape).
+        emergencyBypassFloor = math.max(1, config.activeFacilitatorFloor),
         targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize),
         maxActiveSize = config.activeFacilitatorMax
           .getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedSize))

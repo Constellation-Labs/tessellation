@@ -209,11 +209,21 @@ object ActiveFacilitatorAdmission {
     // Existing climbers rank ahead of fresh score-excluded candidates; both remain capped by the
     // configured probation headroom and are returned in `probationAdmitted`, which keeps them out
     // of Core in CommitteeBuilder. All inputs are signed evidence and the ranking ends in PeerId.
+    // GATED ON `useRecentSignerPool`: on the emergency bypass path EVERY lane must stay empty so
+    // `probationAdmitted` (-> `nonCorePeers` in CommitteeBuilder) cannot force candidates out of
+    // Core. On a cold start the first deep-window round derives every signer below the retain
+    // band (3 signed rounds x SignWeight 20 = 60 < 70): with this lane unconditionally populated,
+    // the whole cluster landed in probation, CommitteeBuilder produced core=0, and
+    // selectLeaderWeighted crashed the round -- freezing every fresh network at ordinal 4
+    // (reproduced in ColdStartRound5ReproSuite from CI run 29593274327).
     val stickyProbationCandidates =
-      (demotedRecentSigners ++ belowRetainRecentSigners)
-        .filter(latestSignerSet.contains)
-        .distinct
-        .sortBy(probationRank)
+      if (useRecentSignerPool)
+        (demotedRecentSigners ++ belowRetainRecentSigners)
+          .filter(latestSignerSet.contains)
+          .distinct
+          .sortBy(probationRank)
+      else
+        List.empty[PeerId]
     val latestRoundMisses = latestRoundStartFacilitators -- latestSignerSet
     val (missedLatestRoundCandidates, eligibleFreshProbationCandidates) =
       scoreExcluded.partition(latestRoundMisses.contains)
