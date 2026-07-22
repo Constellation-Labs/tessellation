@@ -8,12 +8,18 @@ name: Testnet release
 permissions:
   contents: write
   pull-requests: write
+  packages: write   # push tessellation + snapshot-streaming images to GHCR
 
 jobs:
   build:
     name: Testnet release
     runs-on: ubuntu-22.04
+    # For workflow_run, only proceed if the release succeeded. push/dispatch always run.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment: testnet
+    # version is consumed by the image jobs below and by testnet-deploy.yml
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,3 +127,181 @@ jobs:
           source: "./$VERSION"
           dest: "s3://${{ secrets.S3_BUCKET }}/testnet/tessellation/$VERSION"
           flags: --recursive --acl public-read
+
+      # Stage the jars already assembled above into docker/jars and publish them as a
+      # workflow artifact so the image job below builds the Docker image WITHOUT a second
+      # sbt assembly — reusing exactly what this release built.
+      - name: Stage + upload node jars for image build
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          rm -f docker/jars/*.jar
+          mkdir -p docker/jars
+          cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-$VERSION.jar docker/jars/gl0.jar
+          cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-$VERSION.jar docker/jars/gl1.jar
+          cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-$VERSION.jar docker/jars/keytool.jar
+          cp ./modules/wallet/target/scala-2.13/tessellation-wallet-assembly-$VERSION.jar docker/jars/wallet.jar
+          # Metagraph jars the Dockerfile COPYs but a hypergraph node never runs.
+          touch docker/jars/ml0.jar docker/jars/cl1.jar docker/jars/dl1.jar
+      - name: Upload node jars artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-jars
+          path: docker/jars/
+          retention-days: 3
+
+      # Publish the tessellation SDK to the local ivy repo and upload it as an artifact.
+      # `sdk` bakes every module's classes into one self-contained tessellation-sdk jar
+      # (provided-scope deps + packageBin mappings), so this is a single artifact the
+      # snapshot-streaming image job resolves against — no second SDK compile there.
+      # Runs here where the project is already compiled, so it's incremental and cheap.
+      - name: Publish tessellation SDK locally
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          sbt -batch "set ThisBuild / version := \"$VERSION\"" \
+            "set sdk / Compile / doc / scalacOptions += \"-no-link-warnings\"" \
+            sdk/publishLocal
+          rm -rf sdk-ivy-local
+          mkdir -p sdk-ivy-local
+          cp -r "$HOME/.ivy2/local/." sdk-ivy-local/
+      - name: Upload SDK ivy artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-ivy-local
+          path: sdk-ivy-local/
+          retention-days: 3
+
+  # ---------------------------------------------------------------------------
+  # Publish the tessellation node image to GHCR, REUSING the jars assembled by the
+  # release job (downloaded as an artifact — no second sbt build). Tagged with the
+  # release version + the moving :testnet channel tag + the commit sha.
+  # ---------------------------------------------------------------------------
+  build-push-image:
+    name: Publish tessellation image
+    needs: build
+    runs-on: ubuntu-22.04
+    env:
+      IMAGE: ghcr.io/constellation-labs/tessellation
+      VER: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download node jars
+        uses: actions/download-artifact@v4
+        with:
+          name: node-jars
+          path: docker/jars/
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:testnet
+            ${{ env.IMAGE }}:${{ env.VER }}
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Publish the snapshot-streaming image to GHCR at the SAME version as the node
+  # image. Self-contained (SDK publishLocal + SS assembly) — faithfully mirrors the
+  # build-push-ss job in publish-node-image.yml, pinned to the release version.
+  # ---------------------------------------------------------------------------
+  build-push-ss:
+    name: Publish snapshot-streaming image
+    needs: build
+    runs-on: ubuntu-22.04
+    env:
+      SS_IMAGE: ghcr.io/constellation-labs/snapshot-streaming
+      VER: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Java and scala
+        uses: ./.github/templates/actions/setup_java_and_scala
+        with:
+          JAVA_VERSION: 21
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Reuse the tessellation SDK published by the release job instead of recompiling
+      # it here — restore the ivy-local artifact so the SS assembly resolves it locally.
+      - name: Download tessellation SDK (from release job)
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-ivy-local
+          path: sdk-ivy-local/
+      - name: Restore SDK into local ivy repo
+        run: |
+          mkdir -p "$HOME/.ivy2/local"
+          cp -r sdk-ivy-local/. "$HOME/.ivy2/local/"
+      - name: Build snapshot-streaming jar (SS branch release/testnet @ VER)
+        env:
+          SNAPSHOT_STREAMING_BRANCH: release/testnet
+          TESSELLATION_VERSION: ${{ env.VER }}
+          # SS build's sbt-github-packages plugin needs a token to resolve deps.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No on-cluster block explorer — external DB owns the schema.
+          SKIP_BE_CLONE: "true"
+        run: bash docker/snapshot-streaming/build-snapshot-streaming.sh
+      - name: Ensure snapshot-streaming Dockerfile
+        # Prefer the committed docker/snapshot-streaming/Dockerfile (its entrypoint honors
+        # $SS_JAVA_OPTS so the deploy can size the heap). Only generate a fallback if the
+        # tree lacks one; keep the fallback in sync with the committed file.
+        run: |
+          if [ -f docker/snapshot-streaming/Dockerfile ]; then echo "Using committed Dockerfile"; exit 0; fi
+          cat > docker/snapshot-streaming/Dockerfile <<'DOCKEREOF'
+          FROM eclipse-temurin:21-jre
+          WORKDIR /app
+          RUN mkdir -p /app/data
+          COPY docker/snapshot-streaming/snapshot-streaming.jar /app/snapshot-streaming.jar
+          ENV SS_JAVA_OPTS="-Xms256m -Xmx1g"
+          ENTRYPOINT ["sh", "-c", "exec java $SS_JAVA_OPTS --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.security=ALL-UNNAMED -Dconfig.file=/app/application.conf -cp /app/snapshot-streaming.jar org.constellation.snapshotstreaming.App"]
+          DOCKEREOF
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/snapshot-streaming/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.SS_IMAGE }}:testnet
+            ${{ env.SS_IMAGE }}:${{ env.VER }}
+            ${{ env.SS_IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Deploy the cluster ONLY after both images published successfully. Calls the
+  # reusable testnet-deploy workflow, pinned to the exact images just built
+  # (sha-<this commit>). Runs in this same workflow run, so the deploy can never
+  # race ahead of the release.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy testnet cluster
+    needs: [build-push-image, build-push-ss]
+    uses: ./.github/workflows/testnet-deploy.yml
+    with:
+      image_tag: sha-${{ github.sha }}
+    secrets: inherit
