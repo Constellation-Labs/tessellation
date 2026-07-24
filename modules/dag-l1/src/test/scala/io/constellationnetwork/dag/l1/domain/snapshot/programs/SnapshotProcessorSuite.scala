@@ -186,7 +186,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       Map.empty,
                       Map.empty,
                       Map.empty,
-                      Map.empty
+                      Map.empty,
+                      Map(Dev -> SnapshotOrdinal.MinValue)
                     ),
                     Dev,
                     LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
@@ -262,7 +263,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     Map.empty,
                     Map.empty,
                     Map.empty,
-                    Map.empty
+                    Map.empty,
+                    Map(Dev -> SnapshotOrdinal.MinValue)
                   ),
                   MetagraphsSyncConfig(PosInt(100)),
                   Dev,

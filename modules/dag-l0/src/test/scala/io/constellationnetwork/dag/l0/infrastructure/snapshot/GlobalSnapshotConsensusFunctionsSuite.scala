@@ -344,7 +344,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             Map.empty,
             Map.empty,
             Map.empty,
-            Map.empty
+            Map.empty,
+            Map(Dev -> SnapshotOrdinal.MinValue)
           ),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,

@@ -279,7 +279,8 @@ object Mocks {
                       Map.empty,
                       Map.empty,
                       Map.empty,
-                      Map.empty
+                      Map.empty,
+                      Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue)
                     ),
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,

@@ -33,6 +33,20 @@ object artifact {
   )
 
   @derive(decoder, encoder, order, ordering, show)
+  case class BurnAction(burnTransactions: NonEmptyList[BurnTransaction]) extends SharedArtifact
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class BurnTransaction(
+    allowSpendRef: Option[Hash],
+    currencyId: Option[CurrencyId],
+    amount: SwapAmount,
+    source: Address,
+    // L0-opaque commitment to an off-chain, source-signed intent. L0 carries and hashes it
+    // but never interprets it; the consuming application verifies the preimage and the source signature.
+    intentHash: Option[Hash] = None
+  )
+
+  @derive(decoder, encoder, order, ordering, show)
   case class TokenUnlock(
     tokenLockRef: Hash,
     amount: TokenLockAmount,

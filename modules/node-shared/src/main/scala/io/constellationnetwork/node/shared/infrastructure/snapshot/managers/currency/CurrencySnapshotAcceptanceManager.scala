@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, La
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.swap.BurnActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
@@ -176,6 +177,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     lastArtifactProofs: NonEmptySet[SignatureProof]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
     initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
+    burnActionValidator = BurnActionValidator.make[F]
     tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
     initialAllowSpendRef <- AllowSpendReference.emptyCurrency(lastSnapshotContext.address)
     metagraphId = lastSnapshotContext.address
@@ -196,6 +198,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       .getOrElse(environment, SnapshotOrdinal.MinValue)
     fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
       .getOrElse(environment, SnapshotOrdinal.MinValue)
+    burnActionActivation <- fieldsAddedOrdinals.burnActionActivationFor(environment).liftTo[F]
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
       blocksForAcceptance,
@@ -372,6 +375,24 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
           .filter(_.currencyId.exists(_.value == metagraphId))
     }.toList
 
+    // BurnActions are collected from the metagraph's own shared artifacts. Gated by burnActionActivation: before activation they are
+    // ignored entirely (no validation, no balance effect). This change is strictly additive to the spend path.
+    //
+    // burnActionActivation is a GLOBAL ordinal. The currency path gates on the metagraph's synced global view
+    // (lastUnsyncGlobalSnapshot.ordinal); the global path (GlobalSnapshotAcceptanceManager) gates on the global ordinal being created.
+    // The two bases are consistent: the global ordinal that ingests this currency snapshot is always >= the synced global view it was
+    // produced against, so currency-enabled implies global-enabled. A burn the metagraph accepts is therefore never rejected by the
+    // global activation gate (which would otherwise cause a currency/global divergence).
+    burnActionsEnabled = lastUnsyncGlobalSnapshot.ordinal >= burnActionActivation
+    incomingBurnActions =
+      if (burnActionsEnabled)
+        acceptedSharedArtifacts.collect { case ba: BurnAction => ba }.toList
+      else
+        List.empty[BurnAction]
+
+    incomingBurnActionsByMetagraph =
+      if (incomingBurnActions.nonEmpty) Map(metagraphId -> incomingBurnActions) else Map.empty[Address, List[BurnAction]]
+
     incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
       tokenLockBlock.value.tokenLocks.toSortedSet
     }.toSortedSet
@@ -433,11 +454,53 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
     )
 
+    // Validate BurnActions against the active allow spends and current (post-token-lock) balances. Accepted burn transactions are applied
+    // to balances after the spend step, and their referenced allow spends are consumed alongside spend refs.
+    activeAllowSpendsForBurnValidation = SortedMap(metagraphId.some -> lastActiveAllowSpends)
+    balancesForBurnValidation = Map(metagraphId.some -> updatedBalancesByTokenLocks)
+    // Allow-spend single-use across artifact types (mirrors the global path). On the currency path same-snapshot SpendActions are NOT yet
+    // globally accepted, so we exclude refs consumed by BOTH (a) already-accepted global spends and (b) SpendActions emitted in THIS
+    // snapshot. A colliding burnFrom is rejected (spends win) and never enters the currency snapshot's accepted burns, which keeps the
+    // currency re-derivation consistent with the later global acceptance (no SnapshotDifferentThanExpected).
+    currentSnapshotSpendRefs = acceptedSharedArtifacts.collect { case sa: SpendAction => sa }
+      .flatMap(_.spendTransactions.toList)
+      .flatMap(_.allowSpendRef)
+    spendConsumedRefs = (metagraphIdSpendTransactions.flatMap(_.allowSpendRef) ++ currentSnapshotSpendRefs).toSet
+    (acceptedBurnActionsByMetagraph, _) <-
+      if (incomingBurnActionsByMetagraph.nonEmpty)
+        burnActionValidator.validateReturningAcceptedAndRejected(
+          incomingBurnActionsByMetagraph,
+          activeAllowSpendsForBurnValidation,
+          balancesForBurnValidation,
+          spendConsumedRefs
+        )
+      else
+        (Map.empty[Address, List[BurnAction]], Map.empty[Address, (BurnAction, List[BurnActionValidator.BurnActionValidationError])])
+          .pure[F]
+
+    metagraphIdBurnTransactions = acceptedBurnActionsByMetagraph
+      .getOrElse(metagraphId, List.empty)
+      .flatMap(_.burnTransactions.toList)
+
+    burnAllowSpendRefs = metagraphIdBurnTransactions.flatMap(_.allowSpendRef)
+
+    acceptedBurnArtifacts = SortedSet.from[SharedArtifact](
+      acceptedBurnActionsByMetagraph
+        .getOrElse(metagraphId, List.empty)
+        .map(burnAction => burnAction: SharedArtifact)
+    )
+    acceptedSharedArtifactsWithoutBurn = acceptedSharedArtifacts.filter {
+      case _: BurnAction => false
+      case _             => true
+    }
+    acceptedSharedArtifactsForOutput = acceptedSharedArtifactsWithoutBurn ++ acceptedBurnArtifacts
+
     updatedAllowSpends <- allowSpendOps.acceptCurrencyAllowSpends(
       lastGlobalSnapshotEpochProgress,
       incomingCurrencyAllowSpends,
       lastActiveAllowSpends,
       metagraphIdSpendTransactions,
+      burnAllowSpendRefs,
       lastUnsyncGlobalSnapshot.ordinal,
       fixingAllowSpendExpiration
     )
@@ -475,6 +538,16 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
     )
 
+    // Apply burns AFTER the spend step, feeding the spend step's output balances in. Burns reduce totalSupply (never credit a destination).
+    updatedBalancesByBurnTransactions = allowSpendOps.updateCurrencyBalancesByBurnTransactions(
+      updatedBalancesBySpendTransactions,
+      allActiveCurrencyAllowSpends,
+      metagraphIdBurnTransactions
+    ) match {
+      case Right(balances) => balances
+      case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by burn transactions: $error")
+    }
+
     updatedAllowSpendsCleaned = updatedAllowSpends.filter { case (_, allowSpends) => allowSpends.nonEmpty }
     updatedActiveTokenLocksCleaned = updatedActiveTokenLocks.filter { case (_, tokenLocks) => tokenLocks.nonEmpty }
 
@@ -505,16 +578,16 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
             )
             Async[F].raiseError(unauthorizedError)
           } else {
-            updatedBalancesBySpendTransactions.pure[F]
+            updatedBalancesByBurnTransactions.pure[F]
           }
         } { info =>
           if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment) {
-            info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+            info.balanceAdjustFunction(updatedBalancesByBurnTransactions, balanceAdjustments) match {
               case Right(balances) => balances.pure[F]
               case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
             }
           } else {
-            updatedBalancesBySpendTransactions.pure[F]
+            updatedBalancesByBurnTransactions.pure[F]
           }
         }
 
@@ -564,7 +637,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       messagesAcceptanceResult,
       globalSnapshotSyncAcceptanceResult,
       acceptedRewardTxs,
-      acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ maybeGlobalSnapshotProcessedEvent,
+      acceptedSharedArtifactsForOutput ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ maybeGlobalSnapshotProcessedEvent,
       acceptedFeeTxs,
       csi,
       stateProof,
