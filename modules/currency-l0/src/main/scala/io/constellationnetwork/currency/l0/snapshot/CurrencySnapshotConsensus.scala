@@ -120,15 +120,44 @@ object CurrencySnapshotConsensus {
     // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the consensus config copy below.
     val resolvedActiveAdmissionRecentSignerWindow: Int =
       math.max(3, snapshotConfig.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3))
+    // Active-set growth target + hard cap: env-resolved (the coreCommitteeSize pattern), mirror of
+    // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the copy below. Absent env
+    // entries preserve the ConsensusConfig scalar resolution (None -> coreCommitteeSize fallback),
+    // which is the expected shape for currency metagraphs (small clusters; target = Core).
+    val resolvedActiveFacilitatorTarget: Option[Int] =
+      snapshotConfig.activeFacilitatorTarget.get(environment).orElse(snapshotConfig.consensus.activeFacilitatorTarget)
+    val resolvedActiveFacilitatorMax: Option[Int] =
+      snapshotConfig.activeFacilitatorMax.get(environment).orElse(snapshotConfig.consensus.activeFacilitatorMax)
     val effectiveConsensusConfig: ConsensusConfig =
       snapshotConfig.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
+        activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
+        activeFacilitatorMax = resolvedActiveFacilitatorMax
       )
 
     for {
+      // Fail fast on sizing invariants (mirror of GlobalSnapshotConsensus): a configured target at
+      // or below the Core floor closes the admission deficit gate before Core can reach the floor;
+      // a max below the floor caps the active set under it. Inert while the currency env maps are
+      // unset (absent entries fall back to target = coreCommitteeSize, the metagraph shape).
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
+          s" ($resolvedCoreCommitteeSize)"
+      ).raiseError[F, Unit]
+        .whenA(resolvedActiveFacilitatorTarget.exists(_ <= resolvedCoreCommitteeSize))
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-max ($resolvedActiveFacilitatorMax) must be >= core-committee-size" +
+          s" ($resolvedCoreCommitteeSize)"
+      ).raiseError[F, Unit]
+        .whenA(resolvedActiveFacilitatorMax.exists(_ < resolvedCoreCommitteeSize))
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must not exceed" +
+          s" active-facilitator-max ($resolvedActiveFacilitatorMax)"
+      ).raiseError[F, Unit]
+        .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
       consensusStorage <- ConsensusStorage.make[
         F,
         CurrencySnapshotEvent,

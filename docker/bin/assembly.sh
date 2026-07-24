@@ -104,7 +104,11 @@ if [ "$PUBLISH" == "true" ]; then
     echo "  SNAPSHOT versions are not published - use a tagged release."
   else
     echo "Publishing local with version: $TESSELLATION_VERSION"
-    sbt --error "set ThisBuild / version := \"$TESSELLATION_VERSION\"" sdk/publishLocal
+    # -no-link-warnings: an unresolvable Scaladoc [[member]] link (e.g. release/testnet's
+    # ConsensusStateAdvancer references [[QuorumDenominatorShrink]]) is fatal to `doc` and would
+    # abort this publish — and thus the snapshot-streaming build that depends on the SDK. Suppress
+    # link warnings so it doesn't. No-op on branches with clean docs (e.g. develop).
+    sbt --error "set ThisBuild / version := \"$TESSELLATION_VERSION\"" "set sdk / Compile / doc / scalacOptions += \"-no-link-warnings\"" sdk/publishLocal
   fi
 fi
 

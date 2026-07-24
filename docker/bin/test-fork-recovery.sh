@@ -80,12 +80,16 @@ get_fork_events() {
   echo "${result:-0}"
 }
 
-# Helper: check for round completions after a given ordinal
+# Helper: check for round completions after a given ordinal.
+# Marker: the once-per-round CONSENSUS_FINISHED lifecycle line (INFO, ConsensusFSM), rendered as
+# "[CONSENSUS:LIFECYCLE] round=SnapshotOrdinal(N) role=n/a event=CONSENSUS_FINISHED". The previous
+# marker ("Round finished ordinal=N") was demoted to DEBUG: it fired per signature-evaluation poll
+# (~150x/round), not per round, and was a top log-volume source at cluster scale.
 get_completed_rounds_after() {
   local node=$1
   local after_ordinal=$2
   local result
-  result=$(docker logs "$node" 2>&1 | grep "Round finished ordinal=" | sed -n 's/.*ordinal=\([0-9]*\).*/\1/p' | awk -v min="$after_ordinal" '$1 > min' | wc -l || true)
+  result=$(docker logs "$node" 2>&1 | grep "event=CONSENSUS_FINISHED" | sed -n 's/.*round=SnapshotOrdinal(\([0-9]*\)).*/\1/p' | awk -v min="$after_ordinal" '$1 > min' | wc -l || true)
   echo "${result:-0}"
 }
 
@@ -361,8 +365,8 @@ while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
 
   echo "  [${elapsed}s] $ISOLATION_NODE: facilitators=${iso_fac:-?} completedAfterIsolation=$iso_completed forkEvents=$fork_events clusterOrdinal=${monitor_ord:-?}"
 
-  # Success criterion A: node logged "Round finished" >= 1 time after the isolation period ended.
-  # get_completed_rounds_after counts log lines containing "Round finished ordinal=N" where N > post_isolation_ordinal,
+  # Success criterion A: node logged CONSENSUS_FINISHED >= 1 time after the isolation period ended.
+  # get_completed_rounds_after counts "event=CONSENSUS_FINISHED round=SnapshotOrdinal(N)" lines where N > post_isolation_ordinal,
   # so it only counts rounds completed on the re-joined node's own consensus loop.
   # (Threshold is 1, not 2: after recovery the node participates in one round cleanly. Subsequent rounds
   # may still evict it due to TCA penalty expiry cycles and removalPenaltyRounds — this is expected and

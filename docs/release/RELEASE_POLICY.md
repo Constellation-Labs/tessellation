@@ -12,11 +12,21 @@ Releases flow through environments in sequence: **Testnet -> IntegrationNet -> M
 
 All network upgrades require coordination with the auto-restart lambda and confirmation that source nodes have reached READY state before re-enabling automated monitoring.
 
+Before performing a release or merging a PR with breaking changes, ensure you have this document and its references on hand and understand the purpose of each stage.
+
 | Environment | Notice Period | Breaking Changes | Feature Epoch | Discord |
 |-------------|---------------|------------------|---------------|---------|
 | Testnet     | N/A           | N/A              | N/A           | Network Update |
 | IntNet      | 3 days        | Minimal Docs     | R+1 day       | All Stages |
 | MainNet     | 7 days        | Complete         | R+3 days      | All Stages |
+
+## References
+
+- Network Monitoring Service (auto-restart lambda)
+- Network Monitoring dashboards
+- Release Process (internal runbook)
+- [Tessellation GitHub Releases](https://github.com/Constellation-Labs/tessellation/releases)
+- [Conventional Commits](https://www.conventionalcommits.org/) (see also [`docs/adr/0015-conventional-commits.md`](../adr/0015-conventional-commits.md))
 
 ## Functionality Definitions
 
@@ -35,13 +45,13 @@ The preferred mechanism for introducing breaking changes. Gives node operators a
 - **Epoch-based flags** (preferred) - Enable breaking behavior at a specific approximate point in time. Epoch is a vector clock that loosely approximates actual time.
 - **Ordinal-based flags** - Should be avoided when possible, as ordinals cannot accurately proxy for time over longer periods, but may be necessary due to technical constraints.
 
-Configuration lives in `modules/node-shared/src/main/resources/application.conf`. The current primary ordinal-gate surface is the `fields-added-ordinals` block (`application.conf:210-293`), a `Map[AppEnvironment, SnapshotOrdinal]` family plus the `dust-sweeps` `Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`. Live sub-keys include `sc-fee-balance-from-context`, `dust-sweeps`, `set-sum-fix`, `fixing-allow-spend-and-token-lock-validation`, and the historical migration gates. Older keys like `last-legacy-state-proof-ordinal` and `incremental-delegated-staking-starting-ordinal` still exist but are no longer where new gates land.
+Configuration lives in `modules/node-shared/src/main/resources/application.conf`. The current primary ordinal-gate surface is the `fields-added-ordinals` block (`application.conf:210-293`), a `Map[AppEnvironment, SnapshotOrdinal]` family plus the `dust-sweeps` `Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`. Live sub-keys include `sc-fee-balance-from-context`, `dust-sweeps`, `set-sum-fix`, `fixing-allow-spend-and-token-lock-validation`, `sub-trie-roots` (currently an inert placeholder on every environment), and the historical migration gates. Older keys like `last-legacy-state-proof-ordinal` and `incremental-delegated-staking-starting-ordinal` still exist but are no longer where new gates land.
 
 Several `fields-added-ordinals` gates require the deploy-time rule that **the chain must cross the gate ordinal only after the new jar is live cluster-wide** (a too-early crossing on the old jar misses the gated behaviour; for the dust sweep, a missed sweep is not re-attempted until a rollback re-crosses the ordinal). See the gate-setting checklist in [`v4-launch-runbook.md`](v4-launch-runbook.md).
 
 ### Rollback
 
-For non-mainnet environments, sometimes required to rollback to a much earlier snapshot ordinal due to breaking changes or reversions. This is a manual process.
+For non-mainnet environments, sometimes required to rollback to a much earlier snapshot ordinal due to breaking changes or reversions. This is a manual process; contact @Marcus Sousa for the procedure.
 
 ### Snapshot Streaming Consistency
 

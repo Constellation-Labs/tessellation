@@ -1,6 +1,6 @@
 services:
   gl0:
-    image: constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}:${TESSELLATION_DOCKER_VERSION:-latest}
+    image: ${CL_DOCKER_CORE_IMAGE:-constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}}:${TESSELLATION_DOCKER_VERSION:-latest}
     container_name: gl0${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
@@ -47,7 +47,7 @@ services:
       start_period: 3s
     profiles: ["l0"]
   gl1:
-    image: constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}:${TESSELLATION_DOCKER_VERSION:-latest}
+    image: ${CL_DOCKER_CORE_IMAGE:-constellationnetwork/tessellation${CL_DOCKER_CORE_REPO:-}}:${TESSELLATION_DOCKER_VERSION:-latest}
     container_name: gl1${CONTAINER_NAME_SUFFIX:-}
     restart: unless-stopped
     env_file:
@@ -70,6 +70,12 @@ services:
       - CL_DOCKER_JOIN_RETRIES=${CL_DOCKER_GL1_JOIN_RETRIES:-10}
       - CL_DOCKER_JOIN_DELAY=${CL_DOCKER_GL1_JOIN_DELAY:-10}
       - CL_DOCKER_GENESIS=${CL_DOCKER_GL1_GENESIS:-false}
+      # L1 runs without a seedlist (matches real testnet, where only L0 is gated);
+      # blank overrides any project-level CL_DOCKER_SEEDLIST from .env
+      - CL_DOCKER_SEEDLIST=
+      # gl1's own JVM profile: a project-level CL_DOCKER_JAVA_OPTS in .env is sized for
+      # gl0 (e.g. tn's ZGC 10g) — don't inherit it; empty = entrypoint default G1 2-8g
+      - CL_DOCKER_JAVA_OPTS=${CL_DOCKER_GL1_JAVA_OPTS:-}
     ports:
       - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_GL1_PUBLIC:-9010}:${CL_DOCKER_INTERNAL_GL1_PUBLIC:-9010}"  # Public HTTP
       - "${CL_DOCKER_BIND_INTERFACE:-}${CL_DOCKER_EXTERNAL_GL1_P2P:-9011}:${CL_DOCKER_INTERNAL_GL1_P2P:-9011}"  # P2P HTTP

@@ -48,18 +48,10 @@ object TimeoutCertificateBuilder {
       val matchingByView = votes.values
         .filter(signed => signed.value.fromView == fromView && signed.value.toView == toView && signed.value.reason == reason)
         .toList
-      // Group by signer; keep all votes for the divergent-QC check, then collapse to a single deterministic
-      // representative per signer (the highest known QC, with a total-`Signed` tiebreak -- see the
-      // representative selection below) -- never `.head`, which is arrival-order dependent and could split
-      // nodes onto different certs.
-      val poolSignersAll: Map[PeerId, List[Signed[TimeoutVote]]] =
-        matchingByView.groupBy(_.proofs.head.id.toPeerId).filter { case (signer, _) => witnessPool.contains(signer) }
-      val poolQcs = poolSignersAll.values.flatten.flatMap(_.value.highestKnownQc).toList
-      val divergent = poolQcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
-      // Per-signer representative: prefer the highest known QC (carry-forward), deterministic tiebreak by
-      // the total Signed ordering. Divergent (conflicting same-view) QCs are already rejected above.
-      val poolSigners: Map[PeerId, Signed[TimeoutVote]] =
-        poolSignersAll.view.mapValues(_.maxBy(v => (v.value.highestKnownQc.map(_.view).getOrElse(Long.MinValue), v))).toMap
+      // Group-by-signer, divergent-QC detection, and per-signer representative selection are shared
+      // verbatim with ViewChangeCertificateBuilder (see CertVoteAggregation for the full contract).
+      val (poolSigners, divergent) =
+        CertVoteAggregation.poolSignersAndDivergence(matchingByView, witnessPool)(_.highestKnownQc)
 
       if (wrongLastSnapshotHash.nonEmpty)
         Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapshotHash.size))

@@ -550,7 +550,11 @@ object CurrencySnapshotConsensusStateAdvancer {
       private val AdmissionPreProposalGrace: FiniteDuration = 1500.millis
 
       private def activeAdmissionTarget(state: CurrencySnapshotConsensusState): Int =
-        config.activeFacilitatorTarget.getOrElse(config.coreCommitteeSize.getOrElse(state.coreFacilitators.value.size))
+        ActiveFacilitatorAdmission.activeAdmissionTarget(
+          config.activeFacilitatorTarget,
+          config.coreCommitteeSize,
+          state.coreFacilitators.value.size
+        )
 
       private def openAdmissionCandidates(
         state: CurrencySnapshotConsensusState,
