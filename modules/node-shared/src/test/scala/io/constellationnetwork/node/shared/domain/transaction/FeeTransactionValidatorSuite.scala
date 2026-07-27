@@ -2,8 +2,8 @@ package io.constellationnetwork.node.shared.domain.transaction
 
 import java.security.KeyPair
 
-import cats.data.{NonEmptyList, NonEmptySet}
 import cats.data.Validated.{Invalid, Valid}
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
@@ -18,9 +18,8 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
-import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.signature.signature.SignatureProof
+import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{KeyPairGenerator, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.NonNegLong

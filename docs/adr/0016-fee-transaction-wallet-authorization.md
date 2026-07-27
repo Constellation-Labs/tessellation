@@ -42,7 +42,8 @@ Currency Snapshot ordinal; only the platform security gate uses the parent Globa
 
 The activation ordinal is `5848000` for IntegrationNet's coordinated v4.1 upgrade and `0` for
 development. Mainnet and Testnet retain the disabled `9999999` placeholder until their own
-coordinated activation ordinals are selected.
+coordinated activation ordinals are selected. If the current environment is absent from the
+configured map, the stricter validation activates at `SnapshotOrdinal.MinValue`.
 
 ## Consequences
 

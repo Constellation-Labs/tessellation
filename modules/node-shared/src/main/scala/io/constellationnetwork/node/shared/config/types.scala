@@ -56,7 +56,7 @@ object types {
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MinValue)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).

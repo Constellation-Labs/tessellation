@@ -31,4 +31,27 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       }
     }
   }
+
+  test("activates fee transaction security immediately when an environment entry is absent") {
+    val fieldsAddedOrdinals = FieldsAddedOrdinals(
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty,
+      Map.empty
+    )
+
+    IO(
+      expect.same(
+        SnapshotOrdinal.MinValue,
+        fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet)
+      )
+    )
+  }
 }
