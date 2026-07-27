@@ -8,7 +8,12 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
-import io.constellationnetwork.node.shared.config.types.{DustSweep, PriceOracleConfig, RouteRateLimiterConfig}
+import io.constellationnetwork.node.shared.config.types.{
+  DustSweep,
+  FieldsAddedOrdinals,
+  PriceOracleConfig,
+  RouteRateLimiterConfig
+}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -68,4 +73,22 @@ package object pureconfig {
       .map(SortedMap.from(_))
   implicit val envToOrdinalToDustSweepReader: ConfigReader[Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
+  implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
+    ConfigReader.forProduct15(
+      "tessellation-3-migration",
+      "tessellation-301-migration",
+      "check-sync-global-snapshot-field",
+      "metagraph-sync-data",
+      "updated-last-sync-global-order",
+      "updated-last-sync-global-from-peers-in-consensus",
+      "updating-combine-function-spend-actions",
+      "fixing-allow-spend-expiration",
+      "fixing-allow-spend-and-token-lock-validation",
+      "set-sum-fix",
+      "sc-fee-balance-from-context",
+      "sub-trie-roots",
+      "delegated-rewards-full-committee",
+      "fee-transaction-security",
+      "dust-sweeps"
+    )(FieldsAddedOrdinals.apply)
 }
