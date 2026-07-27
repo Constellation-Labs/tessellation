@@ -47,12 +47,17 @@ object types {
     // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
     // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
     delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
+    feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
     // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
-  )
+  ) {
+    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
+      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+  }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
     *

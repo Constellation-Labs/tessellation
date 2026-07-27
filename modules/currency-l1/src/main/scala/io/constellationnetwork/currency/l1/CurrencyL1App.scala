@@ -307,6 +307,7 @@ abstract class CurrencyL1App(
           DataApplication
             .run(
               cfg.dataConsensus,
+              sharedConfig.fieldsAddedOrdinals.feeTransactionSecurityFor(cfg.environment),
               storages.cluster,
               storages.l0Cluster,
               sharedStorages.lastGlobalSnapshot,

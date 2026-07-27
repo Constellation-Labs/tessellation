@@ -55,10 +55,11 @@ class BalanceOpsManager[F[_]: Async](
   }
 
   def validateFeeTxs(
-    maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
+    enforceWalletAuthorization: Boolean
   ): F[Unit] =
     NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(().pure[F]) { nonEmptyTxs =>
-      feeTransactionValidator.validate(nonEmptyTxs).flatMap {
+      feeTransactionValidator.validate(nonEmptyTxs, enforceWalletAuthorization).flatMap {
         case Validated.Valid(_) =>
           ().pure[F]
         case Validated.Invalid(errors) =>

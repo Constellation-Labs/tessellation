@@ -17,6 +17,7 @@ import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateL
 import io.constellationnetwork.currency.schema.currency.DataApplicationPart
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL0
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.block.processing.{BlockNotAcceptedReason, DataBlockNotAccepted}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -33,12 +34,14 @@ trait DataApplicationSnapshotAcceptanceManager[F[_]] {
     maybeLastDataApplication: Option[DataApplicationPart],
     dataBlocks: List[Signed[DataApplicationBlock]],
     lastOrdinal: SnapshotOrdinal,
-    currentOrdinal: SnapshotOrdinal
+    currentOrdinal: SnapshotOrdinal,
+    parentGlobalSnapshotOrdinal: SnapshotOrdinal
   ): F[Option[DataApplicationAcceptanceResult]]
 
   def consumeSignedMajorityArtifact(
     maybeLastDataApplication: Option[DataApplicationPart],
-    artifact: Signed[CurrencySnapshotArtifact]
+    artifact: Signed[CurrencySnapshotArtifact],
+    parentGlobalSnapshotOrdinal: SnapshotOrdinal
   ): F[Unit]
 }
 
@@ -63,10 +66,11 @@ object DataApplicationSnapshotAcceptanceManager {
       s"Calculated state hash=${current.show} does not match expected hash=${expected.show} from majority"
   }
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: Hasher: JsonSerializer: SecurityProvider](
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
-    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
+    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
   ): DataApplicationSnapshotAcceptanceManager[F] = new DataApplicationSnapshotAcceptanceManager[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -93,7 +97,8 @@ object DataApplicationSnapshotAcceptanceManager {
 
     def consumeSignedMajorityArtifact(
       maybeLastDataApplication: Option[DataApplicationPart],
-      artifact: Signed[CurrencySnapshotArtifact]
+      artifact: Signed[CurrencySnapshotArtifact],
+      parentGlobalSnapshotOrdinal: SnapshotOrdinal
     ): F[Unit] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
@@ -104,7 +109,7 @@ object DataApplicationSnapshotAcceptanceManager {
             .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
             .flatMapF { dataBlocks =>
               artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
-                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal)
+                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal, parentGlobalSnapshotOrdinal)
               )
             }
             .map(_.calculatedState)
@@ -120,7 +125,8 @@ object DataApplicationSnapshotAcceptanceManager {
       maybeLastDataApplication: Option[DataApplicationPart],
       dataBlocks: List[Signed[DataApplicationBlock]],
       lastOrdinal: SnapshotOrdinal,
-      currentOrdinal: SnapshotOrdinal
+      currentOrdinal: SnapshotOrdinal,
+      parentGlobalSnapshotOrdinal: SnapshotOrdinal
     ): F[Option[DataApplicationAcceptanceResult]] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
@@ -178,7 +184,19 @@ object DataApplicationSnapshotAcceptanceManager {
                   val dataTransactions = dataBlock.value.dataTransactions
 
                   val dataTransactionsValidations =
-                    dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
+                    dataTransactions
+                      .traverse(
+                        validateDataTransactionsL0(
+                          _,
+                          service,
+                          balances,
+                          currentOrdinal,
+                          parentGlobalSnapshotOrdinal,
+                          dataState,
+                          feeTransactionSecurityActivationOrdinal
+                        )
+                      )
+                      .map(_.reduce)
 
                   dataTransactionsValidations.flatTap { validation =>
                     if (validation.isValid)
