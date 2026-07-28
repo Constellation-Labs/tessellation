@@ -154,7 +154,7 @@ identity-only source check.
 L1 submission and consensus use the latest Global Snapshot ordinal. ML0 data-block acceptance and
 final snapshot acceptance use the parent Currency Snapshot's signed `globalSyncView.ordinal`.
 Currency Snapshot ordinals never activate this platform rule. See
-[ADR-0016](../adr/0016-fee-transaction-wallet-authorization.md).
+[ADR-0029](../adr/0029-fee-transaction-wallet-authorization.md).
 
 ## Operator checklist
 
