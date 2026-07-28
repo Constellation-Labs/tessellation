@@ -57,8 +57,7 @@ object FeeTransactionSignatureValidator {
   private def duplicatedSignerIds(
     signedTransaction: Signed[FeeTransaction]
   ): Option[NonEmptySet[Id]] = {
-    val duplicatedIds = signedTransaction.proofs
-      .toNonEmptyList
+    val duplicatedIds = signedTransaction.proofs.toNonEmptyList
       .map(_.id)
       .toList
       .groupBy(identity)
@@ -80,13 +79,13 @@ object FeeTransactionSignatureValidator {
     signedTransaction: Signed[FeeTransaction]
   ): F[FeeTransactionSignatureValidationResult[Signed[FeeTransaction]]] =
     FeeTransaction.serialize[F](signedTransaction.value).map(Hash.fromBytes).flatMap { hash =>
-      signedTransaction.proofs.toNonEmptyList
-        .traverse { proof =>
-          verifySignatureProof[F](hash, proof).map(proof -> _)
-        }
+      signedTransaction.proofs.toNonEmptyList.traverse { proof =>
+        verifySignatureProof[F](hash, proof).map(proof -> _)
+      }
         .map(_.collect { case (proof, false) => proof })
         .map { invalidProofs =>
-          NonEmptySet.fromSet(SortedSet.from(invalidProofs))
+          NonEmptySet
+            .fromSet(SortedSet.from(invalidProofs))
             .map(InvalidSignatures(_).asInstanceOf[FeeTransactionSignatureValidationError].invalidNec[Signed[FeeTransaction]])
             .getOrElse(signedTransaction.validNec[FeeTransactionSignatureValidationError])
         }

@@ -31,7 +31,7 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
 
   override def sharedResource: Resource[IO, Res] =
     for {
-      json <- JsonSerializer.forSync[IO].asResource
+      json <- JsonSerializer.forAsync[IO].asResource
       securityProvider <- SecurityProvider.forAsync[IO]
     } yield (json, securityProvider)
 
@@ -97,13 +97,15 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
         originalSigned.proofs
       )
       result <- validator.validate(modified, enforceWalletAuthorization = true)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists {
-          case InvalidSigned(_: InvalidSignatures) => true
-          case _                                   => false
-        }
-      case Valid(_) => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) =>
+          errors.exists {
+            case InvalidSigned(_: InvalidSignatures) => true
+            case _                                   => false
+          }
+        case Valid(_) => false
+      })
   }
 
   test("allows source-authorized co-signers only after the activation gate") { res =>
@@ -117,16 +119,18 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
       signedTransaction <- signed(value, NonEmptyList.of(source, coSigner))
       beforeActivation <- validator.validate(signedTransaction, enforceWalletAuthorization = false)
       afterActivation <- validator.validate(signedTransaction, enforceWalletAuthorization = true)
-    } yield expect.all(
-      beforeActivation match {
-        case Invalid(errors) => errors.exists {
-            case NotSignedBySourceAddressOwner => true
-            case _                             => false
-          }
-        case Valid(_)        => false
-      },
-      afterActivation == Valid(signedTransaction)
-    )
+    } yield
+      expect.all(
+        beforeActivation match {
+          case Invalid(errors) =>
+            errors.exists {
+              case NotSignedBySourceAddressOwner => true
+              case _                             => false
+            }
+          case Valid(_) => false
+        },
+        afterActivation == Valid(signedTransaction)
+      )
   }
 
   test("continues to reject transfers to the source address after activation") { res =>
@@ -137,12 +141,14 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
       value = transaction(source, source.getPublic.toAddress)
       signedTransaction <- signed(value, NonEmptyList.one(source))
       result <- validator.validate(signedTransaction, enforceWalletAuthorization = true)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists {
-          case SameSourceAndDestinationAddress(address) => address === value.source
-          case _                                        => false
-        }
-      case Valid(_) => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) =>
+          errors.exists {
+            case SameSourceAndDestinationAddress(address) => address === value.source
+            case _                                        => false
+          }
+        case Valid(_) => false
+      })
   }
 }

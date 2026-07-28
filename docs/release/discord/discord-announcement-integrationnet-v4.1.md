@@ -53,10 +53,11 @@ catching up a slow peer cannot starve the consensus loop.
 
 ### Feature Flags
 
-No ordinal or epoch feature flags activate as part of this restart. All `fields-added-ordinals` gates
-remain at their IntegrationNet placeholder values (not yet scheduled). Any later gate activation on
-IntegrationNet (for example `sub-trie-roots`) will be announced separately with at least 1 day of
-advance notice, and again when it triggers.
+The v4.1 `fields-added-ordinals` gates are provisionally aligned at Global Snapshot ordinal
+`5848000`, including `sub-trie-roots`, delegated full-committee rewards, and exact source-wallet
+authorization for metagraph data-update fees. This value must be replaced if the network can reach it
+before the coordinated Global L0, Currency L1, ML0, and snapshot-streaming rollout completes. The final
+ordinal will be announced with at least 1 day of advance notice and again when it triggers.
 
 ### For Metagraph Operators (Action Required)
 

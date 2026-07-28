@@ -32,7 +32,7 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
 
   override def sharedResource: Resource[IO, Res] =
     for {
-      json <- JsonSerializer.forSync[IO].asResource
+      json <- JsonSerializer.forAsync[IO].asResource
       securityProvider <- SecurityProvider.forAsync[IO]
     } yield (json, securityProvider)
 
@@ -97,10 +97,11 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
         originalSigned.proofs
       )
       result <- validate(modified)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists(_.isInstanceOf[InvalidSignatures])
-      case Valid(_)        => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) => errors.exists(_.isInstanceOf[InvalidSignatures])
+        case Valid(_)        => false
+      })
   }
 
   test("accepts distinct valid co-signers when the source wallet also signs") { res =>
@@ -131,10 +132,11 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
         NonEmptySet.fromSetUnsafe(SortedSet(sourceProof, invalidProof))
       )
       result <- validate(signedTransaction)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists(_.isInstanceOf[InvalidSignatures])
-      case Valid(_)        => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) => errors.exists(_.isInstanceOf[InvalidSignatures])
+        case Valid(_)        => false
+      })
   }
 
   test("rejects valid proofs when none belong to the source wallet") { res =>
@@ -147,10 +149,11 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
       value = transaction(source, destination.getPublic.toAddress)
       signedTransaction <- signed(value, NonEmptyList.one(otherSigner))
       result <- validate(signedTransaction)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists(_ === SourceNotSigned)
-      case Valid(_)        => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) => errors.exists(_ === SourceNotSigned)
+        case Valid(_)        => false
+      })
   }
 
   test("rejects duplicate signer identities before signature verification") { res =>
@@ -167,10 +170,11 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
         NonEmptySet.fromSetUnsafe(SortedSet(validProof, duplicateIdentityProof))
       )
       result <- validate(signedTransaction)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists(_.isInstanceOf[DuplicateSigners])
-      case Valid(_)        => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) => errors.exists(_.isInstanceOf[DuplicateSigners])
+        case Valid(_)        => false
+      })
   }
 
   test("rejects proof sets above the protocol cap before signature verification") { res =>
@@ -186,9 +190,10 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
         NonEmptySet.fromSetUnsafe(SortedSet.from(proofs))
       )
       result <- validate(signedTransaction)
-    } yield expect(result match {
-      case Invalid(errors) => errors.exists(_ === TooManyProofs(MaxProofCount + 1L, MaxProofCount))
-      case Valid(_)        => false
-    })
+    } yield
+      expect(result match {
+        case Invalid(errors) => errors.exists(_ === TooManyProofs(MaxProofCount + 1L, MaxProofCount))
+        case Valid(_)        => false
+      })
   }
 }

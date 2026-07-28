@@ -8,12 +8,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
-import io.constellationnetwork.node.shared.config.types.{
-  DustSweep,
-  FieldsAddedOrdinals,
-  PriceOracleConfig,
-  RouteRateLimiterConfig
-}
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
