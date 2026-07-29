@@ -24,6 +24,8 @@ import fs2.io.file.Path
 
 object types {
 
+  // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
+  // Fields share similar map types, so reordering them without updating that reader can miswire gates.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
@@ -56,7 +58,7 @@ object types {
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MinValue)
+      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).

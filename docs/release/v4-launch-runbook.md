@@ -123,9 +123,9 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       testnet remain `9999999`.
 
 - [ ] **`fee-transaction-security`**. At/after this global ordinal, metagraph data-update fees require
-      exact source-wallet signatures on every accepted path. IntegrationNet is provisionally
-      `5848000`; mainnet and testnet remain `9999999`. Every Currency L1 and ML0 node must run the new
-      jar before crossing the gate.
+      exact source-wallet signatures on every accepted path. All public networks remain at
+      `9999999` until a future activation ordinal is selected. Every Currency L1 and ML0 node must
+      run the new jar before crossing the gate.
 
 - [ ] **Sanity-check the historical gates** (`application.conf:211-258`). The migration gates above this
       block (`tessellation-3-migration`, `tessellation-301-migration`, `check-sync-global-snapshot-field`,

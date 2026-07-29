@@ -36,10 +36,10 @@ Each gate is loaded from the `fields-added-ordinals` HOCON block (`application.c
 - A **threshold gate** (`Map[AppEnvironment, SnapshotOrdinal]`): the behavior is gated by `ordinal >= gate`. Absent-environment resolution **fails closed** to `SnapshotOrdinal.MaxValue` (e.g. `scFeeBalanceFromContext.getOrElse(environment, SnapshotOrdinal.MaxValue)` at `GlobalSnapshotConsensus.scala:152` and `SharedServices.scala:195`): the `ordinal >= gate` check never fires, so an unset environment keeps the OLD path rather than silently activating the new one from genesis. Set an env entry to `0` to turn the new path on from genesis (as testnet does), or to a future launch ordinal to switch over at that ordinal. A high placeholder such as `9999999` does the same as the fail-closed default explicitly: it keeps the OLD path live until replaced with the real launch ordinal.
 - An **exact-key gate** (`dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`): the behavior fires only at exactly the keyed ordinal (`dustSweeps.get(env).flatMap(_.get(ordinal))`), once, and never replays.
 
-`feeTransactionSecurity` deliberately uses the opposite missing-environment default:
-`SnapshotOrdinal.MinValue`. Missing security configuration therefore enables exact-signature
-verification instead of preserving the vulnerable legacy identity-only check. Public-network
-entries remain explicit so historical replay below their activation ordinal is unchanged.
+`feeTransactionSecurity` follows the replay-safe missing-environment default:
+`SnapshotOrdinal.MaxValue`. Missing configuration therefore retains the historical path rather
+than applying stricter validation retroactively to signed history. The shipped configuration
+contains an explicit entry for every environment.
 
 Per-environment activation ordinals differ because the same fix crosses different points of different chains. The behavior itself is identical code on every network; only WHEN it activates is per-environment. Examples from `application.conf:210-293`:
 
@@ -51,10 +51,10 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `sc-fee-balance-from-context` | 9999999 | 3101393 | 5848000 | 0 |
 | `sub-trie-roots` | 9999999 | 9999999 | 5848000 | 9999999 |
 | `delegated-rewards-full-committee` | 9999999 | 9999999 | 5848000 | 0 |
-| `fee-transaction-security` | 9999999 | 9999999 | 5848000 | 0 |
+| `fee-transaction-security` | 9999999 | 9999999 | 9999999 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
-A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. Unless a gate defines a stricter security default such as `feeTransactionSecurity`, an absent environment (no map entry) means the behavior never activates there.
+A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
 
 ## Reward gates: three values with different jobs
 
@@ -163,7 +163,7 @@ Currency Snapshot ordinals never activate this platform rule. See
   - `sc-fee-balance-from-context.mainnet` (`9999999`, `application.conf:275-284`): set it to its context-deploy ordinal. testnet is pinned to its real cutover (`3101393`); IntegrationNet is provisionally `5848000`. An unset env fails closed to the `mptStore` path.
   - `sub-trie-roots.mainnet` and `.testnet` (`9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. IntegrationNet is provisionally `5848000` and requires matching snapshot-streaming support. For a cold restart at checkpoint `N`, use `N + 1`.
   - `delegated-rewards-full-committee.<env>`: set the deploying environment to the first ordinal produced by the corrected jar. Below it, the historical evidence-score filter must remain available for replay.
-  - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet is provisionally `5848000`; do not deploy that value if the chain has already crossed or can cross it during rollout.
+  - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet remains at `9999999` until that future ordinal is selected.
   - `dust-sweeps` has no mainnet entry yet (`application.conf:286-292`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf:281-285`). Bump it up if the chain nears it before the coordinated cold restart completes.
 - These gates do NOT participate in `deterministicConfigHash`, so a wrong ordinal is NOT caught at handshake. It forks the chain when the gate is crossed. Verify them by inspection before deploy.

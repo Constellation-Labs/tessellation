@@ -23,7 +23,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
             Map(
               AppEnvironment.Mainnet -> SnapshotOrdinal.unsafeApply(9999999L),
               AppEnvironment.Testnet -> SnapshotOrdinal.unsafeApply(9999999L),
-              AppEnvironment.Integrationnet -> SnapshotOrdinal.unsafeApply(5848000L),
+              AppEnvironment.Integrationnet -> SnapshotOrdinal.unsafeApply(9999999L),
               AppEnvironment.Dev -> SnapshotOrdinal.MinValue
             ),
             fieldsAddedOrdinals.feeTransactionSecurity
@@ -32,7 +32,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     }
   }
 
-  test("activates fee transaction security immediately when an environment entry is absent") {
+  test("keeps fee transaction security disabled when an environment entry is absent") {
     val fieldsAddedOrdinals = FieldsAddedOrdinals(
       tessellation3Migration = Map.empty,
       tessellation301Migration = Map.empty,
@@ -49,7 +49,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
 
     IO(
       expect.same(
-        SnapshotOrdinal.MinValue,
+        SnapshotOrdinal.MaxValue,
         fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet)
       )
     )

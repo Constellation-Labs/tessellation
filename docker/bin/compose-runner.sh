@@ -61,7 +61,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  allow-spends             Allow-spend tests"
   echo "  spend                    Spend transaction tests"
   echo "  data-without-fee         Data transaction tests (without fee, requires CI_PRIVATE_KEY)"
-  echo "  data-with-fee            Data transaction tests (with fee, requires CI_PRIVATE_KEY)"
+  echo "  data-with-fee            Data transaction tests (with fee)"
   echo ""
   echo "Usage: just test --test=dag-cluster --test=delegated-staking"
   echo "       just test --test=dag-cluster,rewards    (comma-separated)"
@@ -502,7 +502,7 @@ echo "------------------------------------------------"
 # Install dependencies
 cd $PROJECT_ROOT/.github/action_scripts
 echo "Installing Node.js dependencies..."
-npm i @stardust-collective/dag4 js-sha256 axios brotli zod elliptic
+npm ci
 
 if [ -z "$REMOTE_HOST" ] || [ "$REMOTE_HOST" = "http://localhost" ]; then
   sleep 10
@@ -696,28 +696,28 @@ if [ -n "$METAGRAPH" ]; then
     show_time "Spend transaction tests completed"
   fi
 
-  if [ -n "$CI_PRIVATE_KEY" ]; then
-    if should_run_test "data-without-fee"; then
+  if should_run_test "data-without-fee"; then
+    if [ -n "$CI_PRIVATE_KEY" ]; then
       echo "================================================"
       echo "Running data transaction tests (without fee)"
       echo "================================================"
       cd $PROJECT_ROOT/.github/action_scripts
       node send_transactions/data-without-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX $CI_PRIVATE_KEY
       show_time "Data transaction tests (without fee) completed"
+    else
+      echo "================================================"
+      echo "Skipping data transaction tests without fee (CI_PRIVATE_KEY not set)"
+      echo "================================================"
     fi
+  fi
 
-    if should_run_test "data-with-fee"; then
-      echo "================================================"
-      echo "Running data transaction tests (with fee)"
-      echo "================================================"
-      cd $PROJECT_ROOT/.github/action_scripts
-      node send_transactions/data-with-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX $CI_PRIVATE_KEY
-      show_time "Data transaction tests (with fee) completed"
-    fi
-  else
+  if should_run_test "data-with-fee"; then
     echo "================================================"
-    echo "Skipping data transaction tests (CI_PRIVATE_KEY not set)"
+    echo "Running data transaction tests (with fee)"
     echo "================================================"
+    cd $PROJECT_ROOT/.github/action_scripts
+    node send_transactions/data-with-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX
+    show_time "Data transaction tests (with fee) completed"
   fi
 
 else
@@ -731,7 +731,5 @@ echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
-
-
 
 

@@ -23,6 +23,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{KeyPairGenerator, SecurityProvider}
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
 
@@ -81,6 +82,24 @@ object FeeTransactionSignatureValidatorSuite extends MutableIOSuite {
       signedTransaction <- signed(value, NonEmptyList.one(source))
       result <- validate(signedTransaction)
     } yield expect.same(Valid(signedTransaction), result)
+  }
+
+  test("matches the DAG4 keystore fee transaction signing preimage") { res =>
+    implicit val (jsonSerializer, _) = res
+
+    val value = FeeTransaction(
+      Address("DAG0KpQNqMsED4FC5grhFCBWG8iwU8Gm6aLhB9w5"),
+      Address("DAG0jfGbPHrkX9E1grPgTrSZHVZaYy8gqHeTjbaf"),
+      Amount(NonNegLong.unsafeFrom(123L)),
+      Hash("0000000000000000000000000000000000000000000000000000000000000000")
+    )
+
+    FeeTransaction.serialize[IO](value).map { bytes =>
+      expect.all(
+        bytes.length === 161,
+        Hash.fromBytes(bytes) === Hash("87f637fc6d707d6ce3af508e4938d2b0e5642c210bc210865fe7176db67975a5")
+      )
+    }
   }
 
   test("rejects a signature reused after the fee transaction payload changes") { res =>

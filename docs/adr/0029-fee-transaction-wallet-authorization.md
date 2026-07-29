@@ -40,10 +40,10 @@ fee Owner wallet as the data-update fee recipient and does not change the metagr
 In particular, the ordinal passed to an ML0 application's `validateFee` callback remains the
 Currency Snapshot ordinal; only the platform security gate uses the parent Global Snapshot ordinal.
 
-The activation ordinal is `5848000` for IntegrationNet's coordinated v4.1 upgrade and `0` for
-development. Mainnet and Testnet retain the disabled `9999999` placeholder until their own
-coordinated activation ordinals are selected. If the current environment is absent from the
-configured map, the stricter validation activates at `SnapshotOrdinal.MinValue`.
+Development activates the rule from ordinal `0`. IntegrationNet, Mainnet, and Testnet retain the
+disabled `9999999` placeholder until their coordinated activation ordinals are selected. If the
+current environment is absent from the configured map, validation remains on the historical path
+at `SnapshotOrdinal.MaxValue` to prevent accidental retroactive activation during replay.
 
 ## Consequences
 

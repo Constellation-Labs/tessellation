@@ -373,16 +373,15 @@ object Engine {
             result <- maybeBlock match {
               case Some(block) =>
                 Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
-                  signedBlock.dataTransactions
-                    .traverse(
-                      validateDataTransactionsL1(
-                        _,
-                        dataApplication,
-                        balances,
-                        gsOrdinal,
-                        feeTransactionSecurityActivationOrdinal
-                      )
+                  signedBlock.dataTransactions.traverse { dataTransactions =>
+                    validateDataTransactionsL1(
+                      dataTransactions,
+                      dataApplication,
+                      balances,
+                      gsOrdinal,
+                      feeTransactionSecurityActivationOrdinal
                     )
+                  }
                     .map(_.forall(_.isValid))
                     .ifM(
                       processBlock(newState, proposal, signedBlock), {
