@@ -49,8 +49,9 @@ in [the rewards mechanism reference](../consensus/rewards.md).
   accretion.
 - Probationary Tier-1 seats earn immediately once admitted. Preventing idle pay must
   happen in admission/tier policy, not through a hidden payout filter.
-- Public-network activation requires choosing the correction ordinal before the jar
-  produces it; the checked-in `9,999,999` values are fail-closed placeholders.
+- IntegrationNet activates at Global Snapshot ordinal `5,880,000`. Mainnet and
+  Testnet retain fail-closed `9,999,999` placeholders until their own coordinated
+  activation ordinals are selected.
 - Signature grace remains useful for evidence quality and artifact proofs, but it is
   not a delegated reward-fairness mechanism.
 

@@ -50,8 +50,8 @@ constructed a `DelegateRewardsInput`.
 The recipient correction has its own
 `fields-added-ordinals.delegated-rewards-full-committee` gate. Below it GL0 replays
 the briefly deployed evidence-score filter; at and after it GL0 pays the full frozen
-signing committee. Public-network values remain `9,999,999` placeholders until the
-first ordinal that will be produced by the corrected jar is chosen.
+signing committee. IntegrationNet activates this correction at Global Snapshot
+ordinal `5,880,000`; Mainnet and Testnet retain `9,999,999` placeholders.
 
 The similarly named `incremental-delegated-staking-starting-ordinal` is not the
 classic-to-delegated reward switch. It gates population of the incremental delegated
@@ -90,6 +90,7 @@ When diagnosing a payout, compare the produced ordinal and epoch to both gates, 
 compare `peerHistory.controllerEvidence[ordinal - 1].roundStartFacilitators` with
 `rewards`. Do not use top-level `proofs` as the expected delegated recipient set.
 
-Before deploying the correction, replace the target environment's `9,999,999`
-placeholder with the first snapshot ordinal the corrected jar will produce. Missing
-that coordination either leaves the bug active or makes historical replay diverge.
+Before deploying the correction to another environment, replace that environment's
+`9,999,999` placeholder with a future snapshot ordinal crossed only after the
+corrected jar is live cluster-wide. Missing that coordination either leaves the bug
+active or makes historical replay diverge.

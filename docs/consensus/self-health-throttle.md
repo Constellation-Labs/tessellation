@@ -151,7 +151,9 @@ case class Facility(
 ) extends PeerDeclaration
 ```
 
-Optional with default None so v14 and v15 peers wire-decode each others' messages, but per [[reference_jar_hash_vs_schema_hash]] the jar hash gate already prevents cross-version connections; we don't rely on the optionality for compat.
+Optional with default None so v14 and v15 peers wire-decode each others' messages, but release-version
+and consensus-config hashes prevent supported cross-version connections; we don't rely on the
+optionality for runtime compatibility. The advertised jar hash is not compared during joining.
 
 `deterministicConfigHash` adds the relevant LocalHealthMonitor thresholds so divergent operator configs can't silently produce divergent leader selection.
 
@@ -320,6 +322,7 @@ authoritative.
 - [[project_v14_overnight_analysis_may15]] -- the causal chain this proposal addresses
 - [[reference_metric_label_convention]] -- use `peer_id` not `peer_id_short`
 - [[project_v18_abandon_gate_may11]] -- the gate that wedges when this proposal's degraded-peers cascade out
-- [[reference_jar_hash_vs_schema_hash]] -- jar hash is the version gate, not schemaVersion
+- [[reference_jar_hash_vs_schema_hash]] -- release-version and consensus-config hashes are the
+  enforced connection fences; the advertised jar hash is metadata
 - [[feedback_env_dependent_config_pattern]] -- `Map[AppEnvironment, ...]` for thresholds
 - [[feedback_testnet_no_rolling_upgrades]] -- cluster-wide cold restart at Phase B

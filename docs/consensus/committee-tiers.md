@@ -200,8 +200,9 @@ The floor is consensus-critical: divergent values across operators would derive
 divergent Core committees and silently fork. `coreCommitteeSize` is keyed by
 `AppEnvironment`, resolved to a flat value at the construction site, and (as of
 v20) folded into `deterministicConfigHash`, so a mismatched value is rejected at
-handshake by the config hash in addition to the jar hash already gating the
-connection (`CommitteeBuilder.scala:49-53`). The dag-l0 floor argument is
+handshake by the config hash (`CommitteeBuilder.scala:49-53`). Release-version
+hashes provide the separate version fence; the advertised jar hash is not
+compared. The dag-l0 floor argument is
 `coreCommitteeSize` (`GlobalSnapshotConsensusStateCreator.scala:559`,
 `coreFloor = coreCommitteeSize`).
 
@@ -398,8 +399,10 @@ Three deliberate properties:
   have failed anyway does not collapse the Core committee
   (`TierTransitions.scala:24-29`, `:108`).
 
-`DemotionConsecutiveMisses` is a compiled-in constant (jar-hash gated), not a config
-slot (`TierTransitions.scala:79-80`). A documented, accepted limitation: the window
+`DemotionConsecutiveMisses` is a compiled-in constant, not a config slot
+(`TierTransitions.scala:79-80`). It therefore changes only with a release artifact;
+the release-version fence, rather than the advertised jar hash, prevents supported
+mixed-version connections. A documented, accepted limitation: the window
 holds SIGNER sets, not per-round eligibility, so the guarantee is "absent from the
 last N signer sets" rather than the stronger "missed the last N rounds it was
 eligible to sign"; the consequence is bounded and recoverable (Tier 1, re-promoted

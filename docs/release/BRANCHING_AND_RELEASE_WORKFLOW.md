@@ -48,9 +48,11 @@ All release branches receive code **only** by merging from develop (or in rare c
 
 **Why:** Direct commits create "branch drift" — duplicate commits with different SHAs that make future merges impossible without conflicts. This is exactly what led to the February 2026 branch realignment where 16+ cherry-picked commits had to be triaged across `release/testnet` and `release/integrationnet`.
 
-### 3. Environment-specific configuration via environment variables
+### 3. Environment-specific configuration
 
-Network-specific tuning (gossip parameters, facilitator counts, hardfork ordinals) must be managed through deployment configuration (environment variables, Kubernetes ConfigMaps), **not** through branch-specific code changes.
+Network-specific tuning must be represented by shared configuration on `develop`, **not** by
+branch-specific code changes. A value can be supplied at deployment time only when its HOCON key has
+an explicit environment-variable override.
 
 The `application.conf` files support environment variable overrides using the HOCON `${?VAR}` pattern:
 
@@ -59,7 +61,13 @@ fanout = 2
 fanout = ${?CL_GOSSIP_PEER_ROUND_FANOUT}
 ```
 
-This allows each network to tune parameters at deploy time without diverging the codebase.
+This allows those specifically bound parameters to differ by network without diverging the
+codebase. It does not make every HOCON value deploy-time configurable.
+
+`fields-added-ordinals` currently has no `${?VAR}` bindings. Its hard-fork activation values are
+packaged into the assembly and must be finalized on `develop` before the release artifact is built.
+Ordinal changes follow the normal PR and forward-merge process; they cannot be injected through
+environment variables or Kubernetes ConfigMaps.
 
 ### 4. Tags are created by CI, not manually
 
@@ -233,11 +241,15 @@ The following GitHub branch protection settings enforce these workflows:
 
 ### Can I push a quick config change directly to testnet?
 
-No. Even configuration changes should go through develop. If you need network-specific tuning, use environment variables at deployment time (see Rule 3).
+No. Even configuration changes should go through develop. Use a deployment-time environment
+variable only when the relevant HOCON key explicitly supports one (see Rule 3). Assembly-packaged
+values such as `fields-added-ordinals` require a normal change through `develop`.
 
 ### What if develop has changes I don't want on testnet yet?
 
-Use feature flags or conditional logic gated by the network environment, not branch divergence. If a feature truly isn't ready for any release branch, it shouldn't be on develop yet — use a long-running feature branch instead.
+Use shared feature configuration, including per-environment ordinal maps for deterministic consensus
+behavior, not branch divergence. If a feature truly isn't ready for any release branch, it shouldn't
+be on develop yet; use a long-running feature branch instead.
 
 ### Can I skip testnet and go straight to integrationnet?
 
