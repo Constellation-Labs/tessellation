@@ -35,6 +35,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
+import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
@@ -61,7 +62,8 @@ import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -256,6 +258,8 @@ object GlobalSnapshotConsensus {
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           sharedCfg.fieldsAddedOrdinals.setSumFix
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+          sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommittee
+            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MaxValue),
           sharedCfg.incrementalDelegatedStakingStartingOrdinal
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           mptStore,
@@ -412,6 +416,17 @@ object GlobalSnapshotConsensus {
         Slf4jLogger.getLogger[F]
       )
 
+      // HTTP preflight for the rumor-stale abandonment escalation (issue #1533): ask a bounded
+      // random sample of Ready peers for their latest global snapshot metadata. At least two peers
+      // and a strict majority of responders must agree on `(ordinal, hash)`, confirming recovery
+      // has something to fetch without trusting a single response.
+      fetchLatestCommittedMetadata = {
+        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+        val request = PeerResponse[F, SnapshotMetadata]("global-snapshots/latest/metadata")(client, session.some)
+        (peer: Peer) => request(peer)
+      }
+      peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -448,6 +463,7 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
+          peersCommittedAheadProbe,
           injectedHealthRef
         )
 

@@ -23,7 +23,9 @@ Two distinct quorum gates apply (see ADR-0021):
 - **Liveness** is gated on Core only: `q = ceil(coreFacilitators.size * quorumThresholdFraction)`. A Core that has shrunk to a cluster minority can still rotate leaders and assemble liveness certificates.
 - **Finalization** is a separate gate. During bootstrap it keeps the legacy Core-sized strict-majority behavior; outside bootstrap it counts declarations over the **frozen `roundStartFacilitators` committee** (Core + Tier-1), so a minority Core cannot finalize a divergent snapshot.
 
-Rewards follow signing: `Rewards.distribute` splits the pool evenly across the signers in `lastArtifact.proofs`, with no Core-vs-Tier-1 stratification in today's reward math.
+Delegated rewards follow frozen round membership: Core and Tier-1 members split the
+validator pool evenly, independent of `lastArtifact.proofs`. Classic rewards remain
+proof/signer based. See ADR-0028 for the recipient policy and activation gates.
 
 All tier / quality / chronic signals derive from `controllerEvidence` -- a bounded *signed* window on the snapshot (`{ roundStartFacilitators, completedSigners, admittedPeers, timeoutVoters, ... }`) -- never from local state. Specific rules:
 

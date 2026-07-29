@@ -70,6 +70,12 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
+  private[snapshot] def delegatedRewardRecipients(facilitators: Set[PeerId]): List[PeerId] =
+    facilitators.toList.sorted
+
+  private[snapshot] def usesFullCommitteeRewards(ordinal: SnapshotOrdinal, activation: SnapshotOrdinal): Boolean =
+    ordinal >= activation
+
   def make[F[_]: Async: SecurityProvider: JsonSerializer: Metrics](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
@@ -80,12 +86,9 @@ object GlobalSnapshotConsensusFunctions {
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
     v3MigrationOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal,
+    delegatedRewardsFullCommitteeOrdinal: SnapshotOrdinal,
     incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
     mptStore: MptStore[F, GlobalStateKey],
-    // Admission promote threshold (ConsensusConfig.activeAdmissionPromoteThreshold, member of
-    // deterministicConfigHash): reward qualification bar for
-    // `ControllerEvidenceDerivation.rewardQualifiedFacilitators` -- facilitators below it (e.g.
-    // probation re-entry seats still climbing) are excluded from the node-operator reward pool.
     activeAdmissionPromoteThreshold: Int
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
@@ -420,26 +423,26 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        // Derive lastFacilitators from the current-round facilitators set rather than
-        // lastArtifact.proofs. Different nodes collect different numbers of signatures
-        // for the same snapshot (gossip is non-deterministic), so proofs.size varies
-        // per node. This causes divergent nodeOperatorRewards counts (and amounts)
-        // because the facilitator pool is split by facilitators.size. Using the
-        // current-round facilitators is deterministic: all nodes must receive all
-        // facility declarations before advancing from CollectingFacilities, so
-        // state.facilitators is identical across all consensus participants.
-        // Reward qualification: exclude facilitators whose evidence-derived score is below the
-        // promote threshold (probation re-entry seats climb without earning). Derived from the
-        // SIGNED controllerEvidence window riding `peerHistory`, so the leader and every
-        // validator re-executing this function filter identically; empty-window and
-        // nobody-qualifies regimes fall back to paying all facilitators (pre-change behavior).
-        // See ControllerEvidenceDerivation.rewardQualifiedFacilitators.
-        rewardQualified = ControllerEvidenceDerivation.rewardQualifiedFacilitators(
-          SortedSet.from(facilitators),
-          peerHistory.flatMap(_.controllerEvidence),
-          activeAdmissionPromoteThreshold
-        )
-        lastFacilitators <- rewardQualified.toList.traverse { peerId =>
+        // Derive lastFacilitators from the frozen round-start set rather than
+        // lastArtifact.proofs. Different nodes can collect different proof subsets for the same
+        // artifact, whereas the StateAdvancer passes `state.roundStartFacilitators`, which is
+        // never narrowed by node-local mid-round withdrawals.
+        // Below the correction gate, preserve the briefly-deployed evidence-score filter so
+        // historical snapshots replay byte-identically. At/after the gate, delegated rewards
+        // follow every member of the frozen signing committee; admission score affects seating,
+        // not payout eligibility.
+        rewardPeerIds =
+          if (usesFullCommitteeRewards(currentOrdinal, delegatedRewardsFullCommitteeOrdinal))
+            delegatedRewardRecipients(facilitators)
+          else
+            ControllerEvidenceDerivation
+              .legacyRewardQualifiedFacilitators(
+                SortedSet.from(facilitators),
+                peerHistory.flatMap(_.controllerEvidence),
+                activeAdmissionPromoteThreshold
+              )
+              .toList
+        lastFacilitators <- rewardPeerIds.traverse { peerId =>
           PeerId._Id.get(peerId).toAddress.map(_ -> peerId)
         }
         // Sort all event lists before passing to accept() to ensure deterministic ordering.

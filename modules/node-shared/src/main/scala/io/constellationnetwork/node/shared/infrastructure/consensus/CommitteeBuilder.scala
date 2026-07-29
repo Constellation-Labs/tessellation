@@ -20,11 +20,9 @@ import io.constellationnetwork.schema.peer.PeerId
   *
   * ==Reward and signer pool==
   *
-  * Delegated rewards (the mainnet mechanism) follow the round COMMITTEE, not the signer subset: the consensus facilitator set
-  * (`roundStartFacilitators` = Core + Tier 1 + Witness) is threaded to the distributor as `lastFacilitators` in
-  * `GlobalSnapshotConsensusFunctions` (built from the current-round facilitators, explicitly not `lastArtifact.proofs`). Every committee
-  * member earns an equal share; there is no Core-vs-Tier-1 stratification in today's reward math. The legacy classic-rewards path still
-  * keys off `lastArtifact.proofs` (= signers), but mainnet runs delegated.
+  * Delegated rewards follow the frozen round-start signing committee, not the signer subset. In the current tier-transition path this is
+  * Core + Tier 1; Witness remains observation-only and is not seated. Every seated Core and Tier-1 member earns an equal share, with no
+  * evidence-score payout filter or Core-vs-Tier-1 stratification. The legacy classic-rewards path still keys off `lastArtifact.proofs`.
   *
   * ==Tier assignment rule==
   *
@@ -255,8 +253,8 @@ object CommitteeBuilder {
     val splitTier1 = candidates.filterNot(pid => finalCoreSet.contains(pid) || rawWitnessSet.contains(pid))
     val splitWitness: List[PeerId] = rawWitness
 
-    // Reward follows committee membership (delegated rewards pay the round committee, not the
-    // signer subset), so Tier-1 and Witness are just the post-split sets -- no reward rotation.
+    // Delegated rewards follow signing-committee membership (Core + Tier 1), not the signer
+    // subset. Witness remains observation-only and non-earning. There is no Tier-1 reward rotation.
     val (finalTier1, finalWitness) = (splitTier1, splitWitness)
 
     // Stamp the effective tier on every classified peer for the round's persisted view.

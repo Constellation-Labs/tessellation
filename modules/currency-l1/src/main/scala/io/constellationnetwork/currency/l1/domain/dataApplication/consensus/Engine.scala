@@ -26,7 +26,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.round.RoundId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -89,6 +89,7 @@ object Engine {
 
   def fsm[F[_]: Async: Random: SecurityProvider: Hasher: JsonSerializer](
     dataConsensusCfg: DataConsensusConfig,
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal,
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -358,15 +359,29 @@ object Engine {
 
             maybeBlock <- roundData
               .formBlock(
-                a => validateDataTransactionsL1(a, dataApplication, balances, gsOrdinal).map(_.toEither.leftMap(_.toString).as(a)),
+                a =>
+                  validateDataTransactionsL1(
+                    a,
+                    dataApplication,
+                    balances,
+                    gsOrdinal,
+                    feeTransactionSecurityActivationOrdinal
+                  ).map(_.toEither.leftMap(_.toString).as(a)),
                 combine
               )
 
             result <- maybeBlock match {
               case Some(block) =>
                 Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
-                  signedBlock.dataTransactions
-                    .traverse(validateDataTransactionsL1(_, dataApplication, balances, gsOrdinal))
+                  signedBlock.dataTransactions.traverse { dataTransactions =>
+                    validateDataTransactionsL1(
+                      dataTransactions,
+                      dataApplication,
+                      balances,
+                      gsOrdinal,
+                      feeTransactionSecurityActivationOrdinal
+                    )
+                  }
                     .map(_.forall(_.isValid))
                     .ifM(
                       processBlock(newState, proposal, signedBlock), {

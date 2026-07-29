@@ -211,7 +211,8 @@ The decision feeds these gates:
   `decision.meets(coreDeclared)` holds, where `coreDeclared` is the set of Core peers
   that declared. On the shrunken path it logs the `[QuorumShrink]` INFO line. Quorum is
   computed against the Core committee only; Tier-1 declarations are still collected and
-  returned (so Tier-1 peers earn rewards) but cannot block or gate the phase.
+  returned for proof and participation evidence, but cannot block or gate the phase.
+  Delegated reward eligibility already follows frozen Core + Tier-1 membership.
 - **VCC assembly and apply.** `checkViewChangeAssembly`
   (`state/StateTransitions.scala:213-225`) and `applyCertifiedViewChange`
   (`state/StateTransitions.scala:576-601`) each compute

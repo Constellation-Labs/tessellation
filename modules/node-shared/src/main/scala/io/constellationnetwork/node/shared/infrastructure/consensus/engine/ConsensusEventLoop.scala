@@ -108,6 +108,12 @@ object ConsensusEventLoop {
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
+    // Layer-supplied HTTP preflight for AbandonmentTracker's rumor-stale escalation shape (issue
+    // #1533): does a corroborated group of Ready peers report the same committed snapshot at or
+    // above the abandoned key?
+    // Wire with `PeersCommittedAheadProbe.make`; see `AbandonmentTracker.EscalationSignal` for
+    // why frozen rumor state alone must never escalate.
+    peersCommittedAheadProbe: Key => F[AbandonmentTracker.PeersAheadProbe],
     // Optional externally-owned health Ref. When provided, AbandonmentTracker writes to it so
     // a sibling reader (e.g. `Cluster.leave()`'s wedge guard in SharedServices) observes the
     // same wedge signal. When None, an internal Ref is created and writes stay local. Either
@@ -157,7 +163,11 @@ object ConsensusEventLoop {
         viewChangeVoter,
         timeoutVoter
       )
-      abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx, healthRef)
+      abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+        ctx,
+        healthRef,
+        peersCommittedAheadProbe
+      )
       b2AtTipStreakRef <- Ref.of[F, Map[PeerId, Int]](Map.empty)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         ctx,

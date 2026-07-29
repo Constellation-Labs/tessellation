@@ -44,7 +44,7 @@ The tier integers are defined in `TierTransitions.scala:42-49`:
 | Tier | Constant | Value | What it can do |
 |------|----------|-------|----------------|
 | Core | `TierTransitions.Core` | `2` | Full facilitator. In the **liveness quorum**; phase transitions and liveness certificates derive their normal denominator from Core. Only Core peers are eligible to **lead** a round. |
-| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and **earn** rewards proportionally. They cannot lead, and they do **not** count toward the normal liveness denominator, so a silent Tier-1 peer cannot wedge leader rotation. |
+| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and earn a delegated validator share while seated. They cannot lead, and they do **not** count toward the normal liveness denominator, so a silent Tier-1 peer cannot wedge leader rotation. |
 | Witness | `TierTransitions.Witness` | `0` | Observation only. Open membership; in the v19 transition path peers fall here only via explicit eviction. |
 
 The key safety property: **the liveness quorum is gated on Core only.** The
@@ -66,13 +66,12 @@ committee, not a locally mutated post-eviction subset.
 
 ### Reward and signer pool
 
-Snapshot rewards go to the snapshot **signers**: `Rewards.distribute` splits the
-pool evenly across `lastArtifact.proofs.map(_.id)`. Tier-1 peers are in
-`roundStartFacilitators`, sign just like Core peers, and split the facilitator
-reward pool evenly; there is no Core-vs-Tier-1 stratification in today's reward
-math (`CommitteeBuilder.scala:22-26`). Note that the live reward set is therefore
-the round-start facilitator set that actually signs, not a leader-curated signer
-list; reward share follows signing.
+Delegated rewards go to the frozen round-start signing committee, not the proof
+subset. Core and Tier-1 peers split the static validator pool evenly; there is no
+Core-vs-Tier-1 stratification and no admission-score payout filter. Classic rewards
+retain the historical `lastArtifact.proofs.map(_.id)` signer rule. See
+[rewards.md](rewards.md) for activation gates, including the full-committee correction
+ordinal, and diagnostics.
 
 ---
 
@@ -112,14 +111,29 @@ Two expansion lanes widen the active set beyond the sticky recent-signer pool:
   remaining `target` slots (`reserveAdmitted`,
   `ActiveFacilitatorAdmission.scala:196-198`).
 - **Probation re-entry lane** -- `minProbationReentrySlots` reserves up to K
-  slots for below-promote-threshold "rehabilitating" peers (`scoreExcluded`)
-  even when the per-round expansion budget is exhausted
-  (`ActiveFacilitatorAdmission.scala:177-193`). This breaks the catch-22 where a
-  peer needs to sign to rebuild its score but the only re-entry path was throttled
-  to ~1/round. Probation-admitted peers are non-quorum-bearing: they flow into
-  `nonCorePeers` in `CommitteeBuilder` (see below) so widening the lane cannot
-  affect quorum feasibility. The lane is inert when `minProbationReentrySlots == 0`
-  (the default).
+  slots for below-promote-threshold rehabilitating peers even when the per-round
+  expansion budget is exhausted. A peer that signed the latest round retains
+  priority for a bounded probation seat until it reaches the retain band; missing
+  the latest round ends that lease. Existing climbers rank ahead of fresh
+  candidates. Probation-admitted peers are non-quorum-bearing: they flow into
+  `nonCorePeers` in `CommitteeBuilder` (see below), so widening the lane cannot
+  affect quorum feasibility. The lane is inert when
+  `minProbationReentrySlots == 0`.
+
+A demoted peer that continues signing may therefore remain active in a
+non-Core probation seat while its score recovers. Demotion still removes Core
+eligibility and, during normal operation, reward qualification: once at least one
+facilitator meets the promote threshold, reward distribution excludes every
+facilitator below it. The existing empty/no-qualified evidence fallback still
+pays all facilitators during bootstrap rather than zeroing the reward pool.
+Keeping responsive peers seated is intentional; purging one would prevent it
+from accumulating the signed evidence needed to rehabilitate.
+
+`dag_consensus_active_facilitator_fresh_probation_starved` reports whether
+sticky candidates consumed the entire probation lane while fresh candidates
+were waiting. A transient `1` is expected while a cohort graduates; persistence
+beyond the configured score-recovery window indicates that recurring penalties
+may be monopolizing the lane and warrants considering a sticky-seat share cap.
 
 The recent-signer lookback depth is `recentSignerWindow`
 (`ActiveFacilitatorAdmission.scala:74-81`), floored internally to
@@ -186,8 +200,9 @@ The floor is consensus-critical: divergent values across operators would derive
 divergent Core committees and silently fork. `coreCommitteeSize` is keyed by
 `AppEnvironment`, resolved to a flat value at the construction site, and (as of
 v20) folded into `deterministicConfigHash`, so a mismatched value is rejected at
-handshake by the config hash in addition to the jar hash already gating the
-connection (`CommitteeBuilder.scala:49-53`). The dag-l0 floor argument is
+handshake by the config hash (`CommitteeBuilder.scala:49-53`). Release-version
+hashes provide the separate version fence; the advertised jar hash is not
+compared. The dag-l0 floor argument is
 `coreCommitteeSize` (`GlobalSnapshotConsensusStateCreator.scala:559`,
 `coreFloor = coreCommitteeSize`).
 
@@ -384,8 +399,10 @@ Three deliberate properties:
   have failed anyway does not collapse the Core committee
   (`TierTransitions.scala:24-29`, `:108`).
 
-`DemotionConsecutiveMisses` is a compiled-in constant (jar-hash gated), not a config
-slot (`TierTransitions.scala:79-80`). A documented, accepted limitation: the window
+`DemotionConsecutiveMisses` is a compiled-in constant, not a config slot
+(`TierTransitions.scala:79-80`). It therefore changes only with a release artifact;
+the release-version fence, rather than the advertised jar hash, prevents supported
+mixed-version connections. A documented, accepted limitation: the window
 holds SIGNER sets, not per-round eligibility, so the guarantee is "absent from the
 last N signer sets" rather than the stronger "missed the last N rounds it was
 eligible to sign"; the consequence is bounded and recoverable (Tier 1, re-promoted
@@ -432,10 +449,11 @@ completion-ratio tiering within the pool and uses rendezvous score plus
 
 ## 8. Rewards and the committee
 
-Rewards are distributed by the delegated-rewards path (mainnet's mechanism) to the
-round committee: `roundStartFacilitators` = Core + Tier 1 + Witness, the same set
-carried as `state.facilitators`. Distribution is health- and quality-gated, and
-every committee member earns an equal share.
+Rewards are distributed by the delegated-rewards path to the frozen round-start
+signing committee. In the current tier-transition path that set is Core + Tier 1;
+Witness is observation-only and is not seated. Every seated Core and Tier-1 peer earns
+an equal validator share. Health, quality, and evidence govern admission and future
+tier membership, not a second payout-time filter.
 
 There is no per-seat reward rotation. An earlier bounded one-slot Tier-1 rotation
 lane was removed; reward fairness is achieved purely by committee **selection**,
