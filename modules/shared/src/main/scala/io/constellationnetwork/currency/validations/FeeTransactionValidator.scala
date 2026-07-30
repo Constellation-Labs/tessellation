@@ -7,6 +7,13 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.currency.dataApplication.Errors._
 import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.currency.validations.FeeTransactionSignatureValidator.{
+  isEnabled,
+  validate => validateFeeTransactionSignatures
+}
+import io.constellationnetwork.ext.cats.syntax.validated._
+import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.security.SecurityProvider
@@ -67,17 +74,24 @@ object FeeTransactionValidator {
         }
       }
 
-  def validateFeeTransaction[F[_]: Async: SecurityProvider](
+  def validateFeeTransaction[F[_]: Async: JsonSerializer: SecurityProvider](
     maybeFeeTransaction: Option[Signed[FeeTransaction]],
     dataTransactions: DataTransactions,
     balances: Map[Address, Balance],
-    dataApplication: BaseDataApplicationService[F]
+    dataApplication: BaseDataApplicationService[F],
+    globalSnapshotOrdinal: SnapshotOrdinal,
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
     maybeFeeTransaction match {
       case None => ().validNec[DataApplicationValidationError].pure
       case Some(feeTransaction) =>
         for {
-          sourceWalletValidation <- validateSourceWalletSignedFeeTransaction(feeTransaction)
+          sourceWalletValidation <-
+            if (!isEnabled(globalSnapshotOrdinal, feeTransactionSecurityActivationOrdinal))
+              validateSourceWalletSignedFeeTransaction(feeTransaction)
+            else
+              validateFeeTransactionSignatures(feeTransaction)
+                .map(_.errorMap[DataApplicationValidationError](_ => InvalidFeeTransactionSignature).void)
           balanceValidation = validateSourceWalletHasEnoughBalance(feeTransaction, balances)
           hashMatchValidation <- validateFeeTransactionHashMatch(feeTransaction, dataTransactions, dataApplication)
         } yield sourceWalletValidation.productR(hashMatchValidation).productR(balanceValidation)

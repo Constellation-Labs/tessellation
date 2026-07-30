@@ -14,7 +14,7 @@ Several invariants recur as repeated corrections during the v4.1.0 work and unde
 
 Record four standing invariants:
 
-1. **The jar hash is the primary binary fence; `consensusSchemaVersion` is a secondary connect-time fence; neither gates replay.** Peer-connection-time refusal keys on the jar hash -- for a code change the jar hash already fences the deploy. `consensusSchemaVersion` (a single integer wire-version anchor) is folded INTO `deterministicConfigHash`, the config fence checked at handshake and on the Facility `consensusConfigHash`, so a divergent value also rejects the peer connection. But neither is signed into the snapshot artifact, so neither gates replayed history -- that is the job of the ordinal gates (`FieldsAddedOrdinals`, ADR-0025). A wrong ordinal is NOT caught at handshake; it forks the chain when the gate is crossed.
+1. **Version and consensus-config hashes are connect-time fences; `FieldsAddedOrdinals` gates replay.** Joining checks the Tessellation version hash, metagraph version hash, environment, and `consensusConfigHash` when both peers provide it. `consensusSchemaVersion` is folded into `deterministicConfigHash`, which is also checked on Facility declarations. `RegistrationRequest.jar` is advertised and stored but is not compared during joining, so operators must verify identical release artifacts outside the protocol. None of these connect-time values gates replayed history -- that is the job of the ordinal gates (`FieldsAddedOrdinals`, ADR-0025). A wrong ordinal is NOT caught at handshake; it forks the chain when the gate is crossed.
 
 2. **All networks deploy via full cold restart** (testnet / integrationnet / mainnet), all-or-nothing. There are no rolling upgrades and no version-skew tolerance. Every schema bump in this line assumes a coordinated cold restart; do not design for in-place or staggered upgrades.
 
@@ -25,4 +25,6 @@ Record four standing invariants:
 ## Consequences
 
 - Stops a class of recurring mistakes and shortens onboarding.
-- **Cost:** these invariants must be revisited if the operational model ever changes -- e.g. if the deploy model gains rolling-upgrade support, or if the connection-time version gate moves off the jar hash. An ADR superseding this one should be written at that point rather than editing in place.
+- **Cost:** these invariants must be revisited if the operational model ever changes -- for example,
+  if the deploy model gains rolling-upgrade support or joining begins enforcing the advertised jar
+  hash. An ADR superseding this one should be written at that point rather than editing in place.

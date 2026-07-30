@@ -1,9 +1,9 @@
 # v4 Launch Runbook: Coordinated Cold Restart
 
 This runbook is the operator procedure for the v4 release on `release/testnet`. The launch is an
-all-or-nothing **coordinated cold restart**: every node must come up on the same jar, with the same
-per-environment consensus config, and with the launch-gate ordinals set, or peers refuse to handshake
-(or worse, silently fork). Restart is from a recent agreed **checkpoint** snapshot, never a genesis
+all-or-nothing **coordinated cold restart**: every node must come up on the same release artifact, with
+the same per-environment consensus config and launch-gate ordinals, or peers refuse to handshake (or,
+for values outside the handshake hash, silently fork). Restart is from a recent agreed **checkpoint** snapshot, never a genesis
 replay. This document covers (1) why the cold restart is mandatory, (2) the gate-ordinal-setting
 checklist an operator follows at deploy, and (3) the raw `sys.env` toggles that have no HOCON binding.
 
@@ -26,17 +26,19 @@ consensus knobs plus the schema version into a single `deterministicConfigHash`
   folded into the hash at `config/types.scala:1042-1043`). A peer on a divergent config is rejected at the
   Facility stage even if it slipped past registration.
 
-The jar hash is the primary fence (peers only connect to matching jar hashes); the bumped
-`consensusSchemaVersion` and the config-hash fold are the explicit secondary fences. The `dag-l0.conf`
-comment states this directly: "Coordinated cold restart required because this value is in
-`deterministicConfigHash` (and `consensusSchemaVersion` is bumped as a fence)"
-(`dag-l0.conf:68-69`).
+The join handshake does **not** compare `RegistrationRequest.jar`. That field is advertised and
+stored as peer metadata only. Joining validates the Tessellation version hash, metagraph version
+hash, environment, and (when both peers provide it) `consensusConfigHash`
+(`domain/cluster/programs/Joining.scala:252-254,303-307`). The release version and consensus config
+hash are therefore the protocol-enforced fences. Operators must still verify that every node runs
+the identical release artifact because a different jar built with the same reported versions and
+consensus config is not rejected solely by `RegistrationRequest.jar`.
 
 **Consequences for the deploy:**
 
-- **No rolling upgrade.** A mixed-version cluster partitions: old-jar and new-jar peers compute
-  different `deterministicConfigHash` values and reject each other at registration and at Facility. The
-  upgrade is all-or-nothing.
+- **No rolling upgrade.** A mixed-version cluster partitions when the Tessellation version hash or
+  `deterministicConfigHash` differs; those values are checked at registration, and the config hash is
+  also checked at Facility. The upgrade is all-or-nothing.
 - **Restart from a checkpoint, not genesis.** Genesis replay is never performed. The cluster restarts
   from a recent agreed snapshot ordinal that all source/priority nodes hold on disk. Already-signed
   history is preserved; the new jar must re-derive it byte-identically (this is what the ordinal gates in
@@ -51,8 +53,8 @@ comment states this directly: "Coordinated cold restart required because this va
    been completed in the jar-packaged config before assembly.
 3. Bring up the source / priority peers first. The priority set is configured under `priority-peer-ids`
    in `application.conf:129`. Confirm each reaches `Ready` before proceeding.
-4. Bring up the remaining peers. They register against the priority peers; matching jar hash and
-   `consensusConfigHash` admit them, divergent ones are rejected.
+4. Bring up the remaining peers. They register against the priority peers; matching version hashes
+   and `consensusConfigHash` admit them, and divergent values are rejected.
 5. Only after the source/priority peers are confirmed `Ready` should auto-restart monitoring (the
    auto-restart lambda referenced in `RELEASE_POLICY.md`) be re-enabled, so a node still mid-handshake is
    not force-cycled.
@@ -63,17 +65,19 @@ comment states this directly: "Coordinated cold restart required because this va
 
 New or changed deterministic behaviour is gated behind a per-environment activation ordinal so that
 already-signed history re-derives byte-identically. The mechanism is `FieldsAddedOrdinals`
-(`config/types.scala:27-48`), loaded from the `fields-added-ordinals` HOCON block
-(`application.conf:210-293`). These values are packaged into the assembly jar's `application.conf`, so
-the **jar hash plus the environment is the determinism fence** (`config/types.scala:43-46`). Changing any
-of them is therefore itself a coordinated jar redeploy, not a config reload.
+(`config/types.scala`), loaded from the `fields-added-ordinals` HOCON block in `application.conf`.
+These values are literals packaged into the assembly jar's `application.conf`; there are no
+environment-variable overrides for `fields-added-ordinals`. They must be finalized before assembly,
+and changing one requires a coordinated artifact redeploy rather than a runtime config update.
+`FieldsAddedOrdinals` is not included in `deterministicConfigHash`, and
+`RegistrationRequest.jar` is not compared, so the handshake does not detect a wrong ordinal.
 
 > **The cardinal rule, stated once:** an ordinal gate must be set so the chain crosses it **only after**
 > the new jar is live cluster-wide. A too-early crossing on the old jar misses the gated behaviour. For
 > the dust sweep specifically, a missed sweep is not re-attempted until a rollback re-crosses the ordinal
 > (`application.conf:283-285`).
 
-A placeholder value of **9999999** means "keep the OLD path / never fire on this environment yet". Leaving
+A placeholder value of **9999999** means "keep the OLD path until that finite ordinal is reached". Leaving
 a placeholder in place at launch silently keeps the pre-fix behaviour active.
 
 ### Checklist
@@ -89,17 +93,17 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       (`GlobalSnapshotStateChannelEventsProcessor.scala:324-328`). The ordinal is resolved at
       `GlobalSnapshotConsensus.scala:152` and `SharedServices.scala:195`, both **failing closed** to
       `SnapshotOrdinal.MaxValue` when the environment has no entry (the gate never fires, so an unset env
-      keeps the OLD path). **mainnet and integrationnet are `9999999` placeholders (both still on the
-      `mptStore` path); testnet is pinned to `3101393`, its real v4.0.0->alpha.0 cutover.** SET mainnet
-      and integrationnet to the coordinated context-deploy ordinal at deploy. Leaving an env unset
+      keeps the OLD path). **mainnet is a `9999999` placeholder; testnet is pinned to `3101393`, its
+      real v4.0.0->alpha.0 cutover; IntegrationNet is scheduled for `5880000`.** SET mainnet to its
+      coordinated context-deploy ordinal at deploy. Leaving an env unset
       keeps the pre-fix `mptStore` balance source.
 
 - [ ] **`sub-trie-roots`** (`application.conf:285-294`, `config/types.scala:43-46`). At/after this
       ordinal, MPT-format `GlobalSnapshotStateProof` carries per-`GlobalStateFieldId` roots in addition
       to the overall `mptRoot`, making state-root divergence field-localizable. This changes signed proof
-      bytes, so mainnet/testnet/integrationnet are `9999999` placeholders until each network deliberately
-      activates the proof shape at a coordinated cold-restart ordinal. For a restart checkpoint `N`, use
-      `N + 1`.
+      bytes. Mainnet and testnet remain `9999999` placeholders; IntegrationNet is scheduled for
+      `5880000` and MUST have compatible snapshot-streaming deployed before crossing it. For a restart
+      checkpoint `N`, use `N + 1`.
 
 - [ ] **`dust-sweeps`** (`application.conf:295-301`, `config/types.scala:47-65`). Per-environment,
       keyed by the exact ordinal each one-time GSI dust sweep fires at. Only `testnet` has an entry today
@@ -110,15 +114,22 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       sweep ordinal (`GlobalSnapshotDustSweep.scala:16-26`). Burn = omit `collection-address`; credit a
       treasury = supply `collection-address: "DAG..."`. `threshold` is in datum.
 
-- [ ] **`set-sum-fix`** (`application.conf:265-270`, `config/types.scala:37`). mainnet, testnet, and
-      integrationnet are all the placeholder `9999999` (only `dev` is `0`, so the gate is not yet active on
-      any live environment). Set to the launch checkpoint ordinal only if this fix is part of the launch;
-      otherwise leave the placeholder so the old path stays active.
+- [ ] **`set-sum-fix`** (`config/types.scala`). Mainnet and testnet remain the placeholder `9999999`;
+      IntegrationNet is scheduled for `5880000`; `dev` is `0`. Confirm the target value is still in the
+      future before assembling the launch jar.
 
 - [ ] **`fixing-allow-spend-and-token-lock-validation`** (`application.conf:259-264`,
-      `config/types.scala:36`). mainnet is already a real ordinal (`5058096`); **testnet and
-      integrationnet are the placeholder `9999999`.** Set the testnet/intnet ordinals to the launch
-      checkpoint if this validation fix is part of the launch on those environments.
+      `config/types.scala`). mainnet is already a real ordinal (`5058096`); testnet remains the
+      placeholder `9999999`; IntegrationNet is scheduled for `5880000`.
+
+- [ ] **`delegated-rewards-full-committee`**. At/after this ordinal, delegated rewards go to the
+      complete frozen Core + Tier-1 committee. IntegrationNet is scheduled for `5880000`; mainnet and
+      testnet remain `9999999`.
+
+- [ ] **`fee-transaction-security`**. At/after this global ordinal, metagraph data-update fees require
+      exact source-wallet signatures on every accepted path. IntegrationNet is scheduled for
+      `5880000`; Mainnet and Testnet remain at `9999999`. Every Currency L1 and ML0 node must run the
+      new jar before IntegrationNet crosses the gate.
 
 - [ ] **Sanity-check the historical gates** (`application.conf:211-258`). The migration gates above this
       block (`tessellation-3-migration`, `tessellation-301-migration`, `check-sync-global-snapshot-field`,
@@ -127,8 +138,9 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       unchanged from the in-tree values for the environment being launched; an accidental edit changes
       artifact bytes at that boundary and forks.
 
-After editing, the values are compiled into the assembly. Re-assemble the jar, and treat the new jar hash
-as the deploy artifact for section 1.
+After editing, the values are compiled into the assembly. Re-assemble the jar and independently
+verify that the identical artifact digest is staged everywhere; the join handshake does not perform
+that digest comparison.
 
 ---
 

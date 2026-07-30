@@ -24,6 +24,8 @@ import fs2.io.file.Path
 
 object types {
 
+  // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
+  // Fields share similar map types, so reordering them without updating that reader can miswire gates.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
@@ -44,12 +46,20 @@ object types {
     // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
     // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.
     subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
+    // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
+    delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
+    feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
     // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
-  )
+  ) {
+    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
+      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+  }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
     *
@@ -244,9 +254,10 @@ object types {
     // committee, to collect late-arriving Tier 1 signatures before finalizing. Distinct from
     // `signatureGracePeriod` (which covers the Core-incomplete case): once every Core member has
     // signed, liveness no longer needs the full window, but we still want Tier 1 signatures to
-    // land in `signedArtifact.proofs` so rewards are not collapsed onto Core (the alpha.153
-    // regression where finalizing the INSTANT Core completed dropped every Tier 1 reward). The
-    // bounded wait trades a few ms of finalization latency for reward fairness. Timing-only:
+    // land in `signedArtifact.proofs` and participation evidence (the alpha.153 regression where
+    // finalizing the INSTANT Core completed dropped every Tier 1 proof). Delegated rewards follow
+    // frozen committee membership, not proofs. The bounded wait trades a few ms of finalization
+    // latency for evidence completeness. Timing-only:
     // NOT included in `deterministicConfigHash`, for the SAME reason as `signatureGracePeriod` --
     // the canonical `snapshotHash` is the agreed ARTIFACT hash, not the signed-artifact hash, so
     // two nodes with different grace periods still produce the same downstream snapshotHash; this
@@ -313,9 +324,11 @@ object types {
     // cleanup. The v22 demotion hysteresis does NOT use it -- it uses the compiled-in
     // `TierTransitions.DemotionConsecutiveMisses` constant instead.
     //
-    // `activeFacilitatorFloor` is still read by the rollback/ready-participation gates. All three
-    // are consensus-critical (in `deterministicConfigHash`) so divergent operator values are
-    // rejected at handshake.
+    // `activeFacilitatorFloor` is the emergency bypass threshold for active admission and is also
+    // read by the rollback/ready-participation gates. Admission score gating remains enabled at
+    // and above this floor; below it the full selected pool is admitted for bootstrap/collapse
+    // recovery. All three values are consensus-critical (in `deterministicConfigHash`) so
+    // divergent operator values are rejected at handshake.
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
@@ -348,13 +361,11 @@ object types {
     activeAdmissionExpansionIntervalRounds: Int = 1,
     // Bounded probation re-entry lane: minimum number of probation (below-promote-threshold,
     // "rehabilitating") peers admitted to the active set per round EVEN WHEN the per-round
-    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. Fixes the structural
-    // catch-22 where peers that dropped out of the recent-signer pool during an outage could never
-    // re-enter the signing set to rebuild their score, because the only re-entry path was throttled
-    // to ~1/round shared with promoted expansion. Decoupled from `activeAdmissionMaxExpansionPerRound`
-    // so a mass return after a cluster-wide outage drains in a bounded number of rounds; capped by
-    // the active-set max (`activeFacilitatorMax`/`coreCommitteeSize`) inside the admission function so
-    // it never overflows the signing set. Probation peers are non-quorum-bearing (routed to
+    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. A probation peer that
+    // signs the latest round keeps competing ahead of fresh candidates for one of these bounded
+    // seats until it reaches the retain band; missing the latest round ends the lease. This avoids
+    // one-round admission churn and lets responsive peers accumulate enough signed evidence to
+    // graduate. Capped by the active-set max. Probation peers are non-quorum-bearing (routed to
     // `nonCorePeers` in `CommitteeBuilder`), so widening the lane cannot affect quorum feasibility.
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
@@ -905,7 +916,7 @@ object types {
       *   - `tighteningWindow`: size of the rolling `recentSigners` window; as of v22 it feeds the tier-demotion hysteresis (LIVE)
       *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
       *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
-      *   - `activeFacilitatorFloor`: floor read by the rollback / ready-participation gates
+      *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
       *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: active facilitator expansion and cap
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
@@ -1146,11 +1157,10 @@ object types {
     // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved scalar is threaded
     // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into
-    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that environment
-    // (resolved scalar 0). Testnet opts into a small value to drain a mass post-outage return of
-    // rehabilitating peers in a bounded number of rounds; mainnet/dev/integrationnet are absent on
-    // purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable if ever needed,
-    // matching the resolved-scalar default.
+    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that
+    // environment (resolved scalar 0). Public GL0 environments configure one Core-sized cohort;
+    // responsive climbers retain bounded priority until they reach the retain band. `Int` (not
+    // `PosInt`) keeps 0 available as an explicit disable.
     activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
     // Recent-signer pool lookback depth (in ordinals), keyed by AppEnvironment (the coreCommitteeSize
     // pattern: env resolution happens once at the consensus construction site and the resolved scalar

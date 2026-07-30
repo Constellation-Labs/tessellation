@@ -43,7 +43,7 @@ GF_PASS="${GRAFANA_ADMIN_PASSWORD:-admin}"
 log "Deploying to $SERVER_NODE ($SERVER_IP)"
 
 # --- Create directories ---
-ssh "$SERVER_NODE" "mkdir -p $REMOTE_DIR/{prometheus,grafana/provisioning/datasources,grafana/provisioning/dashboards,clickhouse}"
+ssh "$SERVER_NODE" "sudo mkdir -p $REMOTE_DIR/{prometheus,grafana/provisioning/datasources,grafana/provisioning/dashboards,clickhouse} && sudo chown -R \$(id -un):\$(id -gn) $REMOTE_DIR"
 
 # --- Transfer compose file ---
 scp -q "$SCRIPT_DIR/docker-compose.remote.yaml" "$SERVER_NODE:$REMOTE_DIR/docker-compose.yaml"
@@ -146,6 +146,11 @@ else
   log "Initializing ClickHouse tables"
   ssh "$SERVER_NODE" "docker exec -i clickhouse clickhouse-client --password '$CH_PASS'" \
     < "$SCRIPT_DIR/clickhouse/init.sql"
+  # Best-effort TTL removal (kept out of init.sql so a no-TTL table can't abort it).
+  # `REMOVE TTL` errors if the table has no TTL — tolerate that.
+  for t in nightly_logs nightly_logs_consensus; do
+    ssh "$SERVER_NODE" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q 'ALTER TABLE $t REMOVE TTL'" 2>/dev/null || true
+  done
 fi
 
 # --- Deploy process-exporter on each tessellation node ---
@@ -153,10 +158,24 @@ fi
 # Prometheus scrapes these via the process-exporter job in prometheus.yaml.
 PE_IMAGE="ncabatoff/process-exporter:0.8.7"
 PE_REMOTE_DIR="/opt/process-exporter"
+# Regenerate the process-exporter config if it's not in the checkout, so a tree that
+# happens to omit this small static file (as a release-branch copy once did) can't
+# hard-fail the whole deploy. The committed file is authoritative when present.
+PE_CFG="$SCRIPT_DIR/process-exporter/process-exporter.yml"
+if [ ! -f "$PE_CFG" ]; then
+  log "process-exporter.yml missing from checkout — generating it"
+  mkdir -p "$(dirname "$PE_CFG")"
+  cat > "$PE_CFG" <<'PEYML'
+process_names:
+  - name: "{{.Comm}}"
+    cmdline:
+      - ".+"
+PEYML
+fi
 for h in "${NODES[@]}"; do
   log "Deploying process-exporter on $h"
-  ssh "$h" "mkdir -p $PE_REMOTE_DIR"
-  scp -q "$SCRIPT_DIR/process-exporter/process-exporter.yml" "$h:$PE_REMOTE_DIR/process-exporter.yml"
+  ssh "$h" "sudo mkdir -p $PE_REMOTE_DIR && sudo chown -R \$(id -un):\$(id -gn) $PE_REMOTE_DIR"
+  scp -q "$PE_CFG" "$h:$PE_REMOTE_DIR/process-exporter.yml"
   ssh "$h" "docker rm -f process-exporter >/dev/null 2>&1 || true; \
             docker run -d --name process-exporter --restart unless-stopped \
               --network host \
@@ -181,16 +200,18 @@ done
 # Prometheus scrapes these via the network-process-exporter job in prometheus.yaml.
 for h in "${NODES[@]}"; do
   log "Deploying network_process_exporter on $h"
-  ssh "$h" "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+  ssh "$h" "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
               bpfcc-tools python3-bpfcc python3-prometheus-client \
               linux-headers-\$(uname -r) >/dev/null" \
     || { log "  $h: header/BCC install failed (running kernel may need a reboot); skipping service start"; continue; }
-  scp -q "$SCRIPT_DIR/network-process-exporter/network_process_exporter.py" \
-         "$h:/usr/local/bin/network_process_exporter.py"
-  ssh "$h" "chmod +x /usr/local/bin/network_process_exporter.py"
-  scp -q "$SCRIPT_DIR/network-process-exporter/network-process-exporter.service" \
-         "$h:/etc/systemd/system/network-process-exporter.service"
-  ssh "$h" "systemctl daemon-reload && systemctl enable --now network-process-exporter.service" \
+  # scp to the login user's home (writable), then sudo-install into root-owned dirs —
+  # works whether the SSH user is root (nightly) or an unprivileged sudoer (e.g. admin).
+  scp -q "$SCRIPT_DIR/network-process-exporter/network_process_exporter.py" "$h:network_process_exporter.py"
+  scp -q "$SCRIPT_DIR/network-process-exporter/network-process-exporter.service" "$h:network-process-exporter.service"
+  ssh "$h" "sudo install -m 0755 network_process_exporter.py /usr/local/bin/network_process_exporter.py \
+    && sudo install -m 0644 network-process-exporter.service /etc/systemd/system/network-process-exporter.service \
+    && rm -f network_process_exporter.py network-process-exporter.service \
+    && sudo systemctl daemon-reload && sudo systemctl enable --now network-process-exporter.service" \
     && log "  $h: network-process-exporter running on :9435" \
     || log "  $h: network-process-exporter failed to start (non-fatal)"
 done

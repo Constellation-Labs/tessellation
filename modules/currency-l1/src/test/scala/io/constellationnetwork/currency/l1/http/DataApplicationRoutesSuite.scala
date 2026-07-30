@@ -101,7 +101,8 @@ object DataApplicationRoutesSuite extends HttpSuite {
           l1Service,
           dataTransactionsQueue,
           lastGlobalSnapshotStorage,
-          lastCurrencySnapshotStorage
+          lastCurrencySnapshotStorage,
+          SnapshotOrdinal.unsafeApply(9999999L)
         )
       } yield dataApi.publicRoutes
     }

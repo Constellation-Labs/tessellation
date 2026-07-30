@@ -105,6 +105,7 @@ jobs:
           - { name: token-locks,            tests: "token-locks" }
           - { name: allow-spends,           tests: "allow-spends", timeout: 45 }
           - { name: spend,                  tests: "spend", timeout: 45 }
+          - { name: data-with-fee,          tests: "data-with-fee", timeout: 45 }
           - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
 
     env:
@@ -144,13 +145,7 @@ jobs:
 
       - name: Installing node dependencies
         shell: bash
-        run: |
-          npm i @stardust-collective/dag4@v2.8.0
-          npm i js-sha256
-          npm i axios
-          npm i brotli
-          npm i zod
-          npm i elliptic
+        run: npm ci --prefix .github/action_scripts
 
       - name: Install just
         run: |

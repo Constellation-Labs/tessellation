@@ -10,6 +10,7 @@ import io.constellationnetwork.currency.dataApplication.Errors.MissingDataUpdate
 import io.constellationnetwork.currency.dataApplication.FeeTransaction.getByDataUpdate
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.validations.FeeTransactionValidator.validateFeeTransaction
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -17,7 +18,7 @@ import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.signature.Signed
 
 object DataTransactionsValidator {
-  private def validateDataTransactions[F[_]: Async: SecurityProvider](
+  private def validateDataTransactions[F[_]: Async: JsonSerializer: SecurityProvider](
     dataTransactions: DataTransactions,
     balances: Map[Address, Balance],
     dataApplication: BaseDataApplicationService[F],
@@ -25,7 +26,9 @@ object DataTransactionsValidator {
       Signed[DataUpdate],
       Option[Signed[FeeTransaction]]
     ) => F[ValidatedNec[DataApplicationValidationError, Unit]],
-    gsOrdinal: SnapshotOrdinal
+    feeValidationOrdinal: SnapshotOrdinal,
+    globalSnapshotOrdinal: SnapshotOrdinal,
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] = {
 
     val dataUpdates = dataTransactions.collect {
@@ -36,8 +39,15 @@ object DataTransactionsValidator {
         value.traverse { dataUpdate =>
           for {
             maybeFeeTransaction <- getByDataUpdate(dataTransactions, dataUpdate.value, dataApplication.serializeUpdate)
-            feeTransactionValidation <- validateFeeTransaction(maybeFeeTransaction, dataTransactions, balances, dataApplication)
-            feeAgainstDataUpdateValidation <- validateFee(gsOrdinal)(dataUpdate, maybeFeeTransaction)
+            feeTransactionValidation <- validateFeeTransaction(
+              maybeFeeTransaction,
+              dataTransactions,
+              balances,
+              dataApplication,
+              globalSnapshotOrdinal,
+              feeTransactionSecurityActivationOrdinal
+            )
+            feeAgainstDataUpdateValidation <- validateFee(feeValidationOrdinal)(dataUpdate, maybeFeeTransaction)
           } yield
             feeTransactionValidation
               .productR(feeAgainstDataUpdateValidation)
@@ -52,11 +62,12 @@ object DataTransactionsValidator {
 
   }
 
-  def validateDataTransactionsL1[F[_]: Async: L1NodeContext: SecurityProvider](
+  def validateDataTransactionsL1[F[_]: Async: JsonSerializer: L1NodeContext: SecurityProvider](
     dataTransactions: DataTransactions,
     dataApplication: BaseDataApplicationL1Service[F],
     balances: Map[Address, Balance],
-    gsOrdinal: SnapshotOrdinal
+    gsOrdinal: SnapshotOrdinal,
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
     for {
       dataUpdates <- OptionT
@@ -68,16 +79,20 @@ object DataTransactionsValidator {
         balances,
         dataApplication,
         dataApplication.validateFee,
-        gsOrdinal
+        gsOrdinal,
+        gsOrdinal,
+        feeTransactionSecurityActivationOrdinal
       )
     } yield dataUpdatesValidation.productR(dataTransactionsValidation)
 
-  def validateDataTransactionsL0[F[_]: Async: L0NodeContext: SecurityProvider](
+  def validateDataTransactionsL0[F[_]: Async: JsonSerializer: L0NodeContext: SecurityProvider](
     dataTransactions: DataTransactions,
     dataApplication: BaseDataApplicationL0Service[F],
     balances: Map[Address, Balance],
-    gsOrdinal: SnapshotOrdinal,
-    currentState: DataState[DataOnChainState, DataCalculatedState]
+    currencySnapshotOrdinal: SnapshotOrdinal,
+    parentGlobalSnapshotOrdinal: SnapshotOrdinal,
+    currentState: DataState[DataOnChainState, DataCalculatedState],
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
     for {
       dataUpdates <- OptionT
@@ -89,7 +104,9 @@ object DataTransactionsValidator {
         balances,
         dataApplication,
         dataApplication.validateFee,
-        gsOrdinal
+        currencySnapshotOrdinal,
+        parentGlobalSnapshotOrdinal,
+        feeTransactionSecurityActivationOrdinal
       )
     } yield dataUpdatesValidation.productR(dataTransactionsValidation)
 

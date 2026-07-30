@@ -378,10 +378,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
           mptStore,
-          // activeAdmissionPromoteThreshold (reward qualification bar); tests here exercise
-          // artifact creation with no controllerEvidence window, so the reward filter stays in
-          // its pay-everyone fallback regardless of this value.
           100
         )
     } yield globalSnapshotConsensusFunction

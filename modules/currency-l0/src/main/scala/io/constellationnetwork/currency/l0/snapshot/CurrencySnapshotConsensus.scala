@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
@@ -39,7 +40,8 @@ import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.gossip.RumorRaw
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
@@ -320,6 +322,15 @@ object CurrencySnapshotConsensus {
         Slf4jLogger.getLogger[F]
       )
 
+      // HTTP preflight for the rumor-stale abandonment escalation (issue #1533); mirror the
+      // corroborated `(ordinal, hash)` GlobalSnapshotConsensus probe against this layer's endpoint.
+      fetchLatestCommittedMetadata = {
+        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+        val request = PeerResponse[F, SnapshotMetadata]("snapshots/latest/metadata")(client, session.some)
+        (peer: Peer) => request(peer)
+      }
+      peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -356,7 +367,8 @@ object CurrencySnapshotConsensus {
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
-          getPeerChainTips
+          getPeerChainTips,
+          peersCommittedAheadProbe
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)
