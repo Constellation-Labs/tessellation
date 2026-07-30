@@ -21,9 +21,11 @@
  * LATE JOINER scoring below RETAIN. Such a peer is excluded from the recent-signer pool, so the
  * only path that can seat it is the probation lane, which CommitteeBuilder forces to Tier 1 via
  * `nonCorePeers` -- an inference from signed data, since per-peer tier is not exposed over HTTP.
- * The scan also requires >= activeFacilitatorFloor members at/above retain, which proves the score
- * gate was armed: on the emergency-bypass path there is no probation lane and a low score would
- * not imply Tier 1.
+ * The scan also proves the score gate was ARMED by mirroring the production condition against the
+ * signed recent-signer window: >= activeFacilitatorFloor members that are BOTH recent signers AND
+ * at/above retain (score alone is not enough -- a saturated peer can have aged out of the window),
+ * with at least DemotionConsecutiveMisses window entries. On the emergency-bypass path there is no
+ * probation lane at all, so a low score would not imply Tier 1.
  *
  * To find that short-lived state reliably the scan ANCHORS on the signed evidence ordinal where a
  * late joiner first appears in `admittedPeers` (its certification into the facilitator base) and
@@ -75,7 +77,8 @@ const RETAIN_THRESHOLD = parseInt(process.env.CL_ACTIVE_ADMISSION_RETAIN_THRESHO
 // The emergency-bypass guard. When the retained pool falls below the active-facilitator floor the
 // admission filter is bypassed entirely, `active = selected.take(target)`, no probation lane runs,
 // and tiers come from derivation instead -- in which case a below-retain seat would NOT prove
-// Tier 1. Requiring this many at/above-retain members proves the gate was armed.
+// Tier 1. Requiring this many committee members that are both recent signers AND at/above retain
+// proves the gate was armed.
 const ACTIVE_FLOOR = parseInt(process.env.CL_ACTIVE_FACILITATOR_FLOOR || '3', 10)
 // Lookback depth of the recent-signer pool (dev `active-admission-recent-signer-window`), floored
 // internally by the node to DemotionConsecutiveMisses.
@@ -174,7 +177,12 @@ const recentSignerSets = (recentSigners) => {
   const ordinals = Object.keys(recentSigners || {})
     .map((k) => parseInt(k, 10))
     .sort((a, b) => a - b)
-  const windowed = ordinals.slice(-RECENT_SIGNER_WINDOW)
+  // Mirror ActiveFacilitatorAdmission's floor: `effectiveRecentSignerWindow =
+  // math.max(DemotionConsecutiveMisses, recentSignerWindow)`. Slicing by the raw configured value
+  // would diverge for an override below 3 -- the node would look at 3 entries while this test looked
+  // at 1 or 2 and wrongly declare the gate unarmed.
+  const effectiveRecentSignerWindow = Math.max(DEMOTION_CONSECUTIVE_MISSES, RECENT_SIGNER_WINDOW)
+  const windowed = ordinals.slice(-effectiveRecentSignerWindow)
   const signers = new Set()
   for (const ordinal of windowed) {
     for (const peerId of recentSigners[String(ordinal)] || []) signers.add(peerId)
@@ -432,9 +440,10 @@ const main = async () => {
   // 1. THE REGRESSION ASSERTION, and the Tier-1 proof. `tier1` holds late-joining members scoring
   //    below the RETAIN threshold: they are excluded from the recent-signer pool, so the only path
   //    that can seat them is the probation lane, which CommitteeBuilder forces into Tier 1 via
-  //    nonCorePeers. (The scan additionally required >= activeFacilitatorFloor members at/above
-  //    retain, which proves the score gate was armed rather than emergency-bypassed -- on the
-  //    bypass path there is no probation lane and a low score would not imply Tier 1.)
+  //    nonCorePeers. (The scan additionally required >= activeFacilitatorFloor members that are both
+  //    recent signers and at/above retain, which proves the score gate was armed rather than
+  //    emergency-bypassed -- on the bypass path there is no probation lane and a low score would
+  //    not imply Tier 1.)
   //    Under the pre-#1547 filter these Tier-1 seats were dropped from the payout while their
   //    promote-qualified peers were paid.
   for (const climber of tier1) {

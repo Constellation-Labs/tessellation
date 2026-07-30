@@ -153,6 +153,14 @@ jobs:
         shell: bash
         run: npm ci --prefix .github/action_scripts
 
+      # Offline self-test of the committee-rewards assertions: runs the test script against a
+      # synthetic snapshot window and requires it to PASS on correct behavior and FAIL on the
+      # legacy evidence-score filter. ~2s, no docker, and deliberately placed before the cluster
+      # boot so a broken script or a rotted fixture fails in seconds instead of 20 minutes.
+      - name: Self-test committee-rewards assertions
+        if: matrix.test-group.name == 'committee-rewards'
+        run: .github/action_scripts/committee_rewards.selftest.sh
+
       - name: Install just
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
