@@ -13,10 +13,22 @@
  * committee where every member is below the threshold (e.g. the first rounds after genesis) is
  * NOT a discriminating sample -- both implementations pay everyone. Nor is a committee where
  * everyone is above it. The regression is visible only on a MIXED committee: at least one member
- * below the promote threshold and at least one at or above it. Under the old code the below-
- * threshold member is dropped from `rewards`; under the current code it is paid the same share as
- * everyone else. This test therefore searches for a mixed committee and fails if it cannot find
- * one, rather than asserting on whatever ordinal happens to be handy.
+ * below the promote threshold and at least one at or above it.
+ *
+ * AND IT MUST BE A REAL TIER-1 SEAT, NOT MERELY A LOW SCORE
+ * "Below promote" alone is not a tier claim: a peer scoring in [retain, promote) is still inside
+ * the recent-signer pool and derives Core. The sample therefore additionally requires a seated
+ * LATE JOINER scoring below RETAIN. Such a peer is excluded from the recent-signer pool, so the
+ * only path that can seat it is the probation lane, which CommitteeBuilder forces to Tier 1 via
+ * `nonCorePeers` -- an inference from signed data, since per-peer tier is not exposed over HTTP.
+ * The scan also requires >= activeFacilitatorFloor members at/above retain, which proves the score
+ * gate was armed: on the emergency-bypass path there is no probation lane and a low score would
+ * not imply Tier 1.
+ *
+ * To find that short-lived state reliably the scan ANCHORS on the signed evidence ordinal where a
+ * late joiner first appears in `admittedPeers` (its certification into the facilitator base) and
+ * only considers reward rounds from there on. The test fails with a diagnostic if no such sample
+ * exists, rather than asserting on whatever ordinal happens to be handy.
  *
  * THE RIG (docker/bin/set-env.sh NUM_GL0_EARLY)
  * 5 gl0 nodes: 3 join at genesis, 2 delay their self-join. The genesis peers saturate their score
@@ -55,6 +67,16 @@ const CERT_WEIGHT = 10
 const MIN_SCORE = 0
 const MAX_SCORE = 150
 const PROMOTE_THRESHOLD = parseInt(process.env.CL_ACTIVE_ADMISSION_PROMOTE_THRESHOLD || '100', 10)
+// Retain is the Tier-1 discriminator, not promote. A seated peer scoring in [retain, promote) is
+// still inside the recent-signer pool and derives Core; only a peer BELOW retain is excluded from
+// that pool and can reach the committee solely through the probation lane, which CommitteeBuilder
+// forces to Tier 1 via nonCorePeers. See ActiveFacilitatorAdmission.fromRecentSigners.
+const RETAIN_THRESHOLD = parseInt(process.env.CL_ACTIVE_ADMISSION_RETAIN_THRESHOLD || '70', 10)
+// The emergency-bypass guard. When the retained pool falls below the active-facilitator floor the
+// admission filter is bypassed entirely, `active = selected.take(target)`, no probation lane runs,
+// and tiers come from derivation instead -- in which case a below-retain seat would NOT prove
+// Tier 1. Requiring this many at/above-retain members proves the gate was armed.
+const ACTIVE_FLOOR = parseInt(process.env.CL_ACTIVE_FACILITATOR_FLOOR || '3', 10)
 
 const NUM_GL0 = parseInt(process.env.NUM_GL0_NODES || '5', 10)
 const NUM_EARLY = parseInt(process.env.NUM_GL0_EARLY || '3', 10)
@@ -147,8 +169,9 @@ const committeeForOrdinal = (nextSnapshot, ordinal) => {
  * to run consensus, and this whole scan sits inside a retry loop.
  *
  * NOTE: this is only safe because the dev rig disables the per-IP snapshot cap
- * (CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=0 in docker-compose.test.yaml). Against a node
- * running the production default of 120 req/min the window fetch would start taking 429s.
+ * (CL_SNAPSHOT_PER_IP_MAX_REQUESTS_PER_WINDOW=0 in docker-compose.test.yaml). A packaged dag-l0
+ * node caps it at 120 req/min (dag-l0.conf `per-ip-max-requests-per-window`, which overrides the
+ * shared default of 0), so pointing this scan at a real network would start taking 429s.
  */
 const scanWindow = async (globalL0Url) => {
   const latest = await fetchJson(`${globalL0Url}/global-snapshots/latest`)
@@ -165,9 +188,21 @@ const scanWindow = async (globalL0Url) => {
     }
   }
 
-  let mixed = null
+  // ANCHOR: the ordinal at which a late joiner was certified into the facilitator base. Rather
+  // than hunting a transient score window anywhere in recent history, start from the admission
+  // itself -- the climb begins here, so the Tier-1 rounds are the handful immediately after.
+  // `admittedPeers` is part of the signed evidence entry, so this anchor is consensus-agreed.
+  let anchor = null
+  for (let ordinal = from; ordinal <= head && !anchor; ordinal++) {
+    const next = snapshots.get(ordinal + 1)
+    const entry = next?.value?.peerHistory?.controllerEvidence?.[String(ordinal)]
+    const admitted = (entry?.admittedPeers || []).filter((id) => lateJoinerIds.has(id))
+    if (admitted.length > 0) anchor = { ordinal, peerId: admitted[0] }
+  }
+
+  let sample = null
   let eventTriggered = null
-  let bestSpread = null
+  let best = null
 
   for (let ordinal = from + 1; ordinal < head; ordinal++) {
     const snapshot = snapshots.get(ordinal)
@@ -180,7 +215,9 @@ const scanWindow = async (globalL0Url) => {
       if (!eventTriggered) eventTriggered = { ordinal, rewards }
       continue
     }
-    if (mixed || rewards.length === 0) continue
+    if (sample || rewards.length === 0) continue
+    // Only rounds at or after the admission can carry a climbing Tier-1 seat.
+    if (anchor && ordinal < anchor.ordinal) continue
 
     const committee = committeeForOrdinal(next, ordinal)
     if (!committee) continue
@@ -188,31 +225,40 @@ const scanWindow = async (globalL0Url) => {
     // The score window the legacy filter would have read for THIS ordinal.
     const scores = derivePeerScores(snapshot.value?.peerHistory?.controllerEvidence)
     const seatedScores = committee.map((peerId) => ({ peerId, score: scores.get(peerId) ?? 0 }))
-    const below = seatedScores.filter((s) => s.score < PROMOTE_THRESHOLD)
-    const atOrAbove = seatedScores.filter((s) => s.score >= PROMOTE_THRESHOLD)
+    // Tier-1 seats: below retain, therefore admitted through the probation lane.
+    const tier1 = seatedScores.filter((s) => s.score < RETAIN_THRESHOLD && lateJoinerIds.has(s.peerId))
+    const retained = seatedScores.filter((s) => s.score >= RETAIN_THRESHOLD)
+    const belowPromote = seatedScores.filter((s) => s.score < PROMOTE_THRESHOLD)
+    const atOrAbovePromote = seatedScores.filter((s) => s.score >= PROMOTE_THRESHOLD)
 
-    if (!bestSpread || below.length + atOrAbove.length > bestSpread.size) {
-      bestSpread = {
+    if (!best || tier1.length > best.tier1) {
+      best = {
         ordinal,
         size: committee.length,
-        below: below.length,
-        atOrAbove: atOrAbove.length,
+        tier1: tier1.length,
+        retained: retained.length,
+        belowPromote: belowPromote.length,
+        atOrAbovePromote: atOrAbovePromote.length,
       }
     }
-    if (below.length > 0 && atOrAbove.length > 0) {
-      mixed = {
+
+    const gateWasArmed = retained.length >= ACTIVE_FLOOR
+    const legacyWouldHaveFiltered = belowPromote.length > 0 && atOrAbovePromote.length > 0
+    if (tier1.length > 0 && gateWasArmed && legacyWouldHaveFiltered) {
+      sample = {
         ordinal,
         rewards,
         committee,
         seatedScores,
-        below,
+        tier1,
+        belowPromote,
         proofs: snapshot.proofs || [],
         delegateRewards: snapshot.value.delegateRewards,
       }
     }
   }
 
-  return { head, mixed, eventTriggered, bestSpread }
+  return { head, anchor, sample, eventTriggered, best }
 }
 
 const main = async () => {
@@ -240,44 +286,71 @@ const main = async () => {
     rewards,
     committee,
     seatedScores,
-    below,
+    tier1,
+    belowPromote,
     proofs,
     delegateRewards,
+    anchor,
     eventTriggered,
   } = await withRetryOrdinal(
     async () => {
       const scan = await scanWindow(globalL0Url)
-      if (!scan.mixed) {
-        const seen = scan.bestSpread
-          ? `best seen: ordinal ${scan.bestSpread.ordinal}, ${scan.bestSpread.size} seated ` +
-            `(${scan.bestSpread.below} below promote, ${scan.bestSpread.atOrAbove} at/above)`
+      if (!scan.sample) {
+        const seen = scan.best
+          ? `best seen: ordinal ${scan.best.ordinal}, ${scan.best.size} seated ` +
+            `(${scan.best.tier1} late joiners below retain, ${scan.best.retained} at/above retain, ` +
+            `${scan.best.belowPromote} below promote, ${scan.best.atOrAbovePromote} at/above promote)`
           : 'no TimeTrigger ordinal with rewards and landed evidence yet'
+        const anchorNote = scan.anchor
+          ? `late joiner ${scan.anchor.peerId.slice(0, 12)} was admitted at ordinal ${scan.anchor.ordinal}`
+          : 'no late joiner has been certified into the facilitator base yet'
         throw new Error(
-          `no TimeTrigger ordinal below head ${scan.head} has a MIXED committee ` +
-            `(at least one facilitator below the promote threshold and one at/above); ${seen}`,
+          `no TimeTrigger ordinal below head ${scan.head} carries a seated Tier-1 late joiner ` +
+            `(below retain ${RETAIN_THRESHOLD}) alongside a promote-qualified peer; ${anchorNote}; ${seen}`,
         )
       }
-      return { ...scan.mixed, eventTriggered: scan.eventTriggered }
+      return { ...scan.sample, anchor: scan.anchor, eventTriggered: scan.eventTriggered }
     },
     {
       globalL0Url,
-      name: 'TimeTrigger ordinal with a mixed-score committee',
+      name: 'TimeTrigger ordinal with a seated Tier-1 late joiner',
       maxOrdinalMisses: 60,
       maxStalledChecks: 30,
       interval: 5000,
     },
   )
 
-  const rewardedAddresses = new Set(rewards.map((r) => r.destination))
   const describe = (peerId) => {
     const node = nodeByPeerId.get(peerId)
     return node ? `gl0-${node.index}` : peerId.slice(0, 12)
   }
 
+  // Partition the reward set. `snapshot.rewards` is a UNION of validator (static + dynamic
+  // commission), reserved-address, one-time, and delegated-withdrawal payouts
+  // (GlobalSnapshotAcceptanceManager unions them before acceptance). Only the entries addressed to
+  // a known gl0 node key are the equal-split validator rewards this test is about; anything else
+  // is a different reward class and must be ignored rather than treated as an unexpected payout.
+  const knownNodeAddresses = new Set(identities.map((i) => i.address))
+  const validatorRewards = rewards.filter((r) => knownNodeAddresses.has(r.destination))
+  const otherRewards = rewards.filter((r) => !knownNodeAddresses.has(r.destination))
+  const rewardedNodeAddresses = new Set(validatorRewards.map((r) => r.destination))
+
   logWorkflow.info(
-    `Sampled TimeTrigger ordinal ${ordinal}: committee=${committee.length}, rewards=${rewards.length}, ` +
+    `Sampled TimeTrigger ordinal ${ordinal}: committee=${committee.length}, ` +
+      `validator rewards=${validatorRewards.length}, other reward classes=${otherRewards.length}, ` +
       `scores=[${seatedScores.map((s) => `${describe(s.peerId)}:${s.score}`).join(' ')}]`,
   )
+  if (anchor) {
+    logWorkflow.info(
+      `Late joiner ${describe(anchor.peerId)} was certified into the facilitator base at ordinal ${anchor.ordinal}`,
+    )
+  }
+  if (otherRewards.length > 0) {
+    logWorkflow.info(
+      `Ignoring ${otherRewards.length} non-validator reward(s): ` +
+        `${JSON.stringify(otherRewards.map((r) => r.destination))}`,
+    )
+  }
 
   // Precondition: no delegated stakes. With active stakes the distributor also emits per-operator
   // dynamic commission rewards into the same `rewards` array, which are NOT an equal split and
@@ -306,38 +379,44 @@ const main = async () => {
       return address
     }),
   )
-  const missing = [...expectedAddresses].filter((a) => !rewardedAddresses.has(a))
-  const unexpected = [...rewardedAddresses].filter((a) => !expectedAddresses.has(a))
+  const missing = [...expectedAddresses].filter((a) => !rewardedNodeAddresses.has(a))
+  const unexpected = [...rewardedNodeAddresses].filter((a) => !expectedAddresses.has(a))
   if (missing.length > 0 || unexpected.length > 0) {
     throw new Error(
-      `Reward destinations at ordinal ${ordinal} do not match the frozen committee. ` +
-        `Missing (seated but unpaid): ${JSON.stringify(missing)}. ` +
+      `Validator reward destinations at ordinal ${ordinal} do not match the frozen committee. ` +
+        `Missing (seated but unpaid): ${JSON.stringify(missing.map((a) => a))}. ` +
         `Unexpected (paid but not seated): ${JSON.stringify(unexpected)}.`,
     )
   }
 
-  // 2. THE REGRESSION ASSERTION. Every below-promote-threshold member of a mixed committee is
-  //    paid. Under the pre-#1547 evidence-score filter these were dropped while their
-  //    saturated-score peers were paid.
-  for (const climber of below) {
+  // 2. THE REGRESSION ASSERTION, and the Tier-1 proof. `tier1` holds late-joining members scoring
+  //    below the RETAIN threshold: they are excluded from the recent-signer pool, so the only path
+  //    that can seat them is the probation lane, which CommitteeBuilder forces into Tier 1 via
+  //    nonCorePeers. (The scan additionally required >= activeFacilitatorFloor members at/above
+  //    retain, which proves the score gate was armed rather than emergency-bypassed -- on the
+  //    bypass path there is no probation lane and a low score would not imply Tier 1.)
+  //    Under the pre-#1547 filter these Tier-1 seats were dropped from the payout while their
+  //    promote-qualified peers were paid.
+  for (const climber of tier1) {
     const address = addressByPeerId.get(climber.peerId)
-    if (!rewardedAddresses.has(address)) {
+    if (!rewardedNodeAddresses.has(address)) {
       throw new Error(
-        `${describe(climber.peerId)} was seated at ordinal ${ordinal} with score ${climber.score} ` +
-          `(below promote threshold ${PROMOTE_THRESHOLD}) but received no reward -- this is the ` +
-          `evidence-score payout filter regression`,
+        `${describe(climber.peerId)} was a seated Tier-1 facilitator at ordinal ${ordinal} with score ` +
+          `${climber.score} (below retain ${RETAIN_THRESHOLD}, therefore probation-admitted and ` +
+          `non-Core) but received no reward -- this is the evidence-score payout filter regression`,
       )
     }
   }
 
-  // 3. Equal split. The pool is divided and rounded ONCE upstream, so this is exact, not a band.
-  const amounts = new Set(rewards.map((r) => r.amount))
+  // 3. Equal split across validator rewards. The pool is divided and rounded ONCE upstream, so
+  //    this is exact, not a band. Non-validator reward classes are excluded above.
+  const amounts = new Set(validatorRewards.map((r) => r.amount))
   if (amounts.size !== 1) {
     throw new Error(
-      `Committee members received unequal rewards at ordinal ${ordinal}: ${JSON.stringify(
-        rewards.map((r) => ({ destination: r.destination, amount: r.amount })),
-      )}. If this run created delegated stakes, per-operator commission rewards are mixed in and ` +
-        `this test must run on a cluster without them.`,
+      `Committee members received unequal validator rewards at ordinal ${ordinal}: ${JSON.stringify(
+        validatorRewards.map((r) => ({ destination: r.destination, amount: r.amount })),
+      )}. If this run created delegated stakes, per-operator commission rewards addressed to a node ` +
+        `key would land here; run committee-rewards without the delegated-staking suite.`,
     )
   }
   const [amount] = [...amounts]
@@ -355,18 +434,24 @@ const main = async () => {
     )
   }
 
-  // 5. EventTrigger control: static validator rewards mint on TimeTrigger rounds only.
-  if (eventTriggered && eventTriggered.rewards.length > 0) {
+  // 5. EventTrigger control: static validator rewards mint on TimeTrigger rounds only. Compared
+  //    against known node addresses for the same reason as above -- an unrelated reward class on
+  //    an EventTrigger round is not this test's business.
+  const eventValidatorRewards = (eventTriggered?.rewards || []).filter((r) =>
+    knownNodeAddresses.has(r.destination),
+  )
+  if (eventValidatorRewards.length > 0) {
     throw new Error(
-      `EventTrigger ordinal ${eventTriggered.ordinal} minted ${eventTriggered.rewards.length} reward(s); ` +
-        `static validator rewards must only mint on TimeTrigger rounds`,
+      `EventTrigger ordinal ${eventTriggered.ordinal} minted ${eventValidatorRewards.length} validator ` +
+        `reward(s); static validator rewards must only mint on TimeTrigger rounds`,
     )
   }
 
   logWorkflow.info(
     `Ordinal ${ordinal}: all ${committee.length} seated facilitators paid ${amount} datum each, ` +
-      `including ${below.length} below the promote threshold ` +
-      `(${below.map((c) => `${describe(c.peerId)}:${c.score}`).join(' ')})`,
+      `including ${tier1.length} probation-admitted Tier-1 seat(s) ` +
+      `(${tier1.map((c) => `${describe(c.peerId)}:${c.score}`).join(' ')}) and ` +
+      `${belowPromote.length} below the promote threshold the legacy filter would have dropped`,
   )
   if (eventTriggered) {
     logWorkflow.info(`EventTrigger control ordinal ${eventTriggered.ordinal}: 0 rewards, as expected`)
