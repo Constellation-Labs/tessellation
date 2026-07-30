@@ -107,6 +107,11 @@ jobs:
           - { name: spend,                  tests: "spend", timeout: 45 }
           - { name: data-with-fee,          tests: "data-with-fee", timeout: 45 }
           - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
+          # 5 gl0 nodes, 3 at genesis + 2 staggered: the genesis peers saturate their controller
+          # score while a late joiner climbs, producing the score-mixed committee that is the only
+          # state distinguishing full-committee payout from the removed evidence-score filter.
+          # 5 JVMs plus a ~4 min join delay, hence the raised timeout.
+          - { name: committee-rewards,      tests: "committee-rewards", extra-args: "--num-gl0=5 --num-gl0-early=3", timeout: 45 }
 
     env:
       BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
@@ -217,8 +222,10 @@ jobs:
           docker logs "snapshot-streaming" > "runner-logs/snapshot-streaming.log" 2>&1 || echo "No snapshot-streaming container"
           docker logs "snapshot-streaming-postgres" > "runner-logs/snapshot-streaming-postgres.log" 2>&1 || echo "No snapshot-streaming-postgres container"
 
-          # Collect node log directories (mounted volumes)
-          for i in 0 1 2; do
+          # Collect node log directories (mounted volumes). Covers indices beyond the default 3
+          # so multi-node rigs (committee-rewards, fork-recovery) upload their late joiners' logs,
+          # which are exactly the ones needed to diagnose an admission-timing failure.
+          for i in 0 1 2 3 4 5 6 7 8 9; do
             cp -r "nodes/$i/gl0-logs" "runner-logs/node-$i-gl0-logs" 2>/dev/null || true
             cp -r "nodes/$i/gl1-logs" "runner-logs/node-$i-gl1-logs" 2>/dev/null || true
           done

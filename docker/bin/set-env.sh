@@ -63,6 +63,14 @@ export DOCKER_PROFILES=${DOCKER_PROFILES:-""}
 # Test specific settings
 export USE_TEST_METAGRAPH=${USE_TEST_METAGRAPH:-false}
 export SELECTED_TESTS=${SELECTED_TESTS:-""}
+# Staggered gl0 join: node indices >= NUM_GL0_EARLY delay their self-join by
+# GL0_LATE_JOIN_DELAY seconds, so they enter a cluster that has already advanced. Used by the
+# committee-rewards test to produce a genuine Core/Tier-1 split (a cluster whose peers all join
+# at genesis derives every peer as Core, since the Core floor is a minimum, not a cap).
+# Empty NUM_GL0_EARLY = every gl0 node joins immediately (unchanged default for all other tests).
+# Keep delay + join time under the ~800s cluster-health-check budget (200 retries x 4s).
+export NUM_GL0_EARLY=${NUM_GL0_EARLY:-""}
+export GL0_LATE_JOIN_DELAY=${GL0_LATE_JOIN_DELAY:-240}
 export SKIP_STREAMING=${SKIP_STREAMING:-false}
 export LIST_TESTS=${LIST_TESTS:-false}
 
@@ -188,6 +196,24 @@ for arg in "$@"; do
     --num-gl0=*)
       export NUM_GL0_NODES="${arg#*=}"
       export NUM_GL0_NODES_EXPLICIT="${arg#*=}"
+      ;;
+    --num-gl0-early=*)
+      export NUM_GL0_EARLY="${arg#*=}"
+      # A non-numeric value would make the per-node `[ "$i" -ge "$NUM_GL0_EARLY" ]` test in
+      # docker-env-setup.sh error out inside an `if`, where set -e does not fire: no delay would be
+      # written and the rig would silently degrade to an all-genesis cluster.
+      case "$NUM_GL0_EARLY" in
+        ''|*[!0-9]*) echo "ERROR: --num-gl0-early must be a non-negative integer, got '$NUM_GL0_EARLY'"; exit 1 ;;
+      esac
+      [ "$NUM_GL0_EARLY" -lt 1 ] && { echo "ERROR: --num-gl0-early must be >= 1 (node 0 is the genesis node)"; exit 1; }
+      ;;
+    --gl0-late-delay=*)
+      export GL0_LATE_JOIN_DELAY="${arg#*=}"
+      # A non-numeric delay reaches `sleep` in the backgrounded join_process, which dies silently;
+      # the node then never joins and the run fails minutes later in the cluster health check.
+      case "$GL0_LATE_JOIN_DELAY" in
+        ''|*[!0-9]*) echo "ERROR: --gl0-late-delay must be a non-negative integer (seconds), got '$GL0_LATE_JOIN_DELAY'"; exit 1 ;;
+      esac
       ;;
     --num-gl1=*)
       export NUM_GL1_NODES="${arg#*=}"

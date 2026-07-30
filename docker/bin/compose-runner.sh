@@ -51,6 +51,9 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
   echo "  fork-recovery            Fork recovery test (needs --num-gl0=5)"
+  echo "  committee-rewards        Full-committee delegated reward split"
+  echo "                           (needs --num-gl0=5 --num-gl0-early=3;"
+  echo "                            --gl0-late-delay=<seconds>, default 240, tunes the join stagger)"
   echo "  token-lock-replacement   Token lock replacement edge case tests"
   echo "  snapshot-streaming       Snapshot streaming indexer E2E test"
   echo ""
@@ -572,6 +575,32 @@ if should_run_test "fork-recovery"; then
   cd $PROJECT_ROOT
   bash docker/bin/test-fork-recovery.sh $DAG_L0_PORT_PREFIX
   show_time "Fork recovery test completed"
+fi
+
+if should_run_test "committee-rewards"; then
+  echo "================================================"
+  echo "Running committee rewards test"
+  echo "================================================"
+  # This test needs the staggered-join rig: genesis peers with saturated controller scores AND a
+  # late joiner still climbing, so the committee is score-MIXED (the only state where the removed
+  # payout filter and the current behavior differ).
+  #   just test --test=committee-rewards --num-gl0=5 --num-gl0-early=3
+  # A bare `just test` runs every registered test, so on a default 3-node run without the rig we
+  # skip rather than burn the retry budget and fail. When the test was asked for BY NAME the rig is
+  # a hard requirement and a missing one is an error, not a skip.
+  if [ "${NUM_GL0_NODES:-0}" -lt 5 ] || [ -z "${NUM_GL0_EARLY:-}" ] || [ "${NUM_GL0_EARLY}" -ge "${NUM_GL0_NODES:-0}" ]; then
+    msg="committee-rewards needs --num-gl0=5 --num-gl0-early=3 (got num-gl0=${NUM_GL0_NODES:-unset}, num-gl0-early=${NUM_GL0_EARLY:-unset})"
+    if [ -n "$SELECTED_TESTS" ]; then
+      echo "ERROR: $msg"
+      exit 1
+    fi
+    echo "SKIPPING: $msg"
+  else
+    cd $PROJECT_ROOT/.github/action_scripts
+    NUM_GL0_NODES=$NUM_GL0_NODES NUM_GL0_EARLY=$NUM_GL0_EARLY \
+      node committee_rewards.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
+    show_time "Committee rewards test completed"
+  fi
 fi
 
 if streaming_enabled; then
