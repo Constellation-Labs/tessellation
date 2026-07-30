@@ -75,8 +75,8 @@ if [ "$PASS_RC" != "0" ]; then
   cat "$WORKSPACE/pass.out" >&2
   fail "expected exit 0 against the correct fixture, got $PASS_RC"
 fi
-grep -q 'probation-admitted Tier-1 seat' "$WORKSPACE/pass.out" \
-  || fail "pass case did not report a probation-admitted Tier-1 seat (assertion may be vacuous)"
+grep -q 'Tier-1 seat(s) absent from the last' "$WORKSPACE/pass.out" \
+  || fail "pass case did not report a Tier-1 seat (the assertion may be vacuous)"
 echo "    ok: exit 0 and a Tier-1 seat was exercised"
 
 echo "=== case 2/2: legacy evidence-score filter (expect non-zero)"

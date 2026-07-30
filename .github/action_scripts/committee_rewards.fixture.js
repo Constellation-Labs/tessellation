@@ -50,6 +50,10 @@ const CLIMBER = peers[3]
 const NEVER_SEATED = peers[4]
 
 const ADMISSION_ORDINAL = 10
+// The climber is SEATED from ADMISSION_ORDINAL+1 but does not sign until it has caught up, so it is
+// absent from the last DemotionConsecutiveMisses signer sets and therefore derives Tier 1 -- the
+// exact shape the test proves. Signing from here on lets it graduate, mirroring a real climb.
+const CLIMBER_FIRST_SIGNS = 15
 const HEAD = 20
 const REWARD_AMOUNT = 22161532110000
 
@@ -58,7 +62,8 @@ const committeeAt = (ordinal) =>
     ? [...GENESIS.map((p) => p.peerId), CLIMBER.peerId]
     : GENESIS.map((p) => p.peerId)
 
-const signersAt = (ordinal) => committeeAt(ordinal)
+const signersAt = (ordinal) =>
+  committeeAt(ordinal).filter((peerId) => peerId !== CLIMBER.peerId || ordinal >= CLIMBER_FIRST_SIGNS)
 
 // TimeTrigger on even ordinals: epochProgress increments there and stays flat on odd ones, giving
 // the test both a reward sample and an EventTrigger control.
