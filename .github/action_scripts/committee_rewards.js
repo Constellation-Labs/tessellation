@@ -77,6 +77,12 @@ const RETAIN_THRESHOLD = parseInt(process.env.CL_ACTIVE_ADMISSION_RETAIN_THRESHO
 // and tiers come from derivation instead -- in which case a below-retain seat would NOT prove
 // Tier 1. Requiring this many at/above-retain members proves the gate was armed.
 const ACTIVE_FLOOR = parseInt(process.env.CL_ACTIVE_FACILITATOR_FLOOR || '3', 10)
+// Lookback depth of the recent-signer pool (dev `active-admission-recent-signer-window`), floored
+// internally by the node to DemotionConsecutiveMisses.
+const RECENT_SIGNER_WINDOW = parseInt(process.env.CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW || '10', 10)
+// TierTransitions.DemotionConsecutiveMisses -- the compiled-in depth at which the recent-signer
+// window is considered deep enough to arm the filter at all.
+const DEMOTION_CONSECUTIVE_MISSES = 3
 
 const NUM_GL0 = parseInt(process.env.NUM_GL0_NODES || '5', 10)
 const NUM_EARLY = parseInt(process.env.NUM_GL0_EARLY || '3', 10)
@@ -158,6 +164,24 @@ const derivePeerScores = (controllerEvidence) => {
   return scores
 }
 
+/**
+ * The recent-signer window as the admission filter sees it: the last `effectiveRecentSignerWindow`
+ * entries of the signed `peerHistory.recentSigners` map, flattened to a membership set, plus the
+ * entry count for the `recentWindowDeepEnough` guard. Keys are decimal ordinals, so sort numerically
+ * rather than lexically (otherwise "9" sorts after "10").
+ */
+const recentSignerSets = (recentSigners) => {
+  const ordinals = Object.keys(recentSigners || {})
+    .map((k) => parseInt(k, 10))
+    .sort((a, b) => a - b)
+  const windowed = ordinals.slice(-RECENT_SIGNER_WINDOW)
+  const signers = new Set()
+  for (const ordinal of windowed) {
+    for (const peerId of recentSigners[String(ordinal)] || []) signers.add(peerId)
+  }
+  return { entryCount: windowed.length, signers }
+}
+
 const committeeForOrdinal = (nextSnapshot, ordinal) => {
   const entry = nextSnapshot.value?.peerHistory?.controllerEvidence?.[String(ordinal)]
   return Array.isArray(entry?.roundStartFacilitators) ? entry.roundStartFacilitators : null
@@ -173,7 +197,7 @@ const committeeForOrdinal = (nextSnapshot, ordinal) => {
  * node caps it at 120 req/min (dag-l0.conf `per-ip-max-requests-per-window`, which overrides the
  * shared default of 0), so pointing this scan at a real network would start taking 429s.
  */
-const scanWindow = async (globalL0Url) => {
+const scanWindow = async (globalL0Url, lateJoinerIds) => {
   const latest = await fetchJson(`${globalL0Url}/global-snapshots/latest`)
   const head = latest.value.ordinal
   const from = Math.max(2, head - SCAN_DEPTH)
@@ -188,17 +212,25 @@ const scanWindow = async (globalL0Url) => {
     }
   }
 
-  // ANCHOR: the ordinal at which a late joiner was certified into the facilitator base. Rather
-  // than hunting a transient score window anywhere in recent history, start from the admission
-  // itself -- the climb begins here, so the Tier-1 rounds are the handful immediately after.
-  // `admittedPeers` is part of the signed evidence entry, so this anchor is consensus-agreed.
-  let anchor = null
-  for (let ordinal = from; ordinal <= head && !anchor; ordinal++) {
+  // ANCHOR: the evidence ordinal at which each late joiner was certified into the facilitator
+  // base. Rather than hunting a transient score window anywhere in recent history, key off the
+  // admission itself -- the climb begins there, so the Tier-1 rounds are the handful immediately
+  // after. `admittedPeers` is part of the signed evidence entry, so this is consensus-agreed.
+  // An admission recorded FOR round A first affects the round-start committee at A+1, so a peer
+  // only counts as a probation climber on reward ordinals strictly greater than its anchor.
+  const admissionOrdinalByPeer = new Map()
+  for (let ordinal = from; ordinal <= head; ordinal++) {
     const next = snapshots.get(ordinal + 1)
     const entry = next?.value?.peerHistory?.controllerEvidence?.[String(ordinal)]
-    const admitted = (entry?.admittedPeers || []).filter((id) => lateJoinerIds.has(id))
-    if (admitted.length > 0) anchor = { ordinal, peerId: admitted[0] }
+    for (const peerId of entry?.admittedPeers || []) {
+      if (lateJoinerIds.has(peerId) && !admissionOrdinalByPeer.has(peerId)) {
+        admissionOrdinalByPeer.set(peerId, ordinal)
+      }
+    }
   }
+  const anchor = [...admissionOrdinalByPeer.entries()]
+    .map(([peerId, ordinal]) => ({ peerId, ordinal }))
+    .sort((a, b) => a.ordinal - b.ordinal)[0]
 
   let sample = null
   let eventTriggered = null
@@ -216,8 +248,6 @@ const scanWindow = async (globalL0Url) => {
       continue
     }
     if (sample || rewards.length === 0) continue
-    // Only rounds at or after the admission can carry a climbing Tier-1 seat.
-    if (anchor && ordinal < anchor.ordinal) continue
 
     const committee = committeeForOrdinal(next, ordinal)
     if (!committee) continue
@@ -225,9 +255,29 @@ const scanWindow = async (globalL0Url) => {
     // The score window the legacy filter would have read for THIS ordinal.
     const scores = derivePeerScores(snapshot.value?.peerHistory?.controllerEvidence)
     const seatedScores = committee.map((peerId) => ({ peerId, score: scores.get(peerId) ?? 0 }))
-    // Tier-1 seats: below retain, therefore admitted through the probation lane.
-    const tier1 = seatedScores.filter((s) => s.score < RETAIN_THRESHOLD && lateJoinerIds.has(s.peerId))
-    const retained = seatedScores.filter((s) => s.score >= RETAIN_THRESHOLD)
+
+    // Mirror the production gate: `recentWindowDeepEnough && uncappedRecentSignerPool.size >=
+    // minActiveSize`. The pool is peers that appear in the recent-signer window AND score at or
+    // above retain -- a high score alone does not prove membership, since a peer can be saturated
+    // yet no longer recent. Pool members are seated first (`active` starts with recentSignerPool),
+    // so counting committee members that satisfy both is a valid lower bound on the pool size.
+    const recentSignerWindow = recentSignerSets(snapshot.value?.peerHistory?.recentSigners)
+    const windowDeepEnough = recentSignerWindow.entryCount >= DEMOTION_CONSECUTIVE_MISSES
+    const pooled = seatedScores.filter(
+      (s) => s.score >= RETAIN_THRESHOLD && recentSignerWindow.signers.has(s.peerId),
+    )
+    const gateWasArmed = windowDeepEnough && pooled.length >= ACTIVE_FLOOR
+
+    // Tier-1 seats: a late joiner, already certified in on an EARLIER ordinal, scoring below
+    // retain. Below retain it is excluded from the recent-signer pool, so the probation lane is
+    // the only path that can seat it, and CommitteeBuilder forces that lane to Tier 1.
+    const tier1 = seatedScores.filter(
+      (s) =>
+        s.score < RETAIN_THRESHOLD &&
+        lateJoinerIds.has(s.peerId) &&
+        admissionOrdinalByPeer.has(s.peerId) &&
+        admissionOrdinalByPeer.get(s.peerId) < ordinal,
+    )
     const belowPromote = seatedScores.filter((s) => s.score < PROMOTE_THRESHOLD)
     const atOrAbovePromote = seatedScores.filter((s) => s.score >= PROMOTE_THRESHOLD)
 
@@ -236,13 +286,13 @@ const scanWindow = async (globalL0Url) => {
         ordinal,
         size: committee.length,
         tier1: tier1.length,
-        retained: retained.length,
+        pooled: pooled.length,
+        windowDeepEnough,
         belowPromote: belowPromote.length,
         atOrAbovePromote: atOrAbovePromote.length,
       }
     }
 
-    const gateWasArmed = retained.length >= ACTIVE_FLOOR
     const legacyWouldHaveFiltered = belowPromote.length > 0 && atOrAbovePromote.length > 0
     if (tier1.length > 0 && gateWasArmed && legacyWouldHaveFiltered) {
       sample = {
@@ -276,6 +326,13 @@ const main = async () => {
   const identities = loadNodeIdentities(projectRoot)
   const addressByPeerId = new Map(identities.map((i) => [i.peerId, i.address]))
   const nodeByPeerId = new Map(identities.map((i) => [i.peerId, i]))
+  const lateJoinerIds = new Set(identities.filter((i) => i.isLateJoiner).map((i) => i.peerId))
+  if (lateJoinerIds.size === 0) {
+    throw new Error(
+      `no late joiners configured (NUM_GL0_EARLY=${NUM_EARLY} of NUM_GL0_NODES=${NUM_GL0}); ` +
+        `the rig cannot produce a probation-admitted Tier-1 seat`,
+    )
+  }
 
   // Wait for a mixed committee: the late joiner must be seated AND still below the promote
   // threshold while the genesis peers are above it. Admissions are throttled to one certified
@@ -294,19 +351,26 @@ const main = async () => {
     eventTriggered,
   } = await withRetryOrdinal(
     async () => {
-      const scan = await scanWindow(globalL0Url)
+      const scan = await scanWindow(globalL0Url, lateJoinerIds)
+      // The anchor is mandatory, not an optimization: without a recorded admission there is no
+      // proof any seated low-score peer arrived through the probation lane.
+      if (!scan.anchor) {
+        throw new Error(
+          `no late joiner has been certified into the facilitator base in the ${SCAN_DEPTH} ordinals ` +
+            `below head ${scan.head} (looked for a late peer in controllerEvidence.admittedPeers)`,
+        )
+      }
       if (!scan.sample) {
         const seen = scan.best
           ? `best seen: ordinal ${scan.best.ordinal}, ${scan.best.size} seated ` +
-            `(${scan.best.tier1} late joiners below retain, ${scan.best.retained} at/above retain, ` +
+            `(${scan.best.tier1} probation climbers below retain, ${scan.best.pooled} in the ` +
+            `recent-signer pool, windowDeepEnough=${scan.best.windowDeepEnough}, ` +
             `${scan.best.belowPromote} below promote, ${scan.best.atOrAbovePromote} at/above promote)`
           : 'no TimeTrigger ordinal with rewards and landed evidence yet'
-        const anchorNote = scan.anchor
-          ? `late joiner ${scan.anchor.peerId.slice(0, 12)} was admitted at ordinal ${scan.anchor.ordinal}`
-          : 'no late joiner has been certified into the facilitator base yet'
         throw new Error(
           `no TimeTrigger ordinal below head ${scan.head} carries a seated Tier-1 late joiner ` +
-            `(below retain ${RETAIN_THRESHOLD}) alongside a promote-qualified peer; ${anchorNote}; ${seen}`,
+            `(admitted at ordinal ${scan.anchor.ordinal}, below retain ${RETAIN_THRESHOLD}) with the ` +
+            `score gate armed and a promote-qualified peer alongside it; ${seen}`,
         )
       }
       return { ...scan.sample, anchor: scan.anchor, eventTriggered: scan.eventTriggered }
@@ -365,7 +429,26 @@ const main = async () => {
     )
   }
 
-  // 1. Reward destinations are EXACTLY the frozen committee. This is the whole property: no
+  // 1. THE REGRESSION ASSERTION, and the Tier-1 proof. `tier1` holds late-joining members scoring
+  //    below the RETAIN threshold: they are excluded from the recent-signer pool, so the only path
+  //    that can seat them is the probation lane, which CommitteeBuilder forces into Tier 1 via
+  //    nonCorePeers. (The scan additionally required >= activeFacilitatorFloor members at/above
+  //    retain, which proves the score gate was armed rather than emergency-bypassed -- on the
+  //    bypass path there is no probation lane and a low score would not imply Tier 1.)
+  //    Under the pre-#1547 filter these Tier-1 seats were dropped from the payout while their
+  //    promote-qualified peers were paid.
+  for (const climber of tier1) {
+    const address = addressByPeerId.get(climber.peerId)
+    if (!rewardedNodeAddresses.has(address)) {
+      throw new Error(
+        `${describe(climber.peerId)} was a seated Tier-1 facilitator at ordinal ${ordinal} with score ` +
+          `${climber.score} (below retain ${RETAIN_THRESHOLD}, therefore probation-admitted and ` +
+          `non-Core) but received no reward -- this is the evidence-score payout filter regression`,
+      )
+    }
+  }
+
+  // 2. Reward destinations are EXACTLY the frozen committee. This is the whole property: no
   //    seated member filtered out, no non-seated address paid.
   const expectedAddresses = new Set(
     committee.map((peerId) => {
@@ -387,25 +470,6 @@ const main = async () => {
         `Missing (seated but unpaid): ${JSON.stringify(missing.map((a) => a))}. ` +
         `Unexpected (paid but not seated): ${JSON.stringify(unexpected)}.`,
     )
-  }
-
-  // 2. THE REGRESSION ASSERTION, and the Tier-1 proof. `tier1` holds late-joining members scoring
-  //    below the RETAIN threshold: they are excluded from the recent-signer pool, so the only path
-  //    that can seat them is the probation lane, which CommitteeBuilder forces into Tier 1 via
-  //    nonCorePeers. (The scan additionally required >= activeFacilitatorFloor members at/above
-  //    retain, which proves the score gate was armed rather than emergency-bypassed -- on the
-  //    bypass path there is no probation lane and a low score would not imply Tier 1.)
-  //    Under the pre-#1547 filter these Tier-1 seats were dropped from the payout while their
-  //    promote-qualified peers were paid.
-  for (const climber of tier1) {
-    const address = addressByPeerId.get(climber.peerId)
-    if (!rewardedNodeAddresses.has(address)) {
-      throw new Error(
-        `${describe(climber.peerId)} was a seated Tier-1 facilitator at ordinal ${ordinal} with score ` +
-          `${climber.score} (below retain ${RETAIN_THRESHOLD}, therefore probation-admitted and ` +
-          `non-Core) but received no reward -- this is the evidence-score payout filter regression`,
-      )
-    }
   }
 
   // 3. Equal split across validator rewards. The pool is divided and rounded ONCE upstream, so
