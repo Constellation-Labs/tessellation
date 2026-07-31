@@ -81,9 +81,20 @@ deliberately blanked). Derive them the way the node does:
   `ChronicMissThreshold`, which bars both mechanisms) AND at least `MinViableCoreSize` (2) healthy
   Core members remaining, which zeroes the step-5 liveness fallback -- the only path that re-admits a
   chronic peer. Cross-check against the log line, which prints the committee the node actually built.
-- **Score**: `+20` per entry the peer signed, `-15` per entry it was seated but did not sign, `+10`
-  per `admittedPeers`/`timeoutVoters` appearance, clamped `[0,150]`, over
+- **Score**: `+20` per entry in `completedSigners`, `-15` per entry it was seated but absent from
+  `completedSigners`, `+10` per `admittedPeers`/`timeoutVoters` appearance, clamped `[0,150]`, over
   `snapshot[N].peerHistory.controllerEvidence`.
+- **`completedSigners` is NOT "who signed".** `canonicalCompletedSigners` intersects the committee
+  with `observedResponders` -- the leader's record of who sent a **Facility** during the facility
+  phase -- deliberately, because the locally-observed proofs set diverges across honest nodes. So a
+  peer can appear in `snapshot[N].proofs` (it did sign, within the grace window) and still be absent
+  from `controllerEvidence[N].completedSigners` (its Facility reached the leader too late). Measured
+  on a loaded 5-node rig: the two late joiners were seated 8 and 13 times over 63 ordinals and
+  recorded as signers **zero** times, while Ready and at tip. Consequence: such a peer never gains
+  score, goes chronic, is dropped from the committee, and is re-admitted -- permanent churn rather
+  than graduation. Rewards are unaffected (payout follows `roundStartFacilitators`).
+  **Diagnostic:** if a peer looks like it "isn't signing", compare `proofs` against
+  `completedSigners` before concluding anything about the node.
 
 Cross-check against the node's own view:
 

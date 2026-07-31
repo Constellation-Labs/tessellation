@@ -107,11 +107,11 @@ jobs:
           - { name: spend,                  tests: "spend", timeout: 45 }
           - { name: data-with-fee,          tests: "data-with-fee", timeout: 45 }
           - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
-          # 5 gl0 nodes, 3 at genesis + 2 staggered: the genesis peers saturate their controller
-          # score while a late joiner climbs, producing the probation-admitted Tier-1 seat that is
-          # the only state distinguishing full-committee payout from the removed evidence-score
-          # filter. The metagraph stack is skipped (committee-rewards is not in METAGRAPH_TESTS),
-          # but the rig is still 5 gl0 + 3 gl1 JVMs plus a ~4 min join delay, hence the timeout.
+          # 5 gl0 nodes, 3 at genesis + 2 staggered. The stagger keeps the committee churning, which
+          # is what supplies the chronic-Tier-1-plus-promote-qualified committee that is the only
+          # state distinguishing full-committee payout from the removed evidence-score filter.
+          # The metagraph stack is skipped (committee-rewards is not in METAGRAPH_TESTS), but the rig
+          # is still 5 gl0 + 3 gl1 JVMs plus a ~4 min join delay, hence the timeout.
           - { name: committee-rewards,      tests: "committee-rewards", extra-args: "--num-gl0=5 --num-gl0-early=3", timeout: 45 }
 
     env:

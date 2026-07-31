@@ -66,7 +66,8 @@ export SELECTED_TESTS=${SELECTED_TESTS:-""}
 # Staggered gl0 join: node indices >= NUM_GL0_EARLY delay their self-join by
 # GL0_LATE_JOIN_DELAY seconds, so they enter a cluster that has already advanced. Used by the
 # committee-rewards test to produce a genuine Core/Tier-1 split (a cluster whose peers all join
-# at genesis derives every peer as Core, since the Core floor is a minimum, not a cap).
+# at genesis derives every peer as Core, since the Core floor is a minimum, not a cap). The split
+# arises from the resulting committee CHURN, not from a late joiner climbing to Core.
 # Empty NUM_GL0_EARLY = every gl0 node joins immediately (unchanged default for all other tests).
 # Keep delay + join time under the ~800s cluster-health-check budget (200 retries x 4s).
 export NUM_GL0_EARLY=${NUM_GL0_EARLY:-""}

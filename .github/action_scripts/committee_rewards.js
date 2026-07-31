@@ -38,9 +38,20 @@
  * without the chronic + fallback conditions, is unsound for the promotion reason above.
  *
  * THE RIG (docker/bin/set-env.sh NUM_GL0_EARLY)
- * 5 gl0 nodes: 3 join at genesis, 2 delay their self-join. The genesis peers saturate their score
- * while a late joiner enters at ~0 and climbs (+20 per signed round, promote at 100), which is
- * what manufactures the mixed committee. Requires --num-gl0=5 --num-gl0-early=3.
+ * 5 gl0 nodes: 3 join at genesis, 2 delay their self-join. Requires
+ * --num-gl0=5 --num-gl0-early=3.
+ *
+ * How it actually supplies the sample -- CHURN, not a late joiner climbing to Core. Measured on a
+ * live rig: over 63 ordinals the two late joiners were seated 8 and 13 times and appeared in
+ * `completedSigners` ZERO times, while both were Ready and at the chain tip. `completedSigners` is
+ * not a signature set -- `canonicalCompletedSigners` intersects the committee with
+ * `observedResponders`, the leader's record of who sent a FACILITY in the facility phase. A late
+ * joiner's Facility arrives after the leader has proposed, so its signature lands in the artifact
+ * `proofs` while the evidence records a miss. It therefore never gains score, goes chronic, is
+ * dropped, and is re-admitted -- and that churn is what keeps producing committees that pair a
+ * chronic non-promotable seat with a promote-qualified one. (Genesis peers supply the same shape
+ * when they transiently miss three rounds; the live sample was exactly that.) Rewards are
+ * unaffected either way: payout follows roundStartFacilitators, which is the property under test.
  *
  * ORACLES (both signed, both consensus-agreed, neither requires tier introspection)
  *   committee(N) = snapshot[N+1].value.peerHistory.controllerEvidence["N"].roundStartFacilitators

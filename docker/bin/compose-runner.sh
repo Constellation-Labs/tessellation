@@ -581,9 +581,13 @@ if should_run_test "committee-rewards"; then
   echo "================================================"
   echo "Running committee rewards test"
   echo "================================================"
-  # This test needs the staggered-join rig: genesis peers with saturated controller scores AND a
-  # late joiner still climbing, so the committee is score-MIXED (the only state where the removed
-  # payout filter and the current behavior differ).
+  # This test needs a committee that mixes a promote-qualified peer with a chronic, non-promotable
+  # one -- the only state where the removed payout filter and current behavior differ. The
+  # staggered-join rig produces that reliably by keeping the committee churning: late joiners are
+  # admitted, are recorded as non-responders (their Facility reaches the leader late, so they never
+  # enter completedSigners and never gain score), go chronic, get dropped, and are re-admitted.
+  # NOTE the mechanism is churn, not a late joiner "climbing" to Core -- on a loaded box a late
+  # joiner's score never rises. See reference_completedsigners_is_responders.
   #   just test --test=committee-rewards --num-gl0=5 --num-gl0-early=3
   # A bare `just test` runs every registered test, so on a default 3-node run without the rig we
   # skip rather than burn the retry budget and fail. When the test was asked for BY NAME the rig is
