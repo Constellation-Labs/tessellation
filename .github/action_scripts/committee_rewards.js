@@ -15,21 +15,27 @@
  * everyone is above it. The regression is visible only on a MIXED committee: at least one member
  * below the promote threshold and at least one at or above it.
  *
- * AND IT MUST BE A REAL TIER-1 SEAT, NOT MERELY A LOW SCORE
- * "Below promote" alone is not a tier claim. The proof uses the node's OWN demotion rule instead:
- * `ControllerEvidenceDerivation.derive` assigns
+ * AND IT MUST BE A REAL TIER-1 SEAT IN THE FINAL COMMITTEE
+ * "Below promote" is not a tier claim, and neither is the evidence-derived tier on its own.
+ * `ControllerEvidenceDerivation.derive` gives
  *     tier = if (!windowDeepEnough || signedRecently) Core else Tier1
- * where `signedRecently` means "present in at least one of the last DemotionConsecutiveMisses (3)
- * signer sets". So a SEATED peer absent from those sets, with the window deep enough, derives
- * Tier 1 -- and CommitteeBuilder only ever forces peers DOWN to Tier 1 (nonCorePeers, quality
- * degradation), never up. The conclusion therefore holds on both the gated and the emergency-bypass
- * admission paths, so no separate armed-gate proxy is needed.
+ * but `CommitteeBuilder` can then PROMOTE a derived-Tier-1 peer back into Core: both the
+ * one-for-one replacement step and the Core-floor top-up draw from
+ *     corePromotablePool = rawTier1.filterNot(isChronic || nonCorePeers)
+ * so derivation alone would let an all-Core committee satisfy this test and miss a future
+ * Core-only payout regression.
  *
- * Why not "below retain, therefore probation-admitted": that inference is sound but its sample is
- * unreachable in practice. On a 5-node rig the genesis peers dip below retain from ordinary missed
- * rounds at exactly the times a climber is below retain, so the pool-size proof of an armed gate
- * and the presence of a low-score climber are anti-correlated. Measured against a live local
- * cluster: 0 qualifying ordinals in a 70-ordinal window under that rule, 28 under this one.
+ * The predicate therefore requires the candidate to be CHRONIC (a trailing seated-but-missed streak
+ * >= ChronicMissThreshold), which bars it from BOTH promotion mechanisms, AND at least
+ * MinViableCoreSize healthy Core members to remain, which zeroes the step-5 liveness fallback -- the
+ * only remaining path that re-admits a chronic peer. Both are computed from signed evidence the way
+ * the builder computes them. See the scan for the full argument.
+ *
+ * Two superseded approaches, recorded so they are not retried: (1) "below retain, therefore
+ * probation-admitted" is sound but its sample is unreachable -- on a 5-node rig genesis scores dip
+ * below retain from ordinary missed rounds exactly while a climber is below retain, so the two
+ * conditions are anti-correlated (0 qualifying ordinals in 70 measured live). (2) derivation alone,
+ * without the chronic + fallback conditions, is unsound for the promotion reason above.
  *
  * THE RIG (docker/bin/set-env.sh NUM_GL0_EARLY)
  * 5 gl0 nodes: 3 join at genesis, 2 delay their self-join. The genesis peers saturate their score
@@ -77,12 +83,25 @@ const RECENT_SIGNER_WINDOW = parseInt(process.env.CL_ACTIVE_ADMISSION_RECENT_SIG
 // TierTransitions.DemotionConsecutiveMisses -- the compiled-in depth at which the recent-signer
 // window is considered deep enough to arm the filter at all.
 const DEMOTION_CONSECUTIVE_MISSES = 3
+// ControllerEvidenceDerivation.ChronicMissThreshold (== DemotionConsecutiveMisses): a trailing
+// seated-but-missed streak this long makes a peer chronic, which bars it from BOTH Core-floor
+// promotion and one-for-one replacement in CommitteeBuilder.
+const CHRONIC_MISS_THRESHOLD = 3
+// CommitteeBuilder.MinViableCoreSize: below this many healthy Core members the step-5 liveness
+// fallback re-admits chronic peers into Core. At or above it, the fallback takes zero.
+const MIN_VIABLE_CORE_SIZE = 2
+// CommitteeBuilder quality gate inputs (dag-l0.conf min-participation-observations / -ratio).
+const MIN_PARTICIPATION_OBSERVATIONS = parseInt(process.env.CL_MIN_PARTICIPATION_OBSERVATIONS || '10', 10)
+const MIN_PARTICIPATION_RATIO = parseFloat(process.env.CL_MIN_PARTICIPATION_RATIO || '0.5')
 
 const NUM_GL0 = parseInt(process.env.NUM_GL0_NODES || '5', 10)
 const NUM_EARLY = parseInt(process.env.NUM_GL0_EARLY || '3', 10)
-// Ordinals below the head to search. The mixed window is short (a climber crosses the threshold
-// after ~5 signed rounds), so the search must cover enough history to contain it.
-const SCAN_DEPTH = parseInt(process.env.COMMITTEE_REWARDS_SCAN_DEPTH || '60', 10)
+// Ordinals below the head to search. Qualifying states cluster in the committee's GROWTH phase and
+// stop recurring once every peer is saturated and signing, so a short tail-window scan starts
+// missing them as the cluster matures: observed live at head ~209, a 60-ordinal scan found nothing
+// while a 200-ordinal scan immediately found ordinal 29. Default generously; the window is fetched
+// once per attempt.
+const SCAN_DEPTH = parseInt(process.env.COMMITTEE_REWARDS_SCAN_DEPTH || '200', 10)
 
 const fetchJson = async (url) => {
   const response = await axios.get(`${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`, {
@@ -164,6 +183,45 @@ const derivePeerScores = (controllerEvidence) => {
  * entry count for the `recentWindowDeepEnough` guard. Keys are decimal ordinals, so sort numerically
  * rather than lexically (otherwise "9" sorts after "10").
  */
+/**
+ * `ControllerEvidenceDerivation.consecutiveMisses`: trailing entries where the peer was seated
+ * (in roundStartFacilitators) but did not sign, counted back from the most recent entry. An entry
+ * where the peer SIGNED resets the streak; an entry where it was NOT seated BREAKS it. A peer whose
+ * streak reaches ChronicMissThreshold is chronic, which is what bars it from Core-floor promotion.
+ */
+const consecutiveMisses = (controllerEvidence, peerId) => {
+  const ordinals = Object.keys(controllerEvidence || {})
+    .map((k) => parseInt(k, 10))
+    .sort((a, b) => a - b)
+  let streak = 0
+  for (let i = ordinals.length - 1; i >= 0; i--) {
+    const entry = controllerEvidence[String(ordinals[i])]
+    const seated = (entry.roundStartFacilitators || []).includes(peerId)
+    const signed = (entry.completedSigners || []).includes(peerId)
+    if (seated && !signed) streak++
+    else break
+  }
+  return streak
+}
+
+/** `peerQuality` as the builder derives it: (completed, participated) over the evidence window. */
+const peerQuality = (controllerEvidence, peerId) => {
+  const entries = Object.values(controllerEvidence || {})
+  let completed = 0
+  let participated = 0
+  for (const entry of entries) {
+    if ((entry.roundStartFacilitators || []).includes(peerId)) participated++
+    if ((entry.completedSigners || []).includes(peerId)) completed++
+  }
+  return { completed, participated }
+}
+
+/** CommitteeBuilder.isQualityDegraded: enough observations AND ratio below the minimum. */
+const isQualityDegraded = (controllerEvidence, peerId) => {
+  const { completed, participated } = peerQuality(controllerEvidence, peerId)
+  return participated >= MIN_PARTICIPATION_OBSERVATIONS && completed / participated < MIN_PARTICIPATION_RATIO
+}
+
 const recentSignerSets = (recentSigners) => {
   const ordinals = Object.keys(recentSigners || {})
     .map((k) => parseInt(k, 10))
@@ -263,27 +321,49 @@ const scanWindow = async (globalL0Url, lateJoinerIds) => {
     const scores = derivePeerScores(snapshot.value?.peerHistory?.controllerEvidence)
     const seatedScores = committee.map((peerId) => ({ peerId, score: scores.get(peerId) ?? 0 }))
 
-    // TIER-1 PROOF, using the node's own demotion rule rather than an inference about which
-    // admission lane seated the peer. `ControllerEvidenceDerivation.derive` assigns
-    //   tier = if (!windowDeepEnough || signedRecently) Core else Tier1
-    // where `signedRecently` means "appears in at least one of the last DemotionConsecutiveMisses
-    // signer sets". So a SEATED peer that is absent from those sets, with the window deep enough,
-    // derives Tier 1 -- and `CommitteeBuilder` only ever forces peers DOWN to Tier 1 (via
-    // nonCorePeers / quality degradation), never up. The conclusion therefore holds on BOTH the
-    // gated and the emergency-bypass admission paths, which is why no separate armed-gate proxy is
-    // needed. (An earlier version required a below-retain late joiner plus a pool-size proxy; on a
-    // real 5-node rig those two conditions are anti-correlated in time -- genesis scores dip below
-    // retain from missed rounds exactly while the climber is below retain -- so a valid sample was
-    // never found. Measured on a live local cluster: 0 qualifying ordinals in 70 under the old
-    // rule, 28 under this one.)
+    // TIER-1 PROOF. Derivation alone is NOT sufficient: a peer absent from the last
+    // DemotionConsecutiveMisses signer sets derives Tier 1, but `CommitteeBuilder` can then PROMOTE
+    // it back into Core -- step 2 (one-for-one replacement of chronic Core members) and step 3 (the
+    // Core-floor top-up) both draw from
+    //     corePromotablePool = rawTier1.filterNot(isChronic || nonCorePeers)
+    // so a derived-Tier-1 peer that is neither chronic nor on probation can end the round as Core.
+    // Asserting Tier 1 from derivation alone would let an all-Core committee pass and would miss a
+    // future Core-only payout regression (codex round 5).
+    //
+    // Two conditions close that hole, both computable from signed evidence:
+    //   (a) the candidate is CHRONIC -- consecutiveMisses >= ChronicMissThreshold -- which bars it
+    //       from BOTH promotion mechanisms ("chronic peers are categorically barred from BOTH");
+    //   (b) at least MinViableCoreSize healthy Core members remain, so the step-5 liveness fallback
+    //       (the only path that re-admits a chronic peer) takes zero:
+    //           readmitted = (...).take(max(0, readmitTarget - healthySize)),
+    //           readmitTarget = min(MinViableCoreSize, max(coreFloor, rawCore.size)).
+    // A "healthy Core member" here is a committee peer that signed within the last
+    // DemotionConsecutiveMisses sets (so it derives Core), is not chronic, is not quality-degraded,
+    // and scores at/above retain (so it sits in the recent-signer pool rather than probation, i.e.
+    // it is not in nonCorePeers). Each of those is the builder's own test, computed the builder's way.
+    const evidence = snapshot.value?.peerHistory?.controllerEvidence
     const recentWindow = recentSignerSets(snapshot.value?.peerHistory?.recentSigners)
     const windowDeepEnough = recentWindow.entryCount >= DEMOTION_CONSECUTIVE_MISSES
+
+    const healthyCore = seatedScores.filter(
+      (s) =>
+        recentWindow.recentSigners.has(s.peerId) &&
+        consecutiveMisses(evidence, s.peerId) < CHRONIC_MISS_THRESHOLD &&
+        !isQualityDegraded(evidence, s.peerId) &&
+        s.score >= RETAIN_THRESHOLD,
+    )
+    const fallbackBlocked = healthyCore.length >= MIN_VIABLE_CORE_SIZE
+
     const tier1 = windowDeepEnough
-      ? seatedScores.filter((s) => !recentWindow.recentSigners.has(s.peerId))
+      ? seatedScores.filter(
+          (s) =>
+            !recentWindow.recentSigners.has(s.peerId) &&
+            consecutiveMisses(evidence, s.peerId) >= CHRONIC_MISS_THRESHOLD,
+        )
       : []
     // Only a Tier-1 seat BELOW the promote threshold is discriminating: that is precisely what the
     // removed filter dropped.
-    const tier1BelowPromote = tier1.filter((s) => s.score < PROMOTE_THRESHOLD)
+    const tier1BelowPromote = fallbackBlocked ? tier1.filter((s) => s.score < PROMOTE_THRESHOLD) : []
     const belowPromote = seatedScores.filter((s) => s.score < PROMOTE_THRESHOLD)
     const atOrAbovePromote = seatedScores.filter((s) => s.score >= PROMOTE_THRESHOLD)
 
@@ -292,6 +372,9 @@ const scanWindow = async (globalL0Url, lateJoinerIds) => {
         ordinal,
         size: committee.length,
         tier1: tier1BelowPromote.length,
+        chronicTier1: tier1.length,
+        healthyCore: healthyCore.length,
+        fallbackBlocked,
         windowDeepEnough,
         windowEntries: recentWindow.entryCount,
         belowPromote: belowPromote.length,
@@ -338,7 +421,7 @@ const main = async () => {
   if (lateJoinerIds.size === 0) {
     throw new Error(
       `no late joiners configured (NUM_GL0_EARLY=${NUM_EARLY} of NUM_GL0_NODES=${NUM_GL0}); ` +
-        `the rig cannot produce a probation-admitted Tier-1 seat`,
+        `the rig is far less likely to produce a chronic Tier-1 seat`,
     )
   }
 
@@ -432,13 +515,10 @@ const main = async () => {
     )
   }
 
-  // 1. THE REGRESSION ASSERTION, and the Tier-1 proof. `tier1` holds late-joining members scoring
-  //    below the RETAIN threshold: they are excluded from the recent-signer pool, so the only path
-  //    that can seat them is the probation lane, which CommitteeBuilder forces into Tier 1 via
-  //    nonCorePeers. (The scan additionally required >= activeFacilitatorFloor members that are both
-  //    recent signers and at/above retain, which proves the score gate was armed rather than
-  //    emergency-bypassed -- on the bypass path there is no probation lane and a low score would
-  //    not imply Tier 1.)
+  // 1. THE REGRESSION ASSERTION, and the Tier-1 proof. `tier1` holds seated members that carry
+  //    a chronic trailing-miss streak, which bars Core-floor promotion, while >= MinViableCoreSize
+  //    healthy Core members block the liveness fallback that is the only remaining path back into
+  //    Core. See the scan for the full argument.
   //    Under the pre-#1547 filter these Tier-1 seats were dropped from the payout while their
   //    promote-qualified peers were paid.
   for (const climber of tier1) {

@@ -50,10 +50,12 @@ const CLIMBER = peers[3]
 const NEVER_SEATED = peers[4]
 
 const ADMISSION_ORDINAL = 10
-// The climber is SEATED from ADMISSION_ORDINAL+1 but does not sign until it has caught up, so it is
-// absent from the last DemotionConsecutiveMisses signer sets and therefore derives Tier 1 -- the
-// exact shape the test proves. Signing from here on lets it graduate, mirroring a real climb.
-const CLIMBER_FIRST_SIGNS = 15
+// The climber is SEATED from ADMISSION_ORDINAL+1 but does not sign for a while, so it accumulates a
+// trailing seated-but-missed streak >= ChronicMissThreshold. Chronic is what bars it from
+// Core-floor promotion, which is what makes "Tier 1" a claim about the FINAL committee rather than
+// just the derived tier. Set well past the sampled ordinals so several rounds qualify; it signs from
+// here on, mirroring a real catch-up.
+const CLIMBER_FIRST_SIGNS = 19
 const HEAD = 20
 const REWARD_AMOUNT = 22161532110000
 

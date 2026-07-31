@@ -71,9 +71,16 @@ Two off-by-ones that will mislead you:
 Neither per-peer tier nor controller score is exposed over HTTP (`peerHistory.perPeer` is
 deliberately blanked). Derive them the way the node does:
 
-- **Tier**: a seated peer absent from the last `TierTransitions.DemotionConsecutiveMisses` (3)
-  entries of `recentSigners` is Tier 1; otherwise Core. Note the admission pool uses a *wider*
+- **Derived tier**: a seated peer absent from the last `TierTransitions.DemotionConsecutiveMisses`
+  (3) entries of `recentSigners` derives Tier 1; otherwise Core. The admission pool uses a *wider*
   window (`effectiveRecentSignerWindow`) than this tier rule -- do not conflate them.
+- **FINAL tier is not the derived tier.** `CommitteeBuilder` can promote a derived-Tier-1 peer back
+  into Core: both the one-for-one replacement of chronic Core members and the Core-floor top-up draw
+  from `corePromotablePool = rawTier1.filterNot(isChronic || nonCorePeers)`. To conclude a peer ended
+  the round as Tier 1 you also need it to be **chronic** (trailing seated-but-missed streak >=
+  `ChronicMissThreshold`, which bars both mechanisms) AND at least `MinViableCoreSize` (2) healthy
+  Core members remaining, which zeroes the step-5 liveness fallback -- the only path that re-admits a
+  chronic peer. Cross-check against the log line, which prints the committee the node actually built.
 - **Score**: `+20` per entry the peer signed, `-15` per entry it was seated but did not sign, `+10`
   per `admittedPeers`/`timeoutVoters` appearance, clamped `[0,150]`, over
   `snapshot[N].peerHistory.controllerEvidence`.
