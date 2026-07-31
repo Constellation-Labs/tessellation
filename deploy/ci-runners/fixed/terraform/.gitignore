@@ -1,0 +1,21 @@
+# Local
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Variable files that may carry secrets / real IPs
+*.tfvars.json
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+backend_override.tf
+
+# Saved plan files embed variable values, including secrets
+tfplan
+*.tfplan

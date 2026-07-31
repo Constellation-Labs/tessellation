@@ -88,7 +88,7 @@ jobs:
   e2e-test:
     name: E2E - ${{ matrix.test-group.name }}
     needs: build
-    runs-on: ${{ matrix.test-group.runner || 'Ubuntu-22-64-core' }}
+    runs-on: ${{ matrix.test-group.runner || vars.E2E_RUNNER_LABEL || 'tessellation-e2e' }}
     timeout-minutes: ${{ matrix.test-group.timeout || 30 }}
 
     strategy:

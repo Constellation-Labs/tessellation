@@ -1,0 +1,181 @@
+---
+# github-hetzner-runners — autoscaler config for the tessellation E2E CI fleet.
+#
+# One ephemeral Hetzner Cloud server per queued E2E job; the server powers itself
+# off when the job finishes and the autoscaler deletes it. Replaces the
+# GitHub-hosted `Ubuntu-22-64-core` larger runner (~$0.162/min, ~$2k/mo).
+#
+# Why one server per job (and not several runners per big box): the E2E harness is
+# NOT multi-tenant. compose-runner.sh creates a fixed-name docker network
+# `tessellation_common` on a fixed subnet (NET_PREFIX, default 172.32.0.0/24) with
+# fixed container names (gl0-0, gl1-0, ...) and fixed host ports (9000-9412). Two
+# concurrent jobs on one host collide on all four. A server per job sidesteps that
+# entirely — no docker-in-docker, no harness changes.
+#
+# Tokens are injected from the environment by systemd (see systemd/ and
+# bootstrap-controller.sh); nothing secret is committed here.
+#
+# Full option reference:
+#   https://github.com/testflows/TestFlows-GitHub-Hetzner-Runners/wiki/Program-Options
+config:
+  github_token: ${GITHUB_TOKEN}
+  github_repository: ${GITHUB_REPOSITORY}
+  hetzner_token: ${HETZNER_TOKEN}
+
+  # Public key installed on every runner so an operator can SSH in to debug a
+  # wedged job before the server is reaped.
+  ssh_key: "/etc/github-hetzner-runners/runner_key.pub"
+
+  # ---------------------------------------------------------------------------
+  # Job -> server mapping
+  # ---------------------------------------------------------------------------
+  # Only act on jobs carrying this label. Deliberately NOT the default
+  # `self-hosted`: gating on our own label means an unrelated `self-hosted` job
+  # can never silently spend money in this project.
+  with_label:
+    - "tessellation-e2e"
+    - "tessellation-e2e-large"
+
+  # `tessellation-e2e` in a workflow's `runs-on` expands to the labels below,
+  # which is how the server type / image / location get chosen. Keeping this
+  # indirection in the autoscaler (not the workflow) means resizing the fleet is
+  # a controller-side config change + service restart — no repo PR, no rerun of
+  # in-flight PRs.
+  #
+  #   type-*  server type          image-* OS image        in-*  location
+  meta_label:
+    tessellation-e2e:
+      - "self-hosted"
+      - "type-ccx43"
+      - "image-x86-app-docker-ce"
+      - "in-hel1"
+    # For test groups that run a wider topology than the 3-gl0 default — today
+    # only fork-recovery (--num-gl0=5, i.e. ~17 JVM containers instead of 13).
+    # Currently unused: the fork-recovery matrix entry is commented out in
+    # e2e-just-test.yml pending PR #1485. Kept defined so re-enabling it is a
+    # one-line workflow change.
+    tessellation-e2e-large:
+      - "self-hosted"
+      - "type-ccx53"
+      - "image-x86-app-docker-ce"
+      - "in-hel1"
+
+  # SIZING — THE dominant cost variable, not a detail. Per-job need is ~13 JVM
+  # containers (3 gl0 + 3 gl1 + 1 ml0 + 3 cl1 + 3 dl1), each defaulting to
+  # `-Xmx8g` with `-XX:ActiveProcessorCount=8` (docker/entrypoint.sh,
+  # docker-compose.test.yaml).
+  #
+  # Prices below are hel1, pulled from the Hetzner API for this account (net ==
+  # gross). Monthly totals assume ~540 job-servers/mo (9 E2E jobs x ~60 runs) at
+  # ~1.47 billed hours each — Hetzner rounds every partial hour UP to a full
+  # calendar hour, so a ~28 min job usually costs 1-2 h. Add the EUR 22.99/mo
+  # controller.
+  #
+  #   ccx33  8c /  32 GB  EUR 0.2612/h  ~= EUR 230/mo total  (88% saving) — 32 GB is tight; measure first
+  #   ccx43 16c /  64 GB  EUR 0.5216/h  ~= EUR 437/mo total  (76% saving) — default
+  #   ccx53 32c / 128 GB  EUR 1.0088/h  ~= EUR 824/mo total  (56% saving) — only if timing flakes demand it
+  #
+  # Baseline being replaced: GitHub `Ubuntu-22-64-core` at $0.162/min ~= $2000/mo.
+  #
+  # Stepping down to ccx33 nearly halves the bill, so measure real per-job peak
+  # RSS and CPU on the first green run before settling. Conversely, if E2E starts
+  # flaking on consensus timing, step UP before tuning timeouts — a 4x CPU cut vs
+  # the 64-core baseline is the likeliest cause.
+  #
+  # CCX (dedicated vCPU) not CPX (shared): this suite is timing-sensitive and
+  # docker-compose.test.yaml documents at length how shared-CPU contention
+  # produces multi-second JVM pauses and spurious consensus failures. Do not
+  # move to CPX to save money.
+  default_server_type: ccx43
+  default_image: "x86:app:docker-ce"
+  default_location: hel1
+
+  # ---------------------------------------------------------------------------
+  # Concurrency
+  # ---------------------------------------------------------------------------
+  # The E2E matrix is 9 jobs on this label (the 10th, snapshot-streaming, stays on
+  # a GitHub-hosted ubuntu-22.04 runner). 12 leaves headroom for a second PR
+  # starting while one is mid-run.
+  #
+  # NOTE: a Hetzner Cloud project ships with a server limit of ~10. Raise it via
+  # support BEFORE relying on this number, or scale-up silently caps. See README.
+  max_runners: 12
+
+  # Stop one PR from consuming the whole fleet and starving every other PR.
+  max_runners_in_workflow_run: 10
+
+  # ---------------------------------------------------------------------------
+  # Lifecycle
+  # ---------------------------------------------------------------------------
+  # Recycling reuses powered-off servers instead of creating fresh ones. Off by
+  # choice: Hetzner bills a server for existing, not for running, so pooled
+  # powered-off servers cost real money; and a guaranteed-fresh box per job is
+  # precisely the isolation we are buying. Our jobs run ~20-45 min, so a ~60 s
+  # boot is noise. Turn on only if boot latency ever becomes the bottleneck.
+  recycle: false
+
+  # Reap anything that powers off (job finished, or `sudo poweroff` from the
+  # startup script) quickly, so we stop paying for it.
+  max_powered_off_time: 60
+
+  # A runner that registers but never picks up a job is a leak — kill it.
+  max_unused_runner_time: 180
+
+  # Generous vs the 120 s defaults: these servers boot the Docker CE app image and
+  # then download the actions runner, which can exceed two minutes on a cold
+  # Hetzner image. Too-tight values here show up as phantom scale-up failures.
+  max_runner_registration_time: 300
+  max_server_ready_time: 300
+
+  # Poll cadence for queued/finished jobs. 30 s (vs the 60 s default) roughly
+  # halves the queue-to-boot latency for the cost of ~2x GitHub API calls, which
+  # the tool's HTTP caching absorbs.
+  scale_up_interval: 30
+  scale_down_interval: 30
+
+  workers: 10
+  delete_random: false
+  debug: false
+
+  # ---------------------------------------------------------------------------
+  # Monitoring — bound to loopback; reach it over an SSH tunnel:
+  #   ssh -L 8090:127.0.0.1:8090 -L 9099:127.0.0.1:9099 admin@<controller-ip>
+  # ---------------------------------------------------------------------------
+  dashboard_host: "127.0.0.1"
+  dashboard_port: 8090
+  metrics_host: "127.0.0.1"
+  # 9099, not the tool's 9090 default: 9090 is Prometheus on the tessellation
+  # monitoring hosts and reusing it invites confusion across runbooks.
+  metrics_port: 9099
+
+  logger_config:
+    version: 1
+    disable_existing_loggers: false
+    formatters:
+      stdout:
+        class: testflows.github.hetzner.runners.logger.StdoutFormatter
+        format: "%(asctime)s %(message)s"
+        datefmt: "%H:%M:%S"
+      rotating_file:
+        class: testflows.github.hetzner.runners.logger.RotatingFileFormatter
+        format: "%(asctime)s,%(interval)s,%(levelname)s,%(run_id)s,%(job_id)s,%(server_name)s,%(threadName)s,%(funcName)s,%(message)s"
+        datefmt: "%Y-%m-%d,%H:%M:%S"
+    handlers:
+      stdout:
+        level: INFO
+        formatter: stdout
+        class: testflows.github.hetzner.runners.logger.StdoutHandler
+        stream: "ext://sys.stdout"
+      rotating_logfile:
+        level: DEBUG
+        formatter: rotating_file
+        class: testflows.github.hetzner.runners.logger.RotatingFileHandler
+        filename: /var/log/github-hetzner-runners/service.log
+        maxBytes: 10485760
+        backupCount: 5
+    loggers:
+      testflows.github.hetzner.runners:
+        level: INFO
+        handlers:
+          - stdout
+          - rotating_logfile
