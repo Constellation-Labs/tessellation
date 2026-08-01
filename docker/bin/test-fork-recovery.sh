@@ -68,6 +68,27 @@ get_facilitator_count() {
   echo "${result:-0}"
 }
 
+# Helper: the cluster's tip, as the MEDIAN ordinal across reachable gl0 nodes.
+#
+# Deliberately not MONITOR_NODE's own ordinal. The monitor is just gl0-0; it is not guaranteed to
+# be in the committee and it can itself fall behind and recover, which silently weakens every check
+# built on it. Observed on 2026-07-31: a run "passed" its catch-up criterion with iso_ord=51 against
+# a monitor stuck at 41 while the real cluster tip was 58 -- the isolated node had not caught up at
+# all, it was merely ahead of a second lagging node.
+#
+# Median rather than max so a single raced-ahead node cannot make the target unreachable, and
+# rather than min so a single laggard cannot make it trivially satisfiable.
+get_cluster_tip() {
+  local ords=()
+  local i o
+  for i in $(seq 0 $((NUM_GL0 - 1))); do
+    o=$(get_ordinal "gl0-${i}")
+    [ -n "$o" ] && ords+=("$o")
+  done
+  [ "${#ords[@]}" -eq 0 ] && return 0
+  printf '%s\n' "${ords[@]}" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'
+}
+
 # Helper: peer id of a node, from the key material node-key-env-setup.sh syncs into nodes/<i>/.
 peer_id_of() {
   local idx=${1##gl0-}
@@ -332,7 +353,7 @@ fi
 echo "  Isolation target: $ISOLATION_NODE (seated committee:${committee_nodes})"
 
 # Record pre-isolation state from monitor (a validator)
-pre_ordinal=$(get_ordinal "$MONITOR_NODE")
+pre_ordinal=$(get_cluster_tip)
 pre_isolation_ordinal=$(get_ordinal "$ISOLATION_NODE" 2>/dev/null || echo "$pre_ordinal")
 echo "  Pre-isolation ordinal: $pre_ordinal (monitor), $pre_isolation_ordinal (isolated node)"
 
@@ -403,7 +424,7 @@ echo "  $ISOLATION_NODE isolated. Waiting ${ISOLATION_DURATION}s for cluster to 
 sleep "$ISOLATION_DURATION"
 
 # Check cluster advanced
-post_isolation_ordinal=$(get_ordinal "$MONITOR_NODE")
+post_isolation_ordinal=$(get_cluster_tip)
 echo "  Cluster advanced: ordinal $pre_ordinal → $post_isolation_ordinal"
 
 if [ -z "$post_isolation_ordinal" ] || [ "$post_isolation_ordinal" -le "$pre_ordinal" ]; then
@@ -440,7 +461,7 @@ while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
   iso_fac=$(get_facilitator_count "$ISOLATION_NODE")
   iso_completed=$(get_completed_rounds_after "$ISOLATION_NODE" "$post_isolation_ordinal")
   fork_events=$(get_fork_events "$ISOLATION_NODE")
-  monitor_ord=$(get_ordinal "$MONITOR_NODE")
+  monitor_ord=$(get_cluster_tip)
 
   echo "  [${elapsed}s] $ISOLATION_NODE: facilitators=${iso_fac:-?} completedAfterIsolation=$iso_completed forkEvents=$fork_events clusterOrdinal=${monitor_ord:-?}"
 
@@ -488,7 +509,7 @@ done
 echo ""
 echo "Phase 4: Verifying results..."
 
-final_ordinal=$(get_ordinal "$MONITOR_NODE")
+final_ordinal=$(get_cluster_tip)
 final_fac=$(get_facilitator_count "$MONITOR_NODE")
 final_fork_events=$(get_fork_events "$ISOLATION_NODE")
 recovery_elapsed=$(( $(date +%s) - recovery_start ))

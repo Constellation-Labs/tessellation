@@ -9,10 +9,10 @@ import weaver.SimpleIOSuite
 /** Guards the unclosable-gap bound that lets a returning peer's rumor chain restart.
   *
   * Background: `addPeerRumorIfConsecutive` accepts a peer rumor only when its counter is exactly `head + 1`. A peer that is unreachable for
-  * longer than its own rumor buffer therefore comes back permanently muted -- every rumor it sends is `CounterTooHigh` and silently dropped,
-  * including its `NodeState` broadcasts and all of its consensus declarations. Because committees derive from `peerHistory` rather than from
-  * gossip reachability, such a peer can still be seated and elected leader, at which point no follower can hear it and the chain wedges.
-  * Observed on a 5-node rig: ordinal 41 held for 900s with all nodes Ready and at tip.
+  * longer than its own rumor buffer therefore comes back permanently muted -- every rumor it sends is `CounterTooHigh` and silently
+  * dropped, including its `NodeState` broadcasts and all of its consensus declarations. Because committees derive from `peerHistory` rather
+  * than from gossip reachability, such a peer can still be seated and elected leader, at which point no follower can hear it and the chain
+  * wedges. Observed on a 5-node rig: ordinal 41 held for 900s with all nodes Ready and at tip.
   *
   * The bound below is what makes the restart safe to do automatically: it fires only when the missing range provably cannot be served by
   * anyone, so it can never pre-empt the ordinary `peerRound` inquiry repair.
@@ -62,11 +62,12 @@ object RumorChainGapSuite extends SimpleIOSuite {
     expect(
       !RumorStorage.isGapUnclosable(counter(100L), counter(100L), capacity),
       "an equal counter is a duplicate, handled as CounterTooLow"
-    ) and
+    ).and(
       expect(
         !RumorStorage.isGapUnclosable(counter(100L), counter(40L), capacity),
         "a counter below the head must not be mistaken for a forward gap"
       )
+    )
   }
 
   pureTest("the bound scales with the configured capacity") {
@@ -75,10 +76,11 @@ object RumorChainGapSuite extends SimpleIOSuite {
     expect(
       !RumorStorage.isGapUnclosable(counter(10L), counter(12L), small),
       "a gap of exactly the (small) capacity is still closable"
-    ) and
+    ).and(
       expect(
         RumorStorage.isGapUnclosable(counter(10L), counter(13L), small),
         "one beyond the (small) capacity is unclosable"
       )
+    )
   }
 }
