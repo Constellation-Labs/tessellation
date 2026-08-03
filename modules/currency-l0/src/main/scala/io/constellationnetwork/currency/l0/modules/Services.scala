@@ -155,6 +155,7 @@ object Services {
           storages.cluster,
           storages.node,
           storages.lastSyncGlobalSnapshot,
+          feeCalculator,
           maybeRewards,
           cfg.snapshot,
           client,

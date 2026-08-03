@@ -21,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -47,6 +48,7 @@ object CurrencySnapshotConsensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    feeCalculator: FeeCalculator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
@@ -104,7 +106,7 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
-        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)
+        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, feeCalculator, gossip, selfId, seedlist)
       consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = CurrencySnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(
