@@ -3,6 +3,7 @@ package io.constellationnetwork.currency.l0.snapshot
 import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
+import cats.{Functor, Monad}
 
 import scala.collection.immutable.SortedMap
 
@@ -14,6 +15,7 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
@@ -25,6 +27,8 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.currencyMessage.{MessageType, fetchOwnerAddress}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -45,10 +49,43 @@ abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
 
 object CurrencySnapshotConsensusStateCreator {
 
+  val InitialOwnerMessageOrdinal: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(2L)
+
+  /** The initial Owner message can only be accepted at snapshot ordinal 2 and the global L0 charges snapshot fees to the owner address from
+    * that ordinal on. Producing snapshot 2 without the Owner message dooms every subsequent snapshot to rejection, so the round must not
+    * start until the message is available for inclusion.
+    */
+  def canStartOwnedConsensus[F[_]: Monad](
+    key: CurrencySnapshotKey,
+    maybeOwnerAddress: Option[Address],
+    getLastGlobalSnapshotOrdinal: F[Option[SnapshotOrdinal]],
+    feeCalculator: FeeCalculator[F],
+    pendingOwnerMessageExists: F[Boolean]
+  ): F[Boolean] =
+    if (key =!= InitialOwnerMessageOrdinal || maybeOwnerAddress.isDefined)
+      true.pure[F]
+    else
+      getLastGlobalSnapshotOrdinal
+        .map(_.map(feeCalculator.isFeeRequired).getOrElse(feeCalculator.isFeeRequired(SnapshotOrdinal.unsafeApply(Long.MaxValue))))
+        .ifM(pendingOwnerMessageExists, true.pure[F])
+
+  def pendingOwnerMessageExists[F[_]: Functor](
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
+  ): F[Boolean] =
+    eventMempool.snapshot().map {
+      _.events.exists {
+        _.signed.value match {
+          case CurrencyMessageEvent(message) => message.messageType === MessageType.Owner
+          case _                             => false
+        }
+      }
+    }
+
   def make[F[_]: Async: Metrics](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    feeCalculator: FeeCalculator[F],
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
@@ -74,10 +111,24 @@ object CurrencySnapshotConsensusStateCreator {
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
       priorAbandonmentCount: Int
     ): F[StateCreateResult] =
-      consensusStorage
-        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount)))
-        .flatMap(evalEffect)
-        .flatTap(logIfCreated)
+      canStartOwnedConsensus(
+        key,
+        fetchOwnerAddress(lastOutcome.finished.context.snapshotInfo),
+        lastGlobalSnapshotStorage.getOrdinal,
+        feeCalculator,
+        pendingOwnerMessageExists(eventMempool)
+      ).ifM(
+        consensusStorage
+          .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount)))
+          .flatMap(evalEffect)
+          .flatTap(logIfCreated),
+        logger
+          .warn(
+            s"Deferring consensus for key ${key.show}: waiting for the initial Owner message to set the metagraph owner " +
+              s"before creating the first fee-paying snapshot, otherwise it gets rejected by the global L0"
+          )
+          .as(none)
+      )
 
     // Reads the stored self-Facility and re-sends via direct push. Mirrors dag-l0.
     def retransmitOwnFacility(key: CurrencySnapshotKey, targets: Set[PeerId]): F[Unit] =

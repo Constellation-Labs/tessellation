@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
@@ -69,6 +70,7 @@ object CurrencySnapshotConsensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    feeCalculator: FeeCalculator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
@@ -214,6 +216,7 @@ object CurrencySnapshotConsensus {
           consensusFns,
           consensusStorage,
           lastGlobalSnapshotStorage,
+          feeCalculator,
           gossip,
           selfId,
           seedlist,
