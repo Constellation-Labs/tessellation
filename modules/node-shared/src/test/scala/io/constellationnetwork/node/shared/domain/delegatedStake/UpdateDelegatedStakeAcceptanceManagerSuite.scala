@@ -10,11 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.{
-  DuplicatedParent,
-  DuplicatedStake,
-  InvalidParent
-}
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidatorSuite.mkGlobalContext
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
@@ -51,7 +47,10 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject stakes with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        SnapshotOrdinal.MinValue
+      )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -91,7 +90,10 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject withdrawals with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        SnapshotOrdinal.MinValue
+      )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -131,7 +133,10 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should accept withdrawals with different parents") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        SnapshotOrdinal.MinValue
+      )
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -168,6 +173,219 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
           acceptedWithdrawals =
             SortedMap(sourceAddress -> List((valid2, EpochProgress.apply(NonNegLong(1))), (valid1, EpochProgress.apply(NonNegLong(1))))),
           notAcceptedWithdrawals = List.empty
+        )
+      )
+  }
+
+  test("should preserve create-withdraw behavior before activation and reject the withdrawal at activation") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val activationOrdinal = SnapshotOrdinal.unsafeApply(3L)
+    val acceptanceManager =
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        activationOrdinal
+      )
+
+    for {
+      existingNodeKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      ((tokenLockRef, _), ctx) <- mkValidGlobalContext(kp, existingNodeKeyPair, kp)
+      existingStake <- Signed.forAsyncHasher(
+        testCreateDelegatedStake(existingNodeKeyPair, sourceAddress, 100L, tokenLockReference = tokenLockRef),
+        kp
+      )
+      existingStakeRef <- DelegatedStakeReference.of(existingStake)
+      context = ctx.copy(activeDelegatedStakes =
+        Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              DelegatedStakeRecord(existingStake, SnapshotOrdinal.unsafeApply(1L), Amount.empty)
+            )
+          )
+        )
+      )
+      replacementStake <- Signed.forAsyncHasher(
+        testCreateDelegatedStake(
+          kp,
+          sourceAddress,
+          100L,
+          tokenLockReference = tokenLockRef,
+          parent = existingStakeRef
+        ),
+        kp
+      )
+      withdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, existingStakeRef.hash), kp)
+      legacyResult <- acceptanceManager.accept(
+        creates = List(replacementStake),
+        withdrawals = List(withdrawal),
+        lastSnapshotContext = context,
+        currentGlobalEpochProgress = EpochProgress(NonNegLong(1L)),
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2L)
+      )
+      hardenedResult <- acceptanceManager.accept(
+        creates = List(replacementStake),
+        withdrawals = List(withdrawal),
+        lastSnapshotContext = context,
+        currentGlobalEpochProgress = EpochProgress(NonNegLong(1L)),
+        currentSnapshotOrdinal = activationOrdinal
+      )
+    } yield
+      expect.all(
+        legacyResult == UpdateDelegatedStakeAcceptanceResult(
+          acceptedCreates = SortedMap(sourceAddress -> List((replacementStake, SnapshotOrdinal.unsafeApply(2L)))),
+          notAcceptedCreates = List.empty,
+          acceptedWithdrawals = SortedMap(sourceAddress -> List((withdrawal, EpochProgress(NonNegLong(1L))))),
+          notAcceptedWithdrawals = List.empty
+        ),
+        hardenedResult == UpdateDelegatedStakeAcceptanceResult(
+          acceptedCreates = SortedMap(sourceAddress -> List((replacementStake, activationOrdinal))),
+          notAcceptedCreates = List.empty,
+          acceptedWithdrawals = SortedMap.empty,
+          notAcceptedWithdrawals = List(
+            (
+              withdrawal,
+              NonEmptyChain.of(AlreadyWithdrawn(existingStakeRef.hash))
+            )
+          )
+        )
+      )
+  }
+
+  test("should preserve pending-lock behavior before activation and reject a second withdrawal at activation") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val activationOrdinal = SnapshotOrdinal.unsafeApply(3L)
+    val acceptanceManager =
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        activationOrdinal
+      )
+
+    for {
+      existingNodeKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      ((tokenLockRef, _), ctx) <- mkValidGlobalContext(kp, existingNodeKeyPair, kp)
+      withdrawnStake <- Signed.forAsyncHasher(
+        testCreateDelegatedStake(existingNodeKeyPair, sourceAddress, 100L, tokenLockReference = tokenLockRef),
+        kp
+      )
+      withdrawnStakeRef <- DelegatedStakeReference.of(withdrawnStake)
+      activeStake <- Signed.forAsyncHasher(
+        testCreateDelegatedStake(
+          kp,
+          sourceAddress,
+          100L,
+          tokenLockReference = tokenLockRef,
+          parent = withdrawnStakeRef
+        ),
+        kp
+      )
+      activeStakeRef <- DelegatedStakeReference.of(activeStake)
+      context = ctx.copy(
+        activeDelegatedStakes = Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              DelegatedStakeRecord(activeStake, SnapshotOrdinal.unsafeApply(2L), Amount.empty)
+            )
+          )
+        ),
+        delegatedStakesWithdrawals = Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              PendingDelegatedStakeWithdrawal(
+                withdrawnStake,
+                Amount.empty,
+                SnapshotOrdinal.unsafeApply(1L),
+                EpochProgress(NonNegLong(1L))
+              )
+            )
+          )
+        )
+      )
+      withdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, activeStakeRef.hash), kp)
+      legacyResult <- acceptanceManager.accept(
+        creates = List.empty,
+        withdrawals = List(withdrawal),
+        lastSnapshotContext = context,
+        currentGlobalEpochProgress = EpochProgress(NonNegLong(2L)),
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(2L)
+      )
+      hardenedResult <- acceptanceManager.accept(
+        creates = List.empty,
+        withdrawals = List(withdrawal),
+        lastSnapshotContext = context,
+        currentGlobalEpochProgress = EpochProgress(NonNegLong(2L)),
+        currentSnapshotOrdinal = activationOrdinal
+      )
+    } yield
+      expect.all(
+        legacyResult == UpdateDelegatedStakeAcceptanceResult(
+          acceptedCreates = SortedMap.empty,
+          notAcceptedCreates = List.empty,
+          acceptedWithdrawals = SortedMap(sourceAddress -> List((withdrawal, EpochProgress(NonNegLong(2L))))),
+          notAcceptedWithdrawals = List.empty
+        ),
+        hardenedResult == UpdateDelegatedStakeAcceptanceResult(
+          acceptedCreates = SortedMap.empty,
+          notAcceptedCreates = List.empty,
+          acceptedWithdrawals = SortedMap.empty,
+          notAcceptedWithdrawals = List((withdrawal, NonEmptyChain.of(AlreadyWithdrawn(tokenLockRef))))
+        )
+      )
+  }
+
+  test("should accept at most one withdrawal per token lock in a snapshot") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val acceptanceManager =
+      UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        SnapshotOrdinal.MinValue
+      )
+
+    for {
+      alternateNodeKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      ((tokenLockRef, _), ctx) <- mkValidGlobalContext(kp, alternateNodeKeyPair, kp)
+      firstStake <- Signed.forAsyncHasher(
+        testCreateDelegatedStake(alternateNodeKeyPair, sourceAddress, 100L, tokenLockReference = tokenLockRef),
+        kp
+      )
+      firstStakeRef <- DelegatedStakeReference.of(firstStake)
+      secondStake <- Signed.forAsyncHasher(
+        testCreateDelegatedStake(
+          kp,
+          sourceAddress,
+          100L,
+          tokenLockReference = tokenLockRef,
+          parent = firstStakeRef
+        ),
+        kp
+      )
+      secondStakeRef <- DelegatedStakeReference.of(secondStake)
+      context = ctx.copy(activeDelegatedStakes =
+        Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              DelegatedStakeRecord(firstStake, SnapshotOrdinal.unsafeApply(1L), Amount.empty),
+              DelegatedStakeRecord(secondStake, SnapshotOrdinal.unsafeApply(2L), Amount.empty)
+            )
+          )
+        )
+      )
+      firstWithdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, firstStakeRef.hash), kp)
+      secondWithdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, secondStakeRef.hash), kp)
+      result <- acceptanceManager.accept(
+        creates = List.empty,
+        withdrawals = List(firstWithdrawal, secondWithdrawal),
+        lastSnapshotContext = context,
+        currentGlobalEpochProgress = EpochProgress(NonNegLong(2L)),
+        currentSnapshotOrdinal = SnapshotOrdinal.unsafeApply(3L)
+      )
+    } yield
+      expect(
+        result == UpdateDelegatedStakeAcceptanceResult(
+          acceptedCreates = SortedMap.empty,
+          notAcceptedCreates = List.empty,
+          acceptedWithdrawals = SortedMap(
+            sourceAddress -> List((firstWithdrawal, EpochProgress(NonNegLong(2L))))
+          ),
+          notAcceptedWithdrawals = List((secondWithdrawal, NonEmptyChain.of(DuplicatedTokenLock(tokenLockRef))))
         )
       )
   }

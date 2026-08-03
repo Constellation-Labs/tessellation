@@ -107,10 +107,58 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
+  private[snapshot] def generateTokenUnlocks(
+    expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+    globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]],
+    currentSnapshotOrdinal: SnapshotOrdinal,
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal
+  ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] =
+    if (currentSnapshotOrdinal < fixingDelegatedStakeDoubleWithdrawalOrdinal)
+      // Preserve the historical transition exactly when replaying snapshots before activation.
+      expiredWithdrawalsDelegatedStaking.toList.traverse {
+        case (address, withdrawals) =>
+          withdrawals.toList.traverse {
+            case PendingDelegatedStakeWithdrawal(delegatedStaking, _, _, _) =>
+              for {
+                activeTokenLock <- globalActiveTokenLocksByRef
+                  .get(delegatedStaking.tokenLockRef)
+                  .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${delegatedStaking.tokenLockRef}"))
+              } yield
+                TokenUnlock(
+                  delegatedStaking.tokenLockRef,
+                  activeTokenLock.amount,
+                  activeTokenLock.currencyId,
+                  activeTokenLock.source
+                )
+          }.map(tokenUnlocks => address -> tokenUnlocks)
+      }.map(_.toMap)
+    else
+      // Final supply-safety boundary: malformed or legacy state may contain multiple
+      // withdrawals for one lock, but its principal can be credited only once.
+      expiredWithdrawalsDelegatedStaking.valuesIterator
+        .flatMap(_.iterator.map(_.event.tokenLockRef))
+        .toList
+        .distinct
+        .traverse { tokenLockRef =>
+          globalActiveTokenLocksByRef
+            .get(tokenLockRef)
+            .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: $tokenLockRef"))
+            .map { activeTokenLock =>
+              TokenUnlock(
+                tokenLockRef,
+                activeTokenLock.amount,
+                activeTokenLock.currencyId,
+                activeTokenLock.source
+              )
+            }
+        }
+        .map(tokenUnlocks => SortedMap.from(tokenUnlocks.groupBy(_.source)))
+
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSyncConfig: MetagraphsSyncConfig,
     environment: AppEnvironment,
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -447,7 +495,9 @@ object GlobalSnapshotAcceptanceManager {
 
         generatedTokenUnlocks <- generateTokenUnlocks(
           expiredWithdrawalsForUnlock,
-          globalActiveTokenLocksByRef
+          globalActiveTokenLocksByRef,
+          ordinal,
+          fixingDelegatedStakeDoubleWithdrawalOrdinal
         ) match {
           case Right(tokenUnlocks) => tokenUnlocks.pure[F]
           case Left(error) =>
@@ -746,28 +796,6 @@ object GlobalSnapshotAcceptanceManager {
       }.map(SortedMap.from(_))
         .map(unexpiredWithdrawNodeCollaterals |+| _)
         .map(_.filterNot(_._2.isEmpty))
-
-    private def generateTokenUnlocks(
-      expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-      globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]]
-    ): Either[DelegatedStakeError, Map[Address, List[TokenUnlock]]] =
-      expiredWithdrawalsDelegatedStaking.toList.traverse {
-        case (address, withdrawals) =>
-          withdrawals.toList.traverse {
-            case PendingDelegatedStakeWithdrawal(delegatedStaking, _, _, _) =>
-              for {
-                activeTokenLock <- globalActiveTokenLocksByRef
-                  .get(delegatedStaking.tokenLockRef)
-                  .toRight(MissingTokenLock(s"Missing TokenLock for tokenLockRef: ${delegatedStaking.tokenLockRef}"))
-              } yield
-                TokenUnlock(
-                  delegatedStaking.tokenLockRef,
-                  activeTokenLock.amount,
-                  activeTokenLock.currencyId,
-                  activeTokenLock.source
-                )
-          }.map(tokenUnlocks => address -> tokenUnlocks)
-      }.map(_.toMap)
 
     private def acceptDelegatedStakes(
       lastSnapshotContext: GlobalSnapshotInfo,
