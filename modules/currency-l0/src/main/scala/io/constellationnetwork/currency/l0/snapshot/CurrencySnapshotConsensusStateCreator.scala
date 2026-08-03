@@ -1,5 +1,6 @@
 package io.constellationnetwork.currency.l0.snapshot
 
+import cats.Monad
 import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
@@ -16,6 +17,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.currencyMessage.{MessageType, fetchOwnerAddress}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
@@ -35,6 +37,31 @@ abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
 
 object CurrencySnapshotConsensusStateCreator {
 
+  val InitialOwnerMessageOrdinal: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(2L)
+
+  /** The initial Owner message can only be accepted at snapshot ordinal 2 and the global L0 charges snapshot fees to the owner address from
+    * that ordinal on. Producing snapshot 2 without the Owner message dooms every subsequent snapshot to rejection, so the round must not
+    * start until the message is available for inclusion.
+    */
+  def canStartOwnedConsensus[F[_]: Monad](
+    key: CurrencySnapshotKey,
+    maybeOwnerAddress: Option[Address],
+    getLastGlobalSnapshotOrdinal: F[Option[SnapshotOrdinal]],
+    feeCalculator: FeeCalculator[F],
+    pendingOwnerMessageExists: F[Boolean]
+  ): F[Boolean] =
+    if (key =!= InitialOwnerMessageOrdinal || maybeOwnerAddress.isDefined)
+      true.pure[F]
+    else
+      getLastGlobalSnapshotOrdinal
+        .map(_.map(feeCalculator.isFeeRequired).getOrElse(feeCalculator.isFeeRequired(SnapshotOrdinal.unsafeApply(Long.MaxValue))))
+        .ifM(pendingOwnerMessageExists, true.pure[F])
+
+  val isOwnerMessageEvent: CurrencySnapshotEvent => Boolean = {
+    case CurrencyMessageEvent(message) => message.messageType === MessageType.Owner
+    case _                             => false
+  }
+
   def make[F[_]: Async](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
@@ -46,15 +73,19 @@ object CurrencySnapshotConsensusStateCreator {
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
-    private val initialOwnerMessageOrdinal = SnapshotOrdinal.unsafeApply(2L)
-
     def tryFacilitateConsensus(
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
     ): F[StateCreateResult] =
-      canStartOwnedConsensus(key, lastOutcome).ifM(
+      canStartOwnedConsensus(
+        key,
+        fetchOwnerAddress(lastOutcome.finished.context.snapshotInfo),
+        lastGlobalSnapshotStorage.getOrdinal,
+        feeCalculator,
+        consensusStorage.existsEvent(isOwnerMessageEvent)
+      ).ifM(
         consensusStorage
           .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
           .flatMap(evalEffect)
@@ -66,24 +97,6 @@ object CurrencySnapshotConsensusStateCreator {
           )
           .as(none)
       )
-
-    /** The initial Owner message can only be accepted at snapshot ordinal 2 and the global L0 charges snapshot fees to the owner address
-      * from that ordinal on. Producing snapshot 2 without the Owner message dooms every subsequent snapshot to rejection, so the round must
-      * not start until the message is available for inclusion.
-      */
-    private def canStartOwnedConsensus(key: CurrencySnapshotKey, lastOutcome: CurrencyConsensusOutcome): F[Boolean] =
-      if (key =!= initialOwnerMessageOrdinal || fetchOwnerAddress(lastOutcome.finished.context.snapshotInfo).isDefined)
-        true.pure[F]
-      else
-        lastGlobalSnapshotStorage.getOrdinal
-          .map(_.map(feeCalculator.isFeeRequired).getOrElse(feeCalculator.isFeeRequired(SnapshotOrdinal.unsafeApply(Long.MaxValue))))
-          .ifM(
-            consensusStorage.existsEvent {
-              case CurrencyMessageEvent(message) => message.messageType === MessageType.Owner
-              case _                             => false
-            },
-            true.pure[F]
-          )
 
     private def facilitateConsensus(
       key: CurrencySnapshotKey,
