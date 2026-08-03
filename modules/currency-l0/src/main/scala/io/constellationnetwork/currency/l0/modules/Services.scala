@@ -145,6 +145,8 @@ object Services {
         sharedStorages.lastGlobalSnapshot
       )
 
+      identifier <- storages.identifier.get
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedServices.gossip,
@@ -152,6 +154,7 @@ object Services {
           keyPair,
           seedlist,
           cfg.collateral.amount,
+          identifier,
           storages.cluster,
           storages.node,
           storages.lastSyncGlobalSnapshot,

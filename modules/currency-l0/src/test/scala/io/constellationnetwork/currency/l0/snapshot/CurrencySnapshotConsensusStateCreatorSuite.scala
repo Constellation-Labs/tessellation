@@ -7,7 +7,10 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.DurationInt
 
-import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensusStateCreator.{canStartOwnedConsensus, isOwnerMessageEvent}
+import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensusStateCreator.{
+  canStartOwnedConsensus,
+  isInitialOwnerMessageEvent
+}
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
@@ -62,9 +65,13 @@ object CurrencySnapshotConsensusStateCreatorSuite extends SimpleIOSuite {
   private def dummyProofs: NonEmptySet[SignatureProof] =
     NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
 
-  private def messageEvent(messageType: MessageType): CurrencySnapshotEvent = {
+  private def messageEvent(
+    messageType: MessageType,
+    parentOrdinal: MessageOrdinal = MessageOrdinal.MinValue,
+    messageMetagraphId: Address = metagraphId
+  ): CurrencySnapshotEvent = {
     val address = if (messageType === MessageType.Owner) ownerAddress else stakingAddress
-    CurrencyMessageEvent(Signed(CurrencyMessage(messageType, address, metagraphId, MessageOrdinal.MinValue), dummyProofs))
+    CurrencyMessageEvent(Signed(CurrencyMessage(messageType, address, messageMetagraphId, parentOrdinal), dummyProofs))
   }
 
   test("defers the ordinal 2 round when fees are required and no Owner message is pending") {
@@ -103,12 +110,23 @@ object CurrencySnapshotConsensusStateCreatorSuite extends SimpleIOSuite {
       .map(result => expect(!result))
   }
 
-  pureTest("isOwnerMessageEvent matches Owner messages and nothing else") {
-    expect(isOwnerMessageEvent(messageEvent(MessageType.Owner)))
-      .and(expect(!isOwnerMessageEvent(messageEvent(MessageType.Staking))))
+  pureTest("isInitialOwnerMessageEvent matches only the initial Owner message for this metagraph") {
+    val ownerInitial = isInitialOwnerMessageEvent(metagraphId)(messageEvent(MessageType.Owner))
+    val staking = isInitialOwnerMessageEvent(metagraphId)(messageEvent(MessageType.Staking))
+    val wrongMetagraph = isInitialOwnerMessageEvent(metagraphId)(
+      messageEvent(MessageType.Owner, messageMetagraphId = stakingAddress)
+    )
+    val nonInitialOwner = isInitialOwnerMessageEvent(metagraphId)(
+      messageEvent(MessageType.Owner, parentOrdinal = MessageOrdinal(1L).toOption.get)
+    )
+
+    expect(ownerInitial, "the initial Owner message for this metagraph must match")
+      .and(expect(!staking, "a Staking message must not match"))
+      .and(expect(!wrongMetagraph, "an Owner message for a different metagraph must not match"))
+      .and(expect(!nonInitialOwner, "a non-initial Owner message must not match"))
   }
 
-  test("existsEvent finds a pending Owner message in the consensus event queue") {
+  test("existsEvent finds a pending initial Owner message in the consensus event queue") {
     val consensusConfig = ConsensusConfig(
       timeTriggerInterval = 43.seconds,
       declarationTimeout = 50.seconds,
@@ -130,14 +148,14 @@ object CurrencySnapshotConsensusStateCreatorSuite extends SimpleIOSuite {
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
       ](consensusConfig)
-      emptyResult <- storage.existsEvent(isOwnerMessageEvent)
+      emptyResult <- storage.existsEvent(isInitialOwnerMessageEvent(metagraphId))
       _ <- storage.addEvents(Map(peerId -> List((Ordinal.MinValue, messageEvent(MessageType.Staking)))))
-      stakingOnlyResult <- storage.existsEvent(isOwnerMessageEvent)
+      stakingOnlyResult <- storage.existsEvent(isInitialOwnerMessageEvent(metagraphId))
       _ <- storage.addEvents(Map(peerId -> List((Ordinal.MinValue, messageEvent(MessageType.Owner)))))
-      ownerResult <- storage.existsEvent(isOwnerMessageEvent)
+      ownerResult <- storage.existsEvent(isInitialOwnerMessageEvent(metagraphId))
     } yield
-      expect(!emptyResult, "an empty event queue must not report a pending Owner message")
-        .and(expect(!stakingOnlyResult, "a Staking-only event queue must not report a pending Owner message"))
-        .and(expect(ownerResult, "the pending Owner message must be found in the event queue"))
+      expect(!emptyResult, "an empty event queue must not report a pending initial Owner message")
+        .and(expect(!stakingOnlyResult, "a Staking-only event queue must not report a pending initial Owner message"))
+        .and(expect(ownerResult, "the pending initial Owner message must be found in the event queue"))
   }
 }

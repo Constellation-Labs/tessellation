@@ -18,7 +18,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.Cons
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.currencyMessage.{MessageType, fetchOwnerAddress}
+import io.constellationnetwork.schema.currencyMessage.{MessageOrdinal, MessageType, fetchOwnerAddress}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 
@@ -57,9 +57,19 @@ object CurrencySnapshotConsensusStateCreator {
         .map(_.map(feeCalculator.isFeeRequired).getOrElse(feeCalculator.isFeeRequired(SnapshotOrdinal.unsafeApply(Long.MaxValue))))
         .ifM(pendingOwnerMessageExists, true.pure[F])
 
-  val isOwnerMessageEvent: CurrencySnapshotEvent => Boolean = {
-    case CurrencyMessageEvent(message) => message.messageType === MessageType.Owner
-    case _                             => false
+  /** Matches the initial Owner message for this metagraph: an Owner message whose parent ordinal is the minimum, i.e. the one that takes
+    * the special ordinal-2 acceptance path (see `CurrencySnapshotAcceptanceManager`). A type-only `Owner` match could instead be satisfied
+    * by an Owner event for a different metagraph or by a non-initial Owner message with the wrong parent ordinal, which would open the gate
+    * but be rejected by message acceptance and allow ordinal 2 to finalize without an accepted Owner.
+    */
+  def isInitialOwnerMessageEvent(
+    metagraphId: Address
+  ): CurrencySnapshotEvent => Boolean = {
+    case CurrencyMessageEvent(message) =>
+      message.messageType === MessageType.Owner &&
+      message.metagraphId === metagraphId &&
+      message.parentOrdinal === MessageOrdinal.MinValue
+    case _ => false
   }
 
   def make[F[_]: Async](
@@ -69,7 +79,8 @@ object CurrencySnapshotConsensusStateCreator {
     feeCalculator: FeeCalculator[F],
     gossip: Gossip[F],
     selfId: PeerId,
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    metagraphId: Address
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
@@ -84,7 +95,7 @@ object CurrencySnapshotConsensusStateCreator {
         fetchOwnerAddress(lastOutcome.finished.context.snapshotInfo),
         lastGlobalSnapshotStorage.getOrdinal,
         feeCalculator,
-        consensusStorage.existsEvent(isOwnerMessageEvent)
+        consensusStorage.existsEvent(isInitialOwnerMessageEvent(metagraphId))
       ).ifM(
         consensusStorage
           .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
