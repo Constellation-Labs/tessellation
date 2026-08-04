@@ -15,7 +15,12 @@ APT="apt-get -o DPkg::Lock::Timeout=600 -y"
 
 $APT update
 $APT upgrade
-$APT install ca-certificates curl gnupg jq lsb-release unzip git ufw fail2ban acl
+# libatomic1: Node.js binaries link against libatomic.so.1 and it is NOT present on
+# the minimal Ubuntu cloud image. Without it any node (nvm-installed or otherwise)
+# dies with "error while loading shared libraries: libatomic.so.1". GitHub's hosted
+# images ship it. Observed as a real E2E failure before it was added here.
+# jq / wget / unzip / git are likewise assumed present by docker/bin/*.
+$APT install ca-certificates curl wget gnupg jq lsb-release unzip git ufw fail2ban acl libatomic1
 
 # --- Docker CE --------------------------------------------------------------
 install -m 0755 -d /etc/apt/keyrings
@@ -73,6 +78,29 @@ chmod 0440 /etc/sudoers.d/runner
 # actions/setup-java and setup-node install here; pre-creating it owned by
 # `runner` avoids a first-job permission failure.
 install -d -m 0775 -o runner -g runner /opt/hostedtoolcache
+
+# GitHub's hosted runner images let the unprivileged runner user write to
+# /usr/local/bin, and workflows rely on it. e2e-just-test.yml installs `just` with
+#   curl ... | bash -s -- --to /usr/local/bin
+# with NO sudo, which fails on a stock Ubuntu box where /usr/local/bin is
+# root-owned 0755 (observed: "Install just" step failing on the first real job).
+# Grant group write rather than chowning to runner, so root stays the owner.
+chown root:runner /usr/local/bin
+chmod 2775 /usr/local/bin
+
+# nvm for the runner user. docker/bin/install_dependencies.sh gates its Node.js
+# setup on `[ -d "$HOME/.nvm" ]` (check_node, ~line 316) — it does NOT look for
+# node on PATH. GitHub's hosted images ship nvm, so that check short-circuits
+# there; on a bare box it does not, and `just _check_deps` then installs nvm +
+# node mid-job. Pre-installing it here restores parity and keeps that cost out of
+# every job.
+sudo -u runner bash -c '
+  export NVM_DIR="$HOME/.nvm"
+  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+  . "$NVM_DIR/nvm.sh"
+  nvm install 18
+  nvm alias default 18
+'
 
 # --- Kernel / limits tuning for ~13 concurrent JVMs -------------------------
 # The default vm.max_map_count (65530) is the one that actually bites: 13 JVMs

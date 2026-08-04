@@ -71,16 +71,24 @@ config:
   # calendar hour, so a ~28 min job usually costs 1-2 h. Add the EUR 22.99/mo
   # controller.
   #
-  #   ccx33  8c /  32 GB  EUR 0.2612/h  ~= EUR 230/mo total  (88% saving) — 32 GB is tight; measure first
-  #   ccx43 16c /  64 GB  EUR 0.5216/h  ~= EUR 437/mo total  (76% saving) — default
-  #   ccx53 32c / 128 GB  EUR 1.0088/h  ~= EUR 824/mo total  (56% saving) — only if timing flakes demand it
+  #   ccx33  8c /  32 GB  EUR 0.2612/h  ~= EUR 195/mo total  (89%) — REJECTED, see below
+  #   ccx43 16c /  64 GB  EUR 0.5216/h  ~= EUR 353/mo total  (81%) — default
+  #   ccx53 32c / 128 GB  EUR 1.0088/h  ~= EUR 683/mo total  (63%) — more CPU margin
   #
   # Baseline being replaced: GitHub `Ubuntu-22-64-core` at $0.162/min ~= $2000/mo.
   #
-  # Stepping down to ccx33 nearly halves the bill, so measure real per-job peak
-  # RSS and CPU on the first green run before settling. Conversely, if E2E starts
-  # flaking on consensus timing, step UP before tuning timeouts — a 4x CPU cut vs
-  # the 64-core baseline is the likeliest cause.
+  # MEASURED on the fork 2026-07-31..08-03 (all 11 jobs green on one runner):
+  # 15 containers, peak 26.7 GB RAM, peak load 15.42, ~70 min for the 9-group
+  # matrix, longest single job 18m29s (allow-spends).
+  #
+  # ccx33 is REJECTED on evidence: it passed once, then on repeat runs (a) the
+  # kernel OOM-killed the Actions runner agent during allow-spends — p90 memory
+  # 99%, peak 100% of 32 GB, no swap — and (b) load hit 15.42/8 cores (193%),
+  # starving GL0's snapshot route into HTTP 503 and failing `spend`. ccx43 puts
+  # those peaks at ~42% memory / ~96% load, with only 0.7% of samples above 16.
+  #
+  # Memory is the binding constraint, not CPU: with no swap, exceeding it kills the
+  # runner process rather than failing a test.
   #
   # CCX (dedicated vCPU) not CPX (shared): this suite is timing-sensitive and
   # docker-compose.test.yaml documents at length how shared-CPU contention

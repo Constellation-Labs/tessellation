@@ -64,28 +64,42 @@ that is already timing-fragile: `docker/docker-compose.test.yaml` carries ~40 li
 documenting how multi-JVM CPU contention produces multi-second GC pauses, spurious
 chronic-non-signer classification, and the "wedge profile" fork-recovery flake.
 
-## Sizing (applies to both)
+## Sizing (applies to both) — MEASURED
 
-A job runs ~13 JVM containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` + 3 `dl1`),
-each defaulting to `-Xmx8g` with `-XX:ActiveProcessorCount=8`.
+A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
+3 `dl1` + support), each JVM defaulting to `-Xmx8g` with
+`-XX:ActiveProcessorCount=8`. The whole 9-group matrix is **~70 min of work**.
 
-`ccx43` (16c / 64 GB) is the default in both variants and is **inferred from that,
-not measured.** It is the dominant cost variable in both:
+Validated end-to-end on the fork 2026-07-31 → 08-03: **all 11 jobs passed** on a
+single runner. Peak per job: **26.7 GB RAM**, **load 15.42**, 7% disk.
 
-| | `ccx33` (8c/32 GB) | `ccx43` (16c/64 GB) | `ccx53` (32c/128 GB) |
+| | `ccx33` (8c/32 GB) | **`ccx43` (16c/64 GB)** | `ccx53` (32c/128 GB) |
 |---|---|---|---|
 | €/h · €/mo | 0.2612 · 162.99 | 0.5216 · 325.49 | 1.0088 · 629.49 |
-| autoscaled est. | ~€230 (88%) | ~€437 (76%) | ~€824 (56%) |
-| fixed, 3 runners | €489 (74%) | €976 (47%) | €1,888 (−2%) |
+| autoscaled | ~€195 (89%) | **~€353 (81%)** | ~€683 (63%) |
+| fixed, 3 runners | €489 (74%) | **€976 (47%)** | €1,888 (−2%) |
+| verdict | **REJECTED** | **recommended** | more margin, half the saving |
 
-Measure peak RSS and load on the first green run before settling — the difference
-between `ccx33` and `ccx43` is roughly half the bill. Conversely, if E2E starts
-flaking on consensus timing only on Hetzner, step **up** before tuning timeouts: a
-`ccx43` has ~4× less CPU than the 64-core baseline, which is the likeliest cause.
+**`ccx33` is rejected on evidence, not caution.** It passed once, then failed
+twice in two distinct ways on repeat runs:
 
-Prices are `hel1`, pulled from the Hetzner Cloud API for this account (net ==
-gross). CCX (dedicated vCPU) throughout — **not** CPX (shared); see the timing
-fragility note above.
+- **Memory** — p90 99%, peak 100% of 32 GB, **no swap**. The kernel OOM-killed the
+  Actions runner agent itself during `allow-spends`; the unit went `failed` and the
+  remaining 8 jobs queued forever.
+- **CPU** — peak load 15.42/8 cores (193%); 16% of samples over 1.0/core. GL0's
+  `/global-snapshots/latest/combined` returned **HTTP 503** under the contention and
+  `spend` failed.
+
+On `ccx43` those peaks become ~42% memory and ~96% load, with only 0.7% of samples
+above load 16. Memory is the harder constraint: with no swap, exceeding it kills
+the runner rather than failing a test.
+
+Prices are `hel1`, from the Hetzner Cloud API for this account (net == gross). CCX
+(dedicated vCPU) throughout — **not** CPX (shared); see the timing fragility note
+above.
+
+> **Quota:** `ccx43` is 16 dedicated cores. A default Hetzner project allows 8, so
+> creating one returns `resource_limit_exceeded` until you request an increase.
 
 ## Rollback
 

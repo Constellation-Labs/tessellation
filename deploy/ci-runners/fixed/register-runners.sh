@@ -11,7 +11,17 @@
 # re-registered cleanly rather than duplicated.
 #
 # Always required:
-#   GITHUB_REPOSITORY  e.g. Constellation-Labs/tessellation  (not a secret)
+#   GITHUB_TARGET      Where to register. Two forms:
+#                        owner/repo  -> REPOSITORY-level runner. Needs ADMIN on
+#                                       that repo (write/maintain is NOT enough).
+#                        owner       -> ORGANIZATION-level runner. Needs org
+#                                       admin, and serves every repo in the org.
+#                      (GITHUB_REPOSITORY is still honoured as an alias.)
+#
+# Org-level is the way in when you lack per-repo admin. The trade-off is scope:
+# an org runner is reachable from every repo in the org, so this script always
+# passes --no-default-labels (see below) to keep that scope from becoming a
+# footgun.
 #
 # AUTHORIZATION — pick ONE. GitHub will not let a machine register without proof
 # of authorization, but you do not need a long-lived credential for it:
@@ -48,7 +58,18 @@ log() { echo "==> $*"; }
 
 TARGETS="${1:-}"
 [ -n "$TARGETS" ] || die "usage: $0 <ip1,ip2,...>"
-[ -n "${GITHUB_REPOSITORY:-}" ] || die "GITHUB_REPOSITORY must be set in the environment"
+
+GITHUB_TARGET="${GITHUB_TARGET:-${GITHUB_REPOSITORY:-}}"
+[ -n "$GITHUB_TARGET" ] || die "GITHUB_TARGET (owner/repo or owner) must be set in the environment"
+
+# owner/repo -> repo-level; owner -> org-level. Determines both the config.sh URL
+# and which API path mints registration tokens.
+case "$GITHUB_TARGET" in
+  */*) SCOPE="repo"; TOKEN_PATH="repos/${GITHUB_TARGET}" ;;
+  *)   SCOPE="org";  TOKEN_PATH="orgs/${GITHUB_TARGET}" ;;
+esac
+REGISTER_URL="https://github.com/${GITHUB_TARGET}"
+log "Scope: ${SCOPE}-level (${REGISTER_URL})"
 
 command -v curl >/dev/null || die "curl is required"
 
@@ -97,9 +118,9 @@ for i in "${!HOSTS[@]}"; do
     REG_TOKEN="$(curl -sSL -X POST \
       -H "Authorization: Bearer ${GITHUB_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
-      "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runners/registration-token" \
+      "https://api.github.com/${TOKEN_PATH}/actions/runners/registration-token" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')"
-    [ -n "$REG_TOKEN" ] || die "failed to mint a registration token — is GITHUB_TOKEN a classic PAT with 'repo' scope, and authorized for SSO if the org enforces it?"
+    [ -n "$REG_TOKEN" ] || die "failed to mint a registration token for ${GITHUB_TARGET} — repo-level needs a classic PAT with 'repo' scope AND admin on the repo; org-level needs 'admin:org'. Also authorize the token for SSO if the org enforces it."
   fi
 
   log "[$NAME] shipping job hooks"
@@ -114,7 +135,7 @@ for i in "${!HOSTS[@]}"; do
   # Tokens travel as env vars over the SSH channel, never in argv.
   ssh "${SSH_USER}@${HOST}" \
     "REG_TOKEN='$REG_TOKEN' \
-     GITHUB_REPOSITORY='$GITHUB_REPOSITORY' \
+     REGISTER_URL='$REGISTER_URL' \
      RUNNER_NAME='$NAME' \
      RUNNER_LABELS='$RUNNER_LABELS' \
      RUNNER_FILE='$RUNNER_FILE' \
@@ -169,21 +190,62 @@ EOF
 sudo -u runner bash -c "
   set -euo pipefail
   cd '${RUNNER_DIR}'
+  # --no-default-labels drops self-hosted/Linux/X64 so the runner advertises ONLY
+  # our label. This matters most for ORG-level registration: without it, any
+  # workflow anywhere in the org using `runs-on: self-hosted` can be scheduled
+  # onto this box and will fail on a fleet sized purely for tessellation E2E.
   ./config.sh --unattended --replace \
-    --url 'https://github.com/${GITHUB_REPOSITORY}' \
+    --url '${REGISTER_URL}' \
     --token '${REG_TOKEN}' \
     --name '${RUNNER_NAME}' \
-    --labels '${RUNNER_LABELS}' \
+    --no-default-labels --labels '${RUNNER_LABELS}' \
     --work _work
 "
 
-sudo bash -c "cd '${RUNNER_DIR}' && ./svc.sh install runner && ./svc.sh start"
+sudo bash -c "cd '${RUNNER_DIR}' && ./svc.sh install runner"
+
+# Harden the unit that svc.sh just generated.
+#
+# svc.sh writes a unit with NO Restart=, and the listener deliberately exits 0
+# ("Runner listener exit with 0 return code, stop the service, no retry needed")
+# when it is torn down. Combined with systemd's default OOMPolicy=stop, a single
+# OOM kill therefore removes the runner from the fleet PERMANENTLY and silently:
+# every subsequent job queues forever with no runner to claim it.
+#
+# Observed for real on 2026-08-03: the kernel OOM-killed the runner's node
+# process during `allow-spends`, the unit went to `failed`, and the eight
+# remaining matrix jobs hung in `queued` indefinitely.
+#
+# OOMPolicy=continue keeps the unit alive when a CHILD is OOM-killed;
+# Restart=always brings it back when the main process itself dies.
+UNIT="$(systemctl list-units --all --plain --no-legend 'actions.runner.*' | awk '{print $1}' | head -1)"
+if [ -n "$UNIT" ]; then
+  echo "hardening $UNIT against OOM-induced permanent death"
+  sudo mkdir -p "/etc/systemd/system/${UNIT}.d"
+  sudo tee "/etc/systemd/system/${UNIT}.d/override.conf" >/dev/null <<'OVERRIDE'
+[Service]
+Restart=always
+RestartSec=10
+OOMPolicy=continue
+OVERRIDE
+  sudo systemctl daemon-reload
+else
+  echo "WARNING: could not resolve the runner unit name; Restart=always NOT applied" >&2
+fi
+
+sudo bash -c "cd '${RUNNER_DIR}' && ./svc.sh start"
 sleep 3
-sudo bash -c "cd '${RUNNER_DIR}' && ./svc.sh status" | head -20
+sudo bash -c "cd '${RUNNER_DIR}' && ./svc.sh status" | head -12
+echo "--- restart policy ---"
+systemctl show "$UNIT" -p Restart -p RestartUSec -p OOMPolicy 2>/dev/null
 REMOTE
 
   log "[$NAME] done"
 done
 
 log "All runners registered with labels: ${RUNNER_LABELS}"
-log "Verify at: https://github.com/${GITHUB_REPOSITORY}/settings/actions/runners"
+if [ "$SCOPE" = "org" ]; then
+  log "Verify at: https://github.com/organizations/${GITHUB_TARGET}/settings/actions/runners"
+else
+  log "Verify at: https://github.com/${GITHUB_TARGET}/settings/actions/runners"
+fi

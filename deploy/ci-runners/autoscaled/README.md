@@ -33,19 +33,19 @@ Baseline: 9 E2E jobs per run on `Ubuntu-22-64-core` at **$0.162/min** ≈ **$2,0
 `ubuntu-22.04` runner and is unchanged).
 
 Hetzner `hel1` prices below are from the Cloud API for this account. Monthly
-figures assume ~540 job-servers/mo (9 jobs × ~60 runs) at **~1.47 billed hours
-each** — Hetzner rounds every partial hour **up** to a full calendar hour, so a
-~28-minute job typically costs 1–2 h. Plus the €22.99/mo controller.
+figures assume ~540 job-servers/mo (9 jobs × ~60 runs) at **~1.22 billed hours
+each** — Hetzner rounds every partial hour **up** to a full calendar hour, and
+measured jobs run 3m41s–18m29s. Plus the €22.99/mo controller.
 
 | Server type | Cores / RAM | €/h | Est. €/mo | Saving |
 |---|---|---|---|---|
-| `ccx33` | 8c / 32 GB | 0.2612 | ~230 | ~88% |
-| **`ccx43`** | **16c / 64 GB** | **0.5216** | **~437** | **~76%** |
-| `ccx53` | 32c / 128 GB | 1.0088 | ~824 | ~56% |
+| `ccx33` | 8c / 32 GB | 0.2612 | ~195 | **REJECTED** — OOM + 503, see [../README.md](../README.md#sizing-applies-to-both--measured) |
+| **`ccx43`** | **16c / 64 GB** | **0.5216** | **~353** | **~81%** |
+| `ccx53` | 32c / 128 GB | 1.0088 | ~683 | ~63% |
 
-`ccx43` is the default. **Sizing is the dominant cost variable** — stepping down
-to `ccx33` nearly halves the bill, so measure before settling (see
-[Right-sizing](#right-sizing)).
+`ccx43` is the default and the measured floor. Sizing is the dominant cost
+variable, but it is now settled by data rather than estimation — see
+[Right-sizing](#right-sizing).
 
 Why the duty-cycle argument favours ephemeral over always-on hardware: real
 demand is ~198 job-hours/month. An always-on 3-box fleet supplies 2,190
@@ -142,9 +142,16 @@ no rerun. Unset it to return to the Hetzner fleet.
 
 ## Right-sizing
 
-A job runs ~13 JVM containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` + 3 `dl1`),
-each defaulting to `-Xmx8g` with `-XX:ActiveProcessorCount=8`. The `ccx43`
-default is **inferred from that, not measured.** To measure on a live runner:
+A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
+3 `dl1` + support), each JVM defaulting to `-Xmx8g` with
+`-XX:ActiveProcessorCount=8`.
+
+Measured on the fork 2026-07-31 → 08-03, all 11 jobs green: **peak 26.7 GB RAM,
+peak load 15.42, 7% disk**, jobs 3m41s–18m29s. `ccx43` is the measured floor — see
+[../README.md](../README.md#sizing-applies-to-both--measured) for why `ccx33` is
+rejected.
+
+To re-measure after a topology or heap change:
 
 ```sh
 ssh -i /etc/github-hetzner-runners/runner_key ubuntu@<runner-ip>
@@ -152,12 +159,14 @@ docker stats --no-stream
 free -m; nproc; uptime          # peak RSS, and load vs core count
 ```
 
-- Peak RSS comfortably under ~28 GB and load below core count → try `ccx33`.
-- Consensus timeouts or `NoProgress`/`ViewChange` churn appearing only on
-  Hetzner → step **up** to `ccx53` before touching timeouts. A `ccx43` has ~4×
-  less CPU than the 64-core baseline, which is the likeliest cause of new timing
-  flakes; the workflow already sets `CL_DECLARATION_TIMEOUT`, `CL_RE_STALL_TIMEOUT`
-  and friends for slow runners.
+- **Memory is the binding constraint.** These boxes have no swap, so exceeding it
+  makes the kernel kill the runner agent, not fail a test — the job reports
+  `cancelled` with no useful log.
+- **Load above 1.0/core is survivable but not free.** It first shows up as HTTP
+  503s from GL0's `/global-snapshots/latest/combined`, which reads like a flaky
+  test rather than starvation. If that appears, step **up** rather than tuning
+  timeouts; the workflow already sets `CL_DECLARATION_TIMEOUT`,
+  `CL_RE_STALL_TIMEOUT` and friends generously for slow runners.
 
 ## Known risks
 

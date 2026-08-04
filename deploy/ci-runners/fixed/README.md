@@ -26,23 +26,57 @@ essentially flat across the CCX line (~€20/core/mo at every size), so there is
 economy of scale to exploit — buying full 9-way concurrency means buying 9 boxes.
 
 One runner per server (see [below](#why-one-runner-per-server)), so
-**concurrency = `runner_count`** and the 9-job matrix runs in
-`ceil(9 / runner_count)` waves. Against the ~$2,000/mo (≈€1,852 at ~1.08 USD/EUR)
-GitHub baseline, at `hel1` list prices:
+**concurrency = `runner_count`**. Measured on this fleet, the 9 E2E groups total
+**~70 min of work** (see [Measured](#measured-2026-07-31--08-03)), so wall-clock
+is roughly `70 / runner_count` minutes. Against the ~$2,000/mo (≈€1,852 at
+~1.08 USD/EUR) GitHub baseline, at `hel1` prices:
 
-| Runners × type | Concurrent | Waves | PR wall-clock | €/mo | Saving |
-|---|---|---|---|---|---|
-| 3× `ccx33` | 3 | 3 | ~75 min | 489 | 74% |
-| 4× `ccx33` | 4 | 3 | ~75 min | 652 | 65% |
-| **3× `ccx43`** | **3** | **3** | **~75 min** | **976** | **47%** |
-| 5× `ccx43` | 5 | 2 | ~50 min | 1,627 | 12% |
-| 9× `ccx43` | 9 | 1 | ~25 min | 2,929 | **−58%** |
+| Runners × type | Concurrent | PR wall-clock | €/mo | Saving |
+|---|---|---|---|---|
+| 2× `ccx43` | 2 | ~35 min | 651 | 65% |
+| **3× `ccx43`** | **3** | **~23 min** ≈ today | **976** | **47%** |
+| 4× `ccx43` | 4 | ~18 min | 1,302 | 30% |
+| ~~any `ccx33`~~ | — | — | — | **rejected — see below** |
 
-Current PR feedback is ~25 min (all 9 jobs in one wave). The default here — 3×
-`ccx43` — trades that for ~75 min to save ~47%.
+Current PR feedback is ~25 min, so 3 runners roughly preserves it. If you want
+bigger savings at the same speed, use [`../autoscaled`](../autoscaled) (~81%,
+elastic) instead — the duty cycle is only ~9%, so paying for always-on capacity
+is structurally wasteful.
 
-If you want savings **and** current wall-clock, this variant can't give you both;
-use [`../autoscaled`](../autoscaled) (~76%, elastic) instead.
+## Measured (2026-07-31 → 08-03)
+
+Full matrix validated on a single `ccx33`, then stress-tested. All 11 jobs passed
+on the first full run.
+
+| Group | Containers | Duration |
+|---|---|---|
+| `dag-cluster` | 7 | 3m41s |
+| `rewards` | 15 | 4m01s |
+| `data-with-fee` | 15 | 4m18s |
+| `token-lock-replacement` | 15 | 5m16s |
+| `delegated-staking` | 15 | 5m36s |
+| `token-locks` | 15 | 6m27s |
+| `currency` | 15 | 7m58s |
+| `spend` | 15 | 14m14s |
+| `allow-spends` | 15 | 18m29s |
+| **total** | | **~70 min** |
+
+### Why `ccx33` (8 vCPU / 32 GB) is rejected
+
+It passed once, then failed **twice in two different ways** under repeat runs —
+both resource exhaustion, neither a real defect:
+
+- **Memory.** p90 **99%**, peak **100%** of 32 GB, with **no swap**. The kernel
+  OOM-killer killed the Actions runner agent itself during `allow-spends`
+  (`Out of memory: Killed process (node)`), the systemd unit went to `failed`, and
+  the eight remaining matrix jobs hung in `queued` forever.
+- **CPU.** Peak load **15.42 on 8 cores (193%)**; 16% of active samples exceeded
+  1.0/core. Under that contention GL0's snapshot route returned **HTTP 503** on
+  `/global-snapshots/latest/combined` and `spend` failed.
+
+`ccx43` (16 vCPU / 64 GB) puts the same peaks at ~42% memory and ~96% load, and
+only **0.7%** of samples exceeded load 16. `ccx53` would give more CPU margin but
+roughly halves the saving.
 
 ## Why one runner per server
 
@@ -72,9 +106,28 @@ terraform init
 terraform apply
 ```
 
-Then install and register the runners. GitHub requires proof of authorization to
-join a machine to the repo, but **no long-lived credential is needed** — pick
-either path.
+Then install and register the runners.
+
+### Choose a scope first: `GITHUB_TARGET`
+
+| Value | Scope | Requires |
+|---|---|---|
+| `Constellation-Labs/tessellation` | that repo only | **admin** on the repo — write/maintain is *not* enough |
+| `Constellation-Labs` | every repo in the org | org admin |
+
+Repo-level is tighter, but repository **admin** is a higher bar than most
+maintainers have; if `registration-token` returns 403, that's why. Org-level is
+the usual way in.
+
+Because an org runner is reachable from every repo in the org, the script always
+passes `--no-default-labels`, so each runner advertises **only**
+`tessellation-e2e` — not `self-hosted`/`Linux`/`X64`. Without that, any workflow
+anywhere in the org using `runs-on: self-hosted` could be scheduled onto a fleet
+sized purely for tessellation E2E and would fail. Consider also placing org
+runners in a **runner group scoped to `tessellation`** for defence in depth.
+
+GitHub requires proof of authorization to join a machine, but **no long-lived
+credential is needed** — pick either path below.
 
 ### Option A — no PAT (UI-copied registration tokens)
 
@@ -87,7 +140,7 @@ registration token. Copy the value after `--token`. **Repeat once per runner** �
 each token is single-use.
 
 ```sh
-export GITHUB_REPOSITORY=Constellation-Labs/tessellation
+export GITHUB_TARGET=Constellation-Labs          # org-level; or Constellation-Labs/tessellation for repo-level
 export REG_TOKENS="AXXXX...,BYYYY...,CZZZZ..."   # one per runner, in IP order
 
 deploy/ci-runners/fixed/register-runners.sh \
@@ -104,7 +157,7 @@ server.
 More convenient for repeat runs, since the tokens are minted automatically.
 
 ```sh
-export GITHUB_REPOSITORY=Constellation-Labs/tessellation
+export GITHUB_TARGET=Constellation-Labs          # org-level; or Constellation-Labs/tessellation for repo-level
 export GITHUB_TOKEN=...          # classic PAT, `repo` scope
 
 deploy/ci-runners/fixed/register-runners.sh \
@@ -181,27 +234,32 @@ from inside a container, the same trick as the `clean-data` recipe in the
 
 ## Right-sizing
 
-`ccx43` is **inferred** from ~13 JVM containers at default `-Xmx8g` /
-`-XX:ActiveProcessorCount=8`, not measured. Measure during a real job:
+`ccx43` is the floor, established by measurement — see
+[Why `ccx33` is rejected](#why-ccx33-8-vcpu--32-gb-is-rejected). To re-measure
+after any change to the topology or heap settings:
 
 ```sh
 ssh admin@<runner-ip> 'docker stats --no-stream; free -m; uptime; nproc'
 ```
 
-- Peak RSS well under ~28 GB and load below core count → `ccx33` takes 3 runners
-  from €976 to €489/mo.
-- New consensus timeouts / `NoProgress` churn that don't happen on GitHub → step
-  **up** to `ccx53` before touching timeouts. A `ccx43` has ~4× less CPU than the
-  64-core baseline, the likeliest cause of new timing flakes.
+Watch memory first — it is the harder limit, since these boxes run **no swap** and
+the kernel kills the runner agent rather than the test. Load above 1.0/core is
+survivable (the workflow already sets generous consensus timeouts) but shows up as
+HTTP 503s from GL0's snapshot routes before it shows up as anything legible.
 
 ## Known risks
 
 - **A wedged runner silently swallows jobs.** GitHub will keep assigning to a
   registered-but-broken runner until the workflow times out. Check the runners
   page if E2E jobs hang without logs.
+- **An OOM can delete a runner from the fleet.** `svc.sh install` generates a unit
+  with no `Restart=`, and the listener exits 0 on teardown, so one OOM leaves the
+  unit `failed` and every later job queued forever. `register-runners.sh` installs
+  a drop-in with `Restart=always` + `OOMPolicy=continue` to prevent this — do not
+  remove it. Observed for real on 2026-08-03.
 - **Disk exhaustion** is the classic persistent-runner failure and shows up as
   weird mid-test errors, not clean "no space" messages. The hooks guard at 70/80%;
-  `ccx43` ships 360 GB.
+  `ccx43` ships 360 GB. Peak observed disk use was 7%.
 - **Idle capacity is pure waste** — real demand is ~198 job-hours/month against
   2,190 host-hours for a 3-box pool (~9% duty cycle). That's the structural
   argument for the autoscaled variant.
