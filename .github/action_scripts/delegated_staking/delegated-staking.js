@@ -16,7 +16,6 @@ const RUN_ENV = process.env.RUN_ENV || 'ci'
 const {
   parseSharedArgs,
   PRIVATE_KEYS,
-  sleep,
   withRetry,
   createAndConnectAccount,
   createNetworkConfig,
@@ -309,15 +308,16 @@ const testCreateNodeParameters = async (urls) => {
   )
   checkOk(ur4)
 
-  // tends to fail here in CI, wait a little longer
-  await sleep(5000)
-
-  await getNodeParamsNodeIdVerify(
-    urls,
-    nodeId2,
-    secondNodeParameterName1,
-    secondNodeFraction1,
-    0,
+  await withRetry(
+    () =>
+      getNodeParamsNodeIdVerify(
+        urls,
+        nodeId2,
+        secondNodeParameterName1,
+        secondNodeFraction1,
+        0,
+      ),
+    { name: `node params for ${nodeId2}` },
   )
   logWorkflow.info('Update second node params is OK')
 
@@ -332,31 +332,33 @@ const testCreateNodeParameters = async (urls) => {
   )
   checkOk(third)
 
-  // tends to fail here in CI, wait a little longer
-  await sleep(5000)
+  await withRetry(
+    async () => {
+      const allNodeParams = await getNodeParams(urls)
+      if (allNodeParams.length !== 3) {
+        throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
+      }
 
-  const allNodeParams = await getNodeParams(urls)
-  if (allNodeParams.length !== 3) {
-    throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
-  }
-
-  verifyNodeParamsResponse(
-    allNodeParams,
-    nodeId1,
-    firstNodeParameterName2,
-    firstNodeFraction2,
-  )
-  verifyNodeParamsResponse(
-    allNodeParams,
-    nodeId2,
-    secondNodeParameterName1,
-    secondNodeFraction1,
-  )
-  verifyNodeParamsResponse(
-    allNodeParams,
-    nodeId3,
-    thirdNodeParameterName1,
-    thirdNodeFraction1,
+      verifyNodeParamsResponse(
+        allNodeParams,
+        nodeId1,
+        firstNodeParameterName2,
+        firstNodeFraction2,
+      )
+      verifyNodeParamsResponse(
+        allNodeParams,
+        nodeId2,
+        secondNodeParameterName1,
+        secondNodeFraction1,
+      )
+      verifyNodeParamsResponse(
+        allNodeParams,
+        nodeId3,
+        thirdNodeParameterName1,
+        thirdNodeFraction1,
+      )
+    },
+    { name: 'all node params' },
   )
   logWorkflow.info('All nodes check is OK')
 

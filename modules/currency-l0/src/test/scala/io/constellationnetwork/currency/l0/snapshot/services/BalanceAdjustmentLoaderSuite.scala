@@ -18,12 +18,15 @@ import weaver.scalacheck.Checkers
 
 object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
 
+  val nonEmptyAlphaNumStringGen: Gen[String] = Gen.nonEmptyListOf(Gen.alphaNumChar).map(_.mkString)
+  val referenceGen: Gen[List[String]] = Gen.chooseNum(1, 3).flatMap(size => Gen.listOfN(size, nonEmptyAlphaNumStringGen))
+
   // Generator for JsonAdjustment
   val jsonAdjustmentIncreaseGen: Gen[BalanceAdjustmentLoader.JsonAdjustment] = for {
     address <- addressGen
     amount <- Gen.chooseNum(1L, 1000000L)
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
-    reference <- Gen.listOfN(Gen.chooseNum(1, 3).sample.getOrElse(1), Gen.alphaNumStr.filter(_.nonEmpty))
+    reason <- nonEmptyAlphaNumStringGen
+    reference <- referenceGen
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
       address = address,
@@ -36,8 +39,8 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
   val jsonAdjustmentDecreaseGen: Gen[BalanceAdjustmentLoader.JsonAdjustment] = for {
     address <- addressGen
     amount <- Gen.chooseNum(1L, 1000000L)
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
-    reference <- Gen.listOfN(Gen.chooseNum(1, 3).sample.getOrElse(1), Gen.alphaNumStr.filter(_.nonEmpty))
+    reason <- nonEmptyAlphaNumStringGen
+    reference <- referenceGen
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
       address = address,
@@ -69,8 +72,8 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
     address <- addressGen
     deductAmount <- Gen.chooseNum(1L, 1000000L)
     increaseAmount <- Gen.chooseNum(1L, 1000000L)
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
-    reference <- Gen.listOfN(1, Gen.alphaNumStr.filter(_.nonEmpty))
+    reason <- nonEmptyAlphaNumStringGen
+    reference <- Gen.listOfN(1, nonEmptyAlphaNumStringGen)
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
       address = address,
@@ -83,8 +86,8 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
   // Generator for invalid JsonAdjustment (neither deduct nor increase)
   val invalidJsonAdjustmentNeitherGen: Gen[BalanceAdjustmentLoader.JsonAdjustment] = for {
     address <- addressGen
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
-    reference <- Gen.listOfN(1, Gen.alphaNumStr.filter(_.nonEmpty))
+    reason <- nonEmptyAlphaNumStringGen
+    reference <- Gen.listOfN(1, nonEmptyAlphaNumStringGen)
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
       address = address,
@@ -152,22 +155,14 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
 
   test("should successfully convert list of JsonCurrencyAdjustments to Map") {
     forall(Gen.nonEmptyListOf(jsonCurrencyAdjustmentsGen)) { jsonCurrencyAdjustments =>
-      // Filter out invalid adjustments to ensure success
-      val validJsonCurrencyAdjustments = jsonCurrencyAdjustments.map { currencyAdj =>
-        val validAdjustments = currencyAdj.adjustments.filter { adj =>
-          (adj.deduct.isDefined && adj.increase.isEmpty) || (adj.increase.isDefined && adj.deduct.isEmpty)
-        }
-        currencyAdj.copy(adjustments = if (validAdjustments.nonEmpty) validAdjustments else List(jsonAdjustmentIncreaseGen.sample.get))
-      }
-
-      val result = BalanceAdjustmentLoader.convertToBalanceAdjustments(validJsonCurrencyAdjustments)
+      val result = BalanceAdjustmentLoader.convertToBalanceAdjustments(jsonCurrencyAdjustments)
 
       result match {
         case Right(adjustmentMap) =>
-          val allCurrenciesPresent = validJsonCurrencyAdjustments.forall { currencyAdj =>
+          val allCurrenciesPresent = jsonCurrencyAdjustments.forall { currencyAdj =>
             adjustmentMap.contains(currencyAdj.currencyId)
           }
-          val allAdjustmentsConverted = validJsonCurrencyAdjustments.forall { currencyAdj =>
+          val allAdjustmentsConverted = jsonCurrencyAdjustments.forall { currencyAdj =>
             adjustmentMap.get(currencyAdj.currencyId) match {
               case Some(requiredAdjustments) =>
                 requiredAdjustments.size == currencyAdj.adjustments.size
