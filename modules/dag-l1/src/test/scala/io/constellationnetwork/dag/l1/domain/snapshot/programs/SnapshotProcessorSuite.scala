@@ -169,6 +169,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     Map.empty,
                     Map.empty,
                     Map.empty,
+                    Map.empty,
                     Map.empty
                   ),
                   Dev,
@@ -221,11 +222,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   Map.empty,
                   Map.empty,
                   Map.empty,
+                  Map.empty,
                   Map.empty
                 ),
                 MetagraphsSyncConfig(PosInt(100)),
                 Dev,
-                SnapshotOrdinal.MinValue,
                 BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
                 AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
                 TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

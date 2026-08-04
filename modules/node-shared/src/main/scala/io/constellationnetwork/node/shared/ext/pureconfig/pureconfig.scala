@@ -6,7 +6,7 @@ import cats.data.NonEmptySet
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
-import io.constellationnetwork.node.shared.config.types.PriceOracleConfig
+import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, PriceOracleConfig}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -37,6 +37,19 @@ package object pureconfig {
   implicit val epochProgressReader: ConfigReader[EpochProgress] = ConfigReader[NonNegLong].map(EpochProgress(_))
   implicit val environmentToOrdinalMapReader: ConfigReader[Map[AppEnvironment, SnapshotOrdinal]] =
     genericMapReader[AppEnvironment, SnapshotOrdinal](catchReadError(AppEnvironment.withName))
+  implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] = ConfigReader.forProduct11(
+    "tessellation-3-migration",
+    "tessellation-301-migration",
+    "check-sync-global-snapshot-field",
+    "metagraph-sync-data",
+    "updated-last-sync-global-order",
+    "updated-last-sync-global-from-peers-in-consensus",
+    "updating-combine-function-spend-actions",
+    "fixing-allow-spend-expiration",
+    "fixing-allow-spend-and-token-lock-validation",
+    "removing-processed-delegated-stake-withdrawals",
+    "fixing-delegated-stake-double-withdrawal"
+  )(FieldsAddedOrdinals.apply)
   implicit val environmentToEpochProgressMapReader: ConfigReader[Map[AppEnvironment, EpochProgress]] =
     genericMapReader[AppEnvironment, EpochProgress](catchReadError(AppEnvironment.withName))
   implicit val environmentToSetOfPeersReader: ConfigReader[Map[AppEnvironment, NonEmptySet[PeerId]]] =

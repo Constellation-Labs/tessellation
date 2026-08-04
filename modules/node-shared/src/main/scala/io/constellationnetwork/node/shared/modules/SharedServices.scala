@@ -14,8 +14,8 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{CollateralConfig, SharedConfig}
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedStakeDoubleWithdrawalOrdinal}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -132,7 +132,8 @@ object SharedServices {
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
         validators.updateDelegatedStakeValidator,
-        DelegatedStakeDoubleWithdrawalOrdinal.get(cfg.environment)
+        cfg.fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawal
+          .getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
       )
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator
@@ -142,7 +143,6 @@ object SharedServices {
         cfg.fieldsAddedOrdinals,
         cfg.metagraphsSync,
         cfg.environment,
-        DelegatedStakeDoubleWithdrawalOrdinal.get(cfg.environment),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),

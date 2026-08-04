@@ -36,7 +36,8 @@ object types {
     updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
-    removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal]
+    removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal],
+    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class MetagraphsSyncConfig(

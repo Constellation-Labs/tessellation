@@ -158,7 +158,6 @@ object GlobalSnapshotAcceptanceManager {
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSyncConfig: MetagraphsSyncConfig,
     environment: AppEnvironment,
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -224,6 +223,9 @@ object GlobalSnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       val removingProcessedDelegatedStakeWithdrawalsOrdinal = fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawals
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
+      val fixingDelegatedStakeDoubleWithdrawalOrdinal = fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawal
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       for {

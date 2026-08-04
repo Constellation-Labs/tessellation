@@ -5,8 +5,6 @@ import cats.effect.IO
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.DelegatedStakeDoubleWithdrawalOrdinal
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
@@ -25,15 +23,6 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import weaver.SimpleIOSuite
 
 object GlobalSnapshotAcceptanceManagerSuite extends SimpleIOSuite {
-
-  test("double-withdrawal hardening uses the selected MainNet activation ordinal and is active on Dev") {
-    IO(
-      expect.all(
-        DelegatedStakeDoubleWithdrawalOrdinal.get(AppEnvironment.Mainnet) == SnapshotOrdinal.unsafeApply(6710600L),
-        DelegatedStakeDoubleWithdrawalOrdinal.get(AppEnvironment.Dev) == SnapshotOrdinal.MinValue
-      )
-    )
-  }
 
   test("withdrawal unlock generation preserves legacy behavior before activation and credits once at activation") {
     val source = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
