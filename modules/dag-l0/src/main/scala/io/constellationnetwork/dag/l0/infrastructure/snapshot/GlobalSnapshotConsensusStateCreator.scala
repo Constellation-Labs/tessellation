@@ -1,7 +1,8 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.effect.Async
-import cats.effect.kernel.{Clock, Sync}
+import cats.effect.kernel.{Clock, Ref, Sync}
+import cats.effect.std.Queue
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -16,13 +17,15 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Category._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Event._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionReason, Facility}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, EvictionVoter}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
+import io.constellationnetwork.schema.ID.IdOps
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ControllerEvidenceEntry, SnapshotOrdinal}
@@ -63,7 +66,13 @@ object GlobalSnapshotConsensusStateCreator {
     // `coreFacilitators.value.size`, NOT the full round-start committee. If Tier 2
     // (carried-forward) peers fall below this floor, CommitteeBuilder deterministically
     // promotes Tier 1 peers (lexicographic-sorted by PeerId hex) until the floor is met.
-    coreCommitteeSize: Int
+    coreCommitteeSize: Int,
+    evictionVoter: EvictionVoter[F, GlobalSnapshotKey],
+    consensusQueue: Queue[
+      F,
+      ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
+    ],
+    tier1FinalityMissHistoryRef: Ref[F, FinalityParticipationAuditor.MissHistory]
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
 
@@ -71,6 +80,110 @@ object GlobalSnapshotConsensusStateCreator {
 
     private val dagAwaitingParentConfig = DagAwaitingParentConfig.default
     private val maxAwaitingParentReactivationPerRound = 128
+
+    /** Track every auditable parent-round Tier-1 signer from actual local snapshot proofs and audit one deterministic target. After three
+      * consecutive local misses, reuse the existing B1 vote path.
+      *
+      * The local proof subset is evidence for vote emission only. It never enters the outcome, artifact, committee hash, or state proof. A
+      * membership change still requires the normal Core-quorum EvictionCertificate to be embedded in and accepted with the Proposal.
+      */
+    private def auditTier1FinalityParticipation(
+      key: GlobalSnapshotKey,
+      lastOutcome: GlobalConsensusOutcome,
+      currentCore: Set[PeerId],
+      currentTier1: Set[PeerId],
+      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
+    ): F[Unit] = {
+      val parentEvidence = lastOutcome.controllerEvidence.flatMap(_.get(lastOutcome.key))
+      val locallyObservedParentSigners =
+        lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
+      val inBootstrap =
+        !lastOutcome.recentProofSizes.values.exists(_ >= consensusConfig.bootstrapCompleteProofsThreshold)
+      val outcomeLabel = Metrics.unsafeLabelName("outcome")
+
+      parentEvidence match {
+        case None =>
+          // Recovery from a snapshot whose one-round operational sidecar is unavailable can
+          // temporarily lack the exact parent round-start committee. Clear local streaks and
+          // skip rather than bridging an unknown round into a false consecutive-miss sequence.
+          tier1FinalityMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
+            Metrics[F]
+              .incrementCounter(
+                "dag_consensus_tier1_finality_audit_total",
+                Seq(outcomeLabel -> "missing_parent_evidence")
+              )
+              .whenA(!inBootstrap && currentCore.contains(selfId))
+
+        case Some(evidence) =>
+          tier1FinalityMissHistoryRef.modify { previous =>
+            val observation = FinalityParticipationAuditor.observe(
+              selfId,
+              currentCore,
+              currentTier1,
+              evidence.roundStartFacilitators.toSet,
+              locallyObservedParentSigners,
+              lastOutcome.key.value.value,
+              lastOutcome.finished.snapshotHash,
+              inBootstrap,
+              previous
+            )
+            (observation.history, observation.decision)
+          }.flatMap {
+            case Some(audit) if audit.shouldVote =>
+              val alreadyVoted = resources.evictionVotes.get(audit.target).exists(_.contains(selfId))
+              val emit =
+                if (alreadyVoted) Sync[F].unit
+                else evictionVoter.emitEvictionVote(key, audit.target, EvictionReason.Silent)
+
+              emit >>
+                // Queue assembly before the first Facility is sent. Every honest Core voter
+                // audits the same target; local proof differences can only cause abstention.
+                consensusQueue.offer(ConsensusCommand.CheckEvictionAssembly(key, audit.target)) >>
+                ConsensusLog.info(
+                  logger,
+                  Facilitator,
+                  key.show,
+                  "n/a",
+                  Eviction,
+                  "stage" -> "tier1_finality_audit",
+                  "target" -> ConsensusLog.pid(audit.target),
+                  "signatureObserved" -> "false",
+                  "consecutiveMisses" -> audit.consecutiveMisses.toString,
+                  "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString,
+                  "alreadyVoted" -> alreadyVoted.toString
+                ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_tier1_finality_audit_total",
+                  Seq(outcomeLabel -> (if (alreadyVoted) "already_voted" else "vote_emitted"))
+                )
+
+            case Some(audit) if audit.signatureObserved =>
+              Metrics[F].incrementCounter(
+                "dag_consensus_tier1_finality_audit_total",
+                Seq(outcomeLabel -> "signature_observed")
+              )
+
+            case Some(audit) =>
+              ConsensusLog.info(
+                logger,
+                Facilitator,
+                key.show,
+                "n/a",
+                Eviction,
+                "stage" -> "tier1_finality_audit_hysteresis",
+                "target" -> ConsensusLog.pid(audit.target),
+                "consecutiveMisses" -> audit.consecutiveMisses.toString,
+                "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString
+              ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_tier1_finality_audit_total",
+                  Seq(outcomeLabel -> "hysteresis_wait")
+                )
+
+            case None => Sync[F].unit
+          }
+      }
+    }
 
     def tryFacilitateConsensus(
       key: GlobalSnapshotKey,
@@ -125,9 +238,10 @@ object GlobalSnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Full base. Use only the parent round's canonical facilitator set. `finished.candidates`
-        // is local-observation-dependent until candidate admission is carried by a certified path;
-        // feeding it into this value can diverge `facilitatorsHash` across honest nodes.
+        // Full base. Use only the parent round's canonical facilitator set. In schema v34
+        // `finished.candidates` carries the accepted Proposal's open-admission nominee for vote
+        // convergence; nomination alone is not membership authority. Only a quorum-certified
+        // admission may change this base.
         fullBase = ConsensusPeerController.canonicalFacilitatorBase(
           parentFacilitators = lastOutcome.facilitators.value,
           seedlistPeerIds = seedlistPeerIds
@@ -271,8 +385,9 @@ object GlobalSnapshotConsensusStateCreator {
         // that was previously filtered out (chronic non-signers, prior-round-missing,
         // tightening-window exclusions, new-peer deferrals) is now handled at CommitteeBuilder
         // by partitioning into Core / Tier 1 / Witness rather than excluding -- Tier 1 peers
-        // sign and earn but do not count toward the liveness quorum, so chronic peers cannot
-        // wedge consensus by being absent. Fallback ladder preserves probation as non-bypassable.
+        // sign and earn but do not count toward the Core liveness quorum, so chronic peers cannot
+        // wedge leader/VC certificate progress by being absent. The separate frozen-committee
+        // finality floor remains unchanged. Fallback ladder preserves probation as non-bypassable.
         eligibleThisRound = {
           val excluded = penalizedPeers ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
@@ -355,7 +470,16 @@ object GlobalSnapshotConsensusStateCreator {
             )
           )
         )
-        activeFacilitators = activeAdmission.active
+        // The integral controller now classifies Core eligibility; it no longer deletes
+        // signing/reward seats. A selected peer outside its active cohort is retained and
+        // routed through CommitteeBuilder as Tier 1. This is the essential distinction the
+        // tiered design was missing: degraded-but-still-eligible peers keep signing and earning
+        // without inflating the Core liveness denominator.
+        signingMembership = ConsensusPeerController.retainSelectedForSigning(
+          selectedFacilitators,
+          activeAdmission
+        )
+        activeFacilitators = signingMembership.retained
 
         _ <- ConsensusLog
           .info(
@@ -368,6 +492,8 @@ object GlobalSnapshotConsensusStateCreator {
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "selected" -> selectedFacilitators.size.toString,
             "active" -> activeFacilitators.size.toString,
+            "coreEligible" -> activeAdmission.active.size.toString,
+            "retainedAsTier1" -> signingMembership.nonCore.size.toString,
             "activeTarget" -> activeAdmission.targetSize.toString,
             "activeCandidates" -> activeAdmission.candidateSize.toString,
             "promotedCandidates" -> activeAdmission.promotedCandidateSize.toString,
@@ -453,6 +579,8 @@ object GlobalSnapshotConsensusStateCreator {
           activeAdmission.promotedCandidateSize.toLong
         )
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_core_eligible_size", activeAdmission.active.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_tier1_retained_size", signingMembership.nonCore.size.toLong)
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
         _ <- Metrics[F].updateGauge(
@@ -495,6 +623,23 @@ object GlobalSnapshotConsensusStateCreator {
           logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus at key=$key")
         }
 
+        // Partition every retained candidate, then seat only Core + Tier 1. A carried
+        // Witness remains observable/certificate-eligible but cannot enter the signing or
+        // reward committee merely because the controller stopped deleting seats.
+        committees = CommitteeBuilder.build(
+          candidates = active,
+          priorTiers = controllerInputs.peerTiers,
+          peerQuality = controllerInputs.peerQuality,
+          coreFloor = coreCommitteeSize,
+          minObservations = config.minParticipationObservations,
+          minRatio = config.minParticipationRatio,
+          nonCorePeers = signingMembership.nonCore.intersect(active.toSet),
+          chronicMisses = controllerInputs.chronicMisses,
+          activeScores = controllerInputs.activeScores
+        )
+        signingSet = committees.core.toSet ++ committees.tier1.toSet
+        signingFacilitators = active.filter(signingSet.contains)
+
         time <- Clock[F].monotonic
 
         // Build Facility once, then:
@@ -506,6 +651,19 @@ object GlobalSnapshotConsensusStateCreator {
         // hint (Healthy/Degraded/Critical) rides on the outgoing Facility -- the leader aggregates
         // these across the committee into `Proposal.observedSelfHealth`.
         effect = for {
+          _ <- auditTier1FinalityParticipation(
+            key,
+            lastOutcome,
+            committees.core.toSet,
+            committees.tier1.toSet,
+            resources
+          ).handleErrorWith { error =>
+            logger.warn(error)(s"Tier-1 finality audit failed for key=$key; continuing round") >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_tier1_finality_audit_total",
+                Seq(Metrics.unsafeLabelName("outcome") -> "error")
+              )
+          }
           _ <- HasherSelector[F].withCurrent { implicit hasher =>
             DagAwaitingParentQueue.maintain(
               eventMempool,
@@ -535,7 +693,7 @@ object GlobalSnapshotConsensusStateCreator {
           )
           declaration = ConsensusPeerDeclaration(key, facility)
           _ <- consensusStorage.addFacility(selfId, key, facility)
-          _ <- gossip.spreadDirect(declaration, active.toSet)
+          _ <- gossip.spreadDirect(declaration, signingFacilitators.toSet)
         } yield ()
 
         // v19 multi-committee derivation. Partition `active` into Core / Tier 1 / Witness
@@ -562,18 +720,6 @@ object GlobalSnapshotConsensusStateCreator {
         // swaps them for the highest-scored non-chronic reserves, prefers a smaller Core over
         // chronic padding when supply is short, and re-admits the least-bad chronic peers only
         // below MinViableCoreSize. See the CommitteeBuilder scaladoc for the full ladder.
-        committees = CommitteeBuilder.build(
-          candidates = active,
-          priorTiers = controllerInputs.peerTiers,
-          peerQuality = controllerInputs.peerQuality,
-          coreFloor = coreCommitteeSize,
-          minObservations = config.minParticipationObservations,
-          minRatio = config.minParticipationRatio,
-          nonCorePeers = activeAdmission.probationAdmitted.toSet,
-          chronicMisses = controllerInputs.chronicMisses,
-          activeScores = controllerInputs.activeScores
-        )
-
         _ <- logger
           .info(
             s"Chronic core replacement at key=$key: " +
@@ -700,7 +846,7 @@ object GlobalSnapshotConsensusStateCreator {
           if (leader === selfId) "Leader" else "Validator",
           FacilitatorsFinalized,
           "eligible" -> allEligible.size.toString,
-          "active" -> active.size.toString,
+          "active" -> signingFacilitators.size.toString,
           "core" -> coreList.size.toString,
           "leaderPool" -> leaderPool.size.toString,
           "recentSignerActivePool" -> activeAdmission.recentSignerPoolSize.toString,
@@ -718,10 +864,10 @@ object GlobalSnapshotConsensusStateCreator {
         state = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
           key,
           lastOutcome,
-          Facilitators(active),
+          Facilitators(signingFacilitators),
           // Canonical round-start committee -- same set as `facilitators` at creation,
           // but frozen for the lifetime of the round even when peers withdraw.
-          Facilitators(active),
+          Facilitators(signingFacilitators),
           CollectingFacilities(
             maybeTrigger,
             lastOutcome.finished.facilitatorsHash,
@@ -753,7 +899,7 @@ object GlobalSnapshotConsensusStateCreator {
         _ <- {
           val basePairs = Seq(
             "trigger" -> maybeTrigger.map(_.toString).getOrElse("none"),
-            "facilitators" -> active.size.toString,
+            "facilitators" -> signingFacilitators.size.toString,
             "eligible" -> allEligible.size.toString,
             "candidates" -> filteredCandidates.size.toString,
             "leader" -> ConsensusLog.pid(leader),

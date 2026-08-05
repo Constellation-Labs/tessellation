@@ -13,9 +13,8 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 
 import weaver.FunSuite
 
-/** Pure-function coverage for the shared `AdmissionCertificateSelector.select` helper. Both the dag-l0 and currency-l0 advancers delegate
-  * every assembled-admission-certificate attach site (initial proposal build, leader re-spread) plus the apply-site defense-in-depth to
-  * this helper, so tests here cover both code paths.
+/** Pure-function coverage for the shared admission-certificate cap. Proposal construction uses entropy ranking; the unreachable over-cap
+  * apply defense intentionally retains legacy certificate ordering.
   *
   * Invariants under test:
   *   - the cap is `math.max(0, activeAdmissionMaxExpansionPerRound)` -- EXACTLY the limit `validateProposalAcs` enforces via
@@ -45,6 +44,12 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
           NonEmptySet.of(signerProof("ee" * 32))
         )
       )
+    )
+
+  private def signedVote(targetTag: String, signerTag: String, signatureTag: String): Signed[AdmissionVote] =
+    Signed(
+      AdmissionVote(pid(targetTag), AdmissionReason.ReadyAtTip, facHash, lastSnap),
+      NonEmptySet.of(SignatureProof(Id(Hex(signerTag)), Signature(Hex(signatureTag))))
     )
 
   private val certA = cert("aa" * 32)
@@ -94,5 +99,45 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
   test("empty input yields empty selection at any cap") {
     val selection = AdmissionCertificateSelector.select(List.empty[AdmissionCertificate], 1)
     expect.same(List.empty[AdmissionCertificate], selection.kept).and(expect.same(List.empty[AdmissionCertificate], selection.dropped))
+  }
+
+  test("quorum accounting counts unique voter PeerIds rather than vote wrappers") {
+    val target = "aa" * 32
+    val duplicateSigner = "11" * 32
+    val certificate = AdmissionCertificate(
+      targetPeer = pid(target),
+      reason = AdmissionReason.ReadyAtTip,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      votes = NonEmptySet.of(
+        signedVote(target, duplicateSigner, "01"),
+        signedVote(target, duplicateSigner, "02"),
+        signedVote(target, "22" * 32, "03")
+      )
+    )
+
+    expect.same(3, certificate.votes.toNonEmptyList.length) && expect.same(2, AdmissionCertificate.uniqueVoterCount(certificate))
+  }
+
+  test("proposal selection is deterministic under permutations and rotates with entropy") {
+    val entropyCandidates = (1 to 64).map(i => Hash.fromBytes(s"proposal-entropy-$i".getBytes("UTF-8")))
+    val rotatingEntropy = entropyCandidates.find { entropy =>
+      AdmissionCertificateSelector.selectForProposal(all, 1, entropy).kept != List(certA)
+    }.get
+    val selections = all.permutations.map(AdmissionCertificateSelector.selectForProposal(_, 1, rotatingEntropy)).toList
+
+    expect(selections.nonEmpty) &&
+    forEach(selections)(selection => expect.same(selections.head, selection)) &&
+    expect(selections.head.kept != List(certA))
+  }
+
+  test("apply defense keeps its version-stable legacy ordering") {
+    val entropyCandidates = (1 to 64).map(i => Hash.fromBytes(s"proposal-entropy-$i".getBytes("UTF-8")))
+    val rotatingEntropy = entropyCandidates.find { entropy =>
+      AdmissionCertificateSelector.selectForProposal(all, 1, entropy).kept != List(certA)
+    }.get
+
+    expect.same(List(certA), AdmissionCertificateSelector.select(all, 1).kept) &&
+    expect(AdmissionCertificateSelector.selectForProposal(all, 1, rotatingEntropy).kept != List(certA))
   }
 }

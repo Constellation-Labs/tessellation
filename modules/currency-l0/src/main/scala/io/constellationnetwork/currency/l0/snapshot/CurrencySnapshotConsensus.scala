@@ -141,10 +141,9 @@ object CurrencySnapshotConsensus {
       )
 
     for {
-      // Fail fast on sizing invariants (mirror of GlobalSnapshotConsensus): a configured target at
-      // or below the Core floor closes the admission deficit gate before Core can reach the floor;
-      // a max below the floor caps the active set under it. Inert while the currency env maps are
-      // unset (absent entries fall back to target = coreCommitteeSize, the metagraph shape).
+      // Currency L0 retains the bounded active-set interpretation of target/max because its
+      // configured phase/finality threshold is unanimity. The broad GL0 lease policy does not
+      // apply here.
       _ <- new IllegalArgumentException(
         s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
           s" ($resolvedCoreCommitteeSize)"
@@ -364,6 +363,20 @@ object CurrencySnapshotConsensus {
           (o: CurrencyConsensusOutcome) =>
             !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
           (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: CurrencyConsensusOutcome) => {
+            val target = ActiveFacilitatorAdmission.activeAdmissionTarget(
+              effectiveConsensusConfig.activeFacilitatorTarget,
+              effectiveConsensusConfig.coreCommitteeSize,
+              o.facilitators.value.size
+            )
+            if (o.facilitators.value.size < target) o.finished.candidates.value else Set.empty
+          },
+          (key: CurrencySnapshotKey) =>
+            ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+              key.value.value,
+              effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
+            ),
+          (_: CurrencyConsensusOutcome) => None,
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),

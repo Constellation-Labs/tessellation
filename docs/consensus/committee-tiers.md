@@ -77,10 +77,13 @@ ordinal, and diagnostics.
 
 ## 2. Building the Round's Active Set (ActiveFacilitatorAdmission)
 
-`ActiveFacilitatorAdmission` (`ActiveFacilitatorAdmission.scala:8-55`) selects
-which peers actively sign and lead **this** round, before the tier partition runs.
-It is distinct from `CommitteeBuilder`: admission governs who is active; tiering
-governs how the active set is stratified.
+`ActiveFacilitatorAdmission` classifies which deterministically selected peers are
+eligible for Core. It does **not** define the entire signing/reward committee.
+`ConsensusPeerController.retainSelectedForSigning` retains the canonical parent
+membership as Core or Tier 1 unless an existing explicit eligibility/removal rule
+applies. The controller's chronic-miss input is based on the early Facility responder
+set; it can remove Core/leader eligibility but cannot prove snapshot-signing failure
+or delete a Tier-1 reward seat.
 
 `fromRecentSigners` takes the deterministically-`select`ed candidate list and
 scores each peer from recent-signer evidence and `peerQuality`. It produces an
@@ -97,15 +100,16 @@ scores each peer from recent-signer evidence and `peerQuality`. It produces an
   default bands are `promote=100`, `retain=70`, `demote=40`
   (`ActiveFacilitatorAdmission.scala:65-67`), mirroring the evidence weights in
   [section 5](#5-participation-evidence-and-chronic-classification).
-- `BeyondTarget` -- a qualified peer dropped because the active set is already at
-  its `target` size.
+- `BeyondTarget` -- a qualified peer outside the controller's Core-classification
+  target. It remains eligible for a Tier-1 signing lease.
 - `CertifiedTimeoutMissing` -- used by the `fromCertifiedTimeout` path
   (`ActiveFacilitatorAdmission.scala:242-285`), which shrinks the active set to
   the certified timeout voters plus a deterministic recent-signer fill when a
   quorum has independently timed out. This ties admission to the
   Timeout-Certificate view-advance path.
 
-Two expansion lanes widen the active set beyond the sticky recent-signer pool:
+Two controller lanes widen the Core-eligible classification beyond the sticky
+recent-signer pool:
 
 - **Reserve lane** -- qualified promote-threshold peers admitted to fill the
   remaining `target` slots (`reserveAdmitted`,
@@ -113,21 +117,36 @@ Two expansion lanes widen the active set beyond the sticky recent-signer pool:
 - **Probation re-entry lane** -- `minProbationReentrySlots` reserves up to K
   slots for below-promote-threshold rehabilitating peers even when the per-round
   expansion budget is exhausted. A peer that signed the latest round retains
-  priority for a bounded probation seat until it reaches the retain band; missing
-  the latest round ends that lease. Existing climbers rank ahead of fresh
+  priority for a bounded probation classification until it reaches the retain band;
+  missing the latest round ends that classifier priority, not its signing lease. Existing climbers rank ahead of fresh
   candidates. Probation-admitted peers are non-quorum-bearing: they flow into
   `nonCorePeers` in `CommitteeBuilder` (see below), so widening the lane cannot
   affect quorum feasibility. The lane is inert when
   `minProbationReentrySlots == 0`.
 
-A demoted peer that continues signing may therefore remain active in a
-non-Core probation seat while its score recovers. Demotion still removes Core
-eligibility and, during normal operation, reward qualification: once at least one
-facilitator meets the promote threshold, reward distribution excludes every
-facilitator below it. The existing empty/no-qualified evidence fallback still
-pays all facilitators during bootstrap rather than zeroing the reward pool.
-Keeping responsive peers seated is intentional; purging one would prevent it
-from accumulating the signed evidence needed to rehabilitate.
+A peer outside these lanes remains Tier 1 when otherwise eligible. Score exclusion
+or one missed Facility removes Core/leader eligibility, not the signing lease. The
+early Facility responder signal is deliberately not reused as a Tier-1 eviction
+proxy. A separate bounded finality audit inspects actual parent-artifact
+`MajoritySignature` proofs and can only end a lease through the existing
+quorum-certified eviction path; see sections 4 and 5.
+
+New leases use a certified two-round path. The round-N leader carries one
+rendezvous-ranked candidate in its Proposal. In round N+1, Core members vote for
+that parent nominee, and an accepted Core-quorum AdmissionCertificate adds it to
+the next parent committee. Open votes and certificates are enabled only on the
+existing `activeAdmissionExpansionIntervalRounds` cadence (five rounds in the
+shipped Global-L0 config). Before voting, each Core node also requires its actual
+local parent proof set, intersected with the current committee, to satisfy the
+finality floor for `current committee size + 1`. That proof-dependent check is local
+vote-emission policy only; it is never proposal validation or state derivation. It
+starts outside bootstrap, alongside the full-committee finality floor. Bootstrap keeps
+the legacy Core-only finality gate, so a new Tier-1 seat does not raise the active
+requirement and singleton committees remain able to grow under unanimity. The
+certificate is the state-transition authority, so a recovered node without the
+ephemeral nominee can still accept it. The shipped budget remains one. Monitor ticks
+cannot walk to a second candidate after the budget is spent. Probation readmission
+is not cadence- or next-seat-headroom-gated and retains its wider witness lane.
 
 `dag_consensus_active_facilitator_fresh_probation_starved` reports whether
 sticky candidates consumed the entire probation lane while fresh candidates
@@ -142,12 +161,10 @@ recent-signer path. It is intentionally decoupled from the demotion hysteresis:
 widening it only changes active-set eligibility, not who is kept out of
 quorum-bearing Core.
 
-Wiring: `ConsensusPeerController.chooseActive` calls into this with the
-per-environment admission config (`GlobalSnapshotConsensusStateCreator.scala:322-352`);
-the result's `active` becomes `activeFacilitators`
-(`GlobalSnapshotConsensusStateCreator.scala:352`) and its `probationAdmitted` set
-becomes `CommitteeBuilder`'s `nonCorePeers`
-(`GlobalSnapshotConsensusStateCreator.scala:562`).
+Wiring: `ConsensusPeerController.chooseActive` produces the Core classification;
+`retainSelectedForSigning` retains the signing lease and marks every selected peer
+outside that classification as `nonCorePeers`; `CommitteeBuilder` then partitions
+the retained set into Core, Tier 1, and Witness.
 
 ---
 
@@ -280,6 +297,16 @@ The pool is the **union** of two consensus-agreed sources
 For a target-keyed cert (B1/B2), `forTarget` additionally removes the `target` so a
 peer cannot witness its own eviction or admission
 (`state/WitnessPool.scala:44-50`). The non-keyed `all` is used for VCC view-change.
+Two deliberately narrower selectors sit in front of that wider pool:
+
+- open admission and Tier-1 finality-participation eviction are Core-attested; and
+- probation readmission and Core-target stall eviction preserve the wider recovery
+  lane.
+
+The target's frozen tier selects the eviction lane identically at certificate
+assembly and Proposal validation. Thus a silent Tier-1 peer never becomes necessary
+to certify its own removal, while damaged-Core recovery keeps the historical witness
+functionality it already depended on.
 
 Determinism contract (`state/WitnessPool.scala:16-34`): both inputs are
 consensus-agreed (signed in the previous snapshot), and `minParticipationObservations`
@@ -334,6 +361,33 @@ mirror the `ActiveFacilitatorAdmission` promote/retain/demote bands
   NOT the locally accreting `signedMajorityArtifact.proofs`, which differ per node
   by gossip arrival order (`:323-359`). This is what makes the evidence window
   itself byte-identical across deciding nodes.
+
+### Actual finality participation audit
+
+`FinalityParticipationAuditor` deliberately does not feed the local proof set into
+`controllerEvidence`. At each Global-L0 round start it updates node-local proof-miss
+streaks for every peer in the consensus-agreed intersection of the current Tier-1
+set and the parent round's canonical committee, then rendezvous-selects one target
+from that complete set. Any observed proof resets that peer's streak. Only current
+Core nodes emit votes, and a Core node emits the existing `EvictionVote(Silent)` only
+after the target has missed three consecutive local proof sets, reusing
+`TierTransitions.DemotionConsecutiveMisses`. Reprocessing the same parent is
+idempotent; restart, missing parent evidence, or a non-consecutive parent ordinal
+clears the local sequence and delays eviction rather than manufacturing a miss.
+
+Honest nodes may have different proof subsets, so they may disagree about whether to
+emit. That disagreement is safe: it changes only local vote emission. State changes
+only if a Core quorum signs matching, tip-bound votes, an EvictionCertificate is
+assembled, and the leader includes it in an accepted Proposal. In this context
+`Silent` means "not observed by a Core quorum before their finalization cutoffs," not
+"cryptographically proved never to have signed." The accepted eviction enters the
+existing penalty/probation/readmission lifecycle and changes a later committee; it
+never lowers the current frozen finality floor.
+
+The audit selects at most one target per round to bound gossip. This is not the old
+`max-facilitator-count`/300 subsetting mechanism and does not cap Tier-1 size or reward
+breadth. A newly admitted Tier-1 peer is excluded until it was actually seated in the
+audited parent round.
 
 ### Why `ChronicMissThreshold` equals `DemotionConsecutiveMisses`
 
@@ -449,25 +503,29 @@ completion-ratio tiering within the pool and uses rendezvous score plus
 
 ## 8. Rewards and the committee
 
-Rewards are distributed by the delegated-rewards path to the frozen round-start
+Rewards are distributed by the delegated-rewards path from the frozen round-start
 signing committee. In the current tier-transition path that set is Core + Tier 1;
-Witness is observation-only and is not seated. Every seated Core and Tier-1 peer earns
-an equal validator share. Health, quality, and evidence govern admission and future
-tier membership, not a second payout-time filter.
+Witness is observation-only and is not seated. At and after the
+`delegated-rewards-full-committee` ordinal, every seated Core and Tier-1 peer is a
+validator recipient. Before that ordinal, the legacy score-qualified recipient rule
+is retained strictly for historical replay. The payout formula is unchanged.
 
 There is no per-seat reward rotation. An earlier bounded one-slot Tier-1 rotation
-lane was removed; reward fairness is achieved purely by committee **selection**,
-which the health/quality system already governs (sections 2-7). Spreading reward
-share is therefore a matter of which peers the tier partition admits into the round,
-not of moving a seat after the fact.
+lane was removed. Reward breadth instead comes from retaining every otherwise
+eligible signing lease as Core or Tier 1 and adding new leases through certified
+open admission. Health/quality classification governs Core and leader eligibility;
+it does not silently delete a Tier-1 signing/reward seat. A lease ends only through
+the explicit eligibility, penalty/probation, withdrawal, or certified-eviction paths
+described above.
 
 ---
 
 ## 9. How It Wires Into a Round
 
 The per-round derivation in
-`GlobalSnapshotConsensusStateCreator.scala` runs in this order (the currency-l0
-StateCreator mirrors it):
+`GlobalSnapshotConsensusStateCreator.scala` runs in this order. Currency L0 keeps
+its existing bounded active-set policy because its configured finality threshold is
+unanimity; broad retention there requires a separate design.
 
 1. **Eligible base + subset select.** Apply the eligibility filtering pipeline and
    `facilitatorSelector.select` over the previous snapshot hash as entropy
@@ -475,17 +533,19 @@ StateCreator mirrors it):
 2. **Controller inputs.** `controllerInputsWithFallback` derives
    scores/quality/tiers/chronicMisses from the signed `controllerEvidence` window,
    falling back to carried maps on an empty window (`:308-315`).
-3. **Active admission.** `ConsensusPeerController.chooseActive` (which calls
-   `ActiveFacilitatorAdmission.fromRecentSigners`) selects `activeFacilitators` and
-   the `probationAdmitted` set (`:322-352`).
-4. **Tier partition.** `CommitteeBuilder.build` partitions the
-   active set into Core / Tier 1 / Witness, applies the Core floor and chronic-core
-   replacement ladder, with `nonCorePeers`
-   set to the probation peers (`:555-571`).
-5. **Leader selection.** `LeaderEligibility.fromRecentSigners` restricts the leader
+3. **Core classification and lease retention.** `chooseActive` classifies Core
+   eligibility. `retainSelectedForSigning` retains all otherwise eligible selected peers and
+   routes classifier exclusions to `nonCorePeers`.
+4. **Tier partition.** `CommitteeBuilder.build` partitions the retained set into
+   Core / Tier 1 / Witness and applies the Core floor and chronic-core ladder.
+5. **Bounded Tier-1 finality audit.** Before sending the first Facility, every node
+   updates local actual-proof miss streaks for all auditable Tier-1 peers. Current
+   Core nodes audit the same entropy-ranked target; only a third consecutive local
+   miss emits the existing eviction vote and queues existing certificate assembly.
+6. **Leader selection.** `LeaderEligibility.fromRecentSigners` restricts the leader
    pool to graduated recent signers within Core (`:635-643`), then
    `selectLeaderWeighted` picks the view's leader.
-6. **Round-start state.** The new `ConsensusState` carries the full active set as
+7. **Round-start state.** The new `ConsensusState` carries the full active set as
    `Facilitators`, plus `coreFacilitators = CoreFacilitators(committees.core)` and
    `tier1Facilitators = Tier1Facilitators(committees.tier1)`
    (`:720-731`). The cert quorum reads `coreFacilitators`; the snapshot

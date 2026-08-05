@@ -332,19 +332,18 @@ object types {
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
-    // Deterministic active-facilitator expansion. Recent signers are preferred, but when
-    // the recent-signer pool is below this target the StateCreator admits additional selected
-    // facilitators ranked by consensus-agreed peerQuality and stable peer id. This is a target,
-    // not a cap: if more recent signers exist, they remain active up to activeFacilitatorMax.
-    // Consensus-critical because it changes the active facilitator set.
+    // Deterministic controller target. Recent signers are preferred; additional selected peers
+    // are ranked by consensus-agreed peerQuality and stable peer id. On Global L0 this classifies
+    // Core eligibility and does not cap retained Tier-1 signing membership. Currency L0 retains
+    // the bounded active-set interpretation. Consensus-critical in both layers.
     activeFacilitatorTarget: Option[Int] = None,
-    // Hard cap for deterministic active-facilitator admission. None preserves the legacy
-    // maxFacilitatorCount-selected pool size; testnet sets this lower to avoid re-opening the
-    // full selected denominator while still letting healthy community peers prove themselves.
+    // Hard cap for the deterministic controller cohort. On Global L0 this caps Core
+    // classification, not the broad signing/reward committee; on Currency L0 it retains the
+    // existing active-membership meaning. None preserves the selected-pool size.
     activeFacilitatorMax: Option[Int] = None,
-    // v27 consensus peer controller: bounded integral score used for active role
-    // admission. All fields below are consensus-critical because they change which
-    // peers can enter the rewards-affecting active set from the same parent state.
+    // v27 consensus peer controller: bounded integral score used for role classification.
+    // All fields below are consensus-critical because they change Core/tier derivation on
+    // Global L0 and active membership on Currency L0 from the same parent state.
     activeAdmissionPromoteThreshold: Int = 100,
     activeAdmissionRetainThreshold: Int = 70,
     activeAdmissionDemoteThreshold: Int = 40,
@@ -359,14 +358,11 @@ object types {
     activeAdmissionPassiveDecay: Int = 1,
     activeAdmissionMaxExpansionPerRound: Int = 1,
     activeAdmissionExpansionIntervalRounds: Int = 1,
-    // Bounded probation re-entry lane: minimum number of probation (below-promote-threshold,
-    // "rehabilitating") peers admitted to the active set per round EVEN WHEN the per-round
-    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. A probation peer that
-    // signs the latest round keeps competing ahead of fresh candidates for one of these bounded
-    // seats until it reaches the retain band; missing the latest round ends the lease. This avoids
-    // one-round admission churn and lets responsive peers accumulate enough signed evidence to
-    // graduate. Capped by the active-set max. Probation peers are non-quorum-bearing (routed to
-    // `nonCorePeers` in `CommitteeBuilder`), so widening the lane cannot affect quorum feasibility.
+    // Bounded probation lane: minimum number of below-promote-threshold peers retained in the
+    // controller cohort even when the per-round expansion budget is exhausted. A peer that signs
+    // the latest round keeps classifier priority until it reaches the retain band; missing ends
+    // that priority. On Global L0 it does not delete the peer's separate Tier-1 signing lease.
+    // Probation peers are non-Core (routed to `nonCorePeers` in `CommitteeBuilder`).
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
     // pattern); default 0 leaves the lane inert. Consensus-critical: it changes the active committee
@@ -374,16 +370,17 @@ object types {
     // and divergent operator values handshake-reject.
     activeAdmissionMinProbationReentrySlots: Int = 0,
     // Recent-signer pool lookback depth (in ordinals): how far back a peer may have last signed and
-    // still hold a sticky, score-gated active seat instead of churning through the volatile
+    // still hold sticky, score-gated controller priority instead of churning through the volatile
     // expansion/reserve fill. Decoupled from the demotion hysteresis (which stays at
     // `TierTransitions.DemotionConsecutiveMisses` = 3 and independently keeps non-recent signers out
-    // of Core), so widening this only changes active-set eligibility, never the quorum-bearing Core.
+    // of Core). On Global L0 this does not cap the separate Tier-1 signing lease; Currency L0
+    // retains its active-set interpretation.
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionRecentSignerWindow.get(env)` (the coreCommitteeSize pattern),
     // floored to DemotionConsecutiveMisses. Default 3 preserves the pre-change lookback; testnet
     // widens to the full persisted `recentSigners` window (`tighteningWindow`). Consensus-critical:
-    // it changes the active committee -> roundStartFacilitators -> facilitatorsHash, so it is folded
-    // into `deterministicConfigHash` and divergent operator values handshake-reject.
+    // it changes deterministic tier/controller derivation, so it is folded into
+    // `deterministicConfigHash` and divergent operator values handshake-reject.
     activeAdmissionRecentSignerWindow: Int = 3,
     // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
     // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
@@ -846,7 +843,11 @@ object types {
     //     touched. Targets the post-restart 3-of-6 mathematical wedge (ord 3150197 /
     //     task #123 / the Apr-29 deadlock class). `quorumShrinkActivationViews` enters
     //     `deterministicConfigHash`; default 0 keeps the rung disabled.
-    consensusSchemaVersion: Int = 33,
+    //     v34: Proposal carries an optional open-admission nominee used to converge
+    //     Core voters on one target. The accepted singleton is retained in the existing
+    //     Finished.candidates field. Proposal decoding is backward compatible, but the
+    //     signed rumor wire shape changes, so the schema anchor moves.
+    consensusSchemaVersion: Int = 34,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -907,7 +908,7 @@ object types {
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
-      *   - `minParticipationRatio`: ratio below which a peer is excluded from the committee
+      *   - `minParticipationRatio`: ratio below which a peer is excluded from Core/leader eligibility
       *   - `leaderRotationMinRatioPct`: leader-rotation band threshold (tier 0 vs tier 1 inside the pool)
       *   - `hardLeaderQualityScorePct`: hard floor on the consensus-agreed quality score (peers below excluded from leader pool)
       *   - `minLeaderPoolSize`: fallback threshold when too few peers clear the hard floor
@@ -917,7 +918,8 @@ object types {
       *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
       *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
       *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
-      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: active facilitator expansion and cap
+      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: Core-controller expansion and cap on GL0; Currency retains its bounded
+      *     active-set interpretation
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
@@ -1166,27 +1168,26 @@ object types {
     // pattern: env resolution happens once at the consensus construction site and the resolved scalar
     // is threaded into `ConsensusConfig.activeAdmissionRecentSignerWindow`, which folds into
     // `deterministicConfigHash`). Controls how long an intermittently-signing peer keeps a sticky
-    // active seat before churning through expansion/reserve. An absent env entry resolves to the
+    // controller classification before churning through expansion/reserve. An absent env entry resolves to the
     // DemotionConsecutiveMisses floor (3 = the pre-change lookback). Testnet widens to the full
     // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
-    // purpose -- widening is an active-set/reward-breadth change to opt into per environment.
+    // purpose. On Global L0 this setting does not cap a retained Tier-1 signing lease;
+    // Currency L0 retains its bounded active-set interpretation.
     activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
-    // Active-set growth target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
+    // Core-controller target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved value is threaded
     // into `ConsensusConfig.activeFacilitatorTarget`, which folds into `deterministicConfigHash`).
-    // This is the admission deficit gate's threshold (`ActiveFacilitatorAdmission
-    // .activeAdmissionTarget`): the advancers wait for expansion certificates and the StallDetector
-    // emits expansion AdmissionVotes only while `roundStartFacilitators.size` is below it.
-    // INVARIANT: must EXCEED the environment's `coreCommitteeSize` (Core floor), or the feeder
-    // closes before Core can reach its floor and quorum feasibility wedges (v4.1.0: base scalar 7
-    // vs integrationnet floor 9). Scaled 2c+1 from the environment's Core size in the conf files.
+    // On Global L0 it sizes the score/recent-signer Core classification, not the broad
+    // signing/reward committee or certified open-admission lane. Currency L0 retains it as the
+    // active-set/open-admission deficit target. INVARIANT: must EXCEED `coreCommitteeSize` so the
+    // controller has classification headroom. Scaled 2c+1 in the conf files.
     // Absent env entries preserve the ConsensusConfig scalar resolution.
     activeFacilitatorTarget: Map[AppEnvironment, Int] = Map.empty,
-    // Active-set hard cap, keyed by AppEnvironment (same pattern; folds into the hash via
-    // `ConsensusConfig.activeFacilitatorMax`). Bounds the sticky recent-signer pool and the
-    // probation re-entry headroom. INVARIANT: must be >= the environment's `coreCommitteeSize` --
-    // the pre-scaling base scalar 13 was BELOW mainnet's Core floor 15, capping the active set
-    // under the floor: a guaranteed quorum-feasibility wedge. Scaled 4c+1 from Core size.
+    // Core-controller cap, keyed by AppEnvironment (same pattern; folds into the hash via
+    // `ConsensusConfig.activeFacilitatorMax`). Bounds the sticky recent-signer classification and
+    // probation headroom. It does not cap retained Core + Tier-1 membership on Global L0;
+    // Currency L0 retains the bounded active-set policy. INVARIANT: must be >= the environment's
+    // `coreCommitteeSize`. Scaled 4c+1 from Core size.
     activeFacilitatorMax: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,

@@ -119,6 +119,39 @@ object ConsensusPeerController {
     config: Config
   )
 
+  /** Separates signing-committee retention from Core eligibility.
+    *
+    * `ActiveFacilitatorAdmission` historically used its score/recent-signer result as the complete signing committee. That made a
+    * classification miss delete a validator seat and its reward eligibility, even though the tiered design already has Tier 1 for peers
+    * that should keep signing without entering the Core liveness denominator.
+    *
+    * A deterministically selected peer keeps its signing lease. Peers outside the controller's Core-eligible result, plus its explicit
+    * probation cohort, are forced to Tier 1 when `CommitteeBuilder` partitions the round. In particular, the controller's chronic-miss
+    * signal is derived from the leader's early Facility responder set, not from canonical snapshot-proof participation; it is therefore a
+    * valid Core/leader classification input but not authority to delete a signing/reward seat. Upstream collateral, withdrawal, penalty,
+    * probation, and certified-eviction rules still decide which peers reach `selected`. Witnesses are still removed by the builder; this
+    * helper does not turn a Witness into a signing peer.
+    */
+  final case class SigningMembership(
+    retained: List[PeerId],
+    nonCore: Set[PeerId]
+  )
+
+  def retainSelectedForSigning(
+    selected: List[PeerId],
+    classification: ActiveFacilitatorAdmission.Result
+  ): SigningMembership = {
+    val retained = selected.distinct
+    val retainedSet = retained.toSet
+    val coreEligible = classification.active.toSet.intersect(retainedSet)
+    val probation = classification.probationAdmitted.toSet.intersect(retainedSet)
+
+    SigningMembership(
+      retained = retained,
+      nonCore = (retainedSet -- coreEligible) ++ probation
+    )
+  }
+
   def advanceScores(
     prior: SortedMap[PeerId, Int],
     evidence: RoundEvidence,
