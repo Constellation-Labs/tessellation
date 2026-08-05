@@ -80,7 +80,7 @@ object CurrencySnapshotConsensusStateCreator {
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
-    metagraphId: Address
+    getMetagraphId: F[Address]
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
@@ -95,7 +95,7 @@ object CurrencySnapshotConsensusStateCreator {
         fetchOwnerAddress(lastOutcome.finished.context.snapshotInfo),
         lastGlobalSnapshotStorage.getOrdinal,
         feeCalculator,
-        consensusStorage.existsEvent(isInitialOwnerMessageEvent(metagraphId))
+        getMetagraphId.flatMap(id => consensusStorage.existsEvent(isInitialOwnerMessageEvent(id)))
       ).ifM(
         consensusStorage
           .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources)))
