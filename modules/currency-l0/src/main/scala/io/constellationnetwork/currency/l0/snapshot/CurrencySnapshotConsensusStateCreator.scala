@@ -118,9 +118,10 @@ object CurrencySnapshotConsensusStateCreator {
         filteredCandidates = approvedCandidates
           .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
 
-        // Full base. Use only the parent round's canonical facilitator set. `finished.candidates`
-        // is local-observation-dependent until candidate admission is carried by a certified path;
-        // feeding it into this value can diverge `facilitatorsHash` across honest nodes.
+        // Full base. Use only the parent round's canonical facilitator set. In schema v34
+        // `finished.candidates` carries the accepted Proposal's open-admission nominee for vote
+        // convergence; nomination alone is not membership authority. Only a quorum-certified
+        // admission may change this base.
         fullBase = ConsensusPeerController.canonicalFacilitatorBase(
           parentFacilitators = lastOutcome.facilitators.value,
           seedlistPeerIds = seedlistPeerIds

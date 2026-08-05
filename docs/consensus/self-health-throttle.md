@@ -134,7 +134,7 @@ Per [[feedback_env_dependent_config_pattern]] use `Map[AppEnvironment, Threshold
 
 ### Schema bump (consensusSchemaVersion v14 -> v15, shipped)
 
-This field shipped at schema v15; the live `consensusSchemaVersion` is now 33
+This field shipped at schema v15; the live `consensusSchemaVersion` is now 34
 (`config/types.scala:830`). The shipped `Facility` is in
 `consensus/declaration.scala:60` (`selfHealthHint: Option[SelfHealthHint] = None`).
 
