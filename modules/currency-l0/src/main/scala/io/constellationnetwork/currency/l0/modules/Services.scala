@@ -145,8 +145,6 @@ object Services {
         sharedStorages.lastGlobalSnapshot
       )
 
-      identifier <- storages.identifier.get
-
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedServices.gossip,
@@ -154,7 +152,8 @@ object Services {
           keyPair,
           seedlist,
           cfg.collateral.amount,
-          identifier,
+          // Read lazily: create-genesis wires Services before the identifier is set.
+          storages.identifier.get,
           storages.cluster,
           storages.node,
           storages.lastSyncGlobalSnapshot,

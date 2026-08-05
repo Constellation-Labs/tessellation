@@ -46,7 +46,7 @@ object CurrencySnapshotConsensus {
     keyPair: KeyPair,
     seedlist: Option[Set[SeedlistEntry]],
     collateral: Amount,
-    metagraphId: Address,
+    getMetagraphId: F[Address],
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
@@ -108,7 +108,7 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
-        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, feeCalculator, gossip, selfId, seedlist, metagraphId)
+        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, feeCalculator, gossip, selfId, seedlist, getMetagraphId)
       consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = CurrencySnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(

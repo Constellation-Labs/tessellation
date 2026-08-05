@@ -110,6 +110,32 @@ object CurrencySnapshotConsensusStateCreatorSuite extends SimpleIOSuite {
       .map(result => expect(!result))
   }
 
+  /* The pendingOwnerMessageExists effect reads the metagraph identifier, which is unset while
+   * create-genesis wires the currency-l0 services. Forcing it outside the gate crashed the
+   * metagraph L0 at startup with "Identifier not set!", so it must stay unevaluated on every
+   * path that does not need it. */
+  private val identifierNotSet: IO[Boolean] =
+    IO.raiseError(new Throwable("Identifier not set! Encountered attempt to read it"))
+
+  test("does not evaluate pendingOwnerMessageExists for rounds other than ordinal 2") {
+    canStartOwnedConsensus[IO](ordinal3, none, currentGlobalOrdinal.some.pure[IO], feesActive, identifierNotSet).attempt.map { result =>
+      expect(result == Right(true), s"ordinal 3 must start without reading the identifier, got $result")
+    }
+  }
+
+  test("does not evaluate pendingOwnerMessageExists when the owner is already set") {
+    canStartOwnedConsensus[IO](ordinal2, ownerAddress.some, currentGlobalOrdinal.some.pure[IO], feesActive, identifierNotSet).attempt.map {
+      result =>
+        expect(result == Right(true), s"an already-owned metagraph must not read the identifier, got $result")
+    }
+  }
+
+  test("does not evaluate pendingOwnerMessageExists when fees are never required") {
+    canStartOwnedConsensus[IO](ordinal2, none, currentGlobalOrdinal.some.pure[IO], feesNever, identifierNotSet).attempt.map { result =>
+      expect(result == Right(true), s"a fee-free network must not read the identifier, got $result")
+    }
+  }
+
   pureTest("isInitialOwnerMessageEvent matches only the initial Owner message for this metagraph") {
     val ownerInitial = isInitialOwnerMessageEvent(metagraphId)(messageEvent(MessageType.Owner))
     val staking = isInitialOwnerMessageEvent(metagraphId)(messageEvent(MessageType.Staking))
