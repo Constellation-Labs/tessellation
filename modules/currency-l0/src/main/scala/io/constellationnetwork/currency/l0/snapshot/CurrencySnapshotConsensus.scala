@@ -21,11 +21,13 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
@@ -44,9 +46,11 @@ object CurrencySnapshotConsensus {
     keyPair: KeyPair,
     seedlist: Option[Set[SeedlistEntry]],
     collateral: Amount,
+    metagraphId: Address,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    feeCalculator: FeeCalculator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
@@ -104,7 +108,7 @@ object CurrencySnapshotConsensus {
           getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
-        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)
+        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, feeCalculator, gossip, selfId, seedlist, metagraphId)
       consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = CurrencySnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(
