@@ -252,10 +252,19 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     trustRatingsPath: Option[Path],
-    allowanceListPath: Option[AllowanceListPath]
+    allowanceListPath: Option[AllowanceListPath],
+    allowSoloConsensus: Boolean = false
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
+
+    private[currency] val allowSoloConsensusOpts: Opts[Boolean] =
+      Opts
+        .flag(
+          "allow-solo-consensus",
+          "DANGER: seed rollback consensus with this node only; use on exactly one node during coordinated recovery"
+        )
+        .orFalse
 
     val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
       (
@@ -270,7 +279,8 @@ object method {
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
         trustRatingsPathOpts,
-        AllowanceListPath.opts
+        AllowanceListPath.opts,
+        allowSoloConsensusOpts
       ).mapN(RunRollback.apply)
     }
   }
