@@ -1,15 +1,14 @@
 const {dag4} = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
-const { compress } = require("brotli");
-const {parseSharedArgs} = require('../shared');
+const { serializeBrotli } = require('@stardust-collective/dag4-keystore');
+const {parseSharedArgs, withRetry} = require('../shared');
 const { PRIVATE_KEYS } = require('../shared/constants');
 
-// Scenario: a UsageUpdateWithFee submitted together with an ADEQUATE fee (>= minFee of 100).
-// The update is accepted, and the metagraph's combine looks the fee up via
-// L0NodeContext.getSnapshotFeeTransactions and records it as `feesPaid` on the device. Because the
-// fee travels as a sibling transaction (never inside the update body), a non-zero feesPaid can only
-// come from that lookup -- so asserting feesPaid == fee proves the feature end to end.
+// Scenario: a UsageUpdateWithFee submitted together with an adequate fee.
+// The update is accepted, and the metagraph's combine looks the sibling fee transaction up via
+// L0NodeContext.getSnapshotFeeTransactions and records it as `feesPaid` on the device. A non-zero
+// feesPaid therefore proves the snapshot-scoped lookup works end to end.
 
 const createConfig = () => {
     const args = process.argv.slice(2);
@@ -31,13 +30,6 @@ const sleep = (ms) => {
 const getEncoded = (value) => {
     const energyValue = JSON.stringify(value);
     return energyValue;
-};
-
-const serializeBrotli = (content, compressionLevel = 2) => {
-    const jsonString = JSON.stringify(content);
-    const encoder = new TextEncoder();
-    const utf8Bytes = encoder.encode(jsonString);
-    return compress(utf8Bytes, {quality: compressionLevel});
 };
 
 const serialize = (msg) => {
@@ -63,7 +55,7 @@ const generateProof = async (message, walletPrivateKey, account) => {
 
 const generateProofFee = async (message, privateKey, account) => {
     const serializedTx = await serializeBrotli(message);
-    const messageHash = jsSha256.sha256(Buffer.from(serializedTx, "hex"));
+    const messageHash = jsSha256.sha256(Buffer.from(serializedTx));
     const signature = await dag4.keyStore.sign(privateKey, messageHash);
 
     const publicKey = account.publicKey;
@@ -76,18 +68,33 @@ const generateProofFee = async (message, privateKey, account) => {
     };
 };
 
+const getFeeWalletBalance = async (globalL0Url, feeWallet) => {
+    const targetMetagraphId = process.env.METAGRAPH_ID;
+    if (!targetMetagraphId) {
+        throw new Error('METAGRAPH_ID is required to verify the target metagraph balance');
+    }
+
+    const response = await axios.get(`${globalL0Url}/global-snapshots/latest/combined`);
+    const [_, globalSnapshotInfo] = response.data;
+    const targetEntry = globalSnapshotInfo.lastCurrencySnapshots?.[targetMetagraphId];
+
+    if (!targetEntry?.Right || targetEntry.Right.length < 2) {
+        throw new Error(`Target metagraph ${targetMetagraphId} is not present in the latest global snapshot`);
+    }
+
+    return Number(targetEntry.Right[1].balances?.[feeWallet] || 0);
+};
+
 const getEstimateFeeResponse = async (metagraphL1DataUrl, update) => {
-    try {
-        const estimateFeeResponse = await axios.post(`${metagraphL1DataUrl}/data/estimate-fee`, update)
-        const {fee, address, updateHash} = estimateFeeResponse.data
-        return {
-            fee,
-            address,
-            updateHash
-        }
-    } catch (e) {
-        console.error(`Could not get estimate fee response`, e)
-        throw e
+    const estimateFeeResponse = await withRetry(
+        () => axios.post(`${metagraphL1DataUrl}/data/estimate-fee`, update),
+        { name: 'POST /data/estimate-fee', maxAttempts: 60, interval: 2000 }
+    );
+    const {fee, address, updateHash} = estimateFeeResponse.data
+    return {
+        fee,
+        address,
+        updateHash
     }
 }
 
@@ -120,6 +127,10 @@ const sendDataTransactionsUsingUrls = async (
         source: account.address
     }
     const feeTransactionProof = await generateProofFee(feeTransaction, privateKey, account);
+    const initialFeeWalletBalance = await withRetry(
+        () => getFeeWalletBalance(globalL0Url, estimateFeeResponse.address),
+        { name: 'read initial fee recipient balance', maxAttempts: 60, interval: 2000 }
+    );
 
     const body = {
         data: {
@@ -135,15 +146,14 @@ const sendDataTransactionsUsingUrls = async (
             ]
         }
     };
-    try {
-        console.log(`Transaction body: ${JSON.stringify(body)}`);
-        const response = await axios.post(`${metagraphL1DataUrl}/data`, body);
-        console.log(`Response: ${JSON.stringify(response.data)}`);
-    } catch (e) {
-        console.log('Error sending transaction', e);
-    }
+    console.log(`Transaction body: ${JSON.stringify(body)}`);
+    const response = await withRetry(
+        () => axios.post(`${metagraphL1DataUrl}/data`, body),
+        { name: 'POST /data', maxAttempts: 60, interval: 2000 }
+    );
+    console.log(`Response: ${JSON.stringify(response.data)}`);
 
-    return [account.address, estimateFeeResponse];
+    return [account.address, estimateFeeResponse, initialFeeWalletBalance];
 };
 
 const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address, expectedFee) => {
@@ -164,7 +174,7 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address, expect
                 // feesPaid accumulates per combine; assert >= (not ==) so an at-least-once re-combine of
                 // the same update (feesPaid = 2*fee) doesn't flaky-fail. A non-zero value proves the fee
                 // was looked up via getSnapshotFeeTransactions (a sibling tx, never in the update body).
-                if (!(expected > 0) || actual < expected) {
+                if (!(expected > 0) || !Number.isFinite(actual) || actual < expected) {
                     throw new Error(
                         `Fee lookup assertion failed: expected feesPaid>=${expected} (from getSnapshotFeeTransactions) ` +
                         `but device state has feesPaid=${actual}. Full state: ${JSON.stringify(responseData)}`
@@ -190,17 +200,16 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address, expect
     }
 }
 
-const checkFeeTransactionInGlobalL0 = async (globalL0Url, feeWallet) => {
+const checkFeeTransactionInGlobalL0 = async (globalL0Url, feeWallet, initialBalance) => {
     const maxAttempts = 120
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            const response = await axios.get(`${globalL0Url}/global-snapshots/latest/combined`);
-            const [_, globalSnapshotInfo] = response.data;
-
-            const firstSnapshotKey = Object.keys(globalSnapshotInfo.lastCurrencySnapshots)[0];
-            const metagraphSnapshotBalances = globalSnapshotInfo.lastCurrencySnapshots[firstSnapshotKey].Right[1].balances;
-            if (Object.keys(metagraphSnapshotBalances).length > 0 && metagraphSnapshotBalances[feeWallet] > 0) {
-                console.log(`Fee transaction processed successfully. Response: ${JSON.stringify(metagraphSnapshotBalances)}`);
+            const currentBalance = await getFeeWalletBalance(globalL0Url, feeWallet);
+            if (currentBalance > initialBalance) {
+                console.log(
+                    `Fee transaction processed successfully. Recipient balance increased from ` +
+                    `${initialBalance} to ${currentBalance}`
+                );
                 return;
             }
 
@@ -226,10 +235,11 @@ const sendDataTransaction = async () => {
     const metagraphL0Url = process.env.ML0_URL || `${host}:${metagraphL0PortPrefix}00`;
     const metagraphL1DataUrl = process.env.DL1_URL || `${host}:${dataL1PortPrefix}00`;
 
-    const [address, estimateFeeResponse] = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
+    const [address, estimateFeeResponse, initialFeeWalletBalance] =
+        await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
 
     await checkDataTransactionInMetagraphL0(metagraphL0Url, address, estimateFeeResponse.fee);
-    await checkFeeTransactionInGlobalL0(globalL0Url, estimateFeeResponse.address);
+    await checkFeeTransactionInGlobalL0(globalL0Url, estimateFeeResponse.address, initialFeeWalletBalance);
 };
 
 sendDataTransaction();

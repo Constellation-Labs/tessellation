@@ -2,9 +2,11 @@
 
 Date: 2022-05-19
 
+> **Superseded by ADR-0024 (Merkle Patricia Trie for global state commitment) and ADR-0025 (MPT replay-safety and divergence prevention).** The `GlobalSnapshotInfo` delta-aggregation scheme described below is overtaken by the MPT state model in v4.x. The body below is retained as historical context.
+
 ## Status
 
-Accepted
+Superseded
 
 ## Context
 

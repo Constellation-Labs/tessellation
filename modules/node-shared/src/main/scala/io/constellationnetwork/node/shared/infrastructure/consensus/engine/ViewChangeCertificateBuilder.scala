@@ -64,22 +64,10 @@ object ViewChangeCertificateBuilder {
       val matchingByView = votes.values
         .filter(signed => signed.value.fromView == fromView && signed.value.toView == toView)
         .toList
-      // Group by signer. Storage may hold more than one vote from a signer (equivocation / relay
-      // duplicates). Keep ALL of a signer's votes for the divergent-QC check below, then collapse to a
-      // single deterministic representative per signer (the highest known QC, with a total-`Signed`
-      // tiebreak -- see the representative selection below). `.head` over a `groupBy` list is
-      // arrival-order dependent and could split nodes onto different certs.
-      val poolSignersAll: Map[PeerId, List[Signed[ViewChangeVote]]] =
-        matchingByView.groupBy(_.proofs.head.id.toPeerId).filter { case (signer, _) => witnessPool.contains(signer) }
-      // Detect divergent QCs over ALL of each pool signer's votes, BEFORE representative selection, so
-      // an equivocating signer's conflicting QC cannot be silently dropped by the collapse.
-      val poolQcs = poolSignersAll.values.flatten.flatMap(_.value.highestKnownQc).toList
-      val divergent = poolQcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
-      // Per-signer representative: prefer the highest known QC (HotStuff carry-forward), with a
-      // deterministic tiebreak by the total Signed ordering. Divergent (conflicting same-view) QCs are
-      // already rejected above, so the survivors differ only by QC view, and we keep the highest.
-      val poolSigners: Map[PeerId, Signed[ViewChangeVote]] =
-        poolSignersAll.view.mapValues(_.maxBy(v => (v.value.highestKnownQc.map(_.view).getOrElse(Long.MinValue), v))).toMap
+      // Group-by-signer, divergent-QC detection, and per-signer representative selection are shared
+      // verbatim with TimeoutCertificateBuilder (see CertVoteAggregation for the full contract).
+      val (poolSigners, divergent) =
+        CertVoteAggregation.poolSignersAndDivergence(matchingByView, witnessPool)(_.highestKnownQc)
       if (wrongLastSnapshotHash.nonEmpty)
         Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapshotHash.size))
       else if (poolSigners.size < quorumSize)

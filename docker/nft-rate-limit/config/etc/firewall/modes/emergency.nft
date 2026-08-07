@@ -1,0 +1,46 @@
+# Atomic replace (see steady.nft).
+flush ruleset
+
+table inet firewall {
+    set allow_v4 {
+        type ipv4_addr
+        flags interval
+        elements = { @ALLOW@ }
+    }
+
+    set pub_out_dst {
+        type ipv4_addr
+        flags dynamic
+        counter
+    }
+    set p2p_out_dst {
+        type ipv4_addr
+        flags dynamic
+        counter
+    }
+
+    counter pub_dropped { }
+    counter p2p_dropped { }
+    counter pub_out     { }
+    counter p2p_out     { }
+
+    chain input {
+        type filter hook input priority 0; policy accept;
+
+        # Allowlist short-circuit (preserves streaming<->streaming + monitoring)
+        ip saddr @allow_v4 accept
+
+        # Drop public + P2P traffic from anyone not allowlisted
+        tcp dport { @PUBLIC_PORTS@ } counter name pub_dropped drop
+        tcp dport { @P2P_PORTS@ }    counter name p2p_dropped drop
+    }
+
+    # Output observation only - drops happen on input.
+    chain output {
+        type filter hook output priority 0; policy accept;
+        tcp sport { @PUBLIC_PORTS@ } update @pub_out_dst { ip daddr } \
+            counter name pub_out accept
+        tcp sport { @P2P_PORTS@ }    update @p2p_out_dst { ip daddr } \
+            counter name p2p_out accept
+    }
+}

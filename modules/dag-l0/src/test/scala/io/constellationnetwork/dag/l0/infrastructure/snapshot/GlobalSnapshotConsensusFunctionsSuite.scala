@@ -378,7 +378,9 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
-          mptStore
+          SnapshotOrdinal.MinValue,
+          mptStore,
+          100
         )
     } yield globalSnapshotConsensusFunction
   }

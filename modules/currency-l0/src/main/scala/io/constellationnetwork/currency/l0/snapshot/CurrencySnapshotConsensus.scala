@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
@@ -39,7 +40,8 @@ import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.gossip.RumorRaw
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
@@ -120,15 +122,44 @@ object CurrencySnapshotConsensus {
     // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the consensus config copy below.
     val resolvedActiveAdmissionRecentSignerWindow: Int =
       math.max(3, snapshotConfig.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3))
+    // Active-set growth target + hard cap: env-resolved (the coreCommitteeSize pattern), mirror of
+    // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the copy below. Absent env
+    // entries preserve the ConsensusConfig scalar resolution (None -> coreCommitteeSize fallback),
+    // which is the expected shape for currency metagraphs (small clusters; target = Core).
+    val resolvedActiveFacilitatorTarget: Option[Int] =
+      snapshotConfig.activeFacilitatorTarget.get(environment).orElse(snapshotConfig.consensus.activeFacilitatorTarget)
+    val resolvedActiveFacilitatorMax: Option[Int] =
+      snapshotConfig.activeFacilitatorMax.get(environment).orElse(snapshotConfig.consensus.activeFacilitatorMax)
     val effectiveConsensusConfig: ConsensusConfig =
       snapshotConfig.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
+        activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
+        activeFacilitatorMax = resolvedActiveFacilitatorMax
       )
 
     for {
+      // Fail fast on sizing invariants (mirror of GlobalSnapshotConsensus): a configured target at
+      // or below the Core floor closes the admission deficit gate before Core can reach the floor;
+      // a max below the floor caps the active set under it. Inert while the currency env maps are
+      // unset (absent entries fall back to target = coreCommitteeSize, the metagraph shape).
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
+          s" ($resolvedCoreCommitteeSize)"
+      ).raiseError[F, Unit]
+        .whenA(resolvedActiveFacilitatorTarget.exists(_ <= resolvedCoreCommitteeSize))
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-max ($resolvedActiveFacilitatorMax) must be >= core-committee-size" +
+          s" ($resolvedCoreCommitteeSize)"
+      ).raiseError[F, Unit]
+        .whenA(resolvedActiveFacilitatorMax.exists(_ < resolvedCoreCommitteeSize))
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must not exceed" +
+          s" active-facilitator-max ($resolvedActiveFacilitatorMax)"
+      ).raiseError[F, Unit]
+        .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
       consensusStorage <- ConsensusStorage.make[
         F,
         CurrencySnapshotEvent,
@@ -291,6 +322,15 @@ object CurrencySnapshotConsensus {
         Slf4jLogger.getLogger[F]
       )
 
+      // HTTP preflight for the rumor-stale abandonment escalation (issue #1533); mirror the
+      // corroborated `(ordinal, hash)` GlobalSnapshotConsensus probe against this layer's endpoint.
+      fetchLatestCommittedMetadata = {
+        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+        val request = PeerResponse[F, SnapshotMetadata]("snapshots/latest/metadata")(client, session.some)
+        (peer: Peer) => request(peer)
+      }
+      peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -327,7 +367,8 @@ object CurrencySnapshotConsensus {
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
-          getPeerChainTips
+          getPeerChainTips,
+          peersCommittedAheadProbe
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)

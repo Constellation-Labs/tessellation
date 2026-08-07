@@ -559,6 +559,8 @@ Sparse negative-evidence: when `StallDetector` decides to push a peer toward rem
 
 Symmetric positive-evidence: every committee member that observes a probation peer gossiping the committee's expected tip emits a signed `AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)`. Quorum assembles into an `AdmissionCertificate` via `AdmissionCertificateBuilder`. Reasons are an open ADT; only `AdmissionReason.ReadyAtTip` is wired today.
 
+The observation reads the shared chain-tip view (`getPeerChainTips`), which `EventGossipDaemon` populates by a round-robin **witness sweep across all responsive peers** -- not just the gossip mesh. This observation channel is distinct from the certificate *witness pool* (the voters, `eligibleFacilitators - target`) and is a liveness precondition of B2 (ADR-0022): it must cover the full probation-candidate set independent of the mesh degree (`meshHigh`), sized by `chainTipWitnessRefreshInterval` so every responsive peer's tip is refreshed within the admission tip-validity window. Scoping the observation to the gossip mesh left candidates outside the mesh unobservable and starved B2 on clusters larger than the mesh (IntegrationNet, v4.1.0).
+
 ---
 
 ## 7. Detailed Phase Transitions
@@ -738,7 +740,13 @@ The StateCreator gates the candidate set by only **two** behavioural filters now
 
 **Chronic-core replacement ladder.** `chronicMisses` (evidence-derived trailing asked-but-silent streaks past `ChronicMissThreshold`) drives a deterministic ladder, applied in order: **exclude** every chronically-missing Core member (demoted to Tier 1, still signs and earns, just out of the quorum denominator); **replace** each one-for-one with a non-chronic Tier 1 reserve (highest evidence score first); **floor** tops Core back up to `coreCommitteeSize` from non-chronic reserves only; **shrink** leaves Core smaller rather than padding with chronic peers (the quorum is proportional, so a smaller all-healthy Core is strictly more live); **liveness fallback** re-admits the least-bad chronic peers only if healthy Core would fall below `MinViableCoreSize` (= 2). With no chronic peers every step is inert.
 
-The reward facilitator set is `lastArtifact.proofs.map(_.id)` (see `Rewards.distribute`): Core and Tier 1 sign and split the pool evenly. There is no Core-vs-Tier-1 reward stratification.
+Delegated rewards use the frozen round-start signing committee, not
+`lastArtifact.proofs`: Core and Tier 1 split the validator pool evenly, with no
+Core-vs-Tier-1 stratification. Classic rewards remain proof/signer based. See
+[Consensus reward recipients](rewards.md) for the two ordinal/epoch gates and the
+IntegrationNet diagnosis. The full-committee correction is itself activated by
+`fields-added-ordinals.delegated-rewards-full-committee`; below that gate the briefly
+deployed score filter remains solely for replay compatibility.
 
 ### Candidate Registration
 
@@ -893,8 +901,9 @@ Poll (100ms-1000ms adaptive)
   → Detect status/resource changes → queue CheckUpdate
   → While in any signatures-collecting phase: heartbeat CheckUpdate every tick (re-evaluates
     the signatureGracePeriod gate without waiting for a resource change)
-  → On every tick, if state.lastOutcome carries a probation peer whose mesh-gossiped chain
-    tip matches the committed tip: emit AdmissionVote, queue CheckAdmissionAssembly
+  → On every tick, if state.lastOutcome carries a probation peer whose gossiped chain tip
+    (witnessed by the round-robin sweep over ALL responsive peers, not just the mesh; see §6)
+    matches the committed tip: emit AdmissionVote, queue CheckAdmissionAssembly
   → Reset roundStartTime on view advance (per-view round-duration budget)
   → Calculate phase-adaptive timeout
   → Early view change cases (no stall counted):
@@ -1327,8 +1336,9 @@ The `quorumImpossible` escalation in `AbandonmentTracker` provides a third -- if
 Finalization is gated by the pure `SignatureGraceDecision.evaluate` state machine
 (`SignatureGraceDecision.scala:58-82`), not a single count check. A round that
 crosses the finalization quorum does **not** commit instantly; it may keep collecting
-`MajoritySignature` declarations for a bounded **grace window** so the proof set (which
-determines rewards) is not truncated to whoever happened to sign in the first 1-3ms.
+`MajoritySignature` declarations for a bounded **grace window** so the finalized proof
+and participation-evidence set is not truncated to whoever happened to sign in the
+first 1-3ms.
 The window length is one of three cases:
 
 | Case | Condition | Window | Anchored from |
@@ -1339,7 +1349,8 @@ The window length is one of three cases:
 
 The Core-complete window is anchored from when Core first completed (not from first
 quorum) so a round whose Core completes late still gives prompt Tier-1 signatures a
-chance to land for reward inclusion, instead of concentrating rewards on Core.
+chance to land in the artifact and participation evidence. Delegated reward recipients
+are already fixed by round membership.
 
 Two distinctions matter:
 
@@ -1525,15 +1536,26 @@ them to follow consensus without participating as a facilitator.
 | ADR | Topic |
 |-----|-------|
 | [0004-global-snapshot-trigger.md](../adr/0004-global-snapshot-trigger.md) | TimeTick trigger design |
-| [0006-selecting-facilitators.md](../adr/0006-selecting-facilitators.md) | Facilitator selection |
-| [0013-delayed_download.md](../adr/0013-delayed_download.md) | Download deferral |
-| [0014-download-for-incremental-snapshots.md](../adr/0014-download-for-incremental-snapshots.md) | Incremental download |
+| [0006-selecting-facilitators.md](../adr/0006-selecting-facilitators.md) | Historical facilitator selection (superseded) |
+| [0013-delayed_download.md](../adr/0013-delayed_download.md) | Historical download deferral (superseded) |
+| [0014-download-for-incremental-snapshots.md](../adr/0014-download-for-incremental-snapshots.md) | Historical incremental download (superseded) |
+| [0016-consensus-determinism-source-of-truth.md](../adr/0016-consensus-determinism-source-of-truth.md) | Consensus determinism invariant |
+| [0017-leader-based-consensus.md](../adr/0017-leader-based-consensus.md) | Leader-based consensus and selection |
+| [0018-supermajority-quorum-and-between-round-eviction.md](../adr/0018-supermajority-quorum-and-between-round-eviction.md) | Quorum and between-round eviction |
+| [0019-tiered-committee-and-participation-evidence.md](../adr/0019-tiered-committee-and-participation-evidence.md) | Tiered committee and signed evidence |
+| [0020-two-track-view-change.md](../adr/0020-two-track-view-change.md) | View-change and timeout certificates |
+| [0021-quorum-shrink-and-finality-floor.md](../adr/0021-quorum-shrink-and-finality-floor.md) | Quorum shrink and finality floor |
+| [0022-eviction-and-readmission-certificates.md](../adr/0022-eviction-and-readmission-certificates.md) | Eviction and admission certificates |
+| [0023-recovery-fork-safety-gate.md](../adr/0023-recovery-fork-safety-gate.md) | Recovery fork-safety gate |
+| [0027-operating-invariants.md](../adr/0027-operating-invariants.md) | Cross-cutting operating invariants |
+| [0028-delegated-validator-reward-recipients.md](../adr/0028-delegated-validator-reward-recipients.md) | Delegated validator reward recipients |
 
 ### Further Reading (current mechanism docs)
 
 | Doc | Topic |
 |-----|-------|
 | [committee-tiers.md](committee-tiers.md) | Three-tier Core / Tier-1 / Witness committee model ([§9](#9-facilitator-selection)) |
+| [rewards.md](rewards.md) | Classic vs delegated reward recipients, activation gates, and IntegrationNet diagnostics |
 | [timeout-certificate.md](timeout-certificate.md) | Track-2 timeout-certificate view advance ([§10](#10-leader-election--view-changes)) |
 | [quorum-shrink.md](quorum-shrink.md) | v33 quorum-denominator shrink liveness rung ([§5](#5-consensus-round-phases), [§15](#15-signature-threshold)) |
 | [signature-grace.md](signature-grace.md) | `SignatureGraceDecision` finalization grace machine ([§15](#15-signature-threshold)) |

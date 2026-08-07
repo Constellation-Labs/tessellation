@@ -339,7 +339,19 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+        FieldsAddedOrdinals(
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map(Dev -> SnapshotOrdinal.MinValue)
+        ),
         Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
@@ -408,7 +420,19 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           blockAcceptanceManager,

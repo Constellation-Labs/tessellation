@@ -240,6 +240,23 @@ object ControllerEvidenceDerivation {
       )
     }
 
+  /** Historical delegated-reward recipient rule, retained only for replay below the `delegated-rewards-full-committee` activation ordinal.
+    * New snapshots must not use this as a payout policy: admission score controls seating, while every seated Core/Tier-1 peer earns.
+    */
+  def legacyRewardQualifiedFacilitators(
+    facilitators: SortedSet[PeerId],
+    evidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
+    promoteThreshold: Int
+  ): SortedSet[PeerId] = {
+    val window = evidence.getOrElse(SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry])
+    if (window.isEmpty) facilitators
+    else {
+      val derived = derive(window)
+      val qualified = facilitators.filter(pid => derived.get(pid).exists(_.derivedScore >= promoteThreshold))
+      if (qualified.isEmpty) facilitators else qualified
+    }
+  }
+
   /** Canonical committee for a finalized round: the frozen round-start committee minus certificate-applied evictions ONLY.
     *
     * This is the denominator both StateAdvancers use for the `recentProofSizes` window (bootstrap classification). It deliberately does NOT

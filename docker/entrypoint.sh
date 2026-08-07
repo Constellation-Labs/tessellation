@@ -103,54 +103,49 @@ export RUN_COMMAND="run-validator"
 
 # JVM tuning + Java 21 module access flags for Kryo serialization.
 #
-# Heap (-Xms2g -Xmx8g): matches RecommendedHeapMb=8192 in TessellationIOApp so the
-# startup heap-check stays quiet. Without an explicit cap, Java 21's container
-# support sizes max heap at 25% of host RAM -- on the 256 GB CI runner that gave
-# each of 5 nodes ~30 GB, with G1 working sets to match. Smaller, fixed heap =
-# shorter, more predictable mixed-mode collections, which matters because 5
-# sibling JVMs hitting overlapping multi-second GC pauses is exactly the
+# Default heap (-Xms2g -Xmx8g, G1, MaxGCPauseMillis=200): matches
+# RecommendedHeapMb=8192 in TessellationIOApp so the startup heap-check stays quiet.
+# Without an explicit cap, Java 21's container support sizes max heap at 25% of host
+# RAM -- on the 256 GB CI runner that gave each of 5 nodes ~30 GB. A smaller, fixed
+# heap yields shorter, more predictable mixed-mode collections, which matters because
+# 5 sibling JVMs hitting overlapping multi-second GC pauses is exactly the
 # consensus-wedge profile observed in the 2026-05-05 fork-recovery flake.
+# Per-environment thread-pool caps (-XX:ActiveProcessorCount=N) belong in the compose
+# file for the multi-node test scenario, not here.
 #
-# MaxGCPauseMillis=200: explicit pause-time goal for G1. Without this, G1 will
-# tolerate longer pauses on a fat heap.
-#
-# Per-environment thread-pool caps (-XX:ActiveProcessorCount=N) are NOT set here;
-# they belong in the compose file for the multi-node test scenario, where 5
-# sibling JVMs share one box. Production validators run alone on dedicated
-# hardware and should see all cores.
-export CL_DOCKER_JAVA_OPTS="${CL_DOCKER_JAVA_OPTS:-} -Xms2g -Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=200 --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED"
+# IMPORTANT: a CL_DOCKER_JAVA_OPTS from the deploy .env REPLACES the default heap/GC
+# wholesale (default-if-unset, not append) -- merely appending a second heap/GC would
+# fatally conflict. This is what lets the tn migration inject its ZGC 10g profile.
+export CL_DOCKER_JAVA_OPTS="${CL_DOCKER_JAVA_OPTS:--Xms2g -Xmx8g -XX:+UseG1GC -XX:MaxGCPauseMillis=200} --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.security=ALL-UNNAMED"
+
+# Chain data can live at data/snapshot (genesis deployments) or ONLY at
+# data/incremental_snapshot when snapshot-path is remapped via CL_SNAPSHOT_STORED_PATH
+# (the tn1-3 layout, used for migrated data). Probe both so migrated data is never
+# mistaken for an empty volume.
+HAS_CHAIN_DATA="false"
+if [ -f "/tessellation/data/snapshot/ordinal/0/0" ] || [ -d "/tessellation/data/incremental_snapshot/ordinal" ]; then
+  HAS_CHAIN_DATA="true"
+fi
 
 if [ "$CL_DOCKER_GENESIS" == "true" ]; then
   if [ "$L0" == "false" ]; then
     RUN_COMMAND="run-initial-validator"
+  elif [ "$CL_DOCKER_ROLLBACK" == "true" ]; then
+    # Rollback wins over any data probe: restarting from existing/migrated data must
+    # never fall through to genesis just because the probe missed the layout.
+    if [ -z "$CL_DOCKER_ROLLBACK_HASH" ]; then
+      echo "Error: CL_DOCKER_ROLLBACK=true but CL_DOCKER_ROLLBACK_HASH is not set"
+      echo "Please provide the snapshot hash to rollback to via --rollback-hash=<hash>"
+      exit 1
+    fi
+    RUN_COMMAND="run-rollback $CL_DOCKER_ROLLBACK_HASH"
+  elif [ "$HAS_CHAIN_DATA" == "true" ]; then
+    echo "Chain data exists (data/snapshot or data/incremental_snapshot). Use --rollback --rollback-hash=<hash> to restart from existing data"
+    exit 1
   elif [ "$ID" == "ml0" ]; then
-    if [ ! -f "/tessellation/data/snapshot/ordinal/0/0" ]; then
-      RUN_COMMAND="run-genesis /tessellation/data/genesis.snapshot"
-    elif [ "$CL_DOCKER_ROLLBACK" == "true" ]; then
-      if [ -z "$CL_DOCKER_ROLLBACK_HASH" ]; then
-        echo "Error: CL_DOCKER_ROLLBACK=true but CL_DOCKER_ROLLBACK_HASH is not set"
-        echo "Please provide the snapshot hash to rollback to via --rollback-hash=<hash>"
-        exit 1
-      fi
-      RUN_COMMAND="run-rollback $CL_DOCKER_ROLLBACK_HASH"
-    else
-      echo "Ordinal 0/0 exists. Use --rollback --rollback-hash=<hash> to restart from existing data"
-      exit 1
-    fi
+    RUN_COMMAND="run-genesis /tessellation/data/genesis.snapshot"
   else
-    if [ ! -f "/tessellation/data/snapshot/ordinal/0/0" ]; then
-      RUN_COMMAND="run-genesis /tessellation/genesis.csv"
-    elif [ "$CL_DOCKER_ROLLBACK" == "true" ]; then
-      if [ -z "$CL_DOCKER_ROLLBACK_HASH" ]; then
-        echo "Error: CL_DOCKER_ROLLBACK=true but CL_DOCKER_ROLLBACK_HASH is not set"
-        echo "Please provide the snapshot hash to rollback to via --rollback-hash=<hash>"
-        exit 1
-      fi
-      RUN_COMMAND="run-rollback $CL_DOCKER_ROLLBACK_HASH"
-    else
-      echo "Ordinal 0/0 exists. Use --rollback --rollback-hash=<hash> to restart from existing data"
-      exit 1
-    fi
+    RUN_COMMAND="run-genesis /tessellation/genesis.csv"
   fi
 fi
 

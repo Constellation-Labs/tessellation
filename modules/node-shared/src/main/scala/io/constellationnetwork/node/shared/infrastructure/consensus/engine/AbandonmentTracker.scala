@@ -118,7 +118,12 @@ object AbandonReason {
   */
 class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
-  healthRef: Ref[F, ConsensusHealthStatus]
+  healthRef: Ref[F, ConsensusHealthStatus],
+  // Layer-supplied HTTP preflight for the rumor-stale escalation shape: does a corroborated group
+  // of Ready peers report the same committed snapshot at or above the abandoned key? See
+  // `AbandonmentTracker.EscalationSignal` for why frozen rumor state alone must never escalate,
+  // and `PeersCommittedAheadProbe.make` for the standard implementation both layers wire in.
+  peersCommittedAheadProbe: Key => F[AbandonmentTracker.PeersAheadProbe]
 ) {
 
   import ctx.{clusterStorage, config, logger, peerQualityTracker, queue, storage}
@@ -431,7 +436,21 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                             readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
                             readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
                             peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
-                            networkAdvanced = peersAtHigherKey > 0
+                            peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
+                            // Fast path: rumor tips above the key escalate directly. Every other
+                            // shape (all-below, at-key, empty map) is ambiguous between isolation
+                            // and a cluster-wide stall, so whenever HTTP-Ready peers exist the
+                            // preflight asks them for committed progress -- escalation requires a
+                            // corroborated `(ordinal, hash)` at/above the key. A genuine
+                            // cluster-wide stall cannot corroborate it because nobody committed it.
+                            // See AbandonmentTracker.EscalationSignal for the full argument.
+                            signal = AbandonmentTracker.escalationSignal(key, readyPeerRegs.values)
+                            probe <-
+                              if (signal.probeRequired(readyPeerIds.size))
+                                peersCommittedAheadProbe(key).handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
+                              else AbandonmentTracker.PeersAheadProbe.none.pure[F]
+                            escalate = signal.decide(probe.confirmedAhead)
+                            effectiveCause = if (escalate && !signal.networkAdvanced) EscalationCause.RumorIsolated else cause
                             _ <- ConsensusLog.info(
                               logger,
                               Category.Lifecycle,
@@ -441,11 +460,18 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                               "reason" -> reason.label,
                               "activeFacilitators" -> activeFacilitators.toString,
                               "requiredQuorum" -> requiredQuorum.toString,
-                              "escalationCause" -> cause.label,
+                              "escalationCause" -> effectiveCause.label,
                               "peersAtHigherKey" -> peersAtHigherKey.toString,
-                              "readyPeers" -> readyPeerRegs.size.toString,
-                              "triggerRecovery" -> networkAdvanced.toString,
-                              "recoverySuppressed" -> (!networkAdvanced).toString
+                              "peersAtSameKey" -> peersAtSameKey.toString,
+                              "rumorStale" -> signal.rumorStale.toString,
+                              "probeConfirmedAhead" -> probe.confirmedAhead.toString,
+                              "probeOutcome" -> probe.outcome.label,
+                              "probeResponded" -> s"${probe.respondedPeers}/${probe.probedPeers}",
+                              "probeCorroborators" -> probe.corroboratingPeers.toString,
+                              "readyPeers" -> readyPeerIds.size.toString,
+                              "registeredReadyPeers" -> readyPeerRegs.size.toString,
+                              "triggerRecovery" -> escalate.toString,
+                              "recoverySuppressed" -> (!escalate).toString
                             )
                             _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
                             // Update wedge signal for Cluster.leave() guard. Fires when retriable abandonments at the same key
@@ -454,7 +480,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                             // (cluster has advanced) or when a round closes (resetOnSuccessfulRound).
                             _ <- updateWedgeHealth(retriableCount, peersAtHigherKey, reason.label)
                             _ <-
-                              if (networkAdvanced) triggerRecoveryDownload(key, consecutiveCount, reason.label, cause.label)
+                              if (escalate) triggerRecoveryDownload(key, consecutiveCount, reason.label, effectiveCause.label)
                               else retryAfterRetriableAbandon(key, reason)
                           } yield ()
                         }
@@ -490,8 +516,18 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
              readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
              readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
              peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
-             networkAdvanced = peersAtHigherKey > 0
-             willRecover = shouldRecover && networkAdvanced
+             peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
+             // Same evidence + preflight composition as the retriable path; the probe only runs
+             // once the recovery threshold is met AND the fast path has not fired AND there are
+             // Ready peers to ask, so pre-threshold abandonment cycles never generate probe
+             // traffic.
+             signal = AbandonmentTracker.escalationSignal(key, readyPeerRegs.values)
+             probe <-
+               if (shouldRecover && signal.probeRequired(readyPeerIds.size))
+                 peersCommittedAheadProbe(key).handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
+               else AbandonmentTracker.PeersAheadProbe.none.pure[F]
+             willRecover = shouldRecover && signal.decide(probe.confirmedAhead)
+             recoveryCause = if (willRecover && !signal.networkAdvanced) EscalationCause.RumorIsolated.label else "non_retriable"
              _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
              _ <- ConsensusLog.info(
                logger,
@@ -503,12 +539,19 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Eq: Order, Artifact, 
                "consecutiveAbandonments" -> consecutiveCount.toString,
                "maxConsecutiveAbandonments" -> config.maxConsecutiveAbandonments.toString,
                "peersAtHigherKey" -> peersAtHigherKey.toString,
-               "readyPeers" -> readyPeerRegs.size.toString,
+               "peersAtSameKey" -> peersAtSameKey.toString,
+               "rumorStale" -> signal.rumorStale.toString,
+               "probeConfirmedAhead" -> probe.confirmedAhead.toString,
+               "probeOutcome" -> probe.outcome.label,
+               "probeResponded" -> s"${probe.respondedPeers}/${probe.probedPeers}",
+               "probeCorroborators" -> probe.corroboratingPeers.toString,
+               "readyPeers" -> readyPeerIds.size.toString,
+               "registeredReadyPeers" -> readyPeerRegs.size.toString,
                "triggerRecovery" -> willRecover.toString,
-               "recoverySuppressed" -> (shouldRecover && !networkAdvanced).toString
+               "recoverySuppressed" -> (shouldRecover && !willRecover).toString
              )
              _ <-
-               if (willRecover) triggerRecoveryDownload(key, consecutiveCount, reason.label, "non_retriable")
+               if (willRecover) triggerRecoveryDownload(key, consecutiveCount, reason.label, recoveryCause)
                else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
            } yield ()
          })
@@ -777,5 +820,84 @@ object AbandonmentTracker {
   private[engine] object EscalationCause {
     case object Isolated extends EscalationCause("isolated")
     case object QuorumImpossible extends EscalationCause("quorum_impossible")
+    // Rumor-isolated escalation: the gossip view froze behind the abandoned key while HTTP-Ready
+    // peers still exist, AND the HTTP preflight corroborated a committed snapshot at the abandoned
+    // ordinal or newer (see `escalationSignal` + `PeersCommittedAheadProbe`). Distinct from
+    // `Isolated`, which means the round itself saw activeFacilitators <= 1.
+    case object RumorIsolated extends EscalationCause("rumor_isolated")
+  }
+
+  /** Result of the HTTP preflight (`PeersCommittedAheadProbe`): did a corroborated group of Ready peers report the same committed snapshot
+    * identity at or above the abandoned key? Counts and outcome are retained for decision logs. Every non-completed outcome means NOT
+    * confirmed, so degraded probes suppress recovery rather than trigger it.
+    */
+  final case class PeersAheadProbe(
+    confirmedAhead: Boolean,
+    probedPeers: Int,
+    respondedPeers: Int,
+    corroboratingPeers: Int,
+    outcome: ProbeOutcome
+  )
+
+  sealed abstract class ProbeOutcome(val label: String)
+  object ProbeOutcome {
+    case object NotRun extends ProbeOutcome("not_run")
+    case object Completed extends ProbeOutcome("completed")
+    case object TimedOut extends ProbeOutcome("timed_out")
+    case object Failed extends ProbeOutcome("failed")
+  }
+
+  object PeersAheadProbe {
+    val none: PeersAheadProbe = PeersAheadProbe(false, 0, 0, 0, ProbeOutcome.NotRun)
+    val timedOut: PeersAheadProbe = PeersAheadProbe(false, 0, 0, 0, ProbeOutcome.TimedOut)
+    val failed: PeersAheadProbe = PeersAheadProbe(false, 0, 0, 0, ProbeOutcome.Failed)
+  }
+
+  /** Recovery-escalation EVIDENCE for an abandoned key, from the rumor-registered tips of the HTTP-responsive Ready peers.
+    *
+    *   - `networkAdvanced`: some Ready peer's registered tip is ABOVE the abandoned key -- the cluster has provably moved on. Escalates on
+    *     its own with no probe (the pre-existing fast path).
+    *   - `rumorStale`: registrations EXIST but every one of them is STRICTLY BELOW the abandoned key -- the classic frozen-mesh signature
+    *     (issue #1533; first fixed in `8027c0642`, dropped in the #1523 conflict resolution). DIAGNOSTIC ONLY: it labels the shape in the
+    *     decision logs but carries no decision weight.
+    *
+    * Rumor state proves nothing beyond the fast path. `ConsensusStorage.observePeerAtKey` is monotone-max with no freshness and fed only by
+    * incoming keyed rumors, and `clearAllPeerRegistrations` wipes the map during recovery -- so an isolated-but-HTTP-reachable node can sit
+    * with the map frozen BELOW the key, frozen AT it (a single pre-isolation declaration for this key pins the entry forever), or EMPTY
+    * (isolated after a recovery wipe, before any new rumor). All three shapes are byte-identical to a cluster that stalled together, where
+    * escalation would cascade every node into WaitingForDownload with nobody able to serve (the historical false-lagging cascade recorded
+    * in StallDetector's lagging-detection comment; the alpha.58 ord-3122551 deadlock).
+    *
+    * The discrimination therefore lives entirely in the HTTP preflight (`PeersCommittedAheadProbe`): whenever the fast path has not fired
+    * and HTTP-Ready peers exist (`probeRequired`), ask a peer sample for their latest committed snapshot metadata. `decide` escalates iff
+    * the fast path fired or the probe found a strict responder-majority agreeing on the same `(ordinal, hash)` at or above the abandoned
+    * key -- at least two matching peers on any cluster large enough to provide two, clamped to the sample size so a two-node metagraph's
+    * single peer can still confirm. A genuine cluster-wide stall is suppressed because nobody can corroborate a committed snapshot at the
+    * key, rather than by guessing from frozen rumor shapes, which is exactly how the previous two attempts at this fix went wrong.
+    *
+    * Peer identity is irrelevant to the classification, so this takes only the key values.
+    */
+  final case class EscalationSignal(networkAdvanced: Boolean, rumorStale: Boolean) {
+
+    /** Should the HTTP preflight run? Whenever the fast path has not fired and there is a Ready peer to ask: the probe is the
+      * discriminator, so every non-advanced shape (all-below, at-key, empty map) gets one. With zero Ready HTTP peers there is nothing to
+      * ask (and nothing to download from), so skip.
+      */
+    def probeRequired(readyPeerCount: Int): Boolean = !networkAdvanced && readyPeerCount > 0
+
+    /** Final escalation decision given the preflight outcome. Pass `false` when the probe was not run, failed, or timed out -- degraded
+      * probes must suppress, never trigger.
+      */
+    def decide(probeConfirmedAhead: Boolean): Boolean =
+      networkAdvanced || probeConfirmedAhead
+  }
+
+  def escalationSignal[K: Order](abandonedKey: K, readyPeerKeys: Iterable[K]): EscalationSignal = {
+    val higher = readyPeerKeys.count(Order[K].gt(_, abandonedKey))
+    val same = readyPeerKeys.count(Order[K].eqv(_, abandonedKey))
+    EscalationSignal(
+      networkAdvanced = higher > 0,
+      rumorStale = readyPeerKeys.nonEmpty && higher == 0 && same == 0
+    )
   }
 }

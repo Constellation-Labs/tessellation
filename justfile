@@ -30,6 +30,12 @@ build *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh --build {{ extra_args }}
 
+# Deploy a full cluster for an environment with one command (testnet => release/testnet
+# branches for tessellation + snapshot-streaming, increase_delegated_stakes for block_explorer).
+# Builds node software from the env's git ref, then deploys nodes + streaming + monitoring.
+deploy env="testnet" *args:
+	@bash deploy/deploy-cluster.sh {{ env }} {{ args }}
+
 purge-docker:
 	@bash docker/bin/purge-docker.sh
 

@@ -121,8 +121,21 @@ object StateChannelSnapshotService {
       )(implicit hasher: Hasher[F]): F[Boolean] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
-            lastSnapshot.flatMap { case (value, _) => value.dataApplication }
-          }.flatMap(manager.consumeSignedMajorityArtifact(_, signedArtifact))
+            lastSnapshot.fold((none[DataApplicationPart], SnapshotOrdinal.MinValue)) {
+              case (value, _) =>
+                (
+                  value.dataApplication,
+                  value.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+                )
+            }
+          }.flatMap {
+            case (maybeLastDataApplication, parentGlobalSnapshotOrdinal) =>
+              manager.consumeSignedMajorityArtifact(
+                maybeLastDataApplication,
+                signedArtifact,
+                parentGlobalSnapshotOrdinal
+              )
+          }
         }
         persisted <- snapshotStorage.prepend(signedArtifact, context.snapshotInfo)
         _ <- logger

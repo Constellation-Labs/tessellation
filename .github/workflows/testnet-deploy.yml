@@ -1,0 +1,168 @@
+name: Testnet Deploy
+
+# Deploys the Hetzner testnet cluster, REUSING the Docker images that testnet-release.yml
+# built and pushed to GHCR (IMAGE_SOURCE=registry — no build on this runner).
+#
+# This is a REUSABLE workflow. testnet-release.yml calls it as its FINAL job
+# (needs: the image-publish jobs), so a deploy only ever runs AFTER a release —
+# specifically after the tessellation + snapshot-streaming images have been published
+# successfully — in the same workflow run. There is no independent push trigger that
+# could race ahead of the release.
+#
+#   workflow_call     — invoked by testnet-release with image_tag = sha-<release commit>.
+#   workflow_dispatch — manual redeploy (e.g. iterating from this branch) of an
+#                       already-published tag; defaults to the :testnet channel image.
+#
+# The deploy is CHAIN-PRESERVING: `just down` WITHOUT --clean saves node0's rollback
+# hash, then deploy-cluster.sh redeploys and the entrypoint auto-detects rollback. It
+# never wipes chain data. See deploy/deploy-cluster.sh + docker/bin/remote-deploy.sh.
+#
+# Node keys are NOT needed here: the cluster nodes already hold their real key.p12
+# (placed during migration). The deploy runs with PRESET_KEYS=true, deriving each
+# node's peer id from its on-node key and never shipping/overwriting key material.
+#
+# Required repository configuration:
+#   vars.TESTNET_HOSTS        "node0,node1,node2,streaming,monitoring" (public IPs, node0 = anchor)
+#   secrets.TESTNET_SSH_KEY   private key for the `admin` user on all cluster hosts
+# Optional:
+#   secrets.TESTNET_SS_DB_URL         external snapshot-streaming postgres URL; unset => local.
+#                                     For the RDS-via-bastion setup only user:pass@/db are
+#                                     used — host/port are pinned to the tunnel bind (127.0.0.1:5433).
+#   secrets.TESTNET_SS_DB_TUNNEL_BASTION  bastion ssh target (e.g. ec2-user@1.2.3.4); when set,
+#                                     the SS node maintains a persistent loopback->RDS tunnel.
+#   secrets.TESTNET_SS_DB_TUNNEL_TARGET   RDS endpoint the tunnel forwards to (rds-host:5432).
+#   secrets.TESTNET_SS_DB_TUNNEL_KEY      bastion private key (PEM contents); installed onto the
+#                                     SS node each deploy — nothing needs to be pre-placed.
+#   secrets.TESTNET_GRAFANA_PASSWORD  Grafana admin password
+
+on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "GHCR image tag to deploy (release passes sha-<commit>)"
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (default: :testnet channel image)"
+        type: string
+        required: false
+        default: ""
+
+concurrency:
+  group: testnet-deploy
+  cancel-in-progress: false   # never interrupt an in-flight cluster deploy
+
+jobs:
+  deploy:
+    name: Deploy testnet cluster
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    environment: testnet
+    steps:
+      # Deploy tooling (deploy-cluster.sh, remote-deploy.sh, entrypoint, migrate scripts)
+      # comes from the commit being released/dispatched.
+      - name: Checkout deploy tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Install just
+        run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+      - name: Compute image tag
+        id: img
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          # Manual dispatch with no override -> latest published channel image.
+          [ -n "$TAG" ] || TAG="testnet"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying image tag: $TAG"
+
+      - name: Validate configuration
+        run: |
+          [ -n "${{ vars.TESTNET_HOSTS }}" ] || { echo "::error::TESTNET_HOSTS variable not set"; exit 1; }
+          [ -n "${{ secrets.TESTNET_SSH_KEY }}" ] || { echo "::error::TESTNET_SSH_KEY secret not set"; exit 1; }
+
+      - name: Setup SSH
+        env:
+          TESTNET_SSH_KEY: ${{ secrets.TESTNET_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TESTNET_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat > ~/.ssh/config <<'EOF'
+          Host *
+            User admin
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            IdentityFile ~/.ssh/id_ed25519
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Chain-preserving down (saves rollback hash, no data wipe)
+        env:
+          HOSTS: ${{ vars.TESTNET_HOSTS }}
+        run: |
+          IFS=',' read -ra H <<< "$HOSTS"
+          # nodes + streaming (first 4); monitoring is not a compose target
+          REMOTE="admin@${H[0]},admin@${H[1]},admin@${H[2]},admin@${H[3]}"
+          just down --remote="$REMOTE" || true
+
+      - name: Deploy (registry images, chain-preserving rollback)
+        env:
+          HOSTS: ${{ vars.TESTNET_HOSTS }}
+          SSH_USER: admin
+          IMAGE_SOURCE: registry
+          TESSELLATION_IMAGE_TAG: ${{ steps.img.outputs.TAG }}
+          # Keys are ALREADY on the cluster nodes (the migrated tn key.p12). PRESET_KEYS
+          # makes the deploy derive each node's peer id from its on-node key and NEVER
+          # ship or overwrite key material — so no key secrets/vars are needed here.
+          # (Without this the deploy would default to the committed TEST keys and clobber
+          # the real ones, breaking identity + rollback.)
+          PRESET_KEYS: "true"
+          # This cluster runs the migrated tn chain under the testnet env: real-testnet
+          # snapshot layout + full parity profile (seedlist reused from the nodes,
+          # allowlist, ZGC heap), matching the validated manual deploy.
+          DEPLOY_APP_ENV: testnet
+          SNAPSHOT_STORED_PATH: data/incremental_snapshot
+          NODE_JAVA_OPTS: "-Xms10g -Xmx10g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
+          # gl1 JVM profile (tn parity with the old cl-dag-l1: ZGC 5-8g). Without this gl1
+          # falls back to the entrypoint default (G1 2-8g).
+          NODE_GL1_JAVA_OPTS: "-Xms5g -Xmx8g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
+          # snapshot-streaming JVM profile (tn parity with the old ss-test: ZGC 16g). Without
+          # this SS runs the image default (-Xmx1g), too small for full-chain ingestion.
+          SS_JAVA_OPTS: "-Xms16g -Xmx16g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
+          SKIP_TX_SENDER: "true"
+          # snapshot-streaming DB: external AWS RDS reached through a persistent SSH tunnel
+          # on the SS node (bastion -> RDS). The tunnel binds 127.0.0.1:5433 and SS connects
+          # there; SS_DB_URL supplies only user/pass/db, SS_DB_TUNNEL_TARGET is the RDS
+          # endpoint, and the bastion key (PEM contents) is installed onto the SS node from the secret.
+          SS_DB_URL: ${{ secrets.TESTNET_SS_DB_URL }}
+          SS_DB_TUNNEL_BASTION: ${{ secrets.TESTNET_SS_DB_TUNNEL_BASTION }}
+          SS_DB_TUNNEL_TARGET: ${{ secrets.TESTNET_SS_DB_TUNNEL_TARGET }}
+          SS_DB_TUNNEL_KEY: ${{ secrets.TESTNET_SS_DB_TUNNEL_KEY }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.TESTNET_GRAFANA_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          just deploy testnet
+
+      - name: Verify cluster + snapshot-streaming
+        env:
+          HOSTS: ${{ vars.TESTNET_HOSTS }}
+        run: |
+          IFS=',' read -ra H <<< "$HOSTS"
+          ok=1
+          for i in 0 1 2; do
+            state=$(ssh "admin@${H[$i]}" "curl -s --max-time 5 localhost:9000/node/info" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('state','?'))" 2>/dev/null || echo "?")
+            ord=$(ssh "admin@${H[$i]}" "curl -s --max-time 5 localhost:9000/global-snapshots/latest/ordinal" \
+              | grep -oE '[0-9]+' | head -1 || echo "?")
+            echo "  node ${H[$i]} state=$state ordinal=$ord"
+            [ "$state" = "Ready" ] || ok=0
+          done
+          [ "$ok" = "1" ] || { echo "::error::one or more nodes not Ready"; exit 1; }
+          echo "All nodes Ready."

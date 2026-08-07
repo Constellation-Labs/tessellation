@@ -289,10 +289,16 @@ object GlobalSnapshotConsensusStateCreator {
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
         selectedFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
-        targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize)
-        maxActiveSize = config.activeFacilitatorMax.getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedFacilitators.size))
+        admissionSizing = ConsensusPeerController.AdmissionSizing.from(
+          config,
+          coreCommitteeSize,
+          selectedFacilitators.size
+        )
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
-        expansionAllowedThisRound = key.value.value % expansionIntervalRounds.toLong === 0L
+        expansionAllowedThisRound = ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+          key.value.value,
+          config.activeAdmissionExpansionIntervalRounds
+        )
         maxExpansionThisRound =
           if (expansionAllowedThisRound) config.activeAdmissionMaxExpansionPerRound
           else 0
@@ -323,11 +329,11 @@ object GlobalSnapshotConsensusStateCreator {
           ConsensusPeerController.AdmissionInput(
             selected = selectedFacilitators,
             recentSigners = lastOutcome.recentSigners,
+            latestRoundStartFacilitators =
+              lastOutcome.controllerEvidence.flatMap(_.lastOption.map(_._2.roundStartFacilitators.toSet)).getOrElse(Set.empty),
             peerQuality = controllerInputs.peerQuality,
             activeScores = controllerInputs.activeScores,
-            minActiveSize = coreCommitteeSize,
-            targetActiveSize = targetActiveSize,
-            maxActiveSize = maxActiveSize,
+            sizing = admissionSizing,
             minParticipationObservations = config.minParticipationObservations,
             minParticipationRatio = config.minParticipationRatio,
             config = ConsensusPeerController.Config(
@@ -373,6 +379,9 @@ object GlobalSnapshotConsensusStateCreator {
             "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
             "reserveAdmitted" -> activeAdmission.reserveAdmittedSize.toString,
             "probationAdmitted" -> activeAdmission.probationAdmittedSize.toString,
+            "stickyProbationCandidates" -> activeAdmission.stickyProbationCandidateSize.toString,
+            "freshProbationCandidates" -> activeAdmission.freshProbationCandidateSize.toString,
+            "freshProbationStarved" -> activeAdmission.freshProbationStarved.toString,
             "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
             "recentSignerMinCount" -> activeAdmission.recentSignerMinCount.toString,
             "recentSignerMaxCount" -> activeAdmission.recentSignerMaxCount.toString,
@@ -446,23 +455,36 @@ object GlobalSnapshotConsensusStateCreator {
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_active_facilitator_sticky_probation_candidate_size",
+          activeAdmission.stickyProbationCandidateSize.toLong
+        )
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_active_facilitator_fresh_probation_candidate_size",
+          activeAdmission.freshProbationCandidateSize.toLong
+        )
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_active_facilitator_fresh_probation_starved",
+          if (activeAdmission.freshProbationStarved) 1L else 0L
+        )
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_reserve_admitted_size", activeAdmission.reserveAdmittedSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_min_count", activeAdmission.recentSignerMinCount.toLong)
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_signer_max_count", activeAdmission.recentSignerMaxCount.toLong)
+        activeExclusionCounts = activeAdmission.exclusions.groupMapReduce(_.reason.label)(_ => 1)(_ + _)
         _ <- List(
-          ActiveFacilitatorAdmission.ExclusionReason.QualityBelowThreshold.label -> activeAdmission.qualityExcludedSize,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowPromoteThreshold.label -> activeAdmission.scoreExcludedSize,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowDemoteThreshold.label -> activeAdmission.demotedRecentSignerSize,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowRetainThreshold.label -> activeAdmission.belowRetainRecentSignerSize
-        ).traverse_ {
-          case (reason, count) =>
-            Metrics[F].updateGauge(
-              "dag_consensus_active_facilitator_blocker_size",
-              count.toLong,
-              Seq(admissionReasonLabel -> reason)
-            )
+          ActiveFacilitatorAdmission.ExclusionReason.QualityBelowThreshold,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowPromoteThreshold,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowDemoteThreshold,
+          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowRetainThreshold,
+          ActiveFacilitatorAdmission.ExclusionReason.MissedLatestRound
+        ).traverse_ { reason =>
+          Metrics[F].updateGauge(
+            "dag_consensus_active_facilitator_blocker_size",
+            activeExclusionCounts.getOrElse(reason.label, 0).toLong,
+            Seq(admissionReasonLabel -> reason.label)
+          )
         }
 
         (withdrawn, active) = activeFacilitators.partition { peerId =>

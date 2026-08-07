@@ -55,6 +55,10 @@ jobs:
           sbt ci-release
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
+          # Priority-1 version override in build.sbt: pins the version for the whole
+          # sbt session so a dirtied working tree cannot shift the sonatype staging
+          # path between publishSigned and the release step
+          RELEASE_TAG: ${{ steps.resolve.outputs.tag }}
           # Use sonatypeCentralRelease (sbt-sonatype) instead of sonaRelease (sbt 1.11.0+)
           # Required because project is on sbt 1.9.8
           CI_SONATYPE_RELEASE: sonatypeCentralRelease
@@ -63,3 +67,6 @@ jobs:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.MVN_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.MVN_USERNAME }}
+
+      - name: Fail if the build mutated the workspace
+        run: git diff --exit-code

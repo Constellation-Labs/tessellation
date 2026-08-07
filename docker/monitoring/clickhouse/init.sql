@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS nightly_logs_consensus (
 PARTITION BY (network_id, toYYYYMM(timestamp))
 ORDER BY (node_id, ordinal, timestamp);
 
--- Drop any existing TTL on pre-existing tables (idempotent; no-op if no TTL).
-ALTER TABLE nightly_logs REMOVE TTL;
-ALTER TABLE nightly_logs_consensus REMOVE TTL;
+-- NOTE: TTL removal is done in deploy-monitoring.sh as a best-effort step, NOT here.
+-- `ALTER TABLE ... REMOVE TTL` errors (code 36) on a table that has no TTL, which would
+-- abort this entire init script (clickhouse-client multiquery stops on first error) and
+-- leave the deploy half-applied. Tables above are created without TTL, so there's nothing
+-- to remove on a fresh cluster anyway.

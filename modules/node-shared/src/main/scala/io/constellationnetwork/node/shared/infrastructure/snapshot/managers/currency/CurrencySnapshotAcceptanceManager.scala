@@ -10,6 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
+import io.constellationnetwork.currency.validations.FeeTransactionSignatureValidator.isEnabled
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, LastGlobalSnapshotsSyncConfig}
@@ -154,6 +155,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
   balanceOps: BalanceOpsManager[F]
 )(implicit currencyStateProofSelector: CurrencyStateProofSelector)
     extends CurrencySnapshotAcceptanceManager[F] {
+  private val feeTransactionSecurityActivationOrdinal = fieldsAddedOrdinals.feeTransactionSecurityFor(environment)
 
   def accept(
     blocksForAcceptance: List[Signed[Block]],
@@ -226,7 +228,13 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       rewards
     )
 
-    _ <- balanceOps.validateFeeTxs(feeTransactionsForAcceptance)
+    _ <- balanceOps.validateFeeTxs(
+      feeTransactionsForAcceptance,
+      isEnabled(
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
+        feeTransactionSecurityActivationOrdinal
+      )
+    )
 
     (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- balanceOps.acceptFeeTxs(
       updatedBalancesByRewards,

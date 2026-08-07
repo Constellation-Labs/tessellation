@@ -852,7 +852,11 @@ object GlobalSnapshotConsensusStateAdvancer {
       private val AdmissionPreProposalGrace: FiniteDuration = 1500.millis
 
       private def activeAdmissionTarget(state: GlobalSnapshotConsensusState): Int =
-        config.activeFacilitatorTarget.getOrElse(config.coreCommitteeSize.getOrElse(state.coreFacilitators.value.size))
+        ActiveFacilitatorAdmission.activeAdmissionTarget(
+          config.activeFacilitatorTarget,
+          config.coreCommitteeSize,
+          state.coreFacilitators.value.size
+        )
 
       private def openAdmissionCandidates(
         state: GlobalSnapshotConsensusState,
@@ -3179,11 +3183,11 @@ object GlobalSnapshotConsensusStateAdvancer {
             // `clusterFloorActive(state)` (== !isInBootstrap) selects the regime.
             //
             // The grace-window machinery below (coreComplete / fullCommittee) is unchanged: it governs
-            // reward-fair signature collection TIMING, not the finality threshold, so it stays Core/committee
-            // -derived per its original design.
+            // proof/evidence collection timing, not the finality threshold or delegated reward recipients,
+            // so it stays Core/committee-derived per its original design.
             //
             // The signature grace window is THREE-WAY, keyed on how complete the signer set is
-            // (`coreComplete` + `fullCommittee`), so neither liveness nor reward fairness is
+            // (`coreComplete` + `fullCommittee`), so neither liveness nor evidence completeness is
             // sacrificed:
             //
             //   1. FULL committee signed (`validSignatures.size >= fullCommittee`): finalize NOW.
@@ -3191,17 +3195,16 @@ object GlobalSnapshotConsensusStateAdvancer {
             //   2. CORE complete but not full: wait only the SHORT `tier1SignatureGracePeriod` for
             //      the remaining (Tier 1 / probation) signatures, then finalize. Liveness no longer
             //      needs the full window once Core has signed, but we still give Tier 1 signatures a
-            //      brief, bounded chance to land so rewards are not collapsed onto Core. This
+            //      brief, bounded chance to land in the artifact and evidence. This
             //      replaces the alpha.153 "finalize the INSTANT Core completes" behavior, which
-            //      dropped every Tier 1 signature from `signedArtifact.proofs` and collapsed the
-            //      reward split to Core.
+            //      dropped every Tier 1 signature from `signedArtifact.proofs`.
             //   3. CORE incomplete: wait the full `signatureGracePeriod` for the slow Core member,
             //      as before. This is the liveness-relevant case (a Core signature gates the quorum
             //      denominator), so it keeps the longer window.
             //
             // The short Tier-1 window keeps the alpha.152 fix intact (high-latency re-admitted peers
             // can no longer stall finalization for the FULL grace period -- the grace_wait_rate spike
-            // and committee 3<->7 oscillation) while restoring Tier 1 reward inclusion. `fullCommittee`
+            // and committee 3<->7 oscillation) while restoring Tier 1 proof inclusion. `fullCommittee`
             // now drives both the immediate-finalize check and the signature-count log display below.
             val canonicalCommitteeSize = state.roundStartFacilitators.value.size
             val coreSize = state.coreFacilitators.value.size
@@ -3255,12 +3258,12 @@ object GlobalSnapshotConsensusStateAdvancer {
               // derivation). If the full committee has signed, finalize immediately (nothing more
               // can arrive). Otherwise stamp the quorum-first-seen time and wait a BOUNDED grace:
               // the SHORT `tier1SignatureGracePeriod` when Core is already complete (collect late
-              // Tier 1 / probation signatures for reward fairness without blocking liveness), or the
+              // Tier 1 / probation signatures for evidence completeness without blocking liveness), or the
               // full `signatureGracePeriod` when a Core member is still missing (the
               // liveness-relevant case). Mirrors the pattern in `recoveryObserve` where we wait for
               // peer convergence before committing. Without any grace, a round that crosses quorum in
               // 1-3ms on a small cluster finalizes missing late signers -- noisy signer sets, missed
-              // rewards, divergent peerQuality on downstream rounds.
+              // evidence, and divergent peerQuality on downstream rounds.
               now <- Async[F].monotonic
               // Active grace window: short Tier-1 collection window once Core is complete, full
               // window while a Core signer is still missing. Used both by the wait evaluation below

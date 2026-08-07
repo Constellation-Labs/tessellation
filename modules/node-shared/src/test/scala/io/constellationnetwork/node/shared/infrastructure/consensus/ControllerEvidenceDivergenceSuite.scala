@@ -206,11 +206,14 @@ object ControllerEvidenceDivergenceSuite extends SimpleIOSuite {
       ConsensusPeerController.AdmissionInput(
         selected = selected,
         recentSigners = recentSignersOf(fixture.controllerEvidence),
+        latestRoundStartFacilitators = fixture.controllerEvidence.lastOption.map(_._2.roundStartFacilitators.toSet).getOrElse(Set.empty),
         peerQuality = inputs.peerQuality,
         activeScores = inputs.activeScores,
-        minActiveSize = 2,
-        targetActiveSize = 3,
-        maxActiveSize = 4,
+        sizing = ConsensusPeerController.AdmissionSizing(
+          emergencyBypassFloor = 2,
+          targetActiveSize = 3,
+          maxActiveSize = 4
+        ),
         minParticipationObservations = 3,
         minParticipationRatio = 0.5,
         config = ConsensusPeerController.Config.default

@@ -1,7 +1,7 @@
 const {dag4} = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
-const { compress } = require("brotli");
+const { serializeBrotli } = require('@stardust-collective/dag4-keystore');
 const {parseSharedArgs} = require('../shared');
 const { PRIVATE_KEYS } = require('../shared/constants');
 
@@ -34,9 +34,6 @@ const createConfig = () => {
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const serialize = (msg) => Buffer.from(msg, 'utf8').toString('hex');
-const serializeBrotli = (content, level = 2) =>
-    compress(new TextEncoder().encode(JSON.stringify(content)), {quality: level});
-
 const generateProof = async (message, privateKey, account) => {
     const hash = jsSha256.sha256(Buffer.from(serialize(JSON.stringify(message)), 'hex'));
     const signature = await dag4.keyStore.sign(privateKey, hash);
@@ -46,7 +43,8 @@ const generateProof = async (message, privateKey, account) => {
 };
 
 const generateProofFee = async (message, privateKey, account) => {
-    const hash = jsSha256.sha256(Buffer.from(await serializeBrotli(message), 'hex'));
+    const serializedTx = await serializeBrotli(message);
+    const hash = jsSha256.sha256(Buffer.from(serializedTx));
     const signature = await dag4.keyStore.sign(privateKey, hash);
     const publicKey = account.publicKey;
     const uncompressed = publicKey.length === 128 ? '04' + publicKey : publicKey;

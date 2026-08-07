@@ -145,13 +145,7 @@ jobs:
 
       - name: Installing node dependencies
         shell: bash
-        run: |
-          npm i @stardust-collective/dag4@v2.8.0
-          npm i js-sha256
-          npm i axios
-          npm i brotli
-          npm i zod
-          npm i elliptic
+        run: npm ci --prefix .github/action_scripts
 
       - name: Install just
         run: |

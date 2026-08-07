@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.gossip.event
 
 import cats.Parallel
 import cats.effect.std.Supervisor
+import cats.effect.syntax.all._
 import cats.effect.{Async, Clock, Ref}
 import cats.syntax.all._
 
@@ -104,12 +105,56 @@ case class EventGossipConfig(
   maxSeenHashes: Int = 100000, // Maximum number of seen hashes to track
   seenHashTtlMs: Long = 300000, // 5 minutes TTL for seen hashes
   pullRetryAttempts: Int = 3, // Number of retry attempts for pull operations
-  pullRetryBackoff: FiniteDuration = 500.millis // Initial backoff delay for retries
+  pullRetryBackoff: FiniteDuration = 500.millis, // Initial backoff delay for retries
+  chainTipWitnessRefreshInterval: FiniteDuration =
+    EventGossipConfig.defaultChainTipWitnessRefreshInterval // B2 admission witness: refresh EVERY responsive peer's chain tip within this window (round-robin over all peers, not just the mesh)
 )
 
 object EventGossipConfig {
   val defaultHeartbeatInterval: FiniteDuration = 10.seconds
   val defaultPullInterval: FiniteDuration = 20.seconds
+  // Refresh window for the B2 admission chain-tip witness sweep. Kept below the admission tip
+  // validity window (isAdmissionReadyTip tolerates a 2-ordinal lag) so witnessed candidate tips
+  // stay fresh enough to pass the gate during the degraded, slow-cadence phase while Core is
+  // still growing toward its floor.
+  val defaultChainTipWitnessRefreshInterval: FiniteDuration = 45.seconds
+}
+
+/** Pure helpers for the B2 admission chain-tip witness sweep (see EventGossipDaemonImpl.runHeartbeat). Extracted for testability: the
+  * round-robin slice guarantees every responsive peer is witnessed within `refreshInterval`, which the mesh-scoped sampling it replaced
+  * could not do once the cluster grew past the gossip mesh degree (candidates outside the mesh were never witnessed -> B2 admission starved
+  * -> Core frozen below coreFloor).
+  */
+private[event] object ChainTipWitnessSweep {
+
+  /** Peers to witness per heartbeat so every one of `peerCount` peers is refreshed within `refreshInterval` at the given heartbeat cadence.
+    * Floored at `minSweep` (small clusters witness everyone each tick) and capped at `peerCount`.
+    */
+  def sweepSize(
+    peerCount: Int,
+    minSweep: Int,
+    heartbeatInterval: FiniteDuration,
+    refreshInterval: FiniteDuration
+  ): Int =
+    if (peerCount <= 0) 0
+    else {
+      val heartbeatMs = math.max(1L, heartbeatInterval.toMillis)
+      val heartbeatsPerRefresh = math.max(1L, refreshInterval.toMillis / heartbeatMs)
+      math.min(peerCount, math.max(minSweep, math.ceil(peerCount.toDouble / heartbeatsPerRefresh.toDouble).toInt))
+    }
+
+  /** Round-robin slice of `ordered`, length `size`, starting at `cursor` (reduced mod size), wrapping around. Consecutive slices advanced
+    * by `size` are contiguous, so any `ceil(ordered.size / size)` successive slices cover the whole set -- the coverage guarantee the
+    * witness channel needs.
+    */
+  def slice[A](ordered: Vector[A], cursor: Int, size: Int): Vector[A] = {
+    val n = ordered.size
+    if (n <= 0 || size <= 0) Vector.empty
+    else {
+      val start = ((cursor % n) + n) % n
+      (0 until math.min(size, n)).toVector.map(i => ordered((start + i) % n))
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +443,8 @@ object EventGossipDaemon {
     for {
       seenCache <- SeenHashCache.make[F](config.maxSeenHashes, config.seenHashTtlMs)
       running <- Ref.of[F, Boolean](false)
+      witnessCursorRef <- Ref.of[F, Int](0)
+      witnessSweepInFlight <- Ref.of[F, Boolean](false)
       meshConfig = MeshState.MeshConfig(
         targetMeshSize = config.meshDegree,
         minMeshSize = config.meshLow,
@@ -431,7 +478,9 @@ object EventGossipDaemon {
         getGossipEligiblePeers,
         maybeForkDetector,
         onForkDetected,
-        nodeStorage
+        nodeStorage,
+        witnessCursorRef,
+        witnessSweepInFlight
       )
 }
 
@@ -449,7 +498,9 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
   getGossipEligiblePeers: F[Set[Peer]],
   maybeForkRecoveryDetector: Option[ForkRecoveryDetector[F]],
   onForkDetected: Option[ForkRecoveryInfo => F[Unit]],
-  nodeStorage: NodeStorage[F]
+  nodeStorage: NodeStorage[F],
+  witnessCursorRef: Ref[F, Int],
+  witnessSweepInFlight: Ref[F, Boolean]
 )(implicit S: Supervisor[F])
     extends EventGossipDaemon[F, Event, Key] {
 
@@ -567,44 +618,69 @@ private class EventGossipDaemonImpl[F[_]: Async: Parallel, Event, Key](
           ifTrue = logger.debug(s"Heartbeat: pruned ${result.pruned.size} peers from mesh"),
           ifFalse = Async[F].unit
         )
-      // Sample chain tips from a few mesh peers into MeshState. This data feeds two independent
-      // consumers: the fork-recovery detector (when enabled, in the block below) AND the B2 re-admission
-      // witness channel in the consensus engine, which reads peer chain tips (getPeerChainTips) to
-      // confirm a candidate has caught up to the committed tip. The pull loop only contacts NON-mesh
-      // peers, so when the mesh covers all peers (small clusters / adaptive mesh) this heartbeat sampling
-      // is the only path that collects mesh-peer tips. It was previously gated on the fork detector being
-      // present, which starved the B2 gate on nodes that serve a chain tip but wire no fork detector
-      // (e.g. currency-l0): a joining 2nd metagraph-L0 was never witnessed and never admitted. Run it
-      // whenever there are mesh peers; peers that serve no tip contribute nothing. Fork DETECTION (acting
-      // on this data) stays gated on the detector + handler below, so this does NOT enable fork recovery
-      // for nodes that opted out -- it only populates the shared chain-tip view.
+      // Witness sweep: sample peer chain tips into MeshState. This feeds two consumers: the
+      // fork-recovery detector (when enabled, in the block below) AND the B2 re-admission witness
+      // channel in the consensus engine, which reads getPeerChainTips to confirm an admission
+      // candidate has caught up to the committed tip. That witness map is populated ONLY here + the
+      // pull loop, so it MUST cover the full responsive-peer set -- not just the gossip mesh. The
+      // mesh is bounded by meshHigh (message-propagation sizing); every Ready node outside it is an
+      // admission candidate whose tip must be witnessed or it can never join the committee. On
+      // clusters larger than the mesh, mesh-only sampling left the majority of candidates
+      // unwitnessed (atTip=0) and starved admission, freezing Core below its floor. Round-robin over
+      // a stable ordering (not random) guarantees every peer is refreshed within
+      // chainTipWitnessRefreshInterval regardless of cluster size; random sampling would leave a
+      // coupon-collector tail of candidates never witnessed in time. Fork DETECTION (acting on this
+      // data) stays gated on the detector + handler below, so this does not enable fork recovery for
+      // nodes that opted out -- it only populates the shared chain-tip view.
       _ <- {
-        for {
-          meshPeerIds <- meshState.getMeshPeers
-          meshPeers = peers.filter(p => meshPeerIds.contains(p.id)).toList
-          sampled = scala.util.Random.shuffle(meshPeers).take(3)
-          _ <- logger.debug(
-            s"Chain tip sampling: meshSize=${meshPeers.size} sampled=${sampled.size} availablePeers=${peers.size}"
-          )
-          _ <- sampled.traverse_ { peer =>
-            gossipClient.getIHave
-              .run(Peer.toP2PContext(peer))
-              .flatMap { ihave =>
-                ihave.chainTip match {
-                  case Some(tip) =>
-                    logger.debug(
-                      s"Chain tip from peer ${peer.id.show}: ordinal=${tip.ordinal.value.value} hash=${tip.snapshotHash.show}"
-                    ) >> meshState.updateChainTip(peer.id, tip)
-                  case None =>
-                    logger.debug(s"Peer ${peer.id.show} returned no chain tip in IHave response")
-                }
-              }
-              .handleErrorWith(e =>
-                logger.debug(s"Chain tip sampling failed for peer ${peer.id.show}: ${e.getMessage}") >>
-                  meshState.clearChainTip(peer.id)
+        val ordered = peers.toVector.sortBy(_.id.value.value)
+        val n = ordered.size
+        if (n <= 0) Async[F].unit
+        else
+          // Single-flight: skip this tick if the previous sweep is still running so a slow sweep cannot
+          // pile up supervised fibers. The cursor advances only when a sweep actually fires, so no peer
+          // is skipped -- a skipped tick just re-runs the same slice on the next heartbeat.
+          witnessSweepInFlight.getAndSet(true).flatMap {
+            case true => Async[F].unit
+            case false =>
+              val sweepSize = ChainTipWitnessSweep.sweepSize(
+                n,
+                config.meshHigh,
+                config.heartbeatInterval,
+                config.chainTipWitnessRefreshInterval
               )
+              witnessCursorRef.getAndUpdate(c => (c + sweepSize) % n).flatMap { rawStart =>
+                val sampled = ChainTipWitnessSweep.slice(ordered, rawStart, sweepSize)
+                // Run the fetches OFF the heartbeat critical path: bounded-parallel (maxConcurrentPulls
+                // caps the connection burst on large clusters) with a per-call fetchTimeout, supervised so
+                // slow peers cannot serialize into the graft/prune + fork-detection steps that follow.
+                logger.debug(
+                  s"Chain tip witness sweep: availablePeers=$n sweepSize=$sweepSize start=${((rawStart % n) + n) % n}"
+                ) >>
+                  S.supervise(
+                    sampled
+                      .parTraverseN(config.maxConcurrentPulls.max(1)) { peer =>
+                        Async[F]
+                          .timeout(gossipClient.getIHave.run(Peer.toP2PContext(peer)), config.fetchTimeout)
+                          .flatMap { ihave =>
+                            ihave.chainTip match {
+                              case Some(tip) =>
+                                logger.debug(
+                                  s"Chain tip from peer ${peer.id.show}: ordinal=${tip.ordinal.value.value} hash=${tip.snapshotHash.show}"
+                                ) >> meshState.updateChainTip(peer.id, tip)
+                              case None =>
+                                logger.debug(s"Peer ${peer.id.show} returned no chain tip in IHave response")
+                            }
+                          }
+                          .handleErrorWith(e =>
+                            logger.debug(s"Chain tip witness sweep failed for peer ${peer.id.show}: ${e.getMessage}") >>
+                              meshState.clearChainTip(peer.id)
+                          )
+                      }
+                      .guarantee(witnessSweepInFlight.set(false))
+                  ).void
+              }
           }
-        } yield ()
       }
       // Proactive fork detection — clear stale mesh before triggering recovery
       _ <- (maybeForkRecoveryDetector, onForkDetected).mapN { (detector, handler) =>

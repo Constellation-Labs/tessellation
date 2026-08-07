@@ -161,10 +161,10 @@ object Download {
     * downstream `initFromDownload -> WaitingForReady -> Ready` flow can begin.
     *
     * Shortcut is taken iff ALL hold:
-    *   1. At least `minReadyQuorum` Ready peers responded with a (ordinal, hash) tip. 2. A strict majority (> N/2 of responders) agree on
-    *      the same (ordinal, hash) pair. 3. The majority ordinal is ≤ our local ordinal. 4. If the majority ordinal equals our local
-    *      ordinal, the majority hash equals our local hash (prevents a running-fork scenario where peers are "at our ordinal" but on a
-    *      different chain).
+    *   1. At least `minReadyQuorum` responding peers (Ready OR WaitingForReady, per the metadata gate below) returned a (ordinal, hash)
+    *      tip. 2. A strict majority (> N/2 of responders) agree on the same (ordinal, hash) pair. 3. The majority ordinal is ≤ our local
+    *      ordinal. 4. If the majority ordinal equals our local ordinal, the majority hash equals our local hash (prevents a running-fork
+    *      scenario where peers are "at our ordinal" but on a different chain).
     *
     * Data source for peer tips: `SnapshotRoutes:/global-snapshots/latest/metadata`, which is `whenNodeReady`-gated on the responder. Since
     * alpha.64 the gate accepts both `NodeState.Ready` and `NodeState.WaitingForReady`, with the body falling back to

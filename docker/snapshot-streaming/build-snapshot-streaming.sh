@@ -21,7 +21,9 @@ BE_DIR="$SS_DIR/block-explorer"
 
 # --- Obtain JAR ---
 
-if [ -n "$SNAPSHOT_STREAMING_JAR" ] && [ -f "$SNAPSHOT_STREAMING_JAR" ]; then
+if [ "${SKIP_SS_JAR:-false}" = "true" ]; then
+  echo "SKIP_SS_JAR=true — skipping snapshot-streaming jar build (image pulled from registry); block_explorer still cloned for DB migrations"
+elif [ -n "$SNAPSHOT_STREAMING_JAR" ] && [ -f "$SNAPSHOT_STREAMING_JAR" ]; then
   echo "Using pre-built snapshot-streaming JAR: $SNAPSHOT_STREAMING_JAR"
   cp "$SNAPSHOT_STREAMING_JAR" "$JAR_DEST"
 elif [ -f "$JAR_DEST" ] && [ -s "$JAR_DEST" ] && [ "$SKIP_ASSEMBLY" = "true" ]; then
@@ -55,11 +57,20 @@ else
       echo "Local SharedConfig still has forkInfoStorage — skipping snapshot-streaming patch"
     else
       cd "$BUILD_DIR"
-      if git apply --check "$PATCH_FILE" 2>/dev/null; then
+      if git apply --reverse --check "$PATCH_FILE" 2>/dev/null; then
+        echo "snapshot-streaming patch already applied upstream — skipping."
+      elif git apply --check "$PATCH_FILE" 2>/dev/null; then
         echo "Applying snapshot-streaming compatibility patch..."
         git apply "$PATCH_FILE"
+      elif patch -p1 --fuzz=3 --forward --dry-run < "$PATCH_FILE" >/dev/null 2>&1; then
+        echo "git apply rejected the patch (context drift); applying with fuzz via GNU patch..."
+        patch -p1 --fuzz=3 --forward < "$PATCH_FILE"
       else
-        echo "Patch already applied or not needed, skipping..."
+        # Either already applied upstream (harmless) or a stale/drifted patch that no longer
+        # matches this snapshot-streaming branch. --forward stops GNU patch from REVERSE-applying
+        # an already-applied patch (which would re-add forkInfoStorage and break compilation).
+        echo "WARNING: snapshot-streaming.patch did not apply (already applied, or stale vs this SS branch)." >&2
+        echo "         If stale, regenerate it (see testnet-hetzner-migration/snapshot-streaming-blocker.md)." >&2
       fi
       cd "$SCRIPT_DIR"
     fi
@@ -86,22 +97,27 @@ else
 fi
 
 # --- Clone block_explorer for database migrations ---
-
-if [ -d "$BE_DIR/.git" ]; then
-  echo "Reusing existing block_explorer clone: $BE_DIR"
-  git -C "$BE_DIR" fetch --depth 1 origin "$BE_BRANCH"
-  git -C "$BE_DIR" checkout FETCH_HEAD --quiet
+# Not needed with an external SS database (SKIP_BE_CLONE=true): schema/migrations are
+# owned by the existing block-explorer deployment, and the BE app isn't run on-cluster.
+if [ "${SKIP_BE_CLONE:-false}" = "true" ]; then
+  echo "SKIP_BE_CLONE=true — skipping block_explorer clone (external SS database)"
 else
-  echo "Cloning block_explorer (branch: $BE_BRANCH)..."
-  rm -rf "$BE_DIR"
-  git clone --depth 1 --branch "$BE_BRANCH" "$BE_REPO" "$BE_DIR"
-fi
+  if [ -d "$BE_DIR/.git" ]; then
+    echo "Reusing existing block_explorer clone: $BE_DIR"
+    git -C "$BE_DIR" fetch --depth 1 origin "$BE_BRANCH"
+    git -C "$BE_DIR" checkout FETCH_HEAD --quiet
+  else
+    echo "Cloning block_explorer (branch: $BE_BRANCH)..."
+    rm -rf "$BE_DIR"
+    git clone --depth 1 --branch "$BE_BRANCH" "$BE_REPO" "$BE_DIR"
+  fi
 
-if [ ! -d "$BE_DIR/prisma/migrations" ]; then
-  echo "ERROR: block_explorer prisma/migrations not found"
-  exit 1
+  if [ ! -d "$BE_DIR/prisma/migrations" ]; then
+    echo "ERROR: block_explorer prisma/migrations not found"
+    exit 1
+  fi
+  echo "block_explorer migrations ready: $BE_DIR/prisma/migrations"
 fi
-echo "block_explorer migrations ready: $BE_DIR/prisma/migrations"
 
 echo "snapshot-streaming JAR: $JAR_DEST"
 

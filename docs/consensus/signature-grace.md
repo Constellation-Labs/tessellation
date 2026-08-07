@@ -4,11 +4,10 @@
 round keep collecting `MajoritySignature` declarations for a bounded window
 *after* it has already crossed the finalization quorum, instead of committing the
 instant quorum is reached. Without it, a round that crosses quorum in the first
-1-3ms on a small cluster would finalize with a truncated proof set: late but
-honest signers are dropped from `signedArtifact.proofs`, and because rewards
-follow the proofs, reward share collapses onto whoever happened to sign first.
-The window length is chosen three ways depending on which signatures are still
-outstanding, so neither finalization liveness nor reward fairness is sacrificed.
+1-3ms on a small cluster would finalize with a truncated proof and participation-
+evidence set. Delegated rewards do not follow proofs; they follow frozen round
+membership. The window length is chosen three ways depending on which signatures are
+still outstanding, balancing finalization liveness against evidence completeness.
 Source of truth: `SignatureGraceDecision.scala:5-83`.
 
 This belongs to the same `CollectingSignatures -> Finished` transition described
@@ -25,7 +24,7 @@ returns an `Eval`. The decision tree (`SignatureGraceDecision.scala:58-82`):
 |------|-----------|----------|
 | Not yet at quorum | `!canFinalize` | `Leave` the stamp untouched, do not finalize (the round simply has not crossed quorum yet). |
 | Full committee signed | `fullCommitteeSigned` | `Clear` the stamp and finalize immediately. Nothing more can arrive, so any wait is pure latency. |
-| Core complete, committee not full | `coreComplete` | Wait the SHORT `tier1Window`, measured from when Core *first* completed, then finalize. Only Tier-1 (non-quorum) signatures are outstanding; give them a brief, bounded chance to land for reward inclusion. |
+| Core complete, committee not full | `coreComplete` | Wait the SHORT `tier1Window`, measured from when Core *first* completed, then finalize. Only Tier-1 (non-quorum) signatures are outstanding; give them a brief, bounded chance to land in the artifact and participation evidence. |
 | Core incomplete | otherwise | Wait the FULL `fullWindow`, measured from first quorum, for the missing quorum-bearing Core signer. This is the liveness-relevant case. |
 
 `Eval.waitMore` is the load-bearing output: `true` means "do not finalize this
@@ -41,8 +40,8 @@ the monotonic time at which every Core member had first signed
 Core completes late -- more than `tier1Window` after quorum was first crossed --
 anchoring the Tier-1 collection at first-quorum would make the window already
 expired by the time Core finishes, so the round would skip Tier-1 collection
-entirely and concentrate rewards on Core. This is the alpha.153 regression the
-Core-complete anchor fixes (`SignatureGraceDecision.scala:13-15`).
+entirely. This is the alpha.153 proof/evidence regression the Core-complete anchor
+fixes (`SignatureGraceDecision.scala:13-15`).
 
 ## State: the per-round Stamp
 
@@ -139,7 +138,7 @@ Both are timing-only and are deliberately NOT folded into
 `snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash, so two
 nodes running different grace periods still produce the same downstream
 `snapshotHash`. This lever only changes which proofs ride along on the signed
-artifact (and therefore the reward split), never a consensus-decided value, so it
+artifact, never the delegated reward split or another consensus-decided value, so it
 does not need to match cluster-wide and a divergent value will not fork.
 
 ## Observability

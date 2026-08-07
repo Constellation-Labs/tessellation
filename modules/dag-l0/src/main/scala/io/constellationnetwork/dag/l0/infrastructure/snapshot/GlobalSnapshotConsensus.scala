@@ -35,6 +35,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
+import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
@@ -61,7 +62,8 @@ import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -188,12 +190,46 @@ object GlobalSnapshotConsensus {
         3,
         appConfig.snapshot.activeAdmissionRecentSignerWindow.get(appConfig.environment).getOrElse(3)
       )
+      // Active-set growth target + hard cap: env-resolved (the coreCommitteeSize pattern) and
+      // folded into `deterministicConfigHash` via the copy below. Absent env entries preserve the
+      // ConsensusConfig scalar resolution (None -> coreCommitteeSize fallback at the consumers).
+      // INVARIANTS (conf convention): target > coreFloor and max >= coreFloor for every
+      // environment -- violating either closes the admission feeder below the Core floor
+      // (v4.1.0 base scalars: target 7 / max 13 vs integrationnet floor 9 and mainnet floor 15).
+      resolvedActiveFacilitatorTarget = appConfig.snapshot.activeFacilitatorTarget
+        .get(appConfig.environment)
+        .orElse(appConfig.snapshot.consensus.activeFacilitatorTarget)
+      resolvedActiveFacilitatorMax = appConfig.snapshot.activeFacilitatorMax
+        .get(appConfig.environment)
+        .orElse(appConfig.snapshot.consensus.activeFacilitatorMax)
       effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow
+        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
+        activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
+        activeFacilitatorMax = resolvedActiveFacilitatorMax
       )
+      // Fail fast on sizing invariants that would boot a hash-consistent cluster straight into a
+      // quorum-feasibility wedge (the pre-scaling base scalars violated both: target 7 / max 13 vs
+      // integrationnet floor 9 and mainnet floor 15). Enforced only for explicitly configured
+      // values: an absent env entry falls back to target = coreCommitteeSize at the consumers,
+      // the intended shape for currency metagraphs.
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
+          s" ($resolvedCoreCommitteeSize): the admission deficit gate would close before Core can reach its floor"
+      ).raiseError[F, Unit]
+        .whenA(resolvedActiveFacilitatorTarget.exists(_ <= resolvedCoreCommitteeSize))
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-max ($resolvedActiveFacilitatorMax) must be >= core-committee-size" +
+          s" ($resolvedCoreCommitteeSize): the active set would cap below the Core floor"
+      ).raiseError[F, Unit]
+        .whenA(resolvedActiveFacilitatorMax.exists(_ < resolvedCoreCommitteeSize))
+      _ <- new IllegalArgumentException(
+        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must not exceed" +
+          s" active-facilitator-max ($resolvedActiveFacilitatorMax)"
+      ).raiseError[F, Unit]
+        .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
 
       consensusStorage <- ConsensusStorage.make[
         F,
@@ -222,9 +258,12 @@ object GlobalSnapshotConsensus {
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           sharedCfg.fieldsAddedOrdinals.setSumFix
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+          sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommittee
+            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MaxValue),
           sharedCfg.incrementalDelegatedStakingStartingOrdinal
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
-          mptStore
+          mptStore,
+          effectiveConsensusConfig.activeAdmissionPromoteThreshold
         )
 
       facilitatorSelector = FacilitatorSelector.make(
@@ -377,6 +416,17 @@ object GlobalSnapshotConsensus {
         Slf4jLogger.getLogger[F]
       )
 
+      // HTTP preflight for the rumor-stale abandonment escalation (issue #1533): ask a bounded
+      // random sample of Ready peers for their latest global snapshot metadata. At least two peers
+      // and a strict majority of responders must agree on `(ordinal, hash)`, confirming recovery
+      // has something to fetch without trusting a single response.
+      fetchLatestCommittedMetadata = {
+        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+        val request = PeerResponse[F, SnapshotMetadata]("global-snapshots/latest/metadata")(client, session.some)
+        (peer: Peer) => request(peer)
+      }
+      peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -413,6 +463,7 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
+          peersCommittedAheadProbe,
           injectedHealthRef
         )
 
