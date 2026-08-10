@@ -1,6 +1,5 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
 import io.constellationnetwork.schema.peer.PeerId
 
 /** Local vote-emission policy for open Ready-at-tip admission.
@@ -26,16 +25,7 @@ object OpenAdmissionPolicy {
   def penaltyBlocksCertificate(target: PeerId, probation: Set[PeerId], activePenaltyPeers: Set[PeerId]): Boolean =
     activePenaltyPeers.contains(target) && !probation.contains(target)
 
-  final case class Headroom(
-    observedCurrentCommitteeSigners: Int,
-    nextCommitteeSize: Int,
-    nextFinalityFloor: Int
-  ) {
-    val margin: Int = observedCurrentCommitteeSigners - nextFinalityFloor
-    val allowsExpansion: Boolean = margin >= 0
-  }
-
-  final case class Decision(cadenceAllowed: Boolean, headroom: Option[Headroom]) {
+  final case class Decision(cadenceAllowed: Boolean, headroom: Option[FinalityHeadroom.Evaluation]) {
     val allowsOpenAdmission: Boolean = cadenceAllowed && headroom.forall(_.allowsExpansion)
   }
 
@@ -62,16 +52,8 @@ object OpenAdmissionPolicy {
     headroomGateActive: Boolean
   ): Decision = {
     val headroomEvidence = locallyObservedParentSigners.filter(_ => headroomGateActive)
-    val headroom = headroomEvidence.fold(Option.empty[Headroom]) { observedSigners =>
-      val nextCommitteeSize = currentCommittee.size + 1
-      val nextFinalityFloor = math.max(1, QuorumPolicy.fromFraction(nextCommitteeSize, quorumThresholdFraction))
-      Some(
-        Headroom(
-          observedCurrentCommitteeSigners = observedSigners.intersect(currentCommittee).size,
-          nextCommitteeSize = nextCommitteeSize,
-          nextFinalityFloor = nextFinalityFloor
-        )
-      )
+    val headroom = headroomEvidence.fold(Option.empty[FinalityHeadroom.Evaluation]) { observedSigners =>
+      Some(FinalityHeadroom.evaluate(currentCommittee, observedSigners, quorumThresholdFraction))
     }
 
     Decision(cadenceAllowed, headroom)

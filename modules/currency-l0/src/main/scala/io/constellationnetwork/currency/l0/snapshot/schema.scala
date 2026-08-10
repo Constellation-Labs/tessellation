@@ -192,7 +192,7 @@ object schema {
               quality = peerQuality.getOrElse(pid, (0, 0)),
               removalPenalty = removalPenalties.getOrElse(pid, 0),
               cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
-              readmissionCountdown = readmissionCountdown.getOrElse(pid, 0),
+              readmissionCountdown = ReadmissionMaintenance.persistenceValue(readmissionCountdown, pid),
               deferralCountdown = deferralCountdown.getOrElse(pid, 0),
               // v16: Option-wrap so absent peers / pre-v16 readers see no key under
               // dropNullValues=true. Mirror of dag-l0 schema.

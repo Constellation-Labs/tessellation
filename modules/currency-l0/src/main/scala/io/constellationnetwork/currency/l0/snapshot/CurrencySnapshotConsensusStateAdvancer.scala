@@ -566,7 +566,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         state: CurrencySnapshotConsensusState
       ): Set[PeerId] = {
         val committee = state.roundStartFacilitators.value.toSet
-        val probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val penalized = activeAdmissionPenaltyPeers(state)
         state.lastOutcome.finished.candidates.value -- committee -- probation -- penalized
       }
@@ -586,7 +586,7 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): Option[PeerId] = {
         val excluded =
           state.roundStartFacilitators.value.toSet ++
-            state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet ++
+            ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown) ++
             activeAdmissionPenaltyPeers(state)
         val activeBelowTarget = state.roundStartFacilitators.value.size < activeAdmissionTarget(state)
 
@@ -605,7 +605,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           now <- Async[F].monotonic
           acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
           activeBelowTarget = state.roundStartFacilitators.value.size < activeAdmissionTarget(state)
-          probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+          probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
           openAllowed = openExpansionAllowedAt(state)
           hasAdmissionEvidence =
             (openAllowed && openAdmissionNominees(state).nonEmpty) ||
@@ -628,12 +628,16 @@ object CurrencySnapshotConsensusStateAdvancer {
         state: CurrencySnapshotConsensusState,
         assembled: Set[AdmissionCertificate]
       ): F[List[AdmissionCertificate]] = {
-        val probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val openAllowed = openExpansionAllowedAt(state)
         val cadenceEligible = assembled.filter(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
         val cadenceSuppressed = assembled -- cadenceEligible
-        val selection =
-          AdmissionCertificateSelector.selectForProposal(cadenceEligible, config.activeAdmissionMaxExpansionPerRound, state.entropy)
+        val selection = AdmissionCertificateSelector.selectForProposal(
+          cadenceEligible,
+          config.activeAdmissionMaxExpansionPerRound,
+          state.entropy,
+          probation
+        )
         val dropped = selection.dropped.toSet ++ cadenceSuppressed
         ConsensusLog
           .info(
@@ -1183,7 +1187,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         val n = state.coreFacilitators.value.size
         val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
-        val probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val penalized = activeAdmissionPenaltyPeers(state)
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 

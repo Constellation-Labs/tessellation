@@ -64,6 +64,29 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect(third.decision.exists(d => d.consecutiveMisses == TierTransitions.DemotionConsecutiveMisses && d.shouldVote))
   }
 
+  test("three misses do not emit an eviction vote while next-seat finality headroom remains") {
+    val first = observe("parent-1", 1L, core)
+    val second = observe("parent-2", 2L, core, first.history)
+    val third = observe("parent-3", 3L, core, second.history)
+    val committee = core ++ tier1
+    val headroom = FinalityHeadroom.evaluate(committee, committee.take(6), 2.0 / 3.0)
+
+    expect(third.decision.exists(_.shouldVote)) &&
+    expect(headroom.allowsExpansion) &&
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom)))
+  }
+
+  test("three misses emit an eviction vote when next-seat finality headroom is absent") {
+    val first = observe("parent-1", 1L, core)
+    val second = observe("parent-2", 2L, core, first.history)
+    val third = observe("parent-3", 3L, core, second.history)
+    val committee = core ++ tier1
+    val headroom = FinalityHeadroom.evaluate(committee, committee.take(5), 2.0 / 3.0)
+
+    expect(!headroom.allowsExpansion) &&
+    expect(third.decision.exists(d => FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom)))
+  }
+
   test("any observed proof resets that peer while other Tier-1 streaks continue") {
     val first = observe("parent-1", 1L, core)
     val second = observe("parent-2", 2L, core + peer('4'), first.history)

@@ -102,7 +102,8 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
     peerQuality: SortedMap[PeerId, (Int, Int)],
     activeAdmissionScores: SortedMap[PeerId, Int],
     peerTiers: SortedMap[PeerId, Int],
-    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long]
+    recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
+    readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty
   ): GlobalConsensusOutcome =
     GlobalConsensusOutcome(
       key = ord(14L),
@@ -113,6 +114,7 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
       finished = finished,
       peerQuality = peerQuality,
       recentProofSizes = recentProofSizes,
+      readmissionCountdown = readmissionCountdown,
       recentSigners = recentSigners,
       peerTiers = peerTiers,
       activeAdmissionScores = activeAdmissionScores,
@@ -194,6 +196,34 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         // ...but the signed peerHistory payloads are identical, structurally and byte-for-byte.
         expect.same(signedA, signedB) &&
         expect.same(signedA.asJson.printWith(printer), signedB.asJson.printWith(printer))
+  }
+
+  test("sticky zero probation survives sidecar packing without entering signed artifact bytes") { res =>
+    implicit val (js, h, sp) = res
+
+    for {
+      finished <- mkFinished
+      outcome = mkOutcome(
+        finished,
+        peerQuality = SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
+        activeAdmissionScores = SortedMap(a -> 150, b -> 150, c -> 60),
+        peerTiers = SortedMap(a -> 2, b -> 2, c -> 1),
+        recentRoundEndTimes = SortedMap(ord(14L) -> 1700000000000L),
+        readmissionCountdown = SortedMap(c -> 0)
+      )
+      operational = outcome.toOperationalState
+      decoded = decode[ConsensusOperationalState](operational.asJson.noSpaces)
+      seededReadmission = decoded.toOption
+        .map(state =>
+          SortedMap.from(state.perPeer.collect {
+            case (pid, record) if record.readmissionCountdown > 0 => pid -> record.readmissionCountdown
+          })
+        )
+        .getOrElse(SortedMap.empty[PeerId, Int])
+    } yield
+      expect.same(Some(1), operational.perPeer.get(c).map(_.readmissionCountdown)) &&
+        expect.same(SortedMap(c -> 1), seededReadmission) &&
+        expect(outcome.signedArtifactPeerHistory.perPeer.isEmpty)
   }
 
   test("divergent carried perPeer state yields byte-identical signedArtifactPeerHistory for the same evidence") { res =>

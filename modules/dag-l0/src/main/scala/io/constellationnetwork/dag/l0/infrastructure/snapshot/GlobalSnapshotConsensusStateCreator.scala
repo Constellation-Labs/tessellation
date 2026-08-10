@@ -82,10 +82,12 @@ object GlobalSnapshotConsensusStateCreator {
     private val maxAwaitingParentReactivationPerRound = 128
 
     /** Track every auditable parent-round Tier-1 signer from actual local snapshot proofs and audit one deterministic target. After three
-      * consecutive local misses, reuse the existing B1 vote path.
+      * consecutive local misses, reuse the existing B1 vote path only when the observed signer population cannot safely support one more
+      * committee seat.
       *
       * The local proof subset is evidence for vote emission only. It never enters the outcome, artifact, committee hash, or state proof. A
-      * membership change still requires the normal Core-quorum EvictionCertificate to be embedded in and accepted with the Proposal.
+      * Both the proof subset and next-seat headroom remain local vote-emission evidence. A membership change still requires the normal
+      * Core-quorum EvictionCertificate to be embedded in and accepted with the Proposal.
       */
     private def auditTier1FinalityParticipation(
       key: GlobalSnapshotKey,
@@ -115,7 +117,39 @@ object GlobalSnapshotConsensusStateCreator {
               .whenA(!inBootstrap && currentCore.contains(selfId))
 
         case Some(evidence) =>
-          tier1FinalityMissHistoryRef.modify { previous =>
+          val currentCommittee = currentCore ++ currentTier1
+          val finalityHeadroom = FinalityHeadroom.evaluate(
+            currentCommittee,
+            locallyObservedParentSigners,
+            consensusConfig.quorumThresholdFraction
+          )
+          val recordHeadroom =
+            (Metrics[F].updateGauge(
+              "dag_consensus_tier1_finality_audit_current_committee_size",
+              finalityHeadroom.currentCommitteeSize.toLong
+            ) >>
+              Metrics[F].updateGauge(
+                "dag_consensus_tier1_finality_audit_observed_current_committee_signers",
+                finalityHeadroom.observedCurrentCommitteeSigners.toLong
+              ) >>
+              Metrics[F].updateGauge(
+                "dag_consensus_tier1_finality_audit_next_committee_size",
+                finalityHeadroom.nextCommitteeSize.toLong
+              ) >>
+              Metrics[F].updateGauge(
+                "dag_consensus_tier1_finality_audit_next_finality_floor",
+                finalityHeadroom.nextFinalityFloor.toLong
+              ) >>
+              Metrics[F].updateGauge(
+                "dag_consensus_tier1_finality_audit_finality_margin",
+                finalityHeadroom.margin.toLong
+              ) >>
+              Metrics[F].updateGauge(
+                "dag_consensus_tier1_finality_audit_silent_eviction_allowed",
+                if (finalityHeadroom.allowsSilentEviction) 1L else 0L
+              )).whenA(currentCore.contains(selfId) && !inBootstrap)
+
+          recordHeadroom >> tier1FinalityMissHistoryRef.modify { previous =>
             val observation = FinalityParticipationAuditor.observe(
               selfId,
               currentCore,
@@ -129,7 +163,7 @@ object GlobalSnapshotConsensusStateCreator {
             )
             (observation.history, observation.decision)
           }.flatMap {
-            case Some(audit) if audit.shouldVote =>
+            case Some(audit) if FinalityParticipationAuditor.shouldEmitSilentEvictionVote(audit, finalityHeadroom) =>
               val alreadyVoted = resources.evictionVotes.get(audit.target).exists(_.contains(selfId))
               val emit =
                 if (alreadyVoted) Sync[F].unit
@@ -150,11 +184,36 @@ object GlobalSnapshotConsensusStateCreator {
                   "signatureObserved" -> "false",
                   "consecutiveMisses" -> audit.consecutiveMisses.toString,
                   "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString,
+                  "currentCommitteeSize" -> finalityHeadroom.currentCommitteeSize.toString,
+                  "observedCurrentCommitteeSigners" -> finalityHeadroom.observedCurrentCommitteeSigners.toString,
+                  "nextFinalityFloor" -> finalityHeadroom.nextFinalityFloor.toString,
+                  "finalityMargin" -> finalityHeadroom.margin.toString,
                   "alreadyVoted" -> alreadyVoted.toString
                 ) >>
                 Metrics[F].incrementCounter(
                   "dag_consensus_tier1_finality_audit_total",
                   Seq(outcomeLabel -> (if (alreadyVoted) "already_voted" else "vote_emitted"))
+                )
+
+            case Some(audit) if audit.shouldVote =>
+              ConsensusLog.info(
+                logger,
+                Facilitator,
+                key.show,
+                "n/a",
+                Eviction,
+                "stage" -> "tier1_finality_audit_headroom_preserved",
+                "target" -> ConsensusLog.pid(audit.target),
+                "consecutiveMisses" -> audit.consecutiveMisses.toString,
+                "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString,
+                "currentCommitteeSize" -> finalityHeadroom.currentCommitteeSize.toString,
+                "observedCurrentCommitteeSigners" -> finalityHeadroom.observedCurrentCommitteeSigners.toString,
+                "nextFinalityFloor" -> finalityHeadroom.nextFinalityFloor.toString,
+                "finalityMargin" -> finalityHeadroom.margin.toString
+              ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_tier1_finality_audit_total",
+                  Seq(outcomeLabel -> "headroom_preserved")
                 )
 
             case Some(audit) if audit.signatureObserved =>
@@ -173,7 +232,11 @@ object GlobalSnapshotConsensusStateCreator {
                 "stage" -> "tier1_finality_audit_hysteresis",
                 "target" -> ConsensusLog.pid(audit.target),
                 "consecutiveMisses" -> audit.consecutiveMisses.toString,
-                "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString
+                "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString,
+                "currentCommitteeSize" -> finalityHeadroom.currentCommitteeSize.toString,
+                "observedCurrentCommitteeSigners" -> finalityHeadroom.observedCurrentCommitteeSigners.toString,
+                "nextFinalityFloor" -> finalityHeadroom.nextFinalityFloor.toString,
+                "finalityMargin" -> finalityHeadroom.margin.toString
               ) >>
                 Metrics[F].incrementCounter(
                   "dag_consensus_tier1_finality_audit_total",
@@ -332,7 +395,7 @@ object GlobalSnapshotConsensusStateCreator {
         // the committee. Excluded from the round NON-BYPASSABLY: re-admission requires a
         // consensus-witnessed AdmissionCertificate embedded in a Proposal (cleared at
         // round-finish in the advancer). Deterministic: derived from consensus-agreed lastOutcome.
-        probationPeers = lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        probationPeers = ReadmissionMaintenance.probationPeers(lastOutcome.readmissionCountdown)
 
         _ <- logger
           .debug(
@@ -347,10 +410,15 @@ object GlobalSnapshotConsensusStateCreator {
           .debug(
             s"Readmission probation for key=$key: ${probationPeers.size} probation peers" +
               (if (probationPeers.nonEmpty)
-                 s" [${lastOutcome.readmissionCountdown.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
+                 s" [${lastOutcome.readmissionCountdown.map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
                else "")
           )
           .whenA(probationPeers.nonEmpty)
+        _ <- Metrics[F].updateGauge("dag_consensus_readmission_probation_size", probationPeers.size.toLong)
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_readmission_probation_ready_size",
+          lastOutcome.readmissionCountdown.count { case (_, countdown) => countdown == 0 }.toLong
+        )
 
         // Per-peer quality gauges (Prometheus). With v19 cleanup, the quality-degradation
         // override in CommitteeBuilder demotes peers with cumulative ratio < minRatio to Tier 1,

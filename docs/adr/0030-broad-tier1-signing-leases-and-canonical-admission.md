@@ -2,7 +2,7 @@
 
 Date: 2026-08-04
 
-Updated: 2026-08-05
+Updated: 2026-08-10
 
 Status: Accepted
 
@@ -64,7 +64,11 @@ mechanics, with its existing controller-target gate preserved.
    reject new/open admission targets.
    Open Ready-at-tip votes and certificates are eligible only on the existing
    `activeAdmissionExpansionIntervalRounds` cadence. The shipped interval is five
-   rounds. Probation readmission is not cadence-gated.
+   rounds. Probation readmission is not cadence-gated. A `readmissionCountdown` map
+   entry remains probation authority when its value reaches zero; only an accepted
+   AdmissionCertificate removes the entry. When probation and open certificates
+   compete for the one-certificate proposal budget, probation recovery is selected
+   first and rendezvous ordering resolves peers within the same lane.
 7. Rendezvous-rank certificates only when constructing a proposal. Keep the legacy
    `AdmissionCertificate.ordering` at the apply-site defense-in-depth boundary.
 8. Do not change reward arithmetic or activation ordinals. Before
@@ -80,11 +84,14 @@ mechanics, with its existing controller-target gate preserved.
     parentRoundCommittee`, then select one audit target from that complete,
     consensus-agreed set by rendezvous rank. A current Core member emits the existing
     `EvictionVote(Silent)` only after the target is absent from three consecutive
-    locally finalized parent artifact proof sets. Reuse
+    locally finalized parent artifact proof sets **and** those locally observed
+    current-committee signers cannot support the finality floor for one additional
+    seat. Reuse
     `TierTransitions.DemotionConsecutiveMisses`; reset a peer's streak on any observed
-    proof. Newly admitted peers are not auditable until they have had a parent-round
-    signing opportunity. Restart, missing parent evidence, or a non-consecutive
-    parent ordinal clears local streaks, delaying eviction conservatively.
+    proof. The eviction headroom check is the exact inverse of the open-admission
+    invariant in decision 14. Newly admitted peers are not auditable until they have
+    had a parent-round signing opportunity. Restart, missing parent evidence, or a
+    non-consecutive parent ordinal clears local streaks, delaying eviction conservatively.
 11. A Tier-1 target requires a Core-quorum certificate. A Core-target stall eviction
     retains the wider deterministic historical witness pool; the target's frozen tier
     selects between these two existing lanes at both assembly and validation.
@@ -121,7 +128,9 @@ mechanics, with its existing controller-target gate preserved.
     certificate assembly.
 16. Report the actual finality requirement outside bootstrap from the frozen Core +
     Tier-1 committee floor, not the Core strict-majority diagnostic. Expose the
-    first-quorum finality margin and the open-admission cadence/headroom decision.
+    first-quorum finality margin, the open-admission cadence/headroom decision, the
+    Tier-1 eviction headroom decision, and sticky probation entries ready at countdown
+    zero.
 
 ## Consequences
 
@@ -135,9 +144,11 @@ mechanics, with its existing controller-target gate preserved.
 - Open-admission gossip is bounded to approximately one vote per Core member per
   round instead of one vote per monitor tick and candidate.
 - Finality-audit gossip is also bounded to at most one eviction vote per Core member
-  per round, and no vote is emitted until that node has observed three consecutive
-  proof misses for the selected target. This is an audit-work budget, not a cap on
-  Tier-1 membership or rewards.
+  per round. No vote is emitted until that node has observed three consecutive proof
+  misses for the selected target **and** lacks next-seat finality headroom. A slow
+  Tier-1 peer is therefore retained while the observed signer population can safely
+  support the seat. This is an audit-work budget, not a cap on Tier-1 membership or
+  rewards.
 - A Tier-1 lease is removed only when enough Core nodes independently failed to
   observe its signature by their parent-round finalization cutoffs and the resulting
   certificate is accepted. The assertion is quorum-observed untimeliness, not proof

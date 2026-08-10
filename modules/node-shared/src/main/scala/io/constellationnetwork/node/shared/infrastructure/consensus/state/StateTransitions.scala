@@ -1450,7 +1450,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         }
       // B2 readmission gate: refuse to facilitate while self is on probation per the carried
       // outcome. A peer that was B1-evicted during isolation comes back
-      // via recovery with a downloaded snapshot containing `readmissionCountdown[selfId] > 0`. The
+      // via recovery with a downloaded snapshot containing a `readmissionCountdown[selfId]` entry,
+      // including a sticky entry whose countdown reached zero. The
       // cluster's state creator excludes probation peers from `state.facilitators`; if we
       // ignore that and emit Facility/Proposal/Signature anyway, our declarations land in nobody's
       // expected committee and the round wedges at `progress=1/5` until the whole 90s phase

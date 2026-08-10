@@ -49,6 +49,32 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect(!decision.allowsOpenAdmission)
   }
 
+  test("Tier-1 silence eviction is suppressed while the signer set supports one more seat") {
+    val headroom = FinalityHeadroom.evaluate(
+      currentCommittee = committee,
+      locallyObservedParentSigners = committee.take(5),
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+
+    expect.same(6, headroom.currentCommitteeSize) &&
+    expect.same(5, headroom.observedCurrentCommitteeSigners) &&
+    expect.same(5, headroom.nextFinalityFloor) &&
+    expect(headroom.allowsExpansion) &&
+    expect(!headroom.allowsSilentEviction)
+  }
+
+  test("Tier-1 silence eviction is allowed only when next-seat finality headroom is absent") {
+    val headroom = FinalityHeadroom.evaluate(
+      currentCommittee = committee,
+      locallyObservedParentSigners = committee.take(4),
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+
+    expect.same(-1, headroom.margin) &&
+    expect(!headroom.allowsExpansion) &&
+    expect(headroom.allowsSilentEviction)
+  }
+
   test("off-cadence rounds suppress open admission even with sufficient headroom") {
     val decision = OpenAdmissionPolicy.evaluate(
       cadenceAllowed = false,

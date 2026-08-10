@@ -20,7 +20,7 @@ import weaver.FunSuite
   *   - the cap is `math.max(0, activeAdmissionMaxExpansionPerRound)` -- EXACTLY the limit `validateProposalAcs` enforces via
   *     `acs_too_many`, so a capped proposal can never be rejected for size
   *   - selection is deterministic under input-ordering permutations (two leaders building from the same assembled set must agree)
-  *   - kept certs are the lexicographically-first targets by `PeerId` value, per `AdmissionCertificate.ordering`
+  *   - the apply defense keeps lexicographic ordering while proposal construction uses entropy and prioritizes probation recovery
   */
 object AdmissionCertificateSelectorSuite extends FunSuite {
 
@@ -129,6 +129,17 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
     expect(selections.nonEmpty) &&
     forEach(selections)(selection => expect.same(selections.head, selection)) &&
     expect(selections.head.kept != List(certA))
+  }
+
+  test("proposal selection prioritizes probation recovery over open expansion") {
+    val entropy = Hash.fromBytes("probation-priority".getBytes("UTF-8"))
+    val probation = Set(certD.targetPeer)
+    val selections = all.permutations
+      .map(AdmissionCertificateSelector.selectForProposal(_, 1, entropy, probation))
+      .toList
+
+    expect(selections.nonEmpty) &&
+    forEach(selections)(selection => expect.same(List(certD), selection.kept))
   }
 
   test("apply defense keeps its version-stable legacy ordering") {

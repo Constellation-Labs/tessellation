@@ -40,6 +40,13 @@ object FinalityParticipationAuditor {
 
   final case class Observation(history: MissHistory, decision: Option[Decision])
 
+  /** Combine the three-round proof-miss hysteresis with the exact next-seat finality-headroom invariant.
+    *
+    * This remains a local vote-emission decision. A Core quorum of existing EvictionVotes is still required before membership changes.
+    */
+  def shouldEmitSilentEvictionVote(decision: Decision, headroom: FinalityHeadroom.Evaluation): Boolean =
+    decision.shouldVote && headroom.allowsSilentEviction
+
   def selectTarget(
     currentTier1: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
