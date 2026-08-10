@@ -2,6 +2,8 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats.Order
 
+import scala.concurrent.duration.{Duration, FiniteDuration}
+
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -22,30 +24,51 @@ object FinalityParticipationAuditor {
 
   final case class MissHistory(
     lastObservedParent: Option[ObservedParent],
-    consecutiveMisses: Map[PeerId, Int]
+    consecutiveMisses: Map[PeerId, Int],
+    missStartedAt: Map[PeerId, FiniteDuration]
   )
 
   object MissHistory {
-    val empty: MissHistory = MissHistory(None, Map.empty)
+    val empty: MissHistory = MissHistory(None, Map.empty, Map.empty)
   }
 
   final case class Decision(
     target: PeerId,
     signatureObserved: Boolean,
     consecutiveMisses: Int,
-    requiredConsecutiveMisses: Int
+    requiredConsecutiveMisses: Int,
+    consecutiveMissDuration: FiniteDuration,
+    requiredMissDuration: FiniteDuration
   ) {
-    def shouldVote: Boolean = !signatureObserved && consecutiveMisses >= requiredConsecutiveMisses
+    def roundHysteresisSatisfied: Boolean = consecutiveMisses >= requiredConsecutiveMisses
+    def durationHysteresisSatisfied: Boolean = consecutiveMissDuration >= requiredMissDuration
+    def shouldVote: Boolean = !signatureObserved && roundHysteresisSatisfied && durationHysteresisSatisfied
   }
 
   final case class Observation(history: MissHistory, decision: Option[Decision])
 
-  /** Combine the three-round proof-miss hysteresis with the exact next-seat finality-headroom invariant.
+  /** Combine proof-miss hysteresis, the exact current-seat finality deficit, and the existing membership-change cadence.
     *
     * This remains a local vote-emission decision. A Core quorum of existing EvictionVotes is still required before membership changes.
     */
-  def shouldEmitSilentEvictionVote(decision: Decision, headroom: FinalityHeadroom.Evaluation): Boolean =
-    decision.shouldVote && headroom.allowsSilentEviction
+  def shouldEmitSilentEvictionVote(
+    decision: Decision,
+    headroom: FinalityHeadroom.Evaluation,
+    cadenceAllowed: Boolean
+  ): Boolean =
+    decision.shouldVote && headroom.allowsSilentEviction && cadenceAllowed
+
+  /** Preserve the intended elapsed-time meaning of an N-round miss window when EventTrigger accelerates rounds.
+    *
+    * N observations span N-1 intervals from the first miss through the Nth miss. Reusing `timeTriggerInterval` gives the local auditor a
+    * stable lower bound without adding configuration. This is local abstention policy only; differing clocks or timing configuration cannot
+    * mutate membership without the existing Core-quorum certificate.
+    */
+  def minimumMissDuration(timeTriggerInterval: FiniteDuration, requiredConsecutiveMisses: Int): FiniteDuration = {
+    val intervals = math.max(0, requiredConsecutiveMisses - 1).toLong
+    if (timeTriggerInterval <= Duration.Zero) Duration.Zero
+    else timeTriggerInterval * intervals
+  }
 
   def selectTarget(
     currentTier1: Set[PeerId],
@@ -76,6 +99,8 @@ object FinalityParticipationAuditor {
     locallyObservedParentSigners: Set[PeerId],
     parentOrdinal: Long,
     entropy: Hash,
+    observedAt: FiniteDuration,
+    requiredMissDuration: FiniteDuration,
     inBootstrap: Boolean,
     previous: MissHistory,
     requiredConsecutiveMisses: Int = TierTransitions.DemotionConsecutiveMisses
@@ -86,34 +111,51 @@ object FinalityParticipationAuditor {
     else {
       val auditable = currentTier1.intersect(parentRoundCommittee)
       val observedParent = ObservedParent(parentOrdinal, entropy)
-      val nextMisses =
+      val (nextMisses, nextMissStartedAt) =
         if (previous.lastObservedParent.contains(observedParent))
-          auditable.iterator.map(pid => pid -> previous.consecutiveMisses.getOrElse(pid, 0)).toMap
+          (
+            auditable.iterator.map(pid => pid -> previous.consecutiveMisses.getOrElse(pid, 0)).toMap,
+            previous.missStartedAt.view.filterKeys(auditable.contains).toMap
+          )
         else {
-          val previousConsecutiveMisses = previous.lastObservedParent match {
-            case Some(parent) if parent.ordinal < Long.MaxValue && parent.ordinal + 1L == parentOrdinal =>
-              previous.consecutiveMisses
-            case _ => Map.empty[PeerId, Int]
+          val isConsecutive = previous.lastObservedParent.exists { parent =>
+            parent.ordinal < Long.MaxValue && parent.ordinal + 1L == parentOrdinal
           }
-          auditable.iterator.map { pid =>
-            val misses =
+          val previousConsecutiveMisses =
+            if (isConsecutive) previous.consecutiveMisses else Map.empty[PeerId, Int]
+          val previousMissStartedAt =
+            if (isConsecutive) previous.missStartedAt else Map.empty[PeerId, FiniteDuration]
+          val misses = auditable.iterator.map { pid =>
+            val count =
               if (locallyObservedParentSigners.contains(pid)) 0
               else math.min(required, previousConsecutiveMisses.getOrElse(pid, 0) + 1)
-            pid -> misses
+            pid -> count
           }.toMap
+          val startedAt = auditable.iterator.flatMap { pid =>
+            if (locallyObservedParentSigners.contains(pid)) None
+            else Some(pid -> previousMissStartedAt.getOrElse(pid, observedAt))
+          }.toMap
+
+          (misses, startedAt)
         }
-      val nextHistory = MissHistory(Some(observedParent), nextMisses)
+      val nextHistory = MissHistory(Some(observedParent), nextMisses, nextMissStartedAt)
       val decision = Option
         .when(currentCore.contains(selfId)) {
           selectTarget(currentTier1, parentRoundCommittee, entropy)
         }
         .flatten
         .map { target =>
+          val missDuration = nextMissStartedAt
+            .get(target)
+            .fold(Duration.Zero: FiniteDuration)(startedAt => (observedAt - startedAt).max(Duration.Zero))
+
           Decision(
             target = target,
             signatureObserved = locallyObservedParentSigners.contains(target),
             consecutiveMisses = nextMisses.getOrElse(target, 0),
-            requiredConsecutiveMisses = required
+            requiredConsecutiveMisses = required,
+            consecutiveMissDuration = missDuration,
+            requiredMissDuration = requiredMissDuration.max(Duration.Zero)
           )
         }
 

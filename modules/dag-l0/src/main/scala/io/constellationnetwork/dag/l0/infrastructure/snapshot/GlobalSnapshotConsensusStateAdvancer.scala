@@ -140,6 +140,24 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
 
+      override def synchronizeDownloadedOutcome(
+        artifact: Signed[GlobalSnapshotArtifact],
+        context: GlobalSnapshotContext
+      ): F[Unit] =
+        HasherSelector[F].withCurrent { implicit hasher =>
+          for {
+            hashed <- artifact.toHashed
+            _ <- logger.info(
+              s"[RecoveryDownload] Aligning application storage to newer accepted consensus outcome ordinal=${artifact.ordinal.show}"
+            )
+            _ <- lastNGlobalSnapshotStorage.setForRecovery(hashed, context)
+            _ <- lastGlobalSnapshotStorage.setForRecovery(hashed, context)
+            _ <- globalSnapshotStorage.setHeadForRecovery(artifact, context)
+            _ <- context.allStateEntries[F].flatMap(mptStore.syncFull[Json](_, artifact.ordinal))
+            _ <- clearCommittedEvents(artifact.value)
+          } yield ()
+        }
+
       /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
         * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
         *

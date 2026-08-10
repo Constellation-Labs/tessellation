@@ -103,6 +103,14 @@ object CurrencySnapshotConsensusStateAdvancer {
 
       private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromClass[F](getClass)
 
+      // Currency L0 does not use Global L0's incremental-recovery storage stack. Preserve its
+      // existing download handoff; the Global L0 implementation overrides this hook with the
+      // layer-specific snapshot-store and MPT alignment required by incremental recovery.
+      override def synchronizeDownloadedOutcome(
+        artifact: Signed[CurrencySnapshotArtifact],
+        context: CurrencySnapshotContext
+      ): F[Unit] = Applicative[F].unit
+
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
 

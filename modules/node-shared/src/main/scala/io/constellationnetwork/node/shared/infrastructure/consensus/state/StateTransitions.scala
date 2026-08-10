@@ -1429,19 +1429,32 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           val keyMatch = outcomeKey.get(o) === key
           val artifactMatch = outcomeArtifact.get(o) === artifact
           val contextMatch = outcomeContext.get(o) === context
-          if (keyMatch && artifactMatch && contextMatch) (o, isRecovery).pure[F]
-          else {
-            // If the peer returned a DIFFERENT outcome (cluster has moved on past our downloaded
-            // ordinal), accept it and treat as recovery — skip the 43s deferral so we join
-            // the cluster at its current tip instead of targeting a stale ordinal.
-            //
-            // Lower-ordinal outcomes cannot reach here: ConsensusRoutes returns Conflict() when
-            // the peer's key > requested key, and None when key doesn't match. Only the exact
-            // key match returns Some(outcome). This branch is defensive against future API changes.
-            val keyMismatch = outcomeKey.get(o) =!= key
-            if (keyMismatch)
-              (o, true).pure[F]
-            else
+          StateTransitions.downloadOutcomeDisposition(keyMatch, artifactMatch, contextMatch, isRecovery) match {
+            case StateTransitions.DownloadOutcomeDisposition.AcceptExact(isRecoveryEffective) =>
+              (o, isRecoveryEffective).pure[F]
+
+            // If the specific-outcome endpoint reports Conflict, fetchOutcomeFromCluster falls
+            // back to the peer's latest outcome. That can legitimately be N+1 after download
+            // converged at N. Accepting it into consensus without also moving layer storage to
+            // N+1 creates a torn handoff: consensus next emits N+2 while application storage
+            // still requires N+1. Align the layer before installing the newer outcome.
+            case StateTransitions.DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage =>
+              ctx.advancer
+                .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
+                ConsensusLog.info(
+                  log,
+                  Category.Lifecycle,
+                  outcomeKey.get(o).show,
+                  "n/a",
+                  LogEvent.DownloadInitStart,
+                  "stage" -> "newer_outcome_storage_aligned",
+                  "requestedKey" -> key.show,
+                  "acceptedKey" -> outcomeKey.get(o).show
+                ) >>
+                Metrics[F].incrementCounter("dag_consensus_download_newer_outcome_storage_aligned_total") >>
+                (o, true).pure[F]
+
+            case StateTransitions.DownloadOutcomeDisposition.Reject =>
               new Throwable(
                 s"[DownloadInit] Outcome validation failed after retries for key=$key: " +
                   s"keyMatch=$keyMatch, artifactMatch=$artifactMatch, contextMatch=$contextMatch"
@@ -1481,7 +1494,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       // split-brain. The marker is still written so a future deterministic-across-committee
       // reintroduction can reuse it without new plumbing. See
       // `ConsensusEngineContext.recoveredAtKeyRef` for full rationale.
-      _ <- ctx.recoveredAtKeyRef.set(Some(key))
+      _ <- ctx.recoveredAtKeyRef.set(Some(outcomeKey.get(outcome)))
       _ <- storage
         .trySetInitialConsensusOutcome(outcome)
         .ifM(
@@ -1882,6 +1895,29 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 }
 
 object StateTransitions {
+
+  private[consensus] sealed trait DownloadOutcomeDisposition
+
+  private[consensus] object DownloadOutcomeDisposition {
+    final case class AcceptExact(isRecoveryEffective: Boolean) extends DownloadOutcomeDisposition
+    case object AcceptAndAlignApplicationStorage extends DownloadOutcomeDisposition
+    case object Reject extends DownloadOutcomeDisposition
+  }
+
+  /** Classify the handoff independently of layer storage effects so the critical alignment rule is regression-tested.
+    *
+    * A different key is the latest-outcome fallback used when the requested outcome has already been evicted. It is accepted only with an
+    * application-storage alignment. A same-key artifact or context mismatch remains invalid.
+    */
+  private[consensus] def downloadOutcomeDisposition(
+    keyMatches: Boolean,
+    artifactMatches: Boolean,
+    contextMatches: Boolean,
+    isRecovery: Boolean
+  ): DownloadOutcomeDisposition =
+    if (keyMatches && artifactMatches && contextMatches) DownloadOutcomeDisposition.AcceptExact(isRecovery)
+    else if (!keyMatches) DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage
+    else DownloadOutcomeDisposition.Reject
 
   private[consensus] sealed trait ReadyPromotionPeerAlignment
 

@@ -83,15 +83,23 @@ mechanics, with its existing controller-target gate preserved.
     proof-miss streaks for every peer in `currentTier1 intersect
     parentRoundCommittee`, then select one audit target from that complete,
     consensus-agreed set by rendezvous rank. A current Core member emits the existing
-    `EvictionVote(Silent)` only after the target is absent from three consecutive
-    locally finalized parent artifact proof sets **and** those locally observed
-    current-committee signers cannot support the finality floor for one additional
-    seat. Reuse
-    `TierTransitions.DemotionConsecutiveMisses`; reset a peer's streak on any observed
-    proof. The eviction headroom check is the exact inverse of the open-admission
-    invariant in decision 14. Newly admitted peers are not auditable until they have
-    had a parent-round signing opportunity. Restart, missing parent evidence, or a
-    non-consecutive parent ordinal clears local streaks, delaying eviction conservatively.
+    `EvictionVote(Silent)` only when all of the following hold:
+    - the target is absent from three consecutive locally finalized parent artifact
+      proof sets, reusing `TierTransitions.DemotionConsecutiveMisses`;
+    - those observations span at least `(DemotionConsecutiveMisses - 1) *
+      timeTriggerInterval`, preserving the normal elapsed observation window when
+      EventTrigger accelerates rounds;
+    - locally observed current-committee signers are below the finality floor for the
+      **current** committee; and
+    - the round is on the existing `activeAdmissionExpansionIntervalRounds` cadence.
+
+    Any observed proof resets both the count and elapsed-time streak. Newly admitted
+    peers are not auditable until they have had a parent-round signing opportunity.
+    Restart, missing parent evidence, or a non-consecutive parent ordinal clears local
+    streaks, delaying eviction conservatively. The count, monotonic time, and cadence
+    are local vote-emission policy only; certified membership remains authoritative.
+    This cadence applies only to the proactive Tier-1 finality audit. Certified Core
+    stall eviction remains an every-round liveness recovery path.
 11. A Tier-1 target requires a Core-quorum certificate. A Core-target stall eviction
     retains the wider deterministic historical witness pool; the target's frozen tier
     selects between these two existing lanes at both assembly and validation.
@@ -123,6 +131,19 @@ mechanics, with its existing controller-target gate preserved.
     raise the active finality requirement; applying the later floor would also make
     singleton growth impossible under unanimity. Currency L0 does not apply this gate
     because its unanimity policy could never prove an unseated `(n + 1)`th signer.
+    Use the related current-seat invariant to create an exact three-state membership
+    policy, where `S` is the locally observed current-committee signer count and `F(n)`
+    is the configured finality floor for committee size `n`:
+
+    ```text
+    expand: S >= F(n + 1)
+    hold:   F(n) <= S < F(n + 1)
+    evict:  S < F(n)
+    ```
+
+    The neutral hold band is intentional. Making eviction the boolean complement of
+    expansion causes deterministic boundary oscillation when `F(n) == F(n + 1)` but
+    `F(n + 2)` steps upward.
 15. Proposal validation counts distinct voter PeerIds in each AdmissionCertificate,
     not the number of signed vote wrappers. DAG and Currency apply the same rule as
     certificate assembly.
@@ -142,13 +163,14 @@ mechanics, with its existing controller-target gate preserved.
 - Core can remain small and reliable while Tier 1 grows toward the healthy Ready
   population. Tier-1 silence does not enter the normal liveness denominator.
 - Open-admission gossip is bounded to approximately one vote per Core member per
-  round instead of one vote per monitor tick and candidate.
-- Finality-audit gossip is also bounded to at most one eviction vote per Core member
-  per round. No vote is emitted until that node has observed three consecutive proof
-  misses for the selected target **and** lacks next-seat finality headroom. A slow
-  Tier-1 peer is therefore retained while the observed signer population can safely
-  support the seat. This is an audit-work budget, not a cap on Tier-1 membership or
-  rewards.
+  cadence opportunity instead of one vote per monitor tick and candidate.
+- Finality-audit gossip is bounded to at most one eviction vote per Core member on the
+  same five-round cadence as open expansion. No vote is emitted until that node has
+  observed three consecutive proof misses over the configured minimum elapsed window
+  for the selected target **and** the current committee is already below its own
+  finality floor. The neutral current-floor-to-next-floor band changes no membership,
+  preventing adjacent-size oscillation. This is an audit-work budget, not a cap on
+  Tier-1 membership or rewards.
 - A Tier-1 lease is removed only when enough Core nodes independently failed to
   observe its signature by their parent-round finalization cutoffs and the resulting
   certificate is accepted. The assertion is quorum-observed untimeliness, not proof
