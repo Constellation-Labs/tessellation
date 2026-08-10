@@ -11,7 +11,7 @@ import io.constellationnetwork.node.shared.config.types.GossipDaemonConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
-import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage.{AddSuccess, CounterTooHigh}
+import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage.{AddSuccess, ChainRestarted, CounterTooHigh}
 import io.constellationnetwork.node.shared.infrastructure.gossip.p2p.GossipClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.generation.Generation
@@ -137,7 +137,18 @@ object GossipDaemon {
                     result === CounterTooHigh && rumor.origin === selfId && rumor.ordinal.generation === generation
                   )
               }
-              .map(_ === AddSuccess)
+              .flatTap { result =>
+                // Previously a silent drop. Worth a WARN: it means a range of this peer's rumors is
+                // permanently lost, and it is the signature of a peer that was unreachable for longer
+                // than its own rumor buffer.
+                logger
+                  .warn(
+                    s"Restarted rumor chain for origin=${rumor.origin.show} at ordinal=${rumor.ordinal.show}; " +
+                      s"the preceding range is unrecoverable and was skipped"
+                  )
+                  .whenA(result === ChainRestarted)
+              }
+              .map(result => result === AddSuccess || result === ChainRestarted)
           case _ => rumorStorage.addCommonRumorIfUnseen(hashedRumor.asInstanceOf[Hashed[CommonRumorRaw]])
         }
 
