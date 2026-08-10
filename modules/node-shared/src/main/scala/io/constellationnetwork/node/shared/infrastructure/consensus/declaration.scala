@@ -268,6 +268,10 @@ object declaration {
   sealed trait EvictionReason
 
   object EvictionReason {
+    // Used by both existing Core-target stall repair and the bounded Tier-1 finality
+    // audit. For a Tier-1 target, "Silent" means a Core quorum did not observe the
+    // target's MajoritySignature before its local parent-round finalization cutoff;
+    // it does not claim that the target never signed anywhere in the network.
     case object Silent extends EvictionReason
     // Extensibility reserved: LaggingTip, BadProposals, etc. Any new variant is a
     // consensus-critical schema change and requires cluster-wide deploy.
@@ -405,6 +409,13 @@ object declaration {
   )
 
   object AdmissionCertificate {
+
+    /** Count distinct voter PeerIds, not Signed wrapper instances. A malicious certificate can carry multiple differently encoded votes
+      * from one signer; proposal validation must not treat those as independent quorum members.
+      */
+    def uniqueVoterCount(certificate: AdmissionCertificate): Int =
+      certificate.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId).toSet.size
+
     implicit val ordering: Ordering[AdmissionCertificate] =
       Ordering.by { c =>
         (c.targetPeer.value.value, c.reason.toString, c.facilitatorsHash.value, c.lastSnapshotHash.value)
@@ -457,7 +468,13 @@ object declaration {
     // produces byte-identical JSON across nodes -- a `Map` (HashMap-backed) iterator order
     // is hash-bucket-dependent and would diverge between leaders running on different JVMs
     // or with different mutation histories, breaking the proposal-hash quorum check.
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
+    // Canonical open-admission nomination for the NEXT round. The leader chooses one
+    // entropy-ranked peer from the candidate advertisements in the Facilities it collected;
+    // followers adopt this exact value on Proposal acceptance. Carrying one nominee avoids
+    // asking next-round voters to rank node-local candidate universes, which can differ at
+    // quorum-crossing time. None is the backward-compatible/pre-upgrade value.
+    admissionNominee: Option[PeerId] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

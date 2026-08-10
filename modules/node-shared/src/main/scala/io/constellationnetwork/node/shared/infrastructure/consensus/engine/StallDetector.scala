@@ -49,6 +49,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   evictionVoter: EvictionVoter[F, Key],
   admissionVoter: AdmissionVoter[F, Key],
   probationPeersOf: Outcome => Set[PeerId],
+  admissionNomineesOf: Outcome => Set[PeerId],
+  openAdmissionCadenceOf: Key => Boolean,
+  locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
   lastSnapshotHashOf: Outcome => Hash,
   getPeerChainTips: F[Map[PeerId, ChainTip]],
   healthRef: Ref[F, ConsensusHealthStatus],
@@ -1288,8 +1291,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
   /** Admission emission trigger. For each probation peer (those in `readmissionCountdown`), if their gossiped chain tip in the mesh matches
     * the committee's expected tip or is within a small ordinal lag tolerance, emit an `AdmissionVote` for them and queue certificate
-    * assembly. Also emits bounded votes for non-committee candidates that are independently advertised by a quorum of current facilities
-    * and are observed at the committed tip.
+    * assembly. Core peers also emit a bounded open-expansion vote for the parent Proposal's canonical nominee.
     *
     * '''Witness channel''': probation peers are excluded from `state.facilitators` by the state-creator filter, so they never send Facility
     * declarations for the active round. The committee cannot witness them via `resources.peerDeclarationsMap`. Instead, every peer —
@@ -1302,9 +1304,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     * Safety: storage is first-write-wins per `(voter, target)`, so re-invocations within a round are idempotent. We gate the crypto work on
     * `resourcesChanged` in `runMonitorCycle` to avoid re-emission on every tick.
     *
-    * Determinism: all inputs — `readmissionCountdown` keys from `lastOutcome`, `lastOutcome.finished.snapshotHash`, signed
-    * `Facility.candidates`, and the peer's gossiped chain tip — are observable by committee members. Emission itself is local timing
-    * dependent, but committee mutation only occurs after quorum-certified AdmissionCertificates are embedded in an accepted proposal.
+    * Determinism: every Core peer reads the same proposal-carried parent nominee. A local chain-tip observation controls abstention only.
+    * Committee mutation still requires a quorum-certified AdmissionCertificate in an accepted proposal.
     */
   private def maybeEmitAdmissionVotes(
     key: Key,
@@ -1328,52 +1329,88 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     val committee = state.roundStartFacilitators.value.toSet
     val coreSize = math.max(1, state.coreFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
-    val maxOpenAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
-    // Deficit gate: emit expansion-candidate admission votes only while the active set is below its
-    // admission target -- the SAME condition under which the advancers' pre-proposal certificate
-    // wait (`maybeWaitForAdmissionCertificates`) considers admission evidence worth waiting for.
-    // At/above target every vote feeds an admit-then-drop churn loop (the certificate appends the
-    // target to the next round's facilitator base, the score filter ejects it from the active set,
-    // it drops back out of the base and is re-nominated), which on an 82-peer IntegrationNet made
-    // AdmissionVotes ~77% of all gossip (v4.1.0) without ever growing the committee. Below target,
-    // votes emit every round -- committee regrowth traffic must NOT be throttled (the certificate
-    // lane is the only entry into the facilitator base for new peers). Probation (penalty-expiry)
-    // re-admission below is deliberately NOT gated: it is bounded by `readmissionCountdown` and not
-    // deficit-bound. Requires the configured target to exceed the Core floor (scaled per
-    // environment in dag-l0.conf) -- see `ActiveFacilitatorAdmission.activeAdmissionTarget`.
-    val activeAdmissionTargetSize = ActiveFacilitatorAdmission.activeAdmissionTarget(
-      config.activeFacilitatorTarget,
-      config.coreCommitteeSize,
-      state.coreFacilitators.value.size
+    val bootstrapActive = ctx.isInBootstrap(state.lastOutcome)
+    val locallyObservedParentSigners = locallyObservedParentSignersOf(state.lastOutcome)
+    val openAdmissionPolicy = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = openAdmissionCadenceOf(key),
+      currentCommittee = committee,
+      locallyObservedParentSigners = locallyObservedParentSigners,
+      quorumThresholdFraction = config.quorumThresholdFraction,
+      // Bootstrap finality still uses the legacy Core-only gate. An admitted Tier-1 seat
+      // cannot raise that requirement, while applying the post-bootstrap next-seat floor
+      // here would make singleton growth impossible under a unanimity configuration.
+      headroomGateActive = !bootstrapActive
     )
-    val activeBelowTarget = state.roundStartFacilitators.value.size < activeAdmissionTargetSize
-    val candidateSupport =
-      resources.peerDeclarationsMap.toList.collect { case (peerId, declarations) if committee.contains(peerId) => declarations }
-        .flatMap(_.facility.toList)
-        .flatMap(_.candidates.value)
-        .filterNot(committee.contains)
-        .filterNot(probation.contains)
-        .toList
-        .groupBy(identity)
-        .view
-        .mapValues(_.size)
-        .toMap
-    val quorumObservedCandidates =
-      if (maxOpenAdmissions <= 0 || !activeBelowTarget) List.empty[PeerId]
+    val configuredMaxOpenAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
+    val maxOpenAdmissions =
+      if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxOpenAdmissions else 0
+    val canonicalNominees = admissionNomineesOf(state.lastOutcome)
+    // Open expansion has a fixed per-voter target set for the entire round. Selection happens
+    // before the local at-tip check, so a missing observation is an abstention rather than a walk
+    // to the next candidate. Probation votes remain a separate, wider liveness lane below.
+    val openAdmissionTargets = StallDetector.openAdmissionTargets(
+      candidates = canonicalNominees,
+      committee = committee,
+      probation = probation,
+      alreadyVotedBySelf = alreadyVotedBySelf,
+      entropy = expectedTip,
+      maxOpenAdmissions = maxOpenAdmissions,
+      selfIsCore = state.coreFacilitators.value.contains(selfId)
+    )
+
+    val policyOutcome =
+      if (!openAdmissionPolicy.cadenceAllowed) "off_cadence"
       else
-        candidateSupport.toList.collect {
-          case (pid, support) if support >= voteQuorum && !alreadyVotedBySelf.contains(pid) => (pid, support)
-        }.sortBy { case (pid, support) => (-support, pid.value.value) }
-          .take(maxOpenAdmissions)
-          .map(_._1)
+        openAdmissionPolicy.headroom match {
+          case Some(headroom) if !headroom.allowsExpansion                      => "insufficient_headroom"
+          case Some(_)                                                          => "allowed"
+          case None if bootstrapActive && locallyObservedParentSigners.nonEmpty => "bootstrap_cadence_only"
+          case None                                                             => "cadence_only"
+        }
+    val policyOutcomeLabel = Metrics.unsafeLabelName("outcome")
+    val recordOpenAdmissionPolicy =
+      Metrics[F].updateGauge(
+        "dag_consensus_open_admission_cadence_allowed",
+        if (openAdmissionPolicy.cadenceAllowed) 1L else 0L
+      ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_vote_allowed",
+          if (openAdmissionPolicy.allowsOpenAdmission) 1L else 0L
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_headroom_gate_active",
+          if (openAdmissionPolicy.headroom.nonEmpty) 1L else 0L
+        ) >>
+        openAdmissionPolicy.headroom.fold(Async[F].unit) { headroom =>
+          Metrics[F].updateGauge(
+            "dag_consensus_open_admission_observed_current_committee_signers",
+            headroom.observedCurrentCommitteeSigners.toLong
+          ) >>
+            Metrics[F].updateGauge(
+              "dag_consensus_open_admission_next_committee_size",
+              headroom.nextCommitteeSize.toLong
+            ) >>
+            Metrics[F].updateGauge(
+              "dag_consensus_open_admission_next_finality_floor",
+              headroom.nextFinalityFloor.toLong
+            ) >>
+            Metrics[F].updateGauge(
+              "dag_consensus_open_admission_finality_margin",
+              headroom.margin.toLong
+            )
+        } >>
+        Metrics[F].incrementCounter(
+          "dag_consensus_open_admission_policy_total",
+          Seq(policyOutcomeLabel -> policyOutcome)
+        )
 
     val clearStreaks =
       if (probation.isEmpty) b2AtTipStreakRef.set(Map.empty)
       else Async[F].unit
 
-    if (probation.isEmpty && quorumObservedCandidates.isEmpty) clearStreaks
+    if (probation.isEmpty && openAdmissionTargets.isEmpty) recordOpenAdmissionPolicy >> clearStreaks
     else
-      clearStreaks >> getPeerChainTips.flatMap { chainTips =>
+      recordOpenAdmissionPolicy >> clearStreaks >> getPeerChainTips.flatMap { chainTips =>
         // Per-tick stability bookkeeping. Increment the streak for any probation peer whose
         // mesh-reported tip matches the committed tip; reset to 0 otherwise. Drop entries for
         // peers no longer in probation so the map can't grow unbounded.
@@ -1411,7 +1448,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             streaks.getOrElse(pid, 0) >= minStreak
           }
           val readyCandidatesAtTip: List[PeerId] =
-            quorumObservedCandidates.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
+            openAdmissionTargets.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
           // Admission-gate diagnostic log per probation peer per tick.
           // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
           // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
@@ -1439,14 +1476,22 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               "probation" -> probation.size.toString,
               "atTip" -> atTipCount.toString,
               "ready" -> readyAtTip.size.toString,
-              "candidateSupport" -> candidateSupport.size.toString,
-              "candidateQuorumObserved" -> quorumObservedCandidates.size.toString,
+              "canonicalNominees" -> canonicalNominees.size.toString,
+              "openTargets" -> openAdmissionTargets.size.toString,
               "candidateReady" -> readyCandidatesAtTip.size.toString,
               "candidateVoteQuorum" -> voteQuorum.toString,
+              "openCadenceAllowed" -> openAdmissionPolicy.cadenceAllowed.toString,
+              "openVoteAllowed" -> openAdmissionPolicy.allowsOpenAdmission.toString,
+              "openPolicyOutcome" -> policyOutcome,
+              "openObservedSigners" -> openAdmissionPolicy.headroom
+                .map(_.observedCurrentCommitteeSigners.toString)
+                .getOrElse("n/a"),
+              "openNextFinalityFloor" -> openAdmissionPolicy.headroom.map(_.nextFinalityFloor.toString).getOrElse("n/a"),
+              "openFinalityMargin" -> openAdmissionPolicy.headroom.map(_.margin.toString).getOrElse("n/a"),
               "minStreak" -> minStreak.toString,
               "tipLagTolerance" -> admissionTipOrdinalLagTolerance.toString,
               "expectedOrdinal" -> expectedOrdinal.map(_.value.value.toString).getOrElse("none"),
-              "candidateTipOrdinals" -> quorumObservedCandidates
+              "candidateTipOrdinals" -> openAdmissionTargets
                 .flatMap(pid => chainTips.get(pid).map(tip => s"${pid.show.take(8)}:${tip.ordinal.value.value}"))
                 .mkString(","),
               "details" -> details
@@ -1460,6 +1505,43 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 }
 
 object StallDetector {
+
+  /** Select the fixed open-expansion targets a Core voter may consider in one round.
+    *
+    * The configured budget is applied before already-voted targets are removed. This ordering is load-bearing: applying `take` after
+    * removal turns each monitor tick into a cursor over the candidate list and lets a budget of one emit one vote per tick. The fixed
+    * prefix means a voter that already voted for its target is done for the round, and a voter that cannot locally verify that target
+    * abstains instead of walking to a different peer.
+    *
+    * Candidate order is rendezvous-hashed from the accepted parent snapshot hash, with PeerId as the final tie-break. Candidate input order
+    * therefore cannot affect the result.
+    */
+  private[consensus] def openAdmissionTargets(
+    candidates: Iterable[PeerId],
+    committee: Set[PeerId],
+    probation: Set[PeerId],
+    alreadyVotedBySelf: Set[PeerId],
+    entropy: Hash,
+    maxOpenAdmissions: Int,
+    selfIsCore: Boolean
+  ): List[PeerId] = {
+    val budget = math.max(0, maxOpenAdmissions)
+    val openVotesAlreadyUsed = (alreadyVotedBySelf -- probation).size
+    val remainingBudget = math.max(0, budget - openVotesAlreadyUsed)
+
+    if (!selfIsCore || remainingBudget == 0) List.empty
+    else {
+      implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
+      val fixedRoundTargets = candidates.iterator
+        .filterNot(pid => committee.contains(pid) || probation.contains(pid))
+        .toList
+        .distinct
+        .sorted(scoreOrder.toOrdering)
+        .take(budget)
+
+      fixedRoundTargets.filterNot(alreadyVotedBySelf.contains).take(remainingBudget)
+    }
+  }
 
   /** Linear increment applied to `maxRoundDuration` per view number when computing the per-view effective round deadline. Combined with
     * resetting `roundStartTime` on view change, this gives each view a fresh budget that grows slightly with view to reflect progressively

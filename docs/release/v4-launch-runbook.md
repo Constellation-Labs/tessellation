@@ -13,7 +13,7 @@ Ground truth is the code. Every claim below cites the source file and line it wa
 
 ## 1. Why a coordinated cold restart is mandatory
 
-The v4 jar bumps `consensusSchemaVersion` to **33** (`config/types.scala:830`) and folds several dozen
+The v4.1 jar bumps `consensusSchemaVersion` to **34** (`config/types.scala`) and folds several dozen
 consensus knobs plus the schema version into a single `deterministicConfigHash`
 (`config/types.scala:950-1044`). That hash is a handshake fence:
 

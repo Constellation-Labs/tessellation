@@ -526,7 +526,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                   removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ forkEvictedPeers)
                 )
               else state
-            maybeWaitForAdmissionCertificates(updatedState, resources, facilities).flatMap { waitForAcs =>
+            maybeWaitForAdmissionCertificates(updatedState, resources).flatMap { waitForAcs =>
               if (waitForAcs)
                 ConsensusLog
                   .info(
@@ -537,8 +537,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                     Event.Admission,
                     "stage" -> "pre_proposal_grace",
                     "active" -> updatedState.roundStartFacilitators.value.size.toString,
-                    "target" -> activeAdmissionTarget(updatedState).toString,
-                    "candidates" -> openAdmissionCandidates(updatedState, facilities).size.toString,
+                    "activeTarget" -> activeAdmissionTarget(updatedState).toString,
+                    "nominees" -> openAdmissionNominees(updatedState).size.toString,
                     "admissionVoteTargets" -> resources.admissionVotes.size.toString
                   )
                   .as(none[Transition])
@@ -556,31 +556,67 @@ object CurrencySnapshotConsensusStateAdvancer {
           state.coreFacilitators.value.size
         )
 
-      private def openAdmissionCandidates(
-        state: CurrencySnapshotConsensusState,
-        facilities: SortedMap[PeerId, Facility]
+      private def openExpansionAllowedAt(state: CurrencySnapshotConsensusState): Boolean =
+        ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+          state.key.value.value,
+          config.activeAdmissionExpansionIntervalRounds
+        )
+
+      private def openAdmissionNominees(
+        state: CurrencySnapshotConsensusState
       ): Set[PeerId] = {
         val committee = state.roundStartFacilitators.value.toSet
-        facilities.values.flatMap(_.candidates.value).filterNot(committee.contains).toSet
+        val probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        val penalized = activeAdmissionPenaltyPeers(state)
+        state.lastOutcome.finished.candidates.value -- committee -- probation -- penalized
+      }
+
+      private def activeAdmissionPenaltyPeers(state: CurrencySnapshotConsensusState): Set[PeerId] = {
+        val countdown = state.lastOutcome.removalPenalties.filter(_._2 > 0).keySet
+        val absolute = state.lastOutcome.penaltyUntil
+          .getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal])
+          .filter { case (_, until) => until.value.value > state.key.value.value }
+          .keySet
+        countdown ++ absolute
+      }
+
+      private def selectAdmissionNominee(
+        state: CurrencySnapshotConsensusState,
+        candidates: Set[PeerId]
+      ): Option[PeerId] = {
+        val excluded =
+          state.roundStartFacilitators.value.toSet ++
+            state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet ++
+            activeAdmissionPenaltyPeers(state)
+        val activeBelowTarget = state.roundStartFacilitators.value.size < activeAdmissionTarget(state)
+
+        Option
+          .when(config.activeAdmissionMaxExpansionPerRound > 0 && activeBelowTarget)(
+            AdmissionNomineeSelector.select(candidates, excluded, state.entropy)
+          )
+          .flatten
       }
 
       private def maybeWaitForAdmissionCertificates(
         state: CurrencySnapshotConsensusState,
-        resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
-        facilities: SortedMap[PeerId, Facility]
+        resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
       ): F[Boolean] =
         for {
           now <- Async[F].monotonic
           acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
-          target = activeAdmissionTarget(state)
-          activeBelowTarget = state.roundStartFacilitators.value.size < target
-          hasAdmissionEvidence = openAdmissionCandidates(state, facilities).nonEmpty || resources.admissionVotes.nonEmpty
+          activeBelowTarget = state.roundStartFacilitators.value.size < activeAdmissionTarget(state)
+          probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+          openAllowed = openExpansionAllowedAt(state)
+          hasAdmissionEvidence =
+            (openAllowed && openAdmissionNominees(state).nonEmpty) ||
+              resources.admissionVotes.keysIterator.exists(target => probation.contains(target) || openAllowed)
+          hasApplicableCertificate = acs.exists(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
           graceOpen = now - state.createdAt < AdmissionPreProposalGrace
         } yield
           activeBelowTarget &&
             config.activeAdmissionMaxExpansionPerRound > 0 &&
             hasAdmissionEvidence &&
-            acs.isEmpty &&
+            !hasApplicableCertificate &&
             graceOpen
 
       /** Caps the assembled admission certificates attached to an outgoing proposal at the validation limit (`acs_too_many` in
@@ -589,23 +625,30 @@ object CurrencySnapshotConsensusStateAdvancer {
         * `GlobalSnapshotConsensusStateAdvancer.capAssembledAdmissionCertificates` (keep in sync).
         */
       private def capAssembledAdmissionCertificates(
-        key: CurrencySnapshotKey,
+        state: CurrencySnapshotConsensusState,
         assembled: Set[AdmissionCertificate]
       ): F[List[AdmissionCertificate]] = {
-        val selection = AdmissionCertificateSelector.select(assembled, config.activeAdmissionMaxExpansionPerRound)
+        val probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        val openAllowed = openExpansionAllowedAt(state)
+        val cadenceEligible = assembled.filter(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
+        val cadenceSuppressed = assembled -- cadenceEligible
+        val selection =
+          AdmissionCertificateSelector.selectForProposal(cadenceEligible, config.activeAdmissionMaxExpansionPerRound, state.entropy)
+        val dropped = selection.dropped.toSet ++ cadenceSuppressed
         ConsensusLog
           .info(
             logger,
             Category.Phase,
-            key.show,
+            state.key.show,
             "Leader",
             Event.Admission,
             "stage" -> "proposal_cap",
+            "openCadenceAllowed" -> openAllowed.toString,
             "kept" -> selection.kept.map(c => ConsensusLog.pid(c.targetPeer)).mkString(","),
-            "dropped" -> selection.dropped.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
+            "dropped" -> dropped.toList.map(c => ConsensusLog.pid(c.targetPeer)).sorted.mkString(",")
           )
           .productR(Metrics[F].incrementCounter("dag_consensus_admission_cert_capped_total"))
-          .whenA(selection.dropped.nonEmpty)
+          .whenA(dropped.nonEmpty)
           .as(selection.kept)
       }
 
@@ -743,12 +786,14 @@ object CurrencySnapshotConsensusStateAdvancer {
             // removed only after the winning artifact is finalized and persisted, so a proposed-but-
             // not-committed event survives in the mempool and is re-proposed next round.
             hash <- hashArtifact(artifact)
+            admissionNominee = selectAdmissionNominee(state, candidates)
             isLeader = selfId === state.leader
             role = if (isLeader) "LEADER" else "FOLLOWER"
             withdrawnCount = state.withdrawnFacilitators.value.size
             _ <- logger.info(
               s"[CONSENSUS:$role] FACILITIES->PROPOSALS key=${state.key.show} ordinal=${artifact.ordinal.show} trigger=$majorityTrigger " +
                 s"hash=${hash.show.take(8)}... facilitators=${state.facilitators.value.size} candidates=${candidates.size} " +
+                s"admissionNominee=${admissionNominee.map(ConsensusLog.pid).getOrElse("none")} " +
                 s"leader=${state.leader.show.take(8)}... self=${selfId.show.take(8)}... view=${state.viewNumber}" +
                 (if (withdrawnCount > 0) s" withdrawn=$withdrawnCount" else "") +
                 s" facilitatorsHash=${facilitatorsHash.show.take(8)}... lastSnapshotHash=${state.lastOutcome.finished.snapshotHash.show
@@ -826,7 +871,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                   CollectingProposals(
                     majorityTrigger,
                     ArtifactInfo(artifact, context, hash),
-                    Candidates(candidates),
+                    Candidates(admissionNominee.toSet),
                     facilitatorsHash,
                     state.lastOutcome.finished.snapshotHash,
                     observedResponders,
@@ -841,7 +886,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
                       acs <- consensusStorage
                         .getAssembledAdmissionCertificates(state.key)
-                        .flatMap(capAssembledAdmissionCertificates(state.key, _))
+                        .flatMap(capAssembledAdmissionCertificates(state, _))
                     } yield (ecs, acs)).flatMap {
                       case (ecs, acs) =>
                         spreadProposal(
@@ -857,7 +902,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                           ecs.toList,
                           acs,
                           observedResponders,
-                          observedSelfHealth
+                          observedSelfHealth,
+                          admissionNominee
                         )
                     }
                   else
@@ -938,7 +984,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                     else consensusStorage.getAssembledEvictionCertificates(state.key)
                   acs <- consensusStorage
                     .getAssembledAdmissionCertificates(state.key)
-                    .flatMap(capAssembledAdmissionCertificates(state.key, _))
+                    .flatMap(capAssembledAdmissionCertificates(state, _))
                 } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
                   case (maybeVcc, maybeTc, ecs, acs) =>
                     logger.info(
@@ -961,7 +1007,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                         // immutable status, not recomputed from current resources.
                         // v15: same rationale for observedSelfHealth.
                         status.observedResponders,
-                        status.observedSelfHealth
+                        status.observedSelfHealth,
+                        status.candidates.value.headOption
                       ).as(none[Transition])
                 }
               else
@@ -1042,8 +1089,13 @@ object CurrencySnapshotConsensusStateAdvancer {
                 )
               else if (!committee.contains(cert.targetPeer))
                 Left(ProposalRejection(s"ecs_target_not_in_committee target=${cert.targetPeer.show.take(8)}"))
-              else if (cert.votes.size < q)
-                Left(ProposalRejection(s"ecs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q"))
+              else if (cert.votes.toList.map(_.proofs.head.id.toPeerId).toSet.size < q)
+                Left(
+                  ProposalRejection(
+                    s"ecs_under_quorum target=${cert.targetPeer.show.take(8)} " +
+                      s"uniqueVoters=${cert.votes.toList.map(_.proofs.head.id.toPeerId).toSet.size} required=$q"
+                  )
+                )
               else {
                 val mismatched = cert.votes.toList.find { signed =>
                   signed.value.targetPeer =!= cert.targetPeer ||
@@ -1059,11 +1111,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // Pool widens from the round-start committee to the union of
-                    // `eligibleFacilitators` and historical participants in `lastOutcome.peerQuality`.
-                    // See dag-l0 mirror for the full determinism analysis; both sides of the round
-                    // derive the byte-identical pool via the shared WitnessPool helper.
-                    val witnessPool = WitnessPool
+                    // Mirror dag-l0 and the shared assembly site exactly: Tier-1 targets
+                    // require Core attestations, while Core-target stall repair keeps the
+                    // wider historical witness lane.
+                    val widerWitnessPool = WitnessPool
                       .forTarget(
                         state.eligibleFacilitators.value.toSet,
                         state.lastOutcome.peerQuality.toMap,
@@ -1071,6 +1122,12 @@ object CurrencySnapshotConsensusStateAdvancer {
                         cert.targetPeer
                       )
                       .union(state.roundStartFacilitators.value.toSet - cert.targetPeer)
+                    val witnessPool = EvictionVoterPool.select(
+                      cert.targetPeer,
+                      state.tier1Facilitators.value.contains(cert.targetPeer),
+                      state.coreFacilitators.value.toSet,
+                      widerWitnessPool
+                    )
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
@@ -1126,15 +1183,25 @@ object CurrencySnapshotConsensusStateAdvancer {
         val n = state.coreFacilitators.value.size
         val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
-        val probation = state.lastOutcome.readmissionCountdown.keySet
-        val penalized = state.lastOutcome.removalPenalties.filter(_._2 > 0).keySet
+        val probation = state.lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        val penalized = activeAdmissionPenaltyPeers(state)
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
+
+        proposal.admissionNominee.foreach { nominee =>
+          if (committee.contains(nominee))
+            return Left(ProposalRejection(s"admission_nominee_already_in_committee target=${nominee.show.take(8)}"))
+          if (probation.contains(nominee))
+            return Left(ProposalRejection(s"admission_nominee_in_probation target=${nominee.show.take(8)}"))
+          if (penalized.contains(nominee))
+            return Left(ProposalRejection(s"admission_nominee_penalized target=${nominee.show.take(8)}"))
+        }
 
         @scala.annotation.tailrec
         def loop(remaining: List[AdmissionCertificate], seenTargets: Set[PeerId]): Either[ProposalRejection, Unit] =
           remaining match {
             case Nil => Right(())
             case cert :: tail =>
+              val uniqueVoterCount = AdmissionCertificate.uniqueVoterCount(cert)
               if (seenTargets.contains(cert.targetPeer))
                 Left(ProposalRejection(s"acs_duplicate_target target=${cert.targetPeer.show.take(8)}"))
               else if (cert.facilitatorsHash =!= facilitatorsHash)
@@ -1153,12 +1220,23 @@ object CurrencySnapshotConsensusStateAdvancer {
                 )
               else if (committee.contains(cert.targetPeer))
                 Left(ProposalRejection(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}"))
-              else if (penalized.contains(cert.targetPeer))
+              else if (OpenAdmissionPolicy.penaltyBlocksCertificate(cert.targetPeer, probation, penalized))
                 Left(ProposalRejection(s"acs_target_penalized target=${cert.targetPeer.show.take(8)}"))
+              // The parent nominee coordinates vote emission; the Core-quorum certificate is
+              // the authorization applied to state. Do not require the local recovered Outcome
+              // to retain that ephemeral nominee: snapshot download/recovery reconstructs old
+              // Finished values without it and must still accept a valid certificate.
               else if (!probation.contains(cert.targetPeer) && cert.reason =!= AdmissionReason.ReadyAtTip)
                 Left(ProposalRejection(s"acs_target_not_admissible target=${cert.targetPeer.show.take(8)} reason=${cert.reason.show}"))
-              else if (cert.votes.size < q)
-                Left(ProposalRejection(s"acs_under_quorum target=${cert.targetPeer.show.take(8)} votes=${cert.votes.size} required=$q"))
+              else if (!OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openExpansionAllowedAt(state)))
+                Left(ProposalRejection(s"acs_open_expansion_off_cadence target=${cert.targetPeer.show.take(8)}"))
+              else if (uniqueVoterCount < q)
+                Left(
+                  ProposalRejection(
+                    s"acs_under_quorum target=${cert.targetPeer.show.take(8)} " +
+                      s"uniqueVoters=$uniqueVoterCount votes=${cert.votes.size} required=$q"
+                  )
+                )
               else {
                 val mismatched = cert.votes.toList.find { signed =>
                   signed.value.targetPeer =!= cert.targetPeer ||
@@ -1174,14 +1252,21 @@ object CurrencySnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // Symmetric widening with B1 -- see validateProposalEcs above.
-                    val witnessPool = WitnessPool.forTarget(
-                      state.eligibleFacilitators.value.toSet,
-                      state.lastOutcome.peerQuality.toMap,
-                      config.minParticipationObservations,
-                      cert.targetPeer
+                    val widerWitnessPool = WitnessPool
+                      .forTarget(
+                        state.eligibleFacilitators.value.toSet,
+                        state.lastOutcome.peerQuality.toMap,
+                        config.minParticipationObservations,
+                        cert.targetPeer
+                      )
+                      .union(state.roundStartFacilitators.value.toSet - cert.targetPeer)
+                    val voterPool = AdmissionVoterPool.select(
+                      cert.targetPeer,
+                      probation.contains(cert.targetPeer),
+                      state.coreFacilitators.value.toSet,
+                      widerWitnessPool
                     )
-                    val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+                    val nonWitnessPoolVoter = cert.votes.toList.find(sv => !voterPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
                         Left(
@@ -1380,7 +1465,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               leaderProposal.evictionCertificates,
               leaderProposal.admissionCertificates,
               leaderProposal.observedResponders,
-              leaderProposal.observedSelfHealth
+              leaderProposal.observedSelfHealth,
+              leaderProposal.admissionNominee
             )
         } else {
           // Leader proposed a different artifact — validate theirs
@@ -1404,7 +1490,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                       leaderProposal.evictionCertificates,
                       leaderProposal.admissionCertificates,
                       leaderProposal.observedResponders,
-                      leaderProposal.observedSelfHealth
+                      leaderProposal.observedSelfHealth,
+                      leaderProposal.admissionNominee
                     )
                 case Left(invalidArtifact) =>
                   val diffDetail = describeInvalidArtifact(invalidArtifact)
@@ -1493,7 +1580,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         leaderEvictionCerts: List[EvictionCertificate] = List.empty,
         leaderAdmissionCerts: List[AdmissionCertificate] = List.empty,
         leaderObservedResponders: List[PeerId] = List.empty,
-        leaderObservedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
+        leaderObservedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
+        leaderAdmissionNominee: Option[PeerId] = None
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val evictedTargets: Set[PeerId] =
           if (isInBootstrap(state)) Set.empty
@@ -1598,7 +1686,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                     status = CollectingSignatures(
                       majorityInfo,
                       status.majorityTrigger,
-                      status.candidates,
+                      Candidates(leaderAdmissionNominee.toSet),
                       facilitatorsHash,
                       state.lastOutcome.finished.snapshotHash
                     )
@@ -1877,7 +1965,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         evictionCertificates: List[EvictionCertificate] = List.empty,
         admissionCertificates: List[AdmissionCertificate] = List.empty,
         observedResponders: List[PeerId] = List.empty,
-        observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
+        admissionNominee: Option[PeerId] = None
       ): F[Unit] = {
         val sortedEcs = evictionCertificates.sorted(EvictionCertificate.ordering)
         val sortedAcs = admissionCertificates.sorted(AdmissionCertificate.ordering)
@@ -1895,7 +1984,8 @@ object CurrencySnapshotConsensusStateAdvancer {
               evictionCertificates = sortedEcs,
               admissionCertificates = sortedAcs,
               observedResponders = sortedObs,
-              observedSelfHealth = observedSelfHealth
+              observedSelfHealth = observedSelfHealth,
+              admissionNominee = admissionNominee
             )
           )
         val targets = state.facilitators.value.toSet
