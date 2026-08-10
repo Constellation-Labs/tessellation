@@ -98,8 +98,19 @@ jobs:
           - { name: dag-cluster,            tests: "dag-cluster" }
           - { name: delegated-staking,      tests: "delegated-staking" }
           - { name: token-lock-replacement, tests: "token-lock-replacement" }
-          # TODO: re-enable once PR #1485 is merged
-          # - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core" }
+          # DISABLED on a NODE bug, not a test bug. The Phase-1 gate was unsatisfiable and is now
+          # fixed (see docker/bin/test-fork-recovery.sh); phases 1 and 2 pass, and the cluster keeps
+          # producing snapshots while a seated peer is isolated. Phase 3 then wedges: on restore,
+          # peers re-graft the returning node into the gossip mesh but leave it at
+          # WaitingForObserving in their cluster registry, while the node itself reports Ready.
+          # Consensus derives committees from peerHistory rather than that registry, so it can elect
+          # the returning node LEADER -- whose Proposal/Signature declarations every peer then
+          # ignores. Observed locally 2026-07-31: ordinal 41 held for 900s with all 5 nodes Ready and
+          # at tip. Re-enable once that rejoin/leader-eligibility mismatch is fixed; the entry below
+          # is correct as written, including the timeout (the test's own budget is ~40 min, so the
+          # 30 min default would have killed it regardless).
+          # The previous note here blocked on PR #1485, which was closed without ever merging.
+          # - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core", timeout: 60 }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }

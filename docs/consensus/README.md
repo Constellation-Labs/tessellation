@@ -287,6 +287,19 @@ The "always-handled" cases (rumors, `CheckUpdate`, `PeerObserved`, and the cert 
 
 The handler also force-completes a stuck round when an `InitializeFromDownload` arrives in `Observing` while still BUSY (recovery's stale-round escape hatch); under any other node state it re-queues the command after 1s without blocking the event loop.
 
+### Currency L0 rollback committee recovery
+
+Currency L0 rollback normally initializes the next consensus outcome from the
+rolled-back snapshot's proof signers. A fully stopped metagraph can use
+`run-rollback --allow-solo-consensus` on exactly one coordinated recovery node
+to bootstrap progress before the other nodes rejoin as ordinary validators.
+The flag is off by default and two isolated uses can create conflicting
+histories. See the
+[Currency L0 single-node rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
+for the compatibility boundary, committee-regrowth trace, metrics, and rollout
+procedure, and distribute the corresponding
+[operator release note](../release/currency-l0-solo-rollback.md) before use.
+
 ### Round-Blocked States
 
 > **Note (v2 change):** The FSM blocks round starts when the node is in recovery or leaving states to prevent infinite loops.

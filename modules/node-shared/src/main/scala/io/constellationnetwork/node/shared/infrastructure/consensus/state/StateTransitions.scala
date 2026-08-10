@@ -1037,15 +1037,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // Pool widens further to include `lastOutcome.peerQuality` peers
-                    // (participated >= minParticipationObservations). The earlier widening to
-                    // `eligibleFacilitators` did not cover the post-rollback wedge at ord 3122488 where
-                    // the chronic-classifier excluded most non-source peers AND the committee was the
-                    // entire eligibleFacilitators set. Adding historical participants -- peers consensus-
-                    // agreed to have voted in past rounds -- preserves the supermajority quorum (still
-                    // committee-sized) while allowing rotated-out peers with proven history to witness
-                    // the cert. See `widerWitnessPool` for the full determinism analysis.
-                    val witnessPool = widerWitnessPool(state, target)
+                    // Tier-1 finality-participation eviction is Core-attested. Core-target
+                    // stall eviction keeps the wider historical witness recovery lane that
+                    // prevents a damaged Core committee from making its own repair impossible.
+                    // The shared selector is also used by both proposal validators so assembly
+                    // and acceptance cannot drift.
+                    val witnessPool = EvictionVoterPool.select(
+                      target,
+                      state.tier1Facilitators.value.contains(target),
+                      state.coreFacilitators.value.toSet,
+                      widerWitnessPool(state, target)
+                    )
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
                       case Left(error) =>
@@ -1118,7 +1120,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     }
 
   /** Handle `CheckAdmissionAssembly(key, target)` command. Mirrors [[checkEvictionAssembly]]. Attempts to assemble an
-    * `AdmissionCertificate` for `target` once the `AdmissionVote` store holds at least quorum votes agreeing on `facilitatorsHash`.
+    * `AdmissionCertificate` for `target` once the `AdmissionVote` store holds at least quorum unique voters agreeing on `facilitatorsHash`.
     *
     * Like B1, certificate assembly is side-effect free for `state.facilitators` / `state.admittedFacilitators` — those mutations happen at
     * advancer proposal-acceptance time (Phase 6 of the B2 rollout).
@@ -1131,27 +1133,36 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           val votes = resources.admissionVotes.getOrElse(target, Map.empty)
           // v19: ACS assembly quorum threshold computed against the Core committee --
           // mirrors `validateProposalAcs` in the advancer. See ECS assembly above for the
-          // full rationale on decoupling LIVENESS quorum (Core-sized) from signing pool
-          // (witness-widened from `roundStartFacilitators`). Integer math via
-          // `QuorumPolicy.fromFraction`.
+          // full rationale on decoupling the Core-sized liveness quorum from the broad
+          // signing committee. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
           val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
-          if (votes.size >= q) {
+          // Open expansion is certified by Core only: Tier 1 remains outside the liveness
+          // machinery and cannot become necessary for committee growth. Penalty readmission is
+          // deliberately different. A peer already in probation may need the historical witness
+          // lane to recover from the exact committee failure that evicted it, so retain the wider
+          // deterministic pool for that path.
+          val isProbationReadmission = ctx.probationPeersOf(state.lastOutcome).contains(target)
+          val voterPool = AdmissionVoterPool.select(
+            target,
+            isProbationReadmission,
+            state.coreFacilitators.value.toSet,
+            widerWitnessPool(state, target)
+          )
+          val eligibleVotes = votes.filter { case (voter, _) => voterPool.contains(voter) }
+
+          if (eligibleVotes.size >= q) {
             val byHash: Map[Hash, Int] =
-              votes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap
+              eligibleVotes.values.groupBy(_.value.facilitatorsHash).view.mapValues(_.size).toMap
             byHash.toList.sortBy(-_._2) match {
               case (facHash, voteCount) :: _ if voteCount >= q =>
-                val matchingVotes = votes.filter { case (_, signed) => signed.value.facilitatorsHash == facHash }
+                val matchingVotes = eligibleVotes.filter { case (_, signed) => signed.value.facilitatorsHash == facHash }
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // Symmetric widening with B1 -- pool extended to include
-                    // historical participants from `peerQuality` (see `widerWitnessPool` for the
-                    // determinism analysis). Quorum stays committee-sized.
-                    val witnessPool = widerWitnessPool(state, target)
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     AdmissionCertificateBuilder
-                      .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
+                      .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, voterPool) match {
                       case Left(error) =>
                         ConsensusLog.warn(
                           log,
@@ -1215,7 +1226,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 LogEvent.Admission,
                 "assembly" -> "waiting_for_quorum",
                 "target" -> ConsensusLog.pid(target),
-                "votes" -> votes.size.toString,
+                "votes" -> eligibleVotes.size.toString,
+                "discardedNonVoters" -> (votes.size - eligibleVotes.size).toString,
                 "quorum" -> q.toString
               )
             )

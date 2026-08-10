@@ -210,19 +210,16 @@ object GlobalSnapshotConsensus {
         activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
         activeFacilitatorMax = resolvedActiveFacilitatorMax
       )
-      // Fail fast on sizing invariants that would boot a hash-consistent cluster straight into a
-      // quorum-feasibility wedge (the pre-scaling base scalars violated both: target 7 / max 13 vs
-      // integrationnet floor 9 and mainnet floor 15). Enforced only for explicitly configured
-      // values: an absent env entry falls back to target = coreCommitteeSize at the consumers,
-      // the intended shape for currency metagraphs.
+      // Fail fast on Core-controller sizing invariants. Enforced only for explicitly configured
+      // values; these bounds classify Core and do not cap broad Tier-1 signing membership.
       _ <- new IllegalArgumentException(
         s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
-          s" ($resolvedCoreCommitteeSize): the admission deficit gate would close before Core can reach its floor"
+          s" ($resolvedCoreCommitteeSize): the Core controller requires classification headroom"
       ).raiseError[F, Unit]
         .whenA(resolvedActiveFacilitatorTarget.exists(_ <= resolvedCoreCommitteeSize))
       _ <- new IllegalArgumentException(
         s"active-facilitator-max ($resolvedActiveFacilitatorMax) must be >= core-committee-size" +
-          s" ($resolvedCoreCommitteeSize): the active set would cap below the Core floor"
+          s" ($resolvedCoreCommitteeSize): the Core classification cannot cap below its floor"
       ).raiseError[F, Unit]
         .whenA(resolvedActiveFacilitatorMax.exists(_ < resolvedCoreCommitteeSize))
       _ <- new IllegalArgumentException(
@@ -241,6 +238,37 @@ object GlobalSnapshotConsensus {
         GlobalConsensusOutcome,
         GlobalConsensusKind
       ](effectiveConsensusConfig)
+
+      // Global L0 injects the command queue so the round-creation Tier-1 finality audit can
+      // enqueue the existing certificate-assembly command before sending its first Facility.
+      // Currency L0 and generic callers continue to let ConsensusEventLoop allocate internally.
+      consensusQueue <- Queue.unbounded[
+        F,
+        ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
+      ]
+      // Node-local proof-miss streaks are intentionally not restored. A restart starts at zero,
+      // delaying Tier-1 eviction until three new consecutive misses are locally observed.
+      tier1FinalityMissHistoryRef <- Ref.of[F, FinalityParticipationAuditor.MissHistory](
+        FinalityParticipationAuditor.MissHistory.empty
+      )
+
+      evictionVoter = new GossipingEvictionVoter[
+        F,
+        GlobalSnapshotEvent,
+        GlobalSnapshotKey,
+        GlobalSnapshotArtifact,
+        GlobalSnapshotContext,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        GlobalConsensusKind
+      ](
+        selfId,
+        keyPair,
+        gossip,
+        consensusStorage,
+        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        Slf4jLogger.getLogger[F]
+      )
 
       consensusFunctions =
         GlobalSnapshotConsensusFunctions.make[F](
@@ -321,7 +349,10 @@ object GlobalSnapshotConsensus {
           // v19 per-environment Core floor. v20 routes the env-resolved value through
           // `effectiveConsensusConfig.coreCommitteeSize`, so this single binding is what
           // both the state creator and `deterministicConfigHash` see.
-          resolvedCoreCommitteeSize
+          resolvedCoreCommitteeSize,
+          evictionVoter,
+          consensusQueue,
+          tier1FinalityMissHistoryRef
         )
 
       stateRemover =
@@ -363,24 +394,6 @@ object GlobalSnapshotConsensus {
       )
 
       timeoutVoter = new GossipingTimeoutVoter[
-        F,
-        GlobalSnapshotEvent,
-        GlobalSnapshotKey,
-        GlobalSnapshotArtifact,
-        GlobalSnapshotContext,
-        GlobalSnapshotStatus,
-        GlobalConsensusOutcome,
-        GlobalConsensusKind
-      ](
-        selfId,
-        keyPair,
-        gossip,
-        consensusStorage,
-        (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
-        Slf4jLogger.getLogger[F]
-      )
-
-      evictionVoter = new GossipingEvictionVoter[
         F,
         GlobalSnapshotEvent,
         GlobalSnapshotKey,
@@ -459,12 +472,20 @@ object GlobalSnapshotConsensus {
           admissionVoter,
           (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
           (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: GlobalConsensusOutcome) => o.finished.candidates.value,
+          (key: GlobalSnapshotKey) =>
+            ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+              key.value.value,
+              effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
+            ),
+          (o: GlobalConsensusOutcome) => Some(o.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet),
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
           peersCommittedAheadProbe,
-          injectedHealthRef
+          injectedHealthRef,
+          Some(consensusQueue)
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

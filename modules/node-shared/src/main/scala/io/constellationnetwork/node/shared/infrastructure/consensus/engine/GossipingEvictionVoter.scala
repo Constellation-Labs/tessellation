@@ -20,9 +20,9 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 import io.circe.Encoder
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 
-/** Concrete [[EvictionVoter]] that signs an `EvictionVote` with the local keypair, stores it locally, gossips it to the current facilitator
-  * set as a `ConsensusPeerVote`, and offers a `CheckEvictionAssembly` command on the consensus queue so the state transition can attempt
-  * certificate assembly.
+/** Concrete [[EvictionVoter]] that signs an `EvictionVote` with the local keypair, stores it locally, and gossips it to the current
+  * facilitator set as a `ConsensusPeerVote`. The caller offers `CheckEvictionAssembly` on the consensus queue after emission so the state
+  * transition can attempt certificate assembly.
   *
   * Mirrors `GossipingViewChangeVoter`. The `lastSnapshotHashOf` function pulls the last committed snapshot hash out of the generic
   * `Outcome` — layer-specific (e.g., `_.finished.snapshotHash` in dag-l0 and currency-l0). All other construction is generic.

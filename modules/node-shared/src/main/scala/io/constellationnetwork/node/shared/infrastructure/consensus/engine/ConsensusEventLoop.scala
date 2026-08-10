@@ -104,6 +104,12 @@ object ConsensusEventLoop {
     admissionVoter: AdmissionVoter[F, Key],
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
+    admissionNomineesOf: Outcome => Set[PeerId],
+    openAdmissionCadenceOf: Key => Boolean,
+    // Optional local proof view for the exact next-seat finality-headroom gate. Global L0
+    // supplies parent snapshot proof signers; Currency L0 deliberately leaves this absent
+    // because unanimity cannot prove an unseated (n + 1)th signer.
+    locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
     lastSnapshotHashOf: Outcome => Hash,
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
@@ -118,7 +124,11 @@ object ConsensusEventLoop {
     // a sibling reader (e.g. `Cluster.leave()`'s wedge guard in SharedServices) observes the
     // same wedge signal. When None, an internal Ref is created and writes stay local. Either
     // way the returned `BuiltConsensusLoop.healthRef` is non-null so callers always have a handle.
-    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None
+    injectedHealthRef: Option[Ref[F, ConsensusHealthStatus]] = None,
+    // Optional externally-created command queue. Global L0 uses this to enqueue the existing
+    // CheckEvictionAssembly command from its round-creation finality audit before the first
+    // Facility is sent. Other layers retain the internal-queue behavior.
+    injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -126,7 +136,7 @@ object ConsensusEventLoop {
     _trigger: monocle.Lens[Outcome, ConsensusTrigger]
   ): F[BuiltConsensusLoop[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
-      queue <- Queue.unbounded[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]
+      queue <- injectedQueue.fold(Queue.unbounded[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]])(_.pure[F])
       pending <- PendingTriggers.create[F]
       ctx <- ConsensusEngineContext.create(
         selfId,
@@ -176,6 +186,9 @@ object ConsensusEventLoop {
         evictionVoter,
         admissionVoter,
         probationPeersOf,
+        admissionNomineesOf,
+        openAdmissionCadenceOf,
+        locallyObservedParentSignersOf,
         lastSnapshotHashOf,
         getPeerChainTips,
         healthRef,

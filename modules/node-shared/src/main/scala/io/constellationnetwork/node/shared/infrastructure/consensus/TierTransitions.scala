@@ -131,6 +131,27 @@ object TierTransitions {
     roundStartFacilitators: Set[PeerId],
     recentSignersWindow: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
     roundCompleted: Boolean
+  ): SortedMap[PeerId, Int] =
+    computeNextTiers(
+      priorTiers,
+      roundStartFacilitators,
+      roundStartCoreFacilitators = roundStartFacilitators,
+      recentSignersWindow,
+      roundCompleted
+    )
+
+  /** Persist the actual Core/Tier-1 split that was frozen for the completed round.
+    *
+    * The legacy overload above treats every round-start member as Core and remains for callers/tests that model the pre-tiered shape.
+    * Tiered consensus must supply `roundStartCoreFacilitators`: otherwise an unknown or newly admitted Tier-1 signer is incorrectly stamped
+    * Core merely because it appeared in `roundStartFacilitators`.
+    */
+  def computeNextTiers(
+    priorTiers: SortedMap[PeerId, Int],
+    roundStartFacilitators: Set[PeerId],
+    roundStartCoreFacilitators: Set[PeerId],
+    recentSignersWindow: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    roundCompleted: Boolean
   ): SortedMap[PeerId, Int] = {
     // The most-recent `DemotionConsecutiveMisses` signer sets. `SortedMap` iterates ascending by
     // ordinal, so `takeRight` yields the highest (most recent) ordinals.
@@ -142,9 +163,13 @@ object TierTransitions {
     val allKeys: Set[PeerId] = priorTiers.keySet ++ roundStartFacilitators
     SortedMap.from(
       allKeys.iterator.map { pid =>
+        val tierUsedThisRound =
+          if (roundStartCoreFacilitators.contains(pid)) Core
+          else if (roundStartFacilitators.contains(pid)) priorTiers.get(pid).filter(_ == Witness).getOrElse(Tier1)
+          else priorTiers.getOrElse(pid, Core)
         val nextTier = computeNextTier(
-          priorTier = priorTiers.get(pid),
-          wasInRoundStart = roundStartFacilitators.contains(pid),
+          priorTier = Some(tierUsedThisRound),
+          wasInRoundStart = roundStartCoreFacilitators.contains(pid),
           missedRecentConsecutive = missedRecentConsecutive(pid),
           roundCompleted = roundCompleted
         )

@@ -155,7 +155,7 @@ window.
 
 ### 3. Consensus schema version bump
 
-This shipped at `consensusSchemaVersion` v19; the live value is now 33
+This shipped at `consensusSchemaVersion` v19; the live value is now 34
 (`config/types.scala:830`). The schema value is folded into
 `deterministicConfigHash`; that hash and the reported release-version hashes
 fence peer connections. The advertised jar hash is not compared
@@ -232,7 +232,7 @@ the extra complexity yet.
 ## Migration (historical release notes)
 
 > These sections are point-in-time alpha.82 release notes, retained for
-> context. The mechanism is fully deployed (schema v19, live schema 33); the
+> context. The mechanism is fully deployed (schema v19, live schema 34); the
 > mixed-version window described below is closed.
 
 Phase 2 shipped as alpha.82 with both new fields Option-wrapped. Mixed-version

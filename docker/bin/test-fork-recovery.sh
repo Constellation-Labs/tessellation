@@ -42,7 +42,7 @@ STABILIZE_WAIT=480      # seconds to wait for initial cluster stability (nodes n
 echo "================================================"
 echo "Fork Recovery Test"
 echo "================================================"
-echo "  Isolation node: $ISOLATION_NODE"
+echo "  Isolation node: $ISOLATION_NODE (provisional; re-selected from the seated committee in Phase 1)"
 echo "  Monitor node:   $MONITOR_NODE"
 echo "  Isolation time: ${ISOLATION_DURATION}s"
 echo "  Recovery timeout: ${RECOVERY_TIMEOUT}s"
@@ -56,12 +56,58 @@ get_ordinal() {
   curl -s "http://localhost:${port}/global-snapshots/latest" 2>/dev/null | jq -r '.value.ordinal // empty' 2>/dev/null || echo ""
 }
 
-# Helper: get facilitator count from latest consensus log
+# Helper: get facilitator count from latest consensus log.
+# Reporting only -- do NOT gate on this. It returns the node's LAST-EVER logged value, so two
+# nodes sampled at the same instant can report counts from different rounds; with a committee
+# that legitimately oscillates (e.g. 4<->5) that skew reads as disagreement. Phase 1 uses
+# get_committee_peer_ids instead. Bounded tail: the full log is tens of MB by Phase 3.
 get_facilitator_count() {
   local node=$1
   local result
-  result=$(docker logs "$node" 2>&1 | grep "facilitators=" | tail -1 | sed -n 's/.*facilitators=\([0-9]*\).*/\1/p' | head -1 || true)
+  result=$(docker logs --tail 2000 "$node" 2>&1 | grep "facilitators=" | tail -1 | sed -n 's/.*facilitators=\([0-9]*\).*/\1/p' | head -1 || true)
   echo "${result:-0}"
+}
+
+# Helper: the cluster's tip, as the MEDIAN ordinal across reachable gl0 nodes.
+#
+# Deliberately not MONITOR_NODE's own ordinal. The monitor is just gl0-0; it is not guaranteed to
+# be in the committee and it can itself fall behind and recover, which silently weakens every check
+# built on it. Observed on 2026-07-31: a run "passed" its catch-up criterion with iso_ord=51 against
+# a monitor stuck at 41 while the real cluster tip was 58 -- the isolated node had not caught up at
+# all, it was merely ahead of a second lagging node.
+#
+# Median rather than max so a single raced-ahead node cannot make the target unreachable, and
+# rather than min so a single laggard cannot make it trivially satisfiable.
+get_cluster_tip() {
+  local ords=()
+  local i o
+  for i in $(seq 0 $((NUM_GL0 - 1))); do
+    o=$(get_ordinal "gl0-${i}")
+    [ -n "$o" ] && ords+=("$o")
+  done
+  [ "${#ords[@]}" -eq 0 ] && return 0
+  printf '%s\n' "${ords[@]}" | sort -n | awk '{a[NR]=$1} END {print a[int((NR+1)/2)]}'
+}
+
+# Helper: peer id of a node, from the key material node-key-env-setup.sh syncs into nodes/<i>/.
+peer_id_of() {
+  local idx=${1##gl0-}
+  tr -d '[:space:]' < "nodes/${idx}/peer_id" 2>/dev/null || true
+}
+
+# Helper: the round-start committee of the most recently finalized round, read from the SIGNED
+# ARTIFACT rather than from logs. Every node carries identical bytes here (it is covered by the
+# artifact signature), so one query describes the whole cluster's view -- no cross-node skew.
+#
+# Off-by-one: the committee for ordinal N is recorded in snapshot N+1. Snapshot N's own
+# peerHistory only holds entries up to N-1.
+get_committee_peer_ids() {
+  local port=$((GL0_PORT_PREFIX * 100))
+  local tip
+  tip=$(curl -s --max-time 5 "http://localhost:${port}/global-snapshots/latest" 2>/dev/null | jq -r '.value.ordinal // empty' 2>/dev/null || true)
+  { [ -z "$tip" ] || [ "$tip" -lt 1 ]; } && return 0
+  curl -s --max-time 5 "http://localhost:${port}/global-snapshots/${tip}" 2>/dev/null |
+    jq -r --arg o "$((tip - 1))" '.value.peerHistory.controllerEvidence[$o].roundStartFacilitators // [] | .[]' 2>/dev/null || true
 }
 
 # Helper: get node state
@@ -76,7 +122,7 @@ get_node_state() {
 get_fork_events() {
   local node=$1
   local result
-  result=$(docker logs "$node" 2>&1 | grep -c "Fork divergence\|FORK_CHECKS_PASSED\|fork.*detect" 2>/dev/null || true)
+  result=$(docker logs --tail 20000 "$node" 2>&1 | grep -c "Fork divergence\|FORK_CHECKS_PASSED\|fork.*detect" 2>/dev/null || true)
   echo "${result:-0}"
 }
 
@@ -85,11 +131,15 @@ get_fork_events() {
 # "[CONSENSUS:LIFECYCLE] round=SnapshotOrdinal(N) role=n/a event=CONSENSUS_FINISHED". The previous
 # marker ("Round finished ordinal=N") was demoted to DEBUG: it fired per signature-evaluation poll
 # (~150x/round), not per round, and was a top log-volume source at cluster scale.
+#
+# Scoped with `docker logs --since` (set to the moment the network was restored) so the scan cost
+# stays flat instead of re-reading a log that reaches tens of MB by the end of Phase 3, and so
+# rounds the node finished BEFORE isolation can never be miscounted as recovery evidence.
 get_completed_rounds_after() {
   local node=$1
   local after_ordinal=$2
   local result
-  result=$(docker logs "$node" 2>&1 | grep "event=CONSENSUS_FINISHED" | sed -n 's/.*round=SnapshotOrdinal(\([0-9]*\)).*/\1/p' | awk -v min="$after_ordinal" '$1 > min' | wc -l || true)
+  result=$(docker logs ${RECOVERY_SINCE:+--since "$RECOVERY_SINCE"} "$node" 2>&1 | grep "event=CONSENSUS_FINISHED" | sed -n 's/.*round=SnapshotOrdinal(\([0-9]*\)).*/\1/p' | awk -v min="$after_ordinal" '$1 > min' | wc -l || true)
   echo "${result:-0}"
 }
 
@@ -188,76 +238,122 @@ fi
 # as ISOLATION_NODE is still in that committee. What matters is that every
 # CURRENTLY-IN-COMMITTEE peer is at tip.
 #
-# We approximate "in committee" by "reports a non-zero fac that matches the
-# monitor's fac AND is reachable (ord is defined)". Peers that B1 has evicted
-# typically drop off the cluster/info endpoint or report fac=0.
-echo "  Waiting for $ISOLATION_NODE + all committee peers to agree on tip (fac>=3, spread<=1 across committee, 3+ consecutive rounds)..."
+# "In committee" is read from the signed artifact (roundStartFacilitators), NOT inferred from
+# logs. The previous gate compared a COUNT OF AGREEING NODES against the committee SIZE
+# (`committee_size == mon_fac`), which is only satisfiable when the committee is the entire
+# cluster -- the opposite of the paragraph above. Replayed against a real 5-node run it passed
+# 2 of 17 samples and never twice consecutively, so the 3-in-a-row requirement could not be met:
+# a healthy cluster unanimously reporting fac=4 scored committee_size=5 vs mon_fac=4 and was
+# rejected. It also compared each node's LAST-EVER logged count, i.e. values from different
+# rounds, which a 4<->5 oscillation renders as a false split.
+#
+# ISOLATION_NODE is chosen here rather than fixed at gl0-(N-1): the hypothesis is about "some
+# in-committee peer", and the highest-index node is the likeliest to be churning in and out.
+echo "  Waiting for the signed round-start committee to be seated and at tip (size>=3, spread<=1, 3+ consecutive samples)..."
 stable_rounds=0
 stab_deadline=$(($(date +%s) + 600))
 MIN_COMMITTEE=3
-while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
-  iso_ord=$(get_ordinal "$ISOLATION_NODE")
-  iso_fac=$(get_facilitator_count "$ISOLATION_NODE")
-  mon_ord=$(get_ordinal "$MONITOR_NODE")
-  mon_fac=$(get_facilitator_count "$MONITOR_NODE")
 
-  # Build full status line + find the set of peers currently in the committee
-  # (fac matches monitor's fac AND ordinal is reachable).
-  status_line=""
+declare -A NODE_OF_PEER=()
+for i in $(seq 0 $((NUM_GL0 - 1))); do
+  pid=$(peer_id_of "gl0-${i}")
+  [ -n "$pid" ] && NODE_OF_PEER["$pid"]="gl0-${i}"
+done
+[ "${#NODE_OF_PEER[@]}" -eq 0 ] && fail "No peer ids under nodes/*/peer_id (node-key-env-setup.sh did not run?)"
+
+committee_nodes=""
+pinned_target=""
+while [ "$(date +%s)" -lt "$stab_deadline" ] && [ "$stable_rounds" -lt 3 ]; do
+  mon_ord=$(get_ordinal "$MONITOR_NODE")
+  committee_peers=$(get_committee_peer_ids)
+
+  committee_size=0
   committee_min_ord=""
   committee_max_ord=""
-  committee_size=0
-  committee_view_agrees=true
-  for i in $(seq 0 $((NUM_GL0 - 1))); do
-    node="gl0-${i}"
-    nf=$(get_facilitator_count "$node")
+  unmapped=0
+  unreachable=0
+  seated_nodes=""
+  status_line=""
+  for pid in $committee_peers; do
+    committee_size=$((committee_size + 1))
+    node="${NODE_OF_PEER[$pid]:-}"
+    if [ -z "$node" ]; then
+      # A seated peer we cannot address (should not happen on this rig) -- treat as unhealthy
+      # rather than silently narrowing the committee.
+      unmapped=$((unmapped + 1))
+      status_line="${status_line} ${pid:0:8}:unmapped"
+      continue
+    fi
+    seated_nodes="${seated_nodes} ${node}"
     no=$(get_ordinal "$node")
-    status_line="${status_line} ${node}:ord=${no:-?}/fac=${nf:-?}"
-    # A peer is "in this committee" if it's reachable AND agrees with monitor
-    # on the facilitator set size.
-    if [ -n "$no" ] && [ -n "$nf" ] && [ "$nf" = "${mon_fac:-0}" ] && [ "$nf" -gt 0 ]; then
-      committee_size=$((committee_size + 1))
-      if [ -z "$committee_min_ord" ] || [ "$no" -lt "$committee_min_ord" ]; then
-        committee_min_ord=$no
-      fi
-      if [ -z "$committee_max_ord" ] || [ "$no" -gt "$committee_max_ord" ]; then
-        committee_max_ord=$no
-      fi
-    elif [ -n "$nf" ] && [ "$nf" != "${mon_fac:-0}" ] && [ "$nf" -gt 0 ]; then
-      # Peer has a fac view that disagrees with monitor — that's a split.
-      committee_view_agrees=false
+    status_line="${status_line} ${node}:ord=${no:-?}"
+    if [ -z "$no" ]; then
+      unreachable=$((unreachable + 1))
+      continue
+    fi
+    if [ -z "$committee_min_ord" ] || [ "$no" -lt "$committee_min_ord" ]; then
+      committee_min_ord=$no
+    fi
+    if [ -z "$committee_max_ord" ] || [ "$no" -gt "$committee_max_ord" ]; then
+      committee_max_ord=$no
     fi
   done
 
-  in_sync=false
   spread="?"
   if [ -n "$committee_min_ord" ] && [ -n "$committee_max_ord" ]; then
     spread=$((committee_max_ord - committee_min_ord))
   fi
-  if [ -n "$iso_ord" ] && [ -n "$mon_ord" ] \
-     && [ "${iso_fac:-0}" -ge "$MIN_COMMITTEE" ] \
-     && [ "${iso_fac:-0}" = "${mon_fac:-0}" ] \
-     && [ "$committee_view_agrees" = "true" ] \
-     && [ "$committee_size" = "${mon_fac:-0}" ] \
+
+  # Deterministic target: the highest-index seated peer that is not the monitor. Iterate NODE
+  # INDICES, not $seated_nodes -- that list is in roundStartFacilitators order, which is sorted by
+  # peer id, so taking its last element would pick an arbitrary node that changes between runs.
+  candidate=""
+  for i in $(seq $((NUM_GL0 - 1)) -1 0); do
+    node="gl0-${i}"
+    [ "$node" = "$MONITOR_NODE" ] && continue
+    case " ${seated_nodes} " in *" ${node} "*) candidate=$node; break ;; esac
+  done
+
+  # Pin the target across the whole 3-sample window. The precondition being established is that
+  # THIS peer is reliably in-committee, so if it drops out mid-window the window must restart.
+  # The rest of the committee may churn freely -- a 4<->5 oscillation is normal here, and demanding
+  # an identical seated set three times running would reproduce the unsatisfiable old gate.
+  if [ -n "$pinned_target" ]; then
+    case " ${seated_nodes} " in
+      *" ${pinned_target} "*) candidate=$pinned_target ;;
+      *) candidate="" ;;
+    esac
+  fi
+
+  in_sync=false
+  if [ -n "$mon_ord" ] && [ -n "$candidate" ] \
+     && [ "$committee_size" -ge "$MIN_COMMITTEE" ] \
+     && [ "$unmapped" -eq 0 ] && [ "$unreachable" -eq 0 ] \
      && [ "$spread" != "?" ] && [ "$spread" -le 1 ]; then
     in_sync=true
   fi
 
   if [ "$in_sync" = "true" ]; then
     stable_rounds=$((stable_rounds + 1))
-    echo "    Round $stable_rounds/3 committee=${committee_size} at tip (spread=$spread) iso=${iso_ord}/${iso_fac} mon=${mon_ord}/${mon_fac} [${status_line# }]"
+    committee_nodes="$seated_nodes"
+    pinned_target="$candidate"
+    ISOLATION_NODE="$candidate"
+    echo "    Sample $stable_rounds/3 committee=${committee_size} at tip (spread=$spread) target=$ISOLATION_NODE [${status_line# }]"
   else
     stable_rounds=0
-    echo "    Waiting (committee_size=${committee_size}/${mon_fac:-?} spread=$spread iso_fac=${iso_fac:-?} mon_fac=${mon_fac:-?} view_agrees=$committee_view_agrees) [${status_line# }]"
+    pinned_target=""
+    echo "    Waiting (committee=${committee_size} spread=$spread unmapped=$unmapped unreachable=$unreachable target=${candidate:-none}) [${status_line# }]"
   fi
-  sleep 45
+  sleep 30
 done
 if [ "$stable_rounds" -lt 3 ]; then
-  fail "Cluster never reached committee-tip sync within 600s (every in-committee peer must be at tip for isolation to work with supermajority quorum)"
+  fail "Signed committee never reached tip within 600s (every seated peer must be at tip for isolation to work with supermajority quorum)"
 fi
 
+echo "  Isolation target: $ISOLATION_NODE (seated committee:${committee_nodes})"
+
 # Record pre-isolation state from monitor (a validator)
-pre_ordinal=$(get_ordinal "$MONITOR_NODE")
+pre_ordinal=$(get_cluster_tip)
 pre_isolation_ordinal=$(get_ordinal "$ISOLATION_NODE" 2>/dev/null || echo "$pre_ordinal")
 echo "  Pre-isolation ordinal: $pre_ordinal (monitor), $pre_isolation_ordinal (isolated node)"
 
@@ -328,7 +424,7 @@ echo "  $ISOLATION_NODE isolated. Waiting ${ISOLATION_DURATION}s for cluster to 
 sleep "$ISOLATION_DURATION"
 
 # Check cluster advanced
-post_isolation_ordinal=$(get_ordinal "$MONITOR_NODE")
+post_isolation_ordinal=$(get_cluster_tip)
 echo "  Cluster advanced: ordinal $pre_ordinal → $post_isolation_ordinal"
 
 if [ -z "$post_isolation_ordinal" ] || [ "$post_isolation_ordinal" -le "$pre_ordinal" ]; then
@@ -343,6 +439,10 @@ echo "  Cluster produced $advancement snapshots while $ISOLATION_NODE was isolat
 
 echo ""
 echo "Phase 3: Restoring $ISOLATION_NODE network..."
+
+# Anchor for get_completed_rounds_after's `docker logs --since`. Taken BEFORE the flush so no
+# post-restore round can fall outside the window.
+RECOVERY_SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 docker exec --privileged "$ISOLATION_NODE" iptables -F 2>&1 || \
   echo "  Warning: iptables flush failed"
@@ -361,7 +461,7 @@ while [ "$(date +%s)" -lt "$recovery_deadline" ]; do
   iso_fac=$(get_facilitator_count "$ISOLATION_NODE")
   iso_completed=$(get_completed_rounds_after "$ISOLATION_NODE" "$post_isolation_ordinal")
   fork_events=$(get_fork_events "$ISOLATION_NODE")
-  monitor_ord=$(get_ordinal "$MONITOR_NODE")
+  monitor_ord=$(get_cluster_tip)
 
   echo "  [${elapsed}s] $ISOLATION_NODE: facilitators=${iso_fac:-?} completedAfterIsolation=$iso_completed forkEvents=$fork_events clusterOrdinal=${monitor_ord:-?}"
 
@@ -409,7 +509,7 @@ done
 echo ""
 echo "Phase 4: Verifying results..."
 
-final_ordinal=$(get_ordinal "$MONITOR_NODE")
+final_ordinal=$(get_cluster_tip)
 final_fac=$(get_facilitator_count "$MONITOR_NODE")
 final_fork_events=$(get_fork_events "$ISOLATION_NODE")
 recovery_elapsed=$(( $(date +%s) - recovery_start ))
@@ -421,7 +521,8 @@ echo "    Fork events on $ISOLATION_NODE: $final_fork_events"
 echo "    Recovery time: ${recovery_elapsed}s"
 
 # Check for any abandonment tracker activity
-abandonment_count=$(docker logs "$ISOLATION_NODE" 2>&1 | grep -c "ROUND_ABANDONED_TRACKED" 2>/dev/null || echo "0")
+# `grep -c` prints 0 AND exits 1 on no match, so a `|| echo 0` fallback would emit "0\n0".
+abandonment_count=$(docker logs --tail 20000 "$ISOLATION_NODE" 2>&1 | grep -c "ROUND_ABANDONED_TRACKED" || true)
 echo "    Round abandonments on $ISOLATION_NODE: $abandonment_count"
 
 if [ "$recovered" != "true" ]; then

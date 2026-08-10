@@ -429,8 +429,8 @@ object GlobalSnapshotConsensusFunctions {
         // never narrowed by node-local mid-round withdrawals.
         // Below the correction gate, preserve the briefly-deployed evidence-score filter so
         // historical snapshots replay byte-identically. At/after the gate, delegated rewards
-        // follow every member of the frozen signing committee; admission score affects seating,
-        // not payout eligibility.
+        // follow every member of the frozen signing committee; admission score affects Core and
+        // leader classification, not Tier-1 lease retention or payout eligibility.
         rewardPeerIds =
           if (usesFullCommitteeRewards(currentOrdinal, delegatedRewardsFullCommitteeOrdinal))
             delegatedRewardRecipients(facilitators)

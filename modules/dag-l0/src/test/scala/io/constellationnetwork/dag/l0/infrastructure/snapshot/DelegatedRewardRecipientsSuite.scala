@@ -26,4 +26,13 @@ object DelegatedRewardRecipientsSuite extends SimpleIOSuite {
     expect(!GlobalSnapshotConsensusFunctions.usesFullCommitteeRewards(SnapshotOrdinal.unsafeApply(99L), activation)) &&
     expect(GlobalSnapshotConsensusFunctions.usesFullCommitteeRewards(activation, activation))
   }
+
+  pureTest("the frozen reward committee is broad Core plus Tier 1, never Witness") {
+    val core = Set(peer('a'), peer('b'))
+    val tier1 = Set(peer('c'), peer('d'), peer('e'))
+    val witness = peer('f')
+    val recipients = GlobalSnapshotConsensusFunctions.delegatedRewardRecipients(core ++ tier1)
+
+    expect.same((core ++ tier1).toList.sorted, recipients) && expect(!recipients.contains(witness))
+  }
 }

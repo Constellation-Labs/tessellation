@@ -241,7 +241,8 @@ object ControllerEvidenceDerivation {
     }
 
   /** Historical delegated-reward recipient rule, retained only for replay below the `delegated-rewards-full-committee` activation ordinal.
-    * New snapshots must not use this as a payout policy: admission score controls seating, while every seated Core/Tier-1 peer earns.
+    * New snapshots must not use this as a payout policy: admission score controls Core/leader classification, while every seated
+    * Core/Tier-1 peer earns.
     */
   def legacyRewardQualifiedFacilitators(
     facilitators: SortedSet[PeerId],
