@@ -118,6 +118,12 @@ jobs:
           - { name: spend,                  tests: "spend", timeout: 45 }
           - { name: data-with-fee,          tests: "data-with-fee", timeout: 45 }
           - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
+          # 5 gl0 nodes, 3 at genesis + 2 staggered. The stagger keeps the committee churning, which
+          # is what supplies the chronic-Tier-1-plus-promote-qualified committee that is the only
+          # state distinguishing full-committee payout from the removed evidence-score filter.
+          # The metagraph stack is skipped (committee-rewards is not in METAGRAPH_TESTS), but the rig
+          # is still 5 gl0 + 3 gl1 JVMs plus a ~4 min join delay, hence the timeout.
+          - { name: committee-rewards,      tests: "committee-rewards", extra-args: "--num-gl0=5 --num-gl0-early=3", timeout: 45 }
 
     env:
       BASH_DEBUG_MODE: ${{ github.event.inputs.debug_enabled || 'false' }}
@@ -157,6 +163,14 @@ jobs:
       - name: Installing node dependencies
         shell: bash
         run: npm ci --prefix .github/action_scripts
+
+      # Offline self-test of the committee-rewards assertions: runs the test script against a
+      # synthetic snapshot window and requires it to PASS on correct behavior and FAIL on the
+      # legacy evidence-score filter. ~2s, no docker, and deliberately placed before the cluster
+      # boot so a broken script or a rotted fixture fails in seconds instead of 20 minutes.
+      - name: Self-test committee-rewards assertions
+        if: matrix.test-group.name == 'committee-rewards'
+        run: .github/action_scripts/committee_rewards.selftest.sh
 
       - name: Install just
         run: |
@@ -228,8 +242,10 @@ jobs:
           docker logs "snapshot-streaming" > "runner-logs/snapshot-streaming.log" 2>&1 || echo "No snapshot-streaming container"
           docker logs "snapshot-streaming-postgres" > "runner-logs/snapshot-streaming-postgres.log" 2>&1 || echo "No snapshot-streaming-postgres container"
 
-          # Collect node log directories (mounted volumes)
-          for i in 0 1 2; do
+          # Collect node log directories (mounted volumes). Covers indices beyond the default 3
+          # so multi-node rigs (committee-rewards, fork-recovery) upload their late joiners' logs,
+          # which are exactly the ones needed to diagnose an admission-timing failure.
+          for i in 0 1 2 3 4 5 6 7 8 9; do
             cp -r "nodes/$i/gl0-logs" "runner-logs/node-$i-gl0-logs" 2>/dev/null || true
             cp -r "nodes/$i/gl1-logs" "runner-logs/node-$i-gl1-logs" 2>/dev/null || true
           done
