@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -26,6 +27,7 @@ import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealth
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
 
 import eu.timepit.refined.auto._
@@ -45,7 +47,7 @@ abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
 
 object CurrencySnapshotConsensusStateCreator {
 
-  def make[F[_]: Async: Metrics](
+  def make[F[_]: Async: Metrics: HasherSelector](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -66,6 +68,60 @@ object CurrencySnapshotConsensusStateCreator {
     val config: ConsensusConfig = consensusConfig
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+
+    /** V35 activation bridge for Currency L0.
+      *
+      * Currency artifacts do not carry `nextFacilitators`, and artifact proof subsets can differ across honest finalizers. The seed must
+      * therefore come from the latest controller-evidence entry inside the signed artifact value. If that evidence is absent, activation
+      * fails closed instead of inventing a committee from node-local data. All legacy sidecar/controller windows are then flushed just as
+      * on DAG L0.
+      */
+    private def resetLegacyOutcomeAtActivation(
+      key: CurrencySnapshotKey,
+      outcome: CurrencyConsensusOutcome
+    ): F[CurrencyConsensusOutcome] =
+      if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
+      else {
+        val maybeSeed = outcome.finished.signedMajorityArtifact.value.peerHistory
+          .flatMap(_.controllerEvidence)
+          .flatMap(_.lastOption.map { case (_, entry) => ControllerEvidenceDerivation.nextCommittee(entry).toList })
+          .filter(_.nonEmpty)
+
+        maybeSeed.fold(
+          Async[F].raiseError[CurrencyConsensusOutcome](
+            new IllegalStateException(
+              s"Cannot activate certified consensus at currency ordinal=${key.value.value}: signed controller evidence is absent"
+            )
+          )
+        ) { seed =>
+          HasherSelector[F].withCurrent { implicit hasher =>
+            seed.hash.map { seedHash =>
+              outcome.copy(
+                facilitators = Facilitators(seed),
+                removedFacilitators = RemovedFacilitators.empty,
+                withdrawnFacilitators = WithdrawnFacilitators.empty,
+                eligibleFacilitators = EligibleFacilitators.empty,
+                finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
+                removalPenalties = SortedMap.empty,
+                deferralCountdown = SortedMap.empty,
+                peerQuality = SortedMap.empty,
+                cumulativeMissCounts = SortedMap.empty,
+                recentProofSizes = SortedMap.empty,
+                readmissionCountdown = SortedMap.empty,
+                peerSelfHealth = SortedMap.empty,
+                peerViewChanges = SortedMap.empty,
+                recentSigners = SortedMap.empty,
+                peerTiers = SortedMap.empty,
+                activeAdmissionScores = SortedMap.empty,
+                lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
+                recentRoundEndTimes = SortedMap.empty,
+                controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
+                penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some
+              )
+            }
+          }
+        }
+      }
 
     def tryFacilitateConsensus(
       key: CurrencySnapshotKey,
@@ -101,12 +157,13 @@ object CurrencySnapshotConsensusStateCreator {
 
     private def facilitateConsensus(
       key: CurrencySnapshotKey,
-      lastOutcome: CurrencyConsensusOutcome,
+      providedLastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
       priorAbandonmentCount: Int
     ): F[(CurrencySnapshotConsensusState, F[Unit])] =
       for {
+        lastOutcome <- resetLegacyOutcomeAtActivation(key, providedLastOutcome)
         candidates <- consensusStorage.getCandidates(key.next)
         previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
@@ -629,6 +686,7 @@ object CurrencySnapshotConsensusStateCreator {
           eligibleFacilitators = EligibleFacilitators(allEligible),
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
+          certifiedConsensusActive = config.certifiedConsensusActiveAt(key.value.value),
           leader = leader,
           // Round-start view = 0 (certificate-derived only; mirror of dag-l0). MUST match the
           // viewNumber argument passed to selectLeaderWeighted above for leader consistency.

@@ -1,12 +1,17 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
-import cats.syntax.eq._
-import cats.syntax.foldable._
-import cats.syntax.show._
+import cats.data.NonEmptyList
+import cats.effect.Async
+import cats.syntax.all._
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{TimeoutCertificate, ViewChangeCertificate}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hasher, SecurityProvider}
+
+import io.circe.Encoder
 
 /** Pure helper for the view-change-certificate (VCC) invariants that gate acceptance of a Proposal.
   *
@@ -72,6 +77,10 @@ object ProposalVccValidator {
     *   `ConsensusStateAdvancer.quorumShrinkDecision` derivation), NEVER from local retry counters -- a follower whose local counters lag
     *   the assembler's must still accept the shrunken cert, otherwise the recovery proposal is rejected and the wedge persists (the
     *   alpha.92 stale-proposal-rejection shape). `None` preserves pre-v33 behavior byte-identically.
+    * @param certifiedCore
+    *   V35 frozen Core voter universe. When present, VCC/TC validation ignores the legacy wider witness/shrink policy, requires every
+    *   distinct signer to belong to this exact set, and applies the same `max(BFT supermajority, configured fraction)` quorum used by
+    *   ProposalQC/CoreCommitQC. `None` preserves the legacy path.
     */
   def validate(
     proposalView: Long,
@@ -87,7 +96,8 @@ object ProposalVccValidator {
     peerQuality: Map[PeerId, (Int, Int)],
     quorumThresholdFraction: Double,
     minParticipationObservations: Int,
-    quorumShrink: Option[QuorumDenominatorShrink.Decision] = None
+    quorumShrink: Option[QuorumDenominatorShrink.Decision] = None,
+    certifiedCore: Option[Set[PeerId]] = None
   ): Either[ProposalRejection, Unit] = {
     val n = coreSize
     // Integer supermajority via shared `QuorumPolicy.fromFraction`. The legacy `ceil(n * fraction)`
@@ -95,7 +105,9 @@ object ProposalVccValidator {
     // API still accepts a configurable fraction so dev unanimity (1.0) and testnet supermajority
     // (0.6666...) both flow through the same shim. See `QuorumPolicySuite` for the formula
     // equivalence guarantee when fraction == 2/3.
-    val q = math.max(1, QuorumPolicy.fromFraction(n, quorumThresholdFraction))
+    val q = certifiedCore.fold(math.max(1, QuorumPolicy.fromFraction(n, quorumThresholdFraction))) { core =>
+      CertifiedConsensus.requiredCoreQuorum(core.size, quorumThresholdFraction)
+    }
 
     // Count DISTINCT signers, not raw votes. `ViewChangeVote.highestKnownQc`/`TimeoutVote` are part of
     // the vote identity, so one signer can contribute multiple distinct Signed votes that all survive in
@@ -103,8 +115,17 @@ object ProposalVccValidator {
     // must too, or ceil(q/2) equivocators could each emit two differing-QC votes to forge quorum.
     def certQuorumMet(voterIds: List[PeerId]): Boolean = {
       val signers = voterIds.toSet
-      signers.size >= q || quorumShrink.exists(d => d.active && signers.count(d.anchor.contains) >= d.requiredQuorum)
+      certifiedCore match {
+        case Some(core) => signers.subsetOf(core) && signers.size >= q
+        case None =>
+          signers.size >= q || quorumShrink.exists(d => d.active && signers.count(d.anchor.contains) >= d.requiredQuorum)
+      }
     }
+
+    def voterPool: Set[PeerId] =
+      certifiedCore.getOrElse(
+        WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations).union(roundStartFacilitators)
+      )
 
     val isSoloCore = n <= 1
     val isRoundStartView = proposalView === initialViewNumber.toLong
@@ -166,8 +187,7 @@ object ProposalVccValidator {
             // union is REQUIRED for the v33 shrink path: a shrunken cert is built from the anchor (completedSigners
             // INTERSECT roundStartFacilitators), whose voters are round-start facilitators but not necessarily in
             // WitnessPool.all -- without the union the assembler accepts and the follower rejects (vcc_voter_not_in_pool).
-            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations).union(roundStartFacilitators)
-            val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+            val nonWitnessPoolVoter = vcc.votes.toNonEmptyList.toList.find(sv => !voterPool.contains(sv.proofs.head.id.toPeerId))
             nonWitnessPoolVoter match {
               case Some(bad) =>
                 Left(ProposalRejection(s"vcc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
@@ -221,8 +241,7 @@ object ProposalVccValidator {
           else {
             // Same wider witness pool as the VCC branch above (WitnessPool.all unioned with roundStartFacilitators,
             // matching the assembler's widerWitnessPoolAll); REQUIRED for the v33 shrink path's anchor voters.
-            val witnessPool = WitnessPool.all(eligibleFacilitators, peerQuality, minParticipationObservations).union(roundStartFacilitators)
-            val nonWitnessPoolVoter = tc.votes.toNonEmptyList.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
+            val nonWitnessPoolVoter = tc.votes.toNonEmptyList.toList.find(sv => !voterPool.contains(sv.proofs.head.id.toPeerId))
             nonWitnessPoolVoter match {
               case Some(bad) =>
                 Left(ProposalRejection(s"tc_voter_not_in_pool voter=${bad.proofs.head.id.show.take(8)}"))
@@ -246,4 +265,49 @@ object ProposalVccValidator {
       }
     }
   }
+
+  /** Shared cryptographic verification for VCC/TC vote collections.
+    *
+    * The layer advancers own proposal-state transitions, but signature semantics are identical. Keeping them here prevents DAG and Currency
+    * from drifting. Certified rounds require one proof per vote because the frozen-Core quorum counts identities; the legacy VCC path keeps
+    * its historical multi-proof acceptance until activation. Timeout certificates already required one proof in legacy rounds.
+    */
+  private def verifySignedVotes[F[_]: Async: Hasher: SecurityProvider, A: Encoder](
+    certificate: String,
+    votes: NonEmptyList[Signed[A]],
+    requireSingleProof: Boolean
+  ): F[Either[ProposalRejection, Unit]] = {
+    val invalidProofCounts =
+      if (requireSingleProof)
+        votes.toList.collect {
+          case signedVote if signedVote.proofs.size =!= 1L => signedVote.proofs.head.id.show.take(8)
+        }
+      else List.empty[String]
+
+    if (invalidProofCounts.nonEmpty)
+      ProposalRejection(s"${certificate}_invalid_proof_count peers=${invalidProofCounts.mkString(",")}")
+        .asLeft[Unit]
+        .pure[F]
+    else
+      votes.toList.traverse { signedVote =>
+        signedVote.hasValidSignature[F].flatMap { valid =>
+          Either.cond(valid, (), signedVote.proofs.head.id.show.take(8)).pure[F]
+        }
+      }.flatMap { results =>
+        val invalidPeers = results.collect { case Left(peer) => peer }
+        (if (invalidPeers.isEmpty) ().asRight[ProposalRejection]
+         else ProposalRejection(s"${certificate}_invalid_signatures peers=${invalidPeers.mkString(",")}").asLeft[Unit]).pure[F]
+      }
+  }
+
+  def verifyVccSignatures[F[_]: Async: Hasher: SecurityProvider](
+    vcc: ViewChangeCertificate,
+    certifiedConsensusActive: Boolean
+  ): F[Either[ProposalRejection, Unit]] =
+    verifySignedVotes("vcc", vcc.votes.toNonEmptyList, requireSingleProof = certifiedConsensusActive)
+
+  def verifyTcSignatures[F[_]: Async: Hasher: SecurityProvider](
+    tc: TimeoutCertificate
+  ): F[Either[ProposalRejection, Unit]] =
+    verifySignedVotes("tc", tc.votes.toNonEmptyList, requireSingleProof = true)
 }

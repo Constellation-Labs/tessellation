@@ -5,6 +5,11 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{
+  CertifiedOutcome,
+  CertifiedProposalQC,
+  ProposalValue
+}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ControllerEvidenceDerivation
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -45,12 +50,14 @@ object schema {
             facilitatorsHash,
             lastSnapshotHash,
             observedResponders,
-            observedSelfHealth
+            observedSelfHealth,
+            _,
+            _
           ) =>
         s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
-      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
+      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash, _, _) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash) =>
+      case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash, _) =>
         s"Finished{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, snapshotHash=${snapshotHash.show}"
     }
   }
@@ -75,7 +82,12 @@ object schema {
     // v15: same byte-identical-re-spread rationale as observedResponders. The aggregated
     // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
     // original Proposal payload exactly. SortedMap so circe encodes in deterministic key order.
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+    // Exact local candidate used if this node is the leader and must re-spread.
+    proposedValue: Option[ProposalValue] = None,
+    // Leader value already validated by this node. While populated, the state stays in
+    // CollectingProposals until a frozen-Core prepare QC is available.
+    acceptedValue: Option[ProposalValue] = None
   ) extends GlobalConsensusStep
 
   final case class CollectingSignatures(
@@ -83,7 +95,9 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    proposalValue: Option[ProposalValue] = None,
+    proposalQc: Option[CertifiedProposalQC] = None
   ) extends GlobalConsensusStep
 
   @derive(encoder, decoder, eqv)
@@ -93,7 +107,8 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    snapshotHash: Hash
+    snapshotHash: Hash,
+    certifiedOutcome: Option[CertifiedOutcome] = None
   ) extends GlobalConsensusStep
 
   /** Outcome of a completed consensus round, carried forward as `lastOutcome` into the next round.

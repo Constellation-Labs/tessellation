@@ -74,6 +74,7 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
       case tv: ConsensusPeerTimeoutVote[_]           => handleTimeoutVote(origin, tv)
+      case ov: ConsensusPeerOutcomeVote[_]           => handleOutcomeVote(origin, ov)
       case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
       case av: ConsensusPeerAdmissionVote[_]         => handleAdmissionVote(origin, av)
       case vc: ConsensusAssembledVcc[_]              => handleAssembledVcc(origin, vc)
@@ -226,6 +227,41 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
           .flatMap(triggerUpdateIfChanged(queue, key)) >>
         queue.offer(ConsensusCommand.CheckTimeoutCertificateAssembly(key))
     }
+  }
+
+  private def handleOutcomeVote(origin: PeerId, v: ConsensusPeerOutcomeVote[_]): F[Unit] = {
+    val key = v.key.asInstanceOf[Key]
+    val vote = v.vote
+    val signers = vote.proofs.toSortedSet.toList.map(_.id.toPeerId)
+
+    storage.observePeerAtKey(origin, key) >>
+      (signers match {
+        case signer :: Nil if signer === origin =>
+          ConsensusLog.debug(
+            log,
+            Category.Phase,
+            key.toString,
+            "n/a",
+            LogEvent.DeclarationReceived,
+            "kind" -> "OutcomeVote",
+            "from" -> ConsensusLog.pid(origin),
+            "view" -> vote.value.certifiedView.toString,
+            "valueHash" -> vote.value.valueHash.show.take(12)
+          ) >>
+            storage.addOutcomeVote(origin, key, vote).flatMap(triggerUpdateIfChanged(queue, key))
+        case _ =>
+          ConsensusLog.warn(
+            log,
+            Category.Phase,
+            key.toString,
+            "n/a",
+            LogEvent.DeclarationReceived,
+            "kind" -> "OutcomeVote",
+            "rejected" -> "origin_signer_mismatch_or_multiple_proofs",
+            "from" -> ConsensusLog.pid(origin),
+            "proofs" -> signers.size.toString
+          )
+      })
   }
 
   private def handleEvictionVote(origin: PeerId, e: ConsensusPeerEvictionVote[_]): F[Unit] = {

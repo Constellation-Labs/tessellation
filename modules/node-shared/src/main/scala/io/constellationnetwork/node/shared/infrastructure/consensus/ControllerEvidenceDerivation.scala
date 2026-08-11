@@ -273,6 +273,14 @@ object ControllerEvidenceDerivation {
   ): SortedSet[PeerId] =
     roundStartFacilitators -- certifiedEvictions
 
+  /** Deterministic next committee represented by one signed controller-evidence entry.
+    *
+    * This is also the Currency L0 v35 activation seed: unlike a locally observed artifact-proof subset, every input is carried inside the
+    * signed snapshot value. Keeping the transition here gives activation and ordinary outcome derivation one set equation.
+    */
+  def nextCommittee(entry: ControllerEvidenceEntry): SortedSet[PeerId] =
+    (entry.roundStartFacilitators -- entry.evictedPeers) ++ entry.admittedPeers
+
   /** Canonical completed-signer set for a finalized round, used for `ControllerEvidenceEntry.completedSigners` AND the `recentSigners`
     * window entry by BOTH StateAdvancers (shared here so the two layers cannot drift).
     *

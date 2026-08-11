@@ -38,6 +38,7 @@ object CurrencyConsensusHandler {
       all.withdrawHandler <+>
       all.viewChangeVoteHandler <+>
       all.timeoutVoteHandler <+>
+      all.outcomeVoteHandler <+>
       all.evictionVoteHandler <+>
       all.admissionVoteHandler <+>
       all.assembledVccHandler

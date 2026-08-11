@@ -13,20 +13,20 @@ object CurrencySnapshotConsensusOps {
   def make: CurrencySnapshotConsensusOps = new CurrencySnapshotConsensusOps {
     override def collectedKinds(status: CurrencySnapshotStatus): Set[CurrencyConsensusKind] =
       status match {
-        case CollectingFacilities(_, _, _)                   => Set.empty
-        case CollectingProposals(_, _, _, _, _, _, _)        => Set(Facility)
-        case CollectingSignatures(_, _, _, _, _)             => Set(Facility, Proposal)
-        case CollectingBinarySignatures(_, _, _, _, _, _, _) => Set(Facility, Proposal, Signature)
-        case Finished(_, _, _, _, _, _, _)                   => Set(Facility, Proposal, Signature, BinarySignature)
+        case _: CollectingFacilities       => Set.empty
+        case _: CollectingProposals        => Set(Facility)
+        case _: CollectingSignatures       => Set(Facility, Proposal)
+        case _: CollectingBinarySignatures => Set(Facility, Proposal, Signature)
+        case _: Finished                   => Set(Facility, Proposal, Signature, BinarySignature)
       }
 
     override def maybeCollectingKind(status: CurrencySnapshotStatus): Option[CurrencyConsensusKind] =
       status match {
-        case CollectingFacilities(_, _, _)                   => Facility.some
-        case CollectingProposals(_, _, _, _, _, _, _)        => Proposal.some
-        case CollectingSignatures(_, _, _, _, _)             => Signature.some
-        case CollectingBinarySignatures(_, _, _, _, _, _, _) => BinarySignature.some
-        case Finished(_, _, _, _, _, _, _)                   => none
+        case _: CollectingFacilities       => Facility.some
+        case _: CollectingProposals        => Proposal.some
+        case _: CollectingSignatures       => Signature.some
+        case _: CollectingBinarySignatures => BinarySignature.some
+        case _: Finished                   => none
       }
 
     override def kindGetter: CurrencyConsensusKind => PeerDeclarations => Option[declaration.PeerDeclaration] = {
@@ -65,11 +65,12 @@ object CurrencySnapshotConsensusOps {
     }
 
     override def freshCollectingFacilities(status: CurrencySnapshotStatus): Option[CurrencySnapshotStatus] = status match {
-      case CollectingFacilities(_, facHash, lastSnap)             => CollectingFacilities(none, facHash, lastSnap).some
-      case CollectingProposals(_, _, _, facHash, lastSnap, _, _)  => CollectingFacilities(none, facHash, lastSnap).some
-      case CollectingSignatures(_, _, _, facHash, lastSnap)       => CollectingFacilities(none, facHash, lastSnap).some
-      case CollectingBinarySignatures(_, _, _, _, _, facHash, ls) => CollectingFacilities(none, facHash, ls).some
-      case _: Finished                                            => none
+      case value: CollectingFacilities => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case value: CollectingProposals  => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case value: CollectingSignatures => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case value: CollectingBinarySignatures =>
+        CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case _: Finished => none
     }
   }
 }

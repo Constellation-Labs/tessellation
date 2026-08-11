@@ -13,6 +13,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapsh
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{CollectingFacilities, GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.Category._
@@ -81,6 +82,48 @@ object GlobalSnapshotConsensusStateCreator {
 
     private val dagAwaitingParentConfig = DagAwaitingParentConfig.default
     private val maxAwaitingParentReactivationPerRound = 128
+
+    /** V35 activation bridge from a legacy outcome.
+      *
+      * The signed DAG artifact supplies the one source-of-truth committee (`nextFacilitators`). Every controller/evidence window that could
+      * have come from a node-local legacy sidecar is discarded at the exact activation key. The public artifact/context bytes are
+      * untouched.
+      */
+    private def resetLegacyOutcomeAtActivation(
+      key: GlobalSnapshotKey,
+      outcome: GlobalConsensusOutcome
+    ): F[GlobalConsensusOutcome] =
+      if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
+      else {
+        val seed = outcome.finished.signedMajorityArtifact.value.nextFacilitators.toList.sorted
+
+        HasherSelector[F].withCurrent { implicit hasher =>
+          seed.hash.map { seedHash =>
+            outcome.copy(
+              facilitators = Facilitators(seed),
+              removedFacilitators = RemovedFacilitators.empty,
+              withdrawnFacilitators = WithdrawnFacilitators.empty,
+              eligibleFacilitators = EligibleFacilitators.empty,
+              finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
+              removalPenalties = SortedMap.empty,
+              deferralCountdown = SortedMap.empty,
+              peerQuality = SortedMap.empty,
+              cumulativeMissCounts = SortedMap.empty,
+              recentProofSizes = SortedMap.empty,
+              readmissionCountdown = SortedMap.empty,
+              peerSelfHealth = SortedMap.empty,
+              peerViewChanges = SortedMap.empty,
+              recentSigners = SortedMap.empty,
+              peerTiers = SortedMap.empty,
+              activeAdmissionScores = SortedMap.empty,
+              lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
+              recentRoundEndTimes = SortedMap.empty,
+              controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
+              penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some
+            )
+          }
+        }
+      }
 
     /** Track every auditable parent-round Tier-1 signer from actual local snapshot proofs and audit one deterministic target. Reuse the
       * existing B1 vote path only after the round-count and elapsed-time miss floors, on the existing membership-change cadence, and when
@@ -307,12 +350,13 @@ object GlobalSnapshotConsensusStateCreator {
 
     private def facilitateConsensus(
       key: GlobalSnapshotKey,
-      lastOutcome: GlobalConsensusOutcome,
+      providedLastOutcome: GlobalConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
       priorAbandonmentCount: Int
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
+        lastOutcome <- resetLegacyOutcomeAtActivation(key, providedLastOutcome)
         candidates <- consensusStorage.getCandidates(key.next)
         previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
@@ -971,6 +1015,7 @@ object GlobalSnapshotConsensusStateCreator {
           eligibleFacilitators = EligibleFacilitators(allEligible),
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
+          certifiedConsensusActive = config.certifiedConsensusActiveAt(key.value.value),
           leader = leader,
           // Round-start view = certified initial view. MUST match the
           // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the

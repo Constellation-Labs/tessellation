@@ -11,6 +11,7 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{CertifiedProposalQC, OutcomeVote}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -91,6 +92,27 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   private[consensus] def markTimeoutCertificateApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean]
 
   private[consensus] def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  /** Store a v35 prepare vote under its complete semantic value hash. Public so a Core node can self-store before gossip, avoiding the same
+    * local-loopback race that addSignature documents above.
+    */
+  def addOutcomeVote(origin: PeerId, key: Key, vote: OutcomeVote): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  /** Store a fully verified v35 ProposalQC. Unverified wire input must never call this method. */
+  def addCertifiedProposalQc(key: Key, qc: CertifiedProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
+
+  /** Atomically lock a local prepare vote over the complete ProposalValue hash. */
+  def tryLockCertifiedVote(
+    key: Key,
+    view: Long,
+    valueHash: Hash,
+    effectiveLockedQc: Option[CertifiedProposalQC]
+  ): F[Either[VoteRejection, CertifiedVoteLock]]
+
+  /** Advance/read/clear the v35 semantic lock independently of the legacy artifact-only lock. */
+  def advanceCertifiedLockedQc(key: Key, qc: CertifiedProposalQC): F[Unit]
+  def getCertifiedVoteLock(key: Key): F[Option[CertifiedVoteLock]]
+  def clearCertifiedVoteLock(key: Key): F[Unit]
 
   /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(VoteRejection) if the
     * lock would violate the HotStuff-style safety rule.
@@ -248,7 +270,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     *   - `ConsensusResources` is cleared of artifacts, acks, withdrawals, proposalQcs, admissionVotes, AND -- unlike
     *     `clearResourcesPreservingDeclarations` -- `viewChangeVotes`, `assembledVcc`, and the assembled eviction/admission cert slots, all
     *     of which are anchored to the now-stale local view and would corrupt the rebuild;
-    *   - `voteLockR(key)` is cleared (stale view-lock would block the new view's vote);
+    *   - the legacy artifact-only `voteLockR(key)` is cleared (its view-local lock would block the rebuilt legacy attempt);
+    *   - the v35 `certifiedVoteLockR(key)`, signed outcome votes, and assembled certified QCs are PRESERVED. They are safety evidence for
+    *     this consensus key, so a liveness reset must never let the node prepare a conflicting ProposalValue;
     *   - `peerDeclarationsMap` is PRESERVED. The map contains the bootstrap source the fresh round uses to re-derive its view from observed
     *     peer state (the gate in the layer advancer ensures at least one Ready peer entry is useful).
     *
@@ -373,6 +397,7 @@ object ConsensusStorage {
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Status, Outcome, Kind]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
       voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
+      certifiedVoteLocksR <- MapRef.ofConcurrentHashMap[F, Key, CertifiedVoteLock]()
       assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
       assembledVccApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
       assembledVccReceiptsR <- MapRef.ofConcurrentHashMap[F, Key, Set[(PeerId, Hash, Long, Long, Set[PeerId])]]()
@@ -567,6 +592,54 @@ object ConsensusStorage {
             if (resources.proposalQcs.contains(qcKey)) resources
             else resources.copy(proposalQcs = resources.proposalQcs.updated(qcKey, qc))
           }
+
+        def addOutcomeVote(
+          origin: PeerId,
+          key: Key,
+          vote: OutcomeVote
+        ): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val voteKey = (vote.value.certifiedView, vote.value.valueHash)
+            val current = resources.outcomeVotes.getOrElse(voteKey, Map.empty)
+            val updated = if (current.contains(origin)) current else current.updated(origin, vote)
+            resources.copy(outcomeVotes = resources.outcomeVotes.updated(voteKey, updated))
+          }
+
+        def addCertifiedProposalQc(
+          key: Key,
+          qc: CertifiedProposalQC
+        ): F[Option[ConsensusResources[Artifact, Kind]]] =
+          updateResources(key) { resources =>
+            val qcKey = (qc.value.committedView, qc.valueHash)
+            if (resources.certifiedProposalQcs.contains(qcKey)) resources
+            else resources.copy(certifiedProposalQcs = resources.certifiedProposalQcs.updated(qcKey, qc))
+          }
+
+        def tryLockCertifiedVote(
+          key: Key,
+          view: Long,
+          valueHash: Hash,
+          effectiveLockedQc: Option[CertifiedProposalQC]
+        ): F[Either[VoteRejection, CertifiedVoteLock]] =
+          certifiedVoteLocksR(key).modify { maybeLock =>
+            val current = maybeLock.getOrElse(CertifiedVoteLock.empty)
+            current.acceptVote(view, valueHash, effectiveLockedQc) match {
+              case Right(newLock)  => (newLock.some, Right(newLock))
+              case Left(rejection) => (maybeLock, Left(rejection))
+            }
+          }
+
+        def advanceCertifiedLockedQc(key: Key, qc: CertifiedProposalQC): F[Unit] =
+          certifiedVoteLocksR(key).update {
+            case Some(lock) => lock.withAdvancedQc(qc).some
+            case None       => CertifiedVoteLock.empty.withAdvancedQc(qc).some
+          }
+
+        def getCertifiedVoteLock(key: Key): F[Option[CertifiedVoteLock]] =
+          certifiedVoteLocksR(key).get
+
+        def clearCertifiedVoteLock(key: Key): F[Unit] =
+          certifiedVoteLocksR(key).set(none)
 
         def tryLockVote(
           key: Key,
@@ -788,6 +861,7 @@ object ConsensusStorage {
         def clearResources(key: Key): F[Unit] =
           resourcesR(key).set(none) >>
             voteLocksR(key).set(none) >>
+            certifiedVoteLocksR(key).set(none) >>
             assembledVccR(key).set(none) >>
             assembledVccApplyScheduledR(key).set(none) >>
             assembledVccReceiptsR(key).set(none) >>
@@ -825,7 +899,11 @@ object ConsensusStorage {
               ackKinds = Set.empty,
               artifacts = Map.empty,
               proposalQcs = Map.empty,
-              admissionVotes = Map.empty
+              admissionVotes = Map.empty,
+              // A certified v35 value and its local lock are safety evidence for this key. Preserve them across a liveness retry so this
+              // node cannot prepare a conflicting value after abandoning an attempt.
+              outcomeVotes = resources.outcomeVotes,
+              certifiedProposalQcs = resources.certifiedProposalQcs
             )
           }.void >>
             voteLocksR(key).set(none) >>
@@ -887,9 +965,11 @@ object ConsensusStorage {
 
         def softResetRoundState(key: Key): F[Unit] =
           // Aggressive reset: clear everything anchored to the (now-stale) local view,
-          // keep only the peer declarations map so the next round-start can re-derive
-          // view/leader from observed peer state. NodeState is intentionally not
-          // touched -- the peer stays Ready, Core does not lose a member to this reset.
+          // while retaining v35 semantic votes/QCs and certifiedVoteLocksR(key). The latter
+          // is deliberately absent from the clear chain below: resetting liveness state must
+          // not erase the safety fact that this node prepared/locked a ProposalValue at this
+          // key. NodeState is intentionally not touched -- the peer stays Ready, Core does
+          // not lose a member to this reset.
           Clock[F].monotonic.flatMap { now =>
             updateResources(key) { resources =>
               ConsensusResources[Artifact, Kind](
@@ -902,7 +982,9 @@ object ConsensusStorage {
                 viewChangeVotes = Map.empty,
                 proposalQcs = Map.empty,
                 evictionVotes = Map.empty,
-                admissionVotes = Map.empty
+                admissionVotes = Map.empty,
+                outcomeVotes = resources.outcomeVotes,
+                certifiedProposalQcs = resources.certifiedProposalQcs
               )
             }.void >>
               voteLocksR(key).set(none) >>
@@ -1007,6 +1089,8 @@ object ConsensusStorage {
             _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
             voteLockKeys <- voteLocksR.keys
             _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
+            certifiedVoteLockKeys <- certifiedVoteLocksR.keys
+            _ <- certifiedVoteLockKeys.traverse_(k => certifiedVoteLocksR(k).set(none))
             vccKeys <- assembledVccR.keys
             _ <- vccKeys.traverse_(k => assembledVccR(k).set(none))
             vccScheduleKeys <- assembledVccApplyScheduledR.keys

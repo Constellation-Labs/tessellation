@@ -2,12 +2,13 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import java.security.KeyPair
 
-import cats.Show
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.all._
+import cats.{Applicative, Show}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -194,11 +195,168 @@ object CertifiedConsensus {
       } yield CoreCommitQC(valueHash, roundStartCoreHash, signatures)
   }
 
+  /** Verifiable consensus evidence persisted beside the ordinary finished outcome.
+    *
+    * The public artifact and its existing proofs stay in the layer-specific `Finished` value. This sidecar only adds the two Core
+    * certificates, and is shared by DAG L0 and Currency L0.
+    */
+  @derive(eqv, encoder, decoder)
+  final case class CertifiedOutcome(
+    proposalQc: CertifiedProposalQC,
+    coreCommitQc: CoreCommitQC
+  )
+
+  object CertifiedOutcome {
+    implicit val showInstance: Show[CertifiedOutcome] = Show.fromToString
+  }
+
   def valueHash[F[_]: Hasher](value: ProposalValue): F[Hash] =
     Hasher[F].hash(value)
 
+  /** Construct the common semantic value for either L0 layer.
+    *
+    * Layer code supplies its typed context and domain; extraction of shared Proposal evidence and canonical collection handling live in one
+    * place so DAG and Currency cannot drift.
+    */
+  def proposalValue[F[_]: Applicative: Hasher, Context: Encoder](
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    artifactHash: Hash,
+    context: Context,
+    roundStartFacilitators: NonEmptySet[PeerId],
+    roundStartCore: NonEmptySet[PeerId],
+    committedView: Long,
+    trigger: ConsensusTrigger,
+    proposal: declaration.Proposal,
+    consensusEndTime: Option[Long]
+  ): F[ProposalValue] = {
+    val timeoutVoters = proposal.timeoutCertificate
+      .fold(SortedSet.empty[PeerId])(tc => SortedSet.from(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)))
+
+    (
+      Hasher[F].hash(context),
+      Hasher[F].hash(roundStartFacilitators),
+      Hasher[F].hash(roundStartCore)
+    ).mapN { (contextHash, fullHash, coreHash) =>
+      ProposalValue(
+        schemaVersion = SchemaVersion,
+        domain = domain,
+        networkId = networkId,
+        key = key,
+        parentArtifactHash = parentArtifactHash,
+        artifactHash = artifactHash,
+        contextHash = contextHash,
+        roundStartFacilitators = roundStartFacilitators,
+        roundStartFacilitatorsHash = fullHash,
+        roundStartCore = roundStartCore,
+        roundStartCoreHash = coreHash,
+        committedView = committedView,
+        trigger = trigger,
+        admissionNominee = proposal.admissionNominee,
+        admittedPeers = SortedSet.from(proposal.admissionCertificates.map(_.targetPeer)),
+        evictedPeers = SortedSet.from(proposal.evictionCertificates.map(_.targetPeer)),
+        observedResponders = SortedSet.from(proposal.observedResponders),
+        observedSelfHealth = proposal.observedSelfHealth,
+        timeoutVoters = timeoutVoters,
+        consensusEndTime = consensusEndTime
+      )
+    }
+  }
+
+  /** Re-derive only the layer/round identity of an already-certified value.
+    *
+    * A later view has a different VCC/TC transport envelope, so rebuilding semantic fields from that envelope would incorrectly mutate the
+    * locked value. The QC remains the source of semantic fields; this helper recomputes every locally verifiable identity/hash field with
+    * the same standard Hasher used for a fresh value. Comparing the result to the carried value catches wrong-layer, wrong-parent,
+    * wrong-artifact, wrong-context, and wrong-committee replay without inventing a second encoding scheme.
+    */
+  def rederiveCertifiedValue[F[_]: Applicative: Hasher, Context: Encoder](
+    certified: ProposalValue,
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    artifactHash: Hash,
+    context: Context,
+    roundStartFacilitators: NonEmptySet[PeerId],
+    roundStartCore: NonEmptySet[PeerId]
+  ): F[ProposalValue] =
+    (
+      Hasher[F].hash(context),
+      Hasher[F].hash(roundStartFacilitators),
+      Hasher[F].hash(roundStartCore)
+    ).mapN { (contextHash, fullHash, coreHash) =>
+      certified.copy(
+        schemaVersion = SchemaVersion,
+        domain = domain,
+        networkId = networkId,
+        key = key,
+        parentArtifactHash = parentArtifactHash,
+        artifactHash = artifactHash,
+        contextHash = contextHash,
+        roundStartFacilitators = roundStartFacilitators,
+        roundStartFacilitatorsHash = fullHash,
+        roundStartCore = roundStartCore,
+        roundStartCoreHash = coreHash
+      )
+    }
+
   def requiredCoreQuorum(coreSize: Int, configuredFraction: Double): Int =
     math.max(QuorumPolicy.supermajority(coreSize), QuorumPolicy.fromFraction(coreSize, configuredFraction))
+
+  /** Select whether this node may emit a pacemaker vote and, when it may, the exact direct-gossip targets.
+    *
+    * Legacy rounds retain their existing active-facilitator behavior. Certified rounds use only frozen Core votes for VCC/TC quorum
+    * intersection, while delivering those votes to the complete frozen committee. `None` distinguishes an ineligible Tier-1 node from an
+    * eligible solo Core node whose target set is legitimately empty.
+    */
+  def pacemakerVoteTargets(
+    certifiedConsensusActive: Boolean,
+    selfId: PeerId,
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    legacyFacilitators: Set[PeerId]
+  ): Option[Set[PeerId]] =
+    if (certifiedConsensusActive && !frozenCore.contains(selfId)) None
+    else Some((if (certifiedConsensusActive) frozenCommittee else legacyFacilitators) - selfId)
+
+  /** Extract every advertised v35 QC from either pacemaker certificate family.
+    *
+    * Extraction is intentionally dumb; [[highestVerifiedProposalQc]] is the only production selector. Keeping this traversal here avoids
+    * duplicating the nested VCC/TC walk in DAG and Currency.
+    */
+  def proposalQcCandidates(
+    vcc: Option[declaration.ViewChangeCertificate],
+    timeoutCertificate: Option[declaration.TimeoutCertificate]
+  ): List[CertifiedProposalQC] =
+    List.concat(
+      vcc.toList.flatMap(_.votes.toNonEmptyList.toList.flatMap(_.value.highestKnownCertifiedQc)),
+      timeoutCertificate.toList.flatMap(_.votes.toNonEmptyList.toList.flatMap(_.value.highestKnownCertifiedQc))
+    )
+
+  /** Select the uniquely highest certified value from an already-verified collection.
+    *
+    * Keeping selection separate from verification is useful in tests, but production callers should use [[highestVerifiedProposalQc]]. A
+    * syntactically well-formed, higher-view fake must never eclipse a lower, valid certificate.
+    */
+  private[consensus] def selectHighestProposalQc(
+    qcs: Iterable[CertifiedProposalQC]
+  ): Either[String, Option[CertifiedProposalQC]] = {
+    val candidates = qcs.toList
+
+    candidates.map(_.value.committedView).maximumOption match {
+      case None => none[CertifiedProposalQC].asRight[String]
+      case Some(maxView) =>
+        val atMaxView = candidates.filter(_.value.committedView === maxView)
+        Either.cond(
+          atMaxView.map(_.valueHash).distinct.size === 1,
+          atMaxView.headOption,
+          s"divergent_certified_qc_at_view:$maxView"
+        )
+    }
+  }
 
   private def statement(purpose: CertificationPurpose, value: ProposalValue, hash: Hash): CertificationStatement =
     CertificationStatement(
@@ -273,9 +431,33 @@ object CertifiedConsensus {
     }
   }
 
+  private def validateCommitteeBindings[F[_]: Applicative: Hasher](
+    value: ProposalValue,
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId]
+  ): F[Either[String, Unit]] =
+    (
+      Hasher[F].hash(value.roundStartFacilitators),
+      Hasher[F].hash(value.roundStartCore)
+    ).mapN { (fullHash, coreHash) =>
+      ProposalValue
+        .validate(value)
+        .productL(
+          Either.cond(
+            value.roundStartFacilitators.toSortedSet === SortedSet.from(frozenCommittee),
+            (),
+            "frozen_committee_mismatch"
+          )
+        )
+        .productL(Either.cond(value.roundStartCore.toSortedSet === SortedSet.from(frozenCore), (), "frozen_core_mismatch"))
+        .productL(Either.cond(fullHash === value.roundStartFacilitatorsHash, (), "full_committee_hash_mismatch"))
+        .productL(Either.cond(coreHash === value.roundStartCoreHash, (), "core_committee_hash_mismatch"))
+    }
+
   def buildProposalQc[F[_]: Async: Hasher: SecurityProvider](
     value: ProposalValue,
     votes: SortedMap[PeerId, OutcomeVote],
+    frozenCommittee: Set[PeerId],
     frozenCore: Set[PeerId],
     configuredFraction: Double
   ): F[Either[String, CertifiedProposalQC]] =
@@ -283,10 +465,15 @@ object CertifiedConsensus {
       val expected = statement(CertificationPurpose.Prepare, value, hash)
       val required = requiredCoreQuorum(frozenCore.size, configuredFraction)
 
-      (ProposalValue.validate(value), candidateProofs(expected, votes, frozenCore, required)).mapN((_, proofs) => proofs) match {
+      validateCommitteeBindings(value, frozenCommittee, frozenCore).flatMap {
         case Left(error) => error.asLeft[CertifiedProposalQC].pure[F]
-        case Right(proofs) =>
-          verifyProofs(expected, proofs, frozenCore, required).map(_.map(_ => CertifiedProposalQC(value, hash, proofs)))
+        case Right(_) =>
+          candidateProofs(expected, votes, frozenCore, required) match {
+            case Left(error) => error.asLeft[CertifiedProposalQC].pure[F]
+            case Right(proofs) =>
+              verifyProofs(expected, proofs, frozenCore, required)
+                .flatMap(result => result.map(_ => CertifiedProposalQC(value, hash, proofs)).pure[F])
+          }
       }
     }
 
@@ -302,32 +489,68 @@ object CertifiedConsensus {
     candidateProofs(expected, commits, frozenCore, required) match {
       case Left(error) => error.asLeft[CoreCommitQC].pure[F]
       case Right(proofs) =>
-        verifyProofs(expected, proofs, frozenCore, required).map(
-          _.map(_ => CoreCommitQC(proposalQc.valueHash, proposalQc.value.roundStartCoreHash, proofs))
-        )
+        verifyProofs(expected, proofs, frozenCore, required).flatMap { result =>
+          result
+            .map(_ => CoreCommitQC(proposalQc.valueHash, proposalQc.value.roundStartCoreHash, proofs))
+            .pure[F]
+        }
     }
   }
 
   def verifyProposalQc[F[_]: Async: Hasher: SecurityProvider](
     qc: CertifiedProposalQC,
+    frozenCommittee: Set[PeerId],
     frozenCore: Set[PeerId],
     configuredFraction: Double
   ): F[Either[String, Unit]] =
-    valueHash(qc.value).flatMap { recomputed =>
-      val structure = ProposalValue
-        .validate(qc.value)
-        .productL(Either.cond(recomputed === qc.valueHash, (), "value_hash_mismatch"))
+    (
+      valueHash(qc.value),
+      validateCommitteeBindings(qc.value, frozenCommittee, frozenCore)
+    ).mapN { (recomputed, bindings) =>
+      bindings.productL(Either.cond(recomputed === qc.valueHash, (), "value_hash_mismatch"))
+    }.flatMap {
+      case Left(error) => error.asLeft[Unit].pure[F]
+      case Right(_) =>
+        verifyProofs(
+          statement(CertificationPurpose.Prepare, qc.value, qc.valueHash),
+          qc.signatures,
+          frozenCore,
+          requiredCoreQuorum(frozenCore.size, configuredFraction)
+        )
+    }
 
-      structure match {
-        case Left(error) => error.asLeft[Unit].pure[F]
-        case Right(_) =>
-          verifyProofs(
-            statement(CertificationPurpose.Prepare, qc.value, qc.valueHash),
-            qc.signatures,
-            frozenCore,
-            requiredCoreQuorum(frozenCore.size, configuredFraction)
-          )
-      }
+  /** Verify every advertised QC before choosing the highest valid one.
+    *
+    * Invalid candidates are ignored, just as invalid pacemaker declarations are not consensus evidence. If two independently valid QCs
+    * disagree at the highest view, selection fails closed. This one helper is used by both DAG and Currency leader/follower paths so a
+    * buggy or stale peer cannot create layer-specific carry-forward behavior.
+    */
+  def highestVerifiedProposalQc[F[_]: Async: Hasher: SecurityProvider](
+    candidates: Iterable[CertifiedProposalQC],
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Either[String, Option[CertifiedProposalQC]]] =
+    candidates.toList.traverse { qc =>
+      verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction)
+        .flatMap(result => result.toOption.as(qc).pure[F])
+    }
+      .flatMap(valid => selectHighestProposalQc(valid.flatten).pure[F])
+
+  /** Return the first fully verified QC for `value`.
+    *
+    * Transport layers may learn the same certificate through a proposal, local assembly, or a relayed signature. Keeping candidate
+    * filtering and cryptographic verification here prevents DAG and Currency from growing subtly different acceptance rules.
+    */
+  def firstVerifiedProposalQc[F[_]: Async: Hasher: SecurityProvider](
+    value: ProposalValue,
+    candidates: Iterable[CertifiedProposalQC],
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Option[CertifiedProposalQC]] =
+    candidates.iterator.filter(_.value === value).toList.findM { qc =>
+      verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction).flatMap(_.isRight.pure[F])
     }
 
   def verifyCoreCommitQc[F[_]: Async: Hasher: SecurityProvider](
@@ -356,4 +579,48 @@ object CertifiedConsensus {
         )
     }
   }
+
+  def verifyOutcome[F[_]: Async: Hasher: SecurityProvider](
+    outcome: CertifiedOutcome,
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Either[String, Unit]] =
+    verifyProposalQc(outcome.proposalQc, frozenCommittee, frozenCore, configuredFraction).flatMap {
+      case Left(error) => error.asLeft[Unit].pure[F]
+      case Right(_) =>
+        verifyCoreCommitQc(outcome.proposalQc, outcome.coreCommitQc, frozenCore, configuredFraction)
+    }
+
+  /** Shared DAG/Currency semantic-value validation. Layer adapters only construct `expected` from their artifact/context types. */
+  def validateValue[F[_]: Async: Hasher: SecurityProvider](
+    actual: ProposalValue,
+    expected: ProposalValue,
+    carriedQc: Option[CertifiedProposalQC],
+    outerView: Long,
+    parentEndTime: Option[Long],
+    viewInterval: FiniteDuration,
+    maxRoundDuration: Option[FiniteDuration],
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Either[String, ProposalValue]] =
+    carriedQc
+      .traverse(verifyProposalQc[F](_, frozenCommittee, frozenCore, configuredFraction))
+      .map { carriedResult =>
+        for {
+          _ <- ProposalValue.validate(actual)
+          _ <- ConsensusEndTime.validateProposed(
+            actual.consensusEndTime,
+            parentEndTime,
+            actual.committedView,
+            viewInterval,
+            maxRoundDuration
+          )
+          _ <- Either.cond(actual === expected, (), "proposal_value_semantics_mismatch")
+          _ <- Either.cond(actual.committedView <= outerView, (), "proposal_value_future_view")
+          _ <- carriedResult.sequence_
+          _ <- carriedQc.traverse_(qc => Either.cond(qc.value === actual, (), "certified_value_carry_forward_mismatch"))
+        } yield actual
+      }
 }

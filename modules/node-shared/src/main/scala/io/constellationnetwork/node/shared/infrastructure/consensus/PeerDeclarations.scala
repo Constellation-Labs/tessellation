@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{CertifiedProposalQC, CoreCommit, ProposalValue}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
@@ -43,6 +44,17 @@ object PeerDeclarationsArbitraries {
     Arbitrary(Gen.const(Map.empty))
 
   implicit val selfHealthHintOptArb: Arbitrary[Option[SelfHealthHint]] =
+    Arbitrary(Gen.const(None))
+
+  // V35 certification fields are cryptographic fixtures. Generic PeerDeclarations properties exercise the legacy/default wire shape;
+  // focused certification suites construct real values and proofs explicitly.
+  implicit val proposalValueOptArb: Arbitrary[Option[ProposalValue]] =
+    Arbitrary(Gen.const(None))
+
+  implicit val certifiedProposalQcOptArb: Arbitrary[Option[CertifiedProposalQC]] =
+    Arbitrary(Gen.const(None))
+
+  implicit val coreCommitOptArb: Arbitrary[Option[CoreCommit]] =
     Arbitrary(Gen.const(None))
 }
 

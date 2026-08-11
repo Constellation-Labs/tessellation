@@ -178,6 +178,10 @@ object GlobalSnapshotConsensus {
       resolvedQuorumShrinkActivationViews = appConfig.snapshot.quorumShrinkActivationViews
         .get(appConfig.environment)
         .getOrElse(0)
+      resolvedCertifiedConsensusActivationKey = appConfig.snapshot.certifiedConsensusActivationOrdinal
+        .getOrElse(appConfig.environment, SnapshotOrdinal.MaxValue)
+        .value
+        .value
       // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry =
       // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
       resolvedActiveAdmissionMinProbationReentrySlots = appConfig.snapshot.activeAdmissionMinProbationReentrySlots
@@ -205,6 +209,7 @@ object GlobalSnapshotConsensus {
       effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
         coreCommitteeSize = Some(resolvedCoreCommitteeSize),
         quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
+        certifiedConsensusActivationKey = resolvedCertifiedConsensusActivationKey,
         activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
         activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
         activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
@@ -308,6 +313,7 @@ object GlobalSnapshotConsensus {
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
           effectiveConsensusConfig,
+          appConfig.environment.entryName,
           keyPair,
           consensusStorage,
           globalSnapshotStorage,

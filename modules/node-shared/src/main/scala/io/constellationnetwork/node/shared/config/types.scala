@@ -847,7 +847,23 @@ object types {
     //     Core voters on one target. The accepted singleton is retained in the existing
     //     Finished.candidates field. Proposal decoding is backward compatible, but the
     //     signed rumor wire shape changes, so the schema anchor moves.
-    consensusSchemaVersion: Int = 34,
+    //     v35: Core certifies the complete, view-independent ProposalValue before the
+    //     frozen signing committee can finalize it. Prepare and commit signatures use
+    //     the existing Signed/Hasher infrastructure; Proposal/VCC/TC gain optional
+    //     certification fields. Activation is separately ordinal-gated so legacy
+    //     controller/evidence windows can be flushed at one deterministic boundary.
+    //     No GlobalIncrementalSnapshot, GlobalSnapshotInfo, CurrencyIncrementalSnapshot,
+    //     or state-proof schema changes are part of this version.
+    consensusSchemaVersion: Int = 35,
+    // Per-L0 activation key for v35 certified outcomes. DAG L0 and every Currency L0
+    // have independent snapshot-ordinal spaces, so this cannot live in the GL0-only
+    // FieldsAddedOrdinals bundle. SnapshotConfig resolves the current environment's
+    // value once at each consensus construction site and threads it here.
+    //
+    // Long.MaxValue keeps the feature dormant when an environment has no configured
+    // activation. This value is consensus-critical and included in
+    // deterministicConfigHash; operators must deploy one identical value cluster-wide.
+    certifiedConsensusActivationKey: Long = Long.MaxValue,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -892,6 +908,12 @@ object types {
     quorumShrinkActivationViews: Int = 0
   ) {
 
+    def certifiedConsensusActiveAt(key: Long): Boolean =
+      key >= certifiedConsensusActivationKey
+
+    def certifiedConsensusActivatesAt(key: Long): Boolean =
+      key == certifiedConsensusActivationKey
+
     /** Deterministic hash of consensus-critical config values.
       *
       * All nodes in a consensus round MUST have the same config to produce the same results. This hash is included in Facility declarations
@@ -921,6 +943,7 @@ object types {
       *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: Core-controller expansion and cap on GL0; Currency retains its bounded
       *     active-set interpretation
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
+      *   - `maxRoundDuration`: v35 bounds the committed leader-proposed consensus end time; before v35 it was only a local watchdog
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
       *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
@@ -928,7 +951,6 @@ object types {
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
       *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
-      *   - `maxRoundDuration`: safety net, not consensus logic
       *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
       *
       * '''qualityDecayThreshold reclassified.''' Previously documented as local-only and excluded from this hash. In reality it mutates the
@@ -971,6 +993,10 @@ object types {
           // therefore the initial leader) under wall-clock progress; divergent operator values would
           // produce divergent leader selection from the same parent snapshot and silently fork.
           s"viewIntervalMs=${viewInterval.toMillis}," +
+          // v35: bounds the leader-proposed consensus end time. This was a local watchdog
+          // value before v35; once used by ProposalValue validation it must be identical
+          // cluster-wide and therefore belongs in the deterministic hash.
+          s"maxRoundDurationMs=${maxRoundDuration.map(_.toMillis)}," +
           // Active-set tightening: three parameters together determine the next-round
           // committee membership; divergent operator values would produce silently-
           // divergent facilitator sets and fork the cluster.
@@ -1022,6 +1048,9 @@ object types {
           // cert/phase acceptance quorum at a wedged key; divergent operator values would
           // make one node accept a shrunken VCC/TC that another rejects.
           s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
+          // v35: exact local snapshot key where certified outcome semantics and the
+          // canonical legacy-evidence reset begin.
+          s"certifiedConsensusActivationKey=$certifiedConsensusActivationKey," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1133,6 +1162,11 @@ object types {
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     maxFacilitatorCount: Map[AppEnvironment, PosInt] = Map.empty,
+    // V35 certified-outcome activation, keyed by environment but interpreted in this
+    // L0 application's own snapshot-ordinal space. Keeping the map on SnapshotConfig
+    // lets DAG L0 and each Currency L0 configure their own boundary while reusing the
+    // same generic ConsensusConfig/advancer machinery. Absent means disabled.
+    certifiedConsensusActivationOrdinal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // v19 multi-committee minimum Core size, keyed by AppEnvironment. Targets observed
     // committee sizes: testnet ~14 peers -> Core 5, mainnet ~150 peers -> Core 15,
     // integrationnet ~10 peers -> Core 9, dev (single-node test rigs) -> Core 3.

@@ -25,6 +25,8 @@ import monocle.macros.GenLens
 
 object schema {
 
+  import CertifiedConsensus.{CertifiedOutcome, CertifiedProposalQC, ProposalValue}
+
   @derive(eqv)
   sealed trait CurrencyConsensusStep
 
@@ -39,14 +41,16 @@ object schema {
             facilitatorsHash,
             lastSnapshotHash,
             observedResponders,
-            observedSelfHealth
+            observedSelfHealth,
+            _,
+            _
           ) =>
         s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
-      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
+      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash, _, _) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
+      case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash, _) =>
         s"CollectingBinarySignatures{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case Finished(_, binaryArtifactHash, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash) =>
+      case Finished(_, binaryArtifactHash, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash, _) =>
         s"Finished{binaryArtifactHash=${binaryArtifactHash}, majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, snapshotHash=${snapshotHash.show}}"
     }
   }
@@ -70,7 +74,9 @@ object schema {
     // v15: same byte-identical-re-spread rationale as observedResponders. The aggregated
     // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
     // original Proposal payload exactly.
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+    proposedValue: Option[ProposalValue] = None,
+    acceptedValue: Option[ProposalValue] = None
   ) extends CurrencyConsensusStep
 
   final case class CollectingSignatures(
@@ -78,7 +84,9 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    proposalValue: Option[ProposalValue] = None,
+    proposalQc: Option[CertifiedProposalQC] = None
   ) extends CurrencyConsensusStep
 
   final case class CollectingBinarySignatures(
@@ -88,7 +96,8 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    certifiedOutcome: Option[CertifiedOutcome] = None
   ) extends CurrencyConsensusStep
 
   @derive(encoder, decoder, eqv)
@@ -99,7 +108,8 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    snapshotHash: Hash
+    snapshotHash: Hash,
+    certifiedOutcome: Option[CertifiedOutcome] = None
   ) extends CurrencyConsensusStep
 
   @derive(encoder, decoder, eqv, show)

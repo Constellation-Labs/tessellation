@@ -7,6 +7,7 @@ import cats.syntax.show._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.ext.codecs.NonEmptySetCodec
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{CertifiedProposalQC, CoreCommit, ProposalValue}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
@@ -28,6 +29,17 @@ object declaration {
     NonEmptySetCodec.encoder[SignatureProof]
   implicit val signatureProofsDecoder: Decoder[NonEmptySet[SignatureProof]] =
     NonEmptySetCodec.decoder[SignatureProof]
+
+  /** Lazily instantiate the repository-standard `Signed` codecs.
+    *
+    * Proposal/VCC/TC recursively embed signed declarations. Delaying construction avoids magnolia's forward-reference initialization bug
+    * without duplicating the `Signed(value, proofs)` wire format for every declaration type.
+    */
+  private def lazySignedEncoder[A](valueEncoder: => Encoder[A]): Encoder[Signed[A]] =
+    Encoder.instance(signed => Signed.encoder[A](valueEncoder)(signed))
+
+  private def lazySignedDecoder[A](valueDecoder: => Decoder[A]): Decoder[Signed[A]] =
+    Decoder.instance(cursor => Signed.decoder[A](valueDecoder).tryDecode(cursor))
 
   // v15: explicit Show for Proposal.observedSelfHealth resolves an ambiguity between
   // `cats.Show.catsShowForSortedMap` and the package-object `showSortedMapAsList` that both
@@ -89,13 +101,14 @@ object declaration {
   // attempt to serialize a view>0 Proposal (which carries a VCC) produced
   // `NullPointerException: ... circeGenericEncoderForvalue is null` at Signed.scala:56. The
   // round that triggered the view change never delivered its proposal and thrashed forever.
-  @derive(eqv, show, encoder, decoder)
+  @derive(eqv, show)
   case class ViewChangeVote(
     fromView: Long,
     toView: Long,
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
-    highestKnownQc: Option[ProposalQC]
+    highestKnownQc: Option[ProposalQC],
+    highestKnownCertifiedQc: Option[CertifiedProposalQC] = None
   ) extends PeerDeclaration
 
   object ViewChangeVote {
@@ -104,9 +117,41 @@ object declaration {
         val qcPart = v.highestKnownQc.fold("-") { qc =>
           s"${qc.view}|${qc.proposalHash.value}|${qc.facilitatorsHash.value}"
         }
-        (v.fromView, v.toView, v.facilitatorsHash.value, v.lastSnapshotHash.value, qcPart)
+        val certifiedQcPart = v.highestKnownCertifiedQc.fold("-") { qc =>
+          s"${qc.value.committedView}|${qc.valueHash.value}|${qc.value.roundStartCoreHash.value}"
+        }
+        (v.fromView, v.toView, v.facilitatorsHash.value, v.lastSnapshotHash.value, qcPart, certifiedQcPart)
       }
     implicit val order: cats.kernel.Order[ViewChangeVote] = cats.kernel.Order.fromOrdering(ordering)
+
+    implicit val encoder: Encoder[ViewChangeVote] = Encoder.instance { v =>
+      Json.obj(
+        "fromView" -> v.fromView.asJson,
+        "toView" -> v.toView.asJson,
+        "facilitatorsHash" -> v.facilitatorsHash.asJson,
+        "lastSnapshotHash" -> v.lastSnapshotHash.asJson,
+        "highestKnownQc" -> v.highestKnownQc.asJson,
+        "highestKnownCertifiedQc" -> v.highestKnownCertifiedQc.asJson
+      )
+    }
+
+    implicit val decoder: Decoder[ViewChangeVote] = (c: HCursor) =>
+      for {
+        fromView <- c.downField("fromView").as[Long]
+        toView <- c.downField("toView").as[Long]
+        facilitatorsHash <- c.downField("facilitatorsHash").as[Hash]
+        lastSnapshotHash <- c.downField("lastSnapshotHash").as[Hash]
+        highestKnownQc <- c.downField("highestKnownQc").as[Option[ProposalQC]]
+        highestKnownCertifiedQc <- c.downField("highestKnownCertifiedQc").as[Option[CertifiedProposalQC]]
+      } yield
+        ViewChangeVote(
+          fromView,
+          toView,
+          facilitatorsHash,
+          lastSnapshotHash,
+          highestKnownQc,
+          highestKnownCertifiedQc
+        )
   }
 
   // Explicit codecs for `Signed[ViewChangeVote]` and `ViewChangeCertificate`. Without these, the
@@ -127,15 +172,9 @@ object declaration {
   // fully resolved yet. The symptom was `NullPointerException: circeGenericEncoderForvalue is
   // null` at Signed.scala:56 every time a view>0 Proposal carrying a VCC was serialized.
   implicit val signedViewChangeVoteEncoder: Encoder[Signed[ViewChangeVote]] =
-    Encoder.instance { sv =>
-      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
-    }
+    lazySignedEncoder(ViewChangeVote.encoder)
   implicit val signedViewChangeVoteDecoder: Decoder[Signed[ViewChangeVote]] =
-    (c: HCursor) =>
-      for {
-        value <- c.downField("value").as[ViewChangeVote]
-        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
-      } yield Signed(value, proofs)
+    lazySignedDecoder(ViewChangeVote.decoder)
 
   implicit val viewChangeVotesEncoder: Encoder[NonEmptySet[Signed[ViewChangeVote]]] =
     NonEmptySetCodec.encoder[Signed[ViewChangeVote]]
@@ -191,7 +230,8 @@ object declaration {
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
     highestKnownQc: Option[ProposalQC],
-    reason: TimeoutReason
+    reason: TimeoutReason,
+    highestKnownCertifiedQc: Option[CertifiedProposalQC] = None
   ) extends PeerDeclaration
 
   object TimeoutVote {
@@ -200,7 +240,18 @@ object declaration {
         val qcPart = v.highestKnownQc.fold("-") { qc =>
           s"${qc.view}|${qc.proposalHash.value}|${qc.facilitatorsHash.value}"
         }
-        (v.fromView, v.toView, v.facilitatorsHash.value, v.lastSnapshotHash.value, qcPart, v.reason.toString)
+        val certifiedQcPart = v.highestKnownCertifiedQc.fold("-") { qc =>
+          s"${qc.value.committedView}|${qc.valueHash.value}|${qc.value.roundStartCoreHash.value}"
+        }
+        (
+          v.fromView,
+          v.toView,
+          v.facilitatorsHash.value,
+          v.lastSnapshotHash.value,
+          qcPart,
+          certifiedQcPart,
+          v.reason.toString
+        )
       }
     implicit val order: cats.kernel.Order[TimeoutVote] = cats.kernel.Order.fromOrdering(ordering)
 
@@ -212,7 +263,8 @@ object declaration {
           "facilitatorsHash" -> v.facilitatorsHash.asJson,
           "lastSnapshotHash" -> v.lastSnapshotHash.asJson,
           "highestKnownQc" -> v.highestKnownQc.asJson,
-          "reason" -> TimeoutReason.timeoutReasonEncoder(v.reason)
+          "reason" -> TimeoutReason.timeoutReasonEncoder(v.reason),
+          "highestKnownCertifiedQc" -> v.highestKnownCertifiedQc.asJson
         )
       }
     implicit val timeoutVoteDecoder: Decoder[TimeoutVote] =
@@ -224,19 +276,23 @@ object declaration {
           lastSnapshotHash <- c.downField("lastSnapshotHash").as[Hash]
           highestKnownQc <- c.downField("highestKnownQc").as[Option[ProposalQC]]
           reason <- c.downField("reason").as(TimeoutReason.timeoutReasonDecoder)
-        } yield TimeoutVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc, reason)
+          highestKnownCertifiedQc <- c.downField("highestKnownCertifiedQc").as[Option[CertifiedProposalQC]]
+        } yield
+          TimeoutVote(
+            fromView,
+            toView,
+            facilitatorsHash,
+            lastSnapshotHash,
+            highestKnownQc,
+            reason,
+            highestKnownCertifiedQc
+          )
   }
 
   implicit val signedTimeoutVoteEncoder: Encoder[Signed[TimeoutVote]] =
-    Encoder.instance { sv =>
-      Json.obj("value" -> TimeoutVote.timeoutVoteEncoder(sv.value), "proofs" -> sv.proofs.asJson)
-    }
+    lazySignedEncoder(TimeoutVote.timeoutVoteEncoder)
   implicit val signedTimeoutVoteDecoder: Decoder[Signed[TimeoutVote]] =
-    (c: HCursor) =>
-      for {
-        value <- c.downField("value").as(TimeoutVote.timeoutVoteDecoder)
-        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
-      } yield Signed(value, proofs)
+    lazySignedDecoder(TimeoutVote.timeoutVoteDecoder)
 
   implicit val timeoutVotesEncoder: Encoder[NonEmptySet[Signed[TimeoutVote]]] =
     NonEmptySetCodec.encoder[Signed[TimeoutVote]]
@@ -300,15 +356,9 @@ object declaration {
   // at codec-construction time, which avoids the circe-generic lazy-init null pattern
   // when Proposal's derived codec chains through an EvictionCertificate field.
   implicit val signedEvictionVoteEncoder: Encoder[Signed[EvictionVote]] =
-    Encoder.instance { sv =>
-      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
-    }
+    lazySignedEncoder(implicitly[Encoder[EvictionVote]])
   implicit val signedEvictionVoteDecoder: Decoder[Signed[EvictionVote]] =
-    (c: HCursor) =>
-      for {
-        value <- c.downField("value").as[EvictionVote]
-        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
-      } yield Signed(value, proofs)
+    lazySignedDecoder(implicitly[Decoder[EvictionVote]])
 
   implicit val evictionVotesEncoder: Encoder[NonEmptySet[Signed[EvictionVote]]] =
     NonEmptySetCodec.encoder[Signed[EvictionVote]]
@@ -381,15 +431,9 @@ object declaration {
 
   // Explicit codecs for `Signed[AdmissionVote]` — same rationale as the VCV/EV codecs above.
   implicit val signedAdmissionVoteEncoder: Encoder[Signed[AdmissionVote]] =
-    Encoder.instance { sv =>
-      Json.obj("value" -> sv.value.asJson, "proofs" -> sv.proofs.asJson)
-    }
+    lazySignedEncoder(implicitly[Encoder[AdmissionVote]])
   implicit val signedAdmissionVoteDecoder: Decoder[Signed[AdmissionVote]] =
-    (c: HCursor) =>
-      for {
-        value <- c.downField("value").as[AdmissionVote]
-        proofs <- c.downField("proofs").as[NonEmptySet[SignatureProof]]
-      } yield Signed(value, proofs)
+    lazySignedDecoder(implicitly[Decoder[AdmissionVote]])
 
   implicit val admissionVotesEncoder: Encoder[NonEmptySet[Signed[AdmissionVote]]] =
     NonEmptySetCodec.encoder[Signed[AdmissionVote]]
@@ -474,7 +518,10 @@ object declaration {
     // followers adopt this exact value on Proposal acceptance. Carrying one nominee avoids
     // asking next-round voters to rank node-local candidate universes, which can differ at
     // quorum-crossing time. None is the backward-compatible/pre-upgrade value.
-    admissionNominee: Option[PeerId] = None
+    admissionNominee: Option[PeerId] = None,
+    // v35: complete, view-independent semantics certified by the frozen round-start Core.
+    // None decodes legacy/pre-activation proposals; v35 validation rejects None.
+    proposalValue: Option[ProposalValue] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
@@ -483,7 +530,13 @@ object declaration {
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
     view: Long,
-    proposalHash: Hash
+    proposalHash: Hash,
+    // v35 fields are separate from the unchanged bare-artifact signature above. A valid
+    // ProposalQC proves the semantic value; a CoreCommit proves this Core signer received
+    // and verified that QC before artifact finalization.
+    proposalValueHash: Option[Hash] = None,
+    proposalQc: Option[CertifiedProposalQC] = None,
+    coreCommit: Option[CoreCommit] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)

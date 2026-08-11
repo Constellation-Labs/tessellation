@@ -92,6 +92,30 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
   }
 
+  pureTest("v35 activation key is a deterministic-config fence and activates at the exact key") {
+    val first = baseConfig.copy(certifiedConsensusActivationKey = 100L)
+    val second = baseConfig.copy(certifiedConsensusActivationKey = 101L)
+
+    expect(first.deterministicConfigHash != second.deterministicConfigHash)
+      .and(expect(!first.certifiedConsensusActiveAt(99L)))
+      .and(expect(first.certifiedConsensusActivatesAt(100L)))
+      .and(expect(first.certifiedConsensusActiveAt(101L)))
+  }
+
+  pureTest("absent v35 activation remains dormant") {
+    expect
+      .same(Long.MaxValue, baseConfig.certifiedConsensusActivationKey)
+      .and(expect(!baseConfig.certifiedConsensusActiveAt(0L)))
+      .and(expect(!baseConfig.certifiedConsensusActivatesAt(0L)))
+  }
+
+  pureTest("maxRoundDuration joins the deterministic hash when it bounds certified end time") {
+    val short = baseConfig.copy(maxRoundDuration = Some(1.minute))
+    val long = baseConfig.copy(maxRoundDuration = Some(2.minutes))
+
+    expect(short.deterministicConfigHash != long.deterministicConfigHash)
+  }
+
   pureTest("tier1SignatureGracePeriod is NOT in deterministicConfigHash (timing-only, same as signatureGracePeriod)") {
     // Both grace periods are finalization-timing levers: the canonical snapshotHash is the agreed
     // ARTIFACT hash, not the signed-artifact hash, so divergent grace values produce the same

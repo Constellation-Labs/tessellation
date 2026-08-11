@@ -131,7 +131,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
         parentEndTimeMs = lastOutcomeEndTimeMs(state.lastOutcome),
         nowMs = now.toMillis,
         viewIntervalMs = config.viewInterval.toMillis,
-        activationViews = config.quorumShrinkActivationViews
+        activationViews = if (state.certifiedConsensusActive) 0 else config.quorumShrinkActivationViews
       )
     }
 

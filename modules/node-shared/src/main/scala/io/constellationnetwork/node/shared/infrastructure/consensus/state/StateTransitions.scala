@@ -81,19 +81,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{
-    advancer,
-    config,
-    facilitatorSelector,
-    gossip,
-    logger => log,
-    peerQualityOf,
-    peerQualityTracker,
-    queue,
-    remover,
-    storage,
-    updater
-  }
+  import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, peerQualityOf, queue, remover, storage, updater}
   import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusAssembledVcc
 
   /** Deterministic witness pool for B1/B2/VCC certificate assembly.
@@ -150,6 +138,34 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     state: ConsensusState[Key, Status, Outcome, Kind]
   ): F[QuorumDenominatorShrink.Decision] =
     advancer.quorumShrinkDecision(state)
+
+  /** Select the one certificate-voter universe for the active schema.
+    *
+    * Legacy rounds retain the wider witness pool and optional shrink rung. V35 VCC/TC certificates are instead made only from uniquely
+    * identified frozen-Core voters and require the same BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in
+    * the shared state machine prevents DAG and Currency -- and the VCC and TC paths -- from drifting onto different safety universes.
+    */
+  private def certificateQuorum[A](
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    votes: Map[PeerId, Signed[A]],
+    shrinkDecision: QuorumDenominatorShrink.Decision
+  ): StateTransitions.CertificateQuorum[A] =
+    if (state.certifiedConsensusActive) {
+      val core = state.coreFacilitators.value.toSet
+      val coreVotes = votes.collect {
+        case (origin, signed)
+            if signed.proofs.size === 1L &&
+              signed.proofs.head.id.toPeerId === origin &&
+              core.contains(origin) =>
+          origin -> signed
+      }
+      val required = CertifiedConsensus.requiredCoreQuorum(core.size, config.quorumThresholdFraction)
+
+      StateTransitions.CertificateQuorum(coreVotes, core, required, coreVotes.size >= required)
+    } else {
+      val required = shrinkDecision.builderQuorum(votes.keySet)
+      StateTransitions.CertificateQuorum(votes, widerWitnessPoolAll(state), required, shrinkDecision.meets(votes.keySet))
+    }
 
   /** Observability for a gate that passed only via the shrunken quorum margin: one INFO line + the rung-activation counter. */
   private def logQuorumShrinkApplied(
@@ -212,28 +228,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         val toView = fromView + 1L
         (storage.getResources(key), quorumShrinkDecisionFor(state)).tupled.flatMap {
           case (resources, shrinkDecision) =>
-            val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-            // v19: VCC assembly quorum threshold computed against the Core committee --
-            // mirrors `validateProposalVcc` in the advancer. The signer pool stays open to
-            // all of `roundStartFacilitators` (Tier 1 and Tier 0 peers may sign view changes
-            // and earn rewards), but the LIVENESS denominator that determines when q votes
-            // have arrived is Core-sized. Integer math via `QuorumPolicy.fromFraction`.
-            // v33: under the escalated quorum-denominator shrink, `requiredQuorum`
-            // anchor-member votes also satisfy the gate; `builderQuorum` keeps the builder's
-            // internal under-quorum check consistent with whichever path passed.
-            val q = shrinkDecision.builderQuorum(votes.keySet)
-            if (shrinkDecision.meets(votes.keySet)) {
+            val rawVotes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+            val quorum = certificateQuorum(state, rawVotes, shrinkDecision)
+            val votes = quorum.votes
+            val q = quorum.required
+            if (quorum.meets) {
               val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
               facilitatorsHashCandidates.toList match {
                 case singleHash :: Nil =>
-                  // Widen VCC witness pool to match EvictionCertificateBuilder's widening.
-                  // The proposal-validation path in the advancer derives the same pool
-                  // from the same consensus-agreed inputs, so this is the canonical pool for the
-                  // round. Quorum stays committee-sized (passed in q above).
-                  val vccPool = widerWitnessPoolAll(state)
                   val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
                   ViewChangeCertificateBuilder
-                    .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
+                    .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, quorum.voterPool) match {
                     case Left(error) =>
                       ConsensusLog.warn(
                         log,
@@ -350,19 +355,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             val toView = fromView + 1L
             val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
             val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-            val vccPool = widerWitnessPoolAll(state)
 
             votes.values.toList.groupBy(_.value.reason).toList.traverse_ {
               case (reason, reasonVotes) =>
-                val votesBySigner = reasonVotes.map(v => v.proofs.head.id.toPeerId -> v).toMap
-                // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied
-                // (anchor-member votes may satisfy `requiredQuorum` when the rung is live; inert
-                // decision degrades to the legacy `votesBySigner.size >= base` gate).
-                val q = shrinkDecision.builderQuorum(votesBySigner.keySet)
+                val rawVotesBySigner = reasonVotes.map(v => v.proofs.head.id.toPeerId -> v).toMap
+                val quorum = certificateQuorum(state, rawVotesBySigner, shrinkDecision)
+                val votesBySigner = quorum.votes
+                val q = quorum.required
                 votesBySigner.values.map(_.value.facilitatorsHash).toSet.toList match {
-                  case singleHash :: Nil if shrinkDecision.meets(votesBySigner.keySet) =>
+                  case singleHash :: Nil if quorum.meets =>
                     TimeoutCertificateBuilder
-                      .build(fromView, toView, singleHash, lastSnapshotHash, reason, votesBySigner, q, vccPool) match {
+                      .build(fromView, toView, singleHash, lastSnapshotHash, reason, votesBySigner, q, quorum.voterPool) match {
                       case Left(error) =>
                         ConsensusLog.warn(
                           log,
@@ -580,12 +583,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     fromView: Long,
     toView: Long
   ): F[Unit] = quorumShrinkDecisionFor(state).flatMap { shrinkDecision =>
-    val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-    // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied (inert
-    // decision degrades to the legacy base-quorum gate).
-    val q = shrinkDecision.builderQuorum(votes.keySet)
+    val rawVotes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+    val quorum = certificateQuorum(state, rawVotes, shrinkDecision)
+    val votes = quorum.votes
+    val q = quorum.required
 
-    if (!shrinkDecision.meets(votes.keySet))
+    if (!quorum.meets)
       Metrics[F].incrementCounter(
         "dag_consensus_vcc_apply_total",
         Seq(
@@ -596,9 +599,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     else
       votes.values.map(_.value.facilitatorsHash).toSet.toList match {
         case singleHash :: Nil =>
-          val vccPool = widerWitnessPoolAll(state)
           val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
+          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, votes, q, quorum.voterPool) match {
             case Left(error) =>
               ConsensusLog.warn(
                 log,
@@ -731,13 +733,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     reason: TimeoutReason
   ): F[Unit] = quorumShrinkDecisionFor(state).flatMap { shrinkDecision =>
     val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
-    val reasonVotes = votes.collect { case (pid, signed) if signed.value.reason === reason => pid -> signed }
-    // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied (inert
-    // decision degrades to the legacy base-quorum gate). On the shrunken path `q` is also the
-    // certified-shrink floor below, so the round-local active set may reduce to the TC voters.
-    val q = shrinkDecision.builderQuorum(reasonVotes.keySet)
+    val rawReasonVotes = votes.collect { case (pid, signed) if signed.value.reason === reason => pid -> signed }
+    val quorum = certificateQuorum(state, rawReasonVotes, shrinkDecision)
+    val reasonVotes = quorum.votes
+    val q = quorum.required
 
-    if (!shrinkDecision.meets(reasonVotes.keySet))
+    if (!quorum.meets)
       Metrics[F].incrementCounter(
         "dag_consensus_timeout_certificate_apply_total",
         Seq(
@@ -746,11 +747,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         )
       )
     else
-      votes.values.filter(_.value.reason === reason).map(_.value.facilitatorsHash).toSet.toList match {
+      reasonVotes.values.map(_.value.facilitatorsHash).toSet.toList match {
         case singleHash :: Nil =>
-          val tcPool = widerWitnessPoolAll(state)
           val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-          TimeoutCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, reason, reasonVotes, q, tcPool) match {
+          TimeoutCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, reason, reasonVotes, q, quorum.voterPool) match {
             case Left(error) =>
               ConsensusLog.warn(
                 log,
@@ -783,7 +783,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               // certificates are validated against the wider witness pool; retaining certified
               // voters from Tier 1 lets an existing reserve replace missing Core peers round-locally
               // without reading local gossip state or changing the committed committee.
-              val shouldEvaluateShrink = true
+              val shouldEvaluateShrink = !state.certifiedConsensusActive
               val certifiedShrink =
                 if (shouldEvaluateShrink)
                   ActiveFacilitatorAdmission.fromCertifiedTimeout(
@@ -1656,7 +1656,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     key: Key,
     artifact: Signed[Artifact],
     context: Ctx,
-    isRecovery: Boolean = false
+    isRecovery: Boolean
   ): F[Option[Outcome]] = {
     val retryPolicy = limitRetries(20).join(constantDelay(3.seconds))
 
@@ -1918,6 +1918,16 @@ object StateTransitions {
     if (keyMatches && artifactMatches && contextMatches) DownloadOutcomeDisposition.AcceptExact(isRecovery)
     else if (!keyMatches) DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage
     else DownloadOutcomeDisposition.Reject
+
+  /** Shared result of selecting the voter universe for a VCC or TC. Keeping this outside the generic state-machine instance avoids an
+    * outer-instance type while preserving one implementation for both certificate families and both L0 layers.
+    */
+  private[consensus] final case class CertificateQuorum[A](
+    votes: Map[PeerId, Signed[A]],
+    voterPool: Set[PeerId],
+    required: Int,
+    meets: Boolean
+  )
 
   private[consensus] sealed trait ReadyPromotionPeerAlignment
 
