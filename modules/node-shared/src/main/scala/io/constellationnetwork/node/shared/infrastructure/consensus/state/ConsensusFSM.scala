@@ -91,6 +91,7 @@ class ConsensusFSM[F[
             transitions.checkTimeoutCertificateApply(key, from, to)
           case CheckEvictionAssembly(key, target)  => transitions.checkEvictionAssembly(key, target)
           case CheckAdmissionAssembly(key, target) => transitions.checkAdmissionAssembly(key, target)
+          case RestartAfterSoftReset(key)          => restartAfterSoftReset(key, running)
           case InternalScheduled(inner)            => handle(inner)
           case PeerObserved(peer)                  => transitions.registerPeer(peer)
 
@@ -256,4 +257,41 @@ class ConsensusFSM[F[
         case TriggerPriority.Event => startRound(Some(EventTrigger))
       }
     } yield ()
+
+  /** A soft reset clears ConsensusStorage while this FSM is still BUSY. A normal StartRound would therefore only set a pending trigger and
+    * wait for a RoundCompleted that can no longer be produced. Handle the reset as one serialized transition: clear stale pending triggers,
+    * move BUSY -> IDLE when needed, then immediately create the round again from the latest persisted outcome.
+    *
+    * If another queued declaration already rebuilt state for the key, the restart is stale and is ignored rather than wiping that progress.
+    */
+  private def restartAfterSoftReset(key: Key, wasRunning: Boolean): F[Unit] =
+    storage.getState(key).flatMap {
+      case Some(_) =>
+        ConsensusLog.warn(
+          log,
+          Category.Recovery,
+          key.show,
+          "n/a",
+          LogEvent.SoftResetSuppressed,
+          "reason" -> "restart_command_stale_state_present",
+          "action" -> "ignored"
+        ) >> Metrics[F].incrementCounter("dag_consensus_soft_reset_restart_stale_total")
+      case None =>
+        val complete =
+          if (wasRunning) pending.clear() >> completeRound(Async[F].unit)
+          else Async[F].unit
+
+        complete >>
+          ConsensusLog.warn(
+            log,
+            Category.Recovery,
+            key.show,
+            "n/a",
+            LogEvent.SoftResetTriggered,
+            "action" -> "restart_round",
+            "wasRunning" -> wasRunning.toString
+          ) >>
+          Metrics[F].incrementCounter("dag_consensus_soft_reset_restart_total") >>
+          startRound(None)
+    }
 }

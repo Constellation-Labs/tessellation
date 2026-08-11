@@ -325,7 +325,8 @@ object GlobalSnapshotConsensus {
           loggerBundle,
           mptStore,
           facilitatorSelector,
-          peerHistorySidecar
+          peerHistorySidecar,
+          (key: GlobalSnapshotKey) => consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key))
         )
 
       peerQualityTracker <- PeerQualityTracker.make[F]
@@ -372,7 +373,7 @@ object GlobalSnapshotConsensus {
 
       consensusClient = ConsensusClient.make[F, GlobalSnapshotKey, GlobalConsensusOutcome](client, session)
 
-      directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
+      directPushFn <- ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
       _ <- gossip.setDirectPushFn(directPushFn)
 
       viewChangeVoter = new GossipingViewChangeVoter[

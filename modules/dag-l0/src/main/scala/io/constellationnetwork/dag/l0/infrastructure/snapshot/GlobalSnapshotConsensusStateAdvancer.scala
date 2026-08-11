@@ -134,7 +134,10 @@ object GlobalSnapshotConsensusStateAdvancer {
     // Written after each successful `persistAndGossip` so a future rollback to N seeds `state.lastOutcome`
     // from the post-finalization view instead of the one-round-stale `snapshot.peerHistory` field
     // (see `PeerHistorySidecarStorage` scaladoc + `project_alpha92_wedge_may21.md`).
-    peerHistorySidecar: PeerHistorySidecarStorage[F]
+    peerHistorySidecar: PeerHistorySidecarStorage[F],
+    // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
+    // `RestartAfterSoftReset(key)` on the owning serialized command loop so the reset is a total transition rather than an inert state.
+    scheduleSoftResetRestart: GlobalSnapshotKey => F[Unit]
   )(implicit globalStateProofSelector: GlobalStateProofSelector): GlobalSnapshotConsensusStateAdvancer[F] =
     new GlobalSnapshotConsensusStateAdvancer[F] {
 
@@ -1596,10 +1599,9 @@ object GlobalSnapshotConsensusStateAdvancer {
         * eviction/admission cert slots; peer declarations preserved as the bootstrap source for the rebuild), increments the soft-reset
         * budget counter, clears the stale-local-view rejection counter.
         *
-        * NOTE on latency (codex follow-up, alpha.98 candidate): the cleared state is re-created on the next normal time-trigger (~22s at
-        * default cadence) when the FSM next polls. We do not currently queue an immediate restart because the advancer does not hold a
-        * handle to the consensus command queue (it is wired AFTER the advancer in `GlobalSnapshotConsensus.make`). Adding that handle
-        * threads `Queue[F, ConsensusCommand[...]]` through the advancer factory and is deferred to keep this patch surgical.
+        * A fired reset immediately enqueues `RestartAfterSoftReset(key)` on the owning serialized command loop. That command explicitly
+        * completes the still-BUSY FSM attempt and starts from the latest persisted outcome. A bare `StartRound` is insufficient here: while
+        * BUSY it becomes a pending trigger waiting for the very `RoundCompleted` that clearing the round made impossible (the Aug 11 halt).
         *
         * Category labels distinguish the two call sites in Prometheus + structured logs: `stale_local_view` (VCC-validation rejections from
         * `logVccReject`) and `artifact_mismatch` (consecutive_validation_failures from the artifact-hash mismatch path below).
@@ -1694,6 +1696,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                         Seq(Metrics.unsafeLabelName("category") -> category)
                       ) >>
                       consensusStorage.clearStaleLocalViewAtSameKey >>
+                      scheduleSoftResetRestart(key) >>
                       (SoftResetOutcome.Fired: SoftResetOutcome).pure[F]
                   }
             }
