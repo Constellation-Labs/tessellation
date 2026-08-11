@@ -14,7 +14,7 @@ Every consensus knob lives in `ConsensusConfig` (`config/types.scala`). At const
 2. Per-environment knobs live one level up under `snapshot { ... }` as `Map[AppEnvironment, T]` (e.g. `core-committee-size`, `quorum-shrink-activation-views`). The construction site resolves the current environment's entry once and threads the resolved scalar into the corresponding `ConsensusConfig` field (the "coreCommitteeSize pattern", `config/types.scala:847-859`).
 3. `ConsensusConfig.deterministicConfigHash` (`config/types.scala:950-1045`) concatenates the consensus-critical fields into a stable string and hashes it. This hash is the cluster-wide fence: it is checked at `Facility` handshake time, so any divergence is caught before it can fork downstream state.
 
-A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. Timing-only fields (grace windows, view-apply delay, round-duration safety nets) are deliberately excluded, because the canonical `snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash, so nodes with different timing values still finalize the same snapshot (`config/types.scala:233-237, 244-250`).
+A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. Pure timing fields (grace windows and view-apply delay) are deliberately excluded, because the canonical `snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash. V35 is the exception for `max-round-duration`: it bounds the leader-proposed, Core-certified consensus end-time and therefore joins the deterministic hash.
 
 ---
 
@@ -38,6 +38,7 @@ These are folded into `deterministicConfigHash`. Divergent operator values hands
 | `min-observation-history-floor` | `CL_MIN_OBSERVATION_HISTORY_FLOOR` | Int | conf: `10` | Minimum `participated` count before chronic classification can fire (`dag-l0.conf:136-138`). |
 | `active-admission-*` (promote/retain/demote thresholds, max-score, rewards, penalties, decay, expansion) | `CL_ACTIVE_ADMISSION_*` (`dag-l0.conf:105-132`) | Int | see `dag-l0.conf:105-132` | The integral score controller classifies Core eligibility. Certified open admission separately grows Tier-1 signing leases, bounded by `active-admission-max-expansion-per-round` and enabled only every `active-admission-expansion-interval-rounds` (shipped value: `5`). Penalty/probation readmission is a separate, non-cadenced recovery lane. Values remain consensus-critical because they affect tier and admission derivation. |
 | `lock-on-vote-protocol-version` | `CL_LOCK_ON_VOTE_PROTOCOL_VERSION` | Int | conf: `2` | Lock-on-vote protocol version selector. |
+| `max-round-duration` | `CL_MAX_ROUND_DURATION` | Duration | `5 minutes` | V35 deterministic upper bound for the leader-proposed consensus end-time. It participates in ProposalValue validation and is therefore hash-folded. |
 
 `view-interval` (the v19 view-from-time pacemaker divisor) is consensus-critical (`viewIntervalMs` is in the hash, `config/types.scala:980`) but has **no HOCON key**: it is a compiled-in default of `60.seconds` (`config/types.scala:295`, raised from 30s; see the field comment at `config/types.scala:285-294`). Changing it requires a code change plus a coordinated cold restart.
 
@@ -51,10 +52,11 @@ These resolve once per environment at the construction site (the coreCommitteeSi
 | `quorum-shrink-activation-views` | `Map[Env, PosInt]` | testnet `10` (`dag-l0.conf:177-179`) | **disabled** (resolved `0`) | v33 `QuorumDenominatorShrink`: number of `view-interval` units of wall silence since the parent outcome closed before the escalating quorum-denominator shrink begins. Trades partition safety for liveness in its deep stage. Mainnet and dev are absent on purpose (`config/types.scala:861-872, 1168-1175`). |
 | `active-admission-min-probation-reentry-slots` | `Map[Env, Int]` | testnet `3`, mainnet `15`, integrationnet `9`, dev `3` | disabled (resolved `0`) | Minimum bounded probation cohort classified outside Core even when the controller's per-round expansion budget is exhausted. A peer that signs the latest round retains classifier priority until it reaches the retain band; missing ends that priority, not its signing lease. Current public GL0 environments configure one Core-sized cohort. |
 | `active-admission-recent-signer-window` | `Map[Env, Int]` (override `CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW`) | testnet `10` (`dag-l0.conf:216-219`) | floored to `3` (`DemotionConsecutiveMisses`) | Recent-signer controller lookback depth (in ordinals): how far back a peer may have last participated and still hold sticky Core-classification priority. It does not cap retained Tier-1 signing/reward membership (`config/types.scala:1185-1193`). |
+| `certified-consensus-activation-ordinal` | `Map[Env, SnapshotOrdinal]` | public entries intentionally absent; dev `0` | **disabled** (`SnapshotOrdinal.MaxValue`) | Per-L0 v35 behavior boundary. DAG L0 and every Currency L0 interpret this in their own ordinal space. The resolved key is hash-folded and must be installed cluster-wide before the announced activation. |
 
 ### Other hashed knobs without their own table row
 
-`readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash (`config/types.scala:912, 956`). `coreCommitteeSize`, `consensusSchemaVersion` (now `34`, `config/types.scala:830`), and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=34` is the explicit fence against mixed-wire-version cluster joins.
+`readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `35`), the resolved certified-consensus activation key, and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=35` is the immediate fence against mixed active-consensus wire versions; the ordinal key separately controls when v35 behavior starts.
 
 ---
 
@@ -68,7 +70,6 @@ These affect liveness/latency, not what is decided. Mixed values across a networ
 | `tier-1-signature-grace-period` | `CL_TIER_1_SIGNATURE_GRACE_PERIOD` | Duration | `750 milliseconds` | The SHORT grace window used once Core is fully signed but the committee is not, to let late Tier-1 signatures land in `signedArtifact.proofs` and participation evidence. It does not select delegated reward recipients. Measured from Core-complete, not first quorum (`config/types.scala:239-251`). |
 | (no key) `view-change-apply-delay` | none | Duration | `7 seconds` | Delay between assembling/receiving a certified view change and locally applying it, so ordinary traffic can arrive first (`config/types.scala:252-259`). |
 | `time-trigger-interval` | `CL_TIME_TRIGGER_INTERVAL` | Duration | `43 seconds` | Regular round-trigger cadence (`dag-l0.conf:11-12`). |
-| `max-round-duration` | `CL_MAX_ROUND_DURATION` | Duration | `5 minutes` | Per-view round-duration safety net; not consensus logic (`dag-l0.conf:20-21`). |
 
 ### Signature grace state machine
 

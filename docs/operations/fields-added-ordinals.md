@@ -99,10 +99,11 @@ The same discipline applies to env-keyed consensus knobs that are not ordinal ga
 | **FieldsAddedOrdinals** | per-env activation ordinals for deterministic behavior changes | **Yes** | a mismatched ordinal changes artifact bytes at the boundary -> fork |
 | **Tessellation and metagraph version hashes** | hashes of the reported release versions | No | a divergent value is rejected during the join handshake |
 | **deterministicConfigHash** | a hash of dozens of consensus knobs (~48 folded fields) concatenated into one string (`types.scala:950-1044`, folded string ends at `:1043`) | No (it is a config FENCE, not signed into history) | when both peers provide it, a divergent value rejects the join; it also fails the Facility `consensusConfigHash` check and does NOT change replayed bytes |
-| **consensusSchemaVersion** | a single integer wire-version fence (`types.scala:830`, currently `34`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
+| **consensusSchemaVersion** | a single integer wire-version fence (currently `35`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
+| **certifiedConsensusActivationKey** | the environment-resolved v35 consensus behavior boundary, folded INTO `deterministicConfigHash` | Yes for active consensus behavior, but not a public snapshot field | a mismatched value fences at config/Facility checks; crossing the agreed key switches to the certified state machine and canonical legacy-window reset |
 | **RegistrationRequest.jar** | an advertised artifact hash stored as peer metadata | No | no protocol rejection: `Joining.validateHandshake` does not compare it |
 
-The distinction that matters for operators: `FieldsAddedOrdinals` is the only mechanism in this table that changes replayed history bytes. The version hashes, `deterministicConfigHash`, and `consensusSchemaVersion` are replay-irrelevant connection or declaration fences. The advertised jar hash is not a fence. Setting a wrong ordinal does not get caught at handshake; it forks the chain when the gate is crossed. That is why ordinal gates are the highest-stakes value to get right before assembly.
+The distinction that matters for operators: ordinal gates (`FieldsAddedOrdinals` and the per-L0 `certifiedConsensusActivationKey`) switch deterministic behavior at a replay key. Version hashes and `consensusSchemaVersion` are connection/declaration fences; `deterministicConfigHash` fences the resolved activation value as well, but it does not make a wrong cluster-wide ordinal safe. The advertised jar hash is not a fence. A unanimously wrong ordinal can pass config checks and still switch behavior at the wrong key, so ordinal gates remain the highest-stakes values to verify before assembly.
 
 ## Worked example: the ordinal-gated GSI dust sweep
 
@@ -186,4 +187,5 @@ Currency Snapshot ordinals never activate this platform rule. See
 | `feeTransactionSecurity` signature validation | `FeeTransactionSignatureValidator.scala` |
 | `feeTransactionSecurity` ML0 final-acceptance gate | `CurrencySnapshotAcceptanceManager.scala` |
 | `deterministicConfigHash` folded string | `config/types.scala:950-1044` (folded string ends `:1043`) |
-| `consensusSchemaVersion` | `config/types.scala:830` |
+| `consensusSchemaVersion` | `config/types.scala` (`ConsensusConfig`) |
+| `certifiedConsensusActivationOrdinal` | `config/types.scala` (`SnapshotConfig`) |

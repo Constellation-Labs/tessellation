@@ -1,0 +1,70 @@
+# V35 certified-consensus rollout
+
+This runbook accompanies [ADR-0031](../adr/0031-certified-consensus-outcomes.md).
+No public activation ordinal is selected in source yet.
+
+## Compatibility boundaries
+
+- `consensusSchemaVersion=35` is an immediate active-cluster compatibility fence.
+- `certified-consensus-activation-ordinal` is the deterministic behavior boundary.
+- DAG L0 and every Currency L0 use their own snapshot ordinal space.
+- The public global/currency snapshot and state-proof schemas do not change.
+
+Do not confuse the two gates. Nodes started with different schema/config hashes cannot
+form a healthy active consensus cluster even below the activation key. Conversely,
+deploying the aligned v35 jar with no public activation entry leaves the v35 behavior
+dormant.
+
+## Before selecting an activation key
+
+1. Build one commit and record its tag, commit, assembly checksums, resolved
+   `consensusSchemaVersion`, deterministic config hash, and environment-specific
+   activation key.
+2. Confirm that the target network has enough lead time to announce the activation.
+3. For each Currency L0, confirm that the last legacy artifact contains signed
+   controller evidence from which its activation committee can be seeded. Currency
+   activation intentionally fails closed when this evidence is absent.
+4. Verify snapshot/state-proof golden fixtures and v34 pre-activation declaration
+   fixtures.
+5. Exercise activation from deliberately divergent legacy local sidecars and verify
+   that nodes derive one frozen committee and one ProposalValue hash.
+6. Exercise a view change, a carried QC, same-key certified outcome recovery, process
+   restart, and coordinated rollback in staging.
+7. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
+   and CoreCommitQC formation, artifact proof margin, view changes, and reward breadth.
+
+## Deployment sequence
+
+1. Choose a future activation key independently for each L0 cluster.
+2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
+   configuration, and logs; verify a coherent pre-activation checkpoint.
+3. Install the same v35 assembly and the same resolved activation configuration on
+   every active facilitator. Do not canary a mixed active consensus fleet.
+4. Cold-start the cluster and verify identical deterministic config hashes and normal
+   legacy progress below the key.
+5. Before crossing, verify every expected active node is on the recorded jar/config.
+6. At the key, verify the canonical legacy-window reset, frozen full/Core hashes,
+   ProposalQC, CoreCommitQC, full artifact finality floor, persisted certified sidecar,
+   and identical derived outcome on multiple nodes.
+7. Continue watching admission/eviction cadence, signer/reward population, finality
+   headroom, view changes, round duration, direct-send queue pressure, soft resets, and
+   certified recovery.
+
+No restart is required merely because the ordinal crosses; the aligned nodes switch
+deterministically at the configured key.
+
+## Availability and rollback
+
+V35 does not shrink the current-round safety universe. If more than one third of the
+frozen Core disappears during a round, a coordinated restart may be required.
+
+If activation fails:
+
+1. Stop the full cluster; do not let two partial histories race.
+2. Archive logs and sidecars before changing anything.
+3. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
+4. Move the activation key only through another announced, full-cluster rollout.
+
+For Currency L0 emergency solo rollback, `--allow-solo-consensus` remains a one-shot,
+exactly-one-node recovery operation. Never persist it in systemd or automatic restart
+configuration.
