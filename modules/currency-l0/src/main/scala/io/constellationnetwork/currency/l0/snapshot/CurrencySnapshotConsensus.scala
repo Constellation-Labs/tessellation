@@ -246,7 +246,7 @@ object CurrencySnapshotConsensus {
 
       consensusClient = ConsensusClient.make[F, CurrencySnapshotKey, CurrencyConsensusOutcome](client, session)
 
-      directPushFn = ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
+      directPushFn <- ConsensusDirectSender.makeDirectPushFn(clusterStorage, consensusClient)
       _ <- gossip.setDirectPushFn(directPushFn)
 
       viewChangeVoter = new GossipingViewChangeVoter[

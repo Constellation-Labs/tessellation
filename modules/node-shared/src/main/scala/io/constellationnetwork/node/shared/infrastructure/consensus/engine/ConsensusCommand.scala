@@ -68,6 +68,12 @@ object ConsensusCommand {
   // certificate assembly for `target` at round `key`.
   final case class CheckAdmissionAssembly[Key](key: Key, target: PeerId) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
 
+  /** Complete the currently running FSM attempt after its volatile state was intentionally cleared, then immediately start from the latest
+    * persisted outcome. Unlike a bare `StartRound`, this command cannot be deferred forever by the FSM's BUSY flag. It is enqueued by the
+    * same-key soft-reset path on the serialized command loop.
+    */
+  final case class RestartAfterSoftReset[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+
   /** Round ended without producing an outcome. `expectedAttemptId = Some(n)` causes the FSM to drop the command if the round has advanced
     * past attempt `n` (state mutation bumped `ConsensusStorage.roundAttemptId`). `None` means unconditional — reserved for force-recovery
     * paths where the round must always complete.
