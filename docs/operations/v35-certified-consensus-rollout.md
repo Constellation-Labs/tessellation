@@ -21,9 +21,10 @@ dormant.
    `consensusSchemaVersion`, deterministic config hash, and environment-specific
    activation key.
 2. Confirm that the target network has enough lead time to announce the activation.
-3. For each Currency L0, confirm that the last legacy artifact contains signed
-   controller evidence from which its activation committee can be seeded. Currency
-   activation intentionally fails closed when this evidence is absent.
+3. For DAG L0 and each Currency L0, confirm that the last legacy artifact contains
+   signed controller evidence from which its activation committee can be seeded. Both
+   layers intentionally fail closed when this evidence is absent; DAG
+   `nextFacilitators` is not a valid substitute.
 4. Verify snapshot/state-proof golden fixtures and v34 pre-activation declaration
    fixtures.
 5. Exercise activation from deliberately divergent legacy local sidecars and verify
@@ -31,7 +32,8 @@ dormant.
 6. Exercise a view change, a carried QC, same-key certified outcome recovery, process
    restart, and coordinated rollback in staging.
 7. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
-   and CoreCommitQC formation, artifact proof margin, view changes, and reward breadth.
+   and CoreCommitQC formation, artifact proof margin, view changes, reward breadth, and
+   `dag_consensus_outcome_hook_duration_seconds` p95.
 
 ## Deployment sequence
 
@@ -45,10 +47,16 @@ dormant.
 5. Before crossing, verify every expected active node is on the recorded jar/config.
 6. At the key, verify the canonical legacy-window reset, frozen full/Core hashes,
    ProposalQC, CoreCommitQC, full artifact finality floor, persisted certified sidecar,
-   and identical derived outcome on multiple nodes.
+   and identical semantic value/derived operational outcome on multiple nodes. Raw
+   sidecar files may contain different valid signature subsets and need not be
+   byte-identical.
 7. Continue watching admission/eviction cadence, signer/reward population, finality
    headroom, view changes, round duration, direct-send queue pressure, soft resets, and
-   certified recovery.
+   certified recovery. Include
+   `dag_consensus_certified_recovery_total`,
+   `dag_consensus_certified_recovery_candidate_total`, and
+   `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`
+   in the activation dashboard.
 
 No restart is required merely because the ordinal crosses; the aligned nodes switch
 deterministically at the configured key.

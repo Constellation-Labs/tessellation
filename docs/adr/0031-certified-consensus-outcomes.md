@@ -26,6 +26,10 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    hashes, frozen full and Core committees, committed view, trigger, canonical
    admission and eviction targets, responder/self-health evidence, timeout voters,
    and leader-proposed consensus end time.
+   `committedView` is the view in which that semantic value first obtained its prepare
+   QC. A later ProposalInstance may carry it in a higher transport view, but must retain
+   `committedView` byte-for-byte; this lets deterministic view-derived accounting follow
+   the certified value rather than whichever view a local node happened to finalize in.
 2. Represent canonical collections in the Scala types themselves (`NonEmptySet`,
    `SortedSet`, and `SortedMap`). There is no separate `canonicalize` function,
    `canonicalSignBytes`, manual byte concatenation, or new hash algorithm.
@@ -57,17 +61,36 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    accepted in preference to changing the safety universe mid-round.
 8. At the exact activation key, discard legacy node-local controller/evidence,
    recent-signer/proof, penalty/probation, and PeerHistory windows before deriving the
-   first v35 round. DAG seeds membership from the last signed artifact's
-   `nextFacilitators`. Currency seeds from signed controller evidence and fails closed
-   if no signed seed exists.
-9. Persist the certified outcome beside the normal snapshot and support verification
-   and adoption at the same consensus key. The sidecar and peer transport use the
-   existing outcome/Circe infrastructure and are not fields in the public snapshot or
-   state proof. Arbitrary long-range certification is out of scope until a certificate
-   chain or trusted checkpoint is specified.
+   first v35 round. Both layers seed membership from the latest controller-evidence
+   transition inside the signed legacy artifact's PeerHistory and fail closed if no
+   signed seed exists. DAG's historical `nextFacilitators` field is a singleton
+   compatibility field and is explicitly not an activation committee source. Because
+   signed PeerHistory is constructed before its own outcome exists, this bridge delays
+   the last legacy membership delta by one round rather than reading a fresher but
+   node-local sidecar.
+9. Persist the complete typed layer `ConsensusOutcome` beside the normal snapshot after
+   (and only after) the last-outcome compare-and-set succeeds. Storage uses one generic
+   ordinal sidecar over the existing `JsonSerializer`; malformed data is a cache miss.
+   Sidecars reuse the existing logarithmic snapshot-info cutoff rather than introducing
+   another retention configuration.
+   Serve exact historical outcomes through the existing authenticated
+   `/consensus/specific/outcome` route. Before abandonment, a bounded peer sample may be
+   adopted only after the layer re-derives the outcome against its locally known parent
+   and frozen sets and verifies both Core QCs and artifact proofs. Currency additionally
+   retains/verifies its already-existing fully signed `StateChannelSnapshotBinary`,
+   because its binary hash cannot be authenticated from a scalar alone. Two valid
+   semantic value hashes fail closed. Arbitrary long-range certification is out of scope
+   until a certificate chain or trusted checkpoint is specified.
 10. Make direct consensus delivery enqueue-only from the FSM's perspective, and make
     every soft reset schedule a replacement action. Network fanout latency must not
     block the serialized consensus command loop.
+
+`observedResponders`, leader-aggregated self-health, and the resulting evidence remain
+leader-authored claims. V35 bounds them structurally, makes them explicit, and has Core
+certify the exact claim; followers do not independently reconstruct the leader's local
+observation. This preserves the v34 permissioned-operator trust model. A misleading
+leader can be identified and governed out of band, but cannot make honest finalizers
+consume two different claims as one certified value.
 
 ## Activation and compatibility
 
@@ -109,3 +132,11 @@ aligned v35 jar/config when their own metagraph activates it.
 - Missing or corrupt certified sidecars reduce recovery availability and must never be
   treated as valid evidence; every adopted outcome is cryptographically re-verified
   against the locally known parent committee.
+- The durable post-finalization write is awaited before the command loop continues. Its
+  latency is exposed by `dag_consensus_outcome_hook_duration_seconds`; public activation
+  remains gated on IntegrationNet EventTrigger and hook p95 measurements.
+- Certification guarantees one semantic `valueHash`, not one incidental proof envelope.
+  Honest nodes may retain different valid artifact/QC signature subsets. Those subsets
+  are verified and never feed the next deterministic state; byte-identical claims apply
+  to the certified value and derived operational outcome, not necessarily the raw local
+  sidecar file.
