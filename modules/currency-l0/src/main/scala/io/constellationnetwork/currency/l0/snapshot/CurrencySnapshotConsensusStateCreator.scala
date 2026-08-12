@@ -82,10 +82,8 @@ object CurrencySnapshotConsensusStateCreator {
     ): F[CurrencyConsensusOutcome] =
       if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
       else {
-        val maybeSeed = outcome.finished.signedMajorityArtifact.value.peerHistory
-          .flatMap(_.controllerEvidence)
-          .flatMap(_.lastOption.map { case (_, entry) => ControllerEvidenceDerivation.nextCommittee(entry).toList })
-          .filter(_.nonEmpty)
+        val maybeSeed =
+          ControllerEvidenceDerivation.certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
 
         maybeSeed.fold(
           Async[F].raiseError[CurrencyConsensusOutcome](

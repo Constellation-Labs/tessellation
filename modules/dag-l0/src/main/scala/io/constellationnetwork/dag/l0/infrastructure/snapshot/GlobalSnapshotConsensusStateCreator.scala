@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import cats.MonadThrow
 import cats.effect.Async
 import cats.effect.kernel.{Clock, Ref, Sync}
 import cats.effect.std.Queue
@@ -31,8 +32,8 @@ import io.constellationnetwork.schema.ID.IdOps
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ControllerEvidenceEntry, SnapshotOrdinal}
-import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -50,6 +51,51 @@ abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]
     ]
 
 object GlobalSnapshotConsensusStateCreator {
+
+  /** Canonical DAG bridge used exactly once at the v35 activation key.
+    *
+    * Kept as a package-visible pure-by-input helper so the activation regression can start from deliberately divergent legacy operational
+    * windows and prove that both nodes derive the same parent outcome. The seed and its hash still come from the signed artifact; no local
+    * sidecar field is accepted as an input.
+    */
+  private[snapshot] def resetLegacyOutcome[F[_]: MonadThrow: Hasher](
+    key: GlobalSnapshotKey,
+    outcome: GlobalConsensusOutcome
+  ): F[GlobalConsensusOutcome] =
+    ControllerEvidenceDerivation
+      .certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
+      .liftTo[F](
+        new IllegalStateException(
+          s"Cannot activate certified consensus at DAG ordinal=${key.value.value}: signed controller evidence is absent"
+        )
+      )
+      .flatMap { seed =>
+        seed.hash.map { seedHash =>
+          outcome.copy(
+            facilitators = Facilitators(seed),
+            removedFacilitators = RemovedFacilitators.empty,
+            withdrawnFacilitators = WithdrawnFacilitators.empty,
+            eligibleFacilitators = EligibleFacilitators.empty,
+            finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
+            removalPenalties = SortedMap.empty,
+            deferralCountdown = SortedMap.empty,
+            peerQuality = SortedMap.empty,
+            cumulativeMissCounts = SortedMap.empty,
+            recentProofSizes = SortedMap.empty,
+            readmissionCountdown = SortedMap.empty,
+            peerSelfHealth = SortedMap.empty,
+            peerViewChanges = SortedMap.empty,
+            recentSigners = SortedMap.empty,
+            peerTiers = SortedMap.empty,
+            activeAdmissionScores = SortedMap.empty,
+            lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
+            recentRoundEndTimes = SortedMap.empty,
+            controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
+            penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some
+          )
+        }
+      }
+
   def make[F[_]: Async: Metrics: HasherSelector](
     consensusFns: GlobalSnapshotConsensusFunctions[F],
     consensusStorage: GlobalConsensusStorage[F],
@@ -85,45 +131,17 @@ object GlobalSnapshotConsensusStateCreator {
 
     /** V35 activation bridge from a legacy outcome.
       *
-      * The signed DAG artifact supplies the one source-of-truth committee (`nextFacilitators`). Every controller/evidence window that could
-      * have come from a node-local legacy sidecar is discarded at the exact activation key. The public artifact/context bytes are
-      * untouched.
+      * The latest controller-evidence transition inside the signed DAG artifact's PeerHistory supplies the one source-of-truth committee.
+      * The historical `nextFacilitators` field is a singleton compatibility value and must not be used here. Every controller/evidence
+      * window that could have come from a node-local legacy sidecar is discarded at the exact activation key. The public artifact/context
+      * bytes are untouched.
       */
     private def resetLegacyOutcomeAtActivation(
       key: GlobalSnapshotKey,
       outcome: GlobalConsensusOutcome
     ): F[GlobalConsensusOutcome] =
       if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
-      else {
-        val seed = outcome.finished.signedMajorityArtifact.value.nextFacilitators.toList.sorted
-
-        HasherSelector[F].withCurrent { implicit hasher =>
-          seed.hash.map { seedHash =>
-            outcome.copy(
-              facilitators = Facilitators(seed),
-              removedFacilitators = RemovedFacilitators.empty,
-              withdrawnFacilitators = WithdrawnFacilitators.empty,
-              eligibleFacilitators = EligibleFacilitators.empty,
-              finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
-              removalPenalties = SortedMap.empty,
-              deferralCountdown = SortedMap.empty,
-              peerQuality = SortedMap.empty,
-              cumulativeMissCounts = SortedMap.empty,
-              recentProofSizes = SortedMap.empty,
-              readmissionCountdown = SortedMap.empty,
-              peerSelfHealth = SortedMap.empty,
-              peerViewChanges = SortedMap.empty,
-              recentSigners = SortedMap.empty,
-              peerTiers = SortedMap.empty,
-              activeAdmissionScores = SortedMap.empty,
-              lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
-              recentRoundEndTimes = SortedMap.empty,
-              controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
-              penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some
-            )
-          }
-        }
-      }
+      else HasherSelector[F].withCurrent(implicit hasher => resetLegacyOutcome[F](key, outcome))
 
     /** Track every auditable parent-round Tier-1 signer from actual local snapshot proofs and audit one deterministic target. Reuse the
       * existing B1 vote path only after the round-count and elapsed-time miss floors, on the existing membership-change cadence, and when

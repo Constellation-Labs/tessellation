@@ -9,8 +9,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.ConsensusDomain
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Proposal
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.infrastructure.consensus.{CertifiedConsensus, ControllerEvidenceDerivation}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
@@ -96,6 +99,17 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
       Hash.empty,
       snapshotHash
     )
+
+  private def withSignedPeerHistory(finished: Finished, peerHistory: ConsensusOperationalState)(
+    implicit sp: SecurityProvider[IO],
+    h: Hasher[IO]
+  ): IO[Finished] =
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      artifact = finished.signedMajorityArtifact.value.copy(peerHistory = Some(peerHistory))
+      signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](artifact, keyPair)
+      snapshotHash <- Hasher[IO].hash(artifact)
+    } yield finished.copy(signedMajorityArtifact = signed, snapshotHash = snapshotHash)
 
   private def mkOutcome(
     finished: Finished,
@@ -267,5 +281,93 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         expect.same(Some(penaltyUntil), healthySigned.penaltyUntil) &&
         expect.same(Some(recentSigners), healthySigned.recentSigners) &&
         expect.same(recentProofSizes, healthySigned.recentProofSizes)
+  }
+
+  test("the v35 activation bridge flushes divergent legacy sidecars before deriving the first certified value") { res =>
+    implicit val (js, h, sp) = res
+
+    for {
+      rawFinished <- mkFinished
+      seedCarrier = mkOutcome(
+        rawFinished,
+        peerQuality = SortedMap.empty,
+        activeAdmissionScores = SortedMap.empty,
+        peerTiers = SortedMap.empty,
+        recentRoundEndTimes = SortedMap.empty
+      )
+      finished <- withSignedPeerHistory(rawFinished, seedCarrier.signedArtifactPeerHistory)
+      healthy = mkOutcome(
+        finished,
+        peerQuality = SortedMap(a -> (5, 5), b -> (5, 5), c -> (1, 5)),
+        activeAdmissionScores = SortedMap(a -> 150, b -> 150, c -> 60),
+        peerTiers = SortedMap(a -> 2, b -> 2, c -> 1),
+        recentRoundEndTimes = SortedMap(ord(14L) -> 1700000000000L)
+      )
+      poisoned = mkOutcome(
+        finished,
+        peerQuality = SortedMap(a -> (1, 9), b -> (9, 9), c -> (9, 10)),
+        activeAdmissionScores = SortedMap(a -> 5, b -> 200, c -> 200),
+        peerTiers = SortedMap(a -> 0, b -> 2, c -> 2),
+        recentRoundEndTimes = SortedMap(ord(14L) -> 1700000099999L)
+      ).copy(
+        recentProofSizes = SortedMap(ord(14L) -> 1),
+        recentSigners = SortedMap(ord(14L) -> SortedSet(c)),
+        controllerEvidence = Some(SortedMap(ord(14L) -> entry(Set(a, b, c), Set(c)))),
+        penaltyUntil = Some(SortedMap(a -> ord(999L)))
+      )
+      resetHealthy <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), healthy)
+      resetPoisoned <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), poisoned)
+      seed = NonEmptySet.fromSetUnsafe(SortedSet.from(resetHealthy.facilitators.value))
+      proposal = Proposal(
+        hash = finished.snapshotHash,
+        facilitatorsHash = resetHealthy.finished.facilitatorsHash,
+        lastSnapshotHash = finished.snapshotHash,
+        view = 0L,
+        vcc = None
+      )
+      valueHealthy <- CertifiedConsensus.proposalValue[IO, GlobalSnapshotContext](
+        domain = ConsensusDomain.DagL0,
+        networkId = "integrationnet",
+        key = 15L,
+        parentArtifactHash = finished.snapshotHash,
+        artifactHash = finished.snapshotHash,
+        context = finished.context,
+        roundStartFacilitators = seed,
+        roundStartCore = seed,
+        committedView = 0L,
+        trigger = EventTrigger,
+        proposal = proposal,
+        consensusEndTime = None
+      )
+      poisonedSeed = NonEmptySet.fromSetUnsafe(SortedSet.from(resetPoisoned.facilitators.value))
+      valuePoisoned <- CertifiedConsensus.proposalValue[IO, GlobalSnapshotContext](
+        domain = ConsensusDomain.DagL0,
+        networkId = "integrationnet",
+        key = 15L,
+        parentArtifactHash = finished.snapshotHash,
+        artifactHash = finished.snapshotHash,
+        context = finished.context,
+        roundStartFacilitators = poisonedSeed,
+        roundStartCore = poisonedSeed,
+        committedView = 0L,
+        trigger = EventTrigger,
+        proposal = proposal,
+        consensusEndTime = None
+      )
+      healthyHash <- CertifiedConsensus.valueHash[IO](valueHealthy)
+      poisonedHash <- CertifiedConsensus.valueHash[IO](valuePoisoned)
+    } yield
+      expect.all(
+        healthy.toOperationalState =!= poisoned.toOperationalState,
+        resetHealthy === resetPoisoned,
+        resetHealthy.facilitators.value === ControllerEvidenceDerivation.nextCommittee(evidence.last._2).toList,
+        resetHealthy.facilitators.value.size === 3,
+        resetHealthy.controllerEvidence.contains(SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry]),
+        resetHealthy.penaltyUntil.contains(SortedMap.empty[PeerId, SnapshotOrdinal]),
+        resetHealthy.recentSigners.isEmpty,
+        resetHealthy.peerTiers.isEmpty,
+        valueHealthy === valuePoisoned,
+        healthyHash === poisonedHash
+      )
   }
 }
