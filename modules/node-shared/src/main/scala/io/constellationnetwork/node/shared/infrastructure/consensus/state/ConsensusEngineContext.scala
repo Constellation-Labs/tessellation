@@ -119,6 +119,11 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // `StallDetector` emits a signed ViewChangeVote. It does not seed `ConsensusState.viewNumber`
   // directly; view advancement still requires quorum assembly into a VCC.
   lastOutcomeEndTimeMsOf: Outcome => Option[Long],
+  // Layer-owned durable companions to the in-memory outcome. Hooks run only after the
+  // corresponding storage transition succeeds and are failure-isolated by StateTransitions:
+  // losing a sidecar must never lose a finalized snapshot or prevent recovery initialization.
+  onOutcomeFinalized: Outcome => F[Unit],
+  onOutcomeInitialized: Outcome => F[Unit],
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
@@ -171,7 +176,9 @@ object ConsensusEngineContext {
     probationPeersOf: Outcome => Set[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
-    lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None
+    lastOutcomeEndTimeMsOf: Outcome => Option[Long],
+    onOutcomeFinalized: Outcome => F[Unit],
+    onOutcomeInitialized: Outcome => F[Unit]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -204,6 +211,8 @@ object ConsensusEngineContext {
         peerQualityOf,
         lastOutcomeKeyOf,
         lastOutcomeEndTimeMsOf,
+        onOutcomeFinalized,
+        onOutcomeInitialized,
         recoveredAtKey,
         retriableAtSameKey
       )

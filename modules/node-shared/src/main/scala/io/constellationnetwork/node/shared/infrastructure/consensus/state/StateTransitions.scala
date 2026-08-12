@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats.effect.kernel.{Async, Temporal}
 import cats.effect.std.Random
+import cats.effect.syntax.all._
 import cats.syntax.all._
 import cats.{Eq, Show}
 
@@ -83,6 +84,21 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
   import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, peerQualityOf, queue, remover, storage, updater}
   import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusAssembledVcc
+
+  private def runOutcomeHook(stage: String, outcome: Outcome)(hook: Outcome => F[Unit]): F[Unit] =
+    for {
+      startedAt <- Async[F].monotonic
+      result <- hook(outcome).attempt
+      finishedAt <- Async[F].monotonic
+      resultName = result.fold(_ => "failure", _ => "success")
+      labels = Seq(unsafeLabelName("stage") -> stage, unsafeLabelName("outcome") -> resultName)
+      _ <- Metrics[F].recordTimeHistogram("dag_consensus_outcome_hook", finishedAt - startedAt, labels)
+      _ <- Metrics[F].incrementCounter("dag_consensus_outcome_sidecar_total", labels)
+      _ <- result.fold(
+        error => log.warn(error)(s"Best-effort consensus outcome hook failed at stage=$stage"),
+        _ => Async[F].unit
+      )
+    } yield ()
 
   /** Deterministic witness pool for B1/B2/VCC certificate assembly.
     *
@@ -209,6 +225,152 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
       }
     } yield ()
+
+  /** Attempt same-key convergence from a peer's fully certified v35 outcome before abandoning the round.
+    *
+    * The HTTP response and node-local sidecar are transport only. Every candidate is re-derived by the layer advancer against this node's
+    * locally known parent and frozen committee, and all artifact/QC signatures are verified before state changes. Two independently valid
+    * value hashes fail closed.
+    */
+  def tryAdoptCertifiedOutcome(key: Key): F[Boolean] =
+    storage.getState(key).flatMap {
+      case Some(state) if state.certifiedConsensusActive && advancer.getConsensusOutcome(state).isEmpty =>
+        ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
+          val candidates = peers.iterator
+            .filter(peer => peer.id =!= ctx.selfId && (peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady))
+            .toList
+
+          Random[F]
+            .shuffleList(candidates)
+            .map(_.take(StateTransitions.CertifiedRecoverySampleSize))
+            .flatMap(
+              _.parTraverseN(StateTransitions.CertifiedRecoveryParallelism) { peer =>
+                ctx.consensusClient
+                  .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
+                  .run(peer)
+                  .map(_.map(peer -> _))
+                  .timeoutTo(StateTransitions.CertifiedRecoveryPerPeerTimeout, none[(Peer, Outcome)].pure[F])
+                  .handleError(_ => none[(Peer, Outcome)])
+              }
+            )
+            .map(_.flatten)
+            .flatMap { fetched =>
+              fetched.traverse {
+                case (peer, candidate) =>
+                  advancer.certifiedOutcomeAdoption(state, candidate).flatMap {
+                    case Right(adoption) => (peer, candidate, adoption.valueHash).some.pure[F]
+                    case Left(reason) =>
+                      Metrics[F].incrementCounter(
+                        "dag_consensus_certified_recovery_candidate_total",
+                        Seq(unsafeLabelName("outcome") -> "rejected", unsafeLabelName("reason") -> reason)
+                      ) >>
+                        ConsensusLog
+                          .debug(
+                            log,
+                            Category.Recovery,
+                            key.show,
+                            "n/a",
+                            LogEvent.CertifiedOutcomeRecovery,
+                            "outcome" -> "candidate_rejected",
+                            "peer" -> ConsensusLog.pid(peer.id),
+                            "reason" -> reason
+                          )
+                          .as(none[(Peer, Outcome, Hash)])
+                  }
+              }.flatMap { verifiedOptions =>
+                val verified = verifiedOptions.flatten
+                val selection = StateTransitions.selectCertifiedRecoveryCandidate(
+                  verified.sortBy(_._1.id.value.value).map { case (peer, candidate, hash) => hash -> (peer -> candidate) }
+                )
+
+                selection match {
+                  case Left(distinctHashes) =>
+                    ConsensusLog
+                      .error(
+                        log,
+                        Category.Fork,
+                        key.show,
+                        "n/a",
+                        LogEvent.CertifiedOutcomeRecovery,
+                        "outcome" -> "divergent_valid_certificates",
+                        "valueHashes" -> distinctHashes.toString,
+                        "candidates" -> verified.size.toString
+                      ) >>
+                      Metrics[F]
+                        .incrementCounter(
+                          "dag_consensus_certified_recovery_total",
+                          Seq(unsafeLabelName("outcome") -> "divergent_valid_certificates")
+                        )
+                        .as(false)
+                  case Right(None) =>
+                    Metrics[F]
+                      .incrementCounter(
+                        "dag_consensus_certified_recovery_total",
+                        Seq(unsafeLabelName("outcome") -> "no_valid_candidate")
+                      )
+                      .as(false)
+                  case Right(Some((peer, candidate))) => adoptCertifiedOutcome(key, peer, candidate)
+                }
+              }
+            }
+        }
+      case _ => false.pure[F]
+    }
+
+  private def adoptCertifiedOutcome(key: Key, source: Peer, candidate: Outcome): F[Boolean] = {
+    type Adoption = (
+      ConsensusState[Key, Status, Outcome, Kind],
+      Previous[Key],
+      Outcome,
+      F[Unit]
+    )
+
+    val modify = new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Adoption] {
+      def apply(
+        maybeState: Option[ConsensusState[Key, Status, Outcome, Kind]]
+      ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Adoption)]] =
+        maybeState match {
+          case Some(current) if current.certifiedConsensusActive && advancer.getConsensusOutcome(current).isEmpty =>
+            advancer.certifiedOutcomeAdoption(current, candidate).map {
+              case Right(adoption) =>
+                advancer.getConsensusOutcome(adoption.state).map {
+                  case (previous, outcome) =>
+                    adoption.state.some -> (adoption.state, previous, outcome, adoption.sideEffect)
+                }
+              case Left(_) => none
+            }
+          case _ => none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Adoption)].pure[F]
+        }
+    }
+
+    storage.condModifyState[Adoption](key)(modify).flatMap {
+      case Some((recoveredState, previous, outcome, sideEffect)) =>
+        sideEffect >>
+          finalizeAndNotify(recoveredState, previous, outcome) >>
+          ConsensusLog.info(
+            log,
+            Category.Recovery,
+            key.show,
+            "n/a",
+            LogEvent.CertifiedOutcomeRecovery,
+            "outcome" -> "adopted",
+            "peer" -> ConsensusLog.pid(source.id)
+          ) >>
+          Metrics[F]
+            .incrementCounter(
+              "dag_consensus_certified_recovery_total",
+              Seq(unsafeLabelName("outcome") -> "adopted")
+            )
+            .as(true)
+      case None =>
+        Metrics[F]
+          .incrementCounter(
+            "dag_consensus_certified_recovery_total",
+            Seq(unsafeLabelName("outcome") -> "state_changed")
+          )
+          .as(false)
+    }
+  }
 
   /** Handle CheckViewChangeAssembly command.
     *
@@ -1268,10 +1430,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           val withdrawnCount = newState.withdrawnFacilitators.value.size
           val removedCount = newState.removedFacilitators.value.size
 
-          Metrics[F].incrementCounter(
-            "dag_consensus_outcome_finalized",
-            Seq(unsafeLabelName("trigger_type") -> trigger.toString)
-          ) >>
+          runOutcomeHook("finalized", outcome)(ctx.onOutcomeFinalized) >>
+            Metrics[F].incrementCounter(
+              "dag_consensus_outcome_finalized",
+              Seq(unsafeLabelName("trigger_type") -> trigger.toString)
+            ) >>
             Metrics[F].incrementCounter(
               "dag_consensus_round_completed_total",
               Seq(
@@ -1499,54 +1662,55 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         .trySetInitialConsensusOutcome(outcome)
         .ifM(
           ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
-          ifTrue = downloadReadyPromotionAllowed(outcome).flatMap { promoteToReady =>
-            val targetState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
-            // Initial download promotion is also the candidate-admission path. A peer exposes
-            // its next-round registration key through `observationKey`; clearing it here makes
-            // the peer visible as Ready but invisible to committee selection, so bootstrap can
-            // collapse back to a singleton facilitator.
-            storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective) >>
-              ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_init_download_target_state_total",
-                Seq(unsafeLabelName("target_state") -> targetState.entryName)
-              ) >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_init_download_ready_promotion_total",
-                Seq(unsafeLabelName("result") -> (if (promoteToReady) "promoted" else "waiting_for_ready"))
-              ) >>
-              ctx.nodeStorage.setJoiningGracePeriod >>
-              ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
-                if (isValidator && isRecoveryEffective) {
-                  // Validator recovery: start round immediately. The validator solo block
-                  // prevents solo production, and starting immediately avoids the 43s deferral
-                  // that caused ordinal mismatch deadlocks with the leader.
-                  ConsensusLog.info(
-                    log,
-                    Category.Lifecycle,
-                    key.toString,
-                    "n/a",
-                    LogEvent.DownloadInitRecoveryImmediate,
-                    "note" -> "Validator recovery: starting round immediately (solo blocked)"
-                  ) >>
-                    queue.offer(StartRound(TimeTrigger.some))
-                } else {
-                  // Initial join (all node types) or non-validator recovery: defer to align
-                  // with the cluster's TimeTrigger cadence. Without this delay on initial join,
-                  // validators form a majority without genesis, causing an irrecoverable split.
-                  ConsensusLog.info(
-                    log,
-                    Category.Lifecycle,
-                    key.toString,
-                    "n/a",
-                    if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
-                    "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
-                  ) >>
-                    Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
-                    queue.offer(StartRound(TimeTrigger.some))
+          ifTrue = runOutcomeHook("download_initialized", outcome)(ctx.onOutcomeInitialized) >>
+            downloadReadyPromotionAllowed(outcome).flatMap { promoteToReady =>
+              val targetState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
+              // Initial download promotion is also the candidate-admission path. A peer exposes
+              // its next-round registration key through `observationKey`; clearing it here makes
+              // the peer visible as Ready but invisible to committee selection, so bootstrap can
+              // collapse back to a singleton facilitator.
+              storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective) >>
+                ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_init_download_target_state_total",
+                  Seq(unsafeLabelName("target_state") -> targetState.entryName)
+                ) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_init_download_ready_promotion_total",
+                  Seq(unsafeLabelName("result") -> (if (promoteToReady) "promoted" else "waiting_for_ready"))
+                ) >>
+                ctx.nodeStorage.setJoiningGracePeriod >>
+                ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
+                  if (isValidator && isRecoveryEffective) {
+                    // Validator recovery: start round immediately. The validator solo block
+                    // prevents solo production, and starting immediately avoids the 43s deferral
+                    // that caused ordinal mismatch deadlocks with the leader.
+                    ConsensusLog.info(
+                      log,
+                      Category.Lifecycle,
+                      key.toString,
+                      "n/a",
+                      LogEvent.DownloadInitRecoveryImmediate,
+                      "note" -> "Validator recovery: starting round immediately (solo blocked)"
+                    ) >>
+                      queue.offer(StartRound(TimeTrigger.some))
+                  } else {
+                    // Initial join (all node types) or non-validator recovery: defer to align
+                    // with the cluster's TimeTrigger cadence. Without this delay on initial join,
+                    // validators form a majority without genesis, causing an irrecoverable split.
+                    ConsensusLog.info(
+                      log,
+                      Category.Lifecycle,
+                      key.toString,
+                      "n/a",
+                      if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
+                      "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
+                    ) >>
+                      Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
+                      queue.offer(StartRound(TimeTrigger.some))
+                  }
                 }
-              }
-          }
+            }
         )
     } yield ())
       .flatTap(_ => initDownloadOutcome("success"))
@@ -1567,7 +1731,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       _ <- storage.clearObservationKey
       _ <- ctx.pending.clear()
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackStateCleared)
-      _ <- storage.trySetInitialConsensusOutcome(outcome)
+      initialized <- storage.trySetInitialConsensusOutcome(outcome)
+      _ <- runOutcomeHook("rollback_initialized", outcome)(ctx.onOutcomeInitialized).whenA(initialized)
       _ <- ConsensusLog.info(
         log,
         Category.Lifecycle,
@@ -1918,6 +2083,20 @@ object StateTransitions {
     if (keyMatches && artifactMatches && contextMatches) DownloadOutcomeDisposition.AcceptExact(isRecovery)
     else if (!keyMatches) DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage
     else DownloadOutcomeDisposition.Reject
+
+  private[state] val CertifiedRecoverySampleSize: Int = 8
+  private[state] val CertifiedRecoveryParallelism: Int = 4
+  private[state] val CertifiedRecoveryPerPeerTimeout: FiniteDuration = 2.seconds
+
+  /** Pick one already-verified recovery candidate only when every valid certificate names the same semantic value hash. Candidate order is
+    * supplied by the caller (production sorts by source PeerId); multiple proof subsets for one value are harmless, while two values fail
+    * closed.
+    */
+  private[consensus] def selectCertifiedRecoveryCandidate[A](candidates: List[(Hash, A)]): Either[Int, Option[A]] = {
+    val byValueHash = candidates.groupBy(_._1)
+    if (byValueHash.size > 1) byValueHash.size.asLeft[Option[A]]
+    else candidates.headOption.map(_._2).asRight[Int]
+  }
 
   /** Shared result of selecting the voter universe for a VCC or TC. Keeping this outside the generic state-machine instance avoids an
     * outer-instance type while preserving one implementation for both certificate families and both L0 layers.

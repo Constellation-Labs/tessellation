@@ -128,7 +128,11 @@ object ConsensusEventLoop {
     // Optional externally-created command queue. Global L0 uses this to enqueue the existing
     // CheckEvictionAssembly command from its round-creation finality audit before the first
     // Facility is sent. Other layers retain the internal-queue behavior.
-    injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None
+    injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None,
+    // Typed, layer-owned persistence hooks. Defaults preserve every existing caller; DAG/Currency
+    // use these for recovery sidecars without coupling the generic engine to either outcome schema.
+    onOutcomeFinalized: Option[Outcome => F[Unit]] = None,
+    onOutcomeInitialized: Option[Outcome => F[Unit]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -162,7 +166,9 @@ object ConsensusEventLoop {
         probationPeersOf,
         peerQualityOf,
         _key.get _,
-        lastOutcomeEndTimeMsOf
+        lastOutcomeEndTimeMsOf,
+        onOutcomeFinalized.getOrElse((_: Outcome) => Async[F].unit),
+        onOutcomeInitialized.getOrElse((_: Outcome) => Async[F].unit)
       )
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](
@@ -243,8 +249,9 @@ object ConsensusEventLoop {
                     // condModifyState on this single command-loop fiber, the only state writer (see
                     // ConsensusStorage.condModifyState). abandonRound re-checks outcome-readiness, so a round
                     // that completed since the monitor's decision is not wiped.
-                    abandonmentTracker
-                      .abandonRound(key, reason)
+                    fsm
+                      .tryAdoptCertifiedOutcome(key)
+                      .flatMap(adopted => if (adopted) Async[F].unit else abandonmentTracker.abandonRound(key, reason))
                       .handleErrorWith { err =>
                         ctx.logger.error(err)("Unhandled error processing AbandonRound, recovering") >>
                           Metrics[F].incrementCounter("dag_consensus_command_error")

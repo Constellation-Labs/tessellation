@@ -17,6 +17,7 @@ import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
@@ -34,6 +35,7 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
@@ -60,7 +62,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   */
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Parallel: Random: SecurityProvider: Metrics](
+  def make[F[_]: Async: Parallel: Random: SecurityProvider: Metrics: JsonSerializer](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -175,6 +177,10 @@ object CurrencySnapshotConsensus {
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
       ](effectiveConsensusConfig)
+
+      certifiedOutcomeSidecar <- OrdinalJsonSidecarStorage.make[F, CurrencyConsensusOutcome](
+        snapshotConfig.incrementalPersistedSnapshotPath / "certifiedOutcomes"
+      )
 
       consensusFns =
         CurrencySnapshotConsensusFunctions.make[F](
@@ -388,7 +394,14 @@ object CurrencySnapshotConsensus {
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
-          peersCommittedAheadProbe
+          peersCommittedAheadProbe,
+          onOutcomeFinalized = Some((outcome: CurrencyConsensusOutcome) =>
+            outcome.finished.certifiedOutcome.traverse_(_ =>
+              certifiedOutcomeSidecar.write(outcome.key, outcome) >>
+                certifiedOutcomeSidecar.retain(SnapshotOrdinal.MinValue, outcome.key)
+            )
+          ),
+          onOutcomeInitialized = Some((outcome: CurrencyConsensusOutcome) => certifiedOutcomeSidecar.deleteAbove(outcome.key))
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)
@@ -401,7 +414,7 @@ object CurrencySnapshotConsensus {
         CurrencySnapshotStatus,
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
-      ](consensusStorage, rumorQueue)
+      ](consensusStorage, rumorQueue, Some(certifiedOutcomeSidecar.read))
 
       // Pin the consume fiber onto the dedicated consensus EC when one was provided, supervised by
       // that dispatcher's EC-scoped supervisor so it is cancelled before the pool is shut down.

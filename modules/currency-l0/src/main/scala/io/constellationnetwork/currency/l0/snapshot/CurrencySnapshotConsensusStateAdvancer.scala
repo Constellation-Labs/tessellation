@@ -17,6 +17,7 @@ import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
@@ -80,7 +81,7 @@ abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
 
 object CurrencySnapshotConsensusStateAdvancer {
 
-  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector: JsonSerializer](
     consensusConfig: ConsensusConfig,
     networkId: String,
     keyPair: KeyPair,
@@ -448,6 +449,126 @@ object CurrencySnapshotConsensusStateAdvancer {
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
             none
+        }
+
+      def certifiedOutcomeAdoption(
+        state: CurrencySnapshotConsensusState,
+        candidate: CurrencyConsensusOutcome
+      ): F[Either[String, CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]] =
+        HasherSelector[F].withCurrent { implicit hasher =>
+          (candidate.finished.certifiedOutcome, candidate.finished.certifiedBinary).tupled match {
+            case None =>
+              "certified_outcome_or_binary_missing".asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]].pure[F]
+            case Some((certified, certifiedBinary)) =>
+              val value = certified.proposalQc.value
+              val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
+              val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
+              val frozenCommittee = full.toSortedSet.toSet
+              val binarySigners = certifiedBinary.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
+
+              for {
+                artifactHash <- candidate.finished.signedMajorityArtifact.value.hash
+                bound <- CertifiedConsensus.verifyBoundOutcome[F, CurrencySnapshotContext](
+                  certified,
+                  CertifiedConsensus.ConsensusDomain.CurrencyL0,
+                  networkId,
+                  state.key.value.value,
+                  state.lastOutcome.finished.snapshotHash,
+                  artifactHash,
+                  candidate.finished.context,
+                  full,
+                  core,
+                  config.quorumThresholdFraction,
+                  state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2),
+                  config.viewInterval,
+                  config.maxRoundDuration
+                )
+                artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, CurrencySnapshotArtifact](
+                  candidate.finished.signedMajorityArtifact,
+                  frozenCommittee,
+                  frozenCommittee.size
+                )
+                binarySignatureValid <- certifiedBinary.hasValidSignature[F]
+                hashedBinary <- certifiedBinary.toHashed[F]
+                embeddedArtifact <- JsonSerializer[F]
+                  .deserialize[Signed[CurrencySnapshotArtifact]](certifiedBinary.value.content)
+                structure = for {
+                  _ <- Either.cond(candidate.key === state.key, (), "outcome_key_mismatch")
+                  _ <- Either.cond(
+                    candidate.finished.signedMajorityArtifact.value.ordinal === state.key,
+                    (),
+                    "artifact_ordinal_mismatch"
+                  )
+                  _ <- Either.cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
+                  _ <- Either.cond(
+                    candidate.finished.signedMajorityArtifact.value.lastSnapshotHash === state.lastOutcome.finished.snapshotHash,
+                    (),
+                    "artifact_parent_mismatch"
+                  )
+                  _ <- bound
+                  _ <- artifactProofs
+                  _ <- Either.cond(binarySigners === frozenCommittee, (), "binary_signers_not_complete_frozen_committee")
+                  _ <- Either.cond(binarySignatureValid, (), "invalid_binary_signature")
+                  _ <- Either.cond(
+                    certifiedBinary.value.lastSnapshotHash === state.lastOutcome.finished.binaryArtifactHash,
+                    (),
+                    "binary_parent_mismatch"
+                  )
+                  decodedArtifact <- embeddedArtifact.leftMap(error => s"binary_artifact_decode:${error.getMessage}")
+                  _ <- Either.cond(decodedArtifact === candidate.finished.signedMajorityArtifact, (), "binary_artifact_mismatch")
+                  _ <- Either.cond(hashedBinary.hash === candidate.finished.binaryArtifactHash, (), "binary_hash_mismatch")
+                } yield ()
+                result <- structure match {
+                  case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]].pure[F]
+                  case Right(_) =>
+                    val recoveredState: CurrencySnapshotConsensusState = state.copy(
+                      facilitators = state.roundStartFacilitators,
+                      removedFacilitators = RemovedFacilitators(value.evictedPeers.toSet),
+                      withdrawnFacilitators = WithdrawnFacilitators.empty,
+                      admittedFacilitators = AdmittedFacilitators(value.admittedPeers.toSet),
+                      observedResponders = ObservedResponders(value.observedResponders.toSet),
+                      observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
+                      acceptedTimeoutCertificateVoters = value.timeoutVoters,
+                      certifiedEvictionTargets = value.evictedPeers,
+                      outcomeEndTime = value.consensusEndTime,
+                      viewNumber = value.committedView.toInt,
+                      status = Finished(
+                        candidate.finished.signedMajorityArtifact,
+                        hashedBinary.hash,
+                        candidate.finished.context,
+                        value.trigger,
+                        Candidates(value.admissionNominee.toSet),
+                        value.roundStartFacilitatorsHash,
+                        value.artifactHash,
+                        certified.some,
+                        certifiedBinary.some
+                      )
+                    )
+
+                    getConsensusOutcome(recoveredState).map(_._2) match {
+                      case Some(derived) if derived === candidate =>
+                        CertifiedOutcomeAdoption(
+                          certified.proposalQc.valueHash,
+                          recoveredState,
+                          persistAndGossip(
+                            candidate.finished.signedMajorityArtifact,
+                            hashedBinary,
+                            recoveredState,
+                            candidate.finished.context
+                          )
+                        ).asRight[String].pure[F]
+                      case Some(_) =>
+                        "certified_outcome_derivation_mismatch"
+                          .asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]
+                          .pure[F]
+                      case None =>
+                        "certified_outcome_derivation_failed"
+                          .asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]
+                          .pure[F]
+                    }
+                }
+              } yield result
+          }
         }
 
       def advanceStatus(
@@ -2298,7 +2419,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                       status.candidates,
                       facilitatorsHash,
                       snapshotHash,
-                      status.certifiedOutcome
+                      status.certifiedOutcome,
+                      status.certifiedOutcome.as(finalSignedBinary)
                     )
                   ),
                   sideEffect = persistAndGossip(status.signedMajorityArtifact, hashedBinary, state, status.context)

@@ -21,7 +21,8 @@ import org.http4s.server.Router
 
 class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder, Artifact, Context, ConStatus, Outcome: Encoder, Kind](
   storage: ConsensusStorage[F, _, Key, Artifact, Context, ConStatus, Outcome, Kind],
-  rumorQueue: Queue[F, Hashed[RumorRaw]]
+  rumorQueue: Queue[F, Hashed[RumorRaw]],
+  historicalOutcome: Option[Key => F[Option[Outcome]]] = None
 )(implicit _key: Lens[Outcome, Key])
     extends Http4sDsl[F] {
 
@@ -35,11 +36,12 @@ class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder,
     case req @ POST -> Root / "specific" / "outcome" => // POST used instead of GET because `Key` can't be used be in path
       for {
         outcomeRequest <- req.as[GetConsensusOutcomeRequest[Key]]
-        result <- storage.getLastConsensusOutcome.flatMap {
+        historical <- historicalOutcome.fold(none[Outcome].pure[F])(_(outcomeRequest.key))
+        result <- historical.fold(storage.getLastConsensusOutcome.flatMap {
           case Some(value) if _key.get(value) === outcomeRequest.key => Ok(value.some)
           case Some(value) if _key.get(value) > outcomeRequest.key   => Conflict()
-          case _                                                     => Ok(none[GetConsensusOutcomeRequest[Key]])
-        }
+          case _                                                     => Ok(none[Outcome])
+        })(value => Ok(value.some))
       } yield result
     case req @ POST -> Root / "push-rumor" =>
       HasherSelector[F].withCurrent { implicit hasher =>

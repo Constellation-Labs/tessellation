@@ -5,12 +5,12 @@ import cats.effect.{Async, Clock}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusResources, PeerDeclarations}
 import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -55,6 +55,17 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class Previous[A](a: A)
 
+/** A fully verified same-key outcome ready to enter the ordinary finalization path.
+  *
+  * `valueHash` lets the shared coordinator fail closed if peers somehow present two different valid certified values. The layer owns
+  * outcome re-derivation and persistence because DAG and Currency have genuinely different artifact/context side effects.
+  */
+final case class CertifiedOutcomeAdoption[F[_], State](
+  valueHash: Hash,
+  state: State,
+  sideEffect: F[Unit]
+)
+
 trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
   type State = ConsensusState[Key, Status, Outcome, Kind]
@@ -86,6 +97,15 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     * This is node-local recovery state only. It does not alter artifact bytes, state proofs, committee derivation, or proposal validation.
     */
   def synchronizeDownloadedOutcome(artifact: Signed[Artifact], context: Context): F[Unit]
+
+  /** Verify and re-derive a peer-supplied v35 outcome against this node's locally known parent and frozen round sets. Implementations must
+    * return `Left` for every legacy, malformed, or insufficiently proven candidate; callers never trust transport or sidecar bytes
+    * directly.
+    */
+  def certifiedOutcomeAdoption(
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    candidate: Outcome
+  ): F[Either[String, CertifiedOutcomeAdoption[F, ConsensusState[Key, Status, Outcome, Kind]]]]
 
   def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] =
     Slf4jLogger.getLoggerFromName[F](this.getClass.getName)

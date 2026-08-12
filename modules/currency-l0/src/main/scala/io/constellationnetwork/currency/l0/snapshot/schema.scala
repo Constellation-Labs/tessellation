@@ -50,7 +50,7 @@ object schema {
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case CollectingBinarySignatures(_, _, _, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash, _) =>
         s"CollectingBinarySignatures{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case Finished(_, binaryArtifactHash, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash, _) =>
+      case Finished(_, binaryArtifactHash, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash, _, _) =>
         s"Finished{binaryArtifactHash=${binaryArtifactHash}, majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, snapshotHash=${snapshotHash.show}}"
     }
   }
@@ -109,7 +109,13 @@ object schema {
     candidates: Candidates,
     facilitatorsHash: Hash,
     snapshotHash: Hash,
-    certifiedOutcome: Option[CertifiedOutcome] = None
+    certifiedOutcome: Option[CertifiedOutcome] = None,
+    // Recovery evidence only. V35 Currency requires every frozen facilitator to sign the
+    // identical StateChannelSnapshotBinary, so retaining that signed value lets a recovering
+    // peer verify `binaryArtifactHash` and the parent-binary link instead of trusting an
+    // unauthenticated scalar from a sidecar. It is part of the private consensus outcome, not
+    // the public CurrencyIncrementalSnapshot or state proof.
+    certifiedBinary: Option[Signed[StateChannelSnapshotBinary]] = None
   ) extends CurrencyConsensusStep
 
   @derive(encoder, decoder, eqv, show)

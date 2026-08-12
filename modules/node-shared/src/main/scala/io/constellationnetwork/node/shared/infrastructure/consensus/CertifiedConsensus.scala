@@ -306,6 +306,15 @@ object CertifiedConsensus {
   def requiredCoreQuorum(coreSize: Int, configuredFraction: Double): Int =
     math.max(QuorumPolicy.supermajority(coreSize), QuorumPolicy.fromFraction(coreSize, configuredFraction))
 
+  /** V35 artifact finality remains a separate full-committee rule. The Core term preserves configurations whose liveness threshold is
+    * stricter than the broad committee fraction; the full term prevents a Core minority from finalizing for Core + Tier-1.
+    */
+  def requiredArtifactQuorum(fullSize: Int, coreSize: Int, configuredFraction: Double): Int =
+    math.max(
+      math.max(1, QuorumPolicy.fromFraction(fullSize, configuredFraction)),
+      math.max(1, QuorumPolicy.fromFraction(coreSize, configuredFraction))
+    )
+
   /** Select whether this node may emit a pacemaker vote and, when it may, the exact direct-gossip targets.
     *
     * Legacy rounds retain their existing active-facilitator behavior. Certified rounds use only frozen Core votes for VCC/TC quorum
@@ -591,6 +600,78 @@ object CertifiedConsensus {
       case Right(_) =>
         verifyCoreCommitQc(outcome.proposalQc, outcome.coreCommitQc, frozenCore, configuredFraction)
     }
+
+  /** Verify a certified value against the exact round identity reconstructed from a locally known parent. This is the common trust boundary
+    * for DAG/Currency same-key recovery: layer adapters provide their typed context and frozen sets, while this helper reuses the ordinary
+    * value/QC validation path.
+    */
+  def verifyBoundOutcome[F[_]: Async: Hasher: SecurityProvider, Context: Encoder](
+    outcome: CertifiedOutcome,
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    artifactHash: Hash,
+    context: Context,
+    roundStartFacilitators: NonEmptySet[PeerId],
+    roundStartCore: NonEmptySet[PeerId],
+    configuredFraction: Double,
+    parentEndTime: Option[Long],
+    viewInterval: FiniteDuration,
+    maxRoundDuration: Option[FiniteDuration]
+  ): F[Either[String, Unit]] = {
+    val value = outcome.proposalQc.value
+    val fullSet = roundStartFacilitators.toSortedSet.toSet
+    val coreSet = roundStartCore.toSortedSet.toSet
+
+    for {
+      expected <- rederiveCertifiedValue[F, Context](
+        value,
+        domain,
+        networkId,
+        key,
+        parentArtifactHash,
+        artifactHash,
+        context,
+        roundStartFacilitators,
+        roundStartCore
+      )
+      valueValidation <- validateValue[F](
+        value,
+        expected,
+        carriedQc = None,
+        outerView = value.committedView,
+        parentEndTime = parentEndTime,
+        viewInterval = viewInterval,
+        maxRoundDuration = maxRoundDuration,
+        frozenCommittee = fullSet,
+        frozenCore = coreSet,
+        configuredFraction = configuredFraction
+      )
+      qcValidation <- verifyOutcome[F](outcome, fullSet, coreSet, configuredFraction)
+    } yield valueValidation.void.productR(qcValidation)
+  }
+
+  /** Verify legacy artifact proofs against the frozen v35 committee without changing their historical bare-artifact-hash meaning.
+    */
+  def verifyArtifactProofs[F[_]: Async: Hasher: SecurityProvider, Artifact: Encoder](
+    signedArtifact: Signed[Artifact],
+    frozenCommittee: Set[PeerId],
+    requiredQuorum: Int
+  ): F[Either[String, Unit]] = {
+    val signers = signedArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId)
+    val structure = for {
+      _ <- Either.cond(signers.distinct.size === signers.size, (), "duplicate_artifact_signer")
+      _ <- Either.cond(signers.toSet.subsetOf(frozenCommittee), (), "artifact_signer_outside_frozen_committee")
+      _ <- Either.cond(signers.size >= requiredQuorum, (), s"artifact_under_quorum:${signers.size}/$requiredQuorum")
+    } yield ()
+
+    structure match {
+      case Left(error) => error.asLeft[Unit].pure[F]
+      case Right(_) =>
+        signedArtifact.hasValidSignature[F].map(Either.cond(_, (), "invalid_artifact_signature"))
+    }
+  }
 
   /** Shared DAG/Currency semantic-value validation. Layer adapters only construct `expected` from their artifact/context types. */
   def validateValue[F[_]: Async: Hasher: SecurityProvider](

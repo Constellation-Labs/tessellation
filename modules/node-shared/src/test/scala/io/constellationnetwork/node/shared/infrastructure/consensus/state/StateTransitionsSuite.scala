@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 
 import weaver.SimpleIOSuite
@@ -143,5 +144,24 @@ object StateTransitionsSuite extends SimpleIOSuite {
     expect.same(1, status.participantsIncludingSelf) &&
     expect.same(1, status.required) &&
     expect(!status.quorumFeasible)
+  }
+
+  pureTest("certified same-key recovery accepts multiple proof carriers for one semantic value") {
+    val valueHash = Hash.fromBytes("one-value".getBytes("UTF-8"))
+
+    expect.same(
+      Right(Some("peer-a")),
+      StateTransitions.selectCertifiedRecoveryCandidate(List(valueHash -> "peer-a", valueHash -> "peer-b"))
+    )
+  }
+
+  pureTest("certified same-key recovery fails closed on two valid semantic values") {
+    val first = Hash.fromBytes("first-value".getBytes("UTF-8"))
+    val second = Hash.fromBytes("second-value".getBytes("UTF-8"))
+
+    expect.same(
+      Left(2),
+      StateTransitions.selectCertifiedRecoveryCandidate(List(first -> "peer-a", second -> "peer-b"))
+    )
   }
 }

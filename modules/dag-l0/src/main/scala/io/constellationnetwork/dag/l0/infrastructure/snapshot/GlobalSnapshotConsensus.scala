@@ -52,7 +52,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
 }
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.PeerHistorySidecarStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{OrdinalJsonSidecarStorage, PeerHistorySidecarStorage}
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
@@ -309,6 +309,11 @@ object GlobalSnapshotConsensus {
       // discriminator. Best-effort writes; rollback reads fall back to `snapshot.peerHistory` when
       // the sidecar is absent or malformed.
       peerHistorySidecar <- PeerHistorySidecarStorage.make[F](appConfig.snapshot.snapshotPath / "peerHistory")
+      certifiedOutcomeSidecar <- OrdinalJsonSidecarStorage.make[F, GlobalConsensusOutcome](
+        appConfig.snapshot.snapshotPath / "certifiedOutcomes"
+      )
+      certifiedOutcomeCutoff = appConfig.incremental.lastFullGlobalSnapshotOrdinal
+        .getOrElse(appConfig.environment, SnapshotOrdinal.MinValue)
 
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
@@ -331,7 +336,6 @@ object GlobalSnapshotConsensus {
           loggerBundle,
           mptStore,
           facilitatorSelector,
-          peerHistorySidecar,
           (key: GlobalSnapshotKey) => consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key))
         )
 
@@ -492,7 +496,15 @@ object GlobalSnapshotConsensus {
           getPeerChainTips,
           peersCommittedAheadProbe,
           injectedHealthRef,
-          Some(consensusQueue)
+          Some(consensusQueue),
+          Some((outcome: GlobalConsensusOutcome) =>
+            outcome.finished.certifiedOutcome.traverse_(_ =>
+              certifiedOutcomeSidecar.write(outcome.key, outcome) >>
+                certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key)
+            ) >>
+              peerHistorySidecar.write(outcome.key, outcome.toOperationalState)
+          ),
+          Some((outcome: GlobalConsensusOutcome) => certifiedOutcomeSidecar.deleteAbove(outcome.key))
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
@@ -505,7 +517,7 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](consensusStorage, rumorQueue)
+      ](consensusStorage, rumorQueue, Some(certifiedOutcomeSidecar.read))
 
       triggerEvent = loop.queue.offer(ConsensusCommand.FacilitateByEvent)
 

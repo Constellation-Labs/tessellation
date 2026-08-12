@@ -37,7 +37,6 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalArtifactMismatch
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.PeerHistorySidecarStorage
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore, MptStoreSavepoint}
@@ -130,11 +129,6 @@ object GlobalSnapshotConsensusStateAdvancer {
     loggerBundle: LoggerBundle[F],
     mptStore: MptStore[F, GlobalStateKey],
     facilitatorSelector: FacilitatorSelector,
-    // Alpha.94: best-effort node-local cache of `Outcome[N].toOperationalState` keyed by snapshot ordinal.
-    // Written after each successful `persistAndGossip` so a future rollback to N seeds `state.lastOutcome`
-    // from the post-finalization view instead of the one-round-stale `snapshot.peerHistory` field
-    // (see `PeerHistorySidecarStorage` scaladoc + `project_alpha92_wedge_may21.md`).
-    peerHistorySidecar: PeerHistorySidecarStorage[F],
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
     // `RestartAfterSoftReset(key)` on the owning serialized command loop so the reset is a total transition rather than an inert state.
     scheduleSoftResetRestart: GlobalSnapshotKey => F[Unit]
@@ -738,6 +732,107 @@ object GlobalSnapshotConsensusStateAdvancer {
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
             none
+        }
+
+      def certifiedOutcomeAdoption(
+        state: GlobalSnapshotConsensusState,
+        candidate: GlobalConsensusOutcome
+      ): F[Either[String, CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]]] =
+        HasherSelector[F].withCurrent { implicit hasher =>
+          candidate.finished.certifiedOutcome match {
+            case None => "certified_outcome_missing".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
+            case Some(certified) =>
+              val value = certified.proposalQc.value
+              val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
+              val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
+              val frozenCommittee = full.toSortedSet.toSet
+              val requiredArtifactProofs = CertifiedConsensus.requiredArtifactQuorum(
+                frozenCommittee.size,
+                state.coreFacilitators.value.size,
+                config.quorumThresholdFraction
+              )
+
+              for {
+                artifactHash <- candidate.finished.signedMajorityArtifact.value.hash
+                bound <- CertifiedConsensus.verifyBoundOutcome[F, GlobalSnapshotContext](
+                  certified,
+                  CertifiedConsensus.ConsensusDomain.DagL0,
+                  networkId,
+                  state.key.value.value,
+                  state.lastOutcome.finished.snapshotHash,
+                  artifactHash,
+                  candidate.finished.context,
+                  full,
+                  core,
+                  config.quorumThresholdFraction,
+                  state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2),
+                  config.viewInterval,
+                  config.maxRoundDuration
+                )
+                artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, GlobalSnapshotArtifact](
+                  candidate.finished.signedMajorityArtifact,
+                  frozenCommittee,
+                  requiredArtifactProofs
+                )
+                structure = for {
+                  _ <- Either.cond(candidate.key === state.key, (), "outcome_key_mismatch")
+                  _ <- Either.cond(
+                    candidate.finished.signedMajorityArtifact.value.ordinal === state.key,
+                    (),
+                    "artifact_ordinal_mismatch"
+                  )
+                  _ <- Either.cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
+                  _ <- Either.cond(
+                    candidate.finished.signedMajorityArtifact.value.lastSnapshotHash === state.lastOutcome.finished.snapshotHash,
+                    (),
+                    "artifact_parent_mismatch"
+                  )
+                  _ <- bound
+                  _ <- artifactProofs
+                } yield ()
+                result <- structure match {
+                  case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
+                  case Right(_) =>
+                    val recoveredState: GlobalSnapshotConsensusState = state.copy(
+                      facilitators = state.roundStartFacilitators,
+                      removedFacilitators = RemovedFacilitators(value.evictedPeers.toSet),
+                      withdrawnFacilitators = WithdrawnFacilitators.empty,
+                      admittedFacilitators = AdmittedFacilitators(value.admittedPeers.toSet),
+                      observedResponders = ObservedResponders(value.observedResponders.toSet),
+                      observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
+                      acceptedTimeoutCertificateVoters = value.timeoutVoters,
+                      certifiedEvictionTargets = value.evictedPeers,
+                      outcomeEndTime = value.consensusEndTime,
+                      viewNumber = value.committedView.toInt,
+                      status = Finished(
+                        candidate.finished.signedMajorityArtifact,
+                        candidate.finished.context,
+                        value.trigger,
+                        Candidates(value.admissionNominee.toSet),
+                        value.roundStartFacilitatorsHash,
+                        value.artifactHash,
+                        certified.some
+                      )
+                    )
+
+                    getConsensusOutcome(recoveredState).map(_._2) match {
+                      case Some(derived) if derived === candidate =>
+                        CertifiedOutcomeAdoption(
+                          certified.proposalQc.valueHash,
+                          recoveredState,
+                          persistAndGossip(
+                            candidate.finished.signedMajorityArtifact,
+                            candidate.finished.context
+                          )
+                        ).asRight[String].pure[F]
+                      case Some(_) =>
+                        "certified_outcome_derivation_mismatch".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
+                      case None =>
+                        "certified_outcome_derivation_failed".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
+                    }
+                }
+              } yield result
+          }
         }
 
       def advanceStatus(
@@ -3974,20 +4069,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           } yield ok
         }
 
-        // Alpha.94: after a successful persist, write the post-finalization peerHistory sidecar.
-        // `consensusStorage.getLastConsensusOutcome` returns the freshly-committed `Outcome[N]` since
-        // `StateTransitions.tryUpdateLastConsensusOutcomeWithCleanup` has already run upstream.
-        // `toOperationalState` produces the same ConsensusOperationalState the leader packed into the
-        // SIGNED snapshot's `peerHistory` field at proposal time, except this one corresponds to N
-        // rather than N-1. Best-effort -- write failures log and continue (the sidecar miss only
-        // affects future rollback freshness; the persist itself has already succeeded).
-        val writeSidecar: F[Unit] =
-          consensusStorage.getLastConsensusOutcome.flatMap(_.traverse_ { outcome =>
-            peerHistorySidecar.write(signedArtifact.value.ordinal, outcome.toOperationalState)
-          })
-
         persist.ifM(
-          clearCommittedEvents(signedArtifact.value) >> recordMetrics(signedArtifact) >> writeSidecar,
+          clearCommittedEvents(signedArtifact.value) >> recordMetrics(signedArtifact),
           ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
             .raiseError(
               new RuntimeException("Persist failed")

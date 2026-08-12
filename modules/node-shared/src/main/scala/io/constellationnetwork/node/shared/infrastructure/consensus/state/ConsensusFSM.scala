@@ -59,6 +59,8 @@ class ConsensusFSM[F[
   private val rumorHandler = new RumorHandler[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
   private val transitions = new StateTransitions[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](ctx)
 
+  def tryAdoptCertifiedOutcome(key: Key): F[Boolean] = transitions.tryAdoptCertifiedOutcome(key)
+
   import ctx.{isRoundRunning => isRunning, logger => log, nodeStorage, pending, storage}
 
   /** Node states where consensus rounds must NOT start (recovery / download / leaving in progress). Leaving is included to prevent an
