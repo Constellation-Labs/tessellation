@@ -82,10 +82,11 @@ object ConsensusDirectSenderSuite extends SimpleIOSuite {
         _ <- directPush(rumor, Set(peerId))
         elapsed <- IO.monotonic.map(_ - started)
         _ <- pushStarted.get.timeout(1.second)
-      } yield expect(
-        elapsed < 250.millis,
-        s"direct-push callback must only enqueue; it waited ${elapsed.toMillis}ms for peer delivery"
-      )
+      } yield
+        expect(
+          elapsed < 250.millis,
+          s"direct-push callback must only enqueue; it waited ${elapsed.toMillis}ms for peer delivery"
+        )
     }
   }
 
