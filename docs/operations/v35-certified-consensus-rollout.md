@@ -1,7 +1,17 @@
 # V35 certified-consensus rollout
 
-This runbook accompanies [ADR-0031](../adr/0031-certified-consensus-outcomes.md).
-No public activation ordinal is selected in source yet.
+This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md).
+
+## Scheduled activations
+
+- IntegrationNet DAG L0: ordinal `5,890,500`. It was selected on 2026-08-12 at a
+  highest observed priority-node tip of `5,883,109`. At the previously measured healthy
+  cadence of approximately 45.9 seconds per ordinal, the estimated crossing is
+  2026-08-16 around 19:00 UTC. Stalls, restarts, rollback, or transaction-driven event
+  rounds can move that wall-clock estimate, so monitor the remaining ordinal distance.
+- IntegrationNet Currency L0 remains disabled here. Every metagraph has an independent
+  ordinal space and must select and coordinate its own activation key. Mainnet and
+  testnet remain disabled for both layers.
 
 ## Compatibility boundaries
 

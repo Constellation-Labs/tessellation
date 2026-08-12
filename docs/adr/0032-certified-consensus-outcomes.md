@@ -1,4 +1,4 @@
-# ADR-0031: Certified consensus outcomes over a frozen round context
+# ADR-0032: Certified consensus outcomes over a frozen round context
 
 Date: 2026-08-11
 
