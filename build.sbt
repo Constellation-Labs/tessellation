@@ -691,4 +691,4 @@ lazy val sdk = (project in file("modules/sdk"))
     ).flatten,
   )
 
-addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")
+addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports;scalafmtAll")

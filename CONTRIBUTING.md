@@ -12,6 +12,18 @@
 
 For IntelliJ scalafmt integration, see [JetBrains documentation](https://www.jetbrains.com/help/idea/work-with-scala-formatter.html).
 
+### Git Hooks
+
+Install the repository hooks once after cloning:
+
+```sh
+./.githooks/install
+```
+
+The pre-push hook runs `scalafmtCheckAll`, the same formatting gate that CI runs
+first. If it fails, run `sbt scalafmtAll`, commit the formatting change, and push
+again. Git's standard `--no-verify` option remains available for exceptional cases.
+
 ## Code Contributions
 
 ### Repository Fork
@@ -59,7 +71,7 @@ git push -u origin 747-update-contrib
 ### Style Guide
 
 - Follow existing code style in the repository
-- Run `sbt runLinter` before committing (scalafmt + scalafix)
+- Run `sbt runLinter` before committing (Scalafix imports, then Scalafmt)
 
 ### Commands
 
