@@ -310,7 +310,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
       Libraries.log4cats,
-      Libraries.logback % Runtime,
+      Libraries.logback,
       Libraries.logstashLogbackEncoder % Runtime,
       Libraries.mapref,
       Libraries.scaffeine,
