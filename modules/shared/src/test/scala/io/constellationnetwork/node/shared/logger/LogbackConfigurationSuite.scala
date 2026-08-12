@@ -12,7 +12,7 @@ object LogbackConfigurationSuite extends FunSuite {
   test("production logback configuration resolves custom appenders") {
     val context = new LoggerContext()
 
-    try {
+    try
       Option(getClass.getClassLoader.getResource("logback.xml")) match {
         case None => failure("Unable to find production logback.xml")
         case Some(config) =>
@@ -25,6 +25,6 @@ object LogbackConfigurationSuite extends FunSuite {
           if (errors.isEmpty) success
           else failure(errors.map(_.toString).mkString("Logback configuration errors:\n", "\n", ""))
       }
-    } finally context.stop()
+    finally context.stop()
   }
 }
