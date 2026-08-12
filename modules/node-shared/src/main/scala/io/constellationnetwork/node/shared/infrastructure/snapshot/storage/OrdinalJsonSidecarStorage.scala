@@ -13,14 +13,12 @@ import io.circe.{Decoder, Encoder}
 
 /** Generic, node-local storage for typed recovery evidence indexed by snapshot ordinal.
   *
-  * Values use the repository's ordinary `JsonSerializer`; this class deliberately defines no
-  * alternate JSON printer, canonicalization pass, or hashing scheme. A dedicated directory keeps
-  * filenames numeric, which lets rollback remove every sidecar above a checkpoint and lets the
-  * existing logarithmic snapshot-info cutoff retain matching recovery evidence without knowing
-  * the value type.
+  * Values use the repository's ordinary `JsonSerializer`; this class deliberately defines no alternate JSON printer, canonicalization pass,
+  * or hashing scheme. A dedicated directory keeps filenames numeric, which lets rollback remove every sidecar above a checkpoint and lets
+  * the existing logarithmic snapshot-info cutoff retain matching recovery evidence without knowing the value type.
   *
-  * Missing and malformed files read as `None`. A corrupt sidecar is an availability loss, never
-  * evidence: callers must still cryptographically validate every value before adoption.
+  * Missing and malformed files read as `None`. A corrupt sidecar is an availability loss, never evidence: callers must still
+  * cryptographically validate every value before adoption.
   */
 trait OrdinalJsonSidecarStorage[F[_], A] {
   def write(ordinal: SnapshotOrdinal, value: A): F[Unit]

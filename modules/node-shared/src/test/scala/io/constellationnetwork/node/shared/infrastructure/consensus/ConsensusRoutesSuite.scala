@@ -53,44 +53,42 @@ object ConsensusRoutesSuite extends MutableIOSuite {
 
   private def ordinal(value: Long): SnapshotOrdinal = SnapshotOrdinal(NonNegLong.unsafeFrom(value))
 
-  test("the existing authenticated specific-outcome route serves an older typed sidecar outcome") {
-    selector =>
-      implicit val hasherSelector: HasherSelector[IO] = selector
+  test("the existing authenticated specific-outcome route serves an older typed sidecar outcome") { selector =>
+    implicit val hasherSelector: HasherSelector[IO] = selector
 
-      val old = TestOutcome(ordinal(10L), "certified-old")
-      val latest = TestOutcome(ordinal(11L), "latest")
+    val old = TestOutcome(ordinal(10L), "certified-old")
+    val latest = TestOutcome(ordinal(11L), "latest")
 
-      for {
-        storage <- ConsensusStorage.make[IO, String, SnapshotOrdinal, String, Unit, String, TestOutcome, String](config)
-        _ <- storage.trySetInitialConsensusOutcome(latest)
-        queue <- Queue.unbounded[IO, Hashed[RumorRaw]]
-        routes = new ConsensusRoutes[IO, SnapshotOrdinal, String, Unit, String, TestOutcome, String](
-          storage,
-          queue,
-          Some(key => old.some.filter(_.key === key).pure[IO])
-        )
-        response <- routes.p2pRoutes.orNotFound.run(
-          Request[IO](POST, uri"/consensus/specific/outcome").withEntity(GetConsensusOutcomeRequest(old.key).asJson)
-        )
-        body <- response.as[Option[TestOutcome]]
-      } yield expect.all(response.status === Ok, body.contains(old))
+    for {
+      storage <- ConsensusStorage.make[IO, String, SnapshotOrdinal, String, Unit, String, TestOutcome, String](config)
+      _ <- storage.trySetInitialConsensusOutcome(latest)
+      queue <- Queue.unbounded[IO, Hashed[RumorRaw]]
+      routes = new ConsensusRoutes[IO, SnapshotOrdinal, String, Unit, String, TestOutcome, String](
+        storage,
+        queue,
+        Some(key => old.some.filter(_.key === key).pure[IO])
+      )
+      response <- routes.p2pRoutes.orNotFound.run(
+        Request[IO](POST, uri"/consensus/specific/outcome").withEntity(GetConsensusOutcomeRequest(old.key).asJson)
+      )
+      body <- response.as[Option[TestOutcome]]
+    } yield expect.all(response.status === Ok, body.contains(old))
   }
 
-  test("without an exact sidecar the existing ahead response remains Conflict") {
-    selector =>
-      implicit val hasherSelector: HasherSelector[IO] = selector
+  test("without an exact sidecar the existing ahead response remains Conflict") { selector =>
+    implicit val hasherSelector: HasherSelector[IO] = selector
 
-      val requested = ordinal(10L)
-      val latest = TestOutcome(ordinal(11L), "latest")
+    val requested = ordinal(10L)
+    val latest = TestOutcome(ordinal(11L), "latest")
 
-      for {
-        storage <- ConsensusStorage.make[IO, String, SnapshotOrdinal, String, Unit, String, TestOutcome, String](config)
-        _ <- storage.trySetInitialConsensusOutcome(latest)
-        queue <- Queue.unbounded[IO, Hashed[RumorRaw]]
-        routes = new ConsensusRoutes[IO, SnapshotOrdinal, String, Unit, String, TestOutcome, String](storage, queue)
-        response <- routes.p2pRoutes.orNotFound.run(
-          Request[IO](POST, uri"/consensus/specific/outcome").withEntity(GetConsensusOutcomeRequest(requested).asJson)
-        )
-      } yield expect(response.status === Conflict)
+    for {
+      storage <- ConsensusStorage.make[IO, String, SnapshotOrdinal, String, Unit, String, TestOutcome, String](config)
+      _ <- storage.trySetInitialConsensusOutcome(latest)
+      queue <- Queue.unbounded[IO, Hashed[RumorRaw]]
+      routes = new ConsensusRoutes[IO, SnapshotOrdinal, String, Unit, String, TestOutcome, String](storage, queue)
+      response <- routes.p2pRoutes.orNotFound.run(
+        Request[IO](POST, uri"/consensus/specific/outcome").withEntity(GetConsensusOutcomeRequest(requested).asJson)
+      )
+    } yield expect(response.status === Conflict)
   }
 }
