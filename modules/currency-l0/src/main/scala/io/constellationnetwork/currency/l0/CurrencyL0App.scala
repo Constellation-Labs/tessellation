@@ -28,6 +28,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastCheckpointInfo
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
@@ -65,6 +66,17 @@ trait OverridableL0 extends TessellationIOApp[Run] {
   def customArtifacts(
     lastCurrencySnapshot: Signed[CurrencyIncrementalSnapshot]
   ): Option[SortedSet[SharedArtifact]] = None
+}
+
+object CurrencyL0App {
+
+  private[currency] def rollbackBootstrapFacilitators(
+    nodeId: PeerId,
+    proofSigners: List[PeerId],
+    allowSoloConsensus: Boolean
+  ): List[PeerId] =
+    if (allowSoloConsensus || !proofSigners.contains(nodeId)) List(nodeId)
+    else proofSigners
 }
 
 abstract class CurrencyL0App(
@@ -309,7 +321,8 @@ abstract class CurrencyL0App(
             _ <- StateChannel.performGlobalL0PeerDiscovery[IO](storages, programs)
             innerProgram <- other match {
               case rv: RunValidator =>
-                storages.identifier.setInitial(rv.identifier) >>
+                storages.node.setValidatorMode >>
+                  storages.identifier.setInitial(rv.identifier) >>
                   HasherSelector[IO].withCurrent { implicit hs =>
                     StateChannel.performGlobalL0SnapshotProcess(
                       storages,
@@ -342,7 +355,8 @@ abstract class CurrencyL0App(
                   )
 
               case m: RunValidatorWithJoinAttempt =>
-                storages.identifier.setInitial(m.identifier) >>
+                storages.node.setValidatorMode >>
+                  storages.identifier.setInitial(m.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
                   HasherSelector[IO].withCurrent { implicit hs =>
                     StateChannel.performGlobalL0SnapshotProcess(
@@ -418,12 +432,36 @@ abstract class CurrencyL0App(
                         )
                       }
                       hashedSnapshot <- currencySnapshot.toHashed[IO]
-                      // Derive Facilitators/EligibleFacilitators from the signed snapshot's proofs so
-                      // every node rolling back seeds an IDENTICAL outcome. If this node was NOT a
-                      // signer, fall back to self-only so it can solo-produce. See dag-l0 Main.scala
-                      // for full rationale.
+                      // By default, derive both facilitator sets from the signed snapshot's proofs
+                      // so signer nodes seed an identical outcome. A non-signer keeps the existing
+                      // self-only fallback. The explicit recovery override also forces self-only,
+                      // accepting the documented risk of conflicting histories.
                       signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                      bootstrapFacilitators = if (signers.contains(nodeId)) signers else List(nodeId)
+                      bootstrapFacilitators =
+                        CurrencyL0App.rollbackBootstrapFacilitators(nodeId, signers, rr.allowSoloConsensus)
+                      bootstrapMode =
+                        if (rr.allowSoloConsensus) "forced_self_only"
+                        else if (bootstrapFacilitators === signers) "proof_signers"
+                        else "self_only_fallback"
+                      _ <- logger
+                        .warn(
+                          s"DANGER: Currency L0 rollback is forcing self-only consensus at ordinal=${currencySnapshot.ordinal}. " +
+                            s"Exactly one coordinated recovery node may use this override. " +
+                            s"nodeId=${nodeId.value.value.take(8)} proofSigners=${signers.map(_.value.value.take(8)).mkString(",")}"
+                        )
+                        .whenA(rr.allowSoloConsensus)
+                      _ <- Metrics[IO].incrementCounter(
+                        "dag_consensus_rollback_bootstrap_total",
+                        Seq(Metrics.unsafeLabelName("mode") -> bootstrapMode)
+                      )
+                      _ <- Metrics[IO].updateGauge(
+                        "dag_consensus_rollback_proof_signer_count",
+                        signers.size.toLong
+                      )
+                      _ <- Metrics[IO].updateGauge(
+                        "dag_consensus_rollback_bootstrap_facilitator_count",
+                        bootstrapFacilitators.size.toLong
+                      )
                       // Restore consensus-derived peer-behavior counters from the rollback
                       // snapshot if present. Older snapshots have `peerHistory = None` and the
                       // cluster bootstraps from zero just as before. See dag-l0 mirror for the

@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -22,7 +24,9 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     signers: Set[PeerId],
     previous: FinalityParticipationAuditor.MissHistory = FinalityParticipationAuditor.MissHistory.empty,
     observer: PeerId = self,
-    inBootstrap: Boolean = false
+    inBootstrap: Boolean = false,
+    observedAt: FiniteDuration = Duration.Zero,
+    minimumMissDuration: FiniteDuration = 86.seconds
   ): FinalityParticipationAuditor.Observation =
     FinalityParticipationAuditor.observe(
       observer,
@@ -32,6 +36,8 @@ object FinalityParticipationAuditorSuite extends FunSuite {
       signers,
       ordinal,
       entropy(parent),
+      if (observedAt == Duration.Zero) (ordinal * 43L).seconds else observedAt,
+      minimumMissDuration,
       inBootstrap,
       previous
     )
@@ -64,12 +70,66 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect(third.decision.exists(d => d.consecutiveMisses == TierTransitions.DemotionConsecutiveMisses && d.shouldVote))
   }
 
+  test("three misses do not emit an eviction vote while next-seat finality headroom remains") {
+    val first = observe("parent-1", 1L, core)
+    val second = observe("parent-2", 2L, core, first.history)
+    val third = observe("parent-3", 3L, core, second.history)
+    val committee = core ++ tier1
+    val headroom = FinalityHeadroom.evaluate(committee, committee.take(6), 2.0 / 3.0)
+
+    expect(third.decision.exists(_.shouldVote)) &&
+    expect(headroom.allowsExpansion) &&
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true)))
+  }
+
+  test("three misses hold membership in the current-floor to next-floor dead band") {
+    val first = observe("parent-1", 1L, core)
+    val second = observe("parent-2", 2L, core, first.history)
+    val third = observe("parent-3", 3L, core, second.history)
+    val committee = core ++ tier1
+    val headroom = FinalityHeadroom.evaluate(committee, committee.take(5), 2.0 / 3.0)
+
+    expect(!headroom.allowsExpansion) &&
+    expect(headroom.holdsMembership) &&
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true)))
+  }
+
+  test("three elapsed misses emit an eviction vote only for a current-floor deficit and on cadence") {
+    val first = observe("parent-1", 1L, core)
+    val second = observe("parent-2", 2L, core, first.history)
+    val third = observe("parent-3", 3L, core, second.history)
+    val committee = core ++ tier1
+    val headroom = FinalityHeadroom.evaluate(committee, committee.take(4), 2.0 / 3.0)
+
+    expect(headroom.allowsSilentEviction) &&
+    expect(third.decision.exists(d => FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true))) &&
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = false)))
+  }
+
+  test("fast event rounds satisfy the miss count but not the elapsed-time floor") {
+    val first = observe("parent-1", 1L, core, observedAt = 1.second)
+    val second = observe("parent-2", 2L, core, first.history, observedAt = 8.seconds)
+    val third = observe("parent-3", 3L, core, second.history, observedAt = 15.seconds)
+    val afterElapsedFloor = observe("parent-3", 3L, core, third.history, observedAt = 87.seconds)
+
+    expect(third.decision.exists(_.roundHysteresisSatisfied)) &&
+    expect(third.decision.exists(d => !d.durationHysteresisSatisfied && !d.shouldVote)) &&
+    expect(afterElapsedFloor.decision.exists(d => d.durationHysteresisSatisfied && d.shouldVote)) &&
+    expect.same(third.history.consecutiveMisses, afterElapsedFloor.history.consecutiveMisses)
+  }
+
+  test("minimum elapsed miss duration reuses the configured idle round interval") {
+    expect.same(86.seconds, FinalityParticipationAuditor.minimumMissDuration(43.seconds, 3)) &&
+    expect.same(Duration.Zero, FinalityParticipationAuditor.minimumMissDuration(43.seconds, 1))
+  }
+
   test("any observed proof resets that peer while other Tier-1 streaks continue") {
     val first = observe("parent-1", 1L, core)
     val second = observe("parent-2", 2L, core + peer('4'), first.history)
     val third = observe("parent-3", 3L, core, second.history)
 
     expect.same(Some(0), second.history.consecutiveMisses.get(peer('4'))) &&
+    expect(!second.history.missStartedAt.contains(peer('4'))) &&
     expect.same(Some(2), second.history.consecutiveMisses.get(peer('5'))) &&
     expect.same(Some(1), third.history.consecutiveMisses.get(peer('4'))) &&
     expect.same(Some(3), third.history.consecutiveMisses.get(peer('5')))
@@ -98,6 +158,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect.same(FinalityParticipationAuditor.MissHistory.empty, bootstrap.history) &&
     expect.same(None, bootstrap.decision) &&
     expect(afterRestart.history.consecutiveMisses.values.forall(_ == 1)) &&
+    expect(afterRestart.history.missStartedAt.values.forall(_ == 129.seconds)) &&
     expect(afterRestart.decision.forall(!_.shouldVote))
   }
 
@@ -107,6 +168,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     val alternateSameOrdinal = observe("alternate-parent-3", 3L, core, afterGap.history)
 
     expect(afterGap.history.consecutiveMisses.values.forall(_ == 1)) &&
+    expect(afterGap.history.missStartedAt.values.forall(_ == 129.seconds)) &&
     expect(alternateSameOrdinal.history.consecutiveMisses.values.forall(_ == 1)) &&
     expect(alternateSameOrdinal.decision.forall(!_.shouldVote))
   }

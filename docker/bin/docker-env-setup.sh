@@ -207,5 +207,13 @@ for i in $(seq 0 $((MAX_NODES - 1))); do
   echo "CL_DOCKER_DL1_JOIN_INITIAL_DELAY=$((i*12 + 30))" >> .env
   echo "CL_DOCKER_CL1_JOIN_INITIAL_DELAY=$((i*12 + 30))" >> .env
 
+  # Staggered gl0 join (see NUM_GL0_EARLY in set-env.sh). gl0 normally leaves
+  # CL_DOCKER_GL0_JOIN_INITIAL_DELAY unset, so docker-compose.yaml's :-0 default applies and every
+  # node joins at once. Writing it here for the late indices delays only their self-join in
+  # entrypoint.sh; the JVM still boots and serves HTTP immediately.
+  if [ -n "${NUM_GL0_EARLY:-}" ] && [ "$i" -ge "$NUM_GL0_EARLY" ] && [ "$i" -lt "${NUM_GL0_NODES:-0}" ]; then
+    echo "CL_DOCKER_GL0_JOIN_INITIAL_DELAY=${GL0_LATE_JOIN_DELAY:-240}" >> .env
+  fi
+
   cd ../../
 done

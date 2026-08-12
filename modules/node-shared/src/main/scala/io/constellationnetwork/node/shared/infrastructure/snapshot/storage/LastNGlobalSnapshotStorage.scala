@@ -159,7 +159,14 @@ object LastNGlobalSnapshotStorage {
           case Some((current, _)) if isNextSnapshot(current, snapshot.signed.value) => ((snapshot, state).some, Applicative[F].unit)
           case s @ Some((current, _)) if current.hash === snapshot.hash             => (s, Applicative[F].unit)
           case other =>
-            (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
+            val current = other.map { case (value, _) => s"ordinal=${value.ordinal},hash=${value.hash}" }.getOrElse("empty")
+            val incoming = s"ordinal=${snapshot.ordinal},hash=${snapshot.hash}"
+            (
+              other,
+              MonadThrow[F].raiseError[Unit](
+                new Throwable(s"Failure during setting new global snapshot: non-contiguous update current=[$current] incoming=[$incoming]")
+              )
+            )
         }.flatten
 
         _ <- incrementalSnapshotsR.modify { incrementalSnapshots =>
@@ -175,8 +182,17 @@ object LastNGlobalSnapshotStorage {
               (trimmed, Applicative[F].unit)
             case Some((_, latest)) if latest.hash === snapshot.hash =>
               (incrementalSnapshots, Applicative[F].unit)
-            case _ =>
-              (incrementalSnapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
+            case other =>
+              val current = other.map { case (_, value) => s"ordinal=${value.ordinal},hash=${value.hash}" }.getOrElse("empty")
+              val incoming = s"ordinal=${snapshot.ordinal},hash=${snapshot.hash}"
+              (
+                incrementalSnapshots,
+                MonadThrow[F].raiseError[Unit](
+                  new Throwable(
+                    s"Failure during putting new global snapshot: non-contiguous update current=[$current] incoming=[$incoming]"
+                  )
+                )
+              )
           }
         }.flatten
       } yield ()

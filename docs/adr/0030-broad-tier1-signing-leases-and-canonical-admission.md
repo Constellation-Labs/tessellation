@@ -2,7 +2,7 @@
 
 Date: 2026-08-04
 
-Updated: 2026-08-05
+Updated: 2026-08-10
 
 Status: Accepted
 
@@ -64,7 +64,11 @@ mechanics, with its existing controller-target gate preserved.
    reject new/open admission targets.
    Open Ready-at-tip votes and certificates are eligible only on the existing
    `activeAdmissionExpansionIntervalRounds` cadence. The shipped interval is five
-   rounds. Probation readmission is not cadence-gated.
+   rounds. Probation readmission is not cadence-gated. A `readmissionCountdown` map
+   entry remains probation authority when its value reaches zero; only an accepted
+   AdmissionCertificate removes the entry. When probation and open certificates
+   compete for the one-certificate proposal budget, probation recovery is selected
+   first and rendezvous ordering resolves peers within the same lane.
 7. Rendezvous-rank certificates only when constructing a proposal. Keep the legacy
    `AdmissionCertificate.ordering` at the apply-site defense-in-depth boundary.
 8. Do not change reward arithmetic or activation ordinals. Before
@@ -79,12 +83,23 @@ mechanics, with its existing controller-target gate preserved.
     proof-miss streaks for every peer in `currentTier1 intersect
     parentRoundCommittee`, then select one audit target from that complete,
     consensus-agreed set by rendezvous rank. A current Core member emits the existing
-    `EvictionVote(Silent)` only after the target is absent from three consecutive
-    locally finalized parent artifact proof sets. Reuse
-    `TierTransitions.DemotionConsecutiveMisses`; reset a peer's streak on any observed
-    proof. Newly admitted peers are not auditable until they have had a parent-round
-    signing opportunity. Restart, missing parent evidence, or a non-consecutive
-    parent ordinal clears local streaks, delaying eviction conservatively.
+    `EvictionVote(Silent)` only when all of the following hold:
+    - the target is absent from three consecutive locally finalized parent artifact
+      proof sets, reusing `TierTransitions.DemotionConsecutiveMisses`;
+    - those observations span at least `(DemotionConsecutiveMisses - 1) *
+      timeTriggerInterval`, preserving the normal elapsed observation window when
+      EventTrigger accelerates rounds;
+    - locally observed current-committee signers are below the finality floor for the
+      **current** committee; and
+    - the round is on the existing `activeAdmissionExpansionIntervalRounds` cadence.
+
+    Any observed proof resets both the count and elapsed-time streak. Newly admitted
+    peers are not auditable until they have had a parent-round signing opportunity.
+    Restart, missing parent evidence, or a non-consecutive parent ordinal clears local
+    streaks, delaying eviction conservatively. The count, monotonic time, and cadence
+    are local vote-emission policy only; certified membership remains authoritative.
+    This cadence applies only to the proactive Tier-1 finality audit. Certified Core
+    stall eviction remains an every-round liveness recovery path.
 11. A Tier-1 target requires a Core-quorum certificate. A Core-target stall eviction
     retains the wider deterministic historical witness pool; the target's frozen tier
     selects between these two existing lanes at both assembly and validation.
@@ -116,12 +131,27 @@ mechanics, with its existing controller-target gate preserved.
     raise the active finality requirement; applying the later floor would also make
     singleton growth impossible under unanimity. Currency L0 does not apply this gate
     because its unanimity policy could never prove an unseated `(n + 1)`th signer.
+    Use the related current-seat invariant to create an exact three-state membership
+    policy, where `S` is the locally observed current-committee signer count and `F(n)`
+    is the configured finality floor for committee size `n`:
+
+    ```text
+    expand: S >= F(n + 1)
+    hold:   F(n) <= S < F(n + 1)
+    evict:  S < F(n)
+    ```
+
+    The neutral hold band is intentional. Making eviction the boolean complement of
+    expansion causes deterministic boundary oscillation when `F(n) == F(n + 1)` but
+    `F(n + 2)` steps upward.
 15. Proposal validation counts distinct voter PeerIds in each AdmissionCertificate,
     not the number of signed vote wrappers. DAG and Currency apply the same rule as
     certificate assembly.
 16. Report the actual finality requirement outside bootstrap from the frozen Core +
     Tier-1 committee floor, not the Core strict-majority diagnostic. Expose the
-    first-quorum finality margin and the open-admission cadence/headroom decision.
+    first-quorum finality margin, the open-admission cadence/headroom decision, the
+    Tier-1 eviction headroom decision, and sticky probation entries ready at countdown
+    zero.
 
 ## Consequences
 
@@ -133,10 +163,13 @@ mechanics, with its existing controller-target gate preserved.
 - Core can remain small and reliable while Tier 1 grows toward the healthy Ready
   population. Tier-1 silence does not enter the normal liveness denominator.
 - Open-admission gossip is bounded to approximately one vote per Core member per
-  round instead of one vote per monitor tick and candidate.
-- Finality-audit gossip is also bounded to at most one eviction vote per Core member
-  per round, and no vote is emitted until that node has observed three consecutive
-  proof misses for the selected target. This is an audit-work budget, not a cap on
+  cadence opportunity instead of one vote per monitor tick and candidate.
+- Finality-audit gossip is bounded to at most one eviction vote per Core member on the
+  same five-round cadence as open expansion. No vote is emitted until that node has
+  observed three consecutive proof misses over the configured minimum elapsed window
+  for the selected target **and** the current committee is already below its own
+  finality floor. The neutral current-floor-to-next-floor band changes no membership,
+  preventing adjacent-size oscillation. This is an audit-work budget, not a cap on
   Tier-1 membership or rewards.
 - A Tier-1 lease is removed only when enough Core nodes independently failed to
   observe its signature by their parent-round finalization cutoffs and the resulting

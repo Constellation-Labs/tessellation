@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusResources, PeerDeclarations}
 import io.constellationnetwork.schema.peer.{PeerId, Responsive, Unresponsive}
+import io.constellationnetwork.security.signature.Signed
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -72,6 +73,19 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
   def isBootstrapActive(lastOutcome: Outcome): Boolean = false
 
   def advanceStatus(resources: ConsensusResources[Artifact, Kind]): StateT[F, ConsensusState[Key, Status, Outcome, Kind], F[Unit]]
+
+  /** Align layer-specific application storage when recovery accepts a newer consensus outcome than the snapshot originally handed to
+    * `InitializeFromDownload`.
+    *
+    * The consensus-outcome endpoint retains only its latest outcome. A fast chain can therefore advance between download convergence and
+    * initialization, causing recovery to accept outcome `N+1` while application snapshot storage is still at `N`. Starting consensus from
+    * that torn handoff makes the first persisted `N+2` snapshot fail strict contiguity forever. Layers whose recovery path can accept a
+    * newer outcome override this hook to install that outcome's artifact and context before consensus starts. Layers without that
+    * recovery-storage stack implement an inert hook and preserve their existing download behavior.
+    *
+    * This is node-local recovery state only. It does not alter artifact bytes, state proofs, committee derivation, or proposal validation.
+    */
+  def synchronizeDownloadedOutcome(artifact: Signed[Artifact], context: Context): F[Unit]
 
   def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] =
     Slf4jLogger.getLoggerFromName[F](this.getClass.getName)

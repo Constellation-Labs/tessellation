@@ -57,6 +57,20 @@ object ReadmissionMaintenanceSuite extends FunSuite {
     )
   }
 
+  test("probation membership includes sticky zero-countdown entries") {
+    val countdown = SortedMap(pA -> 0, pB -> 1)
+
+    expect.same(Set(pA, pB), ReadmissionMaintenance.probationPeers(countdown))
+  }
+
+  test("operational persistence distinguishes sticky zero from absent membership") {
+    val countdown = SortedMap(pA -> 0, pB -> 3)
+
+    expect.same(1, ReadmissionMaintenance.persistenceValue(countdown, pA)) &&
+    expect.same(3, ReadmissionMaintenance.persistenceValue(countdown, pB)) &&
+    expect.same(0, ReadmissionMaintenance.persistenceValue(countdown, pC))
+  }
+
   test("justUnpenalized seeds new entries at probationRounds") {
     val initial = SortedMap(pA -> 5)
     val afterSeed = ReadmissionMaintenance.step(initial, Set(pB), Set.empty, 8)

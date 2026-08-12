@@ -471,7 +471,7 @@ object GlobalSnapshotConsensus {
           evictionVoter,
           admissionVoter,
           (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
-          (o: GlobalConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
           (key: GlobalSnapshotKey) =>
             ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(

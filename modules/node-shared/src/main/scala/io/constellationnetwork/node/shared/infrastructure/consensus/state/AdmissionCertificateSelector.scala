@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.FacilitatorSelector
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.AdmissionCertificate
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
 /** Deterministic cap for the assembled `AdmissionCertificate`s a leader attaches to an outgoing Proposal.
@@ -37,9 +38,10 @@ object AdmissionCertificateSelector {
     Selection(kept, dropped)
   }
 
-  /** Proposal-construction policy: cap certificates by the same parent-entropy rendezvous ranking used for open nominations, with the
-    * certificate's existing ordering as the final tie-break. This prevents a permanent lowest-PeerId preference when probation and open
-    * certificates compete for a one-certificate proposal budget.
+  /** Proposal-construction policy: prioritize the existing penalty/probation recovery lane, then cap certificates within each priority by
+    * the same parent-entropy rendezvous ranking used for open nominations, with the certificate's existing ordering as the final tie-break.
+    * Recovery priority prevents an open Ready-at-tip certificate from consuming the only proposal slot while an already-evicted peer has a
+    * quorum certificate waiting. Rendezvous ordering still prevents a permanent lowest-PeerId preference among peers in the same lane.
     *
     * The apply-site defense remains on [[select]], intentionally. Validation rejects over-cap proposals, so apply selection is unreachable
     * for valid traffic; preserving its legacy ordering avoids turning that version-stability safety net into construction policy.
@@ -47,14 +49,21 @@ object AdmissionCertificateSelector {
   def selectForProposal(
     assembled: Iterable[AdmissionCertificate],
     activeAdmissionMaxExpansionPerRound: Int,
-    entropy: Hash
+    entropy: Hash,
+    probation: Set[PeerId] = Set.empty
   ): Selection = {
     val cap = math.max(0, activeAdmissionMaxExpansionPerRound)
     val targetOrdering = FacilitatorSelector.orderByScore(entropy).toOrdering
     val ranked = assembled.toList.sortWith { (left, right) =>
-      val targetComparison = targetOrdering.compare(left.targetPeer, right.targetPeer)
-      if (targetComparison != 0) targetComparison < 0
-      else AdmissionCertificate.ordering.compare(left, right) < 0
+      val leftIsProbation = probation.contains(left.targetPeer)
+      val rightIsProbation = probation.contains(right.targetPeer)
+
+      if (leftIsProbation != rightIsProbation) leftIsProbation
+      else {
+        val targetComparison = targetOrdering.compare(left.targetPeer, right.targetPeer)
+        if (targetComparison != 0) targetComparison < 0
+        else AdmissionCertificate.ordering.compare(left, right) < 0
+      }
     }
     val (kept, dropped) = ranked.splitAt(cap)
     Selection(kept, dropped)

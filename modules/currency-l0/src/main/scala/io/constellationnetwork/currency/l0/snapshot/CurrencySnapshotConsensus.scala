@@ -362,7 +362,7 @@ object CurrencySnapshotConsensus {
           admissionVoter,
           (o: CurrencyConsensusOutcome) =>
             !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
-          (o: CurrencyConsensusOutcome) => o.readmissionCountdown.filter(_._2 > 0).keySet,
+          (o: CurrencyConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: CurrencyConsensusOutcome) => {
             val target = ActiveFacilitatorAdmission.activeAdmissionTarget(
               effectiveConsensusConfig.activeFacilitatorTarget,
