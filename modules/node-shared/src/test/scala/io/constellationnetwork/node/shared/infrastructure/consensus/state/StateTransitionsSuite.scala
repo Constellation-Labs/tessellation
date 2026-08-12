@@ -10,6 +10,53 @@ object StateTransitionsSuite extends SimpleIOSuite {
   private def pid(name: String): PeerId =
     PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString))
 
+  pureTest("exact downloaded outcomes preserve the caller's recovery mode") {
+    val normal = StateTransitions.downloadOutcomeDisposition(
+      keyMatches = true,
+      artifactMatches = true,
+      contextMatches = true,
+      isRecovery = false
+    )
+    val recovery = StateTransitions.downloadOutcomeDisposition(
+      keyMatches = true,
+      artifactMatches = true,
+      contextMatches = true,
+      isRecovery = true
+    )
+
+    expect.same(StateTransitions.DownloadOutcomeDisposition.AcceptExact(false), normal) &&
+    expect.same(StateTransitions.DownloadOutcomeDisposition.AcceptExact(true), recovery)
+  }
+
+  pureTest("a newer downloaded outcome requires application-storage alignment") {
+    val disposition = StateTransitions.downloadOutcomeDisposition(
+      keyMatches = false,
+      artifactMatches = false,
+      contextMatches = false,
+      isRecovery = true
+    )
+
+    expect.same(StateTransitions.DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage, disposition)
+  }
+
+  pureTest("a same-key artifact or context mismatch is rejected") {
+    val artifactMismatch = StateTransitions.downloadOutcomeDisposition(
+      keyMatches = true,
+      artifactMatches = false,
+      contextMatches = true,
+      isRecovery = true
+    )
+    val contextMismatch = StateTransitions.downloadOutcomeDisposition(
+      keyMatches = true,
+      artifactMatches = true,
+      contextMatches = false,
+      isRecovery = true
+    )
+
+    expect.same(StateTransitions.DownloadOutcomeDisposition.Reject, artifactMismatch) &&
+    expect.same(StateTransitions.DownloadOutcomeDisposition.Reject, contextMismatch)
+  }
+
   pureTest("view-change leader pool uses Core when Core is populated") {
     val core = List(pid("core-1"), pid("core-2"))
     val nonCore = pid("non-core")

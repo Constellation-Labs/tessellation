@@ -86,7 +86,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // rejected at build time and the advancer validates the cert's tip at proposal-acceptance time.
   lastSnapshotHashOf: Outcome => Hash,
   // Set of peers currently on B2 probation per the carried outcome. A peer is on probation while
-  // its `readmissionCountdown` is positive — it was previously evicted via B1 and is awaiting a
+  // its `readmissionCountdown` map entry exists, including at sticky zero — it was previously evicted via B1 and is awaiting a
   // quorum-witnessed `AdmissionCertificate` from the cluster before it can re-enter the committee.
   // Recovery (`StateTransitions.initFromDownload`) must respect this set
   // and decline to facilitate while self is still in probation. Otherwise a recovering peer would

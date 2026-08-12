@@ -193,7 +193,7 @@ object CurrencySnapshotConsensusStateCreator {
         penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet ++ certPenalizedPeers
 
         // B2 re-admission probation. Non-bypassable; see dag-l0 mirror.
-        probationPeers = lastOutcome.readmissionCountdown.filter(_._2 > 0).keySet
+        probationPeers = ReadmissionMaintenance.probationPeers(lastOutcome.readmissionCountdown)
 
         _ <- logger
           .debug(
@@ -208,10 +208,15 @@ object CurrencySnapshotConsensusStateCreator {
           .debug(
             s"Readmission probation for key=$key: ${probationPeers.size} probation peers" +
               (if (probationPeers.nonEmpty)
-                 s" [${lastOutcome.readmissionCountdown.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
+                 s" [${lastOutcome.readmissionCountdown.map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
                else "")
           )
           .whenA(probationPeers.nonEmpty)
+        _ <- Metrics[F].updateGauge("dag_consensus_readmission_probation_size", probationPeers.size.toLong)
+        _ <- Metrics[F].updateGauge(
+          "dag_consensus_readmission_probation_ready_size",
+          lastOutcome.readmissionCountdown.count { case (_, countdown) => countdown == 0 }.toLong
+        )
 
         // Per-peer quality gauges (Prometheus). With v19 cleanup, the quality-degradation
         // override in CommitteeBuilder demotes peers with cumulative ratio < minRatio to
