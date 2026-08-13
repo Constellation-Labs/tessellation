@@ -356,6 +356,7 @@ object CurrencySnapshotConsensus {
           effectiveConsensusConfig,
           facilitatorSelector,
           peerQualityTracker,
+          HealthDerivedMembershipPolicy.LegacyAutomaticRemoval,
           viewChangeVoter,
           timeoutVoter,
           evictionVoter,
@@ -381,6 +382,7 @@ object CurrencySnapshotConsensus {
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
+          none[AdmissionCandidateTipProbe.Probes[F]],
           peersCommittedAheadProbe
         )
 

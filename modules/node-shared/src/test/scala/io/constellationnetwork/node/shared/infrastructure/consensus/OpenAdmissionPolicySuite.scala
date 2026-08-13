@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
 
@@ -31,8 +33,10 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect.same(Some(7), fourObserved.headroom.map(_.nextCommitteeSize)) &&
     expect.same(Some(5), fourObserved.headroom.map(_.nextFinalityFloor)) &&
     expect.same(Some(-1), fourObserved.headroom.map(_.margin)) &&
+    expect(!fourObserved.allowsProbationAdmission) &&
     expect(!fourObserved.allowsOpenAdmission) &&
     expect.same(Some(0), fiveObserved.headroom.map(_.margin)) &&
+    expect(fiveObserved.allowsProbationAdmission) &&
     expect(fiveObserved.allowsOpenAdmission)
   }
 
@@ -131,7 +135,9 @@ object OpenAdmissionPolicySuite extends FunSuite {
       headroomGateActive = true
     )
 
-    expect(decision.headroom.exists(_.allowsExpansion)) && expect(!decision.allowsOpenAdmission)
+    expect(decision.headroom.exists(_.allowsExpansion)) &&
+    expect(decision.allowsProbationAdmission) &&
+    expect(!decision.allowsOpenAdmission)
   }
 
   test("layers without local proof headroom retain cadence-only behavior") {
@@ -144,7 +150,11 @@ object OpenAdmissionPolicySuite extends FunSuite {
     )
     val suppressed = allowed.copy(cadenceAllowed = false)
 
-    expect.same(None, allowed.headroom) && expect(allowed.allowsOpenAdmission) && expect(!suppressed.allowsOpenAdmission)
+    expect.same(None, allowed.headroom) &&
+    expect(allowed.allowsProbationAdmission) &&
+    expect(allowed.allowsOpenAdmission) &&
+    expect(suppressed.allowsProbationAdmission) &&
+    expect(!suppressed.allowsOpenAdmission)
   }
 
   test("bootstrap bypasses the post-bootstrap next-seat floor so a singleton can grow under unanimity") {
@@ -165,9 +175,112 @@ object OpenAdmissionPolicySuite extends FunSuite {
     )
 
     expect.same(None, inBootstrap.headroom) &&
+    expect(inBootstrap.allowsProbationAdmission) &&
     expect(inBootstrap.allowsOpenAdmission) &&
     expect.same(Some(2), postBootstrap.headroom.map(_.nextFinalityFloor)) &&
+    expect(!postBootstrap.allowsProbationAdmission) &&
     expect(!postBootstrap.allowsOpenAdmission)
+  }
+
+  test("the batch crossing bootstrap threshold must support the floor it activates") {
+    val first = peer(1)
+    val second = peer(2)
+    val committeeOfTwo = Set(first, second)
+    val singletonGate = OpenAdmissionPolicy.headroomRequired(
+      bootstrapActive = true,
+      currentCommitteeSize = 1,
+      maxAdmissionSeats = 1,
+      bootstrapCompleteProofsThreshold = 3
+    )
+    val crossingGate = OpenAdmissionPolicy.headroomRequired(
+      bootstrapActive = true,
+      currentCommitteeSize = 2,
+      maxAdmissionSeats = 1,
+      bootstrapCompleteProofsThreshold = 3
+    )
+    val oneSignerCrossing = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfTwo,
+      locallyObservedParentSigners = Some(Set(first)),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = crossingGate
+    )
+    val twoSignerCrossing = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfTwo,
+      locallyObservedParentSigners = Some(committeeOfTwo),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = crossingGate
+    )
+
+    expect(!singletonGate) &&
+    expect(crossingGate) &&
+    expect(!oneSignerCrossing.allowsProbationAdmission) &&
+    expect(!oneSignerCrossing.allowsOpenAdmission) &&
+    expect(twoSignerCrossing.allowsProbationAdmission) &&
+    expect(twoSignerCrossing.allowsOpenAdmission)
+  }
+
+  test("headroom covers the largest admission batch accepted by a proposal") {
+    val fiveObserved = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committee,
+      locallyObservedParentSigners = Some(committee.take(5)),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = true,
+      maxAdmissionSeats = 2
+    )
+    val sixObserved = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committee,
+      locallyObservedParentSigners = Some(committee),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = true,
+      maxAdmissionSeats = 2
+    )
+
+    expect.same(Some(8), fiveObserved.headroom.map(_.nextCommitteeSize)) &&
+    expect.same(Some(6), fiveObserved.headroom.map(_.nextFinalityFloor)) &&
+    expect(!fiveObserved.allowsProbationAdmission) &&
+    expect(!fiveObserved.allowsOpenAdmission) &&
+    expect(sixObserved.allowsProbationAdmission) &&
+    expect(sixObserved.allowsOpenAdmission)
+  }
+
+  test("two-signer recovery grows only after each floor step proves itself") {
+    val first = peer(1)
+    val second = peer(2)
+    val third = peer(3)
+    val committeeOfTwo = Set(first, second)
+    val committeeOfThree = committeeOfTwo + third
+
+    val twoToThree = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfTwo,
+      locallyObservedParentSigners = Some(committeeOfTwo),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = true
+    )
+    val threeToFourBeforeNewSignerProvesItself = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfThree,
+      locallyObservedParentSigners = Some(committeeOfTwo),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = true
+    )
+    val threeToFourAfterNewSignerProvesItself = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfThree,
+      locallyObservedParentSigners = Some(committeeOfThree),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = true
+    )
+
+    expect.same(Some(2), twoToThree.headroom.map(_.nextFinalityFloor)) &&
+    expect(twoToThree.allowsOpenAdmission) &&
+    expect.same(Some(3), threeToFourBeforeNewSignerProvesItself.headroom.map(_.nextFinalityFloor)) &&
+    expect(!threeToFourBeforeNewSignerProvesItself.allowsOpenAdmission) &&
+    expect(threeToFourAfterNewSignerProvesItself.allowsOpenAdmission)
   }
 
   test("off-cadence certificate filtering suppresses open expansion but retains probation recovery") {
@@ -187,5 +300,61 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect(!OpenAdmissionPolicy.penaltyBlocksCertificate(probationTarget, Set(probationTarget), activePenaltyPeers)) &&
     expect(OpenAdmissionPolicy.penaltyBlocksCertificate(openTarget, Set(probationTarget), activePenaltyPeers)) &&
     expect(!OpenAdmissionPolicy.penaltyBlocksCertificate(peer('c'), Set(probationTarget), activePenaltyPeers))
+  }
+
+  test("probation alone opens a bounded grace before the first vote on an off-cadence round") {
+    val decision = OpenAdmissionPolicy.preProposalGrace(
+      elapsed = Duration.Zero,
+      baseGrace = 1500.millis,
+      maxAdmissionSeats = 1,
+      probationPresent = true,
+      hasOpenEvidence = false,
+      hasAdmissionVoteEvidence = false,
+      hasApplicableCertificate = false,
+      requiredProbationObservations = 2,
+      probationProbeInterval = 1.second,
+      probationProbeTimeout = 1.second
+    )
+
+    expect.same(4500.millis, decision.effectiveGrace) &&
+    expect(decision.hasAdmissionEvidence) &&
+    expect(decision.shouldWait)
+  }
+
+  test("probation grace closes on a certificate and is bounded when the target stays unavailable") {
+    def decision(elapsed: FiniteDuration, hasCertificate: Boolean) =
+      OpenAdmissionPolicy.preProposalGrace(
+        elapsed = elapsed,
+        baseGrace = 1500.millis,
+        maxAdmissionSeats = 1,
+        probationPresent = true,
+        hasOpenEvidence = false,
+        hasAdmissionVoteEvidence = false,
+        hasApplicableCertificate = hasCertificate,
+        requiredProbationObservations = 2,
+        probationProbeInterval = 1.second,
+        probationProbeTimeout = 1.second
+      )
+
+    expect(!decision(Duration.Zero, hasCertificate = true).shouldWait) &&
+    expect(decision(4499.millis, hasCertificate = false).shouldWait) &&
+    expect(!decision(4500.millis, hasCertificate = false).shouldWait)
+  }
+
+  test("open-only rounds retain the existing base grace") {
+    val decision = OpenAdmissionPolicy.preProposalGrace(
+      elapsed = 1499.millis,
+      baseGrace = 1500.millis,
+      maxAdmissionSeats = 1,
+      probationPresent = false,
+      hasOpenEvidence = true,
+      hasAdmissionVoteEvidence = false,
+      hasApplicableCertificate = false,
+      requiredProbationObservations = 3,
+      probationProbeInterval = 1.second,
+      probationProbeTimeout = 1.second
+    )
+
+    expect.same(1500.millis, decision.effectiveGrace) && expect(decision.shouldWait)
   }
 }

@@ -508,8 +508,10 @@ object types {
     // abandonment timing — divergent values here would cause nodes to make view transitions at different moments.
     bootstrapDeclarationTimeoutMultiplier: Double = 2.0,
     // Local-only LIVENESS/TIMING knob (NOT a safety knob) for B2 admission voting. A probation
-    // peer must be observed at the committed tip on this many consecutive StallDetector monitor
-    // ticks before this node will emit an AdmissionVote. Prevents premature re-admission of
+    // peer must be observed at the committed tip on this many consecutive local observations
+    // before this node will emit an AdmissionVote. Global L0 rate-limits its fresh direct
+    // observations; layers using the legacy cached-mesh lane may still observe on monitor ticks.
+    // Prevents premature re-admission of
     // peers whose recovery download transiently presents the committed tip but that are not yet
     // stably participating.
     //
@@ -521,8 +523,8 @@ object types {
     // consequence, not a safety one.
     //
     // Values <= 0 are clamped to 1 at the read-site in StallDetector. Default 2 means two
-    // consecutive monitor ticks (~500ms-1s of sustained at-tip correctness at typical polling
-    // intervals).
+    // consecutive observations. The effective wall-clock span is determined by the layer's
+    // evidence transport cadence.
     b2AdmissionAtTipStreak: Int = 2,
     // Local-only: number of rounds after a successful `initFromDownload` during which this node
     // refuses to lead, immediately self-deferring into a view change if elected.

@@ -69,7 +69,13 @@ object Daemons {
           services.eventMempool,
           eventGossipDaemon,
           services.consensus.triggerEventConsensus,
-          services.consensus.storage.getLastConsensusOutcome.map(_.fold(0)(_.facilitators.value.size)),
+          services.consensus.storage.getLastConsensusOutcome.map(
+            _.fold(0) { outcome =>
+              val facilitators = outcome.facilitators.value.toSet
+              val proofSigners = outcome.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
+              GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(facilitators, proofSigners)
+            }
+          ),
           cfg.snapshot.consensus
         ),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),

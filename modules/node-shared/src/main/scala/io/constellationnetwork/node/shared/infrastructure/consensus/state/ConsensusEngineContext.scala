@@ -73,6 +73,9 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   consensusClient: ConsensusClient[F, Key, Outcome],
   facilitatorSelector: FacilitatorSelector,
   peerQualityTracker: PeerQualityTracker[F],
+  // Layer boundary for health-derived membership removal. Global L0 retains signing
+  // leases; Currency L0 preserves the legacy automatic-removal behavior.
+  membershipPolicy: HealthDerivedMembershipPolicy,
   // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
   // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
   // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
@@ -166,6 +169,7 @@ object ConsensusEngineContext {
     consensusClient: ConsensusClient[F, Key, Outcome],
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
+    membershipPolicy: HealthDerivedMembershipPolicy,
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
@@ -198,6 +202,7 @@ object ConsensusEngineContext {
         consensusClient,
         facilitatorSelector,
         peerQualityTracker,
+        membershipPolicy,
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
