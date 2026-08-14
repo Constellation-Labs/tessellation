@@ -26,39 +26,71 @@ object VoteLockSuite extends FunSuite {
 
   test("acceptVote rejects lower-view votes") {
     val lock = VoteLock(highestVotedView = 5L.some, votedHashAtHighestView = hashA.some, lockedQc = None)
-    val result = lock.acceptVote(view = 3L, proposalHash = hashB, effectiveLockedQc = None)
+    val result = lock.acceptVote(
+      view = 3L,
+      proposalHash = hashB,
+      effectiveLockedQc = None,
+      mode = ViewSafetyMode.LegacyPreserve
+    )
     expect(result.isLeft, s"lower-view vote should be rejected, got: $result")
   }
 
   test("acceptVote rejects same-view vote with different hash") {
     val lock = VoteLock(highestVotedView = 5L.some, votedHashAtHighestView = hashA.some, lockedQc = None)
-    val result = lock.acceptVote(view = 5L, proposalHash = hashB, effectiveLockedQc = None)
+    val result = lock.acceptVote(
+      view = 5L,
+      proposalHash = hashB,
+      effectiveLockedQc = None,
+      mode = ViewSafetyMode.LegacyPreserve
+    )
     expect(result.isLeft, s"conflicting same-view vote should be rejected, got: $result")
   }
 
   test("acceptVote accepts same-view vote with same hash (idempotent)") {
     val lock = VoteLock(highestVotedView = 5L.some, votedHashAtHighestView = hashA.some, lockedQc = None)
-    val result = lock.acceptVote(view = 5L, proposalHash = hashA, effectiveLockedQc = None)
+    val result = lock.acceptVote(
+      view = 5L,
+      proposalHash = hashA,
+      effectiveLockedQc = None,
+      mode = ViewSafetyMode.LegacyPreserve
+    )
     expect(result.isRight, s"same-view same-hash vote should be accepted, got: $result")
   }
 
   test("acceptVote rejects higher-view vote when effectiveLockedQc.hash != proposalHash") {
     val lockedOnHashA = qc(view = 4L, proposalHash = hashA)
     val lock = VoteLock(highestVotedView = 3L.some, votedHashAtHighestView = hashA.some, lockedQc = lockedOnHashA.some)
-    val result = lock.acceptVote(view = 5L, proposalHash = hashB, effectiveLockedQc = lockedOnHashA.some)
+    val result =
+      lock.acceptVote(
+        view = 5L,
+        proposalHash = hashB,
+        effectiveLockedQc = lockedOnHashA.some,
+        mode = ViewSafetyMode.LegacyPreserve
+      )
     expect(result.isLeft, s"voting for different hash than lockedQc should fail, got: $result")
   }
 
   test("acceptVote accepts higher-view vote when effectiveLockedQc absent") {
     val lock = VoteLock.empty
-    val result = lock.acceptVote(view = 5L, proposalHash = hashB, effectiveLockedQc = None)
+    val result = lock.acceptVote(
+      view = 5L,
+      proposalHash = hashB,
+      effectiveLockedQc = None,
+      mode = ViewSafetyMode.LegacyPreserve
+    )
     expect(result.isRight, s"higher-view vote without lock should succeed, got: $result")
   }
 
   test("acceptVote accepts higher-view vote when effectiveLockedQc.hash matches proposalHash") {
     val matchingQc = qc(view = 3L, proposalHash = hashC)
     val lock = VoteLock(highestVotedView = 2L.some, votedHashAtHighestView = hashC.some, lockedQc = matchingQc.some)
-    val result = lock.acceptVote(view = 5L, proposalHash = hashC, effectiveLockedQc = matchingQc.some)
+    val result =
+      lock.acceptVote(
+        view = 5L,
+        proposalHash = hashC,
+        effectiveLockedQc = matchingQc.some,
+        mode = ViewSafetyMode.LegacyPreserve
+      )
     expect(result.isRight, s"higher-view vote matching lockedQc should succeed, got: $result")
   }
 

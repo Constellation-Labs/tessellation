@@ -32,6 +32,7 @@ object OrdinalJsonSidecarStorageSuite extends MutableIOSuite {
   private val ord11 = SnapshotOrdinal.unsafeApply(11L)
   private val ord12 = SnapshotOrdinal.unsafeApply(12L)
   private val ord21 = SnapshotOrdinal.unsafeApply(21L)
+  private val ord20 = SnapshotOrdinal.unsafeApply(20L)
 
   test("a fresh storage instance reads the typed value written by an earlier instance") {
     case (base, serializer) =>
@@ -90,7 +91,7 @@ object OrdinalJsonSidecarStorageSuite extends MutableIOSuite {
       } yield expect.all(kept.contains(Example("keep", 10)), removed.isEmpty)
   }
 
-  test("retention reuses the snapshot-info logarithmic cutoff") {
+  test("retention reuses the snapshot-info logarithmic cutoff and always preserves the immediate recovery window") {
     case (base, serializer) =>
       implicit val jsonSerializer: JsonSerializer[IO] = serializer
       val testBase = base / "retention"
@@ -99,11 +100,41 @@ object OrdinalJsonSidecarStorageSuite extends MutableIOSuite {
         storage <- OrdinalJsonSidecarStorage.make[IO, Example](testBase)
         _ <- storage.write(ord11, Example("prune", 11))
         _ <- storage.write(ord12, Example("recent", 12))
+        _ <- storage.write(ord20, Example("predecessor", 20))
         _ <- storage.write(ord21, Example("current", 21))
         _ <- storage.retain(SnapshotOrdinal.MinValue, ord21)
         pruned <- storage.read(ord11)
         recent <- storage.read(ord12)
+        predecessor <- storage.read(ord20)
         current <- storage.read(ord21)
-      } yield expect.all(pruned.isEmpty, recent.contains(Example("recent", 12)), current.contains(Example("current", 21)))
+      } yield
+        expect.all(
+          pruned.isEmpty,
+          recent.contains(Example("recent", 12)),
+          predecessor.contains(Example("predecessor", 20)),
+          current.contains(Example("current", 21))
+        )
+  }
+
+  test("retention preserves an explicitly pinned recovery anchor after the immediate window advances") {
+    case (base, serializer) =>
+      implicit val jsonSerializer: JsonSerializer[IO] = serializer
+      val testBase = base / "pinned-recovery-anchor"
+
+      for {
+        storage <- OrdinalJsonSidecarStorage.make[IO, Example](testBase)
+        _ <- storage.write(ord10, Example("authorized-anchor", 10))
+        _ <- storage.write(ord20, Example("predecessor", 20))
+        _ <- storage.write(ord21, Example("current", 21))
+        _ <- storage.retain(SnapshotOrdinal.MinValue, ord21, Set(ord10))
+        anchor <- storage.read(ord10)
+        predecessor <- storage.read(ord20)
+        current <- storage.read(ord21)
+      } yield
+        expect.all(
+          anchor.contains(Example("authorized-anchor", 10)),
+          predecessor.contains(Example("predecessor", 20)),
+          current.contains(Example("current", 21))
+        )
   }
 }

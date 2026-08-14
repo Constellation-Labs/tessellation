@@ -110,6 +110,28 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
 
+  private[snapshot] def completeDestructiveSoftReset[F[_]: Async](
+    scheduleRestart: F[Unit],
+    tickResetCount: F[Int],
+    clearStaleRejections: F[Unit],
+    observe: Int => F[Unit],
+    fallbackCount: Int
+  ): F[Unit] =
+    scheduleRestart >>
+      tickResetCount.attempt.flatMap { result =>
+        val count = result.getOrElse(fallbackCount)
+        clearStaleRejections.attempt.void >> observe(count).attempt.void
+      }
+
+  private[snapshot] def isUsefulSoftResetBootstrapDeclaration(
+    selfId: PeerId,
+    peerId: PeerId,
+    isReady: Boolean,
+    isAtOrAhead: Boolean,
+    declaration: PeerDeclarations
+  ): Boolean =
+    peerId =!= selfId && isReady && isAtOrAhead && declaration.facility.nonEmpty
+
   def make[F[_]: Async: Parallel: SecurityProvider: Metrics: HasherSelector: JsonSerializer](
     consensusConfig: ConsensusConfig,
     networkId: String,
@@ -130,6 +152,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     loggerBundle: LoggerBundle[F],
     mptStore: MptStore[F, GlobalStateKey],
     facilitatorSelector: FacilitatorSelector,
+    seedlistPeerIds: Set[PeerId],
     membershipPolicy: HealthDerivedMembershipPolicy,
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
     // `RestartAfterSoftReset(key)` on the owning serialized command loop so the reset is a total transition rather than an inert state.
@@ -316,7 +339,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
                 .asRight[String]
             ) { value =>
-              CertifiedMembershipTransition.applyTo(
+              CertifiedNextRoundProjector.projectTransition(
                 state.roundStartFacilitators.value,
                 value.admittedPeers.toSet,
                 value.evictedPeers.toSet,
@@ -535,7 +558,12 @@ object GlobalSnapshotConsensusStateAdvancer {
                 // on a single missed signature -- the hysteresis that makes the lowered Core floor safe.
                 // Inputs are all consensus-agreed deterministic outcome fields so the computation is
                 // byte-identical across honest nodes.
-                val newPeerTiers: SortedMap[PeerId, Int] = nextPeerTiersForFinished(state)
+                val newPeerTiers: SortedMap[PeerId, Int] = {
+                  val transitioned = nextPeerTiersForFinished(state)
+                  certifiedValue.fold(transitioned) { value =>
+                    transitioned ++ value.admittedPeers.iterator.map(_ -> TierTransitions.Tier1)
+                  }
+                }
 
                 // v19 phase 2: append the round's `consensusEndTime` to the sliding window if
                 // it was computed (Facility set carried enough `proposerClockMs` to clear the
@@ -796,6 +824,16 @@ object GlobalSnapshotConsensusStateAdvancer {
                   frozenCommittee,
                   requiredArtifactProofs
                 )
+                nextRoundProjection <- CertifiedNextRoundProjector.project[F](
+                  state.roundStartFacilitators.value,
+                  value.admittedPeers.toSet,
+                  value.evictedPeers.toSet,
+                  config.activeAdmissionMaxExpansionPerRound,
+                  seedlistPeerIds,
+                  consensusFns.facilitatorEligible(candidate.finished.context, _),
+                  facilitatorSelector,
+                  artifactHash
+                )
                 structure = for {
                   _ <- Either.cond(candidate.key === state.key, (), "outcome_key_mismatch")
                   _ <- CertifiedMembershipTransition
@@ -819,6 +857,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   )
                   _ <- bound
                   _ <- artifactProofs
+                  _ <- nextRoundProjection.void
                 } yield ()
                 result <- structure match {
                   case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
@@ -1133,18 +1172,33 @@ object GlobalSnapshotConsensusStateAdvancer {
                   validated <- membership match {
                     case Left(error) => error.asLeft[ProposalValue].pure[F]
                     case Right(_) =>
-                      CertifiedConsensus.validateValue[F](
-                        actual,
-                        expected,
-                        carriedQc,
-                        proposal.view,
-                        parentEndTime,
-                        config.viewInterval,
-                        config.maxRoundDuration,
-                        state.roundStartFacilitators.value.toSet,
-                        state.coreFacilitators.value.toSet,
-                        config.quorumThresholdFraction
-                      )
+                      CertifiedNextRoundProjector
+                        .project[F](
+                          state.roundStartFacilitators.value,
+                          actual.admittedPeers.toSet,
+                          actual.evictedPeers.toSet,
+                          config.activeAdmissionMaxExpansionPerRound,
+                          seedlistPeerIds,
+                          consensusFns.facilitatorEligible(artifactInfo.context, _),
+                          facilitatorSelector,
+                          artifactInfo.hash
+                        )
+                        .flatMap {
+                          case Left(error) => error.asLeft[ProposalValue].pure[F]
+                          case Right(_) =>
+                            CertifiedConsensus.validateValue[F](
+                              actual,
+                              expected,
+                              carriedQc,
+                              proposal.view,
+                              parentEndTime,
+                              config.viewInterval,
+                              config.maxRoundDuration,
+                              state.roundStartFacilitators.value.toSet,
+                              state.coreFacilitators.value.toSet,
+                              config.quorumThresholdFraction
+                            )
+                        }
                   }
                   result = validated match {
                     case Left(error)  => error.asLeft[(ProposalValue, Option[CertifiedProposalQC])]
@@ -1177,12 +1231,19 @@ object GlobalSnapshotConsensusStateAdvancer {
         for {
           now <- Async[F].monotonic
           acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
+          ecs <- consensusStorage.getAssembledEvictionCertificates(state.key)
+          firstEcsSeenAt <- consensusStorage.getAssembledEvictionCertificateFirstSeen(state.key)
           probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
           openAllowed = openExpansionAllowedAt(state)
           hasOpenEvidence = openAllowed && openAdmissionNominees(state).nonEmpty
           hasAdmissionVoteEvidence =
             resources.admissionVotes.keysIterator.exists(target => probation.contains(target) || openAllowed)
           hasApplicableCertificate = acs.exists(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
+          hasPairableOpenCertificate = acs.exists { cert =>
+            !probation.contains(cert.targetPeer) &&
+            cert.reason === AdmissionReason.ReadyAtTip &&
+            OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed)
+          }
           decision = OpenAdmissionPolicy.preProposalGrace(
             elapsed = now - state.createdAt,
             baseGrace = AdmissionPreProposalGrace,
@@ -1195,11 +1256,19 @@ object GlobalSnapshotConsensusStateAdvancer {
             probationProbeInterval = AdmissionCandidateTipProbe.MinimumProbationProbeInterval,
             probationProbeTimeout = AdmissionCandidateTipProbe.PerPeerTimeout
           )
+          atomicPairWait = OpenAdmissionPolicy.atomicPairGraceShouldWait(
+            now,
+            firstEcsSeenAt,
+            AdmissionPreProposalGrace,
+            requiresPair = membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) && ecs.nonEmpty,
+            hasApplicableAdmissionCertificate = hasPairableOpenCertificate
+          )
           _ <- Metrics[F].updateGauge(
             "dag_consensus_admission_pre_proposal_grace_ms",
             decision.effectiveGrace.toMillis
           )
-        } yield decision.shouldWait
+          _ <- Metrics[F].updateGauge("dag_consensus_atomic_replacement_pair_grace_active", if (atomicPairWait) 1L else 0L)
+        } yield decision.shouldWait || atomicPairWait
 
       /** Caps the assembled admission certificates attached to an outgoing proposal at the validation limit (`acs_too_many` in
         * `validateProposalAcs`). Selection is delegated to the shared `AdmissionCertificateSelector` -- see its scaladoc for the
@@ -1208,18 +1277,31 @@ object GlobalSnapshotConsensusStateAdvancer {
         */
       private def capAssembledAdmissionCertificates(
         state: GlobalSnapshotConsensusState,
-        assembled: Set[AdmissionCertificate]
+        assembled: Set[AdmissionCertificate],
+        preferOpenForReplacement: Boolean
       ): F[List[AdmissionCertificate]] = {
         val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val openAllowed = openExpansionAllowedAt(state)
         val cadenceEligible = assembled.filter(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
+        // Partition before applying the one-seat cap. Probation normally has priority, but it
+        // cannot occupy the ACS half of an atomic replacement because it may still be pre-Ready.
+        // If an open pair is available, select only from exact ReadyAtTip/open certificates.
+        val selection =
+          if (preferOpenForReplacement)
+            AdmissionCertificateSelector.selectOpenReadyForReplacement(
+              cadenceEligible,
+              config.activeAdmissionMaxExpansionPerRound,
+              state.entropy,
+              probation
+            )
+          else
+            AdmissionCertificateSelector.selectForProposal(
+              cadenceEligible,
+              config.activeAdmissionMaxExpansionPerRound,
+              state.entropy,
+              probation
+            )
         val cadenceSuppressed = assembled -- cadenceEligible
-        val selection = AdmissionCertificateSelector.selectForProposal(
-          cadenceEligible,
-          config.activeAdmissionMaxExpansionPerRound,
-          state.entropy,
-          probation
-        )
         val dropped = selection.dropped.toSet ++ cadenceSuppressed
         ConsensusLog
           .info(
@@ -1246,29 +1328,60 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         assembledEvictions: Set[EvictionCertificate],
         assembledAdmissions: Set[AdmissionCertificate]
-      ): F[(List[EvictionCertificate], List[AdmissionCertificate])] =
-        capAssembledAdmissionCertificates(state, assembledAdmissions).flatMap { admissions =>
+      ): F[(List[EvictionCertificate], List[AdmissionCertificate])] = {
+        val atomicReplacementActive =
+          membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+        val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+        val openAllowed = openExpansionAllowedAt(state)
+        val pairableSilentEvictions = assembledEvictions.exists(_.reason === EvictionReason.Silent)
+        val hasPairableOpenAdmission = assembledAdmissions.exists { cert =>
+          !probation.contains(cert.targetPeer) &&
+          cert.reason === AdmissionReason.ReadyAtTip &&
+          OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed)
+        }
+        val preferOpenForReplacement =
+          atomicReplacementActive &&
+            pairableSilentEvictions &&
+            hasPairableOpenAdmission
+
+        capAssembledAdmissionCertificates(state, assembledAdmissions, preferOpenForReplacement).flatMap { admissions =>
           if (membershipPolicy.acceptsEvictionCertificates)
             (assembledEvictions.toList -> admissions).pure[F]
-          else if (membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)) {
-            val candidates = assembledEvictions.toList
-              .filter(cert => cert.reason === EvictionReason.Silent)
-              .sorted(EvictionCertificate.ordering)
-            val pairCount = math.min(admissions.size, math.max(0, config.activeAdmissionMaxExpansionPerRound))
-            val evictions = candidates.take(pairCount)
-            val pairedAdmissions =
-              if (evictions.nonEmpty) admissions.take(evictions.size)
-              else admissions
-            val suppressed = assembledEvictions.size - evictions.size
+          else if (atomicReplacementActive) {
+            val candidates =
+              if (preferOpenForReplacement)
+                assembledEvictions.toList
+                  .filter(cert => cert.reason === EvictionReason.Silent)
+                  .sorted(EvictionCertificate.ordering)
+              else List.empty
+            val selection = CertifiedMembershipTransition.selectForProposal(
+              roundStartCommittee = state.roundStartFacilitators.value.toSet,
+              locallyObservedParentSigners = state.lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet,
+              admissions = admissions,
+              evictions = candidates,
+              admissionTarget = (certificate: AdmissionCertificate) => certificate.targetPeer,
+              evictionTarget = (certificate: EvictionCertificate) => certificate.targetPeer,
+              quorumThresholdFraction = config.quorumThresholdFraction,
+              maxChanges = config.activeAdmissionMaxExpansionPerRound
+            )
+            val suppressedEvictions = assembledEvictions.size - selection.evictions.size
+            val suppressedAdmissions = admissions.size - selection.admissions.size
 
             Metrics[F]
               .incrementCounterBy(
                 "dag_consensus_eviction_cert_suppressed_total",
-                suppressed.toLong,
+                suppressedEvictions.toLong,
                 Seq(Metrics.unsafeLabelName("reason") -> "requires_atomic_admission")
               )
-              .whenA(suppressed > 0)
-              .as(evictions -> pairedAdmissions)
+              .whenA(suppressedEvictions > 0) >>
+              Metrics[F]
+                .incrementCounterBy(
+                  "dag_consensus_admission_cert_suppressed_total",
+                  suppressedAdmissions.toLong,
+                  Seq(Metrics.unsafeLabelName("reason") -> "local_headroom")
+                )
+                .whenA(suppressedAdmissions > 0)
+                .as(selection.evictions -> selection.admissions)
           } else
             Metrics[F]
               .incrementCounterBy(
@@ -1279,6 +1392,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               .whenA(assembledEvictions.nonEmpty)
               .as(List.empty[EvictionCertificate] -> admissions)
         }
+      }
 
       private def toProposalsPhase(
         state: GlobalSnapshotConsensusState,
@@ -1949,6 +2063,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         case object Fired extends SoftResetOutcome
         case object SuppressedBudgetExhausted extends SoftResetOutcome
         case object SuppressedNoReadyPeerWithUsefulDeclarations extends SoftResetOutcome
+        case object SuppressedVoteLocked extends SoftResetOutcome
       }
 
       /** Alpha.97 same-key soft-reset attempt. See `SoftResetOutcome` for the per-outcome action contract. The helper logs each outcome
@@ -1991,10 +2106,13 @@ object GlobalSnapshotConsensusStateAdvancer {
                 // external cluster evidence only. `getResponsivePeers` likely excludes
                 // self today, but this is recovery code -- the safety condition should
                 // not depend on indirect behavior of other components.
-                peerId =!= selfId &&
-                readyIds.contains(peerId) &&
-                peerKeys.get(peerId).exists(_ >= key) &&
-                (d.facility.nonEmpty || d.proposal.nonEmpty)
+                isUsefulSoftResetBootstrapDeclaration(
+                  selfId,
+                  peerId,
+                  readyIds.contains(peerId),
+                  peerKeys.get(peerId).exists(_ >= key),
+                  d
+                )
             }
 
         consensusStorage.getSoftResetCountAtSameKey(key).flatMap { softResetCount =>
@@ -2037,27 +2155,47 @@ object GlobalSnapshotConsensusStateAdvancer {
                   ) >>
                   (SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations: SoftResetOutcome).pure[F]
               else
-                consensusStorage.softResetRoundState(key) >>
-                  consensusStorage.tickSoftResetAtSameKey(key).flatMap { newCount =>
+                consensusStorage.softResetRoundState(key).flatMap {
+                  case false =>
                     ConsensusLog.warn(
                       logger,
                       Category.Recovery,
                       key.show,
                       role,
-                      Event.SoftResetTriggered,
+                      Event.SoftResetSuppressed,
                       "category" -> category,
                       "triggerCount" -> triggerCount.toString,
-                      "softResetCount" -> newCount.toString,
-                      "maxSoftResetsAtSameKey" -> consensusConfig.maxSoftResetsAtSameKey.toString
+                      "softResetCount" -> softResetCount.toString,
+                      "reason" -> "same_key_vote_or_certified_view_locked"
                     ) >>
                       Metrics[F].incrementCounter(
-                        "dag_consensus_soft_reset_total",
-                        Seq(Metrics.unsafeLabelName("category") -> category)
+                        "dag_consensus_soft_reset_suppressed_total",
+                        Seq(Metrics.unsafeLabelName("reason") -> "same_key_vote_or_certified_view_locked")
                       ) >>
-                      consensusStorage.clearStaleLocalViewAtSameKey >>
-                      scheduleSoftResetRestart(key) >>
-                      (SoftResetOutcome.Fired: SoftResetOutcome).pure[F]
-                  }
+                      (SoftResetOutcome.SuppressedVoteLocked: SoftResetOutcome).pure[F]
+                  case true =>
+                    completeDestructiveSoftReset(
+                      scheduleSoftResetRestart(key),
+                      consensusStorage.tickSoftResetAtSameKey(key),
+                      consensusStorage.clearStaleLocalViewAtSameKey,
+                      newCount =>
+                        ConsensusLog.warn(
+                          logger,
+                          Category.Recovery,
+                          key.show,
+                          role,
+                          Event.SoftResetTriggered,
+                          "category" -> category,
+                          "triggerCount" -> triggerCount.toString,
+                          "softResetCount" -> newCount.toString,
+                          "maxSoftResetsAtSameKey" -> consensusConfig.maxSoftResetsAtSameKey.toString
+                        ) >> Metrics[F].incrementCounter(
+                          "dag_consensus_soft_reset_total",
+                          Seq(Metrics.unsafeLabelName("category") -> category)
+                        ),
+                      softResetCount + 1
+                    ).as(SoftResetOutcome.Fired: SoftResetOutcome)
+                }
             }
         }
       }
@@ -2270,9 +2408,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    // A Tier-1 target requires Core attestations; a Core target preserves
-                    // the wider historical witness recovery lane. This must stay identical
-                    // to StateTransitions.checkEvictionAssembly.
+                    // V35 atomic replacement requires Core attestations for any signing-seat
+                    // target. Legacy Core/Tier-1 targets preserve their existing distinct
+                    // recovery lanes. This must stay identical to StateTransitions.checkEvictionAssembly.
                     val widerWitnessPool = WitnessPool
                       .forTarget(
                         state.eligibleFacilitators.value.toSet,
@@ -2320,11 +2458,18 @@ object GlobalSnapshotConsensusStateAdvancer {
           Left(ProposalRejection("certified_membership_replacement_requires_v35"))
         else
           CertifiedMembershipTransition
-            .validateCertificateTargets(
-              state.roundStartFacilitators.value.toSet,
-              admitted,
-              evicted,
-              config.activeAdmissionMaxExpansionPerRound
+            .validateReplacementAdmissionLane(
+              admitted.toSet,
+              evicted.toSet,
+              ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+            )
+            .flatMap(_ =>
+              CertifiedMembershipTransition.validateCertificateTargets(
+                state.roundStartFacilitators.value.toSet,
+                admitted,
+                evicted,
+                config.activeAdmissionMaxExpansionPerRound
+              )
             )
             .leftMap(ProposalRejection(_))
       }
@@ -2377,7 +2522,13 @@ object GlobalSnapshotConsensusStateAdvancer {
         // validateProposalEcs for the full decoupled-threshold-vs-membership rationale.
         // Integer math via `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
-        val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+        val requiresCoreAdmissionCertification =
+          membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+        val q = AdmissionVoterPool.requiredQuorum(
+          n,
+          config.quorumThresholdFraction,
+          requiresCoreAdmissionCertification
+        )
         val committee = state.roundStartFacilitators.value.toSet
         val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val penalized = activeAdmissionPenaltyPeers(state)
@@ -2419,8 +2570,9 @@ object GlobalSnapshotConsensusStateAdvancer {
               else if (OpenAdmissionPolicy.penaltyBlocksCertificate(cert.targetPeer, probation, penalized))
                 Left(ProposalRejection(s"acs_target_penalized target=${cert.targetPeer.show.take(8)}"))
               // The parent nominee coordinates vote emission; the quorum certificate is the
-              // authorization applied to state (Core voters for open admission, the existing
-              // wider recovery pool for probation). Do not require the local recovered Outcome
+              // authorization applied to state. Open admission is Core-certified. Legacy probation
+              // uses the wider recovery pool; certified atomic membership requires Core for it too.
+              // Do not require the local recovered Outcome
               // to retain that ephemeral nominee: snapshot download/recovery reconstructs old
               // Finished values without it and must still accept a valid certificate.
               else if (!probation.contains(cert.targetPeer) && cert.reason =!= AdmissionReason.ReadyAtTip)
@@ -2460,6 +2612,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                     val voterPool = AdmissionVoterPool.select(
                       cert.targetPeer,
                       probation.contains(cert.targetPeer),
+                      requiresCoreAdmissionCertification,
                       state.coreFacilitators.value.toSet,
                       widerWitnessPool
                     )
@@ -2599,6 +2752,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                         // network has nothing to recover FROM). Fall through to normal
                         // stall handling; StallDetector / AbandonmentTracker will fire
                         // when the situation persists with peers actually ahead.
+                        Applicative[F].unit
+                      case SoftResetOutcome.SuppressedVoteLocked =>
                         Applicative[F].unit
                     }
                   }
@@ -2951,6 +3106,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                                         // proven recovery source. Forcing WFD here would worsen the cascade.
                                         // Keep the validation-failure count so the next failure can re-try
                                         // soft reset once a Ready peer surfaces.
+                                        Async[F].unit
+                                      case SoftResetOutcome.SuppressedVoteLocked =>
                                         Async[F].unit
                                     }
                                 }
@@ -3491,14 +3648,21 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def allowsLocalCertifiedMembershipPrepare(
         state: GlobalSnapshotConsensusState,
         value: ProposalValue
+      ): Boolean =
+        allowsLocalCertifiedMembershipTransition(state, value.admittedPeers.toSet, value.evictedPeers.toSet)
+
+      private def allowsLocalCertifiedMembershipTransition(
+        state: GlobalSnapshotConsensusState,
+        admittedPeers: Set[PeerId],
+        evictedPeers: Set[PeerId]
       ): Boolean = {
         val observed = state.lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
 
         CertifiedMembershipTransition.allowsPrepareVote(
           state.roundStartFacilitators.value.toSet,
           observed,
-          value.admittedPeers.toSet,
-          value.evictedPeers.toSet,
+          admittedPeers,
+          evictedPeers,
           config.quorumThresholdFraction,
           config.activeAdmissionMaxExpansionPerRound
         )
@@ -3654,7 +3818,8 @@ object GlobalSnapshotConsensusStateAdvancer {
             localLock.flatMap(_.lockedQc),
             leaderVcc.flatMap(_.highestQcInVcc)
           )
-          tryLock <- consensusStorage.tryLockVote(state.key, view, majorityInfo.hash, effectiveLockedQc)
+          viewSafetyMode = consensusStorage.viewSafetyMode(state.certifiedConsensusActive)
+          tryLock <- consensusStorage.tryLockVote(state.key, view, majorityInfo.hash, effectiveLockedQc, viewSafetyMode)
           result <- tryLock match {
             case Left(rejection) =>
               ConsensusLog
@@ -3799,8 +3964,14 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
+            val attemptDomain = SignatureAttemptDomain(
+              facilitatorsHash = status.facilitatorsHash,
+              lastSnapshotHash = status.lastSnapshotHash,
+              view = state.viewNumber.toLong,
+              proposalHash = status.majorityArtifactInfo.hash
+            )
             for {
-              maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
+              maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature.filter(attemptDomain.contains))
               facilitators = maybeSignatures.map(_.keys.toList).getOrElse(List.empty[PeerId])
               _ <- loggerBundle.consensus.collectingSignatures(facilitators)
               // Skip facilitatorsHash fork check when view > 0 (eviction happened), solo→multi transition,

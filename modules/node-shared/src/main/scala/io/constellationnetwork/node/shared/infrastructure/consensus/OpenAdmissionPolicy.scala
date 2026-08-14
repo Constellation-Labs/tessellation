@@ -18,6 +18,20 @@ object OpenAdmissionPolicy {
     shouldWait: Boolean
   )
 
+  /** A certified eviction is the causal start of atomic-replacement admission work. Measuring this wait from state creation can make the
+    * grace already expired when ECS quorum forms, so give the paired ACS one bounded base-grace window from first ECS assembly.
+    */
+  def atomicPairGraceShouldWait(
+    now: FiniteDuration,
+    firstEvictionCertificateSeenAt: Option[FiniteDuration],
+    baseGrace: FiniteDuration,
+    requiresPair: Boolean,
+    hasApplicableAdmissionCertificate: Boolean
+  ): Boolean =
+    requiresPair &&
+      !hasApplicableAdmissionCertificate &&
+      firstEvictionCertificateSeenAt.exists(firstSeen => now - firstSeen < baseGrace)
+
   /** Bounded local wait for admission-certificate assembly before proposal construction.
     *
     * Probation presence is evidence before the first vote exists. Without that rule, a fast facilities phase can close before a carried

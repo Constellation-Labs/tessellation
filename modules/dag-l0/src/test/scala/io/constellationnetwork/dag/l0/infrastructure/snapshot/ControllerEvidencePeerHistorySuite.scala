@@ -315,8 +315,8 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         controllerEvidence = Some(SortedMap(ord(14L) -> entry(Set(a, b, c), Set(c)))),
         penaltyUntil = Some(SortedMap(a -> ord(999L)))
       )
-      resetHealthy <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), healthy)
-      resetPoisoned <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), poisoned)
+      resetHealthy <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), healthy, 2.0 / 3.0)
+      resetPoisoned <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), poisoned, 2.0 / 3.0)
       seed = NonEmptySet.fromSetUnsafe(SortedSet.from(resetHealthy.facilitators.value))
       proposal = Proposal(
         hash = finished.snapshotHash,
@@ -369,5 +369,26 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         valueHealthy === valuePoisoned,
         healthyHash === poisonedHash
       )
+  }
+
+  test("the v35 activation bridge rejects a canonical singleton seed that cannot admit a second seat") { res =>
+    implicit val (js, h, sp) = res
+
+    for {
+      rawFinished <- mkFinished
+      carrier = mkOutcome(
+        rawFinished,
+        peerQuality = SortedMap.empty,
+        activeAdmissionScores = SortedMap.empty,
+        peerTiers = SortedMap.empty,
+        recentRoundEndTimes = SortedMap.empty
+      )
+      singletonHistory = carrier.signedArtifactPeerHistory.copy(
+        controllerEvidence = Some(SortedMap(ord(14L) -> entry(Set(a), Set(a))))
+      )
+      finished <- withSignedPeerHistory(rawFinished, singletonHistory)
+      outcome = carrier.copy(finished = finished)
+      result <- GlobalSnapshotConsensusStateCreator.resetLegacyOutcome[IO](ord(15L), outcome, 2.0 / 3.0).attempt
+    } yield expect(result.left.exists(_.getMessage.contains("minimum coordinated size=2")))
   }
 }

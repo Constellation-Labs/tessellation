@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.cutoff.LogarithmicOrdinalCutoff
+import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.storage.CrashSafeAtomicFileWriter
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -29,7 +30,11 @@ trait OrdinalJsonSidecarStorage[F[_], A] {
   def read(ordinal: SnapshotOrdinal): F[Option[A]]
   def delete(ordinal: SnapshotOrdinal): F[Unit]
   def deleteAbove(ordinal: SnapshotOrdinal): F[Unit]
-  def retain(cutoffOrdinal: SnapshotOrdinal, currentOrdinal: SnapshotOrdinal): F[Unit]
+  def retain(
+    cutoffOrdinal: SnapshotOrdinal,
+    currentOrdinal: SnapshotOrdinal,
+    pinnedOrdinals: Set[SnapshotOrdinal] = Set.empty
+  ): F[Unit]
 }
 
 object OrdinalJsonSidecarStorage {
@@ -74,8 +79,19 @@ object OrdinalJsonSidecarStorage {
       * Recovery evidence retains the same logarithmic ordinal set as the state context it authenticates. This avoids an independent
       * retention knob and prevents complete typed outcomes from accumulating after their corresponding snapshot info has been pruned.
       */
-    def retain(cutoffOrdinal: SnapshotOrdinal, currentOrdinal: SnapshotOrdinal): F[Unit] = {
-      val toKeep = LogarithmicOrdinalCutoff.make.cutoff(cutoffOrdinal, currentOrdinal)
+    def retain(
+      cutoffOrdinal: SnapshotOrdinal,
+      currentOrdinal: SnapshotOrdinal,
+      pinnedOrdinals: Set[SnapshotOrdinal]
+    ): F[Unit] = {
+      // Certified outcome N is the authority needed to validate/restore N+1.  The
+      // generic logarithmic cutoff is allowed to omit N-1, so retain that exact
+      // predecessor explicitly.  This is deliberately a storage invariant rather
+      // than a caller convention: every typed consensus sidecar keeps the minimum
+      // contiguous recovery window.
+      val immediateRecoveryWindow =
+        currentOrdinal.partialPrevious.fold(Set(currentOrdinal))(previous => Set(previous, currentOrdinal))
+      val toKeep = LogarithmicOrdinalCutoff.make.cutoff(cutoffOrdinal, currentOrdinal) ++ immediateRecoveryWindow ++ pinnedOrdinals
 
       listFiles.flatMap(
         _.evalMap { file =>

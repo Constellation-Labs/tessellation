@@ -125,4 +125,12 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     val b = baseConfig.copy(tier1SignatureGracePeriod = 2.seconds, signatureGracePeriod = 9.seconds)
     expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
   }
+
+  pureTest("the environment-resolved facilitator selector cap participates independently in the join hash") {
+    val a = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(1000))
+    val b = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(300))
+
+    expect(a.deterministicConfigHash != b.deterministicConfigHash) &&
+    expect.same(Some(PosInt(20)), a.maxFacilitatorCount)
+  }
 }

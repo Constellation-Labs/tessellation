@@ -27,6 +27,10 @@ import monocle.Lens
 import monocle.syntax.all._
 
 trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind] {
+  private[consensus] def legacyViewChangePolicy: LegacyViewChangePolicy
+
+  def viewSafetyMode(certifiedConsensusActive: Boolean): ViewSafetyMode
+
   def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]]
 
   def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]]
@@ -91,6 +95,13 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def markTimeoutCertificateApplyScheduled(key: Key, lastSnapshotHash: Hash, fromView: Long, toView: Long): F[Boolean]
 
+  private[consensus] def isTimeoutCertificateApplyScheduled(
+    key: Key,
+    lastSnapshotHash: Hash,
+    fromView: Long,
+    toView: Long
+  ): F[Boolean]
+
   private[consensus] def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]]
 
   /** Store a v35 prepare vote under its complete semantic value hash. Public so a Core node can self-store before gossip, avoiding the same
@@ -130,7 +141,8 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     key: Key,
     view: Long,
     proposalHash: Hash,
-    effectiveLockedQc: Option[ProposalQC]
+    effectiveLockedQc: Option[ProposalQC],
+    mode: ViewSafetyMode
   ): F[Either[VoteRejection, VoteLock]]
 
   /** Advance the `lockedQc` inside the VoteLock for a key. No-op if the existing QC is at an equal-or-higher view. */
@@ -158,7 +170,12 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   /** True when any delayed VCC apply is pending for this key. Local liveness guards use this to yield to the certified pacemaker path
     * instead of abandoning and immediately restarting the same round.
     */
-  private[consensus] def hasAssembledVccApplyScheduled(key: Key): F[Boolean]
+  private[consensus] def isAssembledVccApplyScheduled(
+    key: Key,
+    lastSnapshotHash: Hash,
+    fromView: Long,
+    toView: Long
+  ): F[Boolean]
 
   /** Mark an assembled VCC rumor as already received from a peer. Returns true only for the first receipt of that anchored transition from
     * origin.
@@ -191,6 +208,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   /** Read all currently-assembled EvictionCertificates for a key. Empty set if none. */
   def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]]
+
+  /** Local monotonic time at which this key first assembled any ECS. Pair-aware proposal grace is measured from this causal event, not from
+    * state creation (which may predate certificate formation by an arbitrary amount).
+    */
+  def getAssembledEvictionCertificateFirstSeen(key: Key): F[Option[FiniteDuration]]
 
   /** Add an `AdmissionVote` to the current round's accumulator (B2). First-write-wins per (voter, target), same as eviction votes. */
   private[consensus] def addAdmissionVote(
@@ -230,7 +252,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     * `abandonRound` so the retry attempt can immediately resume with the previously-collected declarations instead of re-fetching them from
     * peers (which they won't re-send under first-write-wins semantics).
     */
-  private[consensus] def clearResourcesPreservingDeclarations(key: Key): F[Unit]
+  private[consensus] def clearResourcesPreservingDeclarations(key: Key, mode: ViewSafetyMode): F[Unit]
+
+  private[consensus] def pruneAttemptDeclarationsForView(key: Key, minViewToKeep: Long): F[Unit]
 
   /** Drop entries in `peerDeclarationsMap[*].proposal` where the stored proposal's view is below `minViewToKeep` AND has no view cert.
     *
@@ -287,7 +311,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     *
     * NodeState is intentionally NOT touched -- the peer stays Ready, Core does not lose a member to this reset.
     */
-  def softResetRoundState(key: Key): F[Unit]
+  def softResetRoundState(key: Key): F[Boolean]
 
   private[consensus] def trySetInitialConsensusOutcome(data: Outcome): F[Boolean]
 
@@ -343,6 +367,10 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     */
   private[consensus] def getRoundAttemptId: F[Long]
 
+  private[consensus] def getResourceGeneration(key: Key): F[Long]
+
+  private[consensus] def markPacemakerEmissionProgress(key: Key): F[Unit]
+
   /** Record that `peer` has produced or relayed a consensus declaration at `key`. Monotonic: stored key is `max(existing, seen)`. Unlike
     * `registerPeer`, which records a peer's one-time join ordinal, this map is continuously refreshed from every keyed rumor and gives a
     * live read of where each peer is in consensus. Consumed by lagging/recovery logic to tell whether the cluster has advanced past this
@@ -378,6 +406,72 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
 object ConsensusStorage {
 
+  private[consensus] def retainVoteLockAcrossAbandon(mode: ViewSafetyMode): Boolean =
+    mode == ViewSafetyMode.LegacyFreezeAfterVote
+
+  private[consensus] def isExactTransitionScheduled(
+    scheduled: Option[Set[(Hash, Long, Long)]],
+    lastSnapshotHash: Hash,
+    fromView: Long,
+    toView: Long
+  ): Boolean =
+    scheduled.exists(_.contains((lastSnapshotHash, fromView, toView)))
+
+  /** Compare only evidence that can advance the active attempt. Auxiliary admission, eviction, view-change, and timeout votes are
+    * intentionally excluded: they become attempt progress only when their serialized assembly/apply command succeeds. v35 prepare votes and
+    * certified QCs are included because either can establish the semantic value that a queued abandonment must not erase.
+    */
+  private[consensus] def attemptProgressChanged[Artifact, Kind](
+    before: ConsensusResources[Artifact, Kind],
+    after: ConsensusResources[Artifact, Kind]
+  ): Boolean =
+    before.peerDeclarationsMap != after.peerDeclarationsMap ||
+      before.acksMap != after.acksMap ||
+      before.withdrawalsMap != after.withdrawalsMap ||
+      before.ackKinds != after.ackKinds ||
+      before.artifacts != after.artifacts ||
+      before.outcomeVotes != after.outcomeVotes ||
+      before.certifiedProposalQcs != after.certifiedProposalQcs
+
+  private[consensus] def retainFacilityOnly(declarations: PeerDeclarations): PeerDeclarations =
+    PeerDeclarations.empty.copy(facility = declarations.facility)
+
+  private[consensus] def declarationsAfterAbandon(
+    declarations: PeerDeclarations,
+    mode: ViewSafetyMode
+  ): PeerDeclarations =
+    mode match {
+      case ViewSafetyMode.LegacyPreserve        => declarations
+      case ViewSafetyMode.LegacyFreezeAfterVote => retainFacilityOnly(declarations)
+      case ViewSafetyMode.CertifiedFullValue    => retainFacilityOnly(declarations)
+    }
+
+  private[consensus] def pruneAttemptDeclarationsForView(
+    declarations: PeerDeclarations,
+    minViewToKeep: Long
+  ): PeerDeclarations =
+    declarations.copy(
+      proposal = declarations.proposal.filter(_.view >= minViewToKeep),
+      signature = declarations.signature.filter(_.view >= minViewToKeep),
+      binarySignature = None
+    )
+
+  private[consensus] def sameKeySoftResetAllowed(
+    viewNumber: Int,
+    voteLock: Option[VoteLock],
+    hasScheduledAdvance: Boolean,
+    mode: ViewSafetyMode
+  ): Boolean =
+    mode match {
+      case ViewSafetyMode.LegacyFreezeAfterVote =>
+        viewNumber == 0 && !voteLock.exists(_.blocksLegacyViewChange) && !hasScheduledAdvance
+      case ViewSafetyMode.LegacyPreserve =>
+        viewNumber == 0 && !hasScheduledAdvance
+      case ViewSafetyMode.CertifiedFullValue =>
+        // The durable CertifiedVoteLock is the safety authority. It is intentionally preserved by a liveness reset.
+        !hasScheduledAdvance
+    }
+
   trait ModifyStateFn[F[_], Key, Status, Outcome, Kind, B]
       extends (
         Option[ConsensusState[Key, Status, Outcome, Kind]] => F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], B)]]
@@ -386,10 +480,23 @@ object ConsensusStorage {
   def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
     consensusConfig: ConsensusConfig
   )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] =
-    make(consensusConfig, CertifiedVoteLockPersistence.noop[F, Key])
+    make(consensusConfig, LegacyViewChangePolicy.PreserveLegacy, CertifiedVoteLockPersistence.noop[F, Key])
 
   def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
     consensusConfig: ConsensusConfig,
+    viewChangePolicy: LegacyViewChangePolicy
+  )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] =
+    make(consensusConfig, viewChangePolicy, CertifiedVoteLockPersistence.noop[F, Key])
+
+  def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
+    consensusConfig: ConsensusConfig,
+    certifiedVoteLockPersistence: CertifiedVoteLockPersistence[F, Key]
+  )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] =
+    make(consensusConfig, LegacyViewChangePolicy.PreserveLegacy, certifiedVoteLockPersistence)
+
+  def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
+    consensusConfig: ConsensusConfig,
+    viewChangePolicy: LegacyViewChangePolicy,
     certifiedVoteLockPersistence: CertifiedVoteLockPersistence[F, Key]
   )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] = {
     case class ConsensusOutcomeWrapper(
@@ -420,6 +527,7 @@ object ConsensusStorage {
       assembledVccReceiptsR <- MapRef.ofConcurrentHashMap[F, Key, Set[(PeerId, Hash, Long, Long, Set[PeerId])]]()
       timeoutCertificateApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
       assembledEvictionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[EvictionCertificate]]()
+      assembledEvictionCertFirstSeenR <- MapRef.ofConcurrentHashMap[F, Key, FiniteDuration]()
       assembledAdmissionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[AdmissionCertificate]]()
       // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
       // the FSM to drop stale ConsensusCommand.RoundCompleted commands — one queued before a
@@ -428,6 +536,7 @@ object ConsensusStorage {
       // view change at T+165s advanced the round to view=1 CollectingSignatures, the stale
       // RoundCompleted fired 104ms before the final signature arrived and dropped the round.
       roundAttemptIdR <- Ref.of[F, Long](0L)
+      resourceGenerationR <- MapRef.ofConcurrentHashMap[F, Key, Long]()
       // Per-peer highest observed key from incoming keyed rumors (declarations, votes, acks,
       // withdraws, artifacts). Feeds live "peer is ahead of me" detection in AbandonmentTracker
       // and StallDetector. Distinct from peerRegistrationsR which records one-time join keys
@@ -436,6 +545,11 @@ object ConsensusStorage {
       peerCurrentKeysR <- Ref.of(Map.empty[PeerId, Key])
     } yield
       new ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind] {
+
+        def legacyViewChangePolicy: LegacyViewChangePolicy = viewChangePolicy
+
+        def viewSafetyMode(certifiedConsensusActive: Boolean): ViewSafetyMode =
+          viewChangePolicy.mode(certifiedConsensusActive)
 
         def getState(key: Key): F[Option[ConsensusState[Key, Status, Outcome, Kind]]] =
           statesR(key).get
@@ -603,6 +717,16 @@ object ConsensusStorage {
             else (scheduled.incl(transition).some, true)
           }
 
+        def isTimeoutCertificateApplyScheduled(
+          key: Key,
+          lastSnapshotHash: Hash,
+          fromView: Long,
+          toView: Long
+        ): F[Boolean] =
+          timeoutCertificateApplyScheduledR(key).get.map(
+            ConsensusStorage.isExactTransitionScheduled(_, lastSnapshotHash, fromView, toView)
+          )
+
         def addProposalQc(key: Key, qc: ProposalQC): F[Option[ConsensusResources[Artifact, Kind]]] =
           updateResources(key) { resources =>
             val qcKey = (qc.view, qc.proposalHash)
@@ -729,11 +853,12 @@ object ConsensusStorage {
           key: Key,
           view: Long,
           proposalHash: Hash,
-          effectiveLockedQc: Option[ProposalQC]
+          effectiveLockedQc: Option[ProposalQC],
+          mode: ViewSafetyMode
         ): F[Either[VoteRejection, VoteLock]] =
           voteLocksR(key).modify { maybeLock =>
             val current = maybeLock.getOrElse(VoteLock.empty)
-            current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+            current.acceptVote(view, proposalHash, effectiveLockedQc, mode) match {
               case Right(newLock)  => (newLock.some, Right(newLock))
               case Left(rejection) => (maybeLock, Left(rejection))
             }
@@ -765,8 +890,15 @@ object ConsensusStorage {
             else (scheduled.incl(transition).some, true)
           }
 
-        def hasAssembledVccApplyScheduled(key: Key): F[Boolean] =
-          assembledVccApplyScheduledR(key).get.map(_.exists(_.nonEmpty))
+        def isAssembledVccApplyScheduled(
+          key: Key,
+          lastSnapshotHash: Hash,
+          fromView: Long,
+          toView: Long
+        ): F[Boolean] =
+          assembledVccApplyScheduledR(key).get.map(
+            ConsensusStorage.isExactTransitionScheduled(_, lastSnapshotHash, fromView, toView)
+          )
 
         def markAssembledVccReceived(
           key: Key,
@@ -815,14 +947,19 @@ object ConsensusStorage {
           // certs with the same target add no liveness value. This makes the storage operation
           // idempotent on (key, targetPeer) and matches the symmetric dedup applied to
           // assembled admission certificates below.
-          assembledEvictionCertsR(key).update {
-            case Some(existing) if existing.exists(_.targetPeer === cert.targetPeer) => existing.some
-            case Some(existing)                                                      => (existing + cert).some
-            case None                                                                => Set(cert).some
+          Clock[F].monotonic.flatMap { now =>
+            assembledEvictionCertsR(key).update {
+              case Some(existing) if existing.exists(_.targetPeer === cert.targetPeer) => existing.some
+              case Some(existing)                                                      => (existing + cert).some
+              case None                                                                => Set(cert).some
+            } >> assembledEvictionCertFirstSeenR(key).update(_.orElse(now.some))
           }
 
         def getAssembledEvictionCertificates(key: Key): F[Set[EvictionCertificate]] =
           assembledEvictionCertsR(key).get.map(_.getOrElse(Set.empty))
+
+        def getAssembledEvictionCertificateFirstSeen(key: Key): F[Option[FiniteDuration]] =
+          assembledEvictionCertFirstSeenR(key).get
 
         def addAdmissionVote(
           origin: PeerId,
@@ -932,11 +1069,16 @@ object ConsensusStorage {
               for {
                 now <- Clock[F].monotonic
                 emptyResources <- ConsensusResources.empty[F, Artifact, Kind]
-                updated <- resourcesR(key).updateAndGet { maybeResource =>
+                update <- resourcesR(key).modify { maybeResource =>
                   val current = maybeResource.getOrElse(emptyResources)
-                  Some(f(current).copy(updatedAt = now))
+                  val next = f(current).copy(updatedAt = now)
+                  (Some(next), (next, ConsensusStorage.attemptProgressChanged(current, next)))
                 }
-              } yield updated
+                (updated, progressChanged) = update
+                _ <- resourceGenerationR(key)
+                  .update(current => Some(current.getOrElse(0L) + 1L))
+                  .whenA(progressChanged)
+              } yield updated.some
             } else {
               none[ConsensusResources[Artifact, Kind]].pure[F]
             }
@@ -944,15 +1086,17 @@ object ConsensusStorage {
 
         def clearResources(key: Key): F[Unit] =
           resourcesR(key).set(none) >>
+            resourceGenerationR(key).update(current => Some(current.getOrElse(0L) + 1L)) >>
             voteLocksR(key).set(none) >>
             assembledVccR(key).set(none) >>
             assembledVccApplyScheduledR(key).set(none) >>
             assembledVccReceiptsR(key).set(none) >>
             assembledEvictionCertsR(key).set(none) >>
+            assembledEvictionCertFirstSeenR(key).set(none) >>
             assembledAdmissionCertsR(key).set(none) >>
             timeoutCertificateApplyScheduledR(key).set(none)
 
-        def clearResourcesPreservingDeclarations(key: Key): F[Unit] =
+        def clearResourcesPreservingDeclarations(key: Key, mode: ViewSafetyMode): F[Unit] =
           // evictionVotes, assembledEvictionCerts, viewChangeVotes, and assembledVcc
           // are preserved across abandonment retries because their identifying keys
           // remain stable across retry:
@@ -977,20 +1121,33 @@ object ConsensusStorage {
           // retry, keeping the B2 semantics honest.
           updateResources(key) { resources =>
             resources.copy(
+              peerDeclarationsMap = resources.peerDeclarationsMap.view
+                .mapValues(ConsensusStorage.declarationsAfterAbandon(_, mode))
+                .toMap,
               acksMap = Map.empty,
               withdrawalsMap = Map.empty,
               ackKinds = Set.empty,
               artifacts = Map.empty,
               proposalQcs = Map.empty,
               admissionVotes = Map.empty,
-              // A certified v35 value and its local lock are safety evidence for this key. Preserve them across a liveness retry so this
-              // node cannot prepare a conflicting value after abandoning an attempt.
               outcomeVotes = resources.outcomeVotes,
               certifiedProposalQcs = resources.certifiedProposalQcs
             )
           }.void >>
-            voteLocksR(key).set(none) >>
+            voteLocksR(key).set(none).unlessA(ConsensusStorage.retainVoteLockAcrossAbandon(mode)) >>
+            assembledVccApplyScheduledR(key).set(none) >>
+            assembledVccReceiptsR(key).set(none) >>
+            timeoutCertificateApplyScheduledR(key).set(none) >>
             assembledAdmissionCertsR(key).set(none)
+
+        def pruneAttemptDeclarationsForView(key: Key, minViewToKeep: Long): F[Unit] =
+          updateResources(key) { resources =>
+            resources.copy(
+              peerDeclarationsMap = resources.peerDeclarationsMap.view
+                .mapValues(ConsensusStorage.pruneAttemptDeclarationsForView(_, minViewToKeep))
+                .toMap
+            )
+          }.void
 
         def pruneStaleProposalSlots(key: Key, minViewToKeep: Long): F[Unit] =
           updateResources(key) { resources =>
@@ -1046,38 +1203,52 @@ object ConsensusStorage {
             case Some(resources) => resources.peerDeclarationsMap
           }
 
-        def softResetRoundState(key: Key): F[Unit] =
-          // Aggressive reset: clear everything anchored to the (now-stale) local view,
-          // while retaining v35 semantic votes/QCs and certifiedVoteLocksR(key). The latter
-          // is deliberately absent from the clear chain below: resetting liveness state must
-          // not erase the safety fact that this node prepared/locked a ProposalValue at this
-          // key. NodeState is intentionally not touched -- the peer stays Ready, Core does
-          // not lose a member to this reset.
-          Clock[F].monotonic.flatMap { now =>
-            updateResources(key) { resources =>
-              ConsensusResources[Artifact, Kind](
-                peerDeclarationsMap = resources.peerDeclarationsMap,
-                acksMap = Map.empty,
-                withdrawalsMap = Map.empty,
-                ackKinds = Set.empty,
-                artifacts = Map.empty,
-                updatedAt = now,
-                viewChangeVotes = Map.empty,
-                proposalQcs = Map.empty,
-                evictionVotes = Map.empty,
-                admissionVotes = Map.empty,
-                outcomeVotes = resources.outcomeVotes,
-                certifiedProposalQcs = resources.certifiedProposalQcs
-              )
-            }.void >>
-              voteLocksR(key).set(none) >>
-              assembledVccR(key).set(none) >>
-              assembledVccApplyScheduledR(key).set(none) >>
-              assembledVccReceiptsR(key).set(none) >>
-              assembledEvictionCertsR(key).set(none) >>
-              assembledAdmissionCertsR(key).set(none) >>
-              timeoutCertificateApplyScheduledR(key).set(none) >>
-              statesR(key).set(none)
+        def softResetRoundState(key: Key): F[Boolean] =
+          (
+            statesR(key).get,
+            voteLocksR(key).get,
+            assembledVccApplyScheduledR(key).get,
+            timeoutCertificateApplyScheduledR(key).get
+          ).tupled.flatMap {
+            case (maybeState, voteLock, vccApplyScheduled, timeoutApplyScheduled) =>
+              val viewNumber = maybeState.fold(0)(_.viewNumber)
+              val mode = viewChangePolicy.mode(maybeState.exists(_.certifiedConsensusActive))
+              // Raw assembled certificates are untrusted until validation schedules the exact apply. Only the schedule marker owns the
+              // transition. Under v35, the durable CertifiedVoteLock remains authoritative and survives this liveness reset.
+              val hasScheduledAdvance = vccApplyScheduled.exists(_.nonEmpty) || timeoutApplyScheduled.exists(_.nonEmpty)
+              if (!ConsensusStorage.sameKeySoftResetAllowed(viewNumber, voteLock, hasScheduledAdvance, mode)) false.pure[F]
+              else
+                Clock[F].monotonic.flatMap { now =>
+                  updateResources(key) { resources =>
+                    ConsensusResources[Artifact, Kind](
+                      peerDeclarationsMap = resources.peerDeclarationsMap.view
+                        .mapValues(ConsensusStorage.retainFacilityOnly)
+                        .toMap,
+                      acksMap = Map.empty,
+                      withdrawalsMap = Map.empty,
+                      ackKinds = Set.empty,
+                      artifacts = Map.empty,
+                      updatedAt = now,
+                      viewChangeVotes = Map.empty,
+                      proposalQcs = Map.empty,
+                      evictionVotes = Map.empty,
+                      admissionVotes = Map.empty,
+                      outcomeVotes = resources.outcomeVotes,
+                      certifiedProposalQcs = resources.certifiedProposalQcs
+                    )
+                  }.void >>
+                    voteLocksR(key).set(none).unlessA(mode == ViewSafetyMode.LegacyFreezeAfterVote) >>
+                    assembledVccR(key).set(none) >>
+                    assembledVccApplyScheduledR(key).set(none) >>
+                    assembledVccReceiptsR(key).set(none) >>
+                    assembledEvictionCertsR(key).set(none) >>
+                    assembledEvictionCertFirstSeenR(key).set(none) >>
+                    assembledAdmissionCertsR(key).set(none) >>
+                    timeoutCertificateApplyScheduledR(key).set(none) >>
+                    statesR(key).set(none) >>
+                    roundAttemptIdR.update(_ + 1L) >>
+                    true.pure[F]
+                }
           }
 
         def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
@@ -1124,6 +1295,11 @@ object ConsensusStorage {
 
         def getRoundAttemptId: F[Long] = roundAttemptIdR.get
 
+        def getResourceGeneration(key: Key): F[Long] = resourceGenerationR(key).get.map(_.getOrElse(0L))
+
+        def markPacemakerEmissionProgress(key: Key): F[Unit] =
+          resourceGenerationR(key).update(current => Some(current.getOrElse(0L) + 1L))
+
         def observePeerAtKey(peerId: PeerId, key: Key): F[Unit] =
           peerCurrentKeysR.update { m =>
             m.updatedWith(peerId) {
@@ -1135,21 +1311,23 @@ object ConsensusStorage {
         def getPeerCurrentKeys: F[Map[PeerId, Key]] = peerCurrentKeysR.get
 
         def pruneStaleResources(activeKey: Key): F[Unit] =
-          resourcesR.keys.flatMap { keys =>
-            // Only prune keys STRICTLY LESS THAN activeKey. Pre-arrived declarations for future
-            // rounds (within the `declarationRangeLimit` window) are already admitted by
-            // `updateResources` and must survive completion of earlier rounds; wiping them here
-            // on every `activeKey` advance erased legitimate pipelined state. Observed in
-            // E2E: Facility declarations for round N+1 arriving ~100ms before round N's local
-            // finalization were stored in resourcesR(N+1), then deleted when round N completed,
-            // leaving the new round N+1 with `progress=3/5 missing=2` forever because the two
-            // "missing" peers never retransmitted. StallDetector logged them as missing for 2+
-            // minutes despite DECL_RECEIVED entries for all 5 facilities on the same node.
-            //
-            // The acceptance window in `updateResources` (`[lastOutcome.key, lastOutcome.key +
-            // declarationRangeLimit]`) bounds memory growth; preserving future keys here is
-            // consistent with that contract.
-            keys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourcesR(k).set(none))
+          (resourcesR.keys, resourceGenerationR.keys).tupled.flatMap {
+            case (keys, generationKeys) =>
+              // Only prune keys STRICTLY LESS THAN activeKey. Pre-arrived declarations for future
+              // rounds (within the `declarationRangeLimit` window) are already admitted by
+              // `updateResources` and must survive completion of earlier rounds; wiping them here
+              // on every `activeKey` advance erased legitimate pipelined state. Observed in
+              // E2E: Facility declarations for round N+1 arriving ~100ms before round N's local
+              // finalization were stored in resourcesR(N+1), then deleted when round N completed,
+              // leaving the new round N+1 with `progress=3/5 missing=2` forever because the two
+              // "missing" peers never retransmitted. StallDetector logged them as missing for 2+
+              // minutes despite DECL_RECEIVED entries for all 5 facilities on the same node.
+              //
+              // The acceptance window in `updateResources` (`[lastOutcome.key, lastOutcome.key +
+              // declarationRangeLimit]`) bounds memory growth; preserving future keys here is
+              // consistent with that contract.
+              keys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourcesR(k).set(none)) >>
+                generationKeys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourceGenerationR(k).set(none))
           }
 
         def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit] =
@@ -1166,10 +1344,13 @@ object ConsensusStorage {
 
         def clearAllConsensusState: F[Unit] =
           for {
+            _ <- roundAttemptIdR.update(_ + 1L)
             stateKeys <- statesR.keys
             _ <- stateKeys.traverse_(k => statesR(k).set(none))
             resourceKeys <- resourcesR.keys
             _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
+            resourceGenerationKeys <- resourceGenerationR.keys
+            _ <- resourceGenerationKeys.traverse_(k => resourceGenerationR(k).set(none))
             voteLockKeys <- voteLocksR.keys
             _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
             // Certified vote locks (including a dirty write-failure value) are safety state, not transient consensus state. Explicit
@@ -1182,6 +1363,8 @@ object ConsensusStorage {
             _ <- vccReceiptKeys.traverse_(k => assembledVccReceiptsR(k).set(none))
             ecsKeys <- assembledEvictionCertsR.keys
             _ <- ecsKeys.traverse_(k => assembledEvictionCertsR(k).set(none))
+            ecsFirstSeenKeys <- assembledEvictionCertFirstSeenR.keys
+            _ <- ecsFirstSeenKeys.traverse_(k => assembledEvictionCertFirstSeenR(k).set(none))
             acsKeys <- assembledAdmissionCertsR.keys
             _ <- acsKeys.traverse_(k => assembledAdmissionCertsR(k).set(none))
             tcsKeys <- timeoutCertificateApplyScheduledR.keys

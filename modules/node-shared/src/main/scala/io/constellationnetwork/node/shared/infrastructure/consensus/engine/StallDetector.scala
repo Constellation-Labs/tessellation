@@ -6,16 +6,20 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionReason, EvictionReason}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionReason, EvictionReason, EvictionVote}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.ID.IdOps
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{PeerId, PeerResponsiveness, Unresponsive}
+import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 
@@ -42,7 +46,7 @@ import eu.timepit.refined.auto._
   * }}}
   */
 @scala.annotation.nowarn("msg=type parameter Outcome.*shadows")
-class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
+class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Artifact, Ctx, Status, Outcome, Kind](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   viewChangeManager: ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind],
   abandonmentTracker: AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -50,6 +54,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   admissionVoter: AdmissionVoter[F, Key],
   probationPeersOf: Outcome => Set[PeerId],
   admissionNomineesOf: Outcome => Set[PeerId],
+  parentRoundCommitteeOf: Outcome => Set[PeerId],
   openAdmissionCadenceOf: Key => Boolean,
   locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
   lastSnapshotHashOf: Outcome => Hash,
@@ -155,20 +160,27 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     } yield ()
 
   private def monitorStep(key: Key, ms: MonitorState): F[Either[MonitorState, Unit]] =
-    storage.getState(key).flatMap {
-      case None =>
-        ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.MonitorStateGone) >>
-          healthRef.update(_.copy(isRunning = false, key = None, phase = None)) >>
-          Async[F].pure(Right(()))
-
-      case Some(state) =>
-        ctx.advancer.getConsensusOutcome(state) match {
-          case Some(_) =>
-            ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.MonitorOutcomeReady) >>
+    // Snapshot the attempt id before reading state. Any mutation before, during, or after
+    // the state read then changes the id seen by the serialized command-loop drain, which
+    // safely rejects this monitor cycle's stale decision. Reading the id after state could
+    // bind a stale phase-0 decision to the newer phase-1 attempt.
+    (storage.getRoundAttemptId, storage.getResourceGeneration(key)).tupled.flatMap {
+      case (observedAttemptId, observedResourceGeneration) =>
+        storage.getState(key).flatMap {
+          case None =>
+            ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.MonitorStateGone) >>
+              healthRef.update(_.copy(isRunning = false, key = None, phase = None)) >>
               Async[F].pure(Right(()))
 
-          case None =>
-            runMonitorCycle(key, ms, state)
+          case Some(state) =>
+            ctx.advancer.getConsensusOutcome(state) match {
+              case Some(_) =>
+                ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.MonitorOutcomeReady) >>
+                  Async[F].pure(Right(()))
+
+              case None =>
+                runMonitorCycle(key, ms, state, observedAttemptId, observedResourceGeneration)
+            }
         }
     }
 
@@ -176,11 +188,18 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   private def runMonitorCycle(
     key: Key,
     ms: MonitorState,
-    state: ConsensusState[Key, Status, Outcome, Kind]
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    observedAttemptId: Long,
+    observedResourceGeneration: Long
   ): F[Either[MonitorState, Unit]] =
     for {
       now <- Async[F].monotonic
       resources <- storage.getResources(key)
+      observedPacemakerEpoch = ViewChangeManager.ObservedEpoch(
+        state.viewNumber.toLong,
+        observedAttemptId,
+        observedResourceGeneration
+      )
 
       // v33 quorum-denominator shrink: one decision per monitor cycle, shared by the
       // feasibility gates below. Derived ONLY from consensus-agreed anchors + wall clock
@@ -246,10 +265,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         now,
         maxPollInterval.millis
       )
+      roundStartFacilitatorsHash <- HasherSelector[F].withCurrent(implicit hasher => state.roundStartFacilitators.value.hash)
       admissionVoteEmission <- maybeEmitAdmissionVotes(
         key,
         state,
         resources,
+        roundStartFacilitatorsHash,
         ms.admissionTipProbedTargets,
         probationProbeDue
       )
@@ -267,7 +288,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // The parent outcome's consensus end-time is signed outcome data. Use it as timeout
       // evidence only: emit a VCV when the current view is overdue, then let VCC assembly
       // decide whether the view actually advances.
-      timestampPacemakerFired <- maybeEmitTimestampPacemakerVote(key, state, ms.lastTimestampPacemakerVoteView)
+      timestampPacemakerFired <- maybeEmitTimestampPacemakerVote(
+        key,
+        state,
+        ms.lastTimestampPacemakerVoteView,
+        observedPacemakerEpoch
+      )
 
       // --- Early view change for unresponsive leader ---
       // Gate on a minimum round-elapsed window so a stale Unresponsive flag carried
@@ -286,20 +312,24 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // If the timestamp pacemaker already emitted a VCV for this view on this tick, do not
       // emit a second identical leader-unresponsive VCV. The duplicate should be harmless at
       // storage level, but it pollutes VCV/VCC telemetry and wastes gossip.
-      earlyViewChange = earlyViewChangeDue && !timestampPacemakerFired
-      _ <- (
-        ConsensusLog.warn(
-          logger,
-          Category.Stall,
-          key.toString,
-          selfRole(state),
-          LogEvent.EarlyViewChange,
-          "leader" -> ConsensusLog.pid(state.leader),
-          "reason" -> "leader_unresponsive",
-          "roundElapsedMs" -> roundElapsedForViewChange.toMillis.toString
-        ) >>
-          viewChangeManager.performViewChange(key, state)
-      ).whenA(earlyViewChange)
+      earlyViewChangeRequested = earlyViewChangeDue && !timestampPacemakerFired
+      earlyViewChangeFired <-
+        if (earlyViewChangeRequested)
+          viewChangeManager.performViewChange(key, observedPacemakerEpoch).flatTap { emitted =>
+            ConsensusLog
+              .warn(
+                logger,
+                Category.Stall,
+                key.toString,
+                selfRole(state),
+                LogEvent.EarlyViewChange,
+                "leader" -> ConsensusLog.pid(state.leader),
+                "reason" -> "leader_unresponsive",
+                "roundElapsedMs" -> roundElapsedForViewChange.toMillis.toString
+              )
+              .whenA(emitted)
+          }
+        else false.pure[F]
 
       // Self-recovered-leader cooldown removed (alpha.96). Was a local-only check here: if
       // this node had just completed initFromDownload and got elected leader within
@@ -319,7 +349,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
       // --- Handle stall: view change for proposal phase, count toward abandon for others ---
       stallResult <-
-        if (earlyViewChange || timestampPacemakerFired) StallResult(didStall = true, quorumInfeasible = false).pure[F]
+        if (earlyViewChangeFired || timestampPacemakerFired)
+          StallResult(
+            didStall = true,
+            quorumInfeasible = false,
+            pacemakerRequestEnqueued = true
+          ).pure[F]
         else
           handleStall(
             key = key,
@@ -328,10 +363,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             statusDuration = statusDuration,
             declaredCount = info.declaredCount,
             activeCount = info.activeCount,
-            missingPeerIds = info.missingPeerIds,
             missingPeers = info.missingPeers,
             stallCount = newStallCount,
-            quorumOverride = shrinkDecision.quorumOverride
+            quorumOverride = shrinkDecision.quorumOverride,
+            observedPacemakerEpoch = observedPacemakerEpoch
           )
 
       didStall = stallResult.didStall
@@ -491,9 +526,26 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // alpha.103, this gate fired with joiningGrace=true during rollback restart, causing a
       // tight abandon/retry loop at view 0 before sibling validators finished promotion. Keep
       // the diagnostic log/metric, but do not abandon until the grace window has elapsed.
-      vccApplyScheduled <- storage.hasAssembledVccApplyScheduled(key)
-      readyParticipationSuppressedForVcc = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && vccApplyScheduled
-      readyParticipationShouldAbandon = readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && !vccApplyScheduled
+      certifiedTransitionParentHash = ctx.lastSnapshotHashOf(state.lastOutcome)
+      certifiedTransitionFromView = state.viewNumber.toLong
+      certifiedTransitionToView = certifiedTransitionFromView + 1L
+      vccApplyScheduled <- storage.isAssembledVccApplyScheduled(
+        key,
+        certifiedTransitionParentHash,
+        certifiedTransitionFromView,
+        certifiedTransitionToView
+      )
+      timeoutApplyScheduled <- storage.isTimeoutCertificateApplyScheduled(
+        key,
+        certifiedTransitionParentHash,
+        certifiedTransitionFromView,
+        certifiedTransitionToView
+      )
+      certifiedViewApplyScheduled = vccApplyScheduled || timeoutApplyScheduled
+      readyParticipationSuppressedForCertifiedView =
+        readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && certifiedViewApplyScheduled
+      readyParticipationShouldAbandon =
+        readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && !certifiedViewApplyScheduled
       _ <- (
         // DEBUG, not WARN: this re-fires every monitor tick while any Core peer is locally observed
         // not-Ready, so at WARN it floods app.log for the whole stall. The operator-relevant event is
@@ -513,7 +565,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           "behindNonReady" -> readyParticipationStatus.behindNonReady.toString,
           "joiningGrace" -> readyParticipationDuringJoiningGrace.toString,
           "vccApplyScheduled" -> vccApplyScheduled.toString,
-          "abandonSuppressedForVcc" -> readyParticipationSuppressedForVcc.toString,
+          "timeoutApplyScheduled" -> timeoutApplyScheduled.toString,
+          "abandonSuppressedForCertifiedView" -> readyParticipationSuppressedForCertifiedView.toString,
           "lastOutcomeKey" -> lastOutcomeKey.toString,
           "quorumShrinkActive" -> shrinkDecision.active.toString,
           "quorumShrinkSteps" -> shrinkDecision.steps.toString,
@@ -526,7 +579,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             .whenA(readyParticipationDuringJoiningGrace) >>
           Metrics[F]
             .incrementCounter("dag_consensus_ready_participation_quorum_infeasible_vcc_suppressed_total")
-            .whenA(readyParticipationSuppressedForVcc)
+            .whenA(readyParticipationSuppressedForCertifiedView)
       ).whenA(readyParticipationInfeasible)
 
       // --- Round timeout / abandon check ---
@@ -541,7 +594,30 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // give up. Without this, solo-eviction fires on the same cycle as maxStallCycles
       // abandonment, wasting the eviction.
       stallCycleExceeded = finalStallCount >= config.maxStallCycles && !stallResult.evictionEscalated
-      shouldAbandon = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || readyParticipationShouldAbandon
+      abandonRequested = stallCycleExceeded || roundTimedOut || quorumInfeasible || isLagging || readyParticipationShouldAbandon
+      voteLock <- storage.getVoteLock(key)
+      sameKeyRestartUnsafe = StallDetector.sameKeyRestartUnsafe(
+        viewNumber = state.viewNumber,
+        phaseIndex = ops.phaseIndex(state.status),
+        voteLockPopulated = voteLock.exists(_.blocksLegacyViewChange),
+        mode = storage.viewSafetyMode(state.certifiedConsensusActive)
+      )
+      // Recreating the same key after this node accepted a proposal/voted can derive a
+      // different artifact while first-write-wins declarations and the old signature are
+      // still circulating. Only lagging recovery is allowed through this guard because a
+      // real peer-ahead download is the boundary that may release the vote lock.
+      // A newly-enqueued pacemaker request must get one command-loop turn to emit its
+      // votes and run the assembly checks before an already-decided abandon removes the
+      // round state. This is a one-monitor-tick grace only: the request latch makes the
+      // same request return false on the next tick, so a non-certifying transition still
+      // takes the normal abandon path without an unbounded hold.
+      shouldAbandon = StallDetector.shouldAbandonThisMonitorTick(
+        abandonRequested,
+        isLagging,
+        sameKeyRestartUnsafe,
+        stallResult.pacemakerRequestEnqueued
+      )
+      restartSuppressed = abandonRequested && !shouldAbandon
 
       abandonReason: AbandonReason =
         if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
@@ -568,6 +644,26 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         .whenA(stallResult.evictionEscalated && finalStallCount >= config.maxStallCycles)
 
       _ <- (
+        ConsensusLog.warn(
+          logger,
+          Category.Stall,
+          key.toString,
+          selfRole(state),
+          LogEvent.StallDetected,
+          "reason" -> "SAME_KEY_RESTART_UNSAFE",
+          "view" -> state.viewNumber.toString,
+          "phaseIndex" -> ops.phaseIndex(state.status).toString,
+          "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
+          "requestedReason" -> abandonReason.label,
+          "action" -> "retain_attempt_and_wait_for_certified_view_or_peer_ahead_recovery"
+        ) >>
+          Metrics[F].incrementCounter(
+            "dag_consensus_same_key_restart_suppressed_total",
+            Seq(Metrics.unsafeLabelName("reason") -> abandonReason.label)
+          )
+      ).whenA(restartSuppressed && didStall)
+
+      _ <- (
         peerQualityTracker.recordAbandonedMissingPeers(info.missingPeers).whenA(info.missingPeers.nonEmpty) >>
           ConsensusLog
             .info(
@@ -584,7 +680,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           // here raced the command loop's condModifyState calls (the #1 lost-update). The command loop is the
           // single serialized writer (see ConsensusStorage.condModifyState). The monitor still terminates on
           // shouldAbandon below (Right(())), so it cannot enqueue a duplicate for this round.
-          queue.offer(ConsensusCommand.AbandonRound(key, abandonReason))
+          queue.offer(
+            ConsensusCommand.AbandonRound(key, abandonReason, observedAttemptId, observedResourceGeneration)
+          )
       ).whenA(shouldAbandon)
 
       // --- Update health snapshot ---
@@ -666,7 +764,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   private def maybeEmitTimestampPacemakerVote(
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind],
-    lastTimestampPacemakerVoteView: Option[Int]
+    lastTimestampPacemakerVoteView: Option[Int],
+    observedPacemakerEpoch: ViewChangeManager.ObservedEpoch
   ): F[Boolean] =
     ctx.lastOutcomeEndTimeMsOf(state.lastOutcome).fold(false.pure[F]) { parentEndTimeMs =>
       for {
@@ -684,25 +783,26 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           eligiblePhase &&
           timeViewHint > state.viewNumber &&
           !alreadyEmitted
-        _ <- (
-          ConsensusLog.info(
-            logger,
-            Category.Phase,
-            key.toString,
-            selfRole(state),
-            LogEvent.ForcedViewChange,
-            "reason" -> "timestamp_pacemaker_timeout",
-            "view" -> state.viewNumber.toString,
-            "targetView" -> (state.viewNumber + 1).toString,
-            "timeViewHint" -> timeViewHint.toString,
-            "parentEndTimeMs" -> parentEndTimeMs.toString,
-            "nowMs" -> nowWallMs.toString,
-            "viewIntervalMs" -> config.viewInterval.toMillis.toString
-          ) >>
-            Metrics[F].incrementCounter("dag_consensus_timestamp_pacemaker_vcv_total") >>
-            viewChangeManager.performViewChange(key, state)
-        ).whenA(shouldEmit)
-      } yield shouldEmit
+        emitted <-
+          if (shouldEmit)
+            viewChangeManager.performViewChange(key, observedPacemakerEpoch).flatTap { accepted =>
+              (ConsensusLog.info(
+                logger,
+                Category.Phase,
+                key.toString,
+                selfRole(state),
+                LogEvent.ForcedViewChange,
+                "reason" -> "timestamp_pacemaker_timeout",
+                "view" -> state.viewNumber.toString,
+                "targetView" -> (state.viewNumber + 1).toString,
+                "timeViewHint" -> timeViewHint.toString,
+                "parentEndTimeMs" -> parentEndTimeMs.toString,
+                "nowMs" -> nowWallMs.toString,
+                "viewIntervalMs" -> config.viewInterval.toMillis.toString
+              ) >> Metrics[F].incrementCounter("dag_consensus_timestamp_pacemaker_vcv_total")).whenA(accepted)
+            }
+          else false.pure[F]
+      } yield emitted
     }
 
   // ── Timeout Calculation ───────────────────────────────────────────
@@ -793,7 +893,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     activeFacilitators: Int = 0,
     quorumSize: Int = 0,
     clusterSize: Int = 0,
-    evictionEscalated: Boolean = false
+    evictionEscalated: Boolean = false,
+    pacemakerRequestEnqueued: Boolean = false
   )
 
   /** v4.1.0 cluster-majority floor -- terminal halt diagnostic. Observability ONLY: it never changes the abandon/eviction decision (those
@@ -841,11 +942,11 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     statusDuration: FiniteDuration,
     declaredCount: Int,
     activeCount: Int,
-    missingPeerIds: Set[String],
     missingPeers: Set[PeerId],
     stallCount: Int,
     // v33 quorum-denominator shrink: effective required quorum when the escalated rung is live.
-    quorumOverride: Option[Int]
+    quorumOverride: Option[Int],
+    observedPacemakerEpoch: ViewChangeManager.ObservedEpoch
   ): F[StallResult] =
     if (statusDuration >= declarationTimeout) {
       val statusName = state.status.getClass.getSimpleName.stripSuffix("$")
@@ -1096,24 +1197,19 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                                 queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
                             }
                           }
-                        evictionEmission >>
-                          // Phase 2+: no mid-round eviction. View change here is leader-rotation
-                          // only (gossip a VCV, wait for quorum-certified VCC to advance the view).
-                          // If the round can't complete due to genuinely-unresponsive peers, the
-                          // stall-cycle abandonment path in the outer monitor takes over.
-                          //
-                          // Propagate quorumInfeasible=true so the outer monitor's abandonment
-                          // classification can distinguish a genuine quorum-infeasible stall (this
-                          // branch) from ordinary stall-cycle expiry (the `else` below). Without
-                          // this, AbandonReason.QuorumInfeasible never fires and the new
-                          // escalate-vs-suppress logic in AbandonmentTracker is unreachable.
-                          viewChangeManager
-                            .performViewChange(key, state)
-                            .as(
-                              // Propagate the Core-only numbers so the resulting
-                              // `AbandonReason.QuorumInfeasible` satisfies its `active < required`
-                              // invariant and `AbandonmentTracker`'s isolated/quorum-impossible
-                              // classifier reads the correct active count.
+                        val phaseIndex = ops.phaseIndex(state.status)
+                        val viewChangeOrBinaryHalt =
+                          if (
+                            phaseIndex == 3 &&
+                            storage.viewSafetyMode(state.certifiedConsensusActive) == ViewSafetyMode.LegacyFreezeAfterVote
+                          )
+                            // Currency BinarySignature has no view/proposal hash on the
+                            // legacy wire. Advancing it across a view would let stale
+                            // binary declarations satisfy a different attempt, so rc.8
+                            // remains deliberately fail-closed here.
+                            Metrics[F].incrementCounter(
+                              "dag_consensus_binary_finality_view_change_suppressed_total"
+                            ) >>
                               StallResult(
                                 didStall = true,
                                 quorumInfeasible = true,
@@ -1121,8 +1217,40 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                                 quorumSize = coreQuorum,
                                 clusterSize = clusterSize,
                                 evictionEscalated = false
-                              )
-                            )
+                              ).pure[F]
+                          else
+                            viewChangeManager
+                              .performViewChange(key, observedPacemakerEpoch)
+                              .map { enqueued =>
+                                // Propagate the Core-only numbers so the resulting
+                                // `AbandonReason.QuorumInfeasible` satisfies its `active < required`
+                                // invariant and `AbandonmentTracker`'s isolated/quorum-impossible
+                                // classifier reads the correct active count.
+                                StallResult(
+                                  didStall = true,
+                                  quorumInfeasible = true,
+                                  activeFacilitators = coreRemaining,
+                                  quorumSize = coreQuorum,
+                                  clusterSize = clusterSize,
+                                  evictionEscalated = false,
+                                  pacemakerRequestEnqueued = enqueued
+                                )
+                              }
+
+                        evictionEmission >>
+                          // Phase 2+: no mid-round eviction. An unlocked node requests
+                          // leader rotation (gossip a VCV, wait for a quorum-certified VCC).
+                          // A Global L0 node that has already voted stays on the old attempt:
+                          // recreating the key or helping certify a higher view is unsafe on the
+                          // legacy artifact-only signature wire. Peer-ahead recovery or an
+                          // operator restart is the explicit availability boundary until v35.
+                          //
+                          // Propagate quorumInfeasible=true so the outer monitor's abandonment
+                          // classification can distinguish a genuine quorum-infeasible stall (this
+                          // branch) from ordinary stall-cycle expiry (the `else` below). Without
+                          // this, AbandonReason.QuorumInfeasible never fires and the new
+                          // escalate-vs-suppress logic in AbandonmentTracker is unreachable.
+                          viewChangeOrBinaryHalt
                       }
                   }
               }
@@ -1132,14 +1260,31 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               // needing to evict anyone. Non-responding peers become non-signers
               // in the outcome and get penalized between rounds.
               Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-                StallResult(didStall = true, quorumInfeasible = false).pure[F]
+                (if (ops.phaseIndex(state.status) == 2)
+                   // Route through the shared pacemaker gate. Once this node has signed,
+                   // ViewChangeManager suppresses the VCV/TC: the legacy artifact hash does
+                   // not bind the full proposal envelope, so a higher-view re-vote is unsafe.
+                   // An unlocked node may still help the unlocked quorum advance.
+                   Metrics[F].incrementCounter("dag_consensus_signature_phase_view_change_requested_total") >>
+                     viewChangeManager
+                       .performViewChange(key, observedPacemakerEpoch)
+                       .map(enqueued =>
+                         StallResult(
+                           didStall = true,
+                           quorumInfeasible = false,
+                           pacemakerRequestEnqueued = enqueued
+                         )
+                       )
+                 else StallResult(didStall = true, quorumInfeasible = false).pure[F])
             }
 
-          // Defensive force-VCV short-circuit. Reads the cluster-tracked
+          // Defensive force-VCV request. Reads the cluster-tracked
           // consecutiveAbandonments counter (same one logged as `consecutiveAbandonments=` in
           // ROUND_ABANDONED_TRACKED / RETRIABLE_ESCALATED). When it crosses the threshold for
-          // THIS ordinal, emit a ViewChangeVote unconditionally so all responsive peers
-          // converge on (fromView=v, toView=v+1) via the existing VCC machinery. We do not
+          // THIS ordinal, enqueue a serialized view-change request so all unlocked peers
+          // converge on (fromView=v, toView=v+1) via the existing VCC machinery. Global L0
+          // peers already locked by a legacy artifact vote deliberately suppress emission.
+          // We do not
           // mutate the facilitator set (April 2026's failed approach was mid-round eviction);
           // the round retries with view=v+1, a deterministically-different leader, and the
           // same supermajority threshold. Honest nodes that cross the abandonment threshold
@@ -1148,7 +1293,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           // ceil(N*2/3) of the round-start committee has voted. Stragglers catch up via the
           // existing "advance localView on observing higher-view message" path.
           abandonmentTracker.consecutiveAbandonmentsFor(key).flatMap { consecutiveAbandonments =>
-            if (consecutiveAbandonments >= config.forceViewChangeAbandonments) {
+            val binaryViewChangeAllowed =
+              ops.phaseIndex(state.status) != 3 ||
+                storage.viewSafetyMode(state.certifiedConsensusActive) != ViewSafetyMode.LegacyFreezeAfterVote
+            if (consecutiveAbandonments >= config.forceViewChangeAbandonments && binaryViewChangeAllowed) {
               ConsensusLog
                 .warn(
                   logger,
@@ -1167,8 +1315,8 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                 Metrics[F].incrementCounter("dag_consensus_forced_view_change_total") >>
                 Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
                 viewChangeManager
-                  .performViewChange(key, state)
-                  .as(
+                  .performViewChange(key, observedPacemakerEpoch)
+                  .map { enqueued =>
                     // Same Core-only propagation as the quorumInfeasible eviction branch:
                     // when this path emits a forced view change AND `quorumInfeasible` is true,
                     // the outer monitor builds `AbandonReason.QuorumInfeasible` from these
@@ -1178,9 +1326,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                       quorumInfeasible = quorumInfeasible,
                       activeFacilitators = coreRemaining,
                       quorumSize = coreQuorum,
-                      clusterSize = clusterSize
+                      clusterSize = clusterSize,
+                      pacemakerRequestEnqueued = enqueued
                     )
-                  )
+                  }
             } else existingHandle
           }
         }
@@ -1201,7 +1350,43 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         ) >>
           Metrics[F].incrementCounter("dag_consensus_view_change") >>
           Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
-          viewChangeManager.performViewChange(key, state).as(StallResult(didStall = true, quorumInfeasible = false))
+          viewChangeManager
+            .performViewChange(key, observedPacemakerEpoch)
+            .map(enqueued =>
+              StallResult(
+                didStall = true,
+                quorumInfeasible = false,
+                pacemakerRequestEnqueued = enqueued
+              )
+            )
+      } else if (ops.phaseIndex(state.status) == 2) {
+        // No peer is missing but the MajoritySignature phase still did not advance.
+        // Emit the same certified view-change vote as the missing-peer path; applying
+        // it gets one synchronous finalization attempt before any view mutation.
+        ConsensusLog.warn(
+          logger,
+          Category.Stall,
+          key.toString,
+          selfRole(state),
+          LogEvent.StallDetected,
+          "phase" -> statusName,
+          "elapsed" -> s"${statusDuration.toSeconds}s",
+          "timeout" -> s"${declarationTimeout.toSeconds}s",
+          "progress" -> s"$declaredCount/$activeCount",
+          "reason" -> "SIGNATURE_PHASE_STALLED",
+          "action" -> "request_view_change_vote"
+        ) >>
+          Metrics[F].incrementCounter("dag_consensus_signature_phase_view_change_requested_total") >>
+          Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
+          viewChangeManager
+            .performViewChange(key, observedPacemakerEpoch)
+            .map(enqueued =>
+              StallResult(
+                didStall = true,
+                quorumInfeasible = false,
+                pacemakerRequestEnqueued = enqueued
+              )
+            )
       } else {
         // All declared but phase hasn't advanced → count toward abandon
         ConsensusLog.warn(
@@ -1346,6 +1531,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind],
     resources: ConsensusResources[Artifact, Kind],
+    roundStartFacilitatorsHash: Hash,
     probedTargets: Set[PeerId],
     probationProbeDue: Boolean
   ): F[AdmissionVoteEmission] = {
@@ -1358,16 +1544,19 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       case ordinal: SnapshotOrdinal => ordinal.some
       case _                        => none[SnapshotOrdinal]
     }
+    val committee = state.roundStartFacilitators.value.toSet
+    val core = state.coreFacilitators.value.toSet
+    val requireCoreCertification =
+      ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+    val selfIsCore = core.contains(selfId)
+    val admissionVoteAuthority =
+      AdmissionVoterPool.allowsVoteEmission(selfId, requireCoreCertification, core)
     // Preserve rc.6's cached gossip-tip policy byte-for-behavior. The new direct
     // request is held to the stricter exact-parent rule in mergeExactResult below;
     // changing this shared predicate would also alter Currency L0, which is outside
     // this IntegrationNet GL0 mitigation.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
-      tip.snapshotHash === expectedTip ||
-        expectedOrdinal.exists { ordinal =>
-          tip.ordinal.value.value + AdmissionTipReadiness.OrdinalLagTolerance >= ordinal.value.value
-        }
-    val committee = state.roundStartFacilitators.value.toSet
+      AdmissionTipReadiness.isCachedReady(tip, expectedTip, expectedOrdinal, requireCoreCertification)
     val coreSize = math.max(1, state.coreFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
     val bootstrapActive = ctx.isInBootstrap(state.lastOutcome)
@@ -1393,34 +1582,51 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // largest possible batch rather than assuming the IntegrationNet value remains one.
       maxAdmissionSeats = admissionBatchSize
     )
-    // A v35 Core voter that has independently emitted a hysteresis-qualified Silent vote
-    // may also attest one ReadyAtTip candidate for an equal-sized replacement. This is
-    // local vote-emission evidence only. Proposal validation still rejects every standalone
-    // eviction, and Core prepare voting applies the normal N+1 headroom gate to an
-    // admission-only value.
-    val hasLocalAtomicReplacementIntent =
-      ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) &&
-        resources.evictionVotes.exists {
-          case (target, voters) =>
-            committee.contains(target) && voters.get(selfId).exists(_.value.reason === EvictionReason.Silent)
-        }
+    // The atomic lane cannot wait for this node to assemble an ECS: certificates are proposal
+    // payloads, not separately gossiped resources, so asymmetric vote delivery could otherwise
+    // leave every Core voter holding its own audit vote while no voter holds a complete ECS.
+    // Instead, the exact hysteresis-qualified self vote emitted by the round-start auditor is
+    // causal authority to emit the matching open ACS vote. Proposal construction/validation still
+    // requires both quorum certificates, so this local gate cannot change membership by itself.
+    val selfEvictionVotes = resources.evictionVotes.iterator.flatMap {
+      case (target, voters) => voters.get(selfId).map(vote => target -> vote)
+    }.toMap
+    val atomicReplacementIntentTargets = StallDetector.atomicReplacementIntentTargets(
+      selfId = selfId,
+      selfIsCore = selfIsCore,
+      atomicReplacementEnabled = requireCoreCertification,
+      cadenceAllowed = openAdmissionPolicy.cadenceAllowed,
+      currentCommittee = committee,
+      parentRoundCommittee = parentRoundCommitteeOf(state.lastOutcome),
+      selfEvictionVotes = selfEvictionVotes,
+      expectedFacilitatorsHash = roundStartFacilitatorsHash,
+      expectedParentHash = expectedTip,
+      entropy = expectedTip,
+      maxTargets = configuredMaxAdmissions
+    )
+    val hasAtomicReplacementIntent = atomicReplacementIntentTargets.nonEmpty
     val atomicReplacementAdmissionAllowed =
-      openAdmissionPolicy.cadenceAllowed && hasLocalAtomicReplacementIntent
+      hasAtomicReplacementIntent
     val maxOpenAdmissions =
-      if (openAdmissionPolicy.allowsOpenAdmission || atomicReplacementAdmissionAllowed) configuredMaxAdmissions else 0
+      if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxAdmissions
+      else atomicReplacementIntentTargets.size
     val canonicalNominees = admissionNomineesOf(state.lastOutcome)
     // Open expansion has a fixed per-voter target set for the entire round. Selection happens
     // before the local at-tip check, so a missing observation is an abstention rather than a walk
     // to the next candidate. Probation votes remain a separate, wider liveness lane below.
     val openAdmissionTargets = StallDetector.openAdmissionTargets(
-      candidates = canonicalNominees,
+      // A replacement target and admission candidate must be distinct. This remains true even
+      // if a malformed/stale parent happened to carry the evicted peer as its nominee.
+      candidates = StallDetector.excludeAtomicReplacementTargets(canonicalNominees, atomicReplacementIntentTargets),
       committee = committee,
       probation = probation,
       alreadyVotedBySelf = alreadyVotedBySelf,
       entropy = expectedTip,
       maxOpenAdmissions = maxOpenAdmissions,
-      selfIsCore = state.coreFacilitators.value.contains(selfId)
+      selfIsCore = selfIsCore
     )
+    val probationAdmissionVoteAllowed =
+      openAdmissionPolicy.allowsProbationAdmission && admissionVoteAuthority
 
     val policyOutcome =
       openAdmissionPolicy.headroom match {
@@ -1443,7 +1649,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         ) >>
         Metrics[F].updateGauge(
           "dag_consensus_probation_admission_vote_allowed",
-          if (openAdmissionPolicy.allowsProbationAdmission) 1L else 0L
+          if (probationAdmissionVoteAllowed) 1L else 0L
         ) >>
         Metrics[F].updateGauge(
           "dag_consensus_open_admission_headroom_gate_active",
@@ -1476,7 +1682,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       if (probation.isEmpty) b2AtTipStreakRef.set(Map.empty)
       else Async[F].unit
 
-    if (probation.isEmpty && openAdmissionTargets.isEmpty)
+    if (!admissionVoteAuthority || (probation.isEmpty && openAdmissionTargets.isEmpty))
       (recordOpenAdmissionPolicy >> clearStreaks).as(
         AdmissionVoteEmission(probedTargets, AdmissionCandidateTipProbe.Observation.NotAttempted)
       )
@@ -1493,7 +1699,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         val probationProbeTarget = for {
           _ <- admissionCandidateTipProbe
           target <- fixedProbationTarget
-          if openAdmissionPolicy.allowsProbationAdmission
+          if probationAdmissionVoteAllowed
           if !alreadyVotedBySelf.contains(target)
           if probationProbeDue
         } yield target
@@ -1501,9 +1707,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
           _ <- admissionCandidateTipProbe
           target <- AdmissionCandidateTipProbe.targetForRound(
             openAdmissionTargets,
-            probedTargets,
-            cachedChainTips,
-            isAdmissionReadyTip
+            probedTargets
           )
         } yield target
 
@@ -1591,7 +1795,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
               // matches behavior prior to this fix rather than silently bypassing the streak.
               val minStreak = math.max(1, config.b2AdmissionAtTipStreak)
               val readyAtTip: Set[PeerId] =
-                if (!openAdmissionPolicy.allowsProbationAdmission) Set.empty
+                if (!probationAdmissionVoteAllowed) Set.empty
                 else if (admissionCandidateTipProbe.nonEmpty)
                   AdmissionCandidateTipProbe.readyProbationTarget(
                     fixedProbationTarget,
@@ -1607,7 +1811,15 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                     !alreadyVotedBySelf.contains(pid) && streaks.getOrElse(pid, 0) >= minStreak
                   }
               val readyCandidatesAtTip: List[PeerId] =
-                openAdmissionTargets.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
+                AdmissionCandidateTipProbe.readyOpenTargets(
+                  openAdmissionTargets,
+                  cachedChainTips,
+                  directProbeResults,
+                  admissionCandidateTipProbe.nonEmpty,
+                  expectedTip,
+                  expectedOrdinal,
+                  isAdmissionReadyTip
+                )
               // Admission-gate diagnostic log per probation peer per tick.
               // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
               // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
@@ -1630,7 +1842,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                 if (admissionCandidateTipProbe.isEmpty) "disabled"
                 else if (fixedProbationTarget.isEmpty) "no_target"
                 else if (fixedProbationTarget.exists(alreadyVotedBySelf.contains)) "already_voted"
-                else if (!openAdmissionPolicy.allowsProbationAdmission) "policy_blocked"
+                else if (!probationAdmissionVoteAllowed) "policy_blocked"
                 else if (!probationProbeDue) "throttled"
                 else
                   probationObservation match {
@@ -1664,7 +1876,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                   "openCadenceAllowed" -> openAdmissionPolicy.cadenceAllowed.toString,
                   "openVoteAllowed" -> openAdmissionPolicy.allowsOpenAdmission.toString,
                   "atomicReplacementVoteAllowed" -> atomicReplacementAdmissionAllowed.toString,
-                  "probationVoteAllowed" -> openAdmissionPolicy.allowsProbationAdmission.toString,
+                  "probationVoteAllowed" -> probationAdmissionVoteAllowed.toString,
                   "openPolicyOutcome" -> policyOutcome,
                   "openObservedSigners" -> openAdmissionPolicy.headroom
                     .map(_.observedCurrentCommitteeSigners.toString)
@@ -1701,6 +1913,84 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 }
 
 object StallDetector {
+
+  /** Give a newly accepted pacemaker request exactly one serialized-loop opportunity before a local abandon may remove the state it needs
+    * for certificate assembly. Duplicate requests return `newPacemakerRequestEnqueued = false`, so an infeasible transition escapes via the
+    * ordinary abandon path on the following monitor tick.
+    */
+  private[consensus] def shouldAbandonThisMonitorTick(
+    abandonRequested: Boolean,
+    isLagging: Boolean,
+    sameKeyRestartUnsafe: Boolean,
+    newPacemakerRequestEnqueued: Boolean
+  ): Boolean =
+    abandonRequested && (isLagging || !sameKeyRestartUnsafe) && !newPacemakerRequestEnqueued
+
+  /** Under the Global L0 fail-closed bridge, a same-key abandon/recreate is safe only before proposal acceptance and before this node has
+    * voted or entered a certified later view. Currency explicitly keeps rc.7's legacy retry policy until it receives a coordinated
+    * full-value-QC rollout of its own.
+    */
+  private[consensus] def sameKeyRestartUnsafe(
+    viewNumber: Int,
+    phaseIndex: Int,
+    voteLockPopulated: Boolean,
+    mode: ViewSafetyMode
+  ): Boolean =
+    mode == ViewSafetyMode.LegacyFreezeAfterVote && (viewNumber > 0 || phaseIndex >= 2 || voteLockPopulated)
+
+  /** Select the exact local atomic-replacement intents that may open the admission-vote lane.
+    *
+    * The signing-finality auditor emits at most one deterministic `Silent` vote per round. An assembled ECS is deliberately not required
+    * here because certificates are not independently gossiped: on asymmetric delivery every honest Core node can hold its own valid vote
+    * without any one of them holding the quorum set. The locally stored self vote is sufficient only to emit the paired ACS vote; proposal
+    * construction and validation still require quorum-certified ECS + ACS with equal cardinality.
+    *
+    * Every payload binding is checked rather than merely looking for `selfId` in the voter map. In particular, stale votes from another
+    * parent or committee cannot authorize the bypass, and a generic stall-path vote for a different peer cannot be mistaken for the
+    * rendezvous-selected auditor target.
+    */
+  private[consensus] def atomicReplacementIntentTargets(
+    selfId: PeerId,
+    selfIsCore: Boolean,
+    atomicReplacementEnabled: Boolean,
+    cadenceAllowed: Boolean,
+    currentCommittee: Set[PeerId],
+    parentRoundCommittee: Set[PeerId],
+    selfEvictionVotes: Map[PeerId, Signed[EvictionVote]],
+    expectedFacilitatorsHash: Hash,
+    expectedParentHash: Hash,
+    entropy: Hash,
+    maxTargets: Int
+  ): List[PeerId] =
+    if (!atomicReplacementEnabled || !selfIsCore || !cadenceAllowed || maxTargets <= 0) List.empty
+    else
+      FinalityParticipationAuditor
+        .selectTarget(currentCommittee, parentRoundCommittee, entropy)
+        .filter { target =>
+          target =!= selfId &&
+          currentCommittee.contains(target) &&
+          selfEvictionVotes.get(target).exists { signed =>
+            val signerIds = signed.proofs.toSortedSet.iterator.map(_.id.toPeerId).toSet
+            val vote = signed.value
+
+            signerIds === Set(selfId) &&
+            vote.targetPeer === target &&
+            vote.reason === EvictionReason.Silent &&
+            vote.facilitatorsHash === expectedFacilitatorsHash &&
+            vote.lastSnapshotHash === expectedParentHash
+          }
+        }
+        .toList
+        .take(math.max(0, maxTargets))
+
+  /** An atomic replacement cannot remove and re-admit the same identity. Keep the exclusion in one pure helper so proposal-nominee input
+    * cannot accidentally bypass it during future lane refactors.
+    */
+  private[consensus] def excludeAtomicReplacementTargets(
+    candidates: Set[PeerId],
+    replacementTargets: Iterable[PeerId]
+  ): Set[PeerId] =
+    candidates -- replacementTargets.toSet
 
   /** Keep probation recovery and open expansion as independent vote-emission lanes.
     *

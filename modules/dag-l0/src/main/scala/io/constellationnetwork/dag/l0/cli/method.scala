@@ -103,12 +103,27 @@ object method {
     rollbackHash: Hash,
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
-    allowanceListPath: Option[AllowanceListPath]
+    allowanceListPath: Option[AllowanceListPath],
+    recoveryPlanPath: Option[Path] = None
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
 
     val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
+
+    val recoveryPlanPathOpts: Opts[Option[Path]] =
+      Opts
+        .option[Path](
+          "recovery-plan",
+          "DANGER: lead-signed, anchor-bound GL0 recovery plan; use on the one run-rollback lead and every named run-validator"
+        )
+        .orElse(
+          Opts.env[Path](
+            "CL_GL0_RECOVERY_PLAN_PATH",
+            help = "DANGER: lead-signed, anchor-bound GL0 recovery plan; planned recovery nodes only"
+          )
+        )
+        .orNone
 
     val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
       (
@@ -123,7 +138,8 @@ object method {
         rollbackHashOpts,
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
-        AllowanceListPath.opts
+        AllowanceListPath.opts,
+        recoveryPlanPathOpts
       ).mapN(RunRollback.apply)
     }
   }
@@ -140,7 +156,8 @@ object method {
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
     peerToJoinPool: NonEmptySet[PeerToJoin],
-    allowanceListPath: Option[AllowanceListPath]
+    allowanceListPath: Option[AllowanceListPath],
+    recoveryPlanPath: Option[Path] = None
   ) extends Run
 
   case class RunValidator(
@@ -154,7 +171,8 @@ object method {
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
-    allowanceListPath: Option[AllowanceListPath]
+    allowanceListPath: Option[AllowanceListPath],
+    recoveryPlanPath: Option[Path] = None
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -171,7 +189,8 @@ object method {
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
-        AllowanceListPath.opts
+        AllowanceListPath.opts,
+        RunRollback.recoveryPlanPathOpts
       ).mapN(RunValidator.apply)
     }
   }

@@ -126,10 +126,14 @@ recent-signer pool:
 
 A peer outside these lanes remains Tier 1 when otherwise eligible. Score exclusion
 or one missed Facility removes Core/leader eligibility, not the signing lease. The
-early Facility responder signal is deliberately not reused as a Tier-1 eviction
-proxy. A separate bounded finality audit inspects actual parent-artifact
-`MajoritySignature` proofs and can only end a lease through the existing
-quorum-certified eviction path; see sections 4 and 5.
+early Facility responder signal is deliberately not reused as signing-seat eviction
+evidence. Under v35, a separate bounded finality audit inspects actual parent-artifact
+`MajoritySignature` proofs for every Core + Tier-1 signing peer. Its certificate can
+only be consumed with a paired Core-certified ReadyAtTip admission, so this
+health-derived path does not shrink the next-round signing roster or finality floor.
+Independent deterministic eligibility authority (including seedlist, on-chain
+collateral eligibility, and configured facilitator selection) remains unchanged; see
+sections 4 and 5.
 
 New leases use a certified two-round path. The round-N leader carries one
 rendezvous-ranked candidate in its Proposal. In round N+1, Core members vote for
@@ -216,10 +220,11 @@ this collapses to pure lex ordering so the cluster bootstraps from scratch.
 The floor is consensus-critical: divergent values across operators would derive
 divergent Core committees and silently fork. `coreCommitteeSize` is keyed by
 `AppEnvironment`, resolved to a flat value at the construction site, and (as of
-v20) folded into `deterministicConfigHash`, so a mismatched value is rejected at
-handshake by the config hash (`CommitteeBuilder.scala:49-53`). Release-version
-hashes provide the separate version fence; the advertised jar hash is not
-compared. The dag-l0 floor argument is
+v20) folded into `deterministicConfigHash`, so a mismatched value is rejected by
+the separate consensus-configuration/facility fence (`CommitteeBuilder.scala:49-53`).
+It is not the join-time version gate. Join `versionHash` is the hash of the
+advertised version string (or `CL_VERSION_HASH` override), while the advertised jar
+or assembly bytes are not hashed or compared. The dag-l0 floor argument is
 `coreCommitteeSize` (`GlobalSnapshotConsensusStateCreator.scala:559`,
 `coreFloor = coreCommitteeSize`).
 
@@ -297,21 +302,21 @@ The pool is the **union** of two consensus-agreed sources
 For a target-keyed cert (B1/B2), `forTarget` additionally removes the `target` so a
 peer cannot witness its own eviction or admission
 (`state/WitnessPool.scala:44-50`). The non-keyed `all` is used for VCC view-change.
-Two deliberately narrower selectors sit in front of that wider pool:
-
-- open admission and Tier-1 finality-participation eviction are Core-attested; and
-- probation readmission and Core-target stall eviction preserve the wider recovery
-  lane.
-
-The target's frozen tier selects the eviction lane identically at certificate
-assembly and Proposal validation. Thus a silent Tier-1 peer never becomes necessary
-to certify its own removal, while damaged-Core recovery keeps the historical witness
-functionality it already depended on.
+Two deliberately narrower selectors sit in front of that wider pool. Open admission
+is Core-attested. Before v35, probation readmission and Core-target stall eviction
+preserve the wider recovery lane while Tier-1 finality-participation eviction is
+Core-attested. Under v35, every health-derived Core or Tier-1 replacement target is
+Core-attested and must be paired one-for-one with a Core-attested open ReadyAtTip
+admission. Assembly and Proposal validation select the same lane. The target cannot
+certify its own replacement, while Currency L0 and legacy Global-L0 recovery retain
+their separately specified wider witness behavior.
 
 Determinism contract (`state/WitnessPool.scala:16-34`): both inputs are
 consensus-agreed (signed in the previous snapshot), and `minParticipationObservations`
-lives in `deterministicConfigHash` so a divergent value rejects peer connections at
-the version gate. The result is a `Set[PeerId]` (order-independent); cert builders
+lives in `deterministicConfigHash` so a divergent value is rejected by the separate
+consensus-configuration/facility fence. That hash is not join `versionHash`, which
+hashes the advertised version string (or `CL_VERSION_HASH` override). The result is
+a `Set[PeerId]` (order-independent); cert builders
 sort the resulting votes into a `SortedSet` for stable serialization. Because
 `peerQuality` grows monotonically, the wider pool is a monotone function of round
 history, and in steady state with a healthy committee the union is dominated by
@@ -538,10 +543,13 @@ unanimity; broad retention there requires a separate design.
    routes classifier exclusions to `nonCorePeers`.
 4. **Tier partition.** `CommitteeBuilder.build` partitions the retained set into
    Core / Tier 1 / Witness and applies the Core floor and chronic-core ladder.
-5. **Bounded Tier-1 finality audit.** Before sending the first Facility, every node
-   updates local actual-proof miss streaks for all auditable Tier-1 peers. Current
-   Core nodes audit the same entropy-ranked target; only a third consecutive local
-   miss emits the existing eviction vote and queues existing certificate assembly.
+5. **Bounded signing-finality audit.** Before sending the first Facility, every node
+   updates local actual-proof miss streaks for all auditable Core + Tier-1 signing
+   peers. Current Core nodes audit the same entropy-ranked target. Under v35, a third
+   consecutive local miss in the protocol-derived dead band may emit the existing
+   eviction vote, but that evidence has no standalone removal authority: it must be
+   paired with a Core-certified open ReadyAtTip admission in one exact N-to-N
+   replacement.
 6. **Leader selection.** `LeaderEligibility.fromRecentSigners` restricts the leader
    pool to graduated recent signers within Core (`:635-643`), then
    `selectLeaderWeighted` picks the view's leader.

@@ -4,12 +4,14 @@ import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Queue
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, FirstRoundStartGate, PendingTriggersF}
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -53,6 +55,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
+  firstRoundStartGate: FirstRoundStartGate[F, Key],
+  plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]],
   // Gossip handle for re-distributing locally-derived consensus artifacts that downstream
   // peers need but might miss via the per-peer assembly path. Currently used to broadcast
   // an assembled `ViewChangeCertificate` from `StateTransitions.checkViewChangeAssembly` so
@@ -127,10 +131,17 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // losing a sidecar must never lose a finalized snapshot or prevent recovery initialization.
   onOutcomeFinalized: Outcome => F[Unit],
   onOutcomeInitialized: Outcome => F[Unit],
+  // Fail-fast preflight before initialization mutates consensus/journal state. Recovery plans use
+  // this boundary to validate exact anchor content/collateral and durably consume one-shot authority.
+  onOutcomePreInitialize: Outcome => F[Unit],
+  // Safety-critical durable-state cleanup after either rollback or download installs
+  // an authoritative outcome. Unlike the ordinary best-effort sidecar hook above,
+  // failures propagate and block Ready/next-round startup until a retry succeeds.
+  onOutcomeSafetyInitialized: Outcome => F[Unit],
   // Explicit rollback is the only initialization path allowed to discard safety records above
   // the accepted boundary. Ordinary download/restart initialization must retain an in-flight
   // next-key vote lock, otherwise a process restart re-opens the cross-view double-vote window.
-  onOutcomeRollbackInitialized: Outcome => F[Unit],
+  onOutcomeRollbackInitialized: (Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit],
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
@@ -159,7 +170,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
 
 object ConsensusEngineContext {
 
-  def create[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+  def create[F[_]: Async, Event, Key: cats.Eq, Artifact, Ctx, Status, Outcome, Kind](
     selfId: PeerId,
     queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     pending: PendingTriggersF[F],
@@ -187,10 +198,15 @@ object ConsensusEngineContext {
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     onOutcomeFinalized: Outcome => F[Unit],
     onOutcomeInitialized: Outcome => F[Unit],
-    onOutcomeRollbackInitialized: Outcome => F[Unit]
+    onOutcomePreInitialize: Outcome => F[Unit],
+    onOutcomeSafetyInitialized: Outcome => F[Unit],
+    onOutcomeRollbackInitialized: (Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit],
+    initiallyHoldFirstRound: Boolean,
+    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
+      firstRoundStartGate <- FirstRoundStartGate.make[F, Key](initiallyHoldFirstRound)
       recoveredAtKey <- Ref.of[F, Option[Key]](None)
       retriableAtSameKey <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
     } yield
@@ -199,6 +215,8 @@ object ConsensusEngineContext {
         queue,
         running,
         pending,
+        firstRoundStartGate,
+        plannedRecoveryCommittee,
         gossip,
         storage,
         creator,
@@ -223,6 +241,8 @@ object ConsensusEngineContext {
         lastOutcomeEndTimeMsOf,
         onOutcomeFinalized,
         onOutcomeInitialized,
+        onOutcomePreInitialize,
+        onOutcomeSafetyInitialized,
         onOutcomeRollbackInitialized,
         recoveredAtKey,
         retriableAtSameKey

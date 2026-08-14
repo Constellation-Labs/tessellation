@@ -142,6 +142,22 @@ object AdmissionCertificateSelectorSuite extends FunSuite {
     forEach(selections)(selection => expect.same(List(certD), selection.kept))
   }
 
+  test("atomic replacement partitions before cap and keeps an open ReadyAtTip certificate over probation") {
+    val entropy = Hash.fromBytes("replacement-open-priority".getBytes("UTF-8"))
+    val probation = Set(certD.targetPeer)
+    val selections = all.permutations
+      .map(AdmissionCertificateSelector.selectOpenReadyForReplacement(_, 1, entropy, probation))
+      .toList
+
+    expect(selections.nonEmpty) &&
+    forEach(selections)(selection =>
+      expect(selection.kept.size == 1) &&
+        expect(!probation.contains(selection.kept.head.targetPeer)) &&
+        expect(selection.kept.head.reason == AdmissionReason.ReadyAtTip) &&
+        expect(selection.dropped.contains(certD))
+    )
+  }
+
   test("apply defense keeps its version-stable legacy ordering") {
     val entropyCandidates = (1 to 64).map(i => Hash.fromBytes(s"proposal-entropy-$i".getBytes("UTF-8")))
     val rotatingEntropy = entropyCandidates.find { entropy =>

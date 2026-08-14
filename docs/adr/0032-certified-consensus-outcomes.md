@@ -62,8 +62,11 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    rc.7 Global L0 policy continues to disable health-derived contraction. After v35
    activation, Global L0 may certify one bounded atomic replacement for N+1: every
    `evictedPeer` must be paired one-for-one with an `admittedPeer` in the same
-   ProposalValue, so the signing roster and finality floor cannot shrink. Core certifies
-   the complete pair; standalone or unequal eviction batches fail closed. The replacement
+   ProposalValue, so this health-derived path cannot shrink the signing roster or
+   finality floor. Core certifies the complete pair; standalone or unequal eviction
+   batches fail closed. Deterministic administrative/eligibility filtering (seedlist,
+   next-context/on-chain collateral eligibility and configured facilitator selection)
+   remains separate authority and may still remove an ineligible incumbent. The replacement
    reuses the existing ACS/ECS messages and ProposalValue sets and does not introduce a
    serialization or hash domain. Currency L0 retains its existing eviction authority and
    does not adopt the Global L0 replacement policy. These are separate policy capabilities:
@@ -173,6 +176,10 @@ aligned v35 jar/config when their own metagraph activates it.
 - Missing or corrupt certified sidecars reduce recovery availability and must never be
   treated as valid evidence; every adopted outcome is cryptographically re-verified
   against the locally known parent committee.
+- Ordinary rollback at or after activation requires an operator-signed recovery plan. A
+  standalone typed outcome cannot authenticate the lineage of the committee used to
+  verify its own QCs; long-range ordinary rollback remains out of scope until a
+  contiguous certified chain or separately trusted checkpoint is implemented.
 - Missing and corrupt pre-finalization vote-lock records have deliberately different
   semantics: missing is no prior durable vote, while corrupt is a hard local safety
   failure. Operators must preserve the `certifiedVoteLocks` directory through ordinary

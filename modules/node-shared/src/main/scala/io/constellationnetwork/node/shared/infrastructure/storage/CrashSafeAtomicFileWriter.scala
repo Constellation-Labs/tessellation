@@ -53,6 +53,29 @@ final class CrashSafeAtomicFileWriter[F[_]: Async] private (base: Path) {
     }
   }
 
+  /** Durably create a file exactly once.
+    *
+    * `CREATE_NEW` is the operating-system exclusivity boundary: concurrent writers and later process invocations cannot replace an existing
+    * destination. Unlike [[write]], a failure or cancellation after creation deliberately leaves the destination in place. This
+    * conservative rule is required for consumed-authority receipts: a crash after authority was consumed must never make the authority
+    * reusable merely because its audit payload was only partially written. Callers must therefore treat existence (not payload
+    * completeness) as the consumed marker.
+    */
+  def writeNew(fileName: String, bytes: Array[Byte]): F[Unit] = {
+    val target = destination(fileName)
+
+    Async[F].uncancelable { _ =>
+      Async[F].blocking {
+        val channel = FileChannel.open(target, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+        try {
+          val buffer = ByteBuffer.wrap(bytes)
+          while (buffer.hasRemaining) channel.write(buffer)
+          channel.force(true)
+        } finally channel.close()
+      } >> forceDirectory
+    }
+  }
+
   /** Durably remove a file. The directory is forced even when the file is already absent, so retrying a cancellation that landed between
     * unlink and directory fsync still establishes a durable cleanup boundary. A crash that resurrects an already-finalized safety lock is
     * conservative, but sharing this rule keeps lifecycle behavior explicit and avoids platform-dependent journal retention.

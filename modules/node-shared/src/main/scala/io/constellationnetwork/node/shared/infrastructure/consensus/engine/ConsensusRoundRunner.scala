@@ -257,10 +257,23 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       _ <- queue.offer(ConsensusCommand.TimeTick).whenA(maybeTimeTrigger.exists(currentTime >= _))
     } yield ()
 
+  /** Re-arm monitoring for a round that still exists after a queued abandonment was suppressed at drain time. The original monitor
+    * intentionally terminates after it enqueues `AbandonRound`; without this re-arm, the safety checks that preserve a newer attempt would
+    * also leave that attempt permanently unmonitored.
+    */
+  def ensureRoundMonitor(key: Key): F[Unit] =
+    storage.getState(key).flatMap {
+      case Some(state) if advancer.getConsensusOutcome(state).isEmpty => startRoundMonitor(key)
+      case _                                                          => Async[F].unit
+    }
+
   private def startRoundMonitor(key: Key): F[Unit] =
     for {
       signal <- Deferred[F, Unit]
-      _ <- cancelSignalRef.set(Some(signal))
+      // Replace, rather than merely overwrite, any prior monitor signal. This keeps
+      // ensureRoundMonitor idempotent when a newer transition already re-armed the round.
+      previousSignal <- cancelSignalRef.getAndSet(Some(signal))
+      _ <- previousSignal.traverse_(_.complete(()).attempt.void)
       _ <- spawnTracked {
         stallDetector
           .monitor(key, signal)

@@ -54,10 +54,16 @@ abstract class SnapshotConsensusFunctions[
 
   def triggerPredicate(event: Event): Boolean = true
 
-  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
+  /** Context-only eligibility projection shared by round creation and certified next-round validation. Artifact proofs never participate in
+    * collateral eligibility; exposing the actual dependency prevents callers from inventing placeholder signatures just to reuse policy.
+    */
+  def facilitatorEligible(context: Context, peerId: peer.PeerId): F[Boolean] =
     peerId.toAddress[F].flatMap { address =>
-      getBalance(lastContext, address).map(_.satisfiesCollateral(getRequiredCollateral))
+      getBalance(context, address).map(_.satisfiesCollateral(getRequiredCollateral))
     }
+
+  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
+    facilitatorEligible(lastContext, peerId)
 
   def validateArtifact(
     lastSignedArtifact: Signed[Artifact],

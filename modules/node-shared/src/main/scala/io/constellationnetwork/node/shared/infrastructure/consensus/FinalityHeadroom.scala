@@ -3,11 +3,12 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
 import io.constellationnetwork.schema.peer.PeerId
 
-/** Exact current-seat and next-seat finality-headroom calculation shared by admission and Tier-1 silence eviction.
+/** Exact current-seat and next-seat finality-headroom calculation shared by admission and certified signing-seat replacement.
   *
   * Finalized proof subsets are node-local, so this result may only control local vote emission. It must never be validated from a Proposal
   * or copied into deterministic state. Admission and eviction remain authoritative only after their existing quorum-certified evidence is
-  * accepted; open admission uses Core voters while probation recovery preserves its wider witness pool at a Core-sized threshold.
+  * accepted; open admission uses Core voters. Legacy probation recovery preserves its wider witness pool at a Core-sized threshold, while
+  * certified atomic membership requires Core certification for probation admission too.
   */
 object FinalityHeadroom {
 
@@ -36,8 +37,9 @@ object FinalityHeadroom {
       * currentFloor <= observedSigners < nextFloor
       * }}}
       *
-      * Neither admission nor silent eviction is allowed in that zone. Using `!allowsExpansion` here would make adjacent floor steps
-      * oscillate between admitting and evicting the same seat.
+      * Before v35, neither admission nor standalone silent eviction is allowed in that zone. V35 may use the same zone for an exact
+      * one-for-one certified replacement, which keeps both committee size and finality floor unchanged. Using `!allowsExpansion` as
+      * standalone removal authority would make adjacent floor steps oscillate between admitting and evicting the same seat.
       */
     val allowsSilentEviction: Boolean = currentMargin < 0
 

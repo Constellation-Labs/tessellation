@@ -68,7 +68,8 @@ object declaration {
     // aggregates these into `Proposal.observedSelfHealth` for consensus-agreed propagation;
     // `selectLeaderWeighted` in the next round demotes Degraded peers to tier 1 and Critical
     // peers to tier 2. Optional with default None so the field is wire-compatible with older
-    // versions, although the jar hash gate already prevents cross-version peer connections.
+    // versions, although distinct advertised versions (or `CL_VERSION_HASH` values) are rejected
+    // by the join-time `versionHash` gate.
     selfHealthHint: Option[SelfHealthHint] = None,
     // v19 phase 2: per-facilitator wall-clock at signing time (raw millis, no bucketing).
     // Acquired via `Clock[F].realTime.map(_.toMillis)` in the Facility build effect. The
@@ -324,8 +325,8 @@ object declaration {
   sealed trait EvictionReason
 
   object EvictionReason {
-    // Used by both existing Core-target stall repair and the bounded Tier-1 finality
-    // audit. For a Tier-1 target, "Silent" means a Core quorum did not observe the
+    // Used by both existing Core-target stall repair and the bounded signing-participation
+    // audit. For a certified replacement target, "Silent" means a Core quorum did not observe the
     // target's MajoritySignature before its local parent-round finalization cutoff;
     // it does not claim that the target never signed anywhere in the network.
     case object Silent extends EvictionReason

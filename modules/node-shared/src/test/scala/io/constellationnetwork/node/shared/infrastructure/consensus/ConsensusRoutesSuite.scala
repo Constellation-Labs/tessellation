@@ -75,6 +75,29 @@ object ConsensusRoutesSuite extends MutableIOSuite {
     } yield expect.all(response.status === Ok, body.contains(old))
   }
 
+  test("an exact live recovery outcome takes precedence over a stale same-key sidecar") { selector =>
+    implicit val hasherSelector: HasherSelector[IO] = selector
+
+    val key = ordinal(10L)
+    val planned = TestOutcome(key, "live-planned-committee")
+    val stale = TestOutcome(key, "stale-certified-committee")
+
+    for {
+      storage <- ConsensusStorage.make[IO, String, SnapshotOrdinal, String, Unit, String, TestOutcome, String](config)
+      _ <- storage.trySetInitialConsensusOutcome(planned)
+      queue <- Queue.unbounded[IO, Hashed[RumorRaw]]
+      routes = new ConsensusRoutes[IO, SnapshotOrdinal, String, Unit, String, TestOutcome, String](
+        storage,
+        queue,
+        Some(requested => stale.some.filter(_.key === requested).pure[IO])
+      )
+      response <- routes.p2pRoutes.orNotFound.run(
+        Request[IO](POST, uri"/consensus/specific/outcome").withEntity(GetConsensusOutcomeRequest(key).asJson)
+      )
+      body <- response.as[Option[TestOutcome]]
+    } yield expect.all(response.status === Ok, body.contains(planned), !body.contains(stale))
+  }
+
   test("without an exact sidecar the existing ahead response remains Conflict") { selector =>
     implicit val hasherSelector: HasherSelector[IO] = selector
 

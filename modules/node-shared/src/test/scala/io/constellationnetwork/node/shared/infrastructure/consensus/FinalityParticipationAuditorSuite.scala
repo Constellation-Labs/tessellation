@@ -56,7 +56,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     forEach(selections)(selection => expect.same(expected, selection))
   }
 
-  test("all auditable Tier-1 misses are tracked and a vote requires three consecutive misses") {
+  test("all auditable signing-committee misses are tracked and a vote requires three consecutive misses") {
     val first = observe("parent-1", 1L, core)
     val second = observe("parent-2", 2L, core, first.history)
     val third = observe("parent-3", 3L, core, second.history)
@@ -79,7 +79,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
 
     expect(third.decision.exists(_.shouldVote)) &&
     expect(headroom.allowsExpansion) &&
-    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true)))
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(d, headroom, cadenceAllowed = true)))
   }
 
   test("three misses hold membership in the current-floor to next-floor dead band") {
@@ -91,12 +91,11 @@ object FinalityParticipationAuditorSuite extends FunSuite {
 
     expect(!headroom.allowsExpansion) &&
     expect(headroom.holdsMembership) &&
-    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true))) &&
     expect(third.decision.exists(d => FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(d, headroom, cadenceAllowed = true))) &&
     expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(d, headroom, cadenceAllowed = false)))
   }
 
-  test("three elapsed misses emit an eviction vote only for a current-floor deficit and on cadence") {
+  test("a current-floor deficit never authorizes standalone contraction") {
     val first = observe("parent-1", 1L, core)
     val second = observe("parent-2", 2L, core, first.history)
     val third = observe("parent-3", 3L, core, second.history)
@@ -104,8 +103,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     val headroom = FinalityHeadroom.evaluate(committee, committee.take(4), 2.0 / 3.0)
 
     expect(headroom.allowsSilentEviction) &&
-    expect(third.decision.exists(d => FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true))) &&
-    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = false)))
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(d, headroom, cadenceAllowed = true)))
   }
 
   test("fast event rounds satisfy the miss count but not the elapsed-time floor") {
@@ -125,7 +123,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect.same(Duration.Zero, FinalityParticipationAuditor.minimumMissDuration(43.seconds, 1))
   }
 
-  test("any observed proof resets that peer while other Tier-1 streaks continue") {
+  test("any observed proof resets that peer while other signing-committee streaks continue") {
     val first = observe("parent-1", 1L, core)
     val second = observe("parent-2", 2L, core + peer('4'), first.history)
     val third = observe("parent-3", 3L, core, second.history)
@@ -145,7 +143,7 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect.same(first.decision.map(_.consecutiveMisses), retry.decision.map(_.consecutiveMisses))
   }
 
-  test("Tier-1 observers track history but do not emit audit decisions") {
+  test("non-Core observers track history but do not emit audit decisions") {
     val observation = observe("parent", 1L, core, observer = peer('4'))
 
     expect.same(None, observation.decision) && expect(observation.history.consecutiveMisses.values.forall(_ == 1))

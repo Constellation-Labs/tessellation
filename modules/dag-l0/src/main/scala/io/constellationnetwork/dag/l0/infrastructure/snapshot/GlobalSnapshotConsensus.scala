@@ -8,14 +8,16 @@ import cats.effect.kernel.{Async, Fiber, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.dag.l0._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   GlobalSnapshotEventCutter,
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt}
 import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
@@ -24,7 +26,7 @@ import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
-import io.constellationnetwork.node.shared.config.types.SharedConfig
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
@@ -58,13 +60,14 @@ import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValida
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.key.ops._
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Json
@@ -94,6 +97,7 @@ object GlobalSnapshotConsensus {
     validators: SharedValidators[F],
     sharedServices: SharedServices[F, R],
     appConfig: AppConfig,
+    effectiveConsensusConfig: ConsensusConfig,
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
@@ -117,6 +121,9 @@ object GlobalSnapshotConsensus {
     // Main.scala populates the real getter once the daemon is up; before that it returns
     // Map.empty and no admission votes fire (safe default).
     getPeerChainTips: F[Map[PeerId, ChainTip]],
+    configuredRecoveryPlan: F[Option[Gl0RecoveryPlanLoader.Verified]],
+    recoveryPlanReceipt: Gl0RecoveryPlanReceipt[F],
+    initiallyHoldConsensusFirstRound: Boolean,
     // Shared consensus-health Ref from SharedServices. When provided, the engine's
     // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
     // reads, activating the leave-refusal behavior. When None, the engine creates its own
@@ -166,72 +173,10 @@ object GlobalSnapshotConsensus {
           loggerBundle
         )
 
-      // v20: env-resolved Core committee size threaded into `ConsensusConfig.coreCommitteeSize`
-      // so it folds into `deterministicConfigHash`. Resolution happens here (single point) and
-      // the resulting `effectiveConsensusConfig` is what every downstream component reads --
-      // ConsensusStorage, consensusFunctions, stateAdvancer, stateCreator, ConsensusEventLoop.
-      // The default `3` mirrors the dev-environment value used by
-      // `GlobalSnapshotConsensusStateCreator.make` and `CurrencySnapshotConsensus`.
-      resolvedCoreCommitteeSize = appConfig.snapshot.coreCommitteeSize.get(appConfig.environment).map(_.value).getOrElse(3)
-      // v33: env-resolved quorum-denominator-shrink activation threshold (absent env entry = 0 =
-      // rung disabled). Folded into `deterministicConfigHash` via the consensus config copy below.
-      resolvedQuorumShrinkActivationViews = appConfig.snapshot.quorumShrinkActivationViews
-        .get(appConfig.environment)
-        .getOrElse(0)
-      resolvedCertifiedConsensusActivationKey = appConfig.snapshot.certifiedConsensusActivationOrdinal
-        .getOrElse(appConfig.environment, SnapshotOrdinal.MaxValue)
-        .value
-        .value
-      // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry =
-      // 0 = lane inert). Folded into `deterministicConfigHash` via the consensus config copy below.
-      resolvedActiveAdmissionMinProbationReentrySlots = appConfig.snapshot.activeAdmissionMinProbationReentrySlots
-        .get(appConfig.environment)
-        .getOrElse(0)
-      // Recent-signer pool lookback depth: env-resolved, floored to the DemotionConsecutiveMisses
-      // constant (3) so a low operator value cannot disable the recent-signer path (Codex review #2).
-      // Absent env entry resolves to that floor (the pre-change lookback). Folded into the copy below.
-      resolvedActiveAdmissionRecentSignerWindow = math.max(
-        3,
-        appConfig.snapshot.activeAdmissionRecentSignerWindow.get(appConfig.environment).getOrElse(3)
-      )
-      // Active-set growth target + hard cap: env-resolved (the coreCommitteeSize pattern) and
-      // folded into `deterministicConfigHash` via the copy below. Absent env entries preserve the
-      // ConsensusConfig scalar resolution (None -> coreCommitteeSize fallback at the consumers).
-      // INVARIANTS (conf convention): target > coreFloor and max >= coreFloor for every
-      // environment -- violating either closes the admission feeder below the Core floor
-      // (v4.1.0 base scalars: target 7 / max 13 vs integrationnet floor 9 and mainnet floor 15).
-      resolvedActiveFacilitatorTarget = appConfig.snapshot.activeFacilitatorTarget
-        .get(appConfig.environment)
-        .orElse(appConfig.snapshot.consensus.activeFacilitatorTarget)
-      resolvedActiveFacilitatorMax = appConfig.snapshot.activeFacilitatorMax
-        .get(appConfig.environment)
-        .orElse(appConfig.snapshot.consensus.activeFacilitatorMax)
-      effectiveConsensusConfig = appConfig.snapshot.consensus.copy(
-        coreCommitteeSize = Some(resolvedCoreCommitteeSize),
-        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
-        certifiedConsensusActivationKey = resolvedCertifiedConsensusActivationKey,
-        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
-        activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
-        activeFacilitatorMax = resolvedActiveFacilitatorMax
-      )
-      // Fail fast on Core-controller sizing invariants. Enforced only for explicitly configured
-      // values; these bounds classify Core and do not cap broad Tier-1 signing membership.
-      _ <- new IllegalArgumentException(
-        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
-          s" ($resolvedCoreCommitteeSize): the Core controller requires classification headroom"
-      ).raiseError[F, Unit]
-        .whenA(resolvedActiveFacilitatorTarget.exists(_ <= resolvedCoreCommitteeSize))
-      _ <- new IllegalArgumentException(
-        s"active-facilitator-max ($resolvedActiveFacilitatorMax) must be >= core-committee-size" +
-          s" ($resolvedCoreCommitteeSize): the Core classification cannot cap below its floor"
-      ).raiseError[F, Unit]
-        .whenA(resolvedActiveFacilitatorMax.exists(_ < resolvedCoreCommitteeSize))
-      _ <- new IllegalArgumentException(
-        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must not exceed" +
-          s" active-facilitator-max ($resolvedActiveFacilitatorMax)"
-      ).raiseError[F, Unit]
-        .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
+      // Startup resolves this exact object once for both the join fence and live engine. Every
+      // downstream component reads the same projection; the fallback is retained defensively.
+      resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
+      resolvedCertifiedConsensusActivationKey = effectiveConsensusConfig.certifiedConsensusActivationKey
 
       certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
         appConfig.snapshot.snapshotPath / "certifiedVoteLocks"
@@ -245,9 +190,9 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](effectiveConsensusConfig, certifiedVoteLockPersistence)
+      ](effectiveConsensusConfig, LegacyViewChangePolicy.FreezeAfterVote, certifiedVoteLockPersistence)
 
-      // Global L0 injects the command queue so the round-creation Tier-1 finality audit can
+      // Global L0 injects the command queue so the round-creation signing-participation audit can
       // enqueue the existing certificate-assembly command before sending its first Facility.
       // Currency L0 and generic callers continue to let ConsensusEventLoop allocate internally.
       consensusQueue <- Queue.unbounded[
@@ -255,8 +200,8 @@ object GlobalSnapshotConsensus {
         ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
       ]
       // Node-local proof-miss streaks are intentionally not restored. A restart starts at zero,
-      // delaying Tier-1 eviction until three new consecutive misses are locally observed.
-      tier1FinalityMissHistoryRef <- Ref.of[F, FinalityParticipationAuditor.MissHistory](
+      // delaying certified signing-seat replacement until three new consecutive misses are locally observed.
+      finalityParticipationMissHistoryRef <- Ref.of[F, FinalityParticipationAuditor.MissHistory](
         FinalityParticipationAuditor.MissHistory.empty
       )
 
@@ -275,6 +220,7 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        HealthDerivedMembershipPolicy.RetainSigningLeases,
         Slf4jLogger.getLogger[F]
       )
       consensusFunctions =
@@ -302,7 +248,7 @@ object GlobalSnapshotConsensus {
         )
 
       facilitatorSelector = FacilitatorSelector.make(
-        appConfig.snapshot.maxFacilitatorCount.get(appConfig.environment).map(_.value)
+        effectiveConsensusConfig.facilitatorSelectionMax
       )
 
       // Alpha.94: node-local sidecar for the post-finalization `ConsensusOperationalState`.
@@ -316,6 +262,40 @@ object GlobalSnapshotConsensus {
       )
       certifiedOutcomeCutoff = appConfig.incremental.lastFullGlobalSnapshotOrdinal
         .getOrElse(appConfig.environment, SnapshotOrdinal.MinValue)
+      recoveryPlanPreflight = (outcome: GlobalConsensusOutcome) =>
+        configuredRecoveryPlan.flatMap(_.traverse_ { verified =>
+          val plan = verified.plan
+          for {
+            hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
+              outcome.finished.signedMajorityArtifact.toHashed[F]
+            }
+            expected = GlobalRecoveryPlanOutcome.seed(
+              outcome.finished.signedMajorityArtifact,
+              outcome.finished.context,
+              hashedSnapshot.hash,
+              plan.committee
+            )
+            _ <- new IllegalStateException(
+              s"Downloaded GL0 recovery outcome does not match signed plan=${plan.planId.value}: " +
+                s"expectedAnchor=${plan.anchor.ordinal.value.value}/${plan.anchor.snapshotHash.value} " +
+                s"got=${outcome.key.value.value}/${hashedSnapshot.hash.value}"
+            ).raiseError[F, Unit]
+              .unlessA(
+                outcome.key === plan.anchor.ordinal &&
+                  hashedSnapshot.hash === plan.anchor.snapshotHash &&
+                  outcome === expected
+              )
+            ineligible <- plan.committee.toList.filterA { peerId =>
+              peerId.toPublic[F].map(_.toAddress).map { address =>
+                !outcome.finished.context.balances.get(address).getOrElse(Balance.empty).satisfiesCollateral(collateral)
+              }
+            }
+            _ <- new IllegalStateException(
+              s"Downloaded GL0 recovery outcome has uncollateralized planned members=${ineligible.map(_.value.value).mkString(",")}"
+            ).raiseError[F, Unit].whenA(ineligible.nonEmpty)
+            _ <- recoveryPlanReceipt.consume(verified.signed)
+          } yield ()
+        })
 
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
@@ -338,6 +318,7 @@ object GlobalSnapshotConsensus {
           loggerBundle,
           mptStore,
           facilitatorSelector,
+          seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
           HealthDerivedMembershipPolicy.RetainSigningLeases,
           (key: GlobalSnapshotKey) => consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key))
         )
@@ -366,7 +347,7 @@ object GlobalSnapshotConsensus {
           resolvedCoreCommitteeSize,
           rawEvictionVoter,
           consensusQueue,
-          tier1FinalityMissHistoryRef,
+          finalityParticipationMissHistoryRef,
           HealthDerivedMembershipPolicy.RetainSigningLeases
         )
 
@@ -443,6 +424,7 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        HealthDerivedMembershipPolicy.RetainSigningLeases,
         Slf4jLogger.getLogger[F]
       )
 
@@ -497,6 +479,7 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
+          (o: GlobalConsensusOutcome) => o.controllerEvidence.flatMap(_.get(o.key)).fold(Set.empty[PeerId])(_.roundStartFacilitators.toSet),
           (key: GlobalSnapshotKey) =>
             ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
               key.value.value,
@@ -513,9 +496,12 @@ object GlobalSnapshotConsensus {
           Some(consensusQueue),
           Some((outcome: GlobalConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
-              certifiedOutcomeSidecar.write(outcome.key, outcome) >>
-                certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key) >>
-                consensusStorage.deleteCertifiedVoteLock(outcome.key)
+              configuredRecoveryPlan.flatMap { recoveryPlan =>
+                val pinned = recoveryPlan.fold(Set.empty[SnapshotOrdinal])(verified => Set(verified.plan.anchor.ordinal))
+                certifiedOutcomeSidecar.write(outcome.key, outcome) >>
+                  certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key, pinned) >>
+                  consensusStorage.deleteCertifiedVoteLock(outcome.key)
+              }
             ) >>
               peerHistorySidecar.write(outcome.key, outcome.toOperationalState)
           ),
@@ -523,8 +509,31 @@ object GlobalSnapshotConsensus {
             certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
               consensusStorage.deleteCertifiedVoteLocksAtOrBelow(outcome.key)
           ),
-          onOutcomeRollbackInitialized =
-            Some((outcome: GlobalConsensusOutcome) => consensusStorage.deleteCertifiedVoteLocksAbove(outcome.key))
+          onOutcomePreInitialize = Some(recoveryPlanPreflight),
+          onOutcomeSafetyInitialized = Some((outcome: GlobalConsensusOutcome) =>
+            configuredRecoveryPlan.flatMap {
+              case Some(verified) if outcome.key === verified.plan.anchor.ordinal =>
+                // The signed-plan synthetic anchor is the all-member barrier's exact value. Keep
+                // serving it even after an early quorum advances, so an asymmetrically late member
+                // can still fetch N and release its locally-held first-round gate.
+                certifiedOutcomeSidecar.write(outcome.key, outcome)
+              case _ =>
+                outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>
+                  certifiedOutcomeSidecar.write(outcome.key, outcome)
+                )
+            }
+          ),
+          onOutcomeRollbackInitialized = Some((outcome: GlobalConsensusOutcome, policy: ConsensusCommand.RollbackStartPolicy) =>
+            policy match {
+              case ConsensusCommand.RollbackStartPolicy.RequireAlignedCommittee(_) =>
+                certifiedOutcomeSidecar.write(outcome.key, outcome) >>
+                  certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
+                  consensusStorage.deleteCertifiedVoteLocksAbove(outcome.key)
+              case _ => Async[F].unit
+            }
+          ),
+          initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
+          plannedRecoveryCommittee = Some(configuredRecoveryPlan.map(_.map(_.plan.committee)))
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

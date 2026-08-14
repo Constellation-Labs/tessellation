@@ -34,6 +34,15 @@ dormant.
    signed controller evidence from which its activation committee can be seeded. Both
    layers intentionally fail closed when this evidence is absent; DAG
    `nextFacilitators` is not a valid substitute.
+   For a non-genesis DAG activation, the canonical signed seed and the final roster
+   after seedlist, collateral, selector, and projector processing must each contain at
+   least two members, and all current members together must be able to satisfy the
+   configured `Q(N+1)` next-seat headroom. Under supermajority a participating pair can
+   grow; under unanimity no finite `N` can prove an unseated `(N+1)`th signer, so a
+   non-genesis certified activation in unanimity mode fails closed. The exact activation
+   never falls back to local `self`. An activation configured at or before the first facilitated key is genesis
+   mode: there is no legacy-to-certified exact-key transition, and intentional
+   single-node development genesis remains supported.
 4. Prove that the signed activation seed is live: its observed parent signers must meet
    the frozen-committee finality floor, and any planned admission batch must satisfy
    `observed parent signers >= Q(seed size + batch size)`. V35 enforces this headroom

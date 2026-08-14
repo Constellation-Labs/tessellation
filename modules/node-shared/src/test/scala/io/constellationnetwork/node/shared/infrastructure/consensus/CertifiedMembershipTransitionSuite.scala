@@ -82,6 +82,43 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect.same(Left("certified_membership_duplicate_eviction_target"), duplicateEviction)
   }
 
+  test("atomic replacement rejects a probation-lane admission but admission-only recovery remains valid") {
+    val probation = peer(5)
+    val paired = CertifiedMembershipTransition.validateReplacementAdmissionLane(
+      admittedPeers = Set(probation),
+      evictedPeers = Set(c),
+      probationPeers = Set(probation)
+    )
+    val admissionOnly = CertifiedMembershipTransition.validateReplacementAdmissionLane(
+      admittedPeers = Set(probation),
+      evictedPeers = Set.empty,
+      probationPeers = Set(probation)
+    )
+    val openReplacement = CertifiedMembershipTransition.validateReplacementAdmissionLane(
+      admittedPeers = Set(d),
+      evictedPeers = Set(c),
+      probationPeers = Set(probation)
+    )
+
+    expect.same(Left("certified_membership_replacement_requires_open_ready_admission"), paired) &&
+    expect.same(Right(()), admissionOnly) &&
+    expect.same(Right(()), openReplacement)
+  }
+
+  test("v35 round-start committee ignores asymmetric buffered withdrawal arrival") {
+    val observedEarly = Set(a)
+    val observedLate = Set.empty[PeerId]
+
+    expect.same(
+      CertifiedRoundCommitteeProjector.roundStartWithdrawals(certifiedConsensusActive = true, observedLate),
+      CertifiedRoundCommitteeProjector.roundStartWithdrawals(certifiedConsensusActive = true, observedEarly)
+    ) &&
+    expect.same(
+      observedEarly,
+      CertifiedRoundCommitteeProjector.roundStartWithdrawals(certifiedConsensusActive = false, observedEarly)
+    )
+  }
+
   test("local proof subsets can abstain from expansion but cannot alter a same-size replacement") {
     val current = (1 to 6).map(peer).toSet
     val replacement = peer(7)
@@ -105,6 +142,49 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect(replacementPreservesFloor)
   }
 
+  test("proposal construction suppresses an unpaired ACS in the dead band but preserves replacement and genuine expansion") {
+    val current = (1 to 4).map(peer).toSet
+    val candidate = peer(5)
+    val silent = peer(4)
+    val deadBandSigners = (1 to 3).map(peer).toSet
+    val fullSigners = current
+
+    val unpaired = CertifiedMembershipTransition.selectForProposal(
+      current,
+      deadBandSigners,
+      admissions = List(candidate),
+      evictions = List.empty[PeerId],
+      (peerId: PeerId) => peerId,
+      (peerId: PeerId) => peerId,
+      quorumFraction,
+      maxChanges = 1
+    )
+    val paired = CertifiedMembershipTransition.selectForProposal(
+      current,
+      deadBandSigners,
+      admissions = List(candidate),
+      evictions = List(silent),
+      (peerId: PeerId) => peerId,
+      (peerId: PeerId) => peerId,
+      quorumFraction,
+      maxChanges = 1
+    )
+    val expansion = CertifiedMembershipTransition.selectForProposal(
+      current,
+      fullSigners,
+      admissions = List(candidate),
+      evictions = List.empty[PeerId],
+      (peerId: PeerId) => peerId,
+      (peerId: PeerId) => peerId,
+      quorumFraction,
+      maxChanges = 1
+    )
+
+    expect.same(CertifiedMembershipTransition.ProposalSelection(List.empty, List.empty), unpaired) &&
+    expect.same(CertifiedMembershipTransition.ProposalSelection(List(candidate), List(silent)), paired) &&
+    expect.same(CertifiedMembershipTransition.ProposalSelection(List(candidate), List.empty), expansion)
+  }
+
   test("invalid membership and cap violations fail closed") {
     val overlap = CertifiedMembershipTransition.validate(committee.toSet, Set(b), Set(b), maxChanges = 1)
     val unknownEviction = CertifiedMembershipTransition.validate(committee.toSet, Set(d), Set(peer(9)), maxChanges = 1)
@@ -115,5 +195,69 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect(unknownEviction.isLeft) &&
     expect(seatedAdmission.isLeft) &&
     expect(overCap.isLeft)
+  }
+
+  test("rc7 N=4/S=3 fixed point heals only through one Core-certified atomic replacement") {
+    val current = (1 to 4).map(peer).toList
+    val silent = current.last
+    val observed = current.take(3).toSet
+    val admitted = peer(5)
+    val headroom = FinalityHeadroom.evaluate(current.toSet, observed, quorumFraction)
+    val expansionVote = CertifiedMembershipTransition.allowsPrepareVote(
+      current.toSet,
+      observed,
+      Set(admitted),
+      Set.empty,
+      quorumFraction,
+      maxChanges = 1
+    )
+    val replacementVote = CertifiedMembershipTransition.allowsPrepareVote(
+      current.toSet,
+      observed,
+      Set(admitted),
+      Set(silent),
+      quorumFraction,
+      maxChanges = 1
+    )
+    val replacement = CertifiedMembershipTransition.applyTo(current, Set(admitted), Set(silent), maxChanges = 1)
+    val committees = CommitteeBuilder.build(
+      candidates = replacement.toOption.get,
+      priorTiers = scala.collection.immutable.SortedMap(current.map(_ -> TierTransitions.Core): _*),
+      peerQuality = Map.empty,
+      coreFloor = 3,
+      minObservations = 3,
+      minRatio = 2.0 / 3.0,
+      forcedTier1Peers = Set(admitted)
+    )
+
+    expect.same(3, headroom.currentFinalityFloor) &&
+    expect.same(4, headroom.nextFinalityFloor) &&
+    expect(!expansionVote) &&
+    expect(replacementVote) &&
+    expect(replacement.exists(_.size == 4)) &&
+    expect(committees.tier1.contains(admitted)) &&
+    expect(!committees.core.contains(admitted)) &&
+    expect.same(3, FinalityHeadroom.evaluate(replacement.toOption.get.toSet, observed, quorumFraction).currentFinalityFloor) &&
+    expect(CertifiedMembershipTransition.validate(current.toSet, Set.empty, Set(silent), 1).isLeft)
+  }
+
+  test("N=3/S=2 cannot expand and below-current-quorum membership requires operator recovery") {
+    val three = (1 to 3).map(peer).toList
+    val twoSigners = three.take(2).toSet
+    val expansion = CertifiedMembershipTransition.allowsPrepareVote(
+      three.toSet,
+      twoSigners,
+      Set(peer(4)),
+      Set.empty,
+      quorumFraction,
+      1
+    )
+    val four = (1 to 4).map(peer).toList
+    val belowCurrentQuorum = FinalityHeadroom.evaluate(four.toSet, four.take(2).toSet, quorumFraction)
+
+    expect(!expansion) &&
+    expect.same(3, belowCurrentQuorum.currentFinalityFloor) &&
+    expect(belowCurrentQuorum.allowsSilentEviction) &&
+    expect(CertifiedMembershipTransition.validate(four.toSet, Set.empty, Set(four.last), 1).isLeft)
   }
 }

@@ -49,6 +49,30 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
     )
   }
 
+  test("cached readiness keeps legacy bounded lag while certified atomic membership requires the exact parent") {
+    val oneBehind = ChainTip(ordinal(99L), differentHash)
+    val expectedOrdinal = ordinal(100L).some
+
+    IO.pure(
+      expect(
+        AdmissionTipReadiness.isCachedReady(
+          oneBehind,
+          expectedHash,
+          expectedOrdinal,
+          requireExact = false
+        )
+      ) &&
+        expect(
+          !AdmissionTipReadiness.isCachedReady(
+            oneBehind,
+            expectedHash,
+            expectedOrdinal,
+            requireExact = true
+          )
+        )
+    )
+  }
+
   test("fresh direct readiness rejects a conflicting same-ordinal hash and every ahead mismatch") {
     val sameOrdinalConflict = ChainTip(ordinal(100L), differentHash)
     val oneAhead = ChainTip(ordinal(101L), differentHash)
@@ -64,27 +88,68 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
   test("the canonical target is probed once per monitor attempt without walking to a second target") {
     val first = PeerId(Hex("01" * 64))
     val second = PeerId(Hex("02" * 64))
-    val readyTip = ChainTip(ordinal(100L), expectedHash)
-    val isReady: ChainTip => Boolean = tip => tip.snapshotHash == expectedHash
 
     IO.pure(
       expect.same(
         first.some,
-        AdmissionCandidateTipProbe.targetForRound(List(first, second), Set.empty, Map.empty, isReady)
+        AdmissionCandidateTipProbe.targetForRound(List(first, second), Set.empty)
       ) &&
         expect.same(
           none[PeerId],
-          AdmissionCandidateTipProbe.targetForRound(List(first, second), Set(first), Map.empty, isReady)
+          AdmissionCandidateTipProbe.targetForRound(List(first, second), Set(first))
         ) &&
         expect.same(
           first.some,
-          AdmissionCandidateTipProbe.targetForRound(List(first, second), Set.empty, Map.empty, isReady)
-        ) &&
-        expect.same(
-          none[PeerId],
-          AdmissionCandidateTipProbe.targetForRound(List(first, second), Set.empty, Map(first -> readyTip), isReady)
+          AdmissionCandidateTipProbe.targetForRound(List(first, second), Set.empty)
         )
     )
+  }
+
+  test("cached readiness neither suppresses the direct open probe nor qualifies a failed direct response") {
+    val target = PeerId(Hex("01" * 64))
+    val cachedExact = ChainTip(ordinal(100L), expectedHash)
+    val cachedReady: ChainTip => Boolean = _ => true
+
+    val selected = AdmissionCandidateTipProbe.targetForRound(List(target), Set.empty)
+    val ready = AdmissionCandidateTipProbe.readyOpenTargets(
+      List(target),
+      Map(target -> cachedExact),
+      List((target, AdmissionCandidateTipProbe.Lane.OpenReady, none[ChainTip])),
+      directProbesEnabled = true,
+      expectedHash = expectedHash,
+      expectedOrdinal = ordinal(100L).some,
+      cachedTipIsReady = cachedReady
+    )
+
+    IO.pure(expect.same(target.some, selected) && expect(ready.isEmpty))
+  }
+
+  test("a wrong-hash cache entry cannot qualify an exact-direct open lane, while Currency retains cached behavior") {
+    val target = PeerId(Hex("01" * 64))
+    val cachedConflict = ChainTip(ordinal(100L), differentHash)
+    val directConflict = ChainTip(ordinal(100L), differentHash)
+    val legacyCachedReady: ChainTip => Boolean = _ => true
+
+    val directReady = AdmissionCandidateTipProbe.readyOpenTargets(
+      List(target),
+      Map(target -> cachedConflict),
+      List((target, AdmissionCandidateTipProbe.Lane.OpenReady, directConflict.some)),
+      directProbesEnabled = true,
+      expectedHash = expectedHash,
+      expectedOrdinal = ordinal(100L).some,
+      cachedTipIsReady = legacyCachedReady
+    )
+    val currencyReady = AdmissionCandidateTipProbe.readyOpenTargets(
+      List(target),
+      Map(target -> cachedConflict),
+      List.empty,
+      directProbesEnabled = false,
+      expectedHash = expectedHash,
+      expectedOrdinal = ordinal(100L).some,
+      cachedTipIsReady = legacyCachedReady
+    )
+
+    IO.pure(expect(directReady.isEmpty) && expect.same(List(target), currencyReady))
   }
 
   test("a fresh direct response must exactly match the expected parent before it becomes vote evidence") {

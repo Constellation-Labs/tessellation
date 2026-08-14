@@ -102,16 +102,42 @@ object AdmissionCandidateTipProbe {
       .map { case (probation, open) => List(probation, open).flatten }
   }
 
-  /** Choose at most the fixed first open target, and never retry it within one continuous monitor attempt. */
+  /** Choose at most the fixed first open target, and never retry it within one continuous monitor attempt.
+    *
+    * Cached gossip is deliberately not consulted here. When the direct-probe lane is installed, only a fresh response from the fixed target
+    * may authorize an open admission vote. In particular, a bounded-lag or wrong-hash cache entry must neither suppress the request nor
+    * become vote evidence after a failed request.
+    */
   private[consensus] def targetForRound(
     openAdmissionTargets: List[PeerId],
-    probedTargets: Set[PeerId],
-    cachedChainTips: Map[PeerId, ChainTip],
-    isReady: ChainTip => Boolean
+    probedTargets: Set[PeerId]
   ): Option[PeerId] =
-    openAdmissionTargets.headOption.filter { target =>
-      !probedTargets.contains(target) && !cachedChainTips.get(target).exists(isReady)
-    }
+    openAdmissionTargets.headOption.filterNot(probedTargets.contains)
+
+  /** Resolve open ReadyAtTip vote evidence without mixing freshness domains.
+    *
+    * Global L0 installs direct probes and therefore requires a fresh exact response from the open lane in this monitor attempt. Currency L0
+    * installs no probe and retains the legacy cached-gossip predicate byte-for-behavior. The explicit branch prevents a failed or
+    * conflicting direct response from falling back to a cached tip during the same decision.
+    */
+  private[consensus] def readyOpenTargets(
+    openAdmissionTargets: List[PeerId],
+    cachedChainTips: Map[PeerId, ChainTip],
+    directProbeResults: List[(PeerId, Lane, Option[ChainTip])],
+    directProbesEnabled: Boolean,
+    expectedHash: Hash,
+    expectedOrdinal: Option[SnapshotOrdinal],
+    cachedTipIsReady: ChainTip => Boolean
+  ): List[PeerId] =
+    if (directProbesEnabled)
+      openAdmissionTargets.filter { target =>
+        directProbeResults.exists {
+          case (`target`, Lane.OpenReady, Some(tip)) => AdmissionTipReadiness.isExact(tip, expectedHash, expectedOrdinal)
+          case _                                     => false
+        }
+      }
+    else
+      openAdmissionTargets.filter(target => cachedChainTips.get(target).exists(cachedTipIsReady))
 
   /** Pick one fixed probation target for the whole round. The parent hash is round-stable entropy, so every monitor tick selects the same
     * target and a failed probe cannot walk the candidate set.
@@ -232,4 +258,18 @@ object AdmissionTipReadiness {
     expectedOrdinal.fold(tip.snapshotHash === expectedHash) { ordinal =>
       tip.ordinal === ordinal && tip.snapshotHash === expectedHash
     }
+
+  /** Interpret asynchronously sampled gossip without leaking Global L0's certified policy into Currency L0. Certified atomic membership
+    * requires the exact parent; legacy layers retain the existing bounded-lag behavior byte-for-behavior.
+    */
+  def isCachedReady(
+    tip: ChainTip,
+    expectedHash: Hash,
+    expectedOrdinal: Option[SnapshotOrdinal],
+    requireExact: Boolean
+  ): Boolean =
+    if (requireExact) isExact(tip, expectedHash, expectedOrdinal)
+    else
+      tip.snapshotHash === expectedHash ||
+      expectedOrdinal.exists(ordinal => tip.ordinal.value.value + OrdinalLagTolerance >= ordinal.value.value)
 }
