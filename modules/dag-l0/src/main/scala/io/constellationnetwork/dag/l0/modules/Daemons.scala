@@ -15,6 +15,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotEven
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
@@ -35,6 +36,7 @@ object Daemons {
     nodeId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,
+    effectiveConsensusConfig: ConsensusConfig,
     hasherSelector: HasherSelector[F],
     eventGossipDaemon: EventGossipDaemon[F, GlobalSnapshotEvent, GlobalStateKey],
     // SharedServices-owned Ref. NodeStateDaemon writes the monotonic timestamp of each
@@ -76,7 +78,7 @@ object Daemons {
               GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(facilitators, proofSigners)
             }
           ),
-          cfg.snapshot.consensus
+          effectiveConsensusConfig
         ),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),
       TrustStorageUpdater.daemon(services.trustStorageUpdater),

@@ -300,6 +300,23 @@ for the compatibility boundary, committee-regrowth trace, metrics, and rollout
 procedure, and distribute the corresponding
 [operator release note](../release/currency-l0-solo-rollback.md) before use.
 
+### Global L0 anchor-bound committee recovery
+
+Global L0 can replace an unrecoverable rollback anchor's dead committee with a
+lead-signed, anchor-bound recovery plan during a coordinated full-fleet cold
+restart. Exactly one controlled node consumes the plan with
+`run-rollback --recovery-plan`; every other named committee member verifies
+and consumes the same plan with `run-validator --recovery-plan`. Unnamed peers
+remain ordinary validators. The option is inert by default and changes no public
+snapshot, state-proof, or consensus-message schema. See the
+[Global L0 recovery-plan runbook](../operations/global-l0-recovery-plan.md) for
+the signed domain, fail-closed checks, first-round alignment gate, and removal
+of the one-shot option after recovery.
+
+The schema-compatible retry and legacy-view safety boundary shipped with that
+operator tool is documented in the
+[v4.1.0-rc.8 IntegrationNet bridge release note](../release/v4.1.0-rc.8-integrationnet-bridge.md).
+
 ### Round-Blocked States
 
 > **Note (v2 change):** The FSM blocks round starts when the node is in recovery or leaving states to prevent infinite loops.
@@ -486,7 +503,9 @@ Sent at the start of a round. Contains:
 - `facilitatorsHash: Hash` - hash of round-start facilitator set
 - `lastGlobalSnapshotOrdinal: SnapshotOrdinal`
 - `lastSnapshotHash: Hash`
-- `consensusConfigHash: Option[Hash]` - peer-side fence on `deterministicConfigHash`
+- `consensusConfigHash: Option[Hash]` - peer compatibility fingerprint from the exact effective
+  `deterministicConfigHash`; L0 joining requires exact equality (including presence), and Facility
+  processing also logs/metrics mismatches
 - `selfHealthHint: Option[SelfHealthHint]` - the peer's own current self-health (from
   `LocalHealthMonitor`); the leader aggregates these into `Proposal.observedSelfHealth`
   so the next round's leader selection can demote unhealthy peers (see
@@ -749,7 +768,7 @@ The StateCreator gates the candidate set by only **two** behavioural filters now
 
 **Tier assignment rule** (re-derived every round, in order): (1) **quality-degradation override** -- a peer whose cumulative `completed/participated` ratio has dropped below `minRatio` (with `participated >= minObservations`) is forced to Tier 1 regardless of its prior tier, so a degraded peer can never gate the liveness quorum; (2) **carried-forward** `priorTiers.get(pid)`; (3) **quality-proven bootstrap** -- a new peer (absent from `priorTiers`) enters Core only if `peerQuality` already proves it above the ratio bar; (4) **default Tier 1** -- unproven new peers join the witness-eligible pool, not the quorum (the replacement for the old "everyone defaults to Core" bootstrap that let unclassified peers wedge the cluster).
 
-**Core floor.** If derived Core is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1, ranked by quality (descending ratio, then descending completed count, then PeerId lex). `coreCommitteeSize` is consensus-critical and is folded into `deterministicConfigHash`, so a mismatched value is rejected at handshake.
+**Core floor.** If derived Core is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1, ranked by quality (descending ratio, then descending completed count, then PeerId lex). `coreCommitteeSize` is consensus-critical and is folded into `deterministicConfigHash`. L0 joining requires exact equality of that effective fingerprint, and Facility processing provides a second diagnostic comparison. The separate `versionHash` independently fences the advertised release string (or `CL_VERSION_HASH`); it is not a jar hash or a substitute for the config fence.
 
 **Chronic-core replacement ladder.** `chronicMisses` (evidence-derived trailing asked-but-silent streaks past `ChronicMissThreshold`) drives a deterministic ladder, applied in order: **exclude** every chronically-missing Core member (demoted to Tier 1, still signs and earns, just out of the quorum denominator); **replace** each one-for-one with a non-chronic Tier 1 reserve (highest evidence score first); **floor** tops Core back up to `coreCommitteeSize` from non-chronic reserves only; **shrink** leaves Core smaller rather than padding with chronic peers (the quorum is proportional, so a smaller all-healthy Core is strictly more live); **liveness fallback** re-admits the least-bad chronic peers only if healthy Core would fall below `MinViableCoreSize` (= 2). With no chronic peers every step is inert.
 

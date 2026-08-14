@@ -112,6 +112,37 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
 
+  /** Finish a destructive soft reset without letting ancillary bookkeeping or observability strand the FSM Busy with no round state.
+    * Restart scheduling is the only critical effect and therefore runs first. Counter, stale-rejection cleanup, logs, and metrics are
+    * best-effort after that command is safely queued.
+    */
+  private[snapshot] def completeDestructiveSoftReset[F[_]: Async](
+    scheduleRestart: F[Unit],
+    tickResetCount: F[Int],
+    clearStaleRejections: F[Unit],
+    observe: Int => F[Unit],
+    fallbackCount: Int
+  ): F[Unit] =
+    scheduleRestart >>
+      tickResetCount.attempt.flatMap { result =>
+        val count = result.getOrElse(fallbackCount)
+        clearStaleRejections.attempt.void >> observe(count).attempt.void
+      }
+
+  /** Recovery retries preserve only Facility declarations. A peer Proposal is attempt-bound and is deliberately discarded by
+    * `softResetRoundState`, so accepting a proposal-only peer as the reset bootstrap source would authorize a reset that immediately
+    * deletes the evidence which justified it. Keep this predicate explicit and testable: a reset needs a Ready external peer, at this key
+    * or ahead, with a Facility that survives the reset.
+    */
+  private[snapshot] def isUsefulSoftResetBootstrapDeclaration(
+    selfId: PeerId,
+    peerId: PeerId,
+    isReady: Boolean,
+    isAtOrAhead: Boolean,
+    declaration: PeerDeclarations
+  ): Boolean =
+    peerId =!= selfId && isReady && isAtOrAhead && declaration.facility.nonEmpty
+
   def make[F[_]: Async: Parallel: SecurityProvider: Metrics: HasherSelector: JsonSerializer](
     consensusConfig: ConsensusConfig,
     keyPair: KeyPair,
@@ -1620,14 +1651,16 @@ object GlobalSnapshotConsensusStateAdvancer {
         case object Fired extends SoftResetOutcome
         case object SuppressedBudgetExhausted extends SoftResetOutcome
         case object SuppressedNoReadyPeerWithUsefulDeclarations extends SoftResetOutcome
+        case object SuppressedVoteLocked extends SoftResetOutcome
       }
 
       /** Alpha.97 same-key soft-reset attempt. See `SoftResetOutcome` for the per-outcome action contract. The helper logs each outcome
         * with `category` + `triggerCount` + `softResetCount` and increments the appropriate Prometheus counter.
         *
-        * On `Fired`: clears the volatile round state via `consensusStorage.softResetRoundState` (state, artifacts, VCC, vote locks,
-        * eviction/admission cert slots; peer declarations preserved as the bootstrap source for the rebuild), increments the soft-reset
-        * budget counter, clears the stale-local-view rejection counter.
+        * On `Fired`: clears the pre-vote volatile round state via `consensusStorage.softResetRoundState` (state, artifacts, VCC,
+        * eviction/admission cert slots; Facility declarations preserved as the bootstrap source for the rebuild), increments the soft-reset
+        * budget counter, clears the stale-local-view rejection counter. Once a vote lock is populated or a certified view is active the
+        * storage operation refuses the reset: only download/recovery may release a same-key lock.
         *
         * A fired reset immediately enqueues `RestartAfterSoftReset(key)` on the owning serialized command loop. That command explicitly
         * completes the still-BUSY FSM attempt and starts from the latest persisted outcome. A bare `StartRound` is insufficient here: while
@@ -1644,9 +1677,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[SoftResetOutcome] = {
         // The bootstrap source must be Ready (not WaitingForReady / WFD / etc.), at
         // the same or higher key (so they have a current-or-ahead view of the round),
-        // with a non-empty facility or proposal we can read locally. The peer-current-
+        // with a non-empty Facility we can read locally. The peer-current-
         // keys map is the same source AbandonmentTracker uses for its `peersAtHigherKey`
-        // check.
+        // check. Proposal is intentionally insufficient: a soft reset prunes Proposal
+        // but preserves Facility, so a proposal-only gate would delete its own evidence.
         def gateAllowsReset: F[Boolean] =
           for {
             responsivePeers <- clusterStorage.getResponsivePeers
@@ -1662,10 +1696,13 @@ object GlobalSnapshotConsensusStateAdvancer {
                 // external cluster evidence only. `getResponsivePeers` likely excludes
                 // self today, but this is recovery code -- the safety condition should
                 // not depend on indirect behavior of other components.
-                peerId =!= selfId &&
-                readyIds.contains(peerId) &&
-                peerKeys.get(peerId).exists(_ >= key) &&
-                (d.facility.nonEmpty || d.proposal.nonEmpty)
+                isUsefulSoftResetBootstrapDeclaration(
+                  selfId,
+                  peerId,
+                  readyIds.contains(peerId),
+                  peerKeys.get(peerId).exists(_ >= key),
+                  d
+                )
             }
 
         consensusStorage.getSoftResetCountAtSameKey(key).flatMap { softResetCount =>
@@ -1708,27 +1745,48 @@ object GlobalSnapshotConsensusStateAdvancer {
                   ) >>
                   (SoftResetOutcome.SuppressedNoReadyPeerWithUsefulDeclarations: SoftResetOutcome).pure[F]
               else
-                consensusStorage.softResetRoundState(key) >>
-                  consensusStorage.tickSoftResetAtSameKey(key).flatMap { newCount =>
+                consensusStorage.softResetRoundState(key).flatMap {
+                  case false =>
                     ConsensusLog.warn(
                       logger,
                       Category.Recovery,
                       key.show,
                       role,
-                      Event.SoftResetTriggered,
+                      Event.SoftResetSuppressed,
                       "category" -> category,
                       "triggerCount" -> triggerCount.toString,
-                      "softResetCount" -> newCount.toString,
-                      "maxSoftResetsAtSameKey" -> consensusConfig.maxSoftResetsAtSameKey.toString
+                      "softResetCount" -> softResetCount.toString,
+                      "reason" -> "same_key_vote_or_certified_view_locked"
                     ) >>
                       Metrics[F].incrementCounter(
-                        "dag_consensus_soft_reset_total",
-                        Seq(Metrics.unsafeLabelName("category") -> category)
+                        "dag_consensus_soft_reset_suppressed_total",
+                        Seq(Metrics.unsafeLabelName("reason") -> "same_key_vote_or_certified_view_locked")
                       ) >>
-                      consensusStorage.clearStaleLocalViewAtSameKey >>
-                      scheduleSoftResetRestart(key) >>
-                      (SoftResetOutcome.Fired: SoftResetOutcome).pure[F]
-                  }
+                      (SoftResetOutcome.SuppressedVoteLocked: SoftResetOutcome).pure[F]
+                  case true =>
+                    completeDestructiveSoftReset(
+                      scheduleSoftResetRestart(key),
+                      consensusStorage.tickSoftResetAtSameKey(key),
+                      consensusStorage.clearStaleLocalViewAtSameKey,
+                      newCount =>
+                        ConsensusLog.warn(
+                          logger,
+                          Category.Recovery,
+                          key.show,
+                          role,
+                          Event.SoftResetTriggered,
+                          "category" -> category,
+                          "triggerCount" -> triggerCount.toString,
+                          "softResetCount" -> newCount.toString,
+                          "maxSoftResetsAtSameKey" -> consensusConfig.maxSoftResetsAtSameKey.toString
+                        ) >>
+                          Metrics[F].incrementCounter(
+                            "dag_consensus_soft_reset_total",
+                            Seq(Metrics.unsafeLabelName("category") -> category)
+                          ),
+                      softResetCount + 1
+                    ).as(SoftResetOutcome.Fired: SoftResetOutcome)
+                }
             }
         }
       }
@@ -2272,6 +2330,12 @@ object GlobalSnapshotConsensusStateAdvancer {
                         // stall handling; StallDetector / AbandonmentTracker will fire
                         // when the situation persists with peers actually ahead.
                         Applicative[F].unit
+                      case SoftResetOutcome.SuppressedVoteLocked =>
+                        // This node already signed or entered a certified higher view at
+                        // this key. Rebuilding view 0 in-place would permit a conflicting
+                        // vote. Stay visibly stalled until peer-ahead recovery can download
+                        // a committed outcome; only that boundary may release the lock.
+                        Applicative[F].unit
                     }
                   }
               }
@@ -2575,10 +2639,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                             }.flatMap { count =>
                               // Alpha.97: when the artifact-hash mismatch count crosses the heavy-
                               // recovery threshold, FIRST attempt an in-place soft reset that keeps
-                              // the node Ready. The soft reset clears volatile round state
-                              // (artifacts, VCC, vote locks, withdrawals) while preserving the per-
-                              // peer declaration map, so the round can re-evaluate from observed
-                              // peer declarations without taking the node out of Core. Falls through
+                              // the node Ready. Before any local vote/view lock, the soft reset
+                              // clears volatile round state while preserving Facility declarations,
+                              // so the round can re-evaluate without taking the node out of Core.
+                              // A locked same-key attempt is never reset in place. Falls through
                               // to the existing heavy Download recovery only when the soft reset is
                               // suppressed (budget exhausted, or no useful declarations) or has
                               // already fired its budget at this key without resolving.
@@ -2617,6 +2681,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                                         // proven recovery source. Forcing WFD here would worsen the cascade.
                                         // Keep the validation-failure count so the next failure can re-try
                                         // soft reset once a Ready peer surfaces.
+                                        Async[F].unit
+                                      case SoftResetOutcome.SuppressedVoteLocked =>
+                                        // Peer-ahead catch-up was already attempted above.
+                                        // Without a committed peer ahead, remain halted rather
+                                        // than release the lock and risk a conflicting vote.
                                         Async[F].unit
                                     }
                                 }
@@ -3263,8 +3332,14 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
+            val attemptDomain = SignatureAttemptDomain(
+              facilitatorsHash = status.facilitatorsHash,
+              lastSnapshotHash = status.lastSnapshotHash,
+              view = state.viewNumber.toLong,
+              proposalHash = status.majorityArtifactInfo.hash
+            )
             for {
-              maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
+              maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature.filter(attemptDomain.contains))
               facilitators = maybeSignatures.map(_.keys.toList).getOrElse(List.empty[PeerId])
               _ <- loggerBundle.consensus.collectingSignatures(facilitators)
               // Skip facilitatorsHash fork check when view > 0 (eviction happened), solo→multi transition,

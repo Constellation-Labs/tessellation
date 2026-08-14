@@ -16,8 +16,7 @@ import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapsho
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SnapshotConfig}
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -70,8 +69,7 @@ object CurrencySnapshotConsensus {
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
-    snapshotConfig: SnapshotConfig,
-    environment: AppEnvironment,
+    effectiveConsensusConfig: ConsensusConfig,
     client: Client[F],
     session: Session[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
@@ -102,63 +100,11 @@ object CurrencySnapshotConsensus {
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
     implicit val hs: HasherSelector[F] = hasherSelector
 
-    // v20: env-resolved Core committee size threaded into `ConsensusConfig.coreCommitteeSize`
-    // so it folds into `deterministicConfigHash`. Mirror of GlobalSnapshotConsensus -- one
-    // env-resolution point feeds every downstream component (storage, advancer, state creator,
-    // event loop). Default `3` mirrors the dev-environment value.
-    val resolvedCoreCommitteeSize: Int =
-      snapshotConfig.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
-    // v33: env-resolved quorum-denominator-shrink activation threshold (absent env entry = 0 =
-    // rung disabled). Mirror of GlobalSnapshotConsensus.
-    val resolvedQuorumShrinkActivationViews: Int =
-      snapshotConfig.quorumShrinkActivationViews.get(environment).getOrElse(0)
-    // Bounded probation re-entry lane: env-resolved minimum probation slots (absent env entry = 0 =
-    // lane inert). Mirror of GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the
-    // consensus config copy below.
-    val resolvedActiveAdmissionMinProbationReentrySlots: Int =
-      snapshotConfig.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0)
-    // Recent-signer pool lookback depth: env-resolved, floored to DemotionConsecutiveMisses (3) so a
-    // low operator value cannot disable the recent-signer path (Codex review #2). Mirror of
-    // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the consensus config copy below.
-    val resolvedActiveAdmissionRecentSignerWindow: Int =
-      math.max(3, snapshotConfig.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3))
-    // Active-set growth target + hard cap: env-resolved (the coreCommitteeSize pattern), mirror of
-    // GlobalSnapshotConsensus; folds into `deterministicConfigHash` via the copy below. Absent env
-    // entries preserve the ConsensusConfig scalar resolution (None -> coreCommitteeSize fallback),
-    // which is the expected shape for currency metagraphs (small clusters; target = Core).
-    val resolvedActiveFacilitatorTarget: Option[Int] =
-      snapshotConfig.activeFacilitatorTarget.get(environment).orElse(snapshotConfig.consensus.activeFacilitatorTarget)
-    val resolvedActiveFacilitatorMax: Option[Int] =
-      snapshotConfig.activeFacilitatorMax.get(environment).orElse(snapshotConfig.consensus.activeFacilitatorMax)
-    val effectiveConsensusConfig: ConsensusConfig =
-      snapshotConfig.consensus.copy(
-        coreCommitteeSize = Some(resolvedCoreCommitteeSize),
-        quorumShrinkActivationViews = resolvedQuorumShrinkActivationViews,
-        activeAdmissionMinProbationReentrySlots = resolvedActiveAdmissionMinProbationReentrySlots,
-        activeAdmissionRecentSignerWindow = resolvedActiveAdmissionRecentSignerWindow,
-        activeFacilitatorTarget = resolvedActiveFacilitatorTarget,
-        activeFacilitatorMax = resolvedActiveFacilitatorMax
-      )
+    // Startup resolves this exact value once for both the join fence and live engine. Every
+    // downstream component receives the same projection; the fallback is retained defensively.
+    val resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
 
     for {
-      // Currency L0 retains the bounded active-set interpretation of target/max because its
-      // configured phase/finality threshold is unanimity. The broad GL0 lease policy does not
-      // apply here.
-      _ <- new IllegalArgumentException(
-        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must exceed core-committee-size" +
-          s" ($resolvedCoreCommitteeSize)"
-      ).raiseError[F, Unit]
-        .whenA(resolvedActiveFacilitatorTarget.exists(_ <= resolvedCoreCommitteeSize))
-      _ <- new IllegalArgumentException(
-        s"active-facilitator-max ($resolvedActiveFacilitatorMax) must be >= core-committee-size" +
-          s" ($resolvedCoreCommitteeSize)"
-      ).raiseError[F, Unit]
-        .whenA(resolvedActiveFacilitatorMax.exists(_ < resolvedCoreCommitteeSize))
-      _ <- new IllegalArgumentException(
-        s"active-facilitator-target ($resolvedActiveFacilitatorTarget) must not exceed" +
-          s" active-facilitator-max ($resolvedActiveFacilitatorMax)"
-      ).raiseError[F, Unit]
-        .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
       consensusStorage <- ConsensusStorage.make[
         F,
         CurrencySnapshotEvent,
@@ -168,7 +114,7 @@ object CurrencySnapshotConsensus {
         CurrencySnapshotStatus,
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
-      ](effectiveConsensusConfig)
+      ](effectiveConsensusConfig, LegacyViewChangePolicy.PreserveLegacy)
 
       consensusFns =
         CurrencySnapshotConsensusFunctions.make[F](
@@ -182,7 +128,7 @@ object CurrencySnapshotConsensus {
       eventGossipClient = EventGossipClient.make[F, CurrencySnapshotEvent](client, session)
 
       facilitatorSelector = FacilitatorSelector.make(
-        snapshotConfig.maxFacilitatorCount.get(environment).map(_.value)
+        effectiveConsensusConfig.facilitatorSelectionMax
       )
 
       consensusStateAdvancer =

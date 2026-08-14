@@ -7,6 +7,7 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.kernel.{Eq, Next, Order}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
 import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
@@ -66,6 +67,66 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   */
 object ConsensusEventLoop {
 
+  /** Queue-depth telemetry is not part of command semantics. In particular, a metrics failure after `queue.take` must not consume the only
+    * generation-bound command that can release a recovery gate.
+    */
+  private[consensus] def observeQueueDepthThenDispatch[F[_]: Async](observeQueueDepth: F[Unit])(dispatch: F[Unit]): F[Unit] =
+    observeQueueDepth.attempt.void >> dispatch
+
+  /** Keep a queued pacemaker request failure from terminating the sole consensus command stream. The recovery effects are each isolated:
+    * logging/metrics failure must not prevent the monitor from being re-armed, and a monitor-rearm failure must not escape and kill the
+    * stream either.
+    */
+  private[consensus] def recoverViewChangeRequestFailure[F[_]: Async](
+    request: F[Unit],
+    onError: Throwable => F[Unit],
+    rearmMonitor: F[Unit]
+  ): F[Unit] =
+    request.handleErrorWith(error => onError(error).attempt.void >> rearmMonitor.attempt.void)
+
+  /** Always attempt monitor re-arm after an abandonment drains. A real abandon removed the state, so re-arm is a no-op; a stale/safety
+    * suppression keeps the state and needs a new monitor. All error handling is best-effort so this helper cannot terminate the sole
+    * command stream.
+    */
+  private[consensus] def containAbandonAndRearm[F[_]: Async](
+    abandon: F[Unit],
+    onError: Throwable => F[Unit],
+    recoverAfterError: F[Unit],
+    rearmMonitor: F[Unit]
+  ): F[Unit] =
+    abandon.attempt.flatMap {
+      case Left(error) => onError(error).attempt.void >> recoverAfterError.attempt.void
+      case Right(_)    => Async[F].unit
+    } >> rearmMonitor.attempt.void
+
+  /** Repair the FSM only when an errored abandon is confirmed to have already removed its round state. If state remains, the caller's
+    * monitor re-arm is the safe recovery; an unconditional `RoundCompleted` there could erase a newer attempt. Once state is absent, an
+    * unconditional completion releases Busy, and Ready nodes receive a TimeTick so the serialized loop can start a fresh round. Recovery
+    * states deliberately do not receive a tick: DownloadDaemon owns their next transition.
+    *
+    * Every effect is best-effort because this is the last-resort error path for the sole command stream.
+    */
+  private[consensus] def recoverFailedAbandonAfterStateRemoval[F[_]: Async](
+    stateStillPresent: F[Boolean],
+    nodeState: F[NodeState],
+    clearAttemptResources: F[Unit],
+    offerRoundCompleted: F[Unit],
+    offerTimeTick: F[Unit]
+  ): F[Unit] =
+    stateStillPresent.attempt.flatMap {
+      case Right(true)  => Async[F].unit
+      case Right(false) =>
+        // The original failure may have happened immediately after state=None and before
+        // `clearResourcesPreservingDeclarations`. Retry that idempotent, policy-aware cleanup so
+        // the next attempt cannot inherit stale Proposal/Signature/Binary slots.
+        clearAttemptResources.attempt.void >> offerRoundCompleted.attempt.void >>
+          nodeState.attempt.flatMap {
+            case Right(NodeState.Ready) => offerTimeTick.attempt.void
+            case _                      => Async[F].unit
+          }
+      case Left(_) => Async[F].unit
+    }
+
   private[consensus] sealed trait InitDownloadFailureDisposition extends Product with Serializable
   private[consensus] object InitDownloadFailureDisposition {
     case object HoldObservingAndRetry extends InitDownloadFailureDisposition
@@ -88,6 +149,13 @@ object ConsensusEventLoop {
   ): Boolean =
     disposition == InitDownloadFailureDisposition.HoldObservingAndRetry && state === NodeState.Observing
 
+  /** A signed-plan initialization is idempotent for its exact installed outcome and gate generation. It may therefore resume from any
+    * lifecycle state reached by the non-transactional initialization tail, rather than bouncing through a fresh download and losing the
+    * only barrier installer.
+    */
+  private[consensus] def plannedInitializationRetryableState(state: NodeState): Boolean =
+    state === NodeState.Observing || state === NodeState.WaitingForReady || state === NodeState.Ready
+
   final case class BuiltConsensusLoop[F[_], Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     run: Stream[F, Unit],
     manager: ConsensusManager[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -102,7 +170,7 @@ object ConsensusEventLoop {
     Artifact: Eq,
     Ctx: Eq,
     Status,
-    Outcome,
+    Outcome: Eq,
     Kind
   ](
     selfId: PeerId,
@@ -155,7 +223,10 @@ object ConsensusEventLoop {
     // Optional externally-created command queue. Global L0 uses this to enqueue the existing
     // CheckEvictionAssembly command from its round-creation finality audit before the first
     // Facility is sent. Other layers retain the internal-queue behavior.
-    injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None
+    injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None,
+    onOutcomePreInitialize: Option[Outcome => F[Unit]] = None,
+    initiallyHoldFirstRound: Boolean = false,
+    plannedRecoveryCommittee: Option[F[Option[SortedSet[PeerId]]]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -190,16 +261,22 @@ object ConsensusEventLoop {
         probationPeersOf,
         peerQualityOf,
         _key.get _,
-        lastOutcomeEndTimeMsOf
+        lastOutcomeEndTimeMsOf,
+        onOutcomePreInitialize.getOrElse((_: Outcome) => Async[F].unit),
+        initiallyHoldFirstRound,
+        plannedRecoveryCommittee.getOrElse(none[SortedSet[PeerId]].pure[F])
       )
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
+      requestedViewChanges <- Ref.of[F, Set[ViewChangeManager.RequestId[Key]]](Set.empty)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](
         storage,
         peerQualityTracker,
         queue,
         Slf4jLogger.getLogger[F],
         viewChangeVoter,
-        timeoutVoter
+        timeoutVoter,
+        state => stateAdvancer.getConsensusOutcome(state).isDefined,
+        requestedViewChanges
       )
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         ctx,
@@ -241,7 +318,7 @@ object ConsensusEventLoop {
 
       val commandStream: Stream[F, Unit] =
         Stream.repeatEval(queue.take).evalMap { cmd =>
-          queue.size.flatMap(sz => Metrics[F].updateGauge("dag_consensus_command_queue_size", sz)) >>
+          observeQueueDepthThenDispatch(queue.size.flatMap(sz => Metrics[F].updateGauge("dag_consensus_command_queue_size", sz))) {
             nodeStorage.getNodeState.flatMap { currentState =>
               // Skip stale consensus commands during recovery. The node may have transitioned to
               // WaitingForDownload/DownloadInProgress/Observing while gossip/stall declarations
@@ -258,28 +335,74 @@ object ConsensusEventLoop {
                 // (Busy→Idle) and must NEVER be filtered — dropping them leaves the FSM permanently
                 // stuck in Busy, causing InitializeFromDownload to re-queue forever.
                 case _: ConsensusCommand.CheckUpdate[_] | ConsensusCommand.TimeTick | ConsensusCommand.FacilitateByEvent |
-                    _: ConsensusCommand.StartRound =>
+                    _: ConsensusCommand.StartRound | _: ConsensusCommand.AbandonRound[_] | _: ConsensusCommand.RequestViewChange[_] =>
                   true
                 case _ => false
               }
               if (isRecovering && isStaleCommand) {
-                ctx.logger.debug(s"Discarding stale ${cmd.getClass.getSimpleName} command: node in $currentState (recovery)")
+                (cmd match {
+                  case _: ConsensusCommand.RequestViewChange[_] => viewChangeManager.resetAllRequests
+                  case _                                        => Async[F].unit
+                }) >> ctx.logger.debug(s"Discarding stale ${cmd.getClass.getSimpleName} command: node in $currentState (recovery)")
               } else
                 cmd match {
-                  case ConsensusCommand.AbandonRound(key, reason) =>
+                  case ConsensusCommand.AbandonRound(key, reason, expectedAttemptId, expectedResourceGeneration) =>
                     // #1 lost-update fix: the StallDetector monitor enqueues AbandonRound instead of calling
                     // abandonmentTracker.abandonRound on its own fiber. Handling it here runs abandonRound's
                     // condModifyState on this single command-loop fiber, the only state writer (see
                     // ConsensusStorage.condModifyState). abandonRound re-checks outcome-readiness, so a round
                     // that completed since the monitor's decision is not wiped.
-                    abandonmentTracker
-                      .abandonRound(key, reason)
-                      .handleErrorWith { err =>
+                    containAbandonAndRearm(
+                      abandonmentTracker.abandonRound(key, reason, expectedAttemptId, expectedResourceGeneration),
+                      err =>
                         ctx.logger.error(err)("Unhandled error processing AbandonRound, recovering") >>
-                          Metrics[F].incrementCounter("dag_consensus_command_error")
-                      }
+                          Metrics[F].incrementCounter("dag_consensus_command_error"),
+                      recoverFailedAbandonAfterStateRemoval(
+                        ctx.storage.getState(key).map(_.isDefined),
+                        nodeStorage.getNodeState,
+                        ctx.storage.clearResourcesPreservingDeclarations(key),
+                        queue.offer(ConsensusCommand.RoundCompleted(None)),
+                        queue.offer(ConsensusCommand.TimeTick)
+                      ),
+                      // The monitor exits as soon as it enqueues AbandonRound. If the drain-time
+                      // attempt/outcome/vote-lock checks suppress that command, the state remains
+                      // live and must receive a replacement monitor. This is a no-op after a real
+                      // abandon because performAbandon removed the state.
+                      roundRunner.ensureRoundMonitor(key)
+                    )
+                  case ConsensusCommand.RequestViewChange(
+                        key,
+                        expectedFromView,
+                        expectedAttemptId,
+                        expectedProgressGeneration,
+                        reason
+                      ) =>
+                    recoverViewChangeRequestFailure(
+                      viewChangeManager.emitRequestedViewChange(
+                        key,
+                        expectedFromView,
+                        expectedAttemptId,
+                        expectedProgressGeneration,
+                        reason
+                      ),
+                      err =>
+                        ctx.logger.error(err)(s"Unhandled error processing RequestViewChange for key=$key, recovering") >>
+                          Metrics[F].incrementCounter("dag_consensus_command_error"),
+                      roundRunner.ensureRoundMonitor(key)
+                    )
                   case _ =>
-                    fsm
+                    (cmd match {
+                      // softResetRoundState discards the key's VCV/TC resources, so the
+                      // one-emission latch must be released before recreating view 0.
+                      // Ordinary abandonment deliberately preserves both resources and latch.
+                      case ConsensusCommand.RestartAfterSoftReset(key) => viewChangeManager.resetRequestForKey(key)
+                      // Certified completion retires this ordinal's one-emission entries.
+                      case ConsensusCommand.ConsensusFinished(key, _, _) => viewChangeManager.resetRequestForKey(key)
+                      // Download/rollback clears consensus resources across keys.
+                      case _: ConsensusCommand.InitializeFromDownload[_, _, _] | _: ConsensusCommand.InitializeFromRollback[_, _] =>
+                        viewChangeManager.resetAllRequests
+                      case _ => Async[F].unit
+                    }) >> fsm
                       .handle(cmd)
                       .flatTap { _ =>
                         // After a successful consensus round completes, reset recovery counters.
@@ -336,8 +459,8 @@ object ConsensusEventLoop {
                                 .void
 
                           case _ =>
-                            ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
-                              Metrics[F].incrementCounter("dag_consensus_command_error") >>
+                            (ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
+                              Metrics[F].incrementCounter("dag_consensus_command_error")).attempt.void >>
                               (cmd match {
                                 case _: ConsensusCommand.ConsensusFinished[_, _] | _: ConsensusCommand.RoundCompleted =>
                                   // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
@@ -358,29 +481,62 @@ object ConsensusEventLoop {
                                         ctx.logger.warn("Skipping TimeTick after error recovery: node is in Leaving state") >>
                                           Metrics[F].incrementCounter("dag_consensus_timetick_suppressed_leaving")
                                     }
-                                case _: ConsensusCommand.InitializeFromDownload[_, _, _] =>
-                                  // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
-                                  // Without recovery, the node stays stuck — never initializes, never starts consensus.
-                                  // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves
-                                  // (prevents infinite download → init fail → download loops).
-                                  // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
-                                  ctx.logger
-                                    .error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
-                                    Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
-                                    abandonmentTracker.trackInitFromDownloadFailure >>
-                                    nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
-                                      case NodeStateTransition.Success =>
-                                        ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")
-                                      case _ =>
-                                        // May already be in a different state; try from Ready as well
-                                        nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
-                                    }
+                                case init @ ConsensusCommand.InitializeFromDownload(_, _, _, _) =>
+                                  (ctx.plannedRecoveryCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
+                                    case (Right(Some(_)), _) | (_, Right(true)) =>
+                                      // A planned initialization may already have installed the exact anchor and advanced
+                                      // Observing -> WaitingForReady before a later prerequisite failed. Re-entering download would
+                                      // strand that state and can never recreate the all-member barrier. Retry the exact idempotent
+                                      // initialization until it installs/observes the same outcome and starts the barrier fiber.
+                                      (ctx.logger.warn(
+                                        "Signed recovery-plan initialization failed after a partial install; retrying the exact generation"
+                                      ) >> Metrics[F].incrementCounter(
+                                        "dag_consensus_recovery_plan_init_resume_total"
+                                      )).attempt.void >>
+                                        Async[F]
+                                          .start(
+                                            Async[F].sleep(1.second) >> nodeStorage.getNodeState.flatMap { state =>
+                                              queue.offer(init).whenA(plannedInitializationRetryableState(state))
+                                            }
+                                          )
+                                          .attempt
+                                          .void
+
+                                    case _ =>
+                                      // After 20 retries, ordinary initFromDownload exhausts its retry policy and the error propagates
+                                      // here. Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
+                                      ctx.logger
+                                        .error(err)(
+                                          "InitializeFromDownload failed after exhausting retries, triggering recovery download"
+                                        ) >>
+                                        Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
+                                        abandonmentTracker.trackInitFromDownloadFailure >>
+                                        nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
+                                          case NodeStateTransition.Success =>
+                                            ctx.logger.info(
+                                              "Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry"
+                                            )
+                                          case _ =>
+                                            // May already be in a different state; try from Ready as well
+                                            nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
+                                        }
+                                  }
+                                case rollback @ ConsensusCommand.InitializeFromRollback(
+                                      _,
+                                      _,
+                                      ConsensusCommand.RollbackStartPolicy.RequireAlignedCommittee(_)
+                                    ) =>
+                                  // The signed recovery plan is fail-closed and idempotent for the
+                                  // exact installed anchor. Retry the serialized initialization if an
+                                  // operational effect failed before or after its barrier was spawned.
+                                  Async[F].start(Async[F].sleep(1.second) >> queue.offer(rollback)).void
                                 case _ => Async[F].unit
                               })
                         }
                       }
                 }
             }
+          }
         }
 
       // Register peers when they enter Observing, WaitingForReady, or Ready.

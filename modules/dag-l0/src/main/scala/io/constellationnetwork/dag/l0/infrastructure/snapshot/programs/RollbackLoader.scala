@@ -6,6 +6,8 @@ import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.util.control.NoStackTrace
+
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotTraverse
 import io.constellationnetwork.dag.l0.modules.{Services, Storages}
@@ -28,6 +30,24 @@ import io.constellationnetwork.security.signature.Signed
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RollbackLoader {
+
+  sealed trait Source
+  object Source {
+    case object Incremental extends Source
+    case object FullSnapshot extends Source
+  }
+
+  final case class PreflightIncrementalMissing(hash: Hash) extends NoStackTrace {
+    override def getMessage: String = s"Recovery-plan preflight could not read exact incremental rollback hash=${hash.value}"
+  }
+
+  final case class PreflightSnapshotInfoMissing(ordinal: SnapshotOrdinal) extends NoStackTrace {
+    override def getMessage: String = s"Recovery-plan preflight could not read snapshot info at ordinal=${ordinal.value.value}"
+  }
+
+  /** Keep the safety-critical ordering explicit and independently testable: a failed preflight cannot evaluate the mutation phase. */
+  private[programs] def runPreflightThen[F[_]: Async, A](preflight: F[Unit], mutate: => F[A]): F[A] =
+    preflight >> mutate
 
   def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
@@ -84,9 +104,14 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
 
   private val logger = Slf4jLogger.getLogger[F]
 
+  /** Resolve and load the rollback anchor. `preLoadValidate` is absent on ordinary rollback, preserving its exact path. Operator recovery
+    * supplies a callback that runs against read-only local incremental/snapshot-info files before `GlobalSnapshotTraverse.loadChain` can
+    * initialize snapshot storage or sync MPT state.
+    */
   def load(
     rollbackHash: Hash,
-    download: Download[F, GlobalIncrementalSnapshot]
+    download: Download[F, GlobalIncrementalSnapshot],
+    preLoadValidate: Option[(RollbackLoader.Source, GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot]) => F[Unit]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] =
@@ -95,7 +120,7 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
         .read(rollbackHash)
         .flatMap {
           case None =>
-            logger.info("Attempt to treat rollback hash as pointer to incremental global snapshot") >> {
+            val loadIncremental = logger.info("Attempt to treat rollback hash as pointer to incremental global snapshot") >> {
               val snapshotTraverse = GlobalSnapshotTraverse
                 .make[F](
                   incrementalGlobalSnapshotLocalFileSystemStorage.read(_),
@@ -112,8 +137,22 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                 )
               snapshotTraverse.loadChain()
             }
+
+            preLoadValidate.fold(loadIncremental) { validate =>
+              val preflight = for {
+                exactSnapshot <- incrementalGlobalSnapshotLocalFileSystemStorage
+                  .read(rollbackHash)
+                  .flatMap(_.liftTo[F](RollbackLoader.PreflightIncrementalMissing(rollbackHash)))
+                exactInfo <- snapshotInfoLocalFileSystemStorage
+                  .read(exactSnapshot.ordinal)
+                  .flatMap(_.liftTo[F](RollbackLoader.PreflightSnapshotInfoMissing(exactSnapshot.ordinal)))
+                _ <- validate(RollbackLoader.Source.Incremental, exactInfo, exactSnapshot)
+              } yield ()
+
+              RollbackLoader.runPreflightThen(preflight, loadIncremental)
+            }
           case Some(fullSnapshot) =>
-            logger.info("Rollback hash points to full global snapshot") >>
+            val loadFull = logger.info("Rollback hash points to full global snapshot") >>
               HasherSelector[F].withCurrent { implicit hasher =>
                 fullSnapshot
                   .toHashed[F]
@@ -125,6 +164,10 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                     }
                   }
               }
+
+            preLoadValidate.fold(loadFull) { validate =>
+              loadFull.flatTap { case (info, snapshot) => validate(RollbackLoader.Source.FullSnapshot, info, snapshot) }
+            }
         }
         .flatTap {
           case (_, lastInc) =>

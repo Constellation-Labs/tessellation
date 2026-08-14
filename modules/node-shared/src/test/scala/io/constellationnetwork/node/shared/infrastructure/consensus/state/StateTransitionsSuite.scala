@@ -1,5 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
+import cats.effect.IO
+import cats.effect.kernel.Ref
+
+import scala.collection.immutable.SortedSet
+
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
 
@@ -9,6 +15,40 @@ object StateTransitionsSuite extends SimpleIOSuite {
 
   private def pid(name: String): PeerId =
     PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString))
+
+  test("certified advance completes prune and CheckUpdate before fallible observability") {
+    Ref.of[IO, List[String]](List.empty).flatMap { order =>
+      val append = (value: String) => order.update(_ :+ value)
+
+      for {
+        _ <- StateTransitions.completeCertifiedAdvance[IO](
+          didAdvance = true,
+          prune = append("prune"),
+          enqueueCheckUpdate = append("check-update"),
+          advancedObservability = append("observability") >> IO.raiseError(new RuntimeException("metrics unavailable")),
+          notAdvancedObservability = append("not-advanced")
+        )
+        observed <- order.get
+      } yield expect.same(List("prune", "check-update", "observability"), observed)
+    }
+  }
+
+  test("certified advance race isolates not-advanced observability failures") {
+    Ref.of[IO, List[String]](List.empty).flatMap { order =>
+      val append = (value: String) => order.update(_ :+ value)
+
+      for {
+        _ <- StateTransitions.completeCertifiedAdvance[IO](
+          didAdvance = false,
+          prune = append("prune"),
+          enqueueCheckUpdate = append("check-update"),
+          advancedObservability = append("advanced"),
+          notAdvancedObservability = append("not-advanced") >> IO.raiseError(new RuntimeException("metrics unavailable"))
+        )
+        observed <- order.get
+      } yield expect.same(List("not-advanced"), observed)
+    }
+  }
 
   pureTest("exact downloaded outcomes preserve the caller's recovery mode") {
     val normal = StateTransitions.downloadOutcomeDisposition(
@@ -143,5 +183,92 @@ object StateTransitionsSuite extends SimpleIOSuite {
     expect.same(1, status.participantsIncludingSelf) &&
     expect.same(1, status.required) &&
     expect(!status.quorumFeasible)
+  }
+
+  pureTest("recovery-plan peer outcome requires full typed equality") {
+    expect.same(
+      StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+      StateTransitions.recoveryPlanPeerOutcome("seeded-full-outcome", Some("seeded-full-outcome"))
+    ) &&
+    expect.same(
+      StateTransitions.RecoveryPlanPeerOutcome.Mismatched,
+      StateTransitions.recoveryPlanPeerOutcome("seeded-full-outcome", Some("same-key-different-operational-state"))
+    ) &&
+    expect.same(
+      StateTransitions.RecoveryPlanPeerOutcome.Missing,
+      StateTransitions.recoveryPlanPeerOutcome[String]("seeded-full-outcome", None)
+    )
+  }
+
+  pureTest("recovery-plan barrier accepts exactly named Ready and WaitingForReady peers with exact outcomes") {
+    val self = pid("recovery-lead")
+    val peerA = pid("recovery-a")
+    val peerB = pid("recovery-b")
+    val unrelated = pid("unrelated-ready")
+    val status = StateTransitions.recoveryPlanBarrierStatus(
+      selfId = self,
+      committee = SortedSet(self, peerA, peerB),
+      selfReady = true,
+      responsivePeerStates = Map(
+        peerA -> NodeState.Ready,
+        peerB -> NodeState.WaitingForReady,
+        unrelated -> NodeState.Ready
+      ),
+      peerOutcomes = Map(
+        peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+        peerB -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+        unrelated -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched
+      )
+    )
+
+    expect(status.aligned) &&
+    expect.same(SortedSet(peerA, peerB), status.expectedExternal) &&
+    expect.same(SortedSet(peerA, peerB), status.alignedPeers)
+  }
+
+  pureTest("recovery-plan barrier fails closed on missing, wrong-state, mismatched, or unfetched planned peers") {
+    val self = pid("recovery-lead")
+    val missing = pid("missing")
+    val wrongState = pid("observing")
+    val mismatched = pid("mismatched")
+    val unfetched = pid("unfetched")
+    val status = StateTransitions.recoveryPlanBarrierStatus(
+      selfId = self,
+      committee = SortedSet(self, missing, wrongState, mismatched, unfetched),
+      selfReady = true,
+      responsivePeerStates = Map(
+        wrongState -> NodeState.Observing,
+        mismatched -> NodeState.Ready,
+        unfetched -> NodeState.WaitingForReady
+      ),
+      peerOutcomes = Map(mismatched -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched)
+    )
+
+    expect(!status.aligned) &&
+    expect(status.missingSession.contains(missing)) &&
+    expect.same(Some(NodeState.Observing), status.invalidState.get(wrongState)) &&
+    expect(status.mismatchedOutcome.contains(mismatched)) &&
+    expect(status.fetchFailed.contains(unfetched))
+  }
+
+  pureTest("recovery-plan barrier rejects a malformed singleton or a non-Ready lead") {
+    val self = pid("recovery-lead")
+    val singleton = StateTransitions.recoveryPlanBarrierStatus(
+      self,
+      SortedSet(self),
+      selfReady = true,
+      Map.empty,
+      Map.empty
+    )
+    val peerA = pid("recovery-a")
+    val nonReadyLead = StateTransitions.recoveryPlanBarrierStatus(
+      self,
+      SortedSet(self, peerA),
+      selfReady = false,
+      Map(peerA -> NodeState.Ready),
+      Map(peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned)
+    )
+
+    expect(singleton.invalidCommittee) && expect(!singleton.aligned) && expect(!nonReadyLead.aligned)
   }
 }

@@ -71,6 +71,7 @@ object SharedServices {
     seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Option[A]],
     versionHash: Hash,
+    consensusConfigHash: Option[Hash],
     metagraphVersionHash: Hash,
     jarHash: Hash,
     collateral: CollateralConfig,
@@ -126,6 +127,7 @@ object SharedServices {
           environment,
           allowanceList,
           metagraphId,
+          consensusConfigHash = consensusConfigHash,
           consensusHealth = Some(consensusHealthRef.get),
           lastStateEntryAt = Some(stateEntryAtRef.get)
         )

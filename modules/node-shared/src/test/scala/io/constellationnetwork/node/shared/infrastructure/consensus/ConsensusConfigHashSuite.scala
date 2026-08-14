@@ -19,7 +19,8 @@ import weaver.SimpleIOSuite
   *
   * v20 routes the env-resolved value through `ConsensusConfig.coreCommitteeSize: Option[Int]` (populated by `GlobalSnapshotConsensus` /
   * `CurrencySnapshotConsensus` at the construction site) and folds it into the hash. Honest operators with divergent Core size values now
-  * compute different hashes and handshake-reject before any consensus state is exchanged.
+  * compute different hashes. L0 advertises this exact effective hash at joining, where mismatched or one-sided values are rejected;
+  * Facility processing provides an additional diagnostic. The advertised `versionHash` independently fences software releases.
   *
   * This suite asserts the invariant directly on `ConsensusConfig.deterministicConfigHash`:
   *
@@ -70,7 +71,7 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect.same(absent.deterministicConfigHash, explicit.deterministicConfigHash)
   }
 
-  pureTest("dev (3) vs testnet (5) -> different hash (env-resolved divergence rejected at handshake)") {
+  pureTest("dev (3) vs testnet (5) -> different join hash after env resolution") {
     val devConfig = baseConfig.copy(coreCommitteeSize = Some(3))
     val testnetConfig = baseConfig.copy(coreCommitteeSize = Some(5))
     expect(devConfig.deterministicConfigHash != testnetConfig.deterministicConfigHash)
@@ -83,10 +84,11 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(t != m).and(expect(t != i)).and(expect(m != i))
   }
 
-  pureTest("regression marker: divergent Core size between operators is detected before consensus") {
+  pureTest("regression marker: divergent Core size between operators has a distinct join fingerprint") {
     // Operator A configures Core=5, operator B configures Core=6 by accident. Pre-v20 both would
     // produce the same hash and their Facility messages would interoperate; the fork would emerge
-    // downstream when their Core committee derivations diverged. v20 catches this at handshake.
+    // downstream when their Core committee derivations diverged. The L0 join gate now rejects the
+    // mismatch before Facility processing.
     val operatorA = baseConfig.copy(coreCommitteeSize = Some(5))
     val operatorB = baseConfig.copy(coreCommitteeSize = Some(6))
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
@@ -96,9 +98,17 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     // Both grace periods are finalization-timing levers: the canonical snapshotHash is the agreed
     // ARTIFACT hash, not the signed-artifact hash, so divergent grace values produce the same
     // downstream hash and must NOT enter the config hash (otherwise honest operators with different
-    // timing would needlessly handshake-reject). This guards the documented treatment.
+    // timing would produce a noisy diagnostic mismatch). This guards the documented treatment.
     val a = baseConfig.copy(tier1SignatureGracePeriod = 750.milliseconds, signatureGracePeriod = 3.seconds)
     val b = baseConfig.copy(tier1SignatureGracePeriod = 2.seconds, signatureGracePeriod = 9.seconds)
     expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+  }
+
+  pureTest("the environment-resolved facilitator selector cap participates independently in the join hash") {
+    val a = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(1000))
+    val b = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(300))
+
+    expect(a.deterministicConfigHash != b.deterministicConfigHash) &&
+    expect.same(Some(PosInt(20)), a.maxFacilitatorCount)
   }
 }

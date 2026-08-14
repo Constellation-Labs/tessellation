@@ -98,7 +98,7 @@ The same discipline applies to env-keyed consensus knobs that are not ordinal ga
 |-----------|------------|------------------|----------------------------|
 | **FieldsAddedOrdinals** | per-env activation ordinals for deterministic behavior changes | **Yes** | a mismatched ordinal changes artifact bytes at the boundary -> fork |
 | **Tessellation and metagraph version hashes** | hashes of the reported release versions | No | a divergent value is rejected during the join handshake |
-| **deterministicConfigHash** | a hash of dozens of consensus knobs (~48 folded fields) concatenated into one string (`types.scala:950-1044`, folded string ends at `:1043`) | No (it is a config FENCE, not signed into history) | when both peers provide it, a divergent value rejects the join; it also fails the Facility `consensusConfigHash` check and does NOT change replayed bytes |
+| **deterministicConfigHash** | a hash of consensus-critical knobs resolved by `SnapshotConfig.resolveEffectiveConsensusConfig` | No (it is a config FENCE, not signed into history) | L0 requires presence and exact equality at join; Facility processing also reports a mismatch; it does NOT change replayed bytes |
 | **consensusSchemaVersion** | a single integer wire-version fence (`types.scala:830`, currently `34`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
 | **RegistrationRequest.jar** | an advertised artifact hash stored as peer metadata | No | no protocol rejection: `Joining.validateHandshake` does not compare it |
 

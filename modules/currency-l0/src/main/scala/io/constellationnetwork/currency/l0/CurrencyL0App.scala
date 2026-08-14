@@ -22,6 +22,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app._
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -99,6 +100,12 @@ abstract class CurrencyL0App(
 
   protected val configFiles: List[String] = List("currency-l0.conf")
 
+  override protected def loadEffectiveConsensusConfig(method: Run, sharedConfig: SharedConfig): IO[Option[ConsensusConfig]] =
+    loadConfigAs[AppConfigReader].flatMap { reader =>
+      val appConfig = method.appConfig(reader, sharedConfig)
+      SnapshotConfig.resolveEffectiveConsensusConfig(appConfig.snapshot, appConfig.environment).liftTo[IO].map(_.some)
+    }
+
   type KryoRegistrationIdRange = NodeSharedOrSharedRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
@@ -111,6 +118,9 @@ abstract class CurrencyL0App(
       cfgR <- loadConfigAs[AppConfigReader].asResource
       implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
+      loadedConsensusConfig <- IO
+        .fromOption(effectiveConsensusConfig)(new IllegalStateException("Currency L0 effective consensus config was not loaded"))
+        .asResource
 
       dataApplicationService <- dataApplication.sequence.adaptError {
         case error =>
@@ -151,7 +161,7 @@ abstract class CurrencyL0App(
       // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Mirrors the
       // dag-l0 setup. Isolates round-timing from HTTP serving load on the default global
       // compute pool. See ConsensusExecutor.
-      consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
+      consensusEc <- ConsensusExecutor.optional[IO](loadedConsensusConfig.consensusDispatcherThreads)
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -166,6 +176,7 @@ abstract class CurrencyL0App(
           nodeShared.nodeId,
           keyPair,
           cfg,
+          loadedConsensusConfig,
           dataApplicationService,
           rewards,
           validators.signedValidator,
@@ -241,8 +252,8 @@ abstract class CurrencyL0App(
             sharedResources.gossipClient,
             sharedServices.session,
             config = EventGossipConfig(
-              heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
-              pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+              heartbeatInterval = loadedConsensusConfig.eventGossipHeartbeatInterval,
+              pullInterval = loadedConsensusConfig.eventGossipPullInterval
             )
           )
           .asResource
@@ -260,6 +271,7 @@ abstract class CurrencyL0App(
           services.dataApplication,
           eventGossipDaemon,
           cfg,
+          loadedConsensusConfig,
           hasherSelectorAlwaysCurrent,
           sharedServices.stateEntryAtRef
         )

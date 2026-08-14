@@ -4,13 +4,20 @@ import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.ProposalQC
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
 import io.chrisdavenport.mapref.MapRef
+import monocle.Lens
 import weaver.SimpleIOSuite
 
 /** Behavioral tests for the VoteLock subsystem of ConsensusStorage. Full ConsensusStorage requires many type-class witnesses that make a
@@ -18,6 +25,27 @@ import weaver.SimpleIOSuite
   * a MapRef of the same shape that ConsensusStorage uses internally.
   */
 object ConsensusStorageLockSuite extends SimpleIOSuite {
+
+  private final case class StoredOutcome(key: SnapshotOrdinal)
+
+  private implicit val storedOutcomeKeyLens: Lens[StoredOutcome, SnapshotOrdinal] =
+    Lens[StoredOutcome, SnapshotOrdinal](_.key)(key => outcome => outcome.copy(key = key))
+
+  private val consensusConfig = ConsensusConfig(
+    timeTriggerInterval = 10.seconds,
+    declarationTimeout = 10.seconds,
+    declarationRangeLimit = 100L,
+    lockDuration = 10.seconds,
+    eventCutter = EventCutterConfig(
+      maxBinarySizeBytes = PosInt(1024),
+      maxUpdateNodeParametersSize = PosInt(1024)
+    )
+  )
+
+  private def storage(
+    policy: LegacyViewChangePolicy
+  ): IO[ConsensusStorage[IO, Unit, SnapshotOrdinal, Unit, Unit, Unit, StoredOutcome, Unit]] =
+    ConsensusStorage.make[IO, Unit, SnapshotOrdinal, Unit, Unit, Unit, StoredOutcome, Unit](consensusConfig, policy)
 
   private val hashA: Hash = Hash.fromBytes("A".getBytes("UTF-8"))
   private val hashB: Hash = Hash.fromBytes("B".getBytes("UTF-8"))
@@ -38,7 +66,7 @@ object ConsensusStorageLockSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, LegacyViewChangePolicy.FreezeAfterVote) match {
         case Right(newLock)  => (newLock.some, Right(newLock))
         case Left(rejection) => (maybeLock, Left(rejection))
       }
@@ -102,6 +130,36 @@ object ConsensusStorageLockSuite extends SimpleIOSuite {
       } yield
         expect(before.isDefined, "lock should exist after vote").and(expect(after.isEmpty, "lock should be cleared after explicit clear"))
     }
+  }
+
+  test("real ConsensusStorage retains FreezeAfterVote locks across abandon cleanup and clears PreserveLegacy locks") {
+    val key = SnapshotOrdinal.unsafeApply(7L)
+
+    for {
+      freeze <- storage(LegacyViewChangePolicy.FreezeAfterVote)
+      preserve <- storage(LegacyViewChangePolicy.PreserveLegacy)
+      freezeVote <- freeze.tryLockVote(key, view = 0L, hashA, effectiveLockedQc = None)
+      preserveVote <- preserve.tryLockVote(key, view = 0L, hashA, effectiveLockedQc = None)
+      _ <- freeze.clearResourcesPreservingDeclarations(key)
+      _ <- preserve.clearResourcesPreservingDeclarations(key)
+      freezeAfter <- freeze.getVoteLock(key)
+      preserveAfter <- preserve.getVoteLock(key)
+    } yield
+      expect(freezeVote.isRight) &&
+        expect(preserveVote.isRight) &&
+        expect(freezeAfter.nonEmpty, "FreezeAfterVote must retain the local vote lock across same-key abandon cleanup") &&
+        expect(preserveAfter.isEmpty, "PreserveLegacy must clear the old attempt lock to retain exact rc.7 retry behavior")
+  }
+
+  test("successful local pacemaker emission advances the real storage progress epoch exactly once") {
+    val key = SnapshotOrdinal.unsafeApply(8L)
+
+    for {
+      consensusStorage <- storage(LegacyViewChangePolicy.FreezeAfterVote)
+      before <- consensusStorage.getResourceGeneration(key)
+      _ <- consensusStorage.markPacemakerEmissionProgress(key)
+      after <- consensusStorage.getResourceGeneration(key)
+    } yield expect(after == before + 1L)
   }
 
 }

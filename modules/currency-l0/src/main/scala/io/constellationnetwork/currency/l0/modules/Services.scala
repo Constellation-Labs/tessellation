@@ -24,7 +24,7 @@ import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.SharedConfig
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -70,6 +70,7 @@ object Services {
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,
+    effectiveConsensusConfig: ConsensusConfig,
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     signedValidator: SignedValidator[F],
@@ -174,8 +175,7 @@ object Services {
           storages.node,
           storages.lastSyncGlobalSnapshot,
           maybeRewards,
-          cfg.snapshot,
-          cfg.environment,
+          effectiveConsensusConfig,
           client,
           session,
           stateChannelSnapshotService,

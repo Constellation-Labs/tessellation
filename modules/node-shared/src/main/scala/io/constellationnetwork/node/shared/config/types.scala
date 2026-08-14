@@ -52,9 +52,9 @@ object types {
     // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
     feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
-    // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
-    // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
-    // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
+    // the `fields-added-ordinals.dust-sweeps` HOCON block. This runtime configuration is not covered by the join-time
+    // `versionHash`, which hashes the advertised version string (or `CL_VERSION_HASH`), so operators must deploy one reviewed value
+    // per environment. Default empty: an environment with no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -224,6 +224,11 @@ object types {
     lockDuration: FiniteDuration,
     eventCutter: EventCutterConfig,
     maxFacilitatorCount: Option[PosInt] = None,
+    // Environment-resolved cap consumed by FacilitatorSelector. This is deliberately distinct
+    // from maxFacilitatorCount above, whose scalar value also serves the legacy controller sizing
+    // fallback (notably on Currency L0). Populated only by SnapshotConfig.resolveEffectiveConsensusConfig
+    // so the join/Facility fingerprint binds the cap actually used by the selector.
+    facilitatorSelectionMax: Option[Int] = None,
     reStallTimeout: Option[FiniteDuration] = None,
     noProgressTimeout: Option[FiniteDuration] = None,
     maxStallCycles: Int = 3,
@@ -328,7 +333,8 @@ object types {
     // read by the rollback/ready-participation gates. Admission score gating remains enabled at
     // and above this floor; below it the full selected pool is admitted for bootstrap/collapse
     // recovery. All three values are consensus-critical (in `deterministicConfigHash`) so
-    // divergent operator values are rejected at handshake.
+    // divergent operator values produce distinct L0 join fingerprints and an alertable Facility
+    // mismatch. L0 joining requires exact equality; operators must still preflight fleet-wide values.
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
@@ -366,8 +372,8 @@ object types {
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
     // pattern); default 0 leaves the lane inert. Consensus-critical: it changes the active committee
-    // -> roundStartFacilitators -> facilitatorsHash, so it is folded into `deterministicConfigHash`
-    // and divergent operator values handshake-reject.
+    // -> roundStartFacilitators -> facilitatorsHash, so it is folded into `deterministicConfigHash`.
+    // L0 joining requires exact equality; Facility processing also surfaces mismatches diagnostically.
     activeAdmissionMinProbationReentrySlots: Int = 0,
     // Recent-signer pool lookback depth (in ordinals): how far back a peer may have last signed and
     // still hold sticky, score-gated controller priority instead of churning through the volatile
@@ -380,7 +386,7 @@ object types {
     // floored to DemotionConsecutiveMisses. Default 3 preserves the pre-change lookback; testnet
     // widens to the full persisted `recentSigners` window (`tighteningWindow`). Consensus-critical:
     // it changes deterministic tier/controller derivation, so it is folded into
-    // `deterministicConfigHash` and divergent operator values handshake-reject.
+    // `deterministicConfigHash`. L0 joining requires exact equality; Facility processing also reports mismatches.
     activeAdmissionRecentSignerWindow: Int = 3,
     // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
     // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
@@ -388,7 +394,7 @@ object types {
     // Stage 4 (v32) activates the read side: `penaltyUntil` joins the eligibility filtering
     // in both StateCreators, so divergent operator values would change committee derivation.
     // Consensus-critical: included in `deterministicConfigHash` since v32 so divergent values
-    // are rejected at the Facility handshake instead of silently forking.
+    // produce a hard L0 join mismatch plus an alertable Facility fingerprint mismatch.
     penaltyDurationOrdinals: Int = 100,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
@@ -683,8 +689,8 @@ object types {
     //     change rate were tier 1 and `sorted[viewNumber % size]` kept walking through them.
     //     v15 nodes have neither the per-peer view-change credit nor the score-based filter,
     //     so a mixed v15/v16 cluster would compute different leaders the moment any peer has
-    //     `viewChangesCaused > 0`. Cold restart required; jar hash gates v15<->v16 peer
-    //     connection.
+    //     `viewChangesCaused > 0`. Cold restart required; distinct advertised versions (or
+    //     `CL_VERSION_HASH` values) gate v15<->v16 peer connection.
     //   v17: Exact-fraction supermajority quorum. The previous
     //     `quorum-threshold-fraction = 0.67` was a decimal approximation of 2/3 that rounded
     //     up unfavorably for N divisible by 3: `ceil(N * 0.67)` gave 5 for N=6 instead of the
@@ -701,8 +707,9 @@ object types {
     //     byzantine). Acceptable because observed silent peers are crash-faulty (network,
     //     JVM hang), not byzantine, and the wedge under crash faults is far more damaging
     //     than the theoretical f=2 tolerance we lose. quorumThresholdFraction is in
-    //     deterministicConfigHash so a v16-config and v17-config cluster reject each other at
-    //     handshake; jar hash also enforces. Currency-l0 unaffected (defaults to 1.0
+    //     deterministicConfigHash so a v16-config and v17-config cluster expose different
+    //     config fingerprints rejected at L0 joining and reported during the Facility phase; the
+    //     independent `versionHash` fences differently advertised software versions. Currency-l0 is unaffected (defaults to 1.0
     //     unanimity, applies to small metagraph clusters where unanimity is preferred).
     //   v18: Active-set tightening via the recentSigners window. Adds an Option-wrapped
     //     `recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]` to
@@ -748,18 +755,18 @@ object types {
     //     of these fields and would derive different committee composition (no
     //     peerTiers), different quorum denominator (Core vs full roundStart), and
     //     no recentRoundEndTimes entries; mixed v18/v19 cluster is unsafe. Cold
-    //     restart required across the cluster; jar hash gates v18 <-> v19 peer
-    //     connection at handshake.
+    //     restart required across the cluster; distinct advertised versions (or
+    //     `CL_VERSION_HASH` values) gate v18 <-> v19 peer connection at join.
     //   - v20: `coreCommitteeSize` is now part of `deterministicConfigHash` so a
-    //     cluster with divergent Core size values handshake-rejects rather than
+    //     cluster with divergent Core size values is rejected at L0 joining and exposes a Facility mismatch before
     //     silently forking on divergent Core committee derivation. The env-resolved
     //     value is threaded through `ConsensusConfig.coreCommitteeSize: Option[Int]`
     //     (populated at the construction site that resolves
     //     `SnapshotConfig.coreCommitteeSize.get(env)`) and folded into the hash.
     //     v19 nodes lacked the field in the hash and would compute different hashes
     //     for the same Core size config; mixed v19/v20 clusters cannot form.
-    //     Cold restart required across the cluster; jar hash gates v19 <-> v20 peer
-    //     connection at handshake.
+    //     Cold restart required across the cluster; distinct advertised versions (or
+    //     `CL_VERSION_HASH` values) gate v19 <-> v20 peer connection at join.
     //     v20 additionally stamps `ConsensusState.initialViewNumber: Int` at round
     //     construction, frozen for the lifetime of the round. Validator-side
     //     `validateProposalVcc` (via the shared `ProposalVccValidator.validate`
@@ -775,14 +782,15 @@ object types {
     //     `view{N}_proposal_missing_vcc` and `vcc_view_mismatch` rejection codes --
     //     the latter is the alpha.90 issue 2 stale-VCC view-mismatch gate.
     //     v21: `viewInterval` raised 30s -> 60s (deploy unit A). Pure value change; it
-    //     alters `deterministicConfigHash` (viewIntervalMs is folded in below), so the
-    //     real cross-cluster gate is the config-hash + jar-hash mismatch at handshake.
-    //     This version bump is an audit anchor only, not the gate.
+    //     alters `deterministicConfigHash` (viewIntervalMs is folded in below), so L0 joining rejects
+    //     divergent settings and Facility processing exposes a diagnostic mismatch; advertised `versionHash` independently fences releases.
+    //     This schema-version bump remains an audit anchor.
     //     v22: testnet Core committee floor 3 -> 2 plus sustained-silence demotion
     //     hysteresis (deploy unit B; a Core peer is demoted only after it is absent from
     //     the most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, not on a
     //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so
-    //     the config-hash + jar-hash are the gate; v22 is the audit anchor for B.
+    //     divergent settings are rejected at L0 joining and reported during Facility processing;
+    //     advertised `versionHash` independently fences releases and is not a jar hash. v22 is the audit anchor for B.
     //     v23: leader selection also narrows the Core leader pool to peers present in the
     //     most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, when that
     //     leaves at least `minLeaderPoolSize` candidates. Deterministic: `recentSigners`
@@ -797,8 +805,8 @@ object types {
     //     view>seed proposals; followers validate TC-carried proposals (view linkage, quorum,
     //     parent/facilitator hash, witness pool, divergent + carry-forward highest-QC). `Proposal`
     //     gains `timeoutCertificate: Option[TimeoutCertificate]` -- a wire change, so deploy as a
-    //     coordinated cold L0 restart. As always the jar/config-hash mismatch at handshake is the
-    //     real gate; this bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
+    //     coordinated cold L0 restart. The advertised-version `versionHash` gates joining while
+    //     `deterministicConfigHash` is enforced at L0 joining and carried in Facilities for diagnostics; this bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
     //     rehydration.
     //     v26: active-facilitator expansion. The recent-signer-only admission filter now keeps
     //     recent signers first, then fills toward `activeFacilitatorTarget` with deterministic
@@ -833,8 +841,8 @@ object types {
     //     `deterministicConfigHash`. Signed-bytes shape changed: peerHistory reinstated with
     //     an evidence-only payload (perPeer empty, recentRoundEndTimes omitted,
     //     controllerEvidence + penaltyUntil signed), so deploy as a coordinated cold L0
-    //     restart. As always the jar/config-hash mismatch at handshake is the real gate; this
-    //     bump is the audit anchor.
+    //     restart. The advertised-version `versionHash` gates joining while
+    //     `deterministicConfigHash` is enforced at L0 joining and carried in Facilities for diagnostics; this bump is the audit anchor.
     //     v33: escalating quorum-denominator shrink (QuorumDenominatorShrink). After
     //     `quorumShrinkActivationViews` viewInterval units of silence since the parent
     //     outcome closed, the REQUIRED quorum for phase/VCC/TC feasibility at the stuck key
@@ -877,8 +885,8 @@ object types {
     // LIVENESS quorum threshold is computed against `coreFacilitators.value.size`; divergent
     // operator values would derive divergent Core committees and silently fork. Now in
     // `deterministicConfigHash` so a v19 (no-hash) and v20 (with-hash) cluster compute
-    // different hashes and reject each other at the Facility handshake. Jar hash also gates
-    // peer connection.
+    // different fingerprints rejected at L0 joining and reported during Facility processing. The
+    // independent `versionHash` hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes.
     coreCommitteeSize: Option[Int] = None,
     // v33 quorum-denominator shrink rung (QuorumDenominatorShrink): number of `viewInterval`
     // units of wall silence since the parent outcome's `consensusEndTime` after which the
@@ -890,7 +898,7 @@ object types {
     // reset on restart and must never gate cross-node acceptance (the alpha.104 lesson). The
     // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
     // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
-    // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
+    // included in `deterministicConfigHash` -- divergent values are rejected at L0 joining and surfaced during Facility processing.
     quorumShrinkActivationViews: Int = 0
   ) {
 
@@ -901,7 +909,8 @@ object types {
       * downstream.
       *
       * '''Consensus-critical fields''' (included in hash):
-      *   - `maxFacilitatorCount`: determines eligible facilitator list size and rendezvous hashing
+      *   - `maxFacilitatorCount`: legacy controller sizing fallback
+      *   - `facilitatorSelectionMax`: environment-resolved cap actually consumed by FacilitatorSelector
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
       *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
@@ -925,7 +934,7 @@ object types {
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
-      *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
+      *     pulls this into the hash so divergence is rejected during L0 joining and observable during Facility processing.
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
@@ -945,6 +954,7 @@ object types {
     lazy val deterministicConfigHash: Hash = {
       val configString =
         s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
+          s"facilitatorSelectionMax=${facilitatorSelectionMax.map(_.toString).getOrElse("none")}," +
           s"maxStallCycles=$maxStallCycles," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
           s"candidateDeferralRounds=$candidateDeferralRounds," +
@@ -996,12 +1006,12 @@ object types {
           s"activeAdmissionMaxExpansionPerRound=$activeAdmissionMaxExpansionPerRound," +
           s"activeAdmissionExpansionIntervalRounds=$activeAdmissionExpansionIntervalRounds," +
           // Bounded probation re-entry lane: changes the active committee -> roundStartFacilitators
-          // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
-          // silently fork. Env-resolved to 0 (inert) when absent for an environment.
+          // -> facilitatorsHash, so divergent values must produce distinct diagnostic fingerprints.
+          // L0 joining rejects them; Facility processing also reports them. Env-resolved to 0 (inert) when absent for an environment.
           s"activeAdmissionMinProbationReentrySlots=$activeAdmissionMinProbationReentrySlots," +
           // Recent-signer pool lookback depth: changes the active committee -> roundStartFacilitators
-          // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
-          // silently fork. Floored to DemotionConsecutiveMisses (3) at the construction site.
+          // -> facilitatorsHash, so divergent values must produce distinct diagnostic fingerprints.
+          // L0 joining rejects them; Facility processing also reports them. Floored to DemotionConsecutiveMisses (3) at the construction site.
           s"activeAdmissionRecentSignerWindow=$activeAdmissionRecentSignerWindow," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
@@ -1140,12 +1150,14 @@ object types {
     // integrationnet ~10 peers -> Core 9, dev (single-node test rigs) -> Core 3.
     // Consensus-critical because the LIVENESS quorum threshold is computed against
     // `coreFacilitators.value.size`; divergent operator values would derive divergent
-    // Core committees and silently fork. The jar hash already gates peer connections.
+    // Core committees and silently fork. The separate join-time `versionHash` gates advertised
+    // software versions; it does not hash jar bytes or this runtime value.
     //
     // v20 update: the env-resolved value is now also folded into `ConsensusConfig.coreCommitteeSize`
     // at the consensus construction site, which in turn folds into `deterministicConfigHash`,
-    // so a Facility-time handshake refusal is the second line of defence against divergent
-    // operator values (in addition to the jar hash). The `Map[AppEnvironment, PosInt]` shape is
+    // so divergent operator values are rejected by the L0 config-hash join fence and reported by
+    // Facility processing. The advertised-version `versionHash` is an independent software fence.
+    // The `Map[AppEnvironment, PosInt]` shape is
     // preserved -- env resolution still happens at the construction site
     // (GlobalSnapshotConsensus / CurrencySnapshotConsensus); only the resolved scalar is
     // additionally threaded into the hash.
@@ -1203,6 +1215,61 @@ object types {
     maxGlobalSnapshotsWithStateDeltasStored: PosLong,
     combinedSnapshotCheckpointPath: Path
   )
+
+  object SnapshotConfig {
+
+    /** Resolves every environment-shaped input that participates in consensus exactly once.
+      *
+      * Both the live consensus engine and the cluster join fence must hash this returned value. Keeping the resolution here prevents a
+      * configuration from passing the join handshake and then producing a different Facility fingerprint after consensus starts.
+      */
+    def resolveEffectiveConsensusConfig(
+      snapshot: SnapshotConfig,
+      environment: AppEnvironment
+    ): Either[IllegalArgumentException, ConsensusConfig] = {
+      val coreCommitteeSize = snapshot.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
+      val activeFacilitatorTarget = snapshot.activeFacilitatorTarget
+        .get(environment)
+        .orElse(snapshot.consensus.activeFacilitatorTarget)
+      val activeFacilitatorMax = snapshot.activeFacilitatorMax
+        .get(environment)
+        .orElse(snapshot.consensus.activeFacilitatorMax)
+
+      val effective = snapshot.consensus.copy(
+        facilitatorSelectionMax = snapshot.maxFacilitatorCount.get(environment).map(_.value),
+        coreCommitteeSize = Some(coreCommitteeSize),
+        quorumShrinkActivationViews = snapshot.quorumShrinkActivationViews.get(environment).getOrElse(0),
+        activeAdmissionMinProbationReentrySlots = snapshot.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0),
+        activeAdmissionRecentSignerWindow = math.max(3, snapshot.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3)),
+        activeFacilitatorTarget = activeFacilitatorTarget,
+        activeFacilitatorMax = activeFacilitatorMax
+      )
+
+      for {
+        _ <- Either.cond(
+          activeFacilitatorTarget.forall(_ > coreCommitteeSize),
+          (),
+          new IllegalArgumentException(
+            s"active-facilitator-target ($activeFacilitatorTarget) must exceed core-committee-size ($coreCommitteeSize)"
+          )
+        )
+        _ <- Either.cond(
+          activeFacilitatorMax.forall(_ >= coreCommitteeSize),
+          (),
+          new IllegalArgumentException(
+            s"active-facilitator-max ($activeFacilitatorMax) must be >= core-committee-size ($coreCommitteeSize)"
+          )
+        )
+        _ <- Either.cond(
+          !activeFacilitatorTarget.exists(target => activeFacilitatorMax.exists(maximum => target > maximum)),
+          (),
+          new IllegalArgumentException(
+            s"active-facilitator-target ($activeFacilitatorTarget) must not exceed active-facilitator-max ($activeFacilitatorMax)"
+          )
+        )
+      } yield effective
+    }
+  }
 
   case class HttpClientConfig(
     timeout: FiniteDuration,

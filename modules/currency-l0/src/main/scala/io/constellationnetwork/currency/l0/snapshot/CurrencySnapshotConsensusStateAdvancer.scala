@@ -1744,9 +1744,15 @@ object CurrencySnapshotConsensusStateAdvancer {
         state: CurrencySnapshotConsensusState,
         status: CollectingSignatures,
         resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
-      ): F[Option[Transition]] =
+      ): F[Option[Transition]] = {
+        val attemptDomain = SignatureAttemptDomain(
+          facilitatorsHash = status.facilitatorsHash,
+          lastSnapshotHash = status.lastSnapshotHash,
+          view = state.viewNumber.toLong,
+          proposalHash = status.majorityArtifactInfo.hash
+        )
         for {
-          maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature)
+          maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature.filter(attemptDomain.contains))
           maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
           // Skip facilitatorsHash fork check when view > 0 (eviction), solo→multi transition,
           // or during joining grace period (peer quality scores haven't converged yet).
@@ -1770,6 +1776,7 @@ object CurrencySnapshotConsensusStateAdvancer {
               none[Transition].pure[F]
           }
         } yield result
+      }
 
       private def extractGlobalSnapshotOrdinal(maybeFacilities: Option[SortedMap[PeerId, Facility]]): Option[SnapshotOrdinal] =
         maybeFacilities
@@ -1863,7 +1870,11 @@ object CurrencySnapshotConsensusStateAdvancer {
         resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
       ): F[Option[Transition]] =
         for {
-          maybeBinarySignatures <- maybeGetAllDeclarations(state, resources)(_.binarySignature)
+          maybeBinarySignatures <- maybeGetAllDeclarations(state, resources)(
+            _.binarySignature.filter(signature =>
+              signature.facilitatorsHash == status.facilitatorsHash && signature.lastSnapshotHash == status.lastSnapshotHash
+            )
+          )
           // Skip facilitatorsHash fork check when view > 0 (eviction), solo→multi transition,
           // or during joining grace period (peer quality scores haven't converged yet).
           lastSolo3 <- wasLastRoundSolo

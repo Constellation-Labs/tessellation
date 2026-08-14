@@ -5,23 +5,28 @@ import cats.effect._
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.BuildInfo
 import io.constellationnetwork.dag.l0.StoragesInitializer.initializeStorages
 import io.constellationnetwork.dag.l0.cli.method._
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.domain.snapshot.ForkRecoveryService
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.RecoveryCheckpointLoader
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery._
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalRecoveryPlanOutcome
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
 import io.constellationnetwork.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import io.constellationnetwork.dag.l0.modules._
 import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app.{DagL0, NodeShared, TessellationIOApp}
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.collateral.OwnCollateralNotSatisfied
 import io.constellationnetwork.node.shared.ext.pureconfig._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.RollbackStartPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, TierTransitions}
@@ -33,6 +38,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{Glob
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
 import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
@@ -41,6 +47,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.security.{Hasher, HasherSelector}
 
@@ -65,8 +72,55 @@ object Main
 
   protected val configFiles: List[String] = List("dag-l0.conf")
 
+  override protected def loadEffectiveConsensusConfig(method: Run, sharedConfig: SharedConfig): IO[Option[ConsensusConfig]] =
+    loadConfigAs[AppConfigReader].flatMap { reader =>
+      val appConfig = method.appConfig(reader, sharedConfig)
+      SnapshotConfig.resolveEffectiveConsensusConfig(appConfig.snapshot, appConfig.environment).liftTo[IO].map(_.some)
+    }
+
   private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId, proofSigners: List[PeerId]): List[PeerId] =
     if (proofSigners.nonEmpty) proofSigners else List(nodeId)
+
+  private[dag] def rollbackBootstrapFacilitators(
+    nodeId: PeerId,
+    proofSigners: List[PeerId],
+    plannedCommittee: Option[SortedSet[PeerId]]
+  ): List[PeerId] =
+    plannedCommittee.fold(rollbackBootstrapFacilitators(nodeId, proofSigners))(_.toList)
+
+  private[dag] def rollbackOperationalSeed(
+    restored: ConsensusOperationalState,
+    recoveryPlanActive: Boolean
+  ): ConsensusOperationalState =
+    if (recoveryPlanActive) ConsensusOperationalState.empty else restored
+
+  private[dag] def rollbackProofSize(snapshotProofSize: Int, plannedCommitteeSize: Option[Int]): Int =
+    plannedCommitteeSize.getOrElse(snapshotProofSize)
+
+  /** Match GlobalSnapshotConsensusFunctions.getBalance exactly: an address absent from the anchor's consensus-agreed balance map has
+    * Balance.empty, not implicit collateral.
+    */
+  private[dag] def rollbackAnchorHasCollateral(balance: Option[Balance], required: Amount): Boolean =
+    balance.getOrElse(Balance.empty).satisfiesCollateral(required)
+
+  private[dag] final case class ConflictingRecoveryAnchors(
+    planned: RecoveryCheckpoint,
+    configured: RecoveryCheckpoint
+  ) extends NoStackTrace {
+    override def getMessage: String =
+      s"GL0 recovery-plan anchor conflicts with configured recovery checkpoint: " +
+        s"plan=(${planned.network},${planned.ordinal.value.value},${planned.snapshotHash.value}) " +
+        s"checkpoint=(${configured.network},${configured.ordinal.value.value},${configured.snapshotHash.value})"
+  }
+
+  /** A one-shot committee plan must not weaken or bypass the independently configured, seedlist-majority fork anchor. */
+  private[dag] def validateRecoveryAnchorCompatibility(
+    plan: Gl0RecoveryPlan,
+    configured: Option[RecoveryCheckpoint]
+  ): Either[ConflictingRecoveryAnchors, Unit] =
+    configured.fold[Either[ConflictingRecoveryAnchors, Unit]](Right(())) { checkpoint =>
+      Either.cond(plan.anchor === checkpoint, (), ConflictingRecoveryAnchors(plan.anchor, checkpoint))
+    }
 
   private[dag] final case class RecentCoreReconstructionDiagnostic(
     source: String,
@@ -112,6 +166,21 @@ object Main
       cfgR <- loadConfigAs[AppConfigReader].asResource
       implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
+      loadedConsensusConfig <- IO
+        .fromOption(effectiveConsensusConfig)(new IllegalStateException("DAG L0 effective consensus config was not loaded"))
+        .asResource
+      recoveryPlanMaxFacilitatorCount = loadedConsensusConfig.facilitatorSelectionMax
+      recoveryPlanPath = method match {
+        case m: RunRollback                 => m.recoveryPlanPath
+        case m: RunValidator                => m.recoveryPlanPath
+        case m: RunValidatorWithJoinAttempt => m.recoveryPlanPath
+        case _: RunGenesis                  => none[fs2.io.file.Path]
+      }
+      initiallyHoldConsensusFirstRound = recoveryPlanPath.isDefined
+      configuredRecoveryPlanRef <- Ref.of[IO, Option[Gl0RecoveryPlanLoader.Verified]](None).asResource
+      recoveryPlanReceipt <- Gl0RecoveryPlanReceipt
+        .make[IO](cfg.snapshot.snapshotPath / "recoveryPlanReceipts")
+        .asResource
       queues <- Queues.make[IO](sharedQueues).asResource
 
       // B2 witness channel: the mesh-gossip peer-chain-tip Ref is created here so it can be
@@ -144,7 +213,7 @@ object Main
       // round-timing from HTTP serving load on the default global compute pool. Zero or
       // negative `consensusDispatcherThreads` falls back to the global runtime (legacy
       // behaviour). See ConsensusExecutor for the rationale and lifecycle notes.
-      consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
+      consensusEc <- ConsensusExecutor.optional[IO](loadedConsensusConfig.consensusDispatcherThreads)
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -160,9 +229,13 @@ object Main
           nodeShared.nodeId,
           keyPair,
           cfg,
+          loadedConsensusConfig,
           Hasher.forKryo[IO],
           nodeShared.loggerBundle,
           getPeerChainTips,
+          configuredRecoveryPlanRef.get,
+          recoveryPlanReceipt,
+          initiallyHoldConsensusFirstRound,
           consensusEc
         )
         .asResource
@@ -175,6 +248,20 @@ object Main
           SignedValidator.make[IO]
         )
       }.asResource
+      loadRecoveryPlan = (planPath: Option[fs2.io.file.Path], role: Gl0RecoveryPlanLoader.Role) =>
+        hasherSelector.withCurrent { implicit hasher =>
+          Gl0RecoveryPlanLoader.load[IO](
+            planPath,
+            cfg.environment.toString,
+            role,
+            nodeShared.seedlist.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet)),
+            nodeShared.customAllowanceList.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet)),
+            recoveryPlanMaxFacilitatorCount,
+            loadedConsensusConfig.quorumThresholdFraction,
+            SignedValidator.make[IO]
+          )
+        }
+          .flatTap(_.traverse_(verified => validateRecoveryAnchorCompatibility(verified.plan, recoveryCheckpoint).liftTo[IO]))
 
       programs = Programs.make[IO, Run](
         sharedPrograms,
@@ -226,12 +313,12 @@ object Main
           sharedResources.gossipClient,
           sharedServices.session,
           config = EventGossipConfig(
-            heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
-            pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+            heartbeatInterval = loadedConsensusConfig.eventGossipHeartbeatInterval,
+            pullInterval = loadedConsensusConfig.eventGossipPullInterval
           ),
           getLocalChainTip = Some(forkRecoveryService.getLocalChainTip),
           onForkDetected = Some(forkRecoveryService.onForkDetected),
-          forkLagThreshold = cfg.snapshot.consensus.forkLagThreshold,
+          forkLagThreshold = loadedConsensusConfig.forkLagThreshold,
           verifyHashAt = Some(hashAtOrdinalProbe)
         )
         .asResource
@@ -250,6 +337,7 @@ object Main
           nodeId,
           keyPair,
           cfg,
+          loadedConsensusConfig,
           hasherSelector,
           eventGossipDaemon,
           sharedServices.stateEntryAtRef
@@ -302,7 +390,9 @@ object Main
 
       _ <- (method match {
         case m: RunValidator =>
-          storages.node.setValidatorMode >>
+          loadRecoveryPlan(m.recoveryPlanPath, Gl0RecoveryPlanLoader.Role.PlannedValidator(nodeId))
+            .flatMap(configuredRecoveryPlanRef.set) >>
+            storages.node.setValidatorMode >>
             gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
             services.restart.setNodeForkedRestartMethod(
@@ -318,11 +408,14 @@ object Main
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
                 _,
-                m.allowanceListPath
+                m.allowanceListPath,
+                m.recoveryPlanPath
               )
             )
         case m: RunValidatorWithJoinAttempt =>
-          storages.node.setValidatorMode >>
+          loadRecoveryPlan(m.recoveryPlanPath, Gl0RecoveryPlanLoader.Role.PlannedValidator(nodeId))
+            .flatMap(configuredRecoveryPlanRef.set) >>
+            storages.node.setValidatorMode >>
             gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
             programs.joining.joinOneOf(m.peerToJoinPool) >>
@@ -338,7 +431,8 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                m.allowanceListPath
+                m.allowanceListPath,
+                m.recoveryPlanPath
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -354,7 +448,8 @@ object Main
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
                 _,
-                m.allowanceListPath
+                m.allowanceListPath,
+                m.recoveryPlanPath
               )
             )
         case m: RunRollback =>
@@ -363,18 +458,73 @@ object Main
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-            programs.rollbackLoader.load(m.rollbackHash, programs.download).flatMap {
-              case (snapshotInfo, snapshot) =>
+            val loadRollback = loadRecoveryPlan(
+              m.recoveryPlanPath,
+              Gl0RecoveryPlanLoader.Role.RollbackLead(nodeId, m.rollbackHash)
+            ).flatTap(configuredRecoveryPlanRef.set).flatMap { verifiedRecoveryPlan =>
+              val recoveryPlan = verifiedRecoveryPlan.map(_.plan)
+              val validateRecoveryPlanBeforeLoad: (
+                RollbackLoader.Source,
+                GlobalSnapshotInfo,
+                Signed[GlobalIncrementalSnapshot]
+              ) => IO[Unit] =
+                (source, snapshotInfo, snapshot) =>
+                  recoveryPlan.traverse_ { plan =>
+                    for {
+                      _ <- source match {
+                        case RollbackLoader.Source.Incremental =>
+                          IO.unit
+                        case RollbackLoader.Source.FullSnapshot =>
+                          Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot").raiseError[IO, Unit]
+                      }
+                      hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
+                      _ <- Gl0RecoveryPlan
+                        .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
+                        .liftTo[IO]
+                      ineligiblePlannedPeers <- plan.committee.toList.filterA { peerId =>
+                        peerId.toPublic[IO].map(_.toAddress).map { address =>
+                          !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
+                        }
+                      }
+                      _ <- Gl0RecoveryPlan
+                        .IneligibleCommitteeMembers(
+                          s"collateral check failed=${ineligiblePlannedPeers.map(_.value.value).mkString(",")}"
+                        )
+                        .raiseError[IO, Unit]
+                        .whenA(ineligiblePlannedPeers.nonEmpty)
+                      // Burn the one-shot authority only after all static, exact-anchor, and
+                      // collateral checks pass, but before RollbackLoader mutates storage.
+                      _ <- verifiedRecoveryPlan.traverse_(verified => recoveryPlanReceipt.consume(verified.signed))
+                    } yield ()
+                  }
+
+              programs.rollbackLoader.load(m.rollbackHash, programs.download, recoveryPlan.as(validateRecoveryPlanBeforeLoad)).map {
+                case (snapshotInfo, snapshot) => (recoveryPlan, snapshotInfo, snapshot)
+              }
+            }
+
+            loadRollback.flatMap {
+              case (recoveryPlan, snapshotInfo, snapshot) =>
                 for {
-                  hashedSnapshot <- hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                  // Preserve the legacy rollback hasher selection when no plan is present. A
+                  // recovery plan, however, is bound to the historical snapshot hash and must
+                  // seed the outcome with the same ordinal-selected hasher used by preflight.
+                  // Otherwise a hasher migration between the anchor and current tip could pass
+                  // authorization and then install a different parent hash.
+                  hashedSnapshot <- recoveryPlan.fold(
+                    hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                  )(_ => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO]))
                   // Rollback bootstrap: preserve the rolled-back snapshot's proof signers as
                   // the checkpoint's live seed committee. That keeps lastSigners/Core anchored
                   // to signed evidence instead of turning a non-signer rollback server into a
                   // self-only chain tip. Only fall back to self-only when the checkpoint has no
-                  // proofs at all (genesis / malformed legacy edge).
+                  // proofs at all (genesis / malformed legacy edge). An explicitly verified
+                  // recovery plan replaces this seed with its canonical committee.
                   proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId, proofSigners)
-                  bootstrapMode = if (bootstrapFacilitators === proofSigners) "proof_signers" else "self_only_fallback"
+                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId, proofSigners, recoveryPlan.map(_.committee))
+                  bootstrapMode = recoveryPlan.fold {
+                    if (bootstrapFacilitators === proofSigners) "proof_signers" else "self_only_fallback"
+                  }(_ => "operator_recovery_plan")
                   _ <- ConsensusLog.info(
                     logger,
                     ConsensusLog.Category.Recovery,
@@ -400,7 +550,7 @@ object Main
                   // the window classifies as post-bootstrap and penalties apply immediately. If we're
                   // rolling back to a solo/bootstrap-era snapshot, the window starts in bootstrap mode
                   // and the cluster re-stabilizes naturally.
-                  rollbackProofSize = snapshot.proofs.size.toInt
+                  rollbackProofSize = Main.rollbackProofSize(snapshot.proofs.size.toInt, recoveryPlan.map(_.committee.size))
                   // Persisted operational history if the rollback snapshot carries it.
                   // Older snapshots have `peerHistory = None`, so seedOperational stays empty
                   // and the cluster bootstraps from zero. Newer snapshots restore
@@ -422,9 +572,16 @@ object Main
                   // behavior, which is the right thing for snapshots written by older nodes.
                   peerHistorySidecar <- PeerHistorySidecarStorage.make[IO](cfg.snapshot.snapshotPath / "peerHistory")
                   sidecarPeerHistory <- peerHistorySidecar.read(snapshot.value.ordinal)
-                  seedOperational = sidecarPeerHistory
-                    .orElse(snapshot.value.peerHistory)
-                    .getOrElse(ConsensusOperationalState.empty)
+                  // A recovery plan is an explicit replacement of the signing committee. Do not
+                  // let locally persisted penalty/tier/probation sidecars silently filter that
+                  // committee on the first derived round. Ordinary rollback retains the exact
+                  // legacy restoration behavior.
+                  seedOperational = rollbackOperationalSeed(
+                    sidecarPeerHistory
+                      .orElse(snapshot.value.peerHistory)
+                      .getOrElse(ConsensusOperationalState.empty),
+                    recoveryPlan.isDefined
+                  )
                   // Project the consolidated per-peer record back out to the five PeerId-keyed
                   // dimensions on the outcome. A peer absent from `perPeer` is treated as
                   // `PerPeerOperationalRecord.empty` (= no penalty, no probation, etc.) on the
@@ -484,11 +641,20 @@ object Main
                   // normalizes a defensive Some(empty) back to None.
                   seedControllerEvidence = seedOperational.controllerEvidence.filter(_.nonEmpty)
                   seedPenaltyUntil = seedOperational.penaltyUntil.filter(_.nonEmpty)
-                  recentCoreDiagnostic <- reconstructRecentCoreFacilitatorsDiagnostic(
-                    peerHistorySidecar,
-                    snapshot.value.ordinal,
-                    snapshot.value.peerHistory,
-                    cfg.snapshot.consensus.tighteningWindow
+                  recentCoreDiagnostic <- recoveryPlan.fold(
+                    reconstructRecentCoreFacilitatorsDiagnostic(
+                      peerHistorySidecar,
+                      snapshot.value.ordinal,
+                      snapshot.value.peerHistory,
+                      loadedConsensusConfig.tighteningWindow
+                    )
+                  )(_ =>
+                    IO.pure(
+                      RecentCoreReconstructionDiagnostic(
+                        "operator_recovery_plan_flush",
+                        SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]]
+                      )
+                    )
                   )
                   recentCoreSummary = recentCoreDiagnostic.entries.toList.map {
                     case (ordinal, core) =>
@@ -504,7 +670,7 @@ object Main
                     "reason" -> "recent_core_facilitators_reconstruction",
                     "source" -> recentCoreDiagnostic.source,
                     "entries" -> recentCoreDiagnostic.entries.size.toString,
-                    "windowSize" -> cfg.snapshot.consensus.tighteningWindow.toString,
+                    "windowSize" -> loadedConsensusConfig.tighteningWindow.toString,
                     "method" -> "best_effort_effective_tier_core",
                     "summary" -> recentCoreSummary
                   )
@@ -520,30 +686,36 @@ object Main
                     "dag_consensus_recent_core_reconstruction_latest_core_size",
                     recentCoreDiagnostic.entries.lastOption.map(_._2.size.toLong).getOrElse(0L)
                   )
+                  legacyRollbackOutcome = GlobalConsensusOutcome(
+                    snapshot.ordinal,
+                    Facilitators(bootstrapFacilitators),
+                    RemovedFacilitators.empty,
+                    WithdrawnFacilitators.empty,
+                    EligibleFacilitators(bootstrapFacilitators),
+                    Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
+                    removalPenalties = seedRemovalPenalties,
+                    deferralCountdown = seedDeferralCountdown,
+                    peerQuality = seedPeerQuality,
+                    cumulativeMissCounts = seedCumulativeMissCounts,
+                    recentProofSizes = seedRecentProofSizes,
+                    readmissionCountdown = seedReadmissionCountdown,
+                    peerViewChanges = seedPeerViewChanges,
+                    recentSigners = seedRecentSigners,
+                    peerTiers = seedPeerTiers,
+                    activeAdmissionScores = seedActiveAdmissionScores,
+                    recentRoundEndTimes = seedRecentRoundEndTimes,
+                    controllerEvidence = seedControllerEvidence,
+                    penaltyUntil = seedPenaltyUntil
+                  )
+                  rollbackOutcome = recoveryPlan.fold(legacyRollbackOutcome)(plan =>
+                    GlobalRecoveryPlanOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, plan.committee)
+                  )
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
-                    GlobalConsensusOutcome(
-                      snapshot.ordinal,
-                      Facilitators(bootstrapFacilitators),
-                      RemovedFacilitators.empty,
-                      WithdrawnFacilitators.empty,
-                      EligibleFacilitators(bootstrapFacilitators),
-                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
-                      removalPenalties = seedRemovalPenalties,
-                      deferralCountdown = seedDeferralCountdown,
-                      peerQuality = seedPeerQuality,
-                      cumulativeMissCounts = seedCumulativeMissCounts,
-                      recentProofSizes = seedRecentProofSizes,
-                      readmissionCountdown = seedReadmissionCountdown,
-                      peerViewChanges = seedPeerViewChanges,
-                      recentSigners = seedRecentSigners,
-                      peerTiers = seedPeerTiers,
-                      activeAdmissionScores = seedActiveAdmissionScores,
-                      recentRoundEndTimes = seedRecentRoundEndTimes,
-                      controllerEvidence = seedControllerEvidence,
-                      penaltyUntil = seedPenaltyUntil
-                    ),
-                    deferFirstRound = true
+                    rollbackOutcome,
+                    startPolicy = recoveryPlan.fold[RollbackStartPolicy](RollbackStartPolicy.LegacyDeferred)(plan =>
+                      RollbackStartPolicy.RequireAlignedCommittee(plan.committee)
+                    )
                   )
                 } yield result
             }
@@ -567,7 +739,8 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
-                m.allowanceListPath
+                m.allowanceListPath,
+                m.recoveryPlanPath
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -583,7 +756,8 @@ object Main
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
                 _,
-                m.allowanceListPath
+                m.allowanceListPath,
+                m.recoveryPlanPath
               )
             )
         case m: RunGenesis =>
@@ -665,7 +839,7 @@ object Main
                                     // makes `lastSigners` and Core collapse to one peer forever.
                                     // Deferring gives validators time to download the genesis
                                     // outcome, promote Ready, and register as candidates.
-                                    deferFirstRound = true
+                                    startPolicy = RollbackStartPolicy.LegacyDeferred
                                   )
                               } yield ()
                           }

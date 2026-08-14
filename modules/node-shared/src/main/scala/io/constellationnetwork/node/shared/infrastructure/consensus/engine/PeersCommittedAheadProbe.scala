@@ -29,9 +29,10 @@ import io.constellationnetwork.schema.snapshot.SnapshotMetadata
   * Failure-safe by construction: per-peer errors and timeouts drop that peer (a non-Ready peer 503s on the endpoint), and an overall
   * timeout or any other error returns an explicit non-confirming outcome. Degraded probes suppress recovery, never trigger it.
   *
-  * The constants are local-liveness tuning (jar-hash gated, not consensus-agreed): a sample of 8 bounds fan-out on large clusters while
-  * making a false-negative on a genuinely-advanced network vanishingly unlikely across repeated abandonment cycles; parallelism and timeout
-  * mirror the DownloadDaemon/PeerSelect probe posture.
+  * The constants are local-liveness tuning, not consensus-agreed. Behaviorally different releases must use distinct advertised versions (or
+  * `CL_VERSION_HASH` values) so the join-time `versionHash` fence separates them; that fence is not a jar hash. A sample of 8 bounds
+  * fan-out on large clusters while making a false-negative on a genuinely-advanced network vanishingly unlikely across repeated abandonment
+  * cycles; parallelism and timeout mirror the DownloadDaemon/PeerSelect probe posture.
   */
 object PeersCommittedAheadProbe {
 

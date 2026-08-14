@@ -1,5 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
+import scala.collection.immutable.SortedSet
+
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.TimeoutReason
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema.gossip.{CommonRumor, PeerRumor}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
@@ -47,10 +50,29 @@ import io.constellationnetwork.security.signature.Signed
 sealed trait ConsensusCommand[+Key, +Artifact, +Ctx, +Outcome]
 
 object ConsensusCommand {
+
+  /** Local startup policy for the first round after rollback. This is an in-process control type, not a consensus or wire schema.
+    *
+    * `RequireAlignedCommittee` is the fail-closed emergency-recovery policy: the rollback lead waits without a timeout escape until the
+    * exact named peers have joined the current session and serve the exact seeded outcome. It never substitutes an unrelated Ready peer.
+    */
+  sealed trait RollbackStartPolicy
+  object RollbackStartPolicy {
+    case object Immediate extends RollbackStartPolicy
+    case object LegacyDeferred extends RollbackStartPolicy
+    final case class RequireAlignedCommittee(committee: SortedSet[PeerId]) extends RollbackStartPolicy
+  }
+
   final case class RumorReceived(rumor: Either[PeerRumor[_], CommonRumor[_]]) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
   final case class StartRound(trigger: Option[ConsensusTrigger]) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
   case object TimeTick extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
   case object FacilitateByEvent extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+
+  /** Serialized, generation-bound establishment and release of the local first-round recovery gate. The expected committee is local signed
+    * recovery-plan input, not a wire or consensus schema field.
+    */
+  final case class ReleaseFirstRoundStart[Key](permit: FirstRoundStartGate.Permit[Key], expectedCommittee: SortedSet[PeerId])
+      extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
 
   final case class CheckUpdate[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class CheckViewChangeAssembly[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
@@ -59,6 +81,17 @@ object ConsensusCommand {
   final case class CheckTimeoutCertificateAssembly[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class CheckTimeoutCertificateApply[Key](key: Key, fromView: Long, toView: Long)
       extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+
+  /** Serialize pacemaker emission with proposal acceptance/signing on the command loop. The two epochs bind the request to the exact
+    * state/progress snapshot that requested it; same-view phase/finality progress before drain makes the request stale.
+    */
+  final case class RequestViewChange[Key](
+    key: Key,
+    expectedFromView: Long,
+    expectedAttemptId: Long,
+    expectedProgressGeneration: Long,
+    reason: TimeoutReason
+  ) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   // EvictionVote assembly is per-target: different targets accumulate quorums independently,
   // so this command carries both the round key and the target peer whose votes should be
   // checked. Dispatched from the event loop to StateTransitions.checkEvictionAssembly.
@@ -80,14 +113,21 @@ object ConsensusCommand {
     */
   final case class RoundCompleted(expectedAttemptId: Option[Long] = None) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
 
-  /** Request to abandon the round at `key` for `reason`. Enqueued by the `StallDetector` monitor fiber instead of calling
+  /** Request to abandon the round at `key` for `reason`. `expectedAttemptId` and `expectedResourceGeneration` bind the asynchronous monitor
+    * decision to the exact local state and declarations it inspected; the command-loop handler drops the command if any intervening state
+    * or resource mutation has advanced either epoch. Enqueued by the `StallDetector` monitor fiber instead of calling
     * `AbandonmentTracker.abandonRound` directly. `abandonRound` mutates per-key state via `condModifyState`; running it on the monitor
     * fiber raced the command loop's own `condModifyState` calls (non-atomic get -> effect -> set lost-update). Routing through the queue
     * serializes every `condModifyState` writer onto the single command-loop fiber -- the invariant documented at
     * `ConsensusStorage.condModifyState`. The handler re-checks at drain time that the round has not produced an outcome (see
     * `abandonRound`), so a round that completed between the monitor's decision and this command draining is never wiped.
     */
-  final case class AbandonRound[Key](key: Key, reason: AbandonReason) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class AbandonRound[Key](
+    key: Key,
+    reason: AbandonReason,
+    expectedAttemptId: Long,
+    expectedResourceGeneration: Long
+  ) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class InternalScheduled[Key, Artifact, Ctx, Outcome](inner: ConsensusCommand[Key, Artifact, Ctx, Outcome])
       extends ConsensusCommand[Key, Artifact, Ctx, Outcome]
   final case class PeerObserved(peer: Peer) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
@@ -97,8 +137,11 @@ object ConsensusCommand {
     context: Ctx,
     isRecovery: Boolean = false
   ) extends ConsensusCommand[Key, Artifact, Ctx, Nothing]
-  final case class InitializeFromRollback[Key, Outcome](key: Key, outcome: Outcome, deferFirstRound: Boolean = false)
-      extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
+  final case class InitializeFromRollback[Key, Outcome](
+    key: Key,
+    outcome: Outcome,
+    startPolicy: RollbackStartPolicy = RollbackStartPolicy.Immediate
+  ) extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
   case object WithdrawFromConsensus extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
   final case class ConsensusFinished[Key, Outcome](key: Key, outcome: Outcome, trigger: ConsensusTrigger)
       extends ConsensusCommand[Key, Nothing, Nothing, Outcome]

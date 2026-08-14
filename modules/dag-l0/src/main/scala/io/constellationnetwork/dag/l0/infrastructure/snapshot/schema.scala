@@ -108,9 +108,10 @@ object schema {
     * Decode contract: this derives a circe decoder with `useDefaults = false`, so every NON-`Option` field must be present in the decoded
     * JSON. The Scala default values below (`= SortedMap.empty`, etc.) apply only to in-code construction -- they do NOT make decode
     * tolerant of a missing field. `Option`-typed fields are the exception: a missing key decodes to `None` (e.g. `controllerEvidence`).
-    * Decoding an outcome that lacks one of the non-`Option` fields would fail, but that is unreachable today: the jar-hash and
-    * `deterministicConfigHash` handshake stops mixed-version peers from exchanging outcomes at all. Before adding the next field, make it
-    * `Option`-typed or switch the derivation to `useDefaults`, so cross-version / historical decode stays safe (see ADR-0016).
+    * Decoding an outcome that lacks one of the non-`Option` fields would fail. Coordinated deployments rely on distinct advertised
+    * `versionHash` values to keep different release schemas from joining. L0 also requires exact `deterministicConfigHash` equality; the
+    * advertised jar field is metadata, not a fence. Before adding the next field, make it `Option`-typed or switch the derivation to
+    * `useDefaults`, so historical decode stays safe (see ADR-0016 and ADR-0027).
     */
   @derive(encoder, decoder, eqv)
   final case class GlobalConsensusOutcome(
@@ -163,8 +164,9 @@ object schema {
     // resulting peer with one view-change-caused. Used by the next round's
     // selectLeaderWeighted to compute a fork-safe integer qualityScore =
     // completed * (participated - viewChangesCaused) / participated^2 and hard-exclude
-    // peers below the configured floor. Default empty is construction-only; cross-version decode is
-    // fenced by the handshake (see the type scaladoc), so pre-v16 outcomes are never decoded here.
+    // peers below the configured floor. Default empty is construction-only; deployment-time schema
+    // separation relies on the advertised `versionHash` (see the type scaladoc), while historical
+    // decoding still requires the explicit compatibility rules above.
     // Persisted via v20/v21
     // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
     peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,

@@ -1,6 +1,6 @@
 # Consensus Configuration Reference (post-4.0)
 
-This is the operator-facing reference for the consensus and health configuration introduced into the Global L0 consensus path since v4.0.0. Most of these knobs are **consensus-critical**: they are folded into `ConsensusConfig.deterministicConfigHash` (`config/types.scala:950-1045`), which is carried in every `Facility` declaration as `consensusConfigHash` and checked at the start of each round. A node whose `deterministicConfigHash` differs from the cluster either handshake-rejects its peers or silently forks. The hard rule below is therefore: **do not override consensus-critical knobs per-operator on a shared network**. Per-environment values are expressed as `Map[AppEnvironment, T]` in `SnapshotConfig` (`config/types.scala:1150-1212`), resolved exactly once at the consensus construction site (`GlobalSnapshotConsensus` / `CurrencySnapshotConsensus`) and threaded into `ConsensusConfig`; they are never branched on at runtime.
+This is the operator-facing reference for the consensus and health configuration introduced into the Global L0 consensus path since v4.0.0. Most of these knobs are **consensus-critical**: they are folded into `ConsensusConfig.deterministicConfigHash`, which L0 advertises in its cluster registration and carries in every `Facility` declaration. L0 joining requires exact hash equality (including presence), while Facility comparison remains an additional structured diagnostic. The advertised `versionHash` is an independent release fence; it hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes or runtime configuration. Per-environment values are resolved through `SnapshotConfig.resolveEffectiveConsensusConfig`; startup threads that exact resolved consensus-critical projection to both the join fence and live consensus. Timing-only values and separately scheduled activation ordinals intentionally remain outside this fingerprint.
 
 This document then flags three gaps an operator will hit in the field: `LocalHealthMonitorConfig` has no HOCON binding at all, and two operational toggles (`CL_MPT_VERIFY_INCREMENTAL`, `CL_RAISE_ON_FOLLOWER_DIVERGENCE`) are read directly from `sys.env` and appear in no `.conf` file.
 
@@ -12,7 +12,7 @@ Every consensus knob lives in `ConsensusConfig` (`config/types.scala`). At const
 
 1. Scalar HOCON keys under `snapshot.consensus { ... }` in `dag-l0.conf` map directly onto `ConsensusConfig` fields (kebab-case to camelCase). These are global, not per-environment.
 2. Per-environment knobs live one level up under `snapshot { ... }` as `Map[AppEnvironment, T]` (e.g. `core-committee-size`, `quorum-shrink-activation-views`). The construction site resolves the current environment's entry once and threads the resolved scalar into the corresponding `ConsensusConfig` field (the "coreCommitteeSize pattern", `config/types.scala:847-859`).
-3. `ConsensusConfig.deterministicConfigHash` (`config/types.scala:950-1045`) concatenates the consensus-critical fields into a stable string and hashes it. This hash is the cluster-wide fence: it is checked at `Facility` handshake time, so any divergence is caught before it can fork downstream state.
+3. `ConsensusConfig.deterministicConfigHash` concatenates the consensus-critical fields into a stable string and hashes it. L0 advertises that exact effective hash in `RegistrationRequest`; unequal or one-sided values are rejected during joining. It is also compared during `Facility` processing for post-join diagnostics. Operators must still verify one effective hash before launch so a misconfigured fleet fails preflight instead of fragmenting during startup.
 
 A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. Timing-only fields (grace windows, view-apply delay, round-duration safety nets) are deliberately excluded, because the canonical `snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash, so nodes with different timing values still finalize the same snapshot (`config/types.scala:233-237, 244-250`).
 
@@ -20,7 +20,7 @@ A field is consensus-critical if and only if it appears in the `deterministicCon
 
 ## Consensus-critical knobs (must match cluster-wide)
 
-These are folded into `deterministicConfigHash`. Divergent operator values handshake-reject or fork. **Do not set per-operator on a shared network.**
+These are folded into `deterministicConfigHash`. Divergent effective values are rejected at L0 joining and additionally reported during Facility processing. **Do not set per-operator on a shared network.**
 
 ### Global scalar knobs (`dag-l0.conf` -> `snapshot.consensus`)
 
@@ -47,6 +47,7 @@ These resolve once per environment at the construction site (the coreCommitteeSi
 
 | HOCON key | Type | Testnet value | Absent-entry behavior | Meaning |
 |-----------|------|---------------|-----------------------|---------|
+| `max-facilitator-count` | `Map[Env, PosInt]` | all shipped environments `1000` | no selector cap | Environment-resolved cap consumed by `FacilitatorSelector`. This is fingerprinted separately from the legacy scalar `snapshot.consensus.max-facilitator-count`; Currency intentionally keeps selector cap `1000` while its legacy controller-sizing scalar remains `20`. A value at or above the candidate population disables narrowing; it is not a desired reward-population size. |
 | `core-committee-size` | `Map[Env, PosInt]` | testnet `3`, mainnet `15`, integrationnet `9`, dev `3` (`dag-l0.conf:156-168`) | resolved default `3` (`config/types.scala:1023`) | The Core committee floor. The LIVENESS quorum threshold is `ceil(coreFacilitators.size * quorumThresholdFraction)`, so this is the quorum denominator. Demotions to Tier-1 outside Core do not shrink it without consensus-agreed promotion of replacements (`config/types.scala:847-860, 1153-1167`). |
 | `quorum-shrink-activation-views` | `Map[Env, PosInt]` | testnet `10` (`dag-l0.conf:177-179`) | **disabled** (resolved `0`) | v33 `QuorumDenominatorShrink`: number of `view-interval` units of wall silence since the parent outcome closed before the escalating quorum-denominator shrink begins. Trades partition safety for liveness in its deep stage. Mainnet and dev are absent on purpose (`config/types.scala:861-872, 1168-1175`). |
 | `active-admission-min-probation-reentry-slots` | `Map[Env, Int]` | testnet `3`, mainnet `15`, integrationnet `9`, dev `3` | disabled (resolved `0`) | Minimum bounded probation cohort classified outside Core even when the controller's per-round expansion budget is exhausted. A peer that signs the latest round retains classifier priority until it reaches the retain band; missing ends that priority, not its signing lease. Current public GL0 environments configure one Core-sized cohort. |
@@ -54,7 +55,7 @@ These resolve once per environment at the construction site (the coreCommitteeSi
 
 ### Other hashed knobs without their own table row
 
-`readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash (`config/types.scala:912, 956`). `coreCommitteeSize`, `consensusSchemaVersion` (now `34`, `config/types.scala:830`), and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=34` is the explicit fence against mixed-wire-version cluster joins.
+`readmissionProbationRounds` (default `3`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `34`), and `qualityDecayThreshold` are also folded in. The deterministic config hash and advertised release `versionHash` are separate mandatory L0 join fences: one binds effective consensus settings and the other binds the advertised software release.
 
 ---
 
@@ -127,9 +128,9 @@ Neither toggle is in `deterministicConfigHash`; they change local behavior only.
 
 ## Quick operator rules
 
-1. **Never** override a knob listed in the consensus-critical tables on a shared network. The value is in `deterministicConfigHash`; divergence => handshake-reject or fork.
+1. **Never** override a knob listed in the consensus-critical tables on a shared network. The value is in `deterministicConfigHash`; divergent L0 peers are rejected during joining.
 2. Per-environment knobs (`core-committee-size`, `quorum-shrink-activation-views`, `active-admission-min-probation-reentry-slots`, `active-admission-recent-signer-window`) must match cluster-wide; **adding or removing an env entry is a consensus change** because absent means a specific resolved default.
-3. Changing any hashed knob (including the compiled-in `view-interval`) requires an all-or-nothing coordinated cold restart, because the config hash partitions mixed-value peers and `consensusSchemaVersion=34` is the wire-shape fence (`dag-l0.conf:68-69`).
+3. Changing any hashed knob (including the compiled-in `view-interval`) requires an all-or-nothing coordinated cold restart because divergent configs can derive and finalize different state. The advertised `versionHash` is only a release fence and does not certify runtime config equality; verify the effective `deterministicConfigHash` fleet-wide before launch.
 4. Genuinely operator-safe knobs are the non-consensus ones: snapshot-serving rate limits (`snapshot-serving { ... }`), storage paths, and the timing-only grace/round-duration knobs.
 5. `LocalHealthMonitorConfig` has no operator knobs in this release; `operatorOverride` is inert. `CL_MPT_VERIFY_INCREMENTAL` and `CL_RAISE_ON_FOLLOWER_DIVERGENCE` are env-only diagnostics/safety toggles, both OFF by default.
 

@@ -88,6 +88,10 @@ object Main
                         sendStateChannelSnapshot(client, baseUrl)
                       case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
                         getLatestSnapshotInfo(client, networkHost, networkPort)
+                      case command: GenerateGl0RecoveryPlanCmd =>
+                        Gl0RecoveryPlanGenerator
+                          .generate[IO](command)
+                          .flatMap(path => Console[IO].println(s"Wrote verified GL0 recovery plan to $path"))
                       case _ => IO.raiseError(new Throwable("Not implemented"))
                     }).as(ExitCode.Success)
                   }

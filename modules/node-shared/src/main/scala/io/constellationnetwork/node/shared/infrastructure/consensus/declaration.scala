@@ -56,7 +56,8 @@ object declaration {
     // aggregates these into `Proposal.observedSelfHealth` for consensus-agreed propagation;
     // `selectLeaderWeighted` in the next round demotes Degraded peers to tier 1 and Critical
     // peers to tier 2. Optional with default None so the field is wire-compatible with older
-    // versions, although the jar hash gate already prevents cross-version peer connections.
+    // versions, although distinct advertised versions (or `CL_VERSION_HASH` values) are rejected
+    // by the join-time `versionHash` gate.
     selfHealthHint: Option[SelfHealthHint] = None,
     // v19 phase 2: per-facilitator wall-clock at signing time (raw millis, no bucketing).
     // Acquired via `Clock[F].realTime.map(_.toMillis)` in the Facility build effect. The

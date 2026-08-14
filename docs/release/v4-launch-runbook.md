@@ -23,12 +23,10 @@ they do not replace one another:
   release builds must therefore carry the intended, distinct release tag, and
   `CL_VERSION_HASH` should be unset.
 - `consensusSchemaVersion` and the consensus knobs are folded into
-  `deterministicConfigHash` (`config/types.scala`). `RegistrationRequest` has an optional
-  `consensusConfigHash`, and `Joining` compares it when both peers provide one
-  (`domain/cluster/programs/Joining.scala:303-307`). In the current v4.1 shared startup wiring that
-  optional value is not supplied, however, so the join check is skipped. Facilities carry the hash,
-  but the current mismatch path records logs/metrics rather than rejecting the declaration. Treat
-  equality as a mandatory operator preflight until hard enforcement is wired and reviewed.
+  `deterministicConfigHash` (`config/types.scala`). L0 startup resolves the exact effective config,
+  advertises its hash in `RegistrationRequest`, and `Joining` requires strict equality (including
+  presence). Facilities carry the same hash for additional logs/metrics. Equality remains a
+  mandatory operator preflight so bad settings fail before fragmenting a cold start.
 
 The join handshake does **not** compare `RegistrationRequest.jar`. That field is advertised and
 stored as peer metadata only. Operators must verify that every node runs the identical release

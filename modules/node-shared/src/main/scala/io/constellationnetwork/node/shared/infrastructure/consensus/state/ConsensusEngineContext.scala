@@ -4,12 +4,14 @@ import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Queue
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, FirstRoundStartGate, PendingTriggersF}
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -53,6 +55,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
+  firstRoundStartGate: FirstRoundStartGate[F, Key],
+  plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]],
   // Gossip handle for re-distributing locally-derived consensus artifacts that downstream
   // peers need but might miss via the per-peer assembly path. Currently used to broadcast
   // an assembled `ViewChangeCertificate` from `StateTransitions.checkViewChangeAssembly` so
@@ -122,6 +126,9 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // `StallDetector` emits a signed ViewChangeVote. It does not seed `ConsensusState.viewNumber`
   // directly; view advancement still requires quorum assembly into a VCC.
   lastOutcomeEndTimeMsOf: Outcome => Option[Long],
+  // Fail-fast before initialization mutates consensus state. The GL0 recovery plan uses
+  // this boundary to validate and consume its exact, one-shot authority.
+  onOutcomePreInitialize: Outcome => F[Unit],
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
@@ -150,7 +157,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
 
 object ConsensusEngineContext {
 
-  def create[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+  def create[F[_]: Async, Event, Key: cats.Eq, Artifact, Ctx, Status, Outcome, Kind](
     selfId: PeerId,
     queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     pending: PendingTriggersF[F],
@@ -175,10 +182,14 @@ object ConsensusEngineContext {
     probationPeersOf: Outcome => Set[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
-    lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None
+    lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None,
+    onOutcomePreInitialize: Outcome => F[Unit],
+    initiallyHoldFirstRound: Boolean,
+    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]]
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
+      firstRoundStartGate <- FirstRoundStartGate.make[F, Key](initiallyHoldFirstRound)
       recoveredAtKey <- Ref.of[F, Option[Key]](None)
       retriableAtSameKey <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
     } yield
@@ -187,6 +198,8 @@ object ConsensusEngineContext {
         queue,
         running,
         pending,
+        firstRoundStartGate,
+        plannedRecoveryCommittee,
         gossip,
         storage,
         creator,
@@ -209,6 +222,7 @@ object ConsensusEngineContext {
         peerQualityOf,
         lastOutcomeKeyOf,
         lastOutcomeEndTimeMsOf,
+        onOutcomePreInitialize,
         recoveredAtKey,
         retriableAtSameKey
       )

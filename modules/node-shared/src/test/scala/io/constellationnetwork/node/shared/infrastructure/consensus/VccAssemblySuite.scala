@@ -38,7 +38,7 @@ object DoubleSignRaceSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, LegacyViewChangePolicy.FreezeAfterVote) match {
         case Right(newLock) => (newLock.some, Right(newLock))
         case Left(reason)   => (maybeLock, Left(reason))
       }
@@ -94,8 +94,9 @@ object DoubleSignRaceSuite extends SimpleIOSuite {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// VccLateArrivalSuite: a VCC arriving after a node signed at view 0 only allows a higher-view vote
-// when the leader's proposal hash matches a prior lock (or lock is empty).
+// VccLateArrivalSuite: on the legacy wire, a VCC arriving after a node signed at view 0 cannot
+// authorize any higher-view vote. Artifact equality does not bind the outcome-shaping Proposal
+// envelope, and ProposalQC is not verified in rc.8. V35's full ProposalValue QC is the unlock.
 // ---------------------------------------------------------------------------------------------------
 object VccLateArrivalSuite extends SimpleIOSuite {
 
@@ -115,40 +116,41 @@ object VccLateArrivalSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, LegacyViewChangePolicy.FreezeAfterVote) match {
         case Right(newLock) => (newLock.some, Right(newLock))
         case Left(reason)   => (maybeLock, Left(reason))
       }
     }
 
-  test("signed P1 at view 0, late VCC (highestQcInVcc=None) arrives: can re-sign at view 1 for any hash") {
+  test("signed P1 at view 0, late VCC without QC cannot unlock P2 at view 1") {
     MapRef.ofConcurrentHashMap[IO, Long, VoteLock]().flatMap { voteLocksR =>
       val key = 10L
       for {
         // View 0: sign hash1.
         v0 <- tryLockVote(voteLocksR, key, view = 0L, proposalHash = hash1, effectiveLockedQc = None)
-        // View 1 arrives. VCC has no highest QC → lockedQc stays None → vote for hash2 accepted.
+        // View 1 arrives. Without a verified full-value QC, the conservative bridge
+        // must retain the artifact lock across views.
         v1 <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash2, effectiveLockedQc = None)
       } yield
         expect(v0.isRight, s"view 0 signing must succeed, got: $v0")
-          .and(expect(v1.isRight, s"view 1 signing with empty-highest-QC VCC must succeed, got: $v1"))
+          .and(expect(v1.isLeft, s"view 1 signing with empty-highest-QC VCC must fail closed, got: $v1"))
     }
   }
 
-  test("signed P1 at view 0, late VCC carries QC(view=0, hash=P1): can re-sign at view 1 only for P1") {
+  test("signed P1 at view 0, late VCC with legacy QC cannot authorize any view-1 re-vote") {
     MapRef.ofConcurrentHashMap[IO, Long, VoteLock]().flatMap { voteLocksR =>
       val key = 11L
       val lockOnP1 = qc(view = 0L, proposalHash = hash1)
       for {
         v0 <- tryLockVote(voteLocksR, key, view = 0L, proposalHash = hash1, effectiveLockedQc = None)
-        // View 1 with VCC carrying QC on hash1; trying hash2 must fail.
+        // The artifact-only QC cannot certify the rest of the outcome envelope. Both a
+        // different artifact and the same artifact must therefore fail closed.
         v1Bad <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash2, effectiveLockedQc = lockOnP1.some)
-        // Trying hash1 succeeds.
-        v1Good <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash1, effectiveLockedQc = lockOnP1.some)
+        v1SameArtifact <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash1, effectiveLockedQc = lockOnP1.some)
       } yield
         expect(v0.isRight, s"view 0 signing must succeed, got: $v0")
           .and(expect(v1Bad.isLeft, s"view 1 signing for different hash than lockedQc must fail, got: $v1Bad"))
-          .and(expect(v1Good.isRight, s"view 1 signing matching lockedQc must succeed, got: $v1Good"))
+          .and(expect(v1SameArtifact.isLeft, s"view 1 signing matching only the artifact hash must fail, got: $v1SameArtifact"))
     }
   }
 }
@@ -289,7 +291,7 @@ object RecoveryClearsLocksSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, LegacyViewChangePolicy.FreezeAfterVote) match {
         case Right(newLock) => (newLock.some, Right(newLock))
         case Left(reason)   => (maybeLock, Left(reason))
       }
