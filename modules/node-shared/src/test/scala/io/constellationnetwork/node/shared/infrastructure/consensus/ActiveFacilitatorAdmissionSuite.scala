@@ -71,6 +71,28 @@ object ActiveFacilitatorAdmissionSuite extends SimpleIOSuite {
     expect.same(List(b, a, c, d), result)
   }
 
+  pureTest("legacy outcome membership carries removal evidence without deleting a signing lease") {
+    val result = ConsensusPeerController.applyNextRoundCertifiedMembership(
+      roundStartFacilitators = List(a, b, c),
+      admittedPeers = List(d),
+      certifiedEvictedPeers = None
+    )
+
+    // A legacy removedFacilitators set containing `b` is intentionally not an input. Below
+    // activation it remains evidence beside the outcome, not authority to contract this roster.
+    expect.same(List(a, b, c, d), result)
+  }
+
+  pureTest("v35 outcome membership applies certified evictions only at the next-round boundary") {
+    val result = ConsensusPeerController.applyNextRoundCertifiedMembership(
+      roundStartFacilitators = List(a, b, c),
+      admittedPeers = List(d),
+      certifiedEvictedPeers = Some(List(b))
+    )
+
+    expect.same(List(a, c, d), result)
+  }
+
   pureTest("does not filter when recent signer window is not deep enough") {
     val result = fromRecent(
       selected = List(a, b, c),

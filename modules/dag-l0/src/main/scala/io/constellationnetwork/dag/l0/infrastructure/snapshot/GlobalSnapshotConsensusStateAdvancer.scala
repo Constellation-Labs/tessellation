@@ -677,9 +677,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                 .filter { case (_, v) => v > 0L }
             }
             val nextOutcomeFacilitators = Facilitators(
-              ConsensusPeerController.applyCertifiedAdmissions(
-                state.roundStartFacilitators.value.filterNot(evictedPeers.contains),
-                state.admittedFacilitators.value
+              ConsensusPeerController.applyNextRoundCertifiedMembership(
+                roundStartFacilitators = state.roundStartFacilitators.value,
+                admittedPeers = state.admittedFacilitators.value,
+                certifiedEvictedPeers = certifiedValue.map(_.evictedPeers)
               )
             )
             val outcome = GlobalConsensusOutcome(

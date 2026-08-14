@@ -225,6 +225,23 @@ object ConsensusPeerController {
     parent ++ admitted
   }
 
+  /** Derive the next-round signing roster across the legacy/v35 boundary.
+    *
+    * Legacy `removedFacilitators` is operational evidence carried beside the roster; rc.7 deliberately does not consume it as a new
+    * membership deletion. Only an eviction inside a certified v35 ProposalValue has N+1 authority. Encoding that distinction as `None`
+    * versus `Some` keeps the mirrored DAG and Currency advancers on one rule.
+    */
+  def applyNextRoundCertifiedMembership(
+    roundStartFacilitators: List[PeerId],
+    admittedPeers: Iterable[PeerId],
+    certifiedEvictedPeers: Option[Iterable[PeerId]]
+  ): List[PeerId] = {
+    val evicted = certifiedEvictedPeers.fold(Set.empty[PeerId])(_.toSet)
+    val retained = roundStartFacilitators.filterNot(evicted.contains)
+
+    applyCertifiedAdmissions(retained, admittedPeers)
+  }
+
   private def selfHealthPenalty(hint: Option[SelfHealthHint], config: Config): Int =
     hint match {
       case Some(SelfHealthHint.Critical) => config.criticalPenalty
