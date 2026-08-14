@@ -528,6 +528,21 @@ object CertifiedConsensus {
         )
     }
 
+  /** Re-verify a QC restored from the node-local safety journal before it is honored as carry-forward evidence.
+    *
+    * The journal parser deliberately hydrates the complete lock conservatively so a restart cannot forget a prior vote. Cryptographic
+    * authority still comes only from this ordinary QC verifier once the round's frozen committee and configured quorum are known.
+    */
+  def verifyPersistedLockedQc[F[_]: Async: Hasher: SecurityProvider](
+    lock: Option[CertifiedVoteLock],
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Either[String, Option[CertifiedProposalQC]]] =
+    lock.flatMap(_.lockedQc).fold(none[CertifiedProposalQC].asRight[String].pure[F]) { qc =>
+      verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction).map(_.as(qc.some))
+    }
+
   /** Verify every advertised QC before choosing the highest valid one.
     *
     * Invalid candidates are ignored, just as invalid pacemaker declarations are not consensus evidence. If two independently valid QCs

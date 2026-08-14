@@ -1724,7 +1724,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       _ <- ctx.pending.clear()
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackStateCleared)
       initialized <- storage.trySetInitialConsensusOutcome(outcome)
-      _ <- runOutcomeHook("rollback_initialized", outcome)(ctx.onOutcomeInitialized).whenA(initialized)
+      _ <-
+        (runOutcomeHook("rollback_initialized", outcome)(ctx.onOutcomeInitialized) >>
+          runOutcomeHook("rollback_safety_pruned", outcome)(ctx.onOutcomeRollbackInitialized)).whenA(initialized)
       _ <- ConsensusLog.info(
         log,
         Category.Lifecycle,

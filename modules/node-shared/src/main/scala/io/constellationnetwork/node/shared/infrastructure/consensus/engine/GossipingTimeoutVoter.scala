@@ -28,6 +28,7 @@ class GossipingTimeoutVoter[F[
   gossip: Gossip[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   lastSnapshotHashOf: Outcome => Hash,
+  configuredFraction: Double,
   logger: SelfAwareStructuredLogger[F]
 ) extends TimeoutVoter[F, Key] {
 
@@ -79,36 +80,56 @@ class GossipingTimeoutVoter[F[
               state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
                 val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
                 storage.getCertifiedVoteLock(key).flatMap { certifiedLock =>
-                  val highestKnownCertifiedQc = certifiedLock.flatMap(_.lockedQc)
-                  val vote = TimeoutVote(
-                    fromView,
-                    toView,
-                    facilitatorsHash,
-                    lastSnapshotHash,
-                    highestKnownQc,
-                    reason,
-                    highestKnownCertifiedQc
-                  )
-                  vote.sign(keyPair).flatMap { signedVote =>
-                    storage.addTimeoutVote(selfId, key, fromView, toView, signedVote) >>
-                      gossip.spreadDirect(ConsensusPeerTimeoutVote[Key](key, signedVote), targets) >>
-                      ConsensusLog
-                        .info(
+                  CertifiedConsensus
+                    .verifyPersistedLockedQc[F](
+                      certifiedLock,
+                      state.roundStartFacilitators.value.toSet,
+                      state.coreFacilitators.value.toSet,
+                      configuredFraction
+                    )
+                    .flatMap {
+                      case Left(error) =>
+                        ConsensusLog.error(
                           logger,
                           Category.Phase,
                           key.toString,
                           "n/a",
                           LogEvent.ViewChange,
-                          "emitted" -> "timeout_vote",
-                          "fromView" -> fromView.toString,
-                          "toView" -> toView.toString,
-                          "reason" -> reason.toString,
-                          "qcPresent" -> highestKnownQc.isDefined.toString,
-                          "certifiedQcPresent" -> highestKnownCertifiedQc.isDefined.toString,
-                          "targets" -> targets.size.toString
+                          "skipped" -> "invalid_persisted_certified_qc",
+                          "vote" -> "timeout",
+                          "error" -> error
                         )
-                        .void
-                  }
+                      case Right(highestKnownCertifiedQc) =>
+                        val vote = TimeoutVote(
+                          fromView,
+                          toView,
+                          facilitatorsHash,
+                          lastSnapshotHash,
+                          highestKnownQc,
+                          reason,
+                          highestKnownCertifiedQc
+                        )
+                        vote.sign(keyPair).flatMap { signedVote =>
+                          storage.addTimeoutVote(selfId, key, fromView, toView, signedVote) >>
+                            gossip.spreadDirect(ConsensusPeerTimeoutVote[Key](key, signedVote), targets) >>
+                            ConsensusLog
+                              .info(
+                                logger,
+                                Category.Phase,
+                                key.toString,
+                                "n/a",
+                                LogEvent.ViewChange,
+                                "emitted" -> "timeout_vote",
+                                "fromView" -> fromView.toString,
+                                "toView" -> toView.toString,
+                                "reason" -> reason.toString,
+                                "qcPresent" -> highestKnownQc.isDefined.toString,
+                                "certifiedQcPresent" -> highestKnownCertifiedQc.isDefined.toString,
+                                "targets" -> targets.size.toString
+                              )
+                              .void
+                        }
+                    }
                 }
               }
             }

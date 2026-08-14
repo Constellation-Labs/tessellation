@@ -36,6 +36,7 @@ class GossipingViewChangeVoter[F[
   gossip: Gossip[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   lastSnapshotHashOf: Outcome => Hash,
+  configuredFraction: Double,
   logger: SelfAwareStructuredLogger[F]
 ) extends ViewChangeVoter[F, Key] {
 
@@ -87,34 +88,53 @@ class GossipingViewChangeVoter[F[
               state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
                 val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
                 storage.getCertifiedVoteLock(key).flatMap { certifiedLock =>
-                  val highestKnownCertifiedQc = certifiedLock.flatMap(_.lockedQc)
-                  val vote = ViewChangeVote(
-                    fromView,
-                    toView,
-                    facilitatorsHash,
-                    lastSnapshotHash,
-                    highestKnownQc,
-                    highestKnownCertifiedQc
-                  )
-                  vote.sign(keyPair).flatMap { signedVote =>
-                    storage.addViewChangeVote(selfId, key, fromView, toView, signedVote) >>
-                      gossip.spreadDirect(ConsensusPeerVote[Key](key, signedVote), targets) >>
-                      ConsensusLog
-                        .info(
+                  CertifiedConsensus
+                    .verifyPersistedLockedQc[F](
+                      certifiedLock,
+                      state.roundStartFacilitators.value.toSet,
+                      state.coreFacilitators.value.toSet,
+                      configuredFraction
+                    )
+                    .flatMap {
+                      case Left(error) =>
+                        ConsensusLog.error(
                           logger,
                           Category.Phase,
                           key.toString,
                           "n/a",
                           LogEvent.ViewChange,
-                          "emitted" -> "vcv",
-                          "fromView" -> fromView.toString,
-                          "toView" -> toView.toString,
-                          "qcPresent" -> highestKnownQc.isDefined.toString,
-                          "certifiedQcPresent" -> highestKnownCertifiedQc.isDefined.toString,
-                          "targets" -> targets.size.toString
+                          "skipped" -> "invalid_persisted_certified_qc",
+                          "error" -> error
                         )
-                        .void
-                  }
+                      case Right(highestKnownCertifiedQc) =>
+                        val vote = ViewChangeVote(
+                          fromView,
+                          toView,
+                          facilitatorsHash,
+                          lastSnapshotHash,
+                          highestKnownQc,
+                          highestKnownCertifiedQc
+                        )
+                        vote.sign(keyPair).flatMap { signedVote =>
+                          storage.addViewChangeVote(selfId, key, fromView, toView, signedVote) >>
+                            gossip.spreadDirect(ConsensusPeerVote[Key](key, signedVote), targets) >>
+                            ConsensusLog
+                              .info(
+                                logger,
+                                Category.Phase,
+                                key.toString,
+                                "n/a",
+                                LogEvent.ViewChange,
+                                "emitted" -> "vcv",
+                                "fromView" -> fromView.toString,
+                                "toView" -> toView.toString,
+                                "qcPresent" -> highestKnownQc.isDefined.toString,
+                                "certifiedQcPresent" -> highestKnownCertifiedQc.isDefined.toString,
+                                "targets" -> targets.size.toString
+                              )
+                              .void
+                        }
+                    }
                 }
               }
             }

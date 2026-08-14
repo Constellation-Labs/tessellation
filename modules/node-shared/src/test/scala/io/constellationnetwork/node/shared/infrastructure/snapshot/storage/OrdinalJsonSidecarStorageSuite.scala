@@ -43,7 +43,8 @@ object OrdinalJsonSidecarStorageSuite extends MutableIOSuite {
         _ <- first.write(ord10, Example("certified", 3))
         restarted <- OrdinalJsonSidecarStorage.make[IO, Example](testBase)
         result <- restarted.read(ord10)
-      } yield expect(result.contains(Example("certified", 3)))
+        tempFiles <- Files[IO].list(testBase).map(_.fileName.toString).filter(_.endsWith(".tmp")).compile.toList
+      } yield expect.all(result.contains(Example("certified", 3)), tempFiles.isEmpty)
   }
 
   test("missing or corrupt files never fabricate recovery evidence") {
@@ -58,6 +59,20 @@ object OrdinalJsonSidecarStorageSuite extends MutableIOSuite {
         _ <- Stream.emits(Array[Byte](1, 2, 3, 4)).through(Files[IO].writeAll(corrupt)).compile.drain
         malformed <- storage.read(ord11)
       } yield expect.all(missing.isEmpty, malformed.isEmpty)
+  }
+
+  test("rewriting an ordinal atomically replaces the prior typed sidecar without temporary-file residue") {
+    case (base, serializer) =>
+      implicit val jsonSerializer: JsonSerializer[IO] = serializer
+      val testBase = base / "replace"
+
+      for {
+        storage <- OrdinalJsonSidecarStorage.make[IO, Example](testBase)
+        _ <- storage.write(ord10, Example("old", 1))
+        _ <- storage.write(ord10, Example("new", 2))
+        value <- storage.read(ord10)
+        files <- Files[IO].list(testBase).map(_.fileName.toString).compile.toList
+      } yield expect.all(value.contains(Example("new", 2)), files == List(ord10.value.value.toString))
   }
 
   test("deleteAbove follows the snapshot rollback boundary") {

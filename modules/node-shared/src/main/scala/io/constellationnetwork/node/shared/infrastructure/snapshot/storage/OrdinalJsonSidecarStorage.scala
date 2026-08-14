@@ -5,6 +5,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.cutoff.LogarithmicOrdinalCutoff
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.infrastructure.storage.CrashSafeAtomicFileWriter
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.storage.SerializableLocalFileSystemStorage
 
@@ -15,7 +16,10 @@ import io.circe.{Decoder, Encoder}
   *
   * Values use the repository's ordinary `JsonSerializer`; this class deliberately defines no alternate JSON printer, canonicalization pass,
   * or hashing scheme. A dedicated directory keeps filenames numeric, which lets rollback remove every sidecar above a checkpoint and lets
-  * the existing logarithmic snapshot-info cutoff retain matching recovery evidence without knowing the value type.
+  * the existing logarithmic snapshot-info cutoff retain matching recovery evidence without knowing the value type. Writes and deletes use
+  * the same crash-safe atomic byte-file primitive as the certified vote-lock journal. A successful write is therefore a valid durability
+  * boundary before consensus deletes the matching pre-finalization safety lock, and acknowledged rollback/retention cleanup cannot
+  * resurrect stale sidecars after a crash.
   *
   * Missing and malformed files read as `None`. A corrupt sidecar is an availability loss, never evidence: callers must still
   * cryptographically validate every value before adoption.
@@ -30,13 +34,13 @@ trait OrdinalJsonSidecarStorage[F[_], A] {
 
 object OrdinalJsonSidecarStorage {
 
-  def make[F[_]: Async: JsonSerializer, A: Encoder: Decoder](base: Path): F[OrdinalJsonSidecarStorage[F, A]] = {
-    val storage = new Impl[F, A](base)
-    storage.createDirectoryIfNotExists().rethrowT.as(storage)
-  }
+  def make[F[_]: Async: JsonSerializer, A: Encoder: Decoder](base: Path): F[OrdinalJsonSidecarStorage[F, A]] =
+    CrashSafeAtomicFileWriter.make[F](base).map(new Impl[F, A](base, _))
 
-  private final class Impl[F[_]: Async: JsonSerializer, A: Encoder: Decoder](base: Path)
-      extends SerializableLocalFileSystemStorage[F, A](base)
+  private final class Impl[F[_]: Async: JsonSerializer, A: Encoder: Decoder](
+    base: Path,
+    atomicFileWriter: CrashSafeAtomicFileWriter[F]
+  ) extends SerializableLocalFileSystemStorage[F, A](base)
       with OrdinalJsonSidecarStorage[F, A] {
 
     private def fileName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString
@@ -45,7 +49,7 @@ object OrdinalJsonSidecarStorage {
       new IllegalArgumentException("No legacy decoder exists for typed ordinal sidecars").asLeft[A]
 
     def write(ordinal: SnapshotOrdinal, value: A): F[Unit] =
-      super.write(fileName(ordinal), value)
+      JsonSerializer[F].serialize(value).flatMap(atomicFileWriter.write(fileName(ordinal), _))
 
     def read(ordinal: SnapshotOrdinal): F[Option[A]] =
       super.read(fileName(ordinal)).handleErrorWith { error =>
@@ -54,7 +58,7 @@ object OrdinalJsonSidecarStorage {
       }
 
     def delete(ordinal: SnapshotOrdinal): F[Unit] =
-      super.delete(fileName(ordinal))
+      atomicFileWriter.delete(fileName(ordinal)).void
 
     def deleteAbove(ordinal: SnapshotOrdinal): F[Unit] =
       listFiles.flatMap(
@@ -63,7 +67,7 @@ object OrdinalJsonSidecarStorage {
             .filter(_ > ordinal.value.value)
             .fold(Async[F].unit)(value => delete(SnapshotOrdinal.unsafeApply(value)))
         }.compile.drain
-      )
+      ) >> atomicFileWriter.syncDirectory
 
     /** Apply the repository's ordinary snapshot-info retention policy.
       *
@@ -80,7 +84,7 @@ object OrdinalJsonSidecarStorage {
             .filterNot(toKeep.contains)
             .fold(Async[F].unit)(delete)
         }.compile.drain
-      )
+      ) >> atomicFileWriter.syncDirectory
     }
   }
 }

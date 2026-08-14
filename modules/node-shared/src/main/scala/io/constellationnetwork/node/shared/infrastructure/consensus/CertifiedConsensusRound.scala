@@ -49,28 +49,32 @@ object CertifiedConsensusRound {
     selfId: PeerId,
     keyPair: KeyPair,
     storage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
-    gossip: Gossip[F]
+    gossip: Gossip[F],
+    allowVoteEmission: Boolean = true
   ): F[Either[VoteRejection, Progress[F]]] =
     for {
       valueHash <- CertifiedConsensus.valueHash[F](value)
+      // Hydrate the durable safety journal before selecting carry-forward evidence or attempting a vote. On a restart resources are
+      // empty, but a previously verified QC must still be available to the first proposal/view-change path.
+      persistedLock <- storage.getCertifiedVoteLock(key)
       relayed = resources.peerDeclarationsMap.valuesIterator.flatMap(_.signature.flatMap(_.proposalQc)).toList
       existingQc <- CertifiedConsensus.firstVerifiedProposalQc[F](
         value,
-        carriedQc.toList ++ resources.certifiedProposalQcs.values.toList ++ relayed,
+        carriedQc.toList ++ persistedLock.flatMap(_.lockedQc).toList ++ resources.certifiedProposalQcs.values.toList ++ relayed,
         frozenCommittee,
         frozenCore,
         configuredFraction
       )
       isCore = frozenCore.contains(selfId)
       lockResult <-
-        if (!isCore) ().asRight[VoteRejection].pure[F]
+        if (!isCore || !allowVoteEmission) ().asRight[VoteRejection].pure[F]
         else
           storage
             .tryLockCertifiedVote(key, value.committedView, valueHash, existingQc)
             .map(_.void)
       voteResult <- lockResult match {
         case Left(rejection) => rejection.asLeft[(Boolean, F[Unit])].pure[F]
-        case Right(_) if existingQc.isDefined || !isCore =>
+        case Right(_) if existingQc.isDefined || !isCore || !allowVoteEmission =>
           (false -> Async[F].unit).asRight[VoteRejection].pure[F]
         case Right(_) =>
           storage.getResources(key).flatMap { current =>

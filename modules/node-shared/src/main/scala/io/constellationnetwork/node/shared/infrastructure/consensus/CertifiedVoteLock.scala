@@ -4,6 +4,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedCon
 import io.constellationnetwork.security.hash.Hash
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 /** Local v35 vote lock over the complete certified ProposalValue hash.
@@ -11,7 +12,7 @@ import derevo.derive
   * This deliberately does not reuse the legacy artifact-only VoteLock. The two hashes have different meanings and mixing them would make it
   * possible to treat an artifact QC as certification of the outcome envelope again.
   */
-@derive(eqv, show)
+@derive(eqv, show, encoder, decoder)
 final case class CertifiedVoteLock(
   highestVotedView: Option[Long],
   votedValueHashAtHighestView: Option[Hash],

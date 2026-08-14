@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import cats.Order
 import cats.effect.Clock
 import cats.effect.kernel.{Async, Ref}
+import cats.effect.std.Mutex
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -15,7 +16,6 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedCon
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.schema.gossip.Ordinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
@@ -113,6 +113,15 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   def advanceCertifiedLockedQc(key: Key, qc: CertifiedProposalQC): F[Unit]
   def getCertifiedVoteLock(key: Key): F[Option[CertifiedVoteLock]]
   def clearCertifiedVoteLock(key: Key): F[Unit]
+
+  /** Remove a certified lock only after the corresponding certified outcome has been durably persisted. */
+  def deleteCertifiedVoteLock(key: Key): F[Unit]
+
+  /** Explicit rollback boundary for node-local safety records above the accepted key. */
+  def deleteCertifiedVoteLocksAbove(key: Key): F[Unit]
+
+  /** Download/restart initialization removes only locks made obsolete by an already-finalized key. */
+  def deleteCertifiedVoteLocksAtOrBelow(key: Key): F[Unit]
 
   /** Attempt to atomically lock a local vote for (view, proposalHash). Returns Right(VoteLock) on success, or Left(VoteRejection) if the
     * lock would violate the HotStuff-style safety rule.
@@ -376,6 +385,12 @@ object ConsensusStorage {
 
   def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
     consensusConfig: ConsensusConfig
+  )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] =
+    make(consensusConfig, CertifiedVoteLockPersistence.noop[F, Key])
+
+  def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
+    consensusConfig: ConsensusConfig,
+    certifiedVoteLockPersistence: CertifiedVoteLockPersistence[F, Key]
   )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] = {
     case class ConsensusOutcomeWrapper(
       value: Outcome,
@@ -398,6 +413,8 @@ object ConsensusStorage {
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact, Kind]]()
       voteLocksR <- MapRef.ofConcurrentHashMap[F, Key, VoteLock]()
       certifiedVoteLocksR <- MapRef.ofConcurrentHashMap[F, Key, CertifiedVoteLock]()
+      certifiedVoteLockMutex <- Mutex[F]
+      certifiedVoteLockDirtyR <- Ref.of[F, Set[Key]](Set.empty)
       assembledVccR <- MapRef.ofConcurrentHashMap[F, Key, ViewChangeCertificate]()
       assembledVccApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
       assembledVccReceiptsR <- MapRef.ofConcurrentHashMap[F, Key, Set[(PeerId, Hash, Long, Long, Set[PeerId])]]()
@@ -615,31 +632,98 @@ object ConsensusStorage {
             else resources.copy(certifiedProposalQcs = resources.certifiedProposalQcs.updated(qcKey, qc))
           }
 
+        private def hydrateCertifiedVoteLock(key: Key): F[Option[CertifiedVoteLock]] =
+          certifiedVoteLocksR(key).get.flatMap {
+            case lock @ Some(_) => (lock: Option[CertifiedVoteLock]).pure[F]
+            case None =>
+              certifiedVoteLockPersistence.read(key).flatTap { restored =>
+                restored.traverse_(lock => certifiedVoteLocksR(key).set(lock.some)) >> certifiedVoteLockDirtyR.update(_ - key)
+              }
+          }
+
+        /** Persist only a changed or previously-failed record.
+          *
+          * Incoming votes can re-enter the prepare path many times for one value. Re-forcing identical clean bytes on every command would
+          * put disk latency directly in the consensus hot loop. A failed or cancelled write remains dirty and is retried; cancellation is
+          * masked for the marker transitions but not the filesystem I/O, so the optimization never converts a non-durable lock into
+          * permission to sign.
+          */
+        private def persistCertifiedVoteLock(key: Key, current: Option[CertifiedVoteLock], next: CertifiedVoteLock): F[Unit] =
+          Async[F].uncancelable { poll =>
+            certifiedVoteLockDirtyR.get.map(_.contains(key)).flatMap { dirty =>
+              if (current.contains(next) && !dirty) Async[F].unit
+              else
+                // The memory/dirty and clean transitions are masked, while the potentially blocking filesystem write remains cancelable.
+                // Cancellation can therefore never expose stricter memory without a dirty marker; cancellation or failure during the
+                // polled write leaves memory strict and dirty so the next safety-state read retries before returning the lock.
+                certifiedVoteLocksR(key).set(next.some) >>
+                  certifiedVoteLockDirtyR.update(_ + key) >>
+                  poll(certifiedVoteLockPersistence.write(key, next)) >>
+                  certifiedVoteLockDirtyR.update(_ - key)
+            }
+          }
+
         def tryLockCertifiedVote(
           key: Key,
           view: Long,
           valueHash: Hash,
           effectiveLockedQc: Option[CertifiedProposalQC]
         ): F[Either[VoteRejection, CertifiedVoteLock]] =
-          certifiedVoteLocksR(key).modify { maybeLock =>
-            val current = maybeLock.getOrElse(CertifiedVoteLock.empty)
-            current.acceptVote(view, valueHash, effectiveLockedQc) match {
-              case Right(newLock)  => (newLock.some, Right(newLock))
-              case Left(rejection) => (maybeLock, Left(rejection))
+          certifiedVoteLockMutex.lock.surround {
+            hydrateCertifiedVoteLock(key).flatMap { maybeLock =>
+              val current = maybeLock.getOrElse(CertifiedVoteLock.empty)
+              current.acceptVote(view, valueHash, effectiveLockedQc) match {
+                case Right(newLock) =>
+                  // Set memory first so even a failed disk write leaves this process conservatively locked. The returned effect fails
+                  // until the same value is durable, so the caller cannot sign/store/spread an OutcomeVote after a persistence failure.
+                  persistCertifiedVoteLock(key, maybeLock, newLock).as(Right(newLock))
+                case Left(rejection) => rejection.asLeft[CertifiedVoteLock].pure[F]
+              }
             }
           }
 
         def advanceCertifiedLockedQc(key: Key, qc: CertifiedProposalQC): F[Unit] =
-          certifiedVoteLocksR(key).update {
-            case Some(lock) => lock.withAdvancedQc(qc).some
-            case None       => CertifiedVoteLock.empty.withAdvancedQc(qc).some
+          certifiedVoteLockMutex.lock.surround {
+            hydrateCertifiedVoteLock(key).flatMap { current =>
+              val advanced = current.getOrElse(CertifiedVoteLock.empty).withAdvancedQc(qc)
+              persistCertifiedVoteLock(key, current, advanced)
+            }
           }
 
         def getCertifiedVoteLock(key: Key): F[Option[CertifiedVoteLock]] =
-          certifiedVoteLocksR(key).get
+          certifiedVoteLockMutex.lock.surround {
+            hydrateCertifiedVoteLock(key).flatMap {
+              case lock @ Some(value) => persistCertifiedVoteLock(key, lock, value).as(lock)
+              case None               => none[CertifiedVoteLock].pure[F]
+            }
+          }
 
+        // Memory-only invalidation is retained for API compatibility. Consensus liveness cleanup must never erase the durable safety
+        // record; a subsequent get/try-lock rehydrates it before use. If a write is dirty, retain the stricter memory value until it can
+        // be retried rather than falling back to an older disk record.
         def clearCertifiedVoteLock(key: Key): F[Unit] =
-          certifiedVoteLocksR(key).set(none)
+          certifiedVoteLockMutex.lock.surround {
+            certifiedVoteLockDirtyR.get.map(_.contains(key)).ifM(Async[F].unit, certifiedVoteLocksR(key).set(none))
+          }
+
+        def deleteCertifiedVoteLock(key: Key): F[Unit] =
+          certifiedVoteLockMutex.lock.surround {
+            certifiedVoteLockPersistence.delete(key) >> certifiedVoteLocksR(key).set(none) >> certifiedVoteLockDirtyR.update(_ - key)
+          }
+
+        def deleteCertifiedVoteLocksAbove(key: Key): F[Unit] =
+          certifiedVoteLockMutex.lock.surround {
+            certifiedVoteLockPersistence.deleteAbove(key) >>
+              certifiedVoteLocksR.keys.flatMap(_.filter(Order[Key].gt(_, key)).traverse_(k => certifiedVoteLocksR(k).set(none))) >>
+              certifiedVoteLockDirtyR.update(_.filterNot(Order[Key].gt(_, key)))
+          }
+
+        def deleteCertifiedVoteLocksAtOrBelow(key: Key): F[Unit] =
+          certifiedVoteLockMutex.lock.surround {
+            certifiedVoteLockPersistence.deleteAtOrBelow(key) >>
+              certifiedVoteLocksR.keys.flatMap(_.filter(Order[Key].lteqv(_, key)).traverse_(k => certifiedVoteLocksR(k).set(none))) >>
+              certifiedVoteLockDirtyR.update(_.filterNot(Order[Key].lteqv(_, key)))
+          }
 
         def tryLockVote(
           key: Key,
@@ -861,7 +945,6 @@ object ConsensusStorage {
         def clearResources(key: Key): F[Unit] =
           resourcesR(key).set(none) >>
             voteLocksR(key).set(none) >>
-            certifiedVoteLocksR(key).set(none) >>
             assembledVccR(key).set(none) >>
             assembledVccApplyScheduledR(key).set(none) >>
             assembledVccReceiptsR(key).set(none) >>
@@ -1089,8 +1172,8 @@ object ConsensusStorage {
             _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
             voteLockKeys <- voteLocksR.keys
             _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
-            certifiedVoteLockKeys <- certifiedVoteLocksR.keys
-            _ <- certifiedVoteLockKeys.traverse_(k => certifiedVoteLocksR(k).set(none))
+            // Certified vote locks (including a dirty write-failure value) are safety state, not transient consensus state. Explicit
+            // rollback initialization prunes them through its dedicated lifecycle hook after this reset.
             vccKeys <- assembledVccR.keys
             _ <- vccKeys.traverse_(k => assembledVccR(k).set(none))
             vccScheduleKeys <- assembledVccApplyScheduledR.keys

@@ -159,7 +159,8 @@ object ConsensusEventLoop {
     // Typed, layer-owned persistence hooks. Defaults preserve every existing caller; DAG/Currency
     // use these for recovery sidecars without coupling the generic engine to either outcome schema.
     onOutcomeFinalized: Option[Outcome => F[Unit]] = None,
-    onOutcomeInitialized: Option[Outcome => F[Unit]] = None
+    onOutcomeInitialized: Option[Outcome => F[Unit]] = None,
+    onOutcomeRollbackInitialized: Option[Outcome => F[Unit]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -196,7 +197,8 @@ object ConsensusEventLoop {
         _key.get _,
         lastOutcomeEndTimeMsOf,
         onOutcomeFinalized.getOrElse((_: Outcome) => Async[F].unit),
-        onOutcomeInitialized.getOrElse((_: Outcome) => Async[F].unit)
+        onOutcomeInitialized.getOrElse((_: Outcome) => Async[F].unit),
+        onOutcomeRollbackInitialized.getOrElse((_: Outcome) => Async[F].unit)
       )
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](

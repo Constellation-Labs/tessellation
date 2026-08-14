@@ -233,6 +233,9 @@ object GlobalSnapshotConsensus {
       ).raiseError[F, Unit]
         .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
 
+      certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
+        appConfig.snapshot.snapshotPath / "certifiedVoteLocks"
+      )
       consensusStorage <- ConsensusStorage.make[
         F,
         GlobalSnapshotEvent,
@@ -242,7 +245,7 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](effectiveConsensusConfig)
+      ](effectiveConsensusConfig, certifiedVoteLockPersistence)
 
       // Global L0 injects the command queue so the round-creation Tier-1 finality audit can
       // enqueue the existing certificate-assembly command before sending its first Facility.
@@ -402,6 +405,7 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        effectiveConsensusConfig.quorumThresholdFraction,
         Slf4jLogger.getLogger[F]
       )
 
@@ -420,6 +424,7 @@ object GlobalSnapshotConsensus {
         gossip,
         consensusStorage,
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
+        effectiveConsensusConfig.quorumThresholdFraction,
         Slf4jLogger.getLogger[F]
       )
 
@@ -509,11 +514,17 @@ object GlobalSnapshotConsensus {
           Some((outcome: GlobalConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
               certifiedOutcomeSidecar.write(outcome.key, outcome) >>
-                certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key)
+                certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key) >>
+                consensusStorage.deleteCertifiedVoteLock(outcome.key)
             ) >>
               peerHistorySidecar.write(outcome.key, outcome.toOperationalState)
           ),
-          Some((outcome: GlobalConsensusOutcome) => certifiedOutcomeSidecar.deleteAbove(outcome.key))
+          Some((outcome: GlobalConsensusOutcome) =>
+            certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
+              consensusStorage.deleteCertifiedVoteLocksAtOrBelow(outcome.key)
+          ),
+          onOutcomeRollbackInitialized =
+            Some((outcome: GlobalConsensusOutcome) => consensusStorage.deleteCertifiedVoteLocksAbove(outcome.key))
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

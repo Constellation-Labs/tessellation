@@ -43,7 +43,13 @@ dormant.
 6. Exercise activation from deliberately divergent legacy local sidecars and verify
    that nodes derive one frozen committee and one ProposalValue hash.
 7. Exercise a view change, a carried QC, same-key certified outcome recovery, process
-   restart, and coordinated rollback in staging.
+   restart, and coordinated rollback in staging. Kill a process after its prepare vote
+   and again after QC formation; after restart, verify that the journal refuses a
+   conflicting vote and that the first VCV/timeout vote carries the verified restored
+   QC. Also kill during the journal write and during the certified-outcome sidecar
+   write: no vote/commit may progress from a non-durable lock, and the lock must remain
+   until the crash-atomic sidecar write has succeeded. A deliberately truncated journal
+   file must fail closed rather than start consensus.
 8. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
    and CoreCommitQC formation, artifact proof margin, view changes, reward breadth, and
    `dag_consensus_outcome_hook_duration_seconds` p95.
@@ -52,7 +58,8 @@ dormant.
 
 1. Choose a future activation key independently for each L0 cluster.
 2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
-   configuration, and logs; verify a coherent pre-activation checkpoint.
+   certified-vote-lock journals, configuration, and logs; verify a coherent
+   pre-activation checkpoint.
 3. Install the same v35 assembly and the same resolved activation configuration on
    every active facilitator. Do not canary a mixed active consensus fleet.
 4. Cold-start the cluster and verify identical deterministic config hashes and normal
@@ -70,6 +77,14 @@ dormant.
    `dag_consensus_certified_recovery_candidate_total`, and
    `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`
    in the activation dashboard.
+
+The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
+to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary
+same-key retries retain the record. A certified finalization removes it only after the
+matching complete-outcome sidecar write succeeds; rollback/download initialization
+have deliberately different semantics. Download/restart removes finalized or stale
+records at or below its accepted ordinal and retains a possible next-key lock. Only an
+explicit coordinated rollback prunes records above its accepted ordinal.
 
 No restart is required merely because the ordinal crosses; the aligned nodes switch
 deterministically at the configured key.

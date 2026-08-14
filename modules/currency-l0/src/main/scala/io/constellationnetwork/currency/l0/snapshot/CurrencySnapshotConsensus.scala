@@ -167,6 +167,9 @@ object CurrencySnapshotConsensus {
           s" active-facilitator-max ($resolvedActiveFacilitatorMax)"
       ).raiseError[F, Unit]
         .whenA((resolvedActiveFacilitatorTarget, resolvedActiveFacilitatorMax).tupled.exists { case (t, m) => t > m })
+      certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
+        snapshotConfig.incrementalPersistedSnapshotPath / "certifiedVoteLocks"
+      )
       consensusStorage <- ConsensusStorage.make[
         F,
         CurrencySnapshotEvent,
@@ -176,7 +179,7 @@ object CurrencySnapshotConsensus {
         CurrencySnapshotStatus,
         CurrencyConsensusOutcome,
         CurrencyConsensusKind
-      ](effectiveConsensusConfig)
+      ](effectiveConsensusConfig, certifiedVoteLockPersistence)
 
       certifiedOutcomeSidecar <- OrdinalJsonSidecarStorage.make[F, CurrencyConsensusOutcome](
         snapshotConfig.incrementalPersistedSnapshotPath / "certifiedOutcomes"
@@ -277,6 +280,7 @@ object CurrencySnapshotConsensus {
         gossip,
         consensusStorage,
         (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+        effectiveConsensusConfig.quorumThresholdFraction,
         Slf4jLogger.getLogger[F]
       )
 
@@ -295,6 +299,7 @@ object CurrencySnapshotConsensus {
         gossip,
         consensusStorage,
         (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
+        effectiveConsensusConfig.quorumThresholdFraction,
         Slf4jLogger.getLogger[F]
       )
 
@@ -400,10 +405,16 @@ object CurrencySnapshotConsensus {
           onOutcomeFinalized = Some((outcome: CurrencyConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
               certifiedOutcomeSidecar.write(outcome.key, outcome) >>
-                certifiedOutcomeSidecar.retain(SnapshotOrdinal.MinValue, outcome.key)
+                certifiedOutcomeSidecar.retain(SnapshotOrdinal.MinValue, outcome.key) >>
+                consensusStorage.deleteCertifiedVoteLock(outcome.key)
             )
           ),
-          onOutcomeInitialized = Some((outcome: CurrencyConsensusOutcome) => certifiedOutcomeSidecar.deleteAbove(outcome.key))
+          onOutcomeInitialized = Some((outcome: CurrencyConsensusOutcome) =>
+            certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
+              consensusStorage.deleteCertifiedVoteLocksAtOrBelow(outcome.key)
+          ),
+          onOutcomeRollbackInitialized =
+            Some((outcome: CurrencyConsensusOutcome) => consensusStorage.deleteCertifiedVoteLocksAbove(outcome.key))
         )
 
       handler = CurrencyConsensusHandler.make(loop.queue)

@@ -86,7 +86,35 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    because its binary hash cannot be authenticated from a scalar alone. Two valid
    semantic value hashes fail closed. Arbitrary long-range certification is out of scope
    until a certificate chain or trusted checkpoint is specified.
-10. Make direct consensus delivery enqueue-only from the FSM's perspective, and make
+10. Persist each local certified vote lock before emitting its `OutcomeVote`, and
+    persist every verified QC advancement before it can influence gossip or commit
+    progression. DAG L0 and Currency L0 share one generic
+    `CertifiedVoteLockPersistence[F, Key]`; their production wiring uses the same
+    SnapshotOrdinal filesystem implementation and the repository `JsonSerializer`.
+    This journal is node-local safety state, not a consensus message, public snapshot,
+    hash input, or activation field.
+
+    Journal replacement and certified-outcome sidecar replacement share one
+    `CrashSafeAtomicFileWriter`: write a temporary file in the destination directory,
+    force file contents and metadata, require an atomic rename, then force the directory
+    where supported. The memory/dirty and clean transitions are cancellation-masked,
+    while the filesystem write remains cancelable; cancellation during I/O leaves the
+    stricter lock dirty. A dirty in-memory lock is never returned as usable safety
+    state; reads retry its write and fail closed until it is durable. A missing record
+    means the node has not durably voted at that key. A malformed/truncated record is
+    not a cache miss: startup and voting fail closed. Parsed QCs are hydrated
+    conservatively for lock safety and are cryptographically re-verified against the
+    frozen committee before a view-change or timeout vote may carry them.
+
+    Same-key abandonment, soft reset, and transient resource cleanup never delete the
+    journal. The record is deleted only after the complete certified outcome sidecar
+    has been durably written. Ordinary download/restart initialization removes records
+    made stale by a finalized boundary while retaining an in-flight next-key lock.
+    Explicit coordinated rollback is a distinct lifecycle hook and additionally prunes
+    records above its accepted boundary. Conflating those paths would erase the exact
+    lock needed after a process crash. This closes the process-restart double-vote
+    window without inventing a second serialization or hash scheme.
+11. Make direct consensus delivery enqueue-only from the FSM's perspective, and make
     every soft reset schedule a replacement action. Network fanout latency must not
     block the serialized consensus command loop.
 
@@ -137,6 +165,10 @@ aligned v35 jar/config when their own metagraph activates it.
 - Missing or corrupt certified sidecars reduce recovery availability and must never be
   treated as valid evidence; every adopted outcome is cryptographically re-verified
   against the locally known parent committee.
+- Missing and corrupt pre-finalization vote-lock records have deliberately different
+  semantics: missing is no prior durable vote, while corrupt is a hard local safety
+  failure. Operators must preserve the `certifiedVoteLocks` directory through ordinary
+  process restarts and must not manually delete it to recover liveness.
 - The durable post-finalization write is awaited before the command loop continues. Its
   latency is exposed by `dag_consensus_outcome_hook_duration_seconds`; public activation
   remains gated on IntegrationNet EventTrigger and hook p95 measurements.
