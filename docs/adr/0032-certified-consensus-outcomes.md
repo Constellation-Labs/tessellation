@@ -59,11 +59,15 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    path. If fewer than the configured supermajority of the frozen Core remains live,
    the round may halt until a coordinated cluster restart. This availability trade is
    accepted in preference to changing the safety universe mid-round. The conservative
-   rc.7 Global L0 policy additionally disables health-derived eviction certification,
-   so Global L0 `evictedPeers` remains empty both before and after activation. Currency
-   L0 retains its existing eviction authority and applies a certified eviction only to
-   N+1. These are separate policy capabilities: freezing N must not implicitly disable
-   a layer's authorized N+1 change.
+   rc.7 Global L0 policy continues to disable health-derived contraction. After v35
+   activation, Global L0 may certify one bounded atomic replacement for N+1: every
+   `evictedPeer` must be paired one-for-one with an `admittedPeer` in the same
+   ProposalValue, so the signing roster and finality floor cannot shrink. Core certifies
+   the complete pair; standalone or unequal eviction batches fail closed. The replacement
+   reuses the existing ACS/ECS messages and ProposalValue sets and does not introduce a
+   serialization or hash domain. Currency L0 retains its existing eviction authority and
+   does not adopt the Global L0 replacement policy. These are separate policy capabilities:
+   freezing N must not implicitly enable health-derived contraction.
 8. At the exact activation key, discard legacy node-local controller/evidence,
    recent-signer/proof, penalty/probation, and PeerHistory windows before deriving the
    first v35 round. Both layers seed membership from the latest controller-evidence
@@ -156,6 +160,10 @@ aligned v35 jar/config when their own metagraph activates it.
   frozen-Core safety violation.
 - Core remains the liveness/certification cohort; Tier 1 remains in broad artifact
   signing, finality, and reward participation.
+- A finalizable zero-headroom committee can replace a hysteresis-qualified silent Core
+  or Tier-1 seat with a Core-attested ReadyAtTip peer without first increasing Q(N).
+  Replacement still requires the original frozen Core quorum and therefore cannot rescue
+  a committee that has already fallen below that quorum.
 - Two additional Core message phases add latency and traffic. IntegrationNet load
   validation must measure the EventTrigger p95 impact before public activation.
 - A mixed v34/v35 active cluster is unsupported and is fenced before useful consensus

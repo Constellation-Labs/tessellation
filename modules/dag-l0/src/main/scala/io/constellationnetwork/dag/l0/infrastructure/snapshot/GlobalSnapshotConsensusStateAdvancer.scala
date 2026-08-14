@@ -307,432 +307,451 @@ object GlobalSnapshotConsensusStateAdvancer {
         state.status match {
           case f: Finished =>
             val certifiedValue = f.certifiedOutcome.map(_.proposalQc.value)
-            // Phase 3: derive penalty/quality state from CONSENSUS-AGREED inputs only.
-            //
-            // Prior implementation derived `signers` from `f.signedMajorityArtifact.proofs`,
-            // but `proofs` varies across nodes for the same artifact/ordinal: each node
-            // finalizes the round the instant it observes quorum's worth of MajoritySignature
-            // declarations (per `maybeGetAllDeclarations`). Fast finalizers stop at exactly
-            // quorum; slow finalizers accumulate extra signatures. `SnapshotStorage.prepend`
-            // does NOT merge proofs from later-arriving gossip copies (see SnapshotStorage.scala
-            // `isNextSnapshot` / head-replace logic). `ForkInfo` gossip only carries
-            // `(ordinal, hash)` — no proofs. So there is no cluster-wide convergence path for
-            // `proofs.size`.
-            //
-            // With non-deterministic `signers`, two nodes can compute different
-            // `nonSigners = facilitators - signers` → different `penalizedThisRound` →
-            // divergent `removalPenalties`, `cumulativeMissCounts`, and `peerQuality`
-            // fields in the stored `lastOutcome`. Those fields gate `chronicNonSigners`,
-            // `penalizedPeers`, and deferral filtering in the NEXT round's state creator,
-            // which produces divergent facilitator sets and cascades into `facilitatorsHash`
-            // fork checks.
-            //
-            // Fix: compute `penalizedThisRound` using only `state.removedFacilitators` —
-            // peers evicted by the consensus-agreed facility fork-eviction path (see
-            // `advanceFromFacilities`). That set is deterministic across all nodes that
-            // complete the round (they agree on `facilitatorsHash` or cannot finalize).
-            // The slow-signer penalty signal is dropped deliberately: Phase 2's VoteLock
-            // plus quorum-certified view change already contain the safety consequences
-            // of slow peers; stall-cycle abandonment handles liveness.
-            //
-            // For `peerQuality`, credit every non-evicted facilitator with
-            // `(completed=1, participated=1)`: reaching Finished implies the committee
-            // reached quorum, and the individual signer/non-signer split within the
-            // committee is not consensus-agreed. Evicted facilitators get
-            // `(completed=0, participated=1)` so they remain trackable but don't gain
-            // quality score while out.
-            //
-            // Grace window: peers whose `deferralCountdown > 0` are in the post-Ready
-            // observation period. Their local advancer can lag by seconds on the first
-            // rounds they're selected into (MPT warmup, acceptance pipeline cold start),
-            // which caused a cascade where a freshly-Ready peer misses round N's
-            // signature window, gets penalized, sits out rounds N+1..N+2, then
-            // re-enters round N+3 still behind — stalling the whole cluster. Symmetric
-            // suppression: they don't accrue `participated` OR `completed` during grace.
-            // This uses the same consensus-agreed `deferralCountdown` infrastructure
-            // that already gates active facilitation (state creator), so every node
-            // arrives at the same peerQuality map.
-            val evictedPeers = certifiedValue.fold(state.removedFacilitators.value)(_.evictedPeers.toSet)
-            val previousPenalties = state.lastOutcome.removalPenalties
-            val previousCumulative = state.lastOutcome.cumulativeMissCounts
-
-            // v19 cleanup: the deferralCountdown field is now inert (StateCreator no longer
-            // reads it), so there is no "deferral bypass" cohort to exclude from penalty.
-            // Every non-evicted facilitator participates fully in penalty accounting.
-            val deferredInCommittee = Set.empty[PeerId]
-
-            // Decay: every non-evicted facilitator earns a 1-unit credit against their
-            // cumulative miss count. Prevents the exponential penalty formula from
-            // trapping nodes forever once they've signed cleanly across enough rounds.
-            //
-            // Uses roundStartFacilitators (canonical) not state.facilitators (mutable):
-            // mid-round withdrawals mutate state.facilitators on nodes that observed the
-            // withdrawal pre-finish, diverging completedFacilitators across nodes and
-            // ultimately the deferralCountdown in lastOutcome. That was the
-            // ord-4->5 fork (see .workspace/codex-response-ord5-facilitator-fork-apr23.md).
-            val completedFacilitators = state.roundStartFacilitators.value.toSet -- evictedPeers
-            val decayedCumulative = completedFacilitators.foldLeft(previousCumulative) { (acc, pid) =>
-              acc.get(pid) match {
-                case Some(v) if v > 1L => acc.updated(pid, v - 1L)
-                case Some(_)           => acc - pid // reached 0 — prune so the map stays bounded
-                case None              => acc // no prior miss history, nothing to decay
-              }
-            }
-
-            // Bootstrap warmup: classify the chain as post-bootstrap once a recent round
-            // has committee size >= bootstrapCompleteProofsThreshold. Uses
-            // `state.facilitators.value.size` (consensus-agreed) rather than
-            // `f.signedMajorityArtifact.proofs.size` (local-observed) so all nodes reach
-            // the same bootstrap/post-bootstrap classification deterministically.
-            val isInBootstrap =
-              !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
-
-            // Penalize only consensus-agreed evictions (facility fork-eviction).
-            val penalizedThisRound =
-              if (isInBootstrap) Set.empty[PeerId] else (evictedPeers -- deferredInCommittee).toSet
-            val newCumulative = penalizedThisRound.foldLeft(decayedCumulative) { (acc, pid) =>
-              acc.updated(pid, acc.getOrElse(pid, 0L) + 1L)
-            }
-
-            val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
-            val newPenalties = penalizedThisRound.foldLeft(decrementedPenalties) { (acc, pid) =>
-              val repeatCount = newCumulative.getOrElse(pid, 1L) - 1L // first eviction = exponent 0
-              // penalty = removalPenaltyRounds * base^repeatCount, clamped to maxRemovalPenaltyRounds
-              val base = config.exponentialPenaltyBase.toDouble
-              val scaled = config.removalPenaltyRounds.toDouble * math.pow(base, repeatCount.toDouble)
-              val penalty = math.min(scaled, config.maxRemovalPenaltyRounds.toDouble).toInt
-              acc.updated(pid, math.max(1, penalty))
-            }
-            val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
-
-            // v19 cleanup: deferralCountdown is inert (no StateCreator consumer). justUnpenalized
-            // is still computed because it seeds the B2 readmissionCountdown path below --
-            // rejoiners whose removalPenalty just expired enter probation and wait for a
-            // quorum-witnessed AdmissionCertificate. The deferralCountdown field is written
-            // as empty going forward (see outcome construction below).
-            val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
-
-            // v7 (flaky-byzantine): the peerQuality "completed" signal now reflects ACTUAL
-            // facility-phase participation, not "non-fork-evicted" as it did before. Source is
-            // the leader's signed observedResponders carried on the accepted Proposal and
-            // plumbed onto state via REPLACE-on-accept at buildSignatureTransition. Bound to
-            // the leader by the rumor envelope's signature (RumorValidator.scala:50). Under
-            // flaky-byzantine, leaders honestly report; under bootstrap, fall back to today's
-            // "non-evicted = completed" semantic to avoid falsely classifying cold-start peers
-            // as chronic before they've had a chance to participate.
-            val responderSet: Set[PeerId] =
-              if (isInBootstrap) completedFacilitators
-              else state.observedResponders.value
-            val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
-              // Iterate canonical committee — mid-round withdrawals must not change
-              // which peers have a peerQuality row for this round.
-              state.roundStartFacilitators.value
-                .filterNot(deferredInCommittee.contains)
-                .map { pid =>
-                  val completed = if (responderSet.contains(pid)) 1 else 0
-                  pid -> (completed, 1)
-                }
-            )
-            // Accumulate with previous rounds; decay/prune as before.
-            val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
-              val previous = state.lastOutcome.peerQuality
-              val allPeerIds = (previous.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
-              SortedMap.from(allPeerIds.map { pid =>
-                val (pc, pp) = previous.getOrElse(pid, (0, 0))
-                val (tc, tp) = thisRoundQuality.getOrElse(pid, (0, 0))
-                pid -> (pc + tc, pp + tp)
-              })
-            }
-            val needsDecay = rawAccumulated.values.exists { case (_, p) => p > config.qualityDecayThreshold }
-            val decayed =
-              if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
-              else rawAccumulated
-            val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
-
-            // Canonical (node-independent) committee and completed-signer set for the
-            // just-finalized round. These feed the SIGNED-bytes windows below
-            // (recentProofSizes / recentSigners / controllerEvidence carried via
-            // signedArtifactPeerHistory), so they must be byte-identical on every node
-            // deciding this round. Unlike `completedFacilitators` above (which subtracts
-            // `state.removedFacilitators`, whose facility-phase fork-eviction component is
-            // computed from the LOCAL declaration snapshot at quorum-crossing and diverges
-            // across honest nodes -- the ordinal-3150166 controllerEvidenceDiffer wedge),
-            // these are derived ONLY from round-start-frozen and quorum-accepted-proposal
-            // data. Full determinism argument:
-            // `ControllerEvidenceDerivation.canonicalCompletedSigners`.
-            val canonicalCommitteeForRound: SortedSet[PeerId] =
-              ControllerEvidenceDerivation.canonicalCommittee(
-                roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
-                certifiedEvictions = state.certifiedEvictionTargets
-              )
-            val canonicalSigners: SortedSet[PeerId] =
-              ControllerEvidenceDerivation.canonicalCompletedSigners(
-                roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
-                acceptedObservedResponders = state.observedResponders.value,
-                certifiedEvictions = state.certifiedEvictionTargets
-              )
-
-            // Roll the proofs-size window forward using the canonical committee size for
-            // the completed round (NOT `f.signedMajorityArtifact.proofs.size`, locally
-            // observed; NOT `completedFacilitators.size`, which embeds local fork-eviction
-            // observations). Committee-size semantics are kept (rather than responder
-            // count) so the bootstrap classification keyed on
-            // `bootstrapCompleteProofsThreshold` continues to measure committee size.
-            val bootstrapLookbackOrdinals = 10L
-            val currentOrdValue = state.key.value.value
-            val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
-            val currentProofsSize: Int = canonicalCommitteeForRound.size
-            val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
-              val withCurrent =
-                state.lastOutcome.recentProofSizes.updated(state.key, currentProofsSize)
-              withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
-            }
-
-            // v22: recentSigners is repopulated as the rolling K-round signer-set window and is now
-            // the input to the tier-demotion hysteresis (TierTransitions.DemotionConsecutiveMisses).
-            // Append the just-completed round's CANONICAL signer set and trim to the tightening
-            // window. The map is SortedMap[SnapshotOrdinal, SortedSet[PeerId]] -- fully sorted, so
-            // it serializes order-independently (ArtifactSerializationDeterminismSuite covers
-            // exactly this field) and every honest node writes byte-identical bytes. Same
-            // window-trim arithmetic the recentProofSizes / recentRoundEndTimes windows use.
-            // MUST stay in lockstep with `nextPeerTiersForFinished`, which rebuilds the same
-            // window for the peerTiers computation.
-            val tighteningMinOrdinalValue =
-              math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
-            val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
-              val withCurrent =
-                state.lastOutcome.recentSigners.updated(state.key, canonicalSigners)
-              withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
-            }
-
-            // v19/v22 multi-committee tier transitions. Round completed (we are in `Finished`), so a
-            // Tier 2 peer in `roundStartFacilitators` demotes to Tier 1 ONLY if it has been absent
-            // from the most-recent `DemotionConsecutiveMisses` signer sets (sustained silence), not
-            // on a single missed signature -- the hysteresis that makes the lowered Core floor safe.
-            // Inputs are all consensus-agreed deterministic outcome fields so the computation is
-            // byte-identical across honest nodes.
-            val newPeerTiers: SortedMap[PeerId, Int] = nextPeerTiersForFinished(state)
-
-            // v19 phase 2: append the round's `consensusEndTime` to the sliding window if
-            // it was computed (Facility set carried enough `proposerClockMs` to clear the
-            // strict-majority threshold). Otherwise the round produced no time anchor and
-            // the window carries forward unchanged; consume-site falls back to phase 1.
-            val newRecentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] =
-              state.outcomeEndTime match {
-                case Some(endTime) =>
-                  val withCurrent = state.lastOutcome.recentRoundEndTimes.updated(state.key, endTime)
-                  withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
-                case None =>
-                  state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
-              }
-            val newActiveAdmissionScores: SortedMap[PeerId, Int] =
-              ConsensusPeerController.advanceScores(
-                prior = state.lastOutcome.activeAdmissionScores,
-                evidence = ConsensusPeerController.RoundEvidence(
-                  roundStart = state.roundStartFacilitators.value.toSet,
-                  completed = completedFacilitators,
-                  responders = responderSet,
-                  timeoutVoters = state.acceptedTimeoutCertificateVoters.toSet,
-                  evicted = evictedPeers,
-                  observedSelfHealth = state.observedSelfHealth.value
-                ),
-                config = ConsensusPeerController.Config(
-                  promoteThreshold = config.activeAdmissionPromoteThreshold,
-                  retainThreshold = config.activeAdmissionRetainThreshold,
-                  demoteThreshold = config.activeAdmissionDemoteThreshold,
-                  maxScore = config.activeAdmissionMaxScore,
-                  signatureReward = config.activeAdmissionSignatureReward,
-                  responderReward = config.activeAdmissionResponderReward,
-                  missedActivePenalty = config.activeAdmissionMissedActivePenalty,
-                  timeoutMissingPenalty = config.activeAdmissionTimeoutMissingPenalty,
-                  evictedPenalty = config.activeAdmissionEvictedPenalty,
-                  degradedPenalty = config.activeAdmissionDegradedPenalty,
-                  criticalPenalty = config.activeAdmissionCriticalPenalty,
-                  passiveDecay = config.activeAdmissionPassiveDecay,
-                  maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
+            val validatedNextCommittee = certifiedValue.fold(
+              ConsensusPeerController
+                .applyNextRoundCertifiedMembership(
+                  roundStartFacilitators = state.roundStartFacilitators.value,
+                  admittedPeers = state.admittedFacilitators.value,
+                  certifiedEvictedPeers = none
                 )
+                .asRight[String]
+            ) { value =>
+              CertifiedMembershipTransition.applyTo(
+                state.roundStartFacilitators.value,
+                value.admittedPeers.toSet,
+                value.evictedPeers.toSet,
+                config.activeAdmissionMaxExpansionPerRound
               )
-            // Controller evidence stage 1: append the just-finalized round's canonical facts to
-            // the bounded evidence window. Every input is consensus-agreed at this site:
-            // roundStartFacilitators is the frozen canonical committee, canonicalSigners is the
-            // proposal-carried completed-signer set shared with the recentSigners window (NOT
-            // the local-observed proofs set and NOT `roundStart -- removedFacilitators`, whose
-            // fork-eviction component is node-local -- see
-            // ControllerEvidenceDerivation.canonicalCompletedSigners for the determinism
-            // argument), acceptedTimeoutCertificateVoters comes from the accepted proposal's
-            // embedded TC, and admitted/certifiedEvicted are certificate-applied targets stashed
-            // at buildSignatureTransition.
-            val controllerEvidenceEntry = ControllerEvidenceEntry(
-              roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
-              completedSigners = canonicalSigners,
-              timeoutVoters = state.acceptedTimeoutCertificateVoters,
-              admittedPeers = SortedSet.from(state.admittedFacilitators.value),
-              evictedPeers = state.certifiedEvictionTargets
-            )
-            val newControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] =
-              ControllerEvidenceDerivation.appendBounded(
-                prior = state.lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
-                key = state.key,
-                entry = controllerEvidenceEntry,
-                tighteningWindow = config.tighteningWindow
-              )
-            // Controller evidence stage 3: cert-anchored penalty horizons. Entries are written
-            // only for certificate-applied evictions (N + penaltyDurationOrdinals), cleared by
-            // certificate-applied admissions, and expired by pure ordinal comparison. Write-only
-            // for now -- no consumer reads penaltyUntil yet.
-            val newPenaltyUntil: SortedMap[PeerId, SnapshotOrdinal] =
-              ControllerEvidenceDerivation.nextPenaltyUntil(
-                prior = state.lastOutcome.penaltyUntil.getOrElse(SortedMap.empty),
-                certifiedEvictions = state.certifiedEvictionTargets,
-                certifiedAdmissions = state.admittedFacilitators.value,
-                currentOrdinal = state.key,
-                penaltyDurationOrdinals = config.penaltyDurationOrdinals
-              )
-            // B2 readmissionCountdown maintenance (sticky-probation):
-            //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
-            //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
-            //      the key when the countdown ran out. That made the AdmissionCertificate path
-            //      semantically optional: a peer would auto-leave probation after N rounds
-            //      regardless of whether quorum had ever witnessed its catch-up. Empirical
-            //      consequence: ZERO admission certs assembled across 14 hours of alpha.50,
-            //      because the StallDetector emission gate (probation intersect atTip-streak) only
-            //      considers peers still in the probation set, but those peers exited probation
-            //      via auto-clear before the streak threshold could fire.
-            //   2) Seed entries for `justUnpenalized` (peers whose removalPenalty expired
-            //      this round) at `readmissionProbationRounds`. These peers take the B2
-            //      re-admission path, not the B1 deferral path.
-            //   3) Clear entries for peers admitted via AdmissionCertificate this round
-            //      (state.admittedFacilitators populated at buildSignatureTransition).
-            //      This is the ONLY path that removes a peer from probation.
-            // Order matters: decrement-then-clear-then-seed avoids decrementing a freshly
-            // seeded entry in the same step. Admitted peers are removed last so an edge
-            // case where the same peer is both admitted AND newly-unpenalized (shouldn't
-            // happen but defended against) does not re-enter probation.
-            val admittedThisRound = state.admittedFacilitators.value
-            val finalReadmission = ReadmissionMaintenance.step(
-              prev = state.lastOutcome.readmissionCountdown,
-              justUnpenalized = justUnpenalized,
-              admittedThisRound = admittedThisRound,
-              probationRounds = config.readmissionProbationRounds
-            )
-            // Per-peer cumulative view-change-caused credits.
-            //
-            // For each view v in [0, state.viewNumber) the round attempted, recompute the
-            // deterministic leader using the SAME inputs `selectLeaderWeighted` was called
-            // with at round-start: state.lastOutcome.peerQuality, state.lastOutcome.peerSelfHealth,
-            // state.lastOutcome.peerViewChanges, and a leaderPool derived from
-            // state.coreFacilitators via the same graduation rule the creator applied.
-            // Each resulting peer is credited with one view-change-caused. All inputs are
-            // consensus-agreed (lastOutcome is signed, coreFacilitators is canonical at
-            // round-start via CommitteeBuilder, entropy is derived from the prior snapshot hash,
-            // config is deterministicConfigHash-gated), so every honest node computes the same
-            // credit map byte-identically.
-            //
-            // v19: prior to multi-committee, this used `state.roundStartFacilitators` because
-            // the leader pool was derived from the full round-start committee. In v19 the
-            // creator restricts the leader pool to the Core committee, so the credit re-derivation
-            // here switches to `state.coreFacilitators` for the same determinism contract.
-            //
-            // Determinism contract: the leaderPool re-derivation here MUST mirror the
-            // creator's logic at GlobalSnapshotConsensusStateCreator. If the creator changes
-            // the graduation rule, this credit logic MUST change in lockstep, or the
-            // selectLeaderWeighted recomputation here will return a different peer than the
-            // one the round actually elected at the same view -- producing a credit miss.
-            val priorPeerQuality = state.lastOutcome.peerQuality
-            val priorActive = state.coreFacilitators.value
-            val priorGraduated = priorActive.filter { pid =>
-              val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
-              participated >= config.minParticipationObservations && completed >= 1
             }
-            val priorLeaderPool = if (priorGraduated.size >= 2) priorGraduated else priorActive
-            val committedViewNumber = certifiedValue.fold(state.viewNumber)(_.committedView.toInt)
-            val viewChangeCredits: SortedMap[PeerId, Long] =
-              if (committedViewNumber <= 0 || priorLeaderPool.isEmpty) SortedMap.empty[PeerId, Long]
-              else {
-                val priorPeerQualityMap: Map[PeerId, (Int, Int)] = priorPeerQuality.toMap
-                val priorPeerSelfHealthMap = state.lastOutcome.peerSelfHealth.toMap
-                val priorPeerViewChangesMap = state.lastOutcome.peerViewChanges.toMap
-                (0 until committedViewNumber).foldLeft(SortedMap.empty[PeerId, Long]) { (acc, v) =>
-                  val failedLeader = facilitatorSelector.selectLeaderWeighted(
-                    priorLeaderPool,
-                    state.entropy,
-                    viewNumber = v,
-                    qualityScores = priorPeerQualityMap,
-                    selfHealthHints = priorPeerSelfHealthMap,
-                    peerViewChanges = priorPeerViewChangesMap,
-                    minLeaderRatioPct = config.leaderRotationMinRatioPct,
-                    hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
-                    minLeaderPoolSize = config.minLeaderPoolSize
-                  )
-                  acc.updated(failedLeader, acc.getOrElse(failedLeader, 0L) + 1L)
+
+            validatedNextCommittee match {
+              // A certified value that violates the N-to-N invariant is not a partially usable
+              // outcome. Refuse to derive/finalize it; silently retaining the old roster would
+              // persist evidence and penalties for a transition that the facilitator list did
+              // not apply.
+              case Left(_)              => none
+              case Right(nextCommittee) =>
+                // Phase 3: derive penalty/quality state from CONSENSUS-AGREED inputs only.
+                //
+                // Prior implementation derived `signers` from `f.signedMajorityArtifact.proofs`,
+                // but `proofs` varies across nodes for the same artifact/ordinal: each node
+                // finalizes the round the instant it observes quorum's worth of MajoritySignature
+                // declarations (per `maybeGetAllDeclarations`). Fast finalizers stop at exactly
+                // quorum; slow finalizers accumulate extra signatures. `SnapshotStorage.prepend`
+                // does NOT merge proofs from later-arriving gossip copies (see SnapshotStorage.scala
+                // `isNextSnapshot` / head-replace logic). `ForkInfo` gossip only carries
+                // `(ordinal, hash)` — no proofs. So there is no cluster-wide convergence path for
+                // `proofs.size`.
+                //
+                // With non-deterministic `signers`, two nodes can compute different
+                // `nonSigners = facilitators - signers` → different `penalizedThisRound` →
+                // divergent `removalPenalties`, `cumulativeMissCounts`, and `peerQuality`
+                // fields in the stored `lastOutcome`. Those fields gate `chronicNonSigners`,
+                // `penalizedPeers`, and deferral filtering in the NEXT round's state creator,
+                // which produces divergent facilitator sets and cascades into `facilitatorsHash`
+                // fork checks.
+                //
+                // Fix: compute `penalizedThisRound` using only `state.removedFacilitators` —
+                // peers evicted by the consensus-agreed facility fork-eviction path (see
+                // `advanceFromFacilities`). That set is deterministic across all nodes that
+                // complete the round (they agree on `facilitatorsHash` or cannot finalize).
+                // The slow-signer penalty signal is dropped deliberately: Phase 2's VoteLock
+                // plus quorum-certified view change already contain the safety consequences
+                // of slow peers; stall-cycle abandonment handles liveness.
+                //
+                // For `peerQuality`, credit every non-evicted facilitator with
+                // `(completed=1, participated=1)`: reaching Finished implies the committee
+                // reached quorum, and the individual signer/non-signer split within the
+                // committee is not consensus-agreed. Evicted facilitators get
+                // `(completed=0, participated=1)` so they remain trackable but don't gain
+                // quality score while out.
+                //
+                // Grace window: peers whose `deferralCountdown > 0` are in the post-Ready
+                // observation period. Their local advancer can lag by seconds on the first
+                // rounds they're selected into (MPT warmup, acceptance pipeline cold start),
+                // which caused a cascade where a freshly-Ready peer misses round N's
+                // signature window, gets penalized, sits out rounds N+1..N+2, then
+                // re-enters round N+3 still behind — stalling the whole cluster. Symmetric
+                // suppression: they don't accrue `participated` OR `completed` during grace.
+                // This uses the same consensus-agreed `deferralCountdown` infrastructure
+                // that already gates active facilitation (state creator), so every node
+                // arrives at the same peerQuality map.
+                val evictedPeers = certifiedValue.fold(state.removedFacilitators.value)(_.evictedPeers.toSet)
+                val previousPenalties = state.lastOutcome.removalPenalties
+                val previousCumulative = state.lastOutcome.cumulativeMissCounts
+
+                // v19 cleanup: the deferralCountdown field is now inert (StateCreator no longer
+                // reads it), so there is no "deferral bypass" cohort to exclude from penalty.
+                // Every non-evicted facilitator participates fully in penalty accounting.
+                val deferredInCommittee = Set.empty[PeerId]
+
+                // Decay: every non-evicted facilitator earns a 1-unit credit against their
+                // cumulative miss count. Prevents the exponential penalty formula from
+                // trapping nodes forever once they've signed cleanly across enough rounds.
+                //
+                // Uses roundStartFacilitators (canonical) not state.facilitators (mutable):
+                // mid-round withdrawals mutate state.facilitators on nodes that observed the
+                // withdrawal pre-finish, diverging completedFacilitators across nodes and
+                // ultimately the deferralCountdown in lastOutcome. That was the
+                // ord-4->5 fork (see .workspace/codex-response-ord5-facilitator-fork-apr23.md).
+                val completedFacilitators = state.roundStartFacilitators.value.toSet -- evictedPeers
+                val decayedCumulative = completedFacilitators.foldLeft(previousCumulative) { (acc, pid) =>
+                  acc.get(pid) match {
+                    case Some(v) if v > 1L => acc.updated(pid, v - 1L)
+                    case Some(_)           => acc - pid // reached 0 — prune so the map stays bounded
+                    case None              => acc // no prior miss history, nothing to decay
+                  }
                 }
-              }
-            val accumulatedPeerViewChanges: SortedMap[PeerId, Long] = {
-              val priorMap = state.lastOutcome.peerViewChanges
-              val allKeys = (priorMap.keysIterator ++ viewChangeCredits.keysIterator).toSet
-              SortedMap
-                .from(allKeys.iterator.map { pid =>
-                  pid -> (priorMap.getOrElse(pid, 0L) + viewChangeCredits.getOrElse(pid, 0L))
-                })
-                .filter { case (_, v) => v > 0L }
+
+                // Bootstrap warmup: classify the chain as post-bootstrap once a recent round
+                // has committee size >= bootstrapCompleteProofsThreshold. Uses
+                // `state.facilitators.value.size` (consensus-agreed) rather than
+                // `f.signedMajorityArtifact.proofs.size` (local-observed) so all nodes reach
+                // the same bootstrap/post-bootstrap classification deterministically.
+                val isInBootstrap =
+                  !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
+
+                // Penalize only consensus-agreed evictions (facility fork-eviction).
+                val penalizedThisRound =
+                  if (isInBootstrap) Set.empty[PeerId] else (evictedPeers -- deferredInCommittee).toSet
+                val newCumulative = penalizedThisRound.foldLeft(decayedCumulative) { (acc, pid) =>
+                  acc.updated(pid, acc.getOrElse(pid, 0L) + 1L)
+                }
+
+                val decrementedPenalties = previousPenalties.view.mapValues(_ - 1).filter(_._2 > 0).to(SortedMap)
+                val newPenalties = penalizedThisRound.foldLeft(decrementedPenalties) { (acc, pid) =>
+                  val repeatCount = newCumulative.getOrElse(pid, 1L) - 1L // first eviction = exponent 0
+                  // penalty = removalPenaltyRounds * base^repeatCount, clamped to maxRemovalPenaltyRounds
+                  val base = config.exponentialPenaltyBase.toDouble
+                  val scaled = config.removalPenaltyRounds.toDouble * math.pow(base, repeatCount.toDouble)
+                  val penalty = math.min(scaled, config.maxRemovalPenaltyRounds.toDouble).toInt
+                  acc.updated(pid, math.max(1, penalty))
+                }
+                val finalPenalties = if (config.removalPenaltyRounds > 0) newPenalties else SortedMap.empty[PeerId, Int]
+
+                // v19 cleanup: deferralCountdown is inert (no StateCreator consumer). justUnpenalized
+                // is still computed because it seeds the B2 readmissionCountdown path below --
+                // rejoiners whose removalPenalty just expired enter probation and wait for a
+                // quorum-witnessed AdmissionCertificate. The deferralCountdown field is written
+                // as empty going forward (see outcome construction below).
+                val justUnpenalized = previousPenalties.filter(_._2 == 1).keySet
+
+                // v7 (flaky-byzantine): the peerQuality "completed" signal now reflects ACTUAL
+                // facility-phase participation, not "non-fork-evicted" as it did before. Source is
+                // the leader's signed observedResponders carried on the accepted Proposal and
+                // plumbed onto state via REPLACE-on-accept at buildSignatureTransition. Bound to
+                // the leader by the rumor envelope's signature (RumorValidator.scala:50). Under
+                // flaky-byzantine, leaders honestly report; under bootstrap, fall back to today's
+                // "non-evicted = completed" semantic to avoid falsely classifying cold-start peers
+                // as chronic before they've had a chance to participate.
+                val responderSet: Set[PeerId] =
+                  if (isInBootstrap) completedFacilitators
+                  else state.observedResponders.value
+                val thisRoundQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.from(
+                  // Iterate canonical committee — mid-round withdrawals must not change
+                  // which peers have a peerQuality row for this round.
+                  state.roundStartFacilitators.value
+                    .filterNot(deferredInCommittee.contains)
+                    .map { pid =>
+                      val completed = if (responderSet.contains(pid)) 1 else 0
+                      pid -> (completed, 1)
+                    }
+                )
+                // Accumulate with previous rounds; decay/prune as before.
+                val rawAccumulated: SortedMap[PeerId, (Int, Int)] = {
+                  val previous = state.lastOutcome.peerQuality
+                  val allPeerIds = (previous.keySet.toList ::: thisRoundQuality.keySet.toList).distinct
+                  SortedMap.from(allPeerIds.map { pid =>
+                    val (pc, pp) = previous.getOrElse(pid, (0, 0))
+                    val (tc, tp) = thisRoundQuality.getOrElse(pid, (0, 0))
+                    pid -> (pc + tc, pp + tp)
+                  })
+                }
+                val needsDecay = rawAccumulated.values.exists { case (_, p) => p > config.qualityDecayThreshold }
+                val decayed =
+                  if (needsDecay) rawAccumulated.view.mapValues { case (c, p) => (c / 2, p / 2) }.to(SortedMap)
+                  else rawAccumulated
+                val accumulatedQuality = decayed.filter { case (_, (c, p)) => c > 0 || p > 0 }
+
+                // Canonical (node-independent) committee and completed-signer set for the
+                // just-finalized round. These feed the SIGNED-bytes windows below
+                // (recentProofSizes / recentSigners / controllerEvidence carried via
+                // signedArtifactPeerHistory), so they must be byte-identical on every node
+                // deciding this round. Unlike `completedFacilitators` above (which subtracts
+                // `state.removedFacilitators`, whose facility-phase fork-eviction component is
+                // computed from the LOCAL declaration snapshot at quorum-crossing and diverges
+                // across honest nodes -- the ordinal-3150166 controllerEvidenceDiffer wedge),
+                // these are derived ONLY from round-start-frozen and quorum-accepted-proposal
+                // data. Full determinism argument:
+                // `ControllerEvidenceDerivation.canonicalCompletedSigners`.
+                val canonicalCommitteeForRound: SortedSet[PeerId] =
+                  ControllerEvidenceDerivation.canonicalCommittee(
+                    roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                    certifiedEvictions = state.certifiedEvictionTargets
+                  )
+                val canonicalSigners: SortedSet[PeerId] =
+                  ControllerEvidenceDerivation.canonicalCompletedSigners(
+                    roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                    acceptedObservedResponders = state.observedResponders.value,
+                    certifiedEvictions = state.certifiedEvictionTargets
+                  )
+
+                // Roll the proofs-size window forward using the canonical committee size for
+                // the completed round (NOT `f.signedMajorityArtifact.proofs.size`, locally
+                // observed; NOT `completedFacilitators.size`, which embeds local fork-eviction
+                // observations). Committee-size semantics are kept (rather than responder
+                // count) so the bootstrap classification keyed on
+                // `bootstrapCompleteProofsThreshold` continues to measure committee size.
+                val bootstrapLookbackOrdinals = 10L
+                val currentOrdValue = state.key.value.value
+                val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
+                val currentProofsSize: Int = canonicalCommitteeForRound.size
+                val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
+                  val withCurrent =
+                    state.lastOutcome.recentProofSizes.updated(state.key, currentProofsSize)
+                  withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
+                }
+
+                // v22: recentSigners is repopulated as the rolling K-round signer-set window and is now
+                // the input to the tier-demotion hysteresis (TierTransitions.DemotionConsecutiveMisses).
+                // Append the just-completed round's CANONICAL signer set and trim to the tightening
+                // window. The map is SortedMap[SnapshotOrdinal, SortedSet[PeerId]] -- fully sorted, so
+                // it serializes order-independently (ArtifactSerializationDeterminismSuite covers
+                // exactly this field) and every honest node writes byte-identical bytes. Same
+                // window-trim arithmetic the recentProofSizes / recentRoundEndTimes windows use.
+                // MUST stay in lockstep with `nextPeerTiersForFinished`, which rebuilds the same
+                // window for the peerTiers computation.
+                val tighteningMinOrdinalValue =
+                  math.max(0L, currentOrdValue - config.tighteningWindow.toLong + 1L)
+                val newRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = {
+                  val withCurrent =
+                    state.lastOutcome.recentSigners.updated(state.key, canonicalSigners)
+                  withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+                }
+
+                // v19/v22 multi-committee tier transitions. Round completed (we are in `Finished`), so a
+                // Tier 2 peer in `roundStartFacilitators` demotes to Tier 1 ONLY if it has been absent
+                // from the most-recent `DemotionConsecutiveMisses` signer sets (sustained silence), not
+                // on a single missed signature -- the hysteresis that makes the lowered Core floor safe.
+                // Inputs are all consensus-agreed deterministic outcome fields so the computation is
+                // byte-identical across honest nodes.
+                val newPeerTiers: SortedMap[PeerId, Int] = nextPeerTiersForFinished(state)
+
+                // v19 phase 2: append the round's `consensusEndTime` to the sliding window if
+                // it was computed (Facility set carried enough `proposerClockMs` to clear the
+                // strict-majority threshold). Otherwise the round produced no time anchor and
+                // the window carries forward unchanged; consume-site falls back to phase 1.
+                val newRecentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] =
+                  state.outcomeEndTime match {
+                    case Some(endTime) =>
+                      val withCurrent = state.lastOutcome.recentRoundEndTimes.updated(state.key, endTime)
+                      withCurrent.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+                    case None =>
+                      state.lastOutcome.recentRoundEndTimes.filter { case (ord, _) => ord.value.value >= tighteningMinOrdinalValue }
+                  }
+                val newActiveAdmissionScores: SortedMap[PeerId, Int] =
+                  ConsensusPeerController.advanceScores(
+                    prior = state.lastOutcome.activeAdmissionScores,
+                    evidence = ConsensusPeerController.RoundEvidence(
+                      roundStart = state.roundStartFacilitators.value.toSet,
+                      completed = completedFacilitators,
+                      responders = responderSet,
+                      timeoutVoters = state.acceptedTimeoutCertificateVoters.toSet,
+                      evicted = evictedPeers,
+                      observedSelfHealth = state.observedSelfHealth.value
+                    ),
+                    config = ConsensusPeerController.Config(
+                      promoteThreshold = config.activeAdmissionPromoteThreshold,
+                      retainThreshold = config.activeAdmissionRetainThreshold,
+                      demoteThreshold = config.activeAdmissionDemoteThreshold,
+                      maxScore = config.activeAdmissionMaxScore,
+                      signatureReward = config.activeAdmissionSignatureReward,
+                      responderReward = config.activeAdmissionResponderReward,
+                      missedActivePenalty = config.activeAdmissionMissedActivePenalty,
+                      timeoutMissingPenalty = config.activeAdmissionTimeoutMissingPenalty,
+                      evictedPenalty = config.activeAdmissionEvictedPenalty,
+                      degradedPenalty = config.activeAdmissionDegradedPenalty,
+                      criticalPenalty = config.activeAdmissionCriticalPenalty,
+                      passiveDecay = config.activeAdmissionPassiveDecay,
+                      maxExpansionPerRound = config.activeAdmissionMaxExpansionPerRound
+                    )
+                  )
+                // Controller evidence stage 1: append the just-finalized round's canonical facts to
+                // the bounded evidence window. Every input is consensus-agreed at this site:
+                // roundStartFacilitators is the frozen canonical committee, canonicalSigners is the
+                // proposal-carried completed-signer set shared with the recentSigners window (NOT
+                // the local-observed proofs set and NOT `roundStart -- removedFacilitators`, whose
+                // fork-eviction component is node-local -- see
+                // ControllerEvidenceDerivation.canonicalCompletedSigners for the determinism
+                // argument), acceptedTimeoutCertificateVoters comes from the accepted proposal's
+                // embedded TC, and admitted/certifiedEvicted are certificate-applied targets stashed
+                // at buildSignatureTransition.
+                val controllerEvidenceEntry = ControllerEvidenceEntry(
+                  roundStartFacilitators = SortedSet.from(state.roundStartFacilitators.value),
+                  completedSigners = canonicalSigners,
+                  timeoutVoters = state.acceptedTimeoutCertificateVoters,
+                  admittedPeers = SortedSet.from(state.admittedFacilitators.value),
+                  evictedPeers = state.certifiedEvictionTargets
+                )
+                val newControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry] =
+                  ControllerEvidenceDerivation.appendBounded(
+                    prior = state.lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+                    key = state.key,
+                    entry = controllerEvidenceEntry,
+                    tighteningWindow = config.tighteningWindow
+                  )
+                // Controller evidence stage 3: cert-anchored penalty horizons. Entries are written
+                // only for certificate-applied evictions (N + penaltyDurationOrdinals), cleared by
+                // certificate-applied admissions, and expired by pure ordinal comparison. Write-only
+                // for now -- no consumer reads penaltyUntil yet.
+                val newPenaltyUntil: SortedMap[PeerId, SnapshotOrdinal] =
+                  ControllerEvidenceDerivation.nextPenaltyUntil(
+                    prior = state.lastOutcome.penaltyUntil.getOrElse(SortedMap.empty),
+                    certifiedEvictions = state.certifiedEvictionTargets,
+                    certifiedAdmissions = state.admittedFacilitators.value,
+                    currentOrdinal = state.key,
+                    penaltyDurationOrdinals = config.penaltyDurationOrdinals
+                  )
+                // B2 readmissionCountdown maintenance (sticky-probation):
+                //   1) Decrement any active probation counters by 1 -- but CLAMP at 0 instead of
+                //      auto-clearing the entry. Earlier versions had `.filter(_._2 > 0)` here, which dropped
+                //      the key when the countdown ran out. That made the AdmissionCertificate path
+                //      semantically optional: a peer would auto-leave probation after N rounds
+                //      regardless of whether quorum had ever witnessed its catch-up. Empirical
+                //      consequence: ZERO admission certs assembled across 14 hours of alpha.50,
+                //      because the StallDetector emission gate (probation intersect atTip-streak) only
+                //      considers peers still in the probation set, but those peers exited probation
+                //      via auto-clear before the streak threshold could fire.
+                //   2) Seed entries for `justUnpenalized` (peers whose removalPenalty expired
+                //      this round) at `readmissionProbationRounds`. These peers take the B2
+                //      re-admission path, not the B1 deferral path.
+                //   3) Clear entries for peers admitted via AdmissionCertificate this round
+                //      (state.admittedFacilitators populated at buildSignatureTransition).
+                //      This is the ONLY path that removes a peer from probation.
+                // Order matters: decrement-then-clear-then-seed avoids decrementing a freshly
+                // seeded entry in the same step. Admitted peers are removed last so an edge
+                // case where the same peer is both admitted AND newly-unpenalized (shouldn't
+                // happen but defended against) does not re-enter probation.
+                val admittedThisRound = state.admittedFacilitators.value
+                val finalReadmission = ReadmissionMaintenance.step(
+                  prev = state.lastOutcome.readmissionCountdown,
+                  justUnpenalized = justUnpenalized,
+                  admittedThisRound = admittedThisRound,
+                  probationRounds = config.readmissionProbationRounds
+                )
+                // Per-peer cumulative view-change-caused credits.
+                //
+                // For each view v in [0, state.viewNumber) the round attempted, recompute the
+                // deterministic leader using the SAME inputs `selectLeaderWeighted` was called
+                // with at round-start: state.lastOutcome.peerQuality, state.lastOutcome.peerSelfHealth,
+                // state.lastOutcome.peerViewChanges, and a leaderPool derived from
+                // state.coreFacilitators via the same graduation rule the creator applied.
+                // Each resulting peer is credited with one view-change-caused. All inputs are
+                // consensus-agreed (lastOutcome is signed, coreFacilitators is canonical at
+                // round-start via CommitteeBuilder, entropy is derived from the prior snapshot hash,
+                // config is deterministicConfigHash-gated), so every honest node computes the same
+                // credit map byte-identically.
+                //
+                // v19: prior to multi-committee, this used `state.roundStartFacilitators` because
+                // the leader pool was derived from the full round-start committee. In v19 the
+                // creator restricts the leader pool to the Core committee, so the credit re-derivation
+                // here switches to `state.coreFacilitators` for the same determinism contract.
+                //
+                // Determinism contract: the leaderPool re-derivation here MUST mirror the
+                // creator's logic at GlobalSnapshotConsensusStateCreator. If the creator changes
+                // the graduation rule, this credit logic MUST change in lockstep, or the
+                // selectLeaderWeighted recomputation here will return a different peer than the
+                // one the round actually elected at the same view -- producing a credit miss.
+                val priorPeerQuality = state.lastOutcome.peerQuality
+                val priorActive = state.coreFacilitators.value
+                val priorGraduated = priorActive.filter { pid =>
+                  val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
+                  participated >= config.minParticipationObservations && completed >= 1
+                }
+                val priorLeaderPool = if (priorGraduated.size >= 2) priorGraduated else priorActive
+                val committedViewNumber = certifiedValue.fold(state.viewNumber)(_.committedView.toInt)
+                val viewChangeCredits: SortedMap[PeerId, Long] =
+                  if (committedViewNumber <= 0 || priorLeaderPool.isEmpty) SortedMap.empty[PeerId, Long]
+                  else {
+                    val priorPeerQualityMap: Map[PeerId, (Int, Int)] = priorPeerQuality.toMap
+                    val priorPeerSelfHealthMap = state.lastOutcome.peerSelfHealth.toMap
+                    val priorPeerViewChangesMap = state.lastOutcome.peerViewChanges.toMap
+                    (0 until committedViewNumber).foldLeft(SortedMap.empty[PeerId, Long]) { (acc, v) =>
+                      val failedLeader = facilitatorSelector.selectLeaderWeighted(
+                        priorLeaderPool,
+                        state.entropy,
+                        viewNumber = v,
+                        qualityScores = priorPeerQualityMap,
+                        selfHealthHints = priorPeerSelfHealthMap,
+                        peerViewChanges = priorPeerViewChangesMap,
+                        minLeaderRatioPct = config.leaderRotationMinRatioPct,
+                        hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
+                        minLeaderPoolSize = config.minLeaderPoolSize
+                      )
+                      acc.updated(failedLeader, acc.getOrElse(failedLeader, 0L) + 1L)
+                    }
+                  }
+                val accumulatedPeerViewChanges: SortedMap[PeerId, Long] = {
+                  val priorMap = state.lastOutcome.peerViewChanges
+                  val allKeys = (priorMap.keysIterator ++ viewChangeCredits.keysIterator).toSet
+                  SortedMap
+                    .from(allKeys.iterator.map { pid =>
+                      pid -> (priorMap.getOrElse(pid, 0L) + viewChangeCredits.getOrElse(pid, 0L))
+                    })
+                    .filter { case (_, v) => v > 0L }
+                }
+                val nextOutcomeFacilitators = Facilitators(nextCommittee)
+                val outcome = GlobalConsensusOutcome(
+                  state.key,
+                  // Canonical committee in the persisted outcome: the round-start committee plus
+                  // accepted AdmissionCertificate targets. This is not post-withdrawal
+                  // state.facilitators, and it does not include local candidate replay.
+                  nextOutcomeFacilitators,
+                  RemovedFacilitators(evictedPeers),
+                  if (certifiedValue.isDefined) WithdrawnFacilitators.empty else state.withdrawnFacilitators,
+                  if (certifiedValue.isDefined) EligibleFacilitators.empty else state.eligibleFacilitators,
+                  Finished(
+                    f.signedMajorityArtifact,
+                    f.context,
+                    f.majorityTrigger,
+                    f.candidates,
+                    f.facilitatorsHash,
+                    f.snapshotHash,
+                    f.certifiedOutcome
+                  ),
+                  removalPenalties = finalPenalties,
+                  // v19 cleanup: inert -- no StateCreator consumer.
+                  deferralCountdown = SortedMap.empty[PeerId, Int],
+                  peerQuality = accumulatedQuality,
+                  cumulativeMissCounts = newCumulative,
+                  recentProofSizes = newRecentProofSizes,
+                  readmissionCountdown = finalReadmission,
+                  // v15: carry the accepted Proposal's `observedSelfHealth` forward as the next
+                  // round's leader-selection input. `state.observedSelfHealth` was populated via
+                  // REPLACE-on-accept at buildSignatureTransition from `leaderProposal.observedSelfHealth`.
+                  peerSelfHealth = state.observedSelfHealth.value,
+                  // v16: per-peer cumulative view-change-caused, deterministic from this round's
+                  // (entropy, viewNumber, lastOutcome, roundStartFacilitators) inputs above.
+                  peerViewChanges = accumulatedPeerViewChanges,
+                  // v22: rolling K-round signer-set window, repopulated. Drives the tier-demotion
+                  // hysteresis (TierTransitions.computeNextTiers above) and is carried forward as the
+                  // next round's window input. Fully sorted -> deterministic across the cluster.
+                  recentSigners = newRecentSigners,
+                  // v19: carried-forward multi-committee tier classification computed from this
+                  // round's signer participation (above).
+                  peerTiers = newPeerTiers,
+                  activeAdmissionScores = newActiveAdmissionScores,
+                  lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
+                  // v19 phase 2: view-from-time anchor for the next round's view derivation.
+                  recentRoundEndTimes = newRecentRoundEndTimes,
+                  // Controller evidence stages 1+3 (write-only). Option-wrap follows the
+                  // recentSigners-at-snapshot-boundary convention: None while empty so
+                  // pre-deploy encodings stay byte-stable under dropNullValues.
+                  controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
+                  penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None
+                )
+                (Previous(state.lastOutcome.key), outcome).some
             }
-            val nextOutcomeFacilitators = Facilitators(
-              ConsensusPeerController.applyNextRoundCertifiedMembership(
-                roundStartFacilitators = state.roundStartFacilitators.value,
-                admittedPeers = state.admittedFacilitators.value,
-                certifiedEvictedPeers = certifiedValue.map(_.evictedPeers)
-              )
-            )
-            val outcome = GlobalConsensusOutcome(
-              state.key,
-              // Canonical committee in the persisted outcome: the round-start committee plus
-              // accepted AdmissionCertificate targets. This is not post-withdrawal
-              // state.facilitators, and it does not include local candidate replay.
-              nextOutcomeFacilitators,
-              RemovedFacilitators(evictedPeers),
-              if (certifiedValue.isDefined) WithdrawnFacilitators.empty else state.withdrawnFacilitators,
-              if (certifiedValue.isDefined) EligibleFacilitators.empty else state.eligibleFacilitators,
-              Finished(
-                f.signedMajorityArtifact,
-                f.context,
-                f.majorityTrigger,
-                f.candidates,
-                f.facilitatorsHash,
-                f.snapshotHash,
-                f.certifiedOutcome
-              ),
-              removalPenalties = finalPenalties,
-              // v19 cleanup: inert -- no StateCreator consumer.
-              deferralCountdown = SortedMap.empty[PeerId, Int],
-              peerQuality = accumulatedQuality,
-              cumulativeMissCounts = newCumulative,
-              recentProofSizes = newRecentProofSizes,
-              readmissionCountdown = finalReadmission,
-              // v15: carry the accepted Proposal's `observedSelfHealth` forward as the next
-              // round's leader-selection input. `state.observedSelfHealth` was populated via
-              // REPLACE-on-accept at buildSignatureTransition from `leaderProposal.observedSelfHealth`.
-              peerSelfHealth = state.observedSelfHealth.value,
-              // v16: per-peer cumulative view-change-caused, deterministic from this round's
-              // (entropy, viewNumber, lastOutcome, roundStartFacilitators) inputs above.
-              peerViewChanges = accumulatedPeerViewChanges,
-              // v22: rolling K-round signer-set window, repopulated. Drives the tier-demotion
-              // hysteresis (TierTransitions.computeNextTiers above) and is carried forward as the
-              // next round's window input. Fully sorted -> deterministic across the cluster.
-              recentSigners = newRecentSigners,
-              // v19: carried-forward multi-committee tier classification computed from this
-              // round's signer participation (above).
-              peerTiers = newPeerTiers,
-              activeAdmissionScores = newActiveAdmissionScores,
-              lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
-              // v19 phase 2: view-from-time anchor for the next round's view derivation.
-              recentRoundEndTimes = newRecentRoundEndTimes,
-              // Controller evidence stages 1+3 (write-only). Option-wrap follows the
-              // recentSigners-at-snapshot-boundary convention: None while empty so
-              // pre-deploy encodings stay byte-stable under dropNullValues.
-              controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
-              penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None
-            )
-            (Previous(state.lastOutcome.key), outcome).some
           case _ =>
             none
         }
@@ -779,11 +798,14 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
                 structure = for {
                   _ <- Either.cond(candidate.key === state.key, (), "outcome_key_mismatch")
-                  _ <- Either.cond(
-                    membershipPolicy.certifiedEvictionTargetsAllowed(value.evictedPeers.toSet),
-                    (),
-                    "certified_evictions_disabled_by_membership_policy"
-                  )
+                  _ <- CertifiedMembershipTransition
+                    .validate(
+                      state.roundStartFacilitators.value.toSet,
+                      value.admittedPeers.toSet,
+                      value.evictedPeers.toSet,
+                      config.activeAdmissionMaxExpansionPerRound
+                    )
+                    .void
                   _ <- Either.cond(
                     candidate.finished.signedMajorityArtifact.value.ordinal === state.key,
                     (),
@@ -1102,8 +1124,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                     actual.consensusEndTime,
                     carriedQc.map(_.value)
                   )
-                  validated <-
-                    if (membershipPolicy.certifiedEvictionTargetsAllowed(actual.evictedPeers.toSet))
+                  membership = CertifiedMembershipTransition.validate(
+                    state.roundStartFacilitators.value.toSet,
+                    actual.admittedPeers.toSet,
+                    actual.evictedPeers.toSet,
+                    config.activeAdmissionMaxExpansionPerRound
+                  )
+                  validated <- membership match {
+                    case Left(error) => error.asLeft[ProposalValue].pure[F]
+                    case Right(_) =>
                       CertifiedConsensus.validateValue[F](
                         actual,
                         expected,
@@ -1116,8 +1145,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                         state.coreFacilitators.value.toSet,
                         config.quorumThresholdFraction
                       )
-                    else
-                      "certified_evictions_disabled_by_membership_policy".asLeft[ProposalValue].pure[F]
+                  }
                   result = validated match {
                     case Left(error)  => error.asLeft[(ProposalValue, Option[CertifiedProposalQC])]
                     case Right(value) => (value -> carriedQc).asRight[String]
@@ -1210,19 +1238,47 @@ object GlobalSnapshotConsensusStateAdvancer {
           .as(selection.kept)
       }
 
-      /** Global L0 proposal-construction gate for the conservative membership policy. */
-      private def evictionCertificatesForProposal(
-        assembled: Set[EvictionCertificate]
-      ): F[List[EvictionCertificate]] =
-        if (!membershipPolicy.acceptsEvictionCertificates)
-          Metrics[F]
-            .incrementCounter(
-              "dag_consensus_eviction_cert_suppressed_total",
-              Seq(Metrics.unsafeLabelName("reason") -> "membership_policy")
-            )
-            .whenA(assembled.nonEmpty)
-            .as(List.empty)
-        else assembled.toList.pure[F]
+      /** Select proposal membership certificates as one transition. In retain mode an ECS is never emitted alone: v35 can carry it only
+        * beside an equal number of ACS entries, making the certified ProposalValue an atomic N-to-N replacement. Pre-v35 behavior remains
+        * suppression-only.
+        */
+      private def membershipCertificatesForProposal(
+        state: GlobalSnapshotConsensusState,
+        assembledEvictions: Set[EvictionCertificate],
+        assembledAdmissions: Set[AdmissionCertificate]
+      ): F[(List[EvictionCertificate], List[AdmissionCertificate])] =
+        capAssembledAdmissionCertificates(state, assembledAdmissions).flatMap { admissions =>
+          if (membershipPolicy.acceptsEvictionCertificates)
+            (assembledEvictions.toList -> admissions).pure[F]
+          else if (membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)) {
+            val candidates = assembledEvictions.toList
+              .filter(cert => cert.reason === EvictionReason.Silent)
+              .sorted(EvictionCertificate.ordering)
+            val pairCount = math.min(admissions.size, math.max(0, config.activeAdmissionMaxExpansionPerRound))
+            val evictions = candidates.take(pairCount)
+            val pairedAdmissions =
+              if (evictions.nonEmpty) admissions.take(evictions.size)
+              else admissions
+            val suppressed = assembledEvictions.size - evictions.size
+
+            Metrics[F]
+              .incrementCounterBy(
+                "dag_consensus_eviction_cert_suppressed_total",
+                suppressed.toLong,
+                Seq(Metrics.unsafeLabelName("reason") -> "requires_atomic_admission")
+              )
+              .whenA(suppressed > 0)
+              .as(evictions -> pairedAdmissions)
+          } else
+            Metrics[F]
+              .incrementCounterBy(
+                "dag_consensus_eviction_cert_suppressed_total",
+                assembledEvictions.size.toLong,
+                Seq(Metrics.unsafeLabelName("reason") -> "membership_policy")
+              )
+              .whenA(assembledEvictions.nonEmpty)
+              .as(List.empty[EvictionCertificate] -> admissions)
+        }
 
       private def toProposalsPhase(
         state: GlobalSnapshotConsensusState,
@@ -1680,11 +1736,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                 assembledEcs <-
                   if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                   else consensusStorage.getAssembledEvictionCertificates(state.key)
-                ecs <- evictionCertificatesForProposal(assembledEcs)
-                acs <- consensusStorage
-                  .getAssembledAdmissionCertificates(state.key)
-                  .flatMap(capAssembledAdmissionCertificates(state, _))
-              } yield (ecs, acs)
+                assembledAcs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
+                membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs)
+              } yield membership
             else (List.empty[EvictionCertificate], List.empty[AdmissionCertificate]).pure[F]
           (leaderEcs, leaderAcs) = leaderEvidence
           proposalAdmissionNominee = carriedCertifiedQc.flatMap(_.value.admissionNominee).orElse(admissionNominee)
@@ -1838,10 +1892,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                       assembledEcs <-
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
-                      ecs <- evictionCertificatesForProposal(assembledEcs)
-                      acs <- consensusStorage
-                        .getAssembledAdmissionCertificates(state.key)
-                        .flatMap(capAssembledAdmissionCertificates(state, _))
+                      assembledAcs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
+                      membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs)
+                      (ecs, acs) = membership
                     } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
                       case (maybeVcc, maybeTc, ecs, acs) =>
                         val selectedEcs = status.proposedValue.fold(ecs.toList) { value =>
@@ -2142,7 +2195,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         proposal: Proposal,
         facilitatorsHash: Hash
       ): Either[ProposalRejection, Unit] = {
-        if (!membershipPolicy.acceptsEvictionCertificates && proposal.evictionCertificates.nonEmpty)
+        val atomicReplacement =
+          membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) &&
+            proposal.evictionCertificates.nonEmpty &&
+            proposal.evictionCertificates.size === proposal.admissionCertificates.size
+        if (!membershipPolicy.acceptsEvictionCertificates && !atomicReplacement && proposal.evictionCertificates.nonEmpty)
           return Left(ProposalRejection(s"ecs_disabled_by_membership_policy count=${proposal.evictionCertificates.size}"))
         if (isInBootstrap(state) && proposal.evictionCertificates.nonEmpty)
           return Left(ProposalRejection(s"ecs_rejected_in_bootstrap count=${proposal.evictionCertificates.size}"))
@@ -2158,7 +2215,9 @@ object GlobalSnapshotConsensusStateAdvancer {
         // pool, otherwise leaders would assemble certs that followers reject. Integer math via
         // `QuorumPolicy.fromFraction`.
         val n = state.coreFacilitators.value.size
-        val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+        val q =
+          if (atomicReplacement) CertifiedConsensus.requiredCoreQuorum(n, config.quorumThresholdFraction)
+          else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
         val committee = state.roundStartFacilitators.value.toSet
         val expectedLastSnap: Hash = state.lastOutcome.finished.snapshotHash
 
@@ -2187,6 +2246,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
               else if (!committee.contains(cert.targetPeer))
                 Left(ProposalRejection(s"ecs_target_not_in_committee target=${cert.targetPeer.show.take(8)}"))
+              else if (atomicReplacement && cert.reason =!= EvictionReason.Silent)
+                Left(ProposalRejection(s"ecs_replacement_reason_not_silent target=${cert.targetPeer.show.take(8)}"))
               else if (cert.votes.toList.map(_.proofs.head.id.toPeerId).toSet.size < q)
                 Left(
                   ProposalRejection(
@@ -2220,12 +2281,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                         cert.targetPeer
                       )
                       .union(state.roundStartFacilitators.value.toSet - cert.targetPeer)
-                    val witnessPool = EvictionVoterPool.select(
-                      cert.targetPeer,
-                      state.tier1Facilitators.value.contains(cert.targetPeer),
-                      state.coreFacilitators.value.toSet,
-                      widerWitnessPool
-                    )
+                    val witnessPool =
+                      if (atomicReplacement) state.coreFacilitators.value.toSet - cert.targetPeer
+                      else
+                        EvictionVoterPool.select(
+                          cert.targetPeer,
+                          state.tier1Facilitators.value.contains(cert.targetPeer),
+                          state.coreFacilitators.value.toSet,
+                          widerWitnessPool
+                        )
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
@@ -2240,6 +2304,29 @@ object GlobalSnapshotConsensusStateAdvancer {
               }
           }
         loop(proposal.evictionCertificates, Set.empty)
+      }
+
+      /** V35 Global L0 permits no certified contraction. Every eviction must be paired one-for-one with an admission in the same
+        * ProposalValue/QC. This check is repeated during certified-outcome adoption and next-roster derivation.
+        */
+      private def validateProposalMembershipTransition(
+        state: GlobalSnapshotConsensusState,
+        proposal: Proposal
+      ): Either[ProposalRejection, CertifiedMembershipTransition.Validated] = {
+        val admitted = proposal.admissionCertificates.map(_.targetPeer)
+        val evicted = proposal.evictionCertificates.map(_.targetPeer)
+
+        if (!state.certifiedConsensusActive && evicted.nonEmpty)
+          Left(ProposalRejection("certified_membership_replacement_requires_v35"))
+        else
+          CertifiedMembershipTransition
+            .validateCertificateTargets(
+              state.roundStartFacilitators.value.toSet,
+              admitted,
+              evicted,
+              config.activeAdmissionMaxExpansionPerRound
+            )
+            .leftMap(ProposalRejection(_))
       }
 
       /** Verify every `Signed[EvictionVote]` inside every embedded `EvictionCertificate` has a valid cryptographic signature. Mirrors
@@ -2555,6 +2642,19 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
+        def logMembershipReject(rejection: ProposalRejection): F[Option[Transition]] =
+          ConsensusLog
+            .warn(
+              logger,
+              Category.Validation,
+              state.key.show,
+              role,
+              Event.ValidationFailed,
+              "reason" -> s"certified_membership_validation: ${rejection.code}",
+              "leader" -> ConsensusLog.pid(state.leader),
+              "view" -> state.viewNumber.toString
+            )
+            .as(none[Transition])
         validateProposalVcc(state, leaderProposal, status.facilitatorsHash).flatMap {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
@@ -2601,6 +2701,11 @@ object GlobalSnapshotConsensusStateAdvancer {
                       case Right(_)     => afterEcs
                     }
               }
+            val afterMembership: F[Option[Transition]] =
+              validateProposalMembershipTransition(state, leaderProposal) match {
+                case Left(reason) => logMembershipReject(reason)
+                case Right(_)     => afterAcs
+              }
             // v7 (flaky-byzantine): observedResponders subset validation. No signed-vote layer
             // here — the rumor envelope binds the set to the leader; only deterministic subset
             // check is needed. Below-quorum count emits a warning log but does NOT reject.
@@ -2636,7 +2741,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                     "quorum" -> q.toString,
                     "view" -> state.viewNumber.toString
                   )
-                  .whenA(below) >> afterAcs
+                  .whenA(below) >> afterMembership
             }
         }
       }
@@ -3320,8 +3425,25 @@ object GlobalSnapshotConsensusStateAdvancer {
         value: ProposalValue,
         carriedQc: Option[CertifiedProposalQC],
         newlyAccepted: Boolean
-      )(implicit hasher: Hasher[F]): F[Option[Transition]] =
-        CertifiedConsensusRound
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
+        val allowVoteEmission = allowsLocalCertifiedMembershipPrepare(state, value)
+        val recordAbstention =
+          ConsensusLog
+            .info(
+              logger,
+              Category.Validation,
+              state.key.show,
+              ConsensusLog.role(selfId, state.leader),
+              Event.Admission,
+              "stage" -> "certified_prepare_abstained",
+              "reason" -> "insufficient_unpaired_admission_headroom",
+              "admitted" -> value.admittedPeers.size.toString,
+              "evicted" -> value.evictedPeers.size.toString
+            )
+            .productR(Metrics[F].incrementCounter("dag_consensus_certified_membership_prepare_abstained_total"))
+            .unlessA(allowVoteEmission)
+
+        recordAbstention >> CertifiedConsensusRound
           .prepare(
             state.key,
             value,
@@ -3333,7 +3455,8 @@ object GlobalSnapshotConsensusStateAdvancer {
             selfId,
             keyPair,
             consensusStorage,
-            gossip
+            gossip,
+            allowVoteEmission
           )
           .flatMap {
             case Left(rejection) =>
@@ -3359,6 +3482,27 @@ object GlobalSnapshotConsensusStateAdvancer {
                 case None => none[Transition].pure[F]
               }
           }
+      }
+
+      /** Local prepare-vote gate. Equal-sized replacements keep Q(N) unchanged and need no N+1 headroom. Admission-only values retain the
+        * exact parent-proof headroom invariant; this prevents a leader from dropping the ECS half of a replacement and reusing its ACS as
+        * unsupported expansion. Local proof-subset differences can only cause abstention.
+        */
+      private def allowsLocalCertifiedMembershipPrepare(
+        state: GlobalSnapshotConsensusState,
+        value: ProposalValue
+      ): Boolean = {
+        val observed = state.lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
+
+        CertifiedMembershipTransition.allowsPrepareVote(
+          state.roundStartFacilitators.value.toSet,
+          observed,
+          value.admittedPeers.toSet,
+          value.evictedPeers.toSet,
+          config.quorumThresholdFraction,
+          config.activeAdmissionMaxExpansionPerRound
+        )
+      }
 
       private def buildCertifiedSignatureTransition(
         state: GlobalSnapshotConsensusState,

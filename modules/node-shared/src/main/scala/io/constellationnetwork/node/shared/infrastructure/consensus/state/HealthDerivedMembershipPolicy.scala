@@ -24,6 +24,11 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
     */
   def acceptsCertifiedNextRoundEvictions: Boolean
 
+  /** Accept and assemble silent-lease evidence for a v35 atomic replacement. This is intentionally separate from automatic removal:
+    * enabling it must never authorize a standalone eviction or mutate the current round.
+    */
+  def supportsCertifiedAtomicReplacement: Boolean
+
   /** Membership policy for a certified VCC/timeout transition.
     *
     * Before v35, each layer retains its configured behavior. Once certified consensus is active, both layers freeze the current round's
@@ -41,6 +46,18 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
     if (acceptsCertifiedNextRoundEvictions) certifiedTargets else Set.empty
 
   final def acceptsEvictionCertificates: Boolean = acceptsCertifiedNextRoundEvictions
+
+  final def acceptsEvictionVotes: Boolean =
+    acceptsCertifiedNextRoundEvictions || supportsCertifiedAtomicReplacement
+
+  /** Runtime receipt gate. Legacy layers retain their existing pre-state vote behavior, while retain-mode Global L0 cannot accumulate
+    * replacement evidence before v35 is active for the exact consensus key.
+    */
+  final def acceptsEvictionVotesAt(certifiedConsensusActive: Boolean): Boolean =
+    acceptsCertifiedNextRoundEvictions || (supportsCertifiedAtomicReplacement && certifiedConsensusActive)
+
+  final def allowsCertifiedAtomicReplacement(certifiedConsensusActive: Boolean): Boolean =
+    supportsCertifiedAtomicReplacement && certifiedConsensusActive
 
   final def certifiedEvictionTargetsAllowed(certifiedTargets: Set[PeerId]): Boolean =
     certifiedTargets.isEmpty || acceptsCertifiedNextRoundEvictions
@@ -92,6 +109,7 @@ object HealthDerivedMembershipPolicy {
   case object RetainSigningLeases extends HealthDerivedMembershipPolicy {
     val allowsAutomaticRemoval: Boolean = false
     val acceptsCertifiedNextRoundEvictions: Boolean = false
+    val supportsCertifiedAtomicReplacement: Boolean = true
 
     def certifiedViewChangeLeaderPool(
       coreFacilitators: List[PeerId],
@@ -126,6 +144,7 @@ object HealthDerivedMembershipPolicy {
   case object LegacyAutomaticRemoval extends HealthDerivedMembershipPolicy {
     val allowsAutomaticRemoval: Boolean = true
     val acceptsCertifiedNextRoundEvictions: Boolean = true
+    val supportsCertifiedAtomicReplacement: Boolean = false
 
     def certifiedViewChangeLeaderPool(
       coreFacilitators: List[PeerId],

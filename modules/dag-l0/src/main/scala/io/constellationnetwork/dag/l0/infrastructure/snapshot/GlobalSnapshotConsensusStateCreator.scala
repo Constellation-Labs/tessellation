@@ -156,7 +156,7 @@ object GlobalSnapshotConsensusStateCreator {
       key: GlobalSnapshotKey,
       lastOutcome: GlobalConsensusOutcome,
       currentCore: Set[PeerId],
-      currentTier1: Set[PeerId],
+      currentSigningCommittee: Set[PeerId],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
       observedAt: FiniteDuration,
       cadenceAllowed: Boolean
@@ -182,7 +182,7 @@ object GlobalSnapshotConsensusStateCreator {
               .whenA(!inBootstrap && currentCore.contains(selfId))
 
         case Some(evidence) =>
-          val currentCommittee = currentCore ++ currentTier1
+          val currentCommittee = currentSigningCommittee
           val finalityHeadroom = FinalityHeadroom.evaluate(
             currentCommittee,
             locallyObservedParentSigners,
@@ -238,7 +238,7 @@ object GlobalSnapshotConsensusStateCreator {
             val observation = FinalityParticipationAuditor.observe(
               selfId,
               currentCore,
-              currentTier1,
+              currentSigningCommittee,
               evidence.roundStartFacilitators.toSet,
               locallyObservedParentSigners,
               lastOutcome.key.value.value,
@@ -250,7 +250,7 @@ object GlobalSnapshotConsensusStateCreator {
             )
             (observation.history, observation.decision)
           }.flatMap {
-            case Some(audit) if FinalityParticipationAuditor.shouldEmitSilentEvictionVote(audit, finalityHeadroom, cadenceAllowed) =>
+            case Some(audit) if FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(audit, finalityHeadroom, cadenceAllowed) =>
               val alreadyVoted = resources.evictionVotes.get(audit.target).exists(_.contains(selfId))
               val emit =
                 if (alreadyVoted) Sync[F].unit
@@ -815,12 +815,12 @@ object GlobalSnapshotConsensusStateCreator {
         // these across the committee into `Proposal.observedSelfHealth`.
         effect = for {
           _ <-
-            if (membershipPolicy.acceptsCertifiedNextRoundEvictions)
+            if (membershipPolicy.allowsCertifiedAtomicReplacement(config.certifiedConsensusActiveAt(key.value.value)))
               auditTier1FinalityParticipation(
                 key,
                 lastOutcome,
                 committees.core.toSet,
-                committees.tier1.toSet,
+                signingSet,
                 resources,
                 time,
                 expansionAllowedThisRound

@@ -1393,8 +1393,21 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // largest possible batch rather than assuming the IntegrationNet value remains one.
       maxAdmissionSeats = admissionBatchSize
     )
+    // A v35 Core voter that has independently emitted a hysteresis-qualified Silent vote
+    // may also attest one ReadyAtTip candidate for an equal-sized replacement. This is
+    // local vote-emission evidence only. Proposal validation still rejects every standalone
+    // eviction, and Core prepare voting applies the normal N+1 headroom gate to an
+    // admission-only value.
+    val hasLocalAtomicReplacementIntent =
+      ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) &&
+        resources.evictionVotes.exists {
+          case (target, voters) =>
+            committee.contains(target) && voters.get(selfId).exists(_.value.reason === EvictionReason.Silent)
+        }
+    val atomicReplacementAdmissionAllowed =
+      openAdmissionPolicy.cadenceAllowed && hasLocalAtomicReplacementIntent
     val maxOpenAdmissions =
-      if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxAdmissions else 0
+      if (openAdmissionPolicy.allowsOpenAdmission || atomicReplacementAdmissionAllowed) configuredMaxAdmissions else 0
     val canonicalNominees = admissionNomineesOf(state.lastOutcome)
     // Open expansion has a fixed per-voter target set for the entire round. Selection happens
     // before the local at-tip check, so a missing observation is an abstention rather than a walk
@@ -1411,11 +1424,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
     val policyOutcome =
       openAdmissionPolicy.headroom match {
-        case Some(headroom) if !headroom.allowsExpansion                      => "insufficient_headroom"
-        case _ if !openAdmissionPolicy.cadenceAllowed                         => "off_cadence"
-        case Some(_)                                                          => "allowed"
-        case None if bootstrapActive && locallyObservedParentSigners.nonEmpty => "bootstrap_cadence_only"
-        case None                                                             => "cadence_only"
+        case Some(headroom) if !headroom.allowsExpansion && atomicReplacementAdmissionAllowed => "atomic_replacement"
+        case Some(headroom) if !headroom.allowsExpansion                                      => "insufficient_headroom"
+        case _ if !openAdmissionPolicy.cadenceAllowed                                         => "off_cadence"
+        case Some(_)                                                                          => "allowed"
+        case None if bootstrapActive && locallyObservedParentSigners.nonEmpty                 => "bootstrap_cadence_only"
+        case None                                                                             => "cadence_only"
       }
     val policyOutcomeLabel = Metrics.unsafeLabelName("outcome")
     val recordOpenAdmissionPolicy =
@@ -1425,7 +1439,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       ) >>
         Metrics[F].updateGauge(
           "dag_consensus_open_admission_vote_allowed",
-          if (openAdmissionPolicy.allowsOpenAdmission) 1L else 0L
+          if (openAdmissionPolicy.allowsOpenAdmission || atomicReplacementAdmissionAllowed) 1L else 0L
         ) >>
         Metrics[F].updateGauge(
           "dag_consensus_probation_admission_vote_allowed",
@@ -1649,6 +1663,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                   "candidateVoteQuorum" -> voteQuorum.toString,
                   "openCadenceAllowed" -> openAdmissionPolicy.cadenceAllowed.toString,
                   "openVoteAllowed" -> openAdmissionPolicy.allowsOpenAdmission.toString,
+                  "atomicReplacementVoteAllowed" -> atomicReplacementAdmissionAllowed.toString,
                   "probationVoteAllowed" -> openAdmissionPolicy.allowsProbationAdmission.toString,
                   "openPolicyOutcome" -> policyOutcome,
                   "openObservedSigners" -> openAdmissionPolicy.headroom

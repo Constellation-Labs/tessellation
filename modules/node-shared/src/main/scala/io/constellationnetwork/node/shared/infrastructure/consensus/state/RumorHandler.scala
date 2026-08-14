@@ -275,47 +275,51 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     // else's vote is either buggy or adversarial. Rejecting relays here means the storage slot
     // is keyed by the actual signer PeerId, so duplicate-relay cannot inflate the quorum count
     // at certificate-assembly time.
-    if (!ctx.membershipPolicy.acceptsEvictionCertificates) {
-      observeTip >> ConsensusLog.debug(
-        log,
-        Category.Facilitator,
-        key.toString,
-        "n/a",
-        LogEvent.DeclarationReceived,
-        "kind" -> "EvictionVote",
-        "ignored" -> "membership_policy",
-        "from" -> ConsensusLog.pid(origin),
-        "target" -> ConsensusLog.pid(target)
-      )
-    } else if (origin =!= signer) {
-      observeTip >> ConsensusLog.warn(
-        log,
-        Category.Facilitator,
-        key.toString,
-        "n/a",
-        LogEvent.DeclarationReceived,
-        "kind" -> "EvictionVote",
-        "rejected" -> "origin_signer_mismatch",
-        "from" -> ConsensusLog.pid(origin),
-        "signer" -> ConsensusLog.pid(signer),
-        "target" -> ConsensusLog.pid(target)
-      )
-    } else {
-      observeTip >> ConsensusLog.info(
-        log,
-        Category.Facilitator,
-        key.toString,
-        "n/a",
-        LogEvent.DeclarationReceived,
-        "kind" -> "EvictionVote",
-        "from" -> ConsensusLog.pid(origin),
-        "target" -> ConsensusLog.pid(target),
-        "reason" -> signedVote.value.reason.toString
-      ) >>
-        storage
-          .addEvictionVote(origin, key, signedVote)
-          .flatMap(triggerUpdateIfChanged(queue, key)) >>
-        queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
+    storage.getState(key).flatMap { state =>
+      val acceptsAtKey = ctx.membershipPolicy.acceptsEvictionVotesAt(state.exists(_.certifiedConsensusActive))
+
+      if (!acceptsAtKey) {
+        observeTip >> ConsensusLog.debug(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "EvictionVote",
+          "ignored" -> "membership_policy_or_inactive_v35",
+          "from" -> ConsensusLog.pid(origin),
+          "target" -> ConsensusLog.pid(target)
+        )
+      } else if (origin =!= signer) {
+        observeTip >> ConsensusLog.warn(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "EvictionVote",
+          "rejected" -> "origin_signer_mismatch",
+          "from" -> ConsensusLog.pid(origin),
+          "signer" -> ConsensusLog.pid(signer),
+          "target" -> ConsensusLog.pid(target)
+        )
+      } else {
+        observeTip >> ConsensusLog.info(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "EvictionVote",
+          "from" -> ConsensusLog.pid(origin),
+          "target" -> ConsensusLog.pid(target),
+          "reason" -> signedVote.value.reason.toString
+        ) >>
+          storage
+            .addEvictionVote(origin, key, signedVote)
+            .flatMap(triggerUpdateIfChanged(queue, key)) >>
+          queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
+      }
     }
   }
 

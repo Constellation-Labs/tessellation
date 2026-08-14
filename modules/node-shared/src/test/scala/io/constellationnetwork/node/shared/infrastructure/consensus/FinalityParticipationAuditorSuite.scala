@@ -91,7 +91,9 @@ object FinalityParticipationAuditorSuite extends FunSuite {
 
     expect(!headroom.allowsExpansion) &&
     expect(headroom.holdsMembership) &&
-    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true)))
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitSilentEvictionVote(d, headroom, cadenceAllowed = true))) &&
+    expect(third.decision.exists(d => FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(d, headroom, cadenceAllowed = true))) &&
+    expect(third.decision.forall(d => !FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(d, headroom, cadenceAllowed = false)))
   }
 
   test("three elapsed misses emit an eviction vote only for a current-floor deficit and on cadence") {

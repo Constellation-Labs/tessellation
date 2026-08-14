@@ -58,6 +58,17 @@ object FinalityParticipationAuditor {
   ): Boolean =
     decision.shouldVote && headroom.allowsSilentEviction && cadenceAllowed
 
+  /** V35 replacement evidence is emitted only in the protocol-derived dead band where the current committee remains finalizable but an
+    * additional seat is unsupported. The vote is not standalone removal authority; it can be consumed only in an equal-sized certified
+    * replacement.
+    */
+  def shouldEmitAtomicReplacementVote(
+    decision: Decision,
+    headroom: FinalityHeadroom.Evaluation,
+    cadenceAllowed: Boolean
+  ): Boolean =
+    decision.shouldVote && headroom.allowsAtomicReplacement && cadenceAllowed
+
   /** Preserve the intended elapsed-time meaning of an N-round miss window when EventTrigger accelerates rounds.
     *
     * N observations span N-1 intervals from the first miss through the Nth miss. Reusing `timeTriggerInterval` gives the local auditor a
@@ -71,13 +82,13 @@ object FinalityParticipationAuditor {
   }
 
   def selectTarget(
-    currentTier1: Set[PeerId],
+    auditablePeers: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
     entropy: Hash
   ): Option[PeerId] = {
     implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
 
-    currentTier1
+    auditablePeers
       .intersect(parentRoundCommittee)
       .toList
       .sorted(scoreOrder.toOrdering)
@@ -94,7 +105,7 @@ object FinalityParticipationAuditor {
   def observe(
     selfId: PeerId,
     currentCore: Set[PeerId],
-    currentTier1: Set[PeerId],
+    auditablePeers: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
     locallyObservedParentSigners: Set[PeerId],
     parentOrdinal: Long,
@@ -109,7 +120,7 @@ object FinalityParticipationAuditor {
 
     if (inBootstrap) Observation(MissHistory.empty, None)
     else {
-      val auditable = currentTier1.intersect(parentRoundCommittee)
+      val auditable = auditablePeers.intersect(parentRoundCommittee)
       val observedParent = ObservedParent(parentOrdinal, entropy)
       val (nextMisses, nextMissStartedAt) =
         if (previous.lastObservedParent.contains(observedParent))
@@ -141,7 +152,7 @@ object FinalityParticipationAuditor {
       val nextHistory = MissHistory(Some(observedParent), nextMisses, nextMissStartedAt)
       val decision = Option
         .when(currentCore.contains(selfId)) {
-          selectTarget(currentTier1, parentRoundCommittee, entropy)
+          selectTarget(auditablePeers, parentRoundCommittee, entropy)
         }
         .flatten
         .map { target =>

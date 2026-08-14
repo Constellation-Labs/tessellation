@@ -20,6 +20,19 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
   private val facilitators = List(peer(4), peer(1), peer(5), peer(2), peer(3))
   private val core = List(peer(4), peer(1), peer(5))
 
+  test("GL0 atomic replacement capability does not re-enable automatic removal") {
+    val policy = HealthDerivedMembershipPolicy.RetainSigningLeases
+
+    expect(!policy.allowsAutomaticRemoval) &&
+    expect(!policy.acceptsCertifiedNextRoundEvictions) &&
+    expect(!policy.acceptsEvictionCertificates) &&
+    expect(policy.acceptsEvictionVotes) &&
+    expect(!policy.acceptsEvictionVotesAt(certifiedConsensusActive = false)) &&
+    expect(policy.acceptsEvictionVotesAt(certifiedConsensusActive = true)) &&
+    expect(!policy.allowsCertifiedAtomicReplacement(certifiedConsensusActive = false)) &&
+    expect(policy.allowsCertifiedAtomicReplacement(certifiedConsensusActive = true))
+  }
+
   test("GL0 retain policy preserves facilitator and Core ordering across a timeout") {
     val result = HealthDerivedMembershipPolicy.RetainSigningLeases.timeoutMembership(
       facilitators,
@@ -156,6 +169,8 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     expect.same(facilitators.tail, policy.canonicalFacilitators(facilitators.tail, facilitators)) &&
     expect(policy.acceptsEvictionCertificates) &&
     expect(policy.acceptsCertifiedNextRoundEvictions) &&
+    expect(policy.acceptsEvictionVotesAt(certifiedConsensusActive = false)) &&
+    expect(policy.acceptsEvictionVotesAt(certifiedConsensusActive = true)) &&
     expect(policy.certifiedEvictionTargetsAllowed(removals)) &&
     expect(policy.allowsAutomaticRemoval)
   }

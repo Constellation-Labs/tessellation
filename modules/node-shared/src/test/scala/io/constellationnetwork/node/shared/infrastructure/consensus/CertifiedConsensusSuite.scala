@@ -245,6 +245,49 @@ object CertifiedConsensusSuite extends MutableIOSuite {
     } yield expect.all(qc.isRight, verified === Right(()))
   }
 
+  test("one ProposalQC binds both halves of an atomic N-to-N replacement") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(5)
+      committee = pairs.take(4).map(peerId)
+      admitted = peerId(pairs.last)
+      base <- withCommittee(committee)
+      value = base.copy(
+        admittedPeers = SortedSet(admitted),
+        evictedPeers = SortedSet(committee.last)
+      )
+      votes <- pairs.take(3).traverse(signOutcomeVote[IO](value, _).map(_._2))
+      qcEither <- buildProposalQc[IO](
+        value,
+        SortedMap.from(committee.take(3).zip(votes)),
+        committee.toSet,
+        committee.toSet,
+        2.0 / 3.0
+      )
+      qc <- IO.fromEither(qcEither.leftMap(new IllegalStateException(_)))
+      verified <- verifyProposalQc[IO](qc, committee.toSet, committee.toSet, 2.0 / 3.0)
+      stripped <- verifyProposalQc[IO](
+        qc.copy(value = value.copy(evictedPeers = SortedSet.empty)),
+        committee.toSet,
+        committee.toSet,
+        2.0 / 3.0
+      )
+      applied = CertifiedMembershipTransition.applyTo(
+        committee,
+        value.admittedPeers.toSet,
+        value.evictedPeers.toSet,
+        maxChanges = 1
+      )
+    } yield
+      expect.all(
+        verified === Right(()),
+        stripped.isLeft,
+        applied.exists(next => next.size == committee.size && next.contains(admitted) && !next.contains(committee.last))
+      )
+  }
+
   test("prepare QC rejects under-quorum and out-of-pool votes") { res =>
     implicit val hasher: Hasher[IO] = res._1
     implicit val provider: SecurityProvider[IO] = res._2

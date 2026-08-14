@@ -42,6 +42,11 @@ object FinalityHeadroom {
     val allowsSilentEviction: Boolean = currentMargin < 0
 
     val holdsMembership: Boolean = !allowsExpansion && !allowsSilentEviction
+
+    /** The old committee can still finalize, but adding a seat would immediately raise the floor beyond the observed signer population. A
+      * v35 one-for-one replacement is safe in this dead band because it leaves both committee size and finality floor unchanged.
+      */
+    val allowsAtomicReplacement: Boolean = currentMargin >= 0 && !allowsExpansion
   }
 
   /** Evaluate the protocol-derived invariant for the largest admission batch the proposal may carry:

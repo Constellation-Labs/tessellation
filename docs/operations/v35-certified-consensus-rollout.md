@@ -50,7 +50,10 @@ dormant.
    write: no vote/commit may progress from a non-durable lock, and the lock must remain
    until the crash-atomic sidecar write has succeeded. A deliberately truncated journal
    file must fail closed rather than start consensus.
-8. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
+8. Exercise both Tier-1 and Core atomic replacement: three consecutive elapsed proof
+   misses, Core-quorum Silent and ReadyAtTip certificates, one ProposalQC carrying equal
+   admitted/evicted sets, unchanged committee cardinality, and no standalone ECS acceptance.
+9. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
    and CoreCommitQC formation, artifact proof margin, view changes, reward breadth, and
    `dag_consensus_outcome_hook_duration_seconds` p95.
 
@@ -93,6 +96,10 @@ deterministically at the configured key.
 
 V35 does not shrink the current-round safety universe. If more than one third of the
 frozen Core disappears during a round, a coordinated restart may be required.
+
+Global L0 replacement is preventive, not subquorum recovery. It runs only while the
+original frozen Core can still certify the complete N-to-N transition. Operators must
+alert on any proposal where admitted and evicted counts differ; honest nodes reject it.
 
 If activation fails:
 

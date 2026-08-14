@@ -1132,17 +1132,22 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     * round boundary is what makes B1 safer than the mid-round eviction path the protocol deliberately removed.
     */
   def checkEvictionAssembly(key: Key, target: PeerId): F[Unit] =
-    if (!ctx.membershipPolicy.acceptsEvictionCertificates)
-      ConsensusLog.debug(
-        log,
-        Category.Phase,
-        key.show,
-        "n/a",
-        LogEvent.Eviction,
-        "assembly" -> "disabled_by_membership_policy",
-        "target" -> ConsensusLog.pid(target)
-      )
-    else checkEvictionAssemblyEnabled(key, target)
+    storage.getState(key).flatMap {
+      case Some(state)
+          if ctx.membershipPolicy.acceptsEvictionCertificates ||
+            ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) =>
+        checkEvictionAssemblyEnabled(key, target)
+      case _ =>
+        ConsensusLog.debug(
+          log,
+          Category.Phase,
+          key.show,
+          "n/a",
+          LogEvent.Eviction,
+          "assembly" -> "disabled_by_membership_policy",
+          "target" -> ConsensusLog.pid(target)
+        )
+    }
 
   /** Exact rc.6 assembly path, reached only for layers whose membership policy enables ECS. */
   private def checkEvictionAssemblyEnabled(key: Key, target: PeerId): F[Unit] =
@@ -1172,7 +1177,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           // a leader assembling with q Core-derived signatures will validate against
           // every follower's matching denominator. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
-          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+          val atomicReplacement =
+            ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+          val q =
+            if (atomicReplacement) CertifiedConsensus.requiredCoreQuorum(n, config.quorumThresholdFraction)
+            else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
             // voter was signing against a different committee view and the certificate
@@ -1195,12 +1204,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     // prevents a damaged Core committee from making its own repair impossible.
                     // The shared selector is also used by both proposal validators so assembly
                     // and acceptance cannot drift.
-                    val witnessPool = EvictionVoterPool.select(
-                      target,
-                      state.tier1Facilitators.value.contains(target),
-                      state.coreFacilitators.value.toSet,
-                      widerWitnessPool(state, target)
-                    )
+                    val witnessPool =
+                      if (atomicReplacement) state.coreFacilitators.value.toSet - target
+                      else
+                        EvictionVoterPool.select(
+                          target,
+                          state.tier1Facilitators.value.contains(target),
+                          state.coreFacilitators.value.toSet,
+                          widerWitnessPool(state, target)
+                        )
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder
                       .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
