@@ -49,7 +49,7 @@ final class CrashSafeAtomicFileWriter[F[_]: Async] private (base: Path) {
       } >> forceDirectory
     } {
       case (_, cats.effect.kernel.Outcome.Succeeded(_)) => Async[F].unit
-      case (temp, _) => delete(temp.getFileName.toString).void.handleError(_ => ())
+      case (temp, _)                                    => delete(temp.getFileName.toString).void.handleError(_ => ())
     }
   }
 
@@ -60,8 +60,8 @@ final class CrashSafeAtomicFileWriter[F[_]: Async] private (base: Path) {
   def delete(fileName: String): F[Boolean] =
     Async[F].blocking(JFiles.deleteIfExists(destination(fileName))).flatTap(_ => forceDirectory)
 
-  /** Establish a durable directory-metadata boundary after a retried bulk cleanup, including when an earlier cancelled attempt already
-    * made every target absent from the directory listing.
+  /** Establish a durable directory-metadata boundary after a retried bulk cleanup, including when an earlier cancelled attempt already made
+    * every target absent from the directory listing.
     */
   def syncDirectory: F[Unit] = forceDirectory
 
@@ -77,7 +77,7 @@ final class CrashSafeAtomicFileWriter[F[_]: Async] private (base: Path) {
       } catch {
         // Some filesystems/JDKs do not permit opening a directory as a channel. File writes still require an atomic move; only this
         // platform-specific directory-metadata force is optional.
-        case _: UnsupportedOperationException => ()
+        case _: UnsupportedOperationException                                                      => ()
         case _: AccessDeniedException if System.getProperty("os.name").toLowerCase.contains("win") => ()
       }
     }

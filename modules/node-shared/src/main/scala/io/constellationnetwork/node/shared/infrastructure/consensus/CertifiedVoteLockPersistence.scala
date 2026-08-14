@@ -58,15 +58,13 @@ object CertifiedVoteLockPersistence {
     * A successful write means the bytes and file metadata were forced, the file was atomically renamed in the same directory, and the
     * directory entry was forced where the platform supports directory fsync. There is deliberately no non-atomic rename fallback.
     */
-  def forSnapshotOrdinal[F[_]: Async: JsonSerializer](base: Path): F[CertifiedVoteLockPersistence[F, SnapshotOrdinal]] = {
+  def forSnapshotOrdinal[F[_]: Async: JsonSerializer](base: Path): F[CertifiedVoteLockPersistence[F, SnapshotOrdinal]] =
     CrashSafeAtomicFileWriter.make[F](base).map(new SnapshotOrdinalFileSystem[F](base, _))
-  }
 
   private final class SnapshotOrdinalFileSystem[F[_]: Async: JsonSerializer](
     base: Path,
     atomicFileWriter: CrashSafeAtomicFileWriter[F]
-  )
-      extends CertifiedVoteLockPersistence[F, SnapshotOrdinal] {
+  ) extends CertifiedVoteLockPersistence[F, SnapshotOrdinal] {
 
     private val nioBase = base.toNioPath
 
@@ -96,15 +94,17 @@ object CertifiedVoteLockPersistence {
     }
 
     def read(key: SnapshotOrdinal): F[Option[CertifiedVoteLock]] =
-      Async[F].blocking(JFiles.exists(file(key))).ifM(
-        Async[F]
-          .blocking(JFiles.readAllBytes(file(key)))
-          .flatMap(JsonSerializer[F].deserialize[Record[SnapshotOrdinal]])
-          .flatMap(_.leftMap(error => new IllegalStateException(s"corrupt certified vote-lock journal for key=$key", error)).liftTo[F])
-          .flatMap(record => validateRecord(key, record).liftTo[F])
-          .map(_.some),
-        none[CertifiedVoteLock].pure[F]
-      )
+      Async[F]
+        .blocking(JFiles.exists(file(key)))
+        .ifM(
+          Async[F]
+            .blocking(JFiles.readAllBytes(file(key)))
+            .flatMap(JsonSerializer[F].deserialize[Record[SnapshotOrdinal]])
+            .flatMap(_.leftMap(error => new IllegalStateException(s"corrupt certified vote-lock journal for key=$key", error)).liftTo[F])
+            .flatMap(record => validateRecord(key, record).liftTo[F])
+            .map(_.some),
+          none[CertifiedVoteLock].pure[F]
+        )
 
     def write(key: SnapshotOrdinal, lock: CertifiedVoteLock): F[Unit] = {
       val record = Record(Protocol, FormatVersion, key, lock)
@@ -123,19 +123,17 @@ object CertifiedVoteLockPersistence {
       deleteMatching(_ > key.value.value)
 
     private def deleteMatching(matches: Long => Boolean): F[Unit] =
-      Async[F]
-        .blocking {
-          val entries = JFiles.list(nioBase)
-          try
-            entries
-              .filter(path => path.getFileName.toString.toLongOption.exists(matches))
-              .toArray
-              .toList
-              .map(_.asInstanceOf[java.nio.file.Path])
-          finally entries.close()
-        }
-        .flatMap { paths =>
-          paths.traverse_(path => atomicFileWriter.delete(path.getFileName.toString).void) >> atomicFileWriter.syncDirectory
-        }
+      Async[F].blocking {
+        val entries = JFiles.list(nioBase)
+        try
+          entries
+            .filter(path => path.getFileName.toString.toLongOption.exists(matches))
+            .toArray
+            .toList
+            .map(_.asInstanceOf[java.nio.file.Path])
+        finally entries.close()
+      }.flatMap { paths =>
+        paths.traverse_(path => atomicFileWriter.delete(path.getFileName.toString).void) >> atomicFileWriter.syncDirectory
+      }
   }
 }
