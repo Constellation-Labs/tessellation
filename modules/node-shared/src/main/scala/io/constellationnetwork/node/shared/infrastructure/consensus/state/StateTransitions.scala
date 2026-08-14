@@ -785,9 +785,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   )
                 )
             case Right(vcc) =>
-              val leaderPool = StateTransitions.viewChangeLeaderPool(
+              val viewMembershipPolicy = ctx.membershipPolicy.forCertifiedView(state.certifiedConsensusActive)
+              val leaderPool = viewMembershipPolicy.certifiedViewChangeLeaderPool(
                 state.coreFacilitators.value,
-                state.facilitators.value
+                state.facilitators.value,
+                state.roundStartFacilitators.value
               )
               val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
@@ -798,16 +800,21 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                     maybeState match {
                       case Some(s) if s.viewNumber.toLong === fromView =>
+                        val canonicalFacilitators = viewMembershipPolicy.canonicalFacilitators(
+                          s.facilitators.value,
+                          s.roundStartFacilitators.value
+                        )
+                        val membershipState = s.copy(facilitators = Facilitators(canonicalFacilitators))
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
-                            s.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               status = fresh,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
                             )
                           case None =>
-                            s.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
@@ -938,57 +945,19 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             case Right(_) =>
               val shrinkFloor = q
               val currentActive = state.facilitators.value
-              // Evaluate shrink on the first certified timeout too. Live alpha.129 data showed
-              // view-0 TCs with quorum evidence advancing the view but preserving a 4-of-4 active
-              // set where only two peers kept responding, causing the next view to wedge again.
-              // Evaluate against the full active facilitator set, not Core only. Timeout
-              // certificates are validated against the wider witness pool; retaining certified
-              // voters from Tier 1 lets an existing reserve replace missing Core peers round-locally
-              // without reading local gossip state or changing the committed committee.
-              val shouldEvaluateShrink = !state.certifiedConsensusActive
-              val certifiedShrink =
-                if (shouldEvaluateShrink)
-                  ActiveFacilitatorAdmission.fromCertifiedTimeout(
-                    selected = currentActive,
-                    // StateTransitions is generic over Outcome and cannot inspect recentSigners
-                    // without a new ConsensusEngineContext hook. Keep this first certified-shrink
-                    // slice protocol-wide by retaining TC voters only; the helper supports
-                    // recent-signer fill for a later typed hook if we need it.
-                    recentSigners = scala.collection.immutable.SortedMap.empty,
-                    timeoutVoters = reasonVotes.keySet,
-                    minActiveSize = shrinkFloor
-                  )
-                else
-                  ActiveFacilitatorAdmission.Result(
-                    active = currentActive,
-                    exclusions = List.empty,
-                    recentSignerPoolSize = 0,
-                    candidateSize = currentActive.size,
-                    targetSize = currentActive.size,
-                    promotedCandidateSize = 0,
-                    scoreExcludedSize = 0,
-                    qualityExcludedSize = 0,
-                    demotedRecentSignerSize = 0,
-                    belowRetainRecentSignerSize = 0,
-                    expansionAdmittedSize = 0,
-                    reserveAdmitted = List.empty,
-                    reserveAdmittedSize = 0,
-                    probationAdmitted = List.empty,
-                    probationAdmittedSize = 0,
-                    stickyProbationCandidateSize = 0,
-                    freshProbationCandidateSize = 0,
-                    freshProbationStarved = false,
-                    recentSignerMinCount = 0,
-                    recentSignerMaxCount = 0,
-                    recentWindowSize = 0,
-                    recentFilterApplied = false
-                  )
-              val effectiveCore = certifiedShrink.active
-              val shrunk = shouldEvaluateShrink && certifiedShrink.recentFilterApplied
-              val leaderPool = StateTransitions.viewChangeLeaderPool(
-                effectiveCore,
-                effectiveCore
+              // Layer policy remains the authority for N+1 health-derived membership changes. V35 additionally freezes the current
+              // round in both layers, so a Currency eviction certificate may affect N+1 without shrinking N during this view change.
+              val viewMembershipPolicy = ctx.membershipPolicy.forCertifiedView(state.certifiedConsensusActive)
+              val timeoutMembership = viewMembershipPolicy.timeoutMembership(
+                facilitators = currentActive,
+                coreFacilitators = state.coreFacilitators.value,
+                roundStartFacilitators = state.roundStartFacilitators.value,
+                timeoutVoters = reasonVotes.keySet,
+                shrinkFloor = shrinkFloor
               )
+              val effectiveActive = timeoutMembership.evaluatedActive
+              val shrunk = timeoutMembership.shrinkApplied
+              val leaderPool = timeoutMembership.leaderPool
               val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
@@ -998,24 +967,31 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                     maybeState match {
                       case Some(s) if s.viewNumber.toLong === fromView =>
-                        val shrinkState =
-                          if (shrunk)
-                            s.copy(
-                              facilitators = Facilitators(effectiveCore),
-                              coreFacilitators = CoreFacilitators(effectiveCore)
-                            )
-                          else
-                            s
+                        // Use the live CAS state for legacy no-shrink. GL0 retain mode
+                        // canonicalizes that live active view back to the frozen round-start
+                        // committee; a certified Currency shrink keeps its certified result.
+                        val activeAfterCertifiedShrink =
+                          if (timeoutMembership.shrinkApplied) timeoutMembership.facilitators else s.facilitators.value
+                        val canonicalFacilitators = viewMembershipPolicy.canonicalFacilitators(
+                          activeAfterCertifiedShrink,
+                          s.roundStartFacilitators.value
+                        )
+                        val coreAfterCertifiedShrink =
+                          if (timeoutMembership.shrinkApplied) timeoutMembership.coreFacilitators else s.coreFacilitators.value
+                        val membershipState = s.copy(
+                          facilitators = Facilitators(canonicalFacilitators),
+                          coreFacilitators = CoreFacilitators(coreAfterCertifiedShrink)
+                        )
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
-                            shrinkState.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               status = fresh,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
                             )
                           case None =>
-                            shrinkState.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
@@ -1052,9 +1028,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "statusReset" -> resetStatus.isDefined.toString,
                     "certifiedShrink" -> shrunk.toString,
                     "shrinkFrom" -> currentActive.size.toString,
-                    "shrinkTo" -> effectiveCore.size.toString,
+                    "shrinkTo" -> effectiveActive.size.toString,
                     "timeoutVoters" -> reasonVotes.size.toString,
-                    "shrinkExclusions" -> certifiedShrink.exclusions.size.toString
+                    "shrinkExclusions" -> timeoutMembership.exclusionCount.toString,
+                    "membershipPolicy" -> viewMembershipPolicy.productPrefix
                   )
                   .whenA(didAdvance)
                 _ <- ConsensusLog
@@ -1069,11 +1046,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "fromView" -> fromView.toString,
                     "toView" -> toView.toString,
                     "fromSize" -> currentActive.size.toString,
-                    "toSize" -> effectiveCore.size.toString,
+                    "toSize" -> effectiveActive.size.toString,
                     "floor" -> shrinkFloor.toString,
                     "timeoutVoters" -> reasonVotes.size.toString,
-                    "recentSignerPool" -> certifiedShrink.recentSignerPoolSize.toString,
-                    "excluded" -> certifiedShrink.exclusions.size.toString
+                    "recentSignerPool" -> timeoutMembership.recentSignerPoolSize.toString,
+                    "excluded" -> timeoutMembership.exclusionCount.toString
                   )
                   .whenA(didAdvance && shrunk)
                 _ <- Metrics[F]
@@ -1099,15 +1076,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "dag_consensus_certified_shrink_total",
                     Seq(
                       unsafeLabelName("outcome") -> (if (shrunk) "applied"
-                                                     else if (shouldEvaluateShrink) "not_needed"
-                                                     else "first_timeout"),
+                                                     else if (timeoutMembership.shrinkEvaluated) "not_needed"
+                                                     else "disabled_by_policy"),
                       unsafeLabelName("reason") -> reason.toString
                     )
                   )
                   .whenA(didAdvance)
-                _ <- Metrics[F].updateGauge("dag_consensus_certified_shrink_retained_size", effectiveCore.size.toLong).whenA(didAdvance)
+                _ <- Metrics[F].updateGauge("dag_consensus_certified_shrink_retained_size", effectiveActive.size.toLong).whenA(didAdvance)
                 _ <- Metrics[F]
-                  .updateGauge("dag_consensus_certified_shrink_missing_size", certifiedShrink.exclusions.size.toLong)
+                  .updateGauge("dag_consensus_certified_shrink_missing_size", timeoutMembership.exclusionCount.toLong)
                   .whenA(didAdvance)
                 _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
                 _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
@@ -1155,6 +1132,20 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     * round boundary is what makes B1 safer than the mid-round eviction path the protocol deliberately removed.
     */
   def checkEvictionAssembly(key: Key, target: PeerId): F[Unit] =
+    if (!ctx.membershipPolicy.acceptsEvictionCertificates)
+      ConsensusLog.debug(
+        log,
+        Category.Phase,
+        key.show,
+        "n/a",
+        LogEvent.Eviction,
+        "assembly" -> "disabled_by_membership_policy",
+        "target" -> ConsensusLog.pid(target)
+      )
+    else checkEvictionAssemblyEnabled(key, target)
+
+  /** Exact rc.6 assembly path, reached only for layers whose membership policy enables ECS. */
+  private def checkEvictionAssemblyEnabled(key: Key, target: PeerId): F[Unit] =
     storage.getState(key).flatMap {
       case None                                                => Async[F].unit
       case Some(state) if ctx.isInBootstrap(state.lastOutcome) =>
@@ -1211,7 +1202,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                       widerWitnessPool(state, target)
                     )
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
-                    EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
+                    EvictionCertificateBuilder
+                      .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
                       case Left(error) =>
                         ConsensusLog.warn(
                           log,
@@ -1568,7 +1560,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     )
 
   private def classifyInitDownloadError(err: Throwable): String = err match {
-    case _: SelfStillInProbation => "self_in_probation"
+    case _: StateTransitions.SelfStillInProbation => "self_in_probation"
     case t =>
       val msg = Option(t.getMessage).getOrElse("")
       if (msg.startsWith("[DownloadInit] Could not observe outcome")) "no_outcome_available"
@@ -1633,10 +1625,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       // expected committee and the round wedges at `progress=1/5` until the whole 90s phase
       // timeout fires (gl0-4 fork-recovery E2E).
       //
-      // Instead, raise `SelfStillInProbation` so the outer event-loop retry path re-issues
-      // initFromDownload after backoff. The next attempt re-fetches the outcome from the cluster;
-      // once the cluster has emitted a quorum-witnessed AdmissionCertificate clearing self from
-      // probation, the check passes and recovery proceeds normally.
+      // Instead, raise `SelfStillInProbation`. A layer with the direct probation-probe capability
+      // keeps the node stably Observing and re-issues initFromDownload after backoff; legacy layers
+      // retain the rc.6 recovery-download behavior. Once the cluster has emitted a quorum-witnessed
+      // AdmissionCertificate clearing self from probation, the check passes and recovery proceeds.
       _ <-
         if (ctx.probationPeersOf(outcome).contains(ctx.selfId)) {
           ConsensusLog
@@ -1648,7 +1640,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               LogEvent.DownloadInitStart,
               "gate" -> "self_in_readmission_probation",
               "action" -> "deferring_facilitation_until_b2_clears_probation"
-            ) >> new SelfStillInProbation(ctx.selfId, key.toString)
+            ) >> new StateTransitions.SelfStillInProbation(ctx.selfId, key.toString)
             .raiseError[F, Unit]
         } else Async[F].unit
       // Mark recovery completion at this key. The local self-yield this used to drive
@@ -2047,19 +2039,19 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
   class NoValidPeersException(message: String) extends RuntimeException(message)
 
-  /** Raised when `initFromDownload` resolves an outcome that still lists `selfId` in `readmissionCountdown` (B2 probation). The outer
-    * event-loop retry path catches this, backs off, and re-issues initFromDownload — by which time the cluster may have emitted an
-    * `AdmissionCertificate` clearing the probation, allowing recovery to proceed.
+}
+
+object StateTransitions {
+
+  /** Raised when `initFromDownload` resolves an outcome that still lists self in B2 probation. Layers with a direct probation probe treat
+    * this as an expected lifecycle deferral and keep Observing stable; legacy layers retain the recovery-download path.
     */
-  class SelfStillInProbation(val selfId: PeerId, val keyShow: String)
+  final class SelfStillInProbation(val selfId: PeerId, val keyShow: String)
       extends RuntimeException(
         s"[DownloadInit] self ${selfId.value.value.take(8)} still in B2 readmission probation at key=$keyShow; " +
           s"deferring facilitation until cluster clears probation."
       )
       with scala.util.control.NoStackTrace
-}
-
-object StateTransitions {
 
   private[consensus] sealed trait DownloadOutcomeDisposition
 

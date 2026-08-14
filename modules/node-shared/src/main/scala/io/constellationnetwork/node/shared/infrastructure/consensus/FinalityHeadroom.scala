@@ -6,8 +6,8 @@ import io.constellationnetwork.schema.peer.PeerId
 /** Exact current-seat and next-seat finality-headroom calculation shared by admission and Tier-1 silence eviction.
   *
   * Finalized proof subsets are node-local, so this result may only control local vote emission. It must never be validated from a Proposal
-  * or copied into deterministic state. Admission and eviction remain authoritative only after their existing Core-quorum certificates are
-  * accepted.
+  * or copied into deterministic state. Admission and eviction remain authoritative only after their existing quorum-certified evidence is
+  * accepted; open admission uses Core voters while probation recovery preserves its wider witness pool at a Core-sized threshold.
   */
 object FinalityHeadroom {
 
@@ -44,20 +44,21 @@ object FinalityHeadroom {
     val holdsMembership: Boolean = !allowsExpansion && !allowsSilentEviction
   }
 
-  /** Evaluate the protocol-derived invariant:
+  /** Evaluate the protocol-derived invariant for the largest admission batch the proposal may carry:
     *
     * {{{
-    * observed current-committee parent signers >= finality floor(current committee size + 1)
+    * observed current-committee parent signers >= finality floor(current committee size + additional seats)
     * }}}
     */
   def evaluate(
     currentCommittee: Set[PeerId],
     locallyObservedParentSigners: Set[PeerId],
-    quorumThresholdFraction: Double
+    quorumThresholdFraction: Double,
+    additionalSeats: Int = 1
   ): Evaluation = {
     val currentCommitteeSize = currentCommittee.size
     val currentFinalityFloor = math.max(1, QuorumPolicy.fromFraction(currentCommitteeSize, quorumThresholdFraction))
-    val nextCommitteeSize = currentCommittee.size + 1
+    val nextCommitteeSize = currentCommittee.size + math.max(1, additionalSeats)
     val nextFinalityFloor = math.max(1, QuorumPolicy.fromFraction(nextCommitteeSize, quorumThresholdFraction))
 
     Evaluation(

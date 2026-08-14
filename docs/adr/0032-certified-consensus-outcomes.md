@@ -58,7 +58,12 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    Disable current-round committee mutation and quorum-denominator shrink on the v35
    path. If fewer than the configured supermajority of the frozen Core remains live,
    the round may halt until a coordinated cluster restart. This availability trade is
-   accepted in preference to changing the safety universe mid-round.
+   accepted in preference to changing the safety universe mid-round. The conservative
+   rc.7 Global L0 policy additionally disables health-derived eviction certification,
+   so Global L0 `evictedPeers` remains empty both before and after activation. Currency
+   L0 retains its existing eviction authority and applies a certified eviction only to
+   N+1. These are separate policy capabilities: freezing N must not implicitly disable
+   a layer's authorized N+1 change.
 8. At the exact activation key, discard legacy node-local controller/evidence,
    recent-signer/proof, penalty/probation, and PeerHistory windows before deriving the
    first v35 round. Both layers seed membership from the latest controller-evidence

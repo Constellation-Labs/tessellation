@@ -4,14 +4,13 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
 
 ## Scheduled activations
 
-- IntegrationNet DAG L0: ordinal `5,890,500`. It was selected on 2026-08-12 at a
-  highest observed priority-node tip of `5,883,109`. At the previously measured healthy
-  cadence of approximately 45.9 seconds per ordinal, the estimated crossing is
-  2026-08-16 around 19:00 UTC. Stalls, restarts, rollback, or transaction-driven event
-  rounds can move that wall-clock estimate, so monitor the remaining ordinal distance.
-- IntegrationNet Currency L0 remains disabled here. Every metagraph has an independent
-  ordinal space and must select and coordinate its own activation key. Mainnet and
-  testnet remain disabled for both layers.
+- No public activation is currently scheduled. The former IntegrationNet DAG L0 key at
+  `5,890,500` was withdrawn before activation after the rc.5/rc.6 incidents. A replacement
+  key must be selected and announced only after the rc.7-compatible dormant path has
+  soaked successfully.
+- Every Currency L0 remains disabled here. Each metagraph has an independent ordinal
+  space and must select and coordinate its own activation key. Mainnet, IntegrationNet,
+  and testnet remain disabled for both layers.
 
 ## Compatibility boundaries
 
@@ -35,13 +34,17 @@ dormant.
    signed controller evidence from which its activation committee can be seeded. Both
    layers intentionally fail closed when this evidence is absent; DAG
    `nextFacilitators` is not a valid substitute.
-4. Verify snapshot/state-proof golden fixtures and v34 pre-activation declaration
+4. Prove that the signed activation seed is live: its observed parent signers must meet
+   the frozen-committee finality floor, and any planned admission batch must satisfy
+   `observed parent signers >= Q(seed size + batch size)`. V35 enforces this headroom
+   even while its freshly reset legacy proof-size window still reports bootstrap.
+5. Verify snapshot/state-proof golden fixtures and v34 pre-activation declaration
    fixtures.
-5. Exercise activation from deliberately divergent legacy local sidecars and verify
+6. Exercise activation from deliberately divergent legacy local sidecars and verify
    that nodes derive one frozen committee and one ProposalValue hash.
-6. Exercise a view change, a carried QC, same-key certified outcome recovery, process
+7. Exercise a view change, a carried QC, same-key certified outcome recovery, process
    restart, and coordinated rollback in staging.
-7. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
+8. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
    and CoreCommitQC formation, artifact proof margin, view changes, reward breadth, and
    `dag_consensus_outcome_hook_duration_seconds` p95.
 

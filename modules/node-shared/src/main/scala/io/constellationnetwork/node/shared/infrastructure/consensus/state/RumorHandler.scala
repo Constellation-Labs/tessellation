@@ -275,7 +275,19 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     // else's vote is either buggy or adversarial. Rejecting relays here means the storage slot
     // is keyed by the actual signer PeerId, so duplicate-relay cannot inflate the quorum count
     // at certificate-assembly time.
-    if (origin =!= signer) {
+    if (!ctx.membershipPolicy.acceptsEvictionCertificates) {
+      observeTip >> ConsensusLog.debug(
+        log,
+        Category.Facilitator,
+        key.toString,
+        "n/a",
+        LogEvent.DeclarationReceived,
+        "kind" -> "EvictionVote",
+        "ignored" -> "membership_policy",
+        "from" -> ConsensusLog.pid(origin),
+        "target" -> ConsensusLog.pid(target)
+      )
+    } else if (origin =!= signer) {
       observeTip >> ConsensusLog.warn(
         log,
         Category.Facilitator,

@@ -66,6 +66,28 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   */
 object ConsensusEventLoop {
 
+  private[consensus] sealed trait InitDownloadFailureDisposition extends Product with Serializable
+  private[consensus] object InitDownloadFailureDisposition {
+    case object HoldObservingAndRetry extends InitDownloadFailureDisposition
+    case object RestartDownload extends InitDownloadFailureDisposition
+  }
+
+  private[consensus] def initDownloadFailureDisposition(
+    error: Throwable,
+    hasDirectProbationProbe: Boolean
+  ): InitDownloadFailureDisposition =
+    error match {
+      case _: StateTransitions.SelfStillInProbation if hasDirectProbationProbe =>
+        InitDownloadFailureDisposition.HoldObservingAndRetry
+      case _ => InitDownloadFailureDisposition.RestartDownload
+    }
+
+  private[consensus] def shouldRequeueProbationInitialization(
+    disposition: InitDownloadFailureDisposition,
+    state: NodeState
+  ): Boolean =
+    disposition == InitDownloadFailureDisposition.HoldObservingAndRetry && state === NodeState.Observing
+
   final case class BuiltConsensusLoop[F[_], Event, Key, Artifact, Ctx, Status, Outcome, Kind](
     run: Stream[F, Unit],
     manager: ConsensusManager[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
@@ -98,6 +120,7 @@ object ConsensusEventLoop {
     config: ConsensusConfig,
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
+    membershipPolicy: HealthDerivedMembershipPolicy,
     viewChangeVoter: ViewChangeVoter[F, Key],
     timeoutVoter: TimeoutVoter[F, Key],
     evictionVoter: EvictionVoter[F, Key],
@@ -114,6 +137,10 @@ object ConsensusEventLoop {
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
+    // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission
+    // Ready-only while allowing carried probation peers to prove an exact tip before Ready;
+    // Currency L0 leaves direct probing disabled.
+    admissionCandidateTipProbe: Option[AdmissionCandidateTipProbe.Probes[F]],
     // Layer-supplied HTTP preflight for AbandonmentTracker's rumor-stale escalation shape (issue
     // #1533): does a corroborated group of Ready peers report the same committed snapshot at or
     // above the abandoned key?
@@ -161,6 +188,7 @@ object ConsensusEventLoop {
         consensusClient,
         facilitatorSelector,
         peerQualityTracker,
+        membershipPolicy,
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
@@ -197,6 +225,7 @@ object ConsensusEventLoop {
         locallyObservedParentSignersOf,
         lastSnapshotHashOf,
         getPeerChainTips,
+        admissionCandidateTipProbe,
         healthRef,
         b2AtTipStreakRef
       )
@@ -287,47 +316,75 @@ object ConsensusEventLoop {
                         }
                       }
                       .handleErrorWith { err =>
-                        ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
-                          Metrics[F].incrementCounter("dag_consensus_command_error") >>
-                          (cmd match {
-                            case _: ConsensusCommand.ConsensusFinished[_, _] | _: ConsensusCommand.RoundCompleted =>
-                              // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
-                              // Force round completion so the next round can start. Unconditional (no attemptId)
-                              // because this is the error-recovery path — must always proceed.
-                              // Also offer TimeTick ONLY if node is not in Leaving state: the forced RoundCompleted
-                              // calls completeRound without afterConsensusFinish, so no timer is scheduled for the
-                              // next round. On solo nodes with no external events, this would deadlock consensus.
-                              // However, if the node is Leaving, queuing TimeTick creates a tight spin loop
-                              // (rounds immediately abandon, can't force-leave, can't recover, re-queue TimeTick).
-                              ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
-                                Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
-                                queue.offer(ConsensusCommand.RoundCompleted(None)) >>
-                                nodeStorage.getNodeState.flatMap { state =>
-                                  if (state =!= NodeState.Leaving)
-                                    queue.offer(ConsensusCommand.TimeTick)
-                                  else
-                                    ctx.logger.warn("Skipping TimeTick after error recovery: node is in Leaving state") >>
-                                      Metrics[F].incrementCounter("dag_consensus_timetick_suppressed_leaving")
-                                }
-                            case _: ConsensusCommand.InitializeFromDownload[_, _, _] =>
-                              // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
-                              // Without recovery, the node stays stuck — never initializes, never starts consensus.
-                              // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves
-                              // (prevents infinite download → init fail → download loops).
-                              // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
-                              ctx.logger
-                                .error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
-                                Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
-                                abandonmentTracker.trackInitFromDownloadFailure >>
-                                nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
-                                  case NodeStateTransition.Success =>
-                                    ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")
-                                  case _ =>
-                                    // May already be in a different state; try from Ready as well
-                                    nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
-                                }
-                            case _ => Async[F].unit
-                          })
+                        (err, cmd) match {
+                          case (probationError, init @ ConsensusCommand.InitializeFromDownload(_, _, _, _))
+                              if initDownloadFailureDisposition(probationError, admissionCandidateTipProbe.nonEmpty) ==
+                                InitDownloadFailureDisposition.HoldObservingAndRetry =>
+                            // This is an expected B2 lifecycle wait, not a failed download. Keep
+                            // Observing stable so the authenticated probation chain-tip probe can
+                            // reach this peer; do not consume recovery attempts or bounce it
+                            // through WaitingForDownload. Re-fetch the outcome after backoff until
+                            // a certified admission clears probation.
+                            ctx.logger.info("InitializeFromDownload deferred by carried probation; retrying in 1s") >>
+                              Metrics[F].incrementCounter("dag_consensus_init_download_probation_deferred_total") >>
+                              Async[F]
+                                .start(
+                                  Async[F].sleep(1.second) >> nodeStorage.getNodeState.flatMap { state =>
+                                    queue
+                                      .offer(init)
+                                      .whenA(
+                                        shouldRequeueProbationInitialization(
+                                          InitDownloadFailureDisposition.HoldObservingAndRetry,
+                                          state
+                                        )
+                                      )
+                                  }
+                                )
+                                .void
+
+                          case _ =>
+                            ctx.logger.error(err)(s"Unhandled error processing ${cmd.getClass.getSimpleName}, recovering") >>
+                              Metrics[F].incrementCounter("dag_consensus_command_error") >>
+                              (cmd match {
+                                case _: ConsensusCommand.ConsensusFinished[_, _] | _: ConsensusCommand.RoundCompleted =>
+                                  // Critical: if round-completion commands fail, FSM stays stuck in BUSY forever.
+                                  // Force round completion so the next round can start. Unconditional (no attemptId)
+                                  // because this is the error-recovery path — must always proceed.
+                                  // Also offer TimeTick ONLY if node is not in Leaving state: the forced RoundCompleted
+                                  // calls completeRound without afterConsensusFinish, so no timer is scheduled for the
+                                  // next round. On solo nodes with no external events, this would deadlock consensus.
+                                  // However, if the node is Leaving, queuing TimeTick creates a tight spin loop
+                                  // (rounds immediately abandon, can't force-leave, can't recover, re-queue TimeTick).
+                                  ctx.logger.warn("Forcing round completion after failed ConsensusFinished/RoundCompleted") >>
+                                    Metrics[F].incrementCounter("dag_consensus_forced_round_completion") >>
+                                    queue.offer(ConsensusCommand.RoundCompleted(None)) >>
+                                    nodeStorage.getNodeState.flatMap { state =>
+                                      if (state =!= NodeState.Leaving)
+                                        queue.offer(ConsensusCommand.TimeTick)
+                                      else
+                                        ctx.logger.warn("Skipping TimeTick after error recovery: node is in Leaving state") >>
+                                          Metrics[F].incrementCounter("dag_consensus_timetick_suppressed_leaving")
+                                    }
+                                case _: ConsensusCommand.InitializeFromDownload[_, _, _] =>
+                                  // After 20 retries, initFromDownload exhausts its retry policy and the error propagates here.
+                                  // Without recovery, the node stays stuck — never initializes, never starts consensus.
+                                  // Track the failure so that after maxTotalRecoveryAttempts the node force-leaves
+                                  // (prevents infinite download → init fail → download loops).
+                                  // Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
+                                  ctx.logger
+                                    .error(err)("InitializeFromDownload failed after exhausting retries, triggering recovery download") >>
+                                    Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
+                                    abandonmentTracker.trackInitFromDownloadFailure >>
+                                    nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
+                                      case NodeStateTransition.Success =>
+                                        ctx.logger.info("Recovery: transitioned Observing → WaitingForDownload for DownloadDaemon retry")
+                                      case _ =>
+                                        // May already be in a different state; try from Ready as well
+                                        nodeStorage.tryModifyStateGetResult(NodeState.Ready, NodeState.WaitingForDownload).void
+                                    }
+                                case _ => Async[F].unit
+                              })
+                        }
                       }
                 }
             }

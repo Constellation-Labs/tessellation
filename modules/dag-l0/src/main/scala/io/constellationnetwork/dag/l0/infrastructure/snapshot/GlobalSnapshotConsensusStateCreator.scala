@@ -120,7 +120,8 @@ object GlobalSnapshotConsensusStateCreator {
       F,
       ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
     ],
-    tier1FinalityMissHistoryRef: Ref[F, FinalityParticipationAuditor.MissHistory]
+    tier1FinalityMissHistoryRef: Ref[F, FinalityParticipationAuditor.MissHistory],
+    membershipPolicy: HealthDerivedMembershipPolicy
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
 
@@ -414,7 +415,12 @@ object GlobalSnapshotConsensusStateCreator {
         // removedFacilitators`. A peer that participated and wasn't fork-evicted is "presumed to
         // have signed" for TCA purposes, matching the Phase 3 canonical-signers philosophy.
         lastFacilitators = lastOutcome.facilitators.value.toSet
-        lastSigners = lastFacilitators -- lastOutcome.removedFacilitators.value
+        // A bridge node may start from an rc.6 anchor that already carries health-derived
+        // `removedFacilitators`. Retain mode must neutralize those inherited removals too;
+        // otherwise the first rc.7 round would contract before the new emission/apply gates
+        // get a chance to take effect. Currency keeps consuming the carried set unchanged.
+        carriedFacilityRemovals = membershipPolicy.persistentFacilityRemovals(lastOutcome.removedFacilitators.value)
+        lastSigners = lastFacilitators -- carriedFacilityRemovals
         tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
         tcaFilteredBase = tcaDegraded match {
           case Some(degraded) =>
@@ -477,9 +483,11 @@ object GlobalSnapshotConsensusStateCreator {
 
         // B2 re-admission probation: peers whose `removalPenalty` just expired sit in
         // `readmissionCountdown` for `readmissionProbationRounds` before they can re-enter
-        // the committee. Excluded from the round NON-BYPASSABLY: re-admission requires a
-        // consensus-witnessed AdmissionCertificate embedded in a Proposal (cleared at
-        // round-finish in the advancer). Deterministic: derived from consensus-agreed lastOutcome.
+        // the committee. The normal path requires a consensus-witnessed AdmissionCertificate
+        // embedded in a Proposal (cleared at round-finish in the advancer). The pre-existing
+        // final liveness fallback below can still bypass probation if every eligible peer is in
+        // probation; rc.7 does not alter that rc.6 emergency behavior, so deploy preflight must
+        // reject such an anchor. Deterministic: derived from consensus-agreed lastOutcome.
         probationPeers = ReadmissionMaintenance.probationPeers(lastOutcome.readmissionCountdown)
 
         _ <- logger
@@ -540,7 +548,9 @@ object GlobalSnapshotConsensusStateCreator {
         // by partitioning into Core / Tier 1 / Witness rather than excluding -- Tier 1 peers
         // sign and earn but do not count toward the Core liveness quorum, so chronic peers cannot
         // wedge leader/VC certificate progress by being absent. The separate frozen-committee
-        // finality floor remains unchanged. Fallback ladder preserves probation as non-bypassable.
+        // finality floor remains unchanged. The final allEligible fallback preserves rc.6's
+        // last-resort probation bypass; it is safe only when anchor preflight proves a viable
+        // non-probation first-round committee and therefore never reaches that rung.
         eligibleThisRound = {
           val excluded = penalizedPeers ++ probationPeers
           val filtered = allEligible.filterNot(excluded.contains)
@@ -804,21 +814,29 @@ object GlobalSnapshotConsensusStateCreator {
         // hint (Healthy/Degraded/Critical) rides on the outgoing Facility -- the leader aggregates
         // these across the committee into `Proposal.observedSelfHealth`.
         effect = for {
-          _ <- auditTier1FinalityParticipation(
-            key,
-            lastOutcome,
-            committees.core.toSet,
-            committees.tier1.toSet,
-            resources,
-            time,
-            expansionAllowedThisRound
-          ).handleErrorWith { error =>
-            logger.warn(error)(s"Tier-1 finality audit failed for key=$key; continuing round") >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_tier1_finality_audit_total",
-                Seq(Metrics.unsafeLabelName("outcome") -> "error")
-              )
-          }
+          _ <-
+            if (membershipPolicy.acceptsCertifiedNextRoundEvictions)
+              auditTier1FinalityParticipation(
+                key,
+                lastOutcome,
+                committees.core.toSet,
+                committees.tier1.toSet,
+                resources,
+                time,
+                expansionAllowedThisRound
+              ).handleErrorWith { error =>
+                logger.warn(error)(s"Tier-1 finality audit failed for key=$key; continuing round") >>
+                  Metrics[F].incrementCounter(
+                    "dag_consensus_tier1_finality_audit_total",
+                    Seq(Metrics.unsafeLabelName("outcome") -> "error")
+                  )
+              }
+            else
+              tier1FinalityMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_tier1_finality_audit_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> "disabled_by_membership_policy")
+                )
           _ <- HasherSelector[F].withCurrent { implicit hasher =>
             DagAwaitingParentQueue.maintain(
               eventMempool,

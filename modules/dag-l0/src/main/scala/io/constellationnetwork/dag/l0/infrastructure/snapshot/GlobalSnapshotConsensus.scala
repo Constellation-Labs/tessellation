@@ -257,7 +257,7 @@ object GlobalSnapshotConsensus {
         FinalityParticipationAuditor.MissHistory.empty
       )
 
-      evictionVoter = new GossipingEvictionVoter[
+      rawEvictionVoter = new GossipingEvictionVoter[
         F,
         GlobalSnapshotEvent,
         GlobalSnapshotKey,
@@ -274,7 +274,6 @@ object GlobalSnapshotConsensus {
         (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
         Slf4jLogger.getLogger[F]
       )
-
       consensusFunctions =
         GlobalSnapshotConsensusFunctions.make[F](
           snapshotAcceptanceManager,
@@ -336,6 +335,7 @@ object GlobalSnapshotConsensus {
           loggerBundle,
           mptStore,
           facilitatorSelector,
+          HealthDerivedMembershipPolicy.RetainSigningLeases,
           (key: GlobalSnapshotKey) => consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key))
         )
 
@@ -361,9 +361,10 @@ object GlobalSnapshotConsensus {
           // `effectiveConsensusConfig.coreCommitteeSize`, so this single binding is what
           // both the state creator and `deterministicConfigHash` see.
           resolvedCoreCommitteeSize,
-          evictionVoter,
+          rawEvictionVoter,
           consensusQueue,
-          tier1FinalityMissHistoryRef
+          tier1FinalityMissHistoryRef,
+          HealthDerivedMembershipPolicy.RetainSigningLeases
         )
 
       stateRemover =
@@ -450,6 +451,12 @@ object GlobalSnapshotConsensus {
         (peer: Peer) => request(peer)
       }
       peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
+      fetchProbationChainTip = (peer: Peer) => eventGossipClient.getChainTip.run(Peer.toP2PContext(peer))
+      admissionCandidateTipProbe = AdmissionCandidateTipProbe.make[F](
+        clusterStorage,
+        fetchLatestCommittedMetadata,
+        fetchProbationChainTip
+      )
 
       loop <-
         ConsensusEventLoop.build[
@@ -477,9 +484,10 @@ object GlobalSnapshotConsensus {
           effectiveConsensusConfig,
           facilitatorSelector,
           peerQualityTracker,
+          HealthDerivedMembershipPolicy.RetainSigningLeases,
           viewChangeVoter,
           timeoutVoter,
-          evictionVoter,
+          rawEvictionVoter,
           admissionVoter,
           (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
@@ -494,6 +502,7 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
+          admissionCandidateTipProbe.some,
           peersCommittedAheadProbe,
           injectedHealthRef,
           Some(consensusQueue),

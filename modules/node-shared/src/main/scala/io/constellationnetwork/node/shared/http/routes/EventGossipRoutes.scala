@@ -19,6 +19,7 @@ import org.http4s.dsl.Http4sDsl
   * Provides endpoints for:
   *   - POST /events/push - Receive pushed events from peers
   *   - GET /events/ihave - Get hashes of events we have
+  *   - GET /events/chain-tip - Get only the current chain tip
   *   - POST /events/iwant - Request specific events by hash
   *
   * @tparam Key
@@ -51,6 +52,11 @@ final case class EventGossipRoutes[F[_]: Async, Event: Encoder: Decoder, Key](
         ihave = IHave(snapshot.hashes, chainTip)
         response <- Ok(ihave)
       } yield response
+
+    // Chain-tip-only probe. Reuse the exact payload/source carried by IHave without forcing a
+    // full mempool snapshot and event-hash serialization on every admission monitor tick.
+    case GET -> Root / "chain-tip" =>
+      getLocalChainTip.fold(none[ChainTip].pure[F])(identity).flatMap(Ok(_))
 
     case req @ POST -> Root / "iwant" =>
       for {

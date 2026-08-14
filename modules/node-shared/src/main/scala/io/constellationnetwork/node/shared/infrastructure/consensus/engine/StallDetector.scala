@@ -54,6 +54,7 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
   lastSnapshotHashOf: Outcome => Hash,
   getPeerChainTips: F[Map[PeerId, ChainTip]],
+  admissionCandidateTipProbe: Option[AdmissionCandidateTipProbe.Probes[F]],
   healthRef: Ref[F, ConsensusHealthStatus],
   // Local-only: consecutive-observation streaks of "probation peer at committed tip" for B2
   // stability gating. Not part of consensus-agreed state — two honest nodes may have different
@@ -70,8 +71,6 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
 
   private def selfRole(state: ConsensusState[Key, Status, Outcome, Kind]): String =
     ConsensusLog.role(selfId, state.leader)
-
-  private val admissionTipOrdinalLagTolerance: Long = 2L
 
   private case class MonitorState(
     lastResourcesHash: Int,
@@ -101,11 +100,23 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     // Local duplicate-suppression for timestamp-driven ViewChangeVote emission. The vote still
     // goes through the normal signed VCV/VCC path; this only avoids re-signing the same
     // current->next view transition on every monitor tick.
-    lastTimestampPacemakerVoteView: Option[Int] = None
+    lastTimestampPacemakerVoteView: Option[Int] = None,
+    // Open-nominee probes are single-shot during one continuous monitor attempt. Probation
+    // recovery deliberately re-probes one fixed target at a locally rate-limited cadence until
+    // its short stability streak completes; those targets are never added to this open-lane set.
+    admissionTipProbedTargets: Set[PeerId] = Set.empty,
+    // Monotonic time of the last launched probation probe. This is local transport throttling,
+    // not consensus input. A skipped tick preserves streak history but cannot authorize a vote.
+    lastProbationTipProbeAt: Option[FiniteDuration] = None
+  )
+
+  private case class AdmissionVoteEmission(
+    openProbedTargets: Set[PeerId],
+    probationObservation: AdmissionCandidateTipProbe.Observation
   )
 
   private val basePollInterval = 100L
-  private val maxPollInterval = 1000L
+  private val maxPollInterval = AdmissionCandidateTipProbe.MinimumProbationProbeInterval.toMillis
 
   // Facility-retransmit tunables and the backoff schedule live on the companion object
   // (StallDetector.MaxFacilityRetransmits etc.) so they are unit-testable as pure values
@@ -214,22 +225,34 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       // B2 admission emission: when a peer currently in `readmissionCountdown` has a
       // matching chain tip in the mesh-gossip table, emit an `AdmissionVote` for them.
       //
-      // Fires on every poll tick when probation is non-empty (not just on
-      // resourcesChanged). Witness signal is the mesh chain tip, which updates
+      // Evaluates on every poll tick when probation is non-empty (not just on
+      // resourcesChanged). Direct probation transport is rate-limited below to one launched
+      // request per max poll interval. Witness signal is the mesh chain tip, which updates
       // independently of per-round consensus resources — binding emission to
       // `resourcesChanged` misses the case where a probation peer's mesh tip advances
       // mid-round without any consensus declaration arriving. Observed in E2E:
       // only 1 voter per cycle produced an AdmissionVote, so the 3-of-5 quorum never
-      // assembled and re-admission fell back to countdown expiry. With per-tick emission,
-      // every committee member gets a chance to observe the probation peer at tip within
+      // assembled and re-admission fell back to countdown expiry. With independent periodic
+      // evaluation, every committee member gets a chance to observe the probation peer at tip within
       // the 3-round window, tightening the cert-gated path into the primary admission
       // route rather than a rare opportunistic one.
       //
       // Safety against spam: `GossipingAdmissionVoter` calls `storage.addAdmissionVote`
-      // with first-write-wins semantics per (voter, target) — re-emitting the same signed
-      // vote on later ticks is a no-op at the storage level. The crypto work per tick is
-      // O(k) where k = probation peers at tip (typically 0-2 in practice).
-      _ <- maybeEmitAdmissionVotes(key, state, resources)
+      // with first-write-wins semantics per (voter, target). Direct probation requests are
+      // limited to one fixed target per second, and skipped ticks cannot emit from a carried
+      // streak. Any later fresh re-emission is still a storage no-op for that voter/target.
+      probationProbeDue = AdmissionCandidateTipProbe.isProbeDue(
+        ms.lastProbationTipProbeAt,
+        now,
+        maxPollInterval.millis
+      )
+      admissionVoteEmission <- maybeEmitAdmissionVotes(
+        key,
+        state,
+        resources,
+        ms.admissionTipProbedTargets,
+        probationProbeDue
+      )
 
       inFacilitiesPhase = ops.phaseIndex(state.status) == 0
       inSignaturesPhase = ops.isSignaturesPhase(state.status)
@@ -631,7 +654,12 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
             lastTimestampPacemakerVoteView =
               if (timestampPacemakerFired) state.viewNumber.some
               else if (viewAdvanced) None
-              else ms.lastTimestampPacemakerVoteView
+              else ms.lastTimestampPacemakerVoteView,
+            admissionTipProbedTargets = admissionVoteEmission.openProbedTargets,
+            lastProbationTipProbeAt = admissionVoteEmission.probationObservation match {
+              case AdmissionCandidateTipProbe.Observation.Attempted(_) => now.some
+              case AdmissionCandidateTipProbe.Observation.NotAttempted => ms.lastProbationTipProbeAt
+            }
           )
         )
 
@@ -1024,13 +1052,19 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                         // by `selectEvictionTargets`.
                         val committeeSet: Set[PeerId] = state.facilitators.value.toSet
                         val inBootstrap = ctx.isInBootstrap(state.lastOutcome)
-                        val evictionEmission = if (inBootstrap) {
+                        val evictionEmission = if (inBootstrap || !ctx.membershipPolicy.acceptsEvictionCertificates) {
                           // Phase B1 gate: no emission during bootstrap. Peers flicker Ready/Unresponsive
                           // during initial sync and recovery, and clusterStorage's view of who is
                           // unresponsive is unreliable until at least one full-committee snapshot
                           // exists. Emitting here produced cascading committee splits in the
                           // fork-recovery E2E failures. Matches Phase 4's penalty-suppression pattern.
-                          Async[F].unit
+                          Metrics[F].incrementCounter(
+                            "dag_consensus_eviction_vote_suppressed_total",
+                            Seq(
+                              Metrics.unsafeLabelName("reason") ->
+                                (if (inBootstrap) "bootstrap" else "membership_policy")
+                            )
+                          )
                         } else
                           storage.getResources(key).flatMap { resources =>
                             val alreadyVotedBySelf: Set[PeerId] =
@@ -1301,8 +1335,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     * a witnessed candidate for re-admission. Exact hash matching was too strict on a live chain: Ready followers commonly advertise N while
     * the committee has just finalized N+1.
     *
-    * Safety: storage is first-write-wins per `(voter, target)`, so re-invocations within a round are idempotent. We gate the crypto work on
-    * `resourcesChanged` in `runMonitorCycle` to avoid re-emission on every tick.
+    * Safety: storage is first-write-wins per `(voter, target)`, so re-invocations within a round are idempotent. The fixed open target is
+    * probed once per monitor attempt. The fixed probation target is probed at most once per local one-second maximum-poll interval, and a
+    * throttled tick preserves its streak without authorizing a vote from stale evidence.
     *
     * Determinism: every Core peer reads the same proposal-carried parent nominee. A local chain-tip observation controls abstention only.
     * Committee mutation still requires a quorum-certified AdmissionCertificate in an accepted proposal.
@@ -1310,8 +1345,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
   private def maybeEmitAdmissionVotes(
     key: Key,
     state: ConsensusState[Key, Status, Outcome, Kind],
-    resources: ConsensusResources[Artifact, Kind]
-  ): F[Unit] = {
+    resources: ConsensusResources[Artifact, Kind],
+    probedTargets: Set[PeerId],
+    probationProbeDue: Boolean
+  ): F[AdmissionVoteEmission] = {
     val probation = probationPeersOf(state.lastOutcome)
     val alreadyVotedBySelf: Set[PeerId] = resources.admissionVotes.collect {
       case (target, voters) if voters.contains(selfId) => target
@@ -1321,29 +1358,43 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       case ordinal: SnapshotOrdinal => ordinal.some
       case _                        => none[SnapshotOrdinal]
     }
+    // Preserve rc.6's cached gossip-tip policy byte-for-behavior. The new direct
+    // request is held to the stricter exact-parent rule in mergeExactResult below;
+    // changing this shared predicate would also alter Currency L0, which is outside
+    // this IntegrationNet GL0 mitigation.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
       tip.snapshotHash === expectedTip ||
         expectedOrdinal.exists { ordinal =>
-          tip.ordinal.value.value + admissionTipOrdinalLagTolerance >= ordinal.value.value
+          tip.ordinal.value.value + AdmissionTipReadiness.OrdinalLagTolerance >= ordinal.value.value
         }
     val committee = state.roundStartFacilitators.value.toSet
     val coreSize = math.max(1, state.coreFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
     val bootstrapActive = ctx.isInBootstrap(state.lastOutcome)
     val locallyObservedParentSigners = locallyObservedParentSignersOf(state.lastOutcome)
+    val configuredMaxAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
+    val admissionBatchSize = math.max(1, configuredMaxAdmissions)
+    val headroomGateActive = OpenAdmissionPolicy.headroomRequired(
+      certifiedConsensusActive = state.certifiedConsensusActive,
+      bootstrapActive = bootstrapActive,
+      currentCommitteeSize = committee.size,
+      maxAdmissionSeats = admissionBatchSize,
+      bootstrapCompleteProofsThreshold = config.bootstrapCompleteProofsThreshold
+    )
     val openAdmissionPolicy = OpenAdmissionPolicy.evaluate(
       cadenceAllowed = openAdmissionCadenceOf(key),
       currentCommittee = committee,
       locallyObservedParentSigners = locallyObservedParentSigners,
       quorumThresholdFraction = config.quorumThresholdFraction,
-      // Bootstrap finality still uses the legacy Core-only gate. An admitted Tier-1 seat
-      // cannot raise that requirement, while applying the post-bootstrap next-seat floor
-      // here would make singleton growth impossible under a unanimity configuration.
-      headroomGateActive = !bootstrapActive
+      // Bootstrap bypass remains only below the batch that reaches the full-committee proof
+      // threshold. The crossing batch must already support the floor it can activate.
+      headroomGateActive = headroomGateActive,
+      // The proposal validator may accept this many certificates. Prove headroom for the
+      // largest possible batch rather than assuming the IntegrationNet value remains one.
+      maxAdmissionSeats = admissionBatchSize
     )
-    val configuredMaxOpenAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
     val maxOpenAdmissions =
-      if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxOpenAdmissions else 0
+      if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxAdmissions else 0
     val canonicalNominees = admissionNomineesOf(state.lastOutcome)
     // Open expansion has a fixed per-voter target set for the entire round. Selection happens
     // before the local at-tip check, so a missing observation is an abstention rather than a walk
@@ -1359,14 +1410,13 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
     )
 
     val policyOutcome =
-      if (!openAdmissionPolicy.cadenceAllowed) "off_cadence"
-      else
-        openAdmissionPolicy.headroom match {
-          case Some(headroom) if !headroom.allowsExpansion                      => "insufficient_headroom"
-          case Some(_)                                                          => "allowed"
-          case None if bootstrapActive && locallyObservedParentSigners.nonEmpty => "bootstrap_cadence_only"
-          case None                                                             => "cadence_only"
-        }
+      openAdmissionPolicy.headroom match {
+        case Some(headroom) if !headroom.allowsExpansion                      => "insufficient_headroom"
+        case _ if !openAdmissionPolicy.cadenceAllowed                         => "off_cadence"
+        case Some(_)                                                          => "allowed"
+        case None if bootstrapActive && locallyObservedParentSigners.nonEmpty => "bootstrap_cadence_only"
+        case None                                                             => "cadence_only"
+      }
     val policyOutcomeLabel = Metrics.unsafeLabelName("outcome")
     val recordOpenAdmissionPolicy =
       Metrics[F].updateGauge(
@@ -1376,6 +1426,10 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
         Metrics[F].updateGauge(
           "dag_consensus_open_admission_vote_allowed",
           if (openAdmissionPolicy.allowsOpenAdmission) 1L else 0L
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_probation_admission_vote_allowed",
+          if (openAdmissionPolicy.allowsProbationAdmission) 1L else 0L
         ) >>
         Metrics[F].updateGauge(
           "dag_consensus_open_admission_headroom_gate_active",
@@ -1408,103 +1462,247 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
       if (probation.isEmpty) b2AtTipStreakRef.set(Map.empty)
       else Async[F].unit
 
-    if (probation.isEmpty && openAdmissionTargets.isEmpty) recordOpenAdmissionPolicy >> clearStreaks
+    if (probation.isEmpty && openAdmissionTargets.isEmpty)
+      (recordOpenAdmissionPolicy >> clearStreaks).as(
+        AdmissionVoteEmission(probedTargets, AdmissionCandidateTipProbe.Observation.NotAttempted)
+      )
     else
-      recordOpenAdmissionPolicy >> clearStreaks >> getPeerChainTips.flatMap { chainTips =>
-        // Per-tick stability bookkeeping. Increment the streak for any probation peer whose
-        // mesh-reported tip matches the committed tip; reset to 0 otherwise. Drop entries for
-        // peers no longer in probation so the map can't grow unbounded.
-        val updateStreaks =
-          if (probation.isEmpty) Map.empty[PeerId, Int].pure[F]
-          else
-            b2AtTipStreakRef.modify { prev =>
-              val updated: Map[PeerId, Int] = probation.iterator.map { pid =>
-                val atTip = chainTips.get(pid).exists(isAdmissionReadyTip)
-                val next = if (atTip) prev.getOrElse(pid, 0) + 1 else 0
-                pid -> next
-              }.toMap
-              (updated, updated)
+      recordOpenAdmissionPolicy >> clearStreaks >> getPeerChainTips.flatMap { cachedChainTips =>
+        // Global L0 probes one fixed target per lane. The probation target may be retried once per
+        // local one-second maximum-poll interval until its stability streak is satisfied; the open target remains one-shot
+        // per monitor attempt. Run the two bounded lane probes independently so an unavailable
+        // probation peer cannot starve a healthy open nominee. Neither lane walks to a second
+        // target after failure. Currency supplies no probe and keeps its cached-mesh behavior
+        // byte-for-behavior.
+        val fixedProbationTarget =
+          admissionCandidateTipProbe.flatMap(_ => AdmissionCandidateTipProbe.probationTargetForRound(probation, expectedTip))
+        val probationProbeTarget = for {
+          _ <- admissionCandidateTipProbe
+          target <- fixedProbationTarget
+          if openAdmissionPolicy.allowsProbationAdmission
+          if !alreadyVotedBySelf.contains(target)
+          if probationProbeDue
+        } yield target
+        val openProbeTarget = for {
+          _ <- admissionCandidateTipProbe
+          target <- AdmissionCandidateTipProbe.targetForRound(
+            openAdmissionTargets,
+            probedTargets,
+            cachedChainTips,
+            isAdmissionReadyTip
+          )
+        } yield target
+
+        admissionCandidateTipProbe
+          .fold(List.empty[(PeerId, AdmissionCandidateTipProbe.Lane, Option[ChainTip])].pure[F]) { probes =>
+            AdmissionCandidateTipProbe.runLaneProbes(probes, probationProbeTarget, openProbeTarget)
+          }
+          .flatMap { directProbeResults =>
+            val probationObservation: AdmissionCandidateTipProbe.Observation =
+              directProbeResults.collectFirst {
+                case (_, lane, tip) if lane.isProbationRecovery =>
+                  AdmissionCandidateTipProbe.Observation.Attempted(tip)
+              }.getOrElse(AdmissionCandidateTipProbe.Observation.NotAttempted)
+            val nextProbedTargets = probedTargets ++ directProbeResults.collect {
+              case (target, lane, _) if !lane.isProbationRecovery => target
+            }
+            // A fresh direct response is admitted only when it names the exact parent.
+            // The bounded-lag allowance remains for the asynchronously sampled gossip cache,
+            // whose value can legitimately trail the current round.
+            val chainTips = directProbeResults.foldLeft(cachedChainTips) {
+              case (tips, (target, _, observedTip)) =>
+                AdmissionCandidateTipProbe.mergeExactResult(
+                  tips,
+                  (target -> observedTip).some,
+                  expectedTip,
+                  expectedOrdinal
+                )
+            }
+            val directProbeOutcomes = directProbeResults.map {
+              case (target, lane, Some(tip)) if AdmissionTipReadiness.isExact(tip, expectedTip, expectedOrdinal) =>
+                (target, lane, "ready")
+              case (target, lane, Some(_)) => (target, lane, "not_ready")
+              case (target, lane, None)    => (target, lane, "unavailable")
+            }
+            val recordDirectProbe = directProbeOutcomes.traverse_ {
+              case (_, lane, outcome) =>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_open_admission_tip_probe_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> outcome, Metrics.unsafeLabelName("lane") -> lane.label)
+                )
             }
 
-        updateStreaks.flatMap { streaks =>
-          // Require multiple consecutive at-tip observations before emitting. A single tick of
-          // match is insufficient evidence that the peer has stably caught up — observed
-          // in E2E: B1 evicted gl0-2 while it was still downloading, then B2 re-admitted
-          // it the instant its recovery download produced the committed tip hash; committee
-          // snapped back to 5 just before isolation, leaving only 3 active signers against a
-          // declaration quorum of 4 (ceil(5*0.67)). Requiring a stability streak delays
-          // re-admission until the peer has held the tip for at least
-          // `b2AdmissionAtTipStreak` consecutive monitor ticks, which at ~500ms polling is
-          // roughly a second of sustained correctness.
-          // Clamp the threshold to a minimum of 1. A non-positive `b2AdmissionAtTipStreak`
-          // would silently satisfy `streaks.getOrElse(pid, 0) >= 0` for every probation
-          // peer on the very first tick, restoring the pre-fix one-shot behavior without
-          // any signal at config load time. Forcing a floor of 1 means mis-configured
-          // values degrade gracefully to the old-style immediate admission, which at least
-          // matches behavior prior to this fix rather than silently bypassing the streak.
-          val minStreak = math.max(1, config.b2AdmissionAtTipStreak)
-          val readyAtTip: Set[PeerId] = probation.filter { pid =>
-            !alreadyVotedBySelf.contains(pid) &&
-            streaks.getOrElse(pid, 0) >= minStreak
+            // Global L0 advances the fixed probation streak only from this tick's fresh exact
+            // direct response. Currency has no direct probe and retains the legacy cached-mesh
+            // streak behavior for every probation peer.
+            val updateStreaks =
+              if (probation.isEmpty) Map.empty[PeerId, Int].pure[F]
+              else if (admissionCandidateTipProbe.nonEmpty)
+                b2AtTipStreakRef.modify { previous =>
+                  val updated = AdmissionCandidateTipProbe.updateExactProbationStreak(
+                    previous,
+                    fixedProbationTarget,
+                    probationObservation,
+                    expectedTip,
+                    expectedOrdinal
+                  )
+                  (updated, updated)
+                }
+              else
+                b2AtTipStreakRef.modify { prev =>
+                  val updated: Map[PeerId, Int] = probation.iterator.map { pid =>
+                    val atTip = chainTips.get(pid).exists(isAdmissionReadyTip)
+                    val next = if (atTip) prev.getOrElse(pid, 0) + 1 else 0
+                    pid -> next
+                  }.toMap
+                  (updated, updated)
+                }
+
+            recordDirectProbe >> updateStreaks.flatMap { streaks =>
+              // Require multiple consecutive at-tip observations before emitting. A single tick of
+              // match is insufficient evidence that the peer has stably caught up — observed
+              // in E2E: B1 evicted gl0-2 while it was still downloading, then B2 re-admitted
+              // it the instant its recovery download produced the committed tip hash; committee
+              // snapped back to 5 just before isolation, leaving only 3 active signers against a
+              // declaration quorum of 4 (ceil(5*0.67)). Requiring a stability streak delays
+              // re-admission until the peer has held the tip for at least
+              // `b2AdmissionAtTipStreak` fresh, rate-limited direct observations. With the bridge's
+              // one-second minimum probe interval, the compiled default streak of two spans multiple seconds
+              // of sustained correctness.
+              // Clamp the threshold to a minimum of 1. A non-positive `b2AdmissionAtTipStreak`
+              // would silently satisfy `streaks.getOrElse(pid, 0) >= 0` for every probation
+              // peer on the very first tick, restoring the pre-fix one-shot behavior without
+              // any signal at config load time. Forcing a floor of 1 means mis-configured
+              // values degrade gracefully to the old-style immediate admission, which at least
+              // matches behavior prior to this fix rather than silently bypassing the streak.
+              val minStreak = math.max(1, config.b2AdmissionAtTipStreak)
+              val readyAtTip: Set[PeerId] =
+                if (!openAdmissionPolicy.allowsProbationAdmission) Set.empty
+                else if (admissionCandidateTipProbe.nonEmpty)
+                  AdmissionCandidateTipProbe.readyProbationTarget(
+                    fixedProbationTarget,
+                    probationObservation,
+                    streaks,
+                    minStreak,
+                    alreadyVotedBySelf,
+                    expectedTip,
+                    expectedOrdinal
+                  )
+                else
+                  probation.filter { pid =>
+                    !alreadyVotedBySelf.contains(pid) && streaks.getOrElse(pid, 0) >= minStreak
+                  }
+              val readyCandidatesAtTip: List[PeerId] =
+                openAdmissionTargets.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
+              // Admission-gate diagnostic log per probation peer per tick.
+              // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
+              // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
+              // or already-voted-by-self. One INFO line per call when probation is non-empty.
+              val atTipPerPeer = probation.iterator.map { pid =>
+                val atTip =
+                  if (admissionCandidateTipProbe.nonEmpty)
+                    directProbeResults.exists {
+                      case (target, lane, Some(tip)) =>
+                        lane.isProbationRecovery && target === pid && AdmissionTipReadiness.isExact(tip, expectedTip, expectedOrdinal)
+                      case _ => false
+                    }
+                  else chainTips.get(pid).exists(isAdmissionReadyTip)
+                val streak = streaks.getOrElse(pid, 0)
+                val voted = alreadyVotedBySelf.contains(pid)
+                (pid, atTip, streak, voted)
+              }.toList.sortBy(_._1.toString)
+              val atTipCount = atTipPerPeer.count(_._2)
+              val probationProbeDisposition =
+                if (admissionCandidateTipProbe.isEmpty) "disabled"
+                else if (fixedProbationTarget.isEmpty) "no_target"
+                else if (fixedProbationTarget.exists(alreadyVotedBySelf.contains)) "already_voted"
+                else if (!openAdmissionPolicy.allowsProbationAdmission) "policy_blocked"
+                else if (!probationProbeDue) "throttled"
+                else
+                  probationObservation match {
+                    case AdmissionCandidateTipProbe.Observation.Attempted(Some(tip))
+                        if AdmissionTipReadiness.isExact(tip, expectedTip, expectedOrdinal) =>
+                      "ready"
+                    case AdmissionCandidateTipProbe.Observation.Attempted(Some(_)) => "not_ready"
+                    case AdmissionCandidateTipProbe.Observation.Attempted(None)    => "unavailable"
+                    case AdmissionCandidateTipProbe.Observation.NotAttempted       => "not_attempted"
+                  }
+              val details = atTipPerPeer.map {
+                case (pid, atTip, streak, voted) =>
+                  s"${pid.show.take(8)}:atTip=$atTip,streak=$streak,votedBySelf=$voted"
+              }
+                .mkString(",")
+              ConsensusLog
+                .info(
+                  logger,
+                  Category.Facilitator,
+                  key.toString,
+                  "n/a",
+                  LogEvent.Admission,
+                  "stage" -> "gate",
+                  "probation" -> probation.size.toString,
+                  "atTip" -> atTipCount.toString,
+                  "ready" -> readyAtTip.size.toString,
+                  "canonicalNominees" -> canonicalNominees.size.toString,
+                  "openTargets" -> openAdmissionTargets.size.toString,
+                  "candidateReady" -> readyCandidatesAtTip.size.toString,
+                  "candidateVoteQuorum" -> voteQuorum.toString,
+                  "openCadenceAllowed" -> openAdmissionPolicy.cadenceAllowed.toString,
+                  "openVoteAllowed" -> openAdmissionPolicy.allowsOpenAdmission.toString,
+                  "probationVoteAllowed" -> openAdmissionPolicy.allowsProbationAdmission.toString,
+                  "openPolicyOutcome" -> policyOutcome,
+                  "openObservedSigners" -> openAdmissionPolicy.headroom
+                    .map(_.observedCurrentCommitteeSigners.toString)
+                    .getOrElse("n/a"),
+                  "openNextFinalityFloor" -> openAdmissionPolicy.headroom.map(_.nextFinalityFloor.toString).getOrElse("n/a"),
+                  "openFinalityMargin" -> openAdmissionPolicy.headroom.map(_.margin.toString).getOrElse("n/a"),
+                  "minStreak" -> minStreak.toString,
+                  "tipLagTolerance" -> AdmissionTipReadiness.OrdinalLagTolerance.toString,
+                  "expectedOrdinal" -> expectedOrdinal.map(_.value.value.toString).getOrElse("none"),
+                  "directProbeTarget" -> directProbeResults.map { case (target, _, _) => target.show.take(8) }.mkString(","),
+                  "directProbeLane" -> directProbeResults.map { case (_, lane, _) => lane.label }.mkString(","),
+                  "directProbeOutcome" -> directProbeOutcomes.map(_._3).mkString(","),
+                  "probationProbeDisposition" -> probationProbeDisposition,
+                  "candidateTipOrdinals" -> openAdmissionTargets
+                    .flatMap(pid => chainTips.get(pid).map(tip => s"${pid.show.take(8)}:${tip.ordinal.value.value}"))
+                    .mkString(","),
+                  "details" -> details
+                ) >> {
+                val emissionTargets = StallDetector.admissionVoteTargets(
+                  probationReady = readyAtTip.toList,
+                  openReady = readyCandidatesAtTip,
+                  maxOpenAdmissions = configuredMaxAdmissions,
+                  laneProbesEnabled = admissionCandidateTipProbe.nonEmpty
+                )
+                emissionTargets.traverse_ { target =>
+                  admissionVoter.emitAdmissionVote(key, target, AdmissionReason.ReadyAtTip) >>
+                    queue.offer(ConsensusCommand.CheckAdmissionAssembly(key, target))
+                }
+              }.as(AdmissionVoteEmission(nextProbedTargets, probationObservation))
+            }
           }
-          val readyCandidatesAtTip: List[PeerId] =
-            openAdmissionTargets.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
-          // Admission-gate diagnostic log per probation peer per tick.
-          // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
-          // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
-          // or already-voted-by-self. One INFO line per call when probation is non-empty.
-          val atTipPerPeer = probation.iterator.map { pid =>
-            val atTip = chainTips.get(pid).exists(isAdmissionReadyTip)
-            val streak = streaks.getOrElse(pid, 0)
-            val voted = alreadyVotedBySelf.contains(pid)
-            (pid, atTip, streak, voted)
-          }.toList.sortBy(_._1.toString)
-          val atTipCount = atTipPerPeer.count(_._2)
-          val details = atTipPerPeer.map {
-            case (pid, atTip, streak, voted) =>
-              s"${pid.show.take(8)}:atTip=$atTip,streak=$streak,votedBySelf=$voted"
-          }
-            .mkString(",")
-          ConsensusLog
-            .info(
-              logger,
-              Category.Facilitator,
-              key.toString,
-              "n/a",
-              LogEvent.Admission,
-              "stage" -> "gate",
-              "probation" -> probation.size.toString,
-              "atTip" -> atTipCount.toString,
-              "ready" -> readyAtTip.size.toString,
-              "canonicalNominees" -> canonicalNominees.size.toString,
-              "openTargets" -> openAdmissionTargets.size.toString,
-              "candidateReady" -> readyCandidatesAtTip.size.toString,
-              "candidateVoteQuorum" -> voteQuorum.toString,
-              "openCadenceAllowed" -> openAdmissionPolicy.cadenceAllowed.toString,
-              "openVoteAllowed" -> openAdmissionPolicy.allowsOpenAdmission.toString,
-              "openPolicyOutcome" -> policyOutcome,
-              "openObservedSigners" -> openAdmissionPolicy.headroom
-                .map(_.observedCurrentCommitteeSigners.toString)
-                .getOrElse("n/a"),
-              "openNextFinalityFloor" -> openAdmissionPolicy.headroom.map(_.nextFinalityFloor.toString).getOrElse("n/a"),
-              "openFinalityMargin" -> openAdmissionPolicy.headroom.map(_.margin.toString).getOrElse("n/a"),
-              "minStreak" -> minStreak.toString,
-              "tipLagTolerance" -> admissionTipOrdinalLagTolerance.toString,
-              "expectedOrdinal" -> expectedOrdinal.map(_.value.value.toString).getOrElse("none"),
-              "candidateTipOrdinals" -> openAdmissionTargets
-                .flatMap(pid => chainTips.get(pid).map(tip => s"${pid.show.take(8)}:${tip.ordinal.value.value}"))
-                .mkString(","),
-              "details" -> details
-            ) >> (readyAtTip.toList ++ readyCandidatesAtTip).distinct.traverse_ { target =>
-            admissionVoter.emitAdmissionVote(key, target, AdmissionReason.ReadyAtTip) >>
-              queue.offer(ConsensusCommand.CheckAdmissionAssembly(key, target))
-          }
-        }
       }
   }
 }
 
 object StallDetector {
+
+  /** Keep probation recovery and open expansion as independent vote-emission lanes.
+    *
+    * Global L0's direct probes produce at most one fixed probation target plus the configured number of fixed open targets. Currency's
+    * no-probe path retains rc.6 behavior exactly: every locally ready probation/open target may emit, while proposal construction remains
+    * the shared certificate cap.
+    */
+  private[consensus] def admissionVoteTargets(
+    probationReady: List[PeerId],
+    openReady: List[PeerId],
+    maxOpenAdmissions: Int,
+    laneProbesEnabled: Boolean
+  ): List[PeerId] =
+    if (laneProbesEnabled) {
+      val probation = probationReady.distinct
+      probation ++ openReady.filterNot(probation.toSet).distinct.take(math.max(0, maxOpenAdmissions))
+    } else (probationReady ++ openReady).distinct
 
   /** Select the fixed open-expansion targets a Core voter may consider in one round.
     *
@@ -1747,4 +1945,5 @@ object StallDetector {
         .sortBy(_.value.value) // canonical hex identity — same on every node
         .take(remainingSlots)
   }
+
 }
