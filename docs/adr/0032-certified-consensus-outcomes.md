@@ -93,6 +93,15 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    because its binary hash cannot be authenticated from a scalar alone. Two valid
    semantic value hashes fail closed. Arbitrary long-range certification is out of scope
    until a certificate chain or trusted checkpoint is specified.
+   Ordinary download uses the same rule before any application-storage alignment or
+   consensus initialization. At the exact activation key, the locally downloaded and
+   state-proof-validated A-1 artifact/context is the independent root. After activation,
+   the node must hold the immediately preceding outcome in its locally produced or
+   previously validated certified sidecar and tie that sidecar back to its local public
+   snapshot. The existing bound-outcome verifier then re-derives the candidate against
+   that predecessor. A fresh post-activation node without local lineage or an explicit
+   signed recovery-plan/checkpoint fails closed; one authenticated peer response is not
+   membership authority.
 10. Persist each local certified vote lock before emitting its `OutcomeVote`, and
     persist every verified QC advancement before it can influence gossip or commit
     progression. DAG L0 and Currency L0 share one generic
@@ -176,6 +185,11 @@ aligned v35 jar/config when their own metagraph activates it.
 - Missing or corrupt certified sidecars reduce recovery availability and must never be
   treated as valid evidence; every adopted outcome is cryptographically re-verified
   against the locally known parent committee.
+- This includes initial download: layer preflight runs before the newer-outcome
+  application-storage shortcut, sidecar writes, vote-lock cleanup, or consensus CAS. A
+  missing trusted predecessor rejects the handoff without mutation. Operators adding a
+  fresh node after activation must provide an announced trusted checkpoint/recovery plan
+  until contiguous certified-outcome download is implemented.
 - Ordinary rollback at or after activation requires an operator-signed recovery plan. A
   standalone typed outcome cannot authenticate the lineage of the committee used to
   verify its own QCs; long-range ordinary rollback remains out of scope until a

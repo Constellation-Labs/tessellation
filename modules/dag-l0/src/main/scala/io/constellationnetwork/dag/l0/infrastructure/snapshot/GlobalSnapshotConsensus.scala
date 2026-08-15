@@ -267,36 +267,37 @@ object GlobalSnapshotConsensus {
       recoveryPlanPreflight = (outcome: GlobalConsensusOutcome) =>
         configuredRecoveryPlan.flatMap(_.traverse_ { verified =>
           val plan = verified.plan
-          for {
-            hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
-              outcome.finished.signedMajorityArtifact.toHashed[F]
-            }
-            expected = GlobalRecoveryPlanOutcome.seed(
-              outcome.finished.signedMajorityArtifact,
-              outcome.finished.context,
-              hashedSnapshot.hash,
-              plan.committee
-            )
-            _ <- new IllegalStateException(
-              s"Downloaded GL0 recovery outcome does not match signed plan=${plan.planId.value}: " +
-                s"expectedAnchor=${plan.anchor.ordinal.value.value}/${plan.anchor.snapshotHash.value} " +
-                s"got=${outcome.key.value.value}/${hashedSnapshot.hash.value}"
-            ).raiseError[F, Unit]
-              .unlessA(
-                outcome.key === plan.anchor.ordinal &&
-                  hashedSnapshot.hash === plan.anchor.snapshotHash &&
-                  outcome === expected
-              )
-            ineligible <- plan.committee.toList.filterA { peerId =>
-              peerId.toPublic[F].map(_.toAddress).map { address =>
-                !outcome.finished.context.balances.get(address).getOrElse(Balance.empty).satisfiesCollateral(collateral)
+          if (outcome.key =!= plan.anchor.ordinal) Async[F].unit
+          else
+            for {
+              hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
+                outcome.finished.signedMajorityArtifact.toHashed[F]
               }
-            }
-            _ <- new IllegalStateException(
-              s"Downloaded GL0 recovery outcome has uncollateralized planned members=${ineligible.map(_.value.value).mkString(",")}"
-            ).raiseError[F, Unit].whenA(ineligible.nonEmpty)
-            _ <- recoveryPlanReceipt.consume(verified.signed)
-          } yield ()
+              expected = GlobalRecoveryPlanOutcome.seed(
+                outcome.finished.signedMajorityArtifact,
+                outcome.finished.context,
+                hashedSnapshot.hash,
+                plan.committee
+              )
+              _ <- new IllegalStateException(
+                s"Downloaded GL0 recovery outcome does not match signed plan=${plan.planId.value}: " +
+                  s"expectedAnchor=${plan.anchor.ordinal.value.value}/${plan.anchor.snapshotHash.value} " +
+                  s"got=${outcome.key.value.value}/${hashedSnapshot.hash.value}"
+              ).raiseError[F, Unit]
+                .unlessA(
+                  hashedSnapshot.hash === plan.anchor.snapshotHash &&
+                    outcome === expected
+                )
+              ineligible <- plan.committee.toList.filterA { peerId =>
+                peerId.toPublic[F].map(_.toAddress).map { address =>
+                  !outcome.finished.context.balances.get(address).getOrElse(Balance.empty).satisfiesCollateral(collateral)
+                }
+              }
+              _ <- new IllegalStateException(
+                s"Downloaded GL0 recovery outcome has uncollateralized planned members=${ineligible.map(_.value.value).mkString(",")}"
+              ).raiseError[F, Unit].whenA(ineligible.nonEmpty)
+              _ <- recoveryPlanReceipt.consume(verified.signed)
+            } yield ()
         })
 
       stateAdvancer =
@@ -535,6 +536,13 @@ object GlobalSnapshotConsensus {
                 // The signed-plan synthetic anchor is the all-member barrier's exact value. Keep
                 // serving it even after an early quorum advances, so an asymmetrically late member
                 // can still fetch N and release its locally-held first-round gate.
+                certifiedOutcomeSidecar.write(outcome.key, outcome)
+              case _
+                  if effectiveConsensusConfig.certifiedConsensusActivationKey == 0L &&
+                    outcome.key.value.value == 0L &&
+                    GlobalRecoveryPlanOutcome.isCanonicalRoot(outcome) =>
+                // Genesis is the independently authenticated chain root. Preserve its canonical
+                // local outcome long enough to validate the first certified child at key 1.
                 certifiedOutcomeSidecar.write(outcome.key, outcome)
               case _ =>
                 outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>

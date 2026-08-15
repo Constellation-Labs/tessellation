@@ -90,6 +90,18 @@ dormant.
    `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`
    in the activation dashboard.
 
+Before activation, verify the ordinary-download lineage boundary on every source node:
+
+- the exact activation outcome validates from the locally stored, state-proof-checked
+  A-1 snapshot;
+- a restart after activation retains both the current and immediately preceding
+  certified outcome sidecars and validates the current outcome from that predecessor;
+- a missing/corrupt predecessor fails before application storage, consensus storage,
+  safety locks, or sidecars change; and
+- a fresh post-activation node has a signed operator recovery plan or separately
+  announced trusted checkpoint. Until contiguous certificate-chain download exists,
+  it cannot securely bootstrap from one arbitrary Ready peer.
+
 The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
 to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary
 same-key retries retain the record. A certified finalization removes it only after the
@@ -116,6 +128,12 @@ If activation fails:
 2. Archive logs and sidecars before changing anything.
 3. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
 4. Move the activation key only through another announced, full-cluster rollout.
+
+Do not work around `trusted_predecessor_sidecar_missing` by copying a peer's JSON
+sidecar into the local directory. Local provenance is the authority: the predecessor
+must have been produced by this node, accepted through the certified preflight, or
+superseded by an explicit signed recovery plan. Copying unverified transport bytes
+reintroduces the circular committee proof this boundary is designed to reject.
 
 For Currency L0 emergency solo rollback, `--allow-solo-consensus` remains a one-shot,
 exactly-one-node recovery operation. Never persist it in systemd or automatic restart

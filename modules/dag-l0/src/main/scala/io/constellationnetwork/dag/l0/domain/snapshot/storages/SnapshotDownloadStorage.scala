@@ -21,6 +21,15 @@ trait SnapshotDownloadStorage[F[_]] {
   def readCombined(
     ordinal: SnapshotOrdinal
   )(implicit hasher: Hasher[F], stateProofSelector: StateProofSelector): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+
+  /** Read and state-proof-validate a persisted snapshot/context pair without synchronizing or otherwise mutating application storage.
+    *
+    * Consensus lineage preflight uses this method before it has accepted a peer-supplied outcome. `readCombined` remains the application
+    * recovery path and may synchronize the MPT or self-heal invalid files.
+    */
+  def readCombinedValidated(
+    ordinal: SnapshotOrdinal
+  )(implicit hasher: Hasher[F], stateProofSelector: StateProofSelector): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
   def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit]
 
   def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit]

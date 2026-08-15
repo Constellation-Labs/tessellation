@@ -3,12 +3,11 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.Duration
 
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
-import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -18,7 +17,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
+import io.constellationnetwork.security.HasherSelector
 
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *
@@ -35,12 +34,41 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
   */
 object GlobalCertifiedDownloadValidator {
 
+  private[snapshot] sealed trait TrustedParentKind
+  private[snapshot] object TrustedParentKind {
+    case object Certified extends TrustedParentKind
+    case object AuthorizedRoot extends TrustedParentKind
+  }
+
+  private final case class TrustedParent(
+    outcome: GlobalConsensusOutcome,
+    kind: TrustedParentKind
+  )
+
   private final case class RoundProjection(
     selected: List[PeerId],
     committee: CertifiedRoundCommitteeProjector.Projection
   )
 
-  def make[F[_]: Async: HasherSelector: SecurityProvider](
+  private[snapshot] def trustedParentKind(outcome: GlobalConsensusOutcome): Either[String, TrustedParentKind] =
+    if (outcome.finished.certifiedOutcome.nonEmpty) TrustedParentKind.Certified.asRight
+    else if (GlobalRecoveryPlanOutcome.isCanonicalRoot(outcome)) TrustedParentKind.AuthorizedRoot.asRight
+    else "trusted_predecessor_not_certified_or_authorized_root".asLeft
+
+  private[snapshot] def validatePredecessorBindings(
+    keyMatches: Boolean,
+    artifactMatches: Boolean,
+    contextMatches: Boolean,
+    hashMatches: Boolean
+  ): Either[String, Unit] =
+    for {
+      _ <- Either.cond(keyMatches, (), "trusted_predecessor_key_mismatch")
+      _ <- Either.cond(artifactMatches, (), "trusted_predecessor_artifact_mismatch")
+      _ <- Either.cond(contextMatches, (), "trusted_predecessor_context_mismatch")
+      _ <- Either.cond(hashMatches, (), "trusted_predecessor_hash_mismatch")
+    } yield ()
+
+  def make[F[_]: Async: HasherSelector](
     config: ConsensusConfig,
     coreCommitteeSize: Int,
     seedlistPeerIds: Set[PeerId],
@@ -60,73 +88,83 @@ object GlobalCertifiedDownloadValidator {
         selfHealth = outcome.peerSelfHealth.toMap
       )
 
-    def projectRound(
+    def projectAuthorizedRoot(
       key: GlobalSnapshotKey,
       trustedParent: GlobalConsensusOutcome
-    ): F[Either[String, RoundProjection]] =
-      trustedParent.finished.certifiedOutcome match {
-        case Some(certified) =>
-          CertifiedRoundCommitteeProjector
-            .fromCertifiedParent[F](
+    ): F[Either[String, RoundProjection]] = {
+      val seedlistEligible = trustedParent.facilitators.value.filter(pid => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(pid))
+
+      seedlistEligible
+        .filterA(consensusFns.facilitatorEligible(trustedParent.finished.context, _))
+        .map { eligible =>
+          for {
+            _ <- Either.cond(eligible.nonEmpty, (), "trusted_root_eligible_committee_empty")
+            _ <- GlobalSnapshotConsensusStateCreator
+              .finalizeEligibleCommitteeAtActivation(
+                key,
+                config.certifiedConsensusActivatesAt(key.value.value),
+                eligible,
+                eligible.head,
+                config.quorumThresholdFraction
+              )
+              .leftMap(_.getMessage)
+            selected = facilitatorSelector.select(eligible, trustedParent.finished.snapshotHash)
+            committee = CertifiedRoundCommitteeProjector.project(
               key = key,
-              parentValue = certified.proposalQc.value,
-              parentRecentSigners = trustedParent.recentSigners,
-              parentControllerEvidence = trustedParent.controllerEvidence.getOrElse(SortedMap.empty),
-              parentCarried = carried(trustedParent),
+              selectedFacilitators = selected,
+              recentSigners = trustedParent.recentSigners,
+              controllerEvidence = trustedParent.controllerEvidence.getOrElse(SortedMap.empty),
+              carried = carried(trustedParent),
               config = config,
               coreCommitteeSize = coreCommitteeSize,
-              seedlistPeerIds = seedlistPeerIds,
-              isContextEligible = consensusFns.facilitatorEligible(trustedParent.finished.context, _),
-              facilitatorSelector = facilitatorSelector,
-              parentArtifactHash = trustedParent.finished.snapshotHash
+              forcedTier1Peers = Set.empty
             )
-            .map(_.map(p => RoundProjection(p.nextRound.selectedCommittee, p.committee)))
+            _ <- Either.cond(committee.signingFacilitators.nonEmpty, (), "trusted_root_signing_committee_empty")
+            _ <- GlobalSnapshotConsensusStateCreator
+              .validateActivationCommittee(
+                key,
+                config.certifiedConsensusActivatesAt(key.value.value),
+                "downloaded activation signing",
+                committee.signingFacilitators,
+                config.quorumThresholdFraction
+              )
+              .leftMap(_.getMessage)
+          } yield RoundProjection(selected, committee)
+        }
+    }
 
-        case None if config.certifiedConsensusActivatesAt(key.value.value) =>
-          val seedlistEligible = trustedParent.facilitators.value.filter(pid => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(pid))
-
-          seedlistEligible
-            .filterA(consensusFns.facilitatorEligible(trustedParent.finished.context, _))
-            .map { eligible =>
-              for {
-                _ <- GlobalSnapshotConsensusStateCreator
-                  .finalizeEligibleCommitteeAtActivation(
-                    key,
-                    certifiedConsensusActivatesAtKey = true,
-                    eligible,
-                    eligible.headOption.getOrElse(trustedParent.facilitators.value.head),
-                    config.quorumThresholdFraction
-                  )
-                  .leftMap(_.getMessage)
-                selected = facilitatorSelector.select(eligible, trustedParent.finished.snapshotHash)
-                committee = CertifiedRoundCommitteeProjector.project(
+    def projectRound(
+      key: GlobalSnapshotKey,
+      trustedParent: TrustedParent
+    ): F[Either[String, RoundProjection]] =
+      trustedParent.kind match {
+        case TrustedParentKind.Certified =>
+          trustedParent.outcome.finished.certifiedOutcome match {
+            case Some(certified) =>
+              CertifiedRoundCommitteeProjector
+                .fromCertifiedParent[F](
                   key = key,
-                  selectedFacilitators = selected,
-                  recentSigners = trustedParent.recentSigners,
-                  controllerEvidence = trustedParent.controllerEvidence.getOrElse(SortedMap.empty),
-                  carried = carried(trustedParent),
+                  parentValue = certified.proposalQc.value,
+                  parentRecentSigners = trustedParent.outcome.recentSigners,
+                  parentControllerEvidence = trustedParent.outcome.controllerEvidence.getOrElse(SortedMap.empty),
+                  parentCarried = carried(trustedParent.outcome),
                   config = config,
                   coreCommitteeSize = coreCommitteeSize,
-                  forcedTier1Peers = Set.empty
+                  seedlistPeerIds = seedlistPeerIds,
+                  isContextEligible = consensusFns.facilitatorEligible(trustedParent.outcome.finished.context, _),
+                  facilitatorSelector = facilitatorSelector,
+                  parentArtifactHash = trustedParent.outcome.finished.snapshotHash
                 )
-                _ <- GlobalSnapshotConsensusStateCreator
-                  .validateActivationCommittee(
-                    key,
-                    certifiedConsensusActivatesAtKey = true,
-                    "downloaded activation signing",
-                    committee.signingFacilitators,
-                    config.quorumThresholdFraction
-                  )
-                  .leftMap(_.getMessage)
-              } yield RoundProjection(selected, committee)
-            }
+                .map(_.map(p => RoundProjection(p.nextRound.selectedCommittee, p.committee)))
+            case None => "trusted_predecessor_certificate_missing".asLeft[RoundProjection].pure[F]
+          }
 
-        case None => "trusted_predecessor_not_certified".asLeft[RoundProjection].pure[F]
+        case TrustedParentKind.AuthorizedRoot => projectAuthorizedRoot(key, trustedParent.outcome)
       }
 
     def stateFromTrustedParent(
       key: GlobalSnapshotKey,
-      trustedParent: GlobalConsensusOutcome
+      trustedParent: TrustedParent
     ): F[Either[String, GlobalSnapshotConsensusState]] =
       projectRound(key, trustedParent).map(
         _.flatMap { projected =>
@@ -137,7 +175,7 @@ object GlobalCertifiedDownloadValidator {
           val leaderEligibility = LeaderEligibility.fromRecentSigners(
             core = core,
             peerQuality = controllerInputs.peerQuality,
-            recentSigners = trustedParent.recentSigners,
+            recentSigners = trustedParent.outcome.recentSigners,
             minParticipationObservations = config.minParticipationObservations,
             minLeaderPoolSize = config.minLeaderPoolSize
           )
@@ -147,7 +185,7 @@ object GlobalCertifiedDownloadValidator {
             .map { _ =>
               val leader = facilitatorSelector.selectLeaderWeighted(
                 leaderEligibility.leaderPool,
-                trustedParent.finished.snapshotHash,
+                trustedParent.outcome.finished.snapshotHash,
                 viewNumber = 0,
                 qualityScores = controllerInputs.peerQuality,
                 selfHealthHints = controllerInputs.selfHealth,
@@ -159,13 +197,13 @@ object GlobalCertifiedDownloadValidator {
 
               ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, GlobalConsensusKind](
                 key = key,
-                lastOutcome = trustedParent,
+                lastOutcome = trustedParent.outcome,
                 facilitators = Facilitators(full),
                 roundStartFacilitators = Facilitators(full),
                 status = CollectingFacilities(
                   maybeTrigger = None,
-                  facilitatorsHash = trustedParent.finished.facilitatorsHash,
-                  lastSnapshotHash = trustedParent.finished.snapshotHash
+                  facilitatorsHash = trustedParent.outcome.finished.facilitatorsHash,
+                  lastSnapshotHash = trustedParent.outcome.finished.snapshotHash
                 ),
                 createdAt = Duration.Zero,
                 eligibleFacilitators = EligibleFacilitators(projected.selected),
@@ -174,7 +212,7 @@ object GlobalCertifiedDownloadValidator {
                 leader = leader,
                 initialViewNumber = 0,
                 viewNumber = 0,
-                entropy = trustedParent.finished.snapshotHash,
+                entropy = trustedParent.outcome.finished.snapshotHash,
                 certifiedConsensusActive = true
               )
             }
@@ -186,48 +224,48 @@ object GlobalCertifiedDownloadValidator {
     ): F[Either[String, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
       HasherSelector[F].forOrdinal(ordinal) { implicit hasher =>
         snapshotDownloadStorage
-          .readCombined(ordinal)
+          .readCombinedValidated(ordinal)
           .map(_.toRight(s"trusted_snapshot_missing:${ordinal.value.value}"))
       }
 
-    def exactActivationParent(candidate: GlobalConsensusOutcome): F[Either[String, GlobalConsensusOutcome]] = {
+    def exactActivationParent(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] = {
       val activation = candidate.key.value.value
 
       if (activation <= 0L)
-        "activation_parent_unavailable_at_genesis".asLeft[GlobalConsensusOutcome].pure[F]
+        "activation_parent_unavailable_at_genesis".asLeft[TrustedParent].pure[F]
       else {
         val parentOrdinal = SnapshotOrdinal.unsafeApply(activation - 1L)
 
         locallyValidatedSnapshot(parentOrdinal).flatMap(_.traverse {
           case (snapshot, context) =>
-            HasherSelector[F].forOrdinal(parentOrdinal) { implicit hasher =>
-              snapshot.toHashed[F].flatMap { hashed =>
-                val proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                val legacy = GlobalConsensusOutcome(
-                  key = parentOrdinal,
-                  facilitators = Facilitators(proofSigners),
-                  removedFacilitators = RemovedFacilitators.empty,
-                  withdrawnFacilitators = WithdrawnFacilitators.empty,
-                  eligibleFacilitators = EligibleFacilitators(proofSigners),
-                  finished = Finished(
-                    snapshot,
-                    context,
-                    EventTrigger,
-                    Candidates.empty,
-                    Hash.empty,
-                    hashed.hash
-                  )
+            for {
+              hashed <- HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher => snapshot.toHashed[F])
+              proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+              legacy = GlobalConsensusOutcome(
+                key = parentOrdinal,
+                facilitators = Facilitators(proofSigners),
+                removedFacilitators = RemovedFacilitators.empty,
+                withdrawnFacilitators = WithdrawnFacilitators.empty,
+                eligibleFacilitators = EligibleFacilitators(proofSigners),
+                finished = Finished(
+                  snapshot,
+                  context,
+                  EventTrigger,
+                  Candidates.empty,
+                  Hash.empty,
+                  hashed.hash
                 )
-
+              )
+              reset <- HasherSelector[F].withCurrent(implicit hasher =>
                 GlobalSnapshotConsensusStateCreator
                   .resetLegacyOutcome[F](candidate.key, legacy, config.quorumThresholdFraction)
-              }
-            }
+              )
+            } yield TrustedParent(reset, TrustedParentKind.AuthorizedRoot)
         })
       }
     }
 
-    def trustedCertifiedParent(candidate: GlobalConsensusOutcome): F[Either[String, GlobalConsensusOutcome]] = {
+    def trustedLocalParent(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] = {
       val parentOrdinal = SnapshotOrdinal.unsafeApply(candidate.key.value.value - 1L)
 
       (certifiedOutcomeSidecar.read(parentOrdinal), locallyValidatedSnapshot(parentOrdinal)).tupled.flatMap {
@@ -235,16 +273,18 @@ object GlobalCertifiedDownloadValidator {
           HasherSelector[F].forOrdinal(parentOrdinal) { implicit hasher =>
             snapshot.toHashed[F].map { hashed =>
               for {
-                _ <- Either.cond(parent.key === parentOrdinal, (), "trusted_predecessor_key_mismatch")
-                _ <- Either.cond(parent.finished.signedMajorityArtifact === snapshot, (), "trusted_predecessor_artifact_mismatch")
-                _ <- Either.cond(parent.finished.context === context, (), "trusted_predecessor_context_mismatch")
-                _ <- Either.cond(parent.finished.snapshotHash === hashed.hash, (), "trusted_predecessor_hash_mismatch")
-                _ <- Either.cond(parent.finished.certifiedOutcome.nonEmpty, (), "trusted_predecessor_certificate_missing")
-              } yield parent
+                _ <- validatePredecessorBindings(
+                  parent.key === parentOrdinal,
+                  parent.finished.signedMajorityArtifact === snapshot,
+                  parent.finished.context === context,
+                  parent.finished.snapshotHash === hashed.hash
+                )
+                kind <- trustedParentKind(parent)
+              } yield TrustedParent(parent, kind)
             }
           }
-        case (None, _)        => "trusted_predecessor_sidecar_missing".asLeft[GlobalConsensusOutcome].pure[F]
-        case (_, Left(error)) => error.asLeft[GlobalConsensusOutcome].pure[F]
+        case (None, _)        => "trusted_predecessor_sidecar_missing".asLeft[TrustedParent].pure[F]
+        case (_, Left(error)) => error.asLeft[TrustedParent].pure[F]
       }
     }
 
@@ -256,11 +296,15 @@ object GlobalCertifiedDownloadValidator {
       else {
         val trustedParent =
           if (config.certifiedConsensusActivatesAt(candidate.key.value.value)) exactActivationParent(candidate)
-          else trustedCertifiedParent(candidate)
+          else trustedLocalParent(candidate)
 
         for {
-          parent <- trustedParent.flatMap(_.leftMap(new IllegalStateException(_)).liftTo[F])
-          state <- stateFromTrustedParent(candidate.key, parent).flatMap(_.leftMap(new IllegalStateException(_)).liftTo[F])
+          parent <- trustedParent.flatMap(
+            _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_parent:$error")).liftTo[F]
+          )
+          state <- stateFromTrustedParent(candidate.key, parent).flatMap(
+            _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_state:$error")).liftTo[F]
+          )
           adoption <- stateAdvancer.certifiedOutcomeAdoption(state, candidate)
           _ <- adoption.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_invalid:$error")).liftTo[F]
         } yield ()

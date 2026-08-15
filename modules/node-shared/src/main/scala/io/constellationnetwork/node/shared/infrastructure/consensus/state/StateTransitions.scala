@@ -1678,8 +1678,9 @@ class StateTransitions[
 
   /** `dag_consensus_init_download_outcome_total{outcome}` - telemetry on which path through `initFromDownload` is exercised. `outcome`
     * labels: `success`, `self_in_probation` (B2 gate fired), `no_outcome_available` (fetchOutcomeFromCluster exhausted retries),
-    * `outcome_validation_failed` (post-retry artifact/context mismatch), `storage_init_failed` (trySetInitialConsensusOutcome returned
-    * false), `other` (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and
+    * `outcome_validation_failed` (post-retry artifact/context mismatch), `certified_outcome_validation_failed` (layer preflight rejected
+    * missing/invalid certified lineage before mutation), `storage_init_failed` (trySetInitialConsensusOutcome returned false), `other`
+    * (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and
     * `dag_consensus_force_leave_triggered` to identify why a recovering peer ends up in Leaving.
     */
   private def initDownloadOutcome(outcome: String): F[Unit] =
@@ -1694,6 +1695,8 @@ class StateTransitions[
       val msg = Option(t.getMessage).getOrElse("")
       if (msg.startsWith("[DownloadInit] Could not observe outcome")) "no_outcome_available"
       else if (msg.startsWith("[DownloadInit] Outcome validation failed")) "outcome_validation_failed"
+      else if (msg.contains("downloaded_certified_outcome") || msg.contains("trusted_predecessor"))
+        "certified_outcome_validation_failed"
       else if (msg.contains("Failed to initialize consensus storage")) "storage_init_failed"
       else "other"
   }
@@ -1720,7 +1723,10 @@ class StateTransitions[
               // In certified consensus it verifies the peer-supplied outcome against an
               // independently trusted predecessor before any application or consensus
               // storage is mutated. Legacy layers keep the inert default hook.
-              ctx.onOutcomePreInitialize(o).as((o, isRecoveryEffective))
+              StateTransitions.validateDownloadBeforeMutation(
+                ctx.onOutcomePreInitialize(o),
+                (o, isRecoveryEffective).pure[F]
+              )
 
             // If the specific-outcome endpoint reports Conflict, fetchOutcomeFromCluster falls
             // back to the peer's latest outcome. That can legitimately be N+1 after download
@@ -1733,21 +1739,23 @@ class StateTransitions[
                   s"[DownloadInit] Recovery-plan validator requires exact anchor outcome for key=$key; peer returned newer key=${outcomeKey.get(o)}"
                 ).raiseError[F, (Outcome, Boolean)]
               else
-                ctx.onOutcomePreInitialize(o) >>
+                StateTransitions.validateDownloadBeforeMutation(
+                  ctx.onOutcomePreInitialize(o),
                   ctx.advancer
                     .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
-                  ConsensusLog.info(
-                    log,
-                    Category.Lifecycle,
-                    outcomeKey.get(o).show,
-                    "n/a",
-                    LogEvent.DownloadInitStart,
-                    "stage" -> "newer_outcome_storage_aligned",
-                    "requestedKey" -> key.show,
-                    "acceptedKey" -> outcomeKey.get(o).show
-                  ) >>
-                  Metrics[F].incrementCounter("dag_consensus_download_newer_outcome_storage_aligned_total") >>
-                  (o, true).pure[F]
+                    ConsensusLog.info(
+                      log,
+                      Category.Lifecycle,
+                      outcomeKey.get(o).show,
+                      "n/a",
+                      LogEvent.DownloadInitStart,
+                      "stage" -> "newer_outcome_storage_aligned",
+                      "requestedKey" -> key.show,
+                      "acceptedKey" -> outcomeKey.get(o).show
+                    ) >>
+                    Metrics[F].incrementCounter("dag_consensus_download_newer_outcome_storage_aligned_total") >>
+                    (o, true).pure[F]
+                )
 
             case StateTransitions.DownloadOutcomeDisposition.Reject =>
               new Throwable(
@@ -2404,6 +2412,17 @@ class StateTransitions[
 }
 
 object StateTransitions {
+
+  /** Enforce the downloaded-outcome trust boundary before any application or consensus mutation.
+    *
+    * Kept generic so every L0 layer shares the same sequencing invariant and tests can prove
+    * that a failed layer preflight never evaluates the mutation effect.
+    */
+  private[consensus] def validateDownloadBeforeMutation[F[_]: Monad, A](
+    validate: F[Unit],
+    mutate: => F[A]
+  ): F[A] =
+    validate >> mutate
 
   private[consensus] sealed trait PlannedInitializationStateDisposition
   private[consensus] object PlannedInitializationStateDisposition {

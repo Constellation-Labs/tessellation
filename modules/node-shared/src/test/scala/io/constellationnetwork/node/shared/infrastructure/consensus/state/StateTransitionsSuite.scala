@@ -1,5 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
+import cats.effect.{IO, Ref}
+import cats.syntax.functor._
+
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -10,6 +13,29 @@ object StateTransitionsSuite extends SimpleIOSuite {
 
   private def pid(name: String): PeerId =
     PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString))
+
+  test("download validation completes before the first mutation") {
+    for {
+      events <- Ref.of[IO, List[String]](Nil)
+      result <- StateTransitions.validateDownloadBeforeMutation(
+        events.update(_ :+ "validated"),
+        events.update(_ :+ "mutated").as("installed")
+      )
+      observed <- events.get
+    } yield expect.same("installed", result) && expect.same(List("validated", "mutated"), observed)
+  }
+
+  test("failed download validation prevents every mutation") {
+    val failure = new IllegalStateException("invalid certified outcome")
+
+    for {
+      mutated <- Ref.of[IO, Boolean](false)
+      result <- StateTransitions
+        .validateDownloadBeforeMutation[IO, Unit](IO.raiseError(failure), mutated.set(true))
+        .attempt
+      wasMutated <- mutated.get
+    } yield expect.same(Left(failure), result) && expect(!wasMutated)
+  }
 
   pureTest("exact downloaded outcomes preserve the caller's recovery mode") {
     val normal = StateTransitions.downloadOutcomeDisposition(
