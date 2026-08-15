@@ -21,8 +21,7 @@ import io.constellationnetwork.security.signature.Signed
 
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *
-  * A QC cannot authenticate the committee declared inside that same QC. Download therefore starts only from an independent local
-  * authority:
+  * A QC cannot authenticate the committee declared inside that same QC. Download therefore starts only from an independent local authority:
   *
   *   - at the exact activation key, the locally downloaded/state-proof-validated A-1 snapshot and its signed controller evidence; or
   *   - after activation, a predecessor sidecar that this node previously produced or accepted through this validator, tied back to the
