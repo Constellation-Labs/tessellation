@@ -367,7 +367,7 @@ object GlobalSnapshotConsensus {
       outcomePreInitialize = (outcome: GlobalConsensusOutcome) =>
         configuredRecoveryPlan.flatMap {
           case Some(verified) if outcome.key === verified.plan.anchor.ordinal => recoveryPlanPreflight(outcome)
-          case _                                                              => certifiedDownloadPreflight(outcome) >> recoveryPlanPreflight(outcome)
+          case _ => certifiedDownloadPreflight(outcome) >> recoveryPlanPreflight(outcome)
         }
 
       stateRemover =

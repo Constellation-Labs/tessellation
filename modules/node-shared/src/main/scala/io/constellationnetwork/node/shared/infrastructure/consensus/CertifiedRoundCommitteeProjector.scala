@@ -54,11 +54,10 @@ object CertifiedRoundCommitteeProjector {
 
   /** Complete next-round projection from an independently trusted certified parent.
     *
-    * This is the single composition used by live state creation and downloaded-outcome
-    * reconstruction. The parent QC supplies the certified membership delta; the existing
-    * next-round projector applies seedlist/collateral/selector eligibility; and [[project]]
-    * derives the Core/Tier-1 split from the parent evidence window. Keeping the composition
-    * here prevents recovery from growing a second committee algorithm.
+    * This is the single composition used by live state creation and downloaded-outcome reconstruction. The parent QC supplies the certified
+    * membership delta; the existing next-round projector applies seedlist/collateral/selector eligibility; and [[project]] derives the
+    * Core/Tier-1 split from the parent evidence window. Keeping the composition here prevents recovery from growing a second committee
+    * algorithm.
     */
   final case class FromCertifiedParent(
     nextRound: CertifiedNextRoundProjector.Projection,

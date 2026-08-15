@@ -1735,7 +1735,7 @@ class StateTransitions[
               else
                 ctx.onOutcomePreInitialize(o) >>
                   ctx.advancer
-                  .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
+                    .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
                   ConsensusLog.info(
                     log,
                     Category.Lifecycle,

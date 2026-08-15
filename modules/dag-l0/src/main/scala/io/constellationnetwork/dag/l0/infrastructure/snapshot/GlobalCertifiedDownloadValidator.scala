@@ -7,12 +7,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.Duration
 
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{
-  CollectingFacilities,
-  Finished,
-  GlobalConsensusKind,
-  GlobalConsensusOutcome
-}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -27,17 +22,15 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *
-  * A QC cannot authenticate the committee declared inside that same QC. Download therefore
-  * starts from one of two independent authorities only:
+  * A QC cannot authenticate the committee declared inside that same QC. Download therefore starts from one of two independent authorities
+  * only:
   *
-  *   - at the exact activation key, the locally downloaded/state-proof-validated A-1
-  *     snapshot and its signed controller evidence; or
-  *   - after activation, a predecessor sidecar that this node previously produced or
-  *     accepted through this validator, tied back to the locally validated public snapshot.
+  *   - at the exact activation key, the locally downloaded/state-proof-validated A-1 snapshot and its signed controller evidence; or
+  *   - after activation, a predecessor sidecar that this node previously produced or accepted through this validator, tied back to the
+  *     locally validated public snapshot.
   *
-  * The resulting frozen state is passed to the ordinary [[CertifiedConsensus]] adoption
-  * verifier through `certifiedOutcomeAdoption`. No alternate encoder, canonicalizer, hash,
-  * QC verifier, or committee rule is introduced. A signed operator recovery-plan anchor is
+  * The resulting frozen state is passed to the ordinary [[CertifiedConsensus]] adoption verifier through `certifiedOutcomeAdoption`. No
+  * alternate encoder, canonicalizer, hash, QC verifier, or committee rule is introduced. A signed operator recovery-plan anchor is
   * validated by its existing preflight and intentionally bypasses this QC path.
   */
 object GlobalCertifiedDownloadValidator {
@@ -250,8 +243,8 @@ object GlobalCertifiedDownloadValidator {
               } yield parent
             }
           }
-        case (None, _)              => "trusted_predecessor_sidecar_missing".asLeft[GlobalConsensusOutcome].pure[F]
-        case (_, Left(error))       => error.asLeft[GlobalConsensusOutcome].pure[F]
+        case (None, _)        => "trusted_predecessor_sidecar_missing".asLeft[GlobalConsensusOutcome].pure[F]
+        case (_, Left(error)) => error.asLeft[GlobalConsensusOutcome].pure[F]
       }
     }
 
