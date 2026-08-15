@@ -128,6 +128,7 @@ object Services {
             storages.cluster,
             storages.node,
             storages.globalSnapshot,
+            storages.snapshotDownload,
             validators,
             sharedServices,
             cfg,

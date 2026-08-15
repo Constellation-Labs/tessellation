@@ -1,11 +1,16 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import cats.Monad
+import cats.syntax.all._
+
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.ProposalValue
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ControllerEvidenceEntry, SnapshotOrdinal}
+import io.constellationnetwork.security.hash.Hash
 
 /** Pure, shared projection of the Core/Tier-1 signing committees for one round.
   *
@@ -46,6 +51,60 @@ object CertifiedRoundCommitteeProjector {
     committees: CommitteeBuilder.Committees,
     signingFacilitators: List[PeerId]
   )
+
+  /** Complete next-round projection from an independently trusted certified parent.
+    *
+    * This is the single composition used by live state creation and downloaded-outcome
+    * reconstruction. The parent QC supplies the certified membership delta; the existing
+    * next-round projector applies seedlist/collateral/selector eligibility; and [[project]]
+    * derives the Core/Tier-1 split from the parent evidence window. Keeping the composition
+    * here prevents recovery from growing a second committee algorithm.
+    */
+  final case class FromCertifiedParent(
+    nextRound: CertifiedNextRoundProjector.Projection,
+    committee: Projection
+  )
+
+  def fromCertifiedParent[F[_]: Monad](
+    key: SnapshotOrdinal,
+    parentValue: ProposalValue,
+    parentRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    parentControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry],
+    parentCarried: CarriedControllerState,
+    config: ConsensusConfig,
+    coreCommitteeSize: Int,
+    seedlistPeerIds: Set[PeerId],
+    isContextEligible: PeerId => F[Boolean],
+    facilitatorSelector: FacilitatorSelector,
+    parentArtifactHash: Hash
+  ): F[Either[String, FromCertifiedParent]] =
+    CertifiedNextRoundProjector
+      .project[F](
+        parentValue.roundStartFacilitators.toSortedSet.toList,
+        parentValue.admittedPeers.toSet,
+        parentValue.evictedPeers.toSet,
+        config.activeAdmissionMaxExpansionPerRound,
+        seedlistPeerIds,
+        isContextEligible,
+        facilitatorSelector,
+        parentArtifactHash
+      )
+      .map(
+        _.map { nextRound =>
+          val committee = project(
+            key = key,
+            selectedFacilitators = nextRound.selectedCommittee,
+            recentSigners = parentRecentSigners,
+            controllerEvidence = parentControllerEvidence,
+            carried = parentCarried,
+            config = config,
+            coreCommitteeSize = coreCommitteeSize,
+            forcedTier1Peers = parentValue.admittedPeers.toSet
+          )
+
+          FromCertifiedParent(nextRound, committee)
+        }
+      )
 
   def project(
     key: SnapshotOrdinal,

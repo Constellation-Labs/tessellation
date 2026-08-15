@@ -348,6 +348,15 @@ object CurrencySnapshotConsensus {
           getPeerChainTips,
           none[AdmissionCandidateTipProbe.Probes[F]],
           peersCommittedAheadProbe,
+          onOutcomePreInitialize = Some((outcome: CurrencyConsensusOutcome) =>
+            new IllegalStateException(
+              s"Certified Currency L0 download requires independently trusted predecessor lineage at ordinal=${outcome.key.value.value}"
+            ).raiseError[F, Unit]
+              .whenA(
+                effectiveConsensusConfig.certifiedConsensusActiveAt(outcome.key.value.value) &&
+                  outcome.key.value.value > 0L
+              )
+          ),
           onOutcomeFinalized = Some((outcome: CurrencyConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
               certifiedOutcomeSidecar.write(outcome.key, outcome) >>

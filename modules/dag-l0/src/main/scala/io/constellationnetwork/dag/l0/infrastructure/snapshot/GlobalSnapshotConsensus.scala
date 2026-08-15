@@ -18,6 +18,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   UpdateNodeParametersCutter
 }
 import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt}
+import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
@@ -94,6 +95,7 @@ object GlobalSnapshotConsensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
+    snapshotDownloadStorage: SnapshotDownloadStorage[F],
     validators: SharedValidators[F],
     sharedServices: SharedServices[F, R],
     appConfig: AppConfig,
@@ -351,6 +353,23 @@ object GlobalSnapshotConsensus {
           HealthDerivedMembershipPolicy.RetainSigningLeases
         )
 
+      certifiedDownloadPreflight = GlobalCertifiedDownloadValidator.make[F](
+        effectiveConsensusConfig,
+        resolvedCoreCommitteeSize,
+        seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
+        facilitatorSelector,
+        consensusFunctions,
+        snapshotDownloadStorage,
+        certifiedOutcomeSidecar,
+        stateAdvancer
+      )
+
+      outcomePreInitialize = (outcome: GlobalConsensusOutcome) =>
+        configuredRecoveryPlan.flatMap {
+          case Some(verified) if outcome.key === verified.plan.anchor.ordinal => recoveryPlanPreflight(outcome)
+          case _                                                              => certifiedDownloadPreflight(outcome) >> recoveryPlanPreflight(outcome)
+        }
+
       stateRemover =
         GlobalSnapshotConsensusStateRemover.make(
           consensusStorage,
@@ -509,7 +528,7 @@ object GlobalSnapshotConsensus {
             certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
               consensusStorage.deleteCertifiedVoteLocksAtOrBelow(outcome.key)
           ),
-          onOutcomePreInitialize = Some(recoveryPlanPreflight),
+          onOutcomePreInitialize = Some(outcomePreInitialize),
           onOutcomeSafetyInitialized = Some((outcome: GlobalConsensusOutcome) =>
             configuredRecoveryPlan.flatMap {
               case Some(verified) if outcome.key === verified.plan.anchor.ordinal =>

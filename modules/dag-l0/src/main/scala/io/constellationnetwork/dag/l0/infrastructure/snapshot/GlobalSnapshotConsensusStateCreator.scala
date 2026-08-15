@@ -471,20 +471,29 @@ object GlobalSnapshotConsensusStateCreator {
         approvedCandidates = lastOutcome.finished.candidates.value
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
         certifiedNextRoundValue = lastOutcome.finished.certifiedOutcome.map(_.proposalQc.value)
-        certifiedNextRoundProjection <- certifiedNextRoundValue.traverse { value =>
-          CertifiedNextRoundProjector
-            .project[F](
-              value.roundStartFacilitators.toSortedSet.toList,
-              value.admittedPeers.toSet,
-              value.evictedPeers.toSet,
-              config.activeAdmissionMaxExpansionPerRound,
-              seedlistPeerIds.toSet,
-              consensusFns.facilitatorEligible(lastOutcome.finished.context, _),
-              facilitatorSelector,
-              lastOutcome.finished.snapshotHash
+        certifiedRoundProjection <- certifiedNextRoundValue.traverse { value =>
+          CertifiedRoundCommitteeProjector
+            .fromCertifiedParent[F](
+              key = key,
+              parentValue = value,
+              parentRecentSigners = lastOutcome.recentSigners,
+              parentControllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+              parentCarried = CertifiedRoundCommitteeProjector.CarriedControllerState(
+                activeScores = lastOutcome.activeAdmissionScores.toMap,
+                peerQuality = lastOutcome.peerQuality.toMap,
+                peerTiers = lastOutcome.peerTiers,
+                viewChanges = lastOutcome.peerViewChanges.toMap,
+                selfHealth = lastOutcome.peerSelfHealth.toMap
+              ),
+              config = config,
+              coreCommitteeSize = coreCommitteeSize,
+              seedlistPeerIds = seedlistPeerIds.toSet,
+              isContextEligible = consensusFns.facilitatorEligible(lastOutcome.finished.context, _),
+              facilitatorSelector = facilitatorSelector,
+              parentArtifactHash = lastOutcome.finished.snapshotHash
             )
             .flatMap(
-              _.leftMap(error => new IllegalStateException(s"Certified next-round projection failed for key=$key: $error"))
+              _.leftMap(error => new IllegalStateException(s"Certified round projection failed for key=$key: $error"))
                 .liftTo[F]
             )
         }
@@ -678,8 +687,8 @@ object GlobalSnapshotConsensusStateCreator {
         // Apply deterministic subset selection using hash-distance ordering
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
-        selectedFacilitators = certifiedNextRoundProjection
-          .map(_.selectedCommittee)
+        selectedFacilitators = certifiedRoundProjection
+          .map(_.nextRound.selectedCommittee)
           .getOrElse(facilitatorSelector.select(eligibleThisRound, entropy))
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
         locallyBufferedWithdrawals = selectedFacilitators.iterator
@@ -689,23 +698,25 @@ object GlobalSnapshotConsensusStateCreator {
           config.certifiedConsensusActiveAt(key.value.value),
           locallyBufferedWithdrawals
         )
-        membershipProjection = CertifiedRoundCommitteeProjector.project(
-          key = key,
-          selectedFacilitators = selectedFacilitators,
-          recentSigners = lastOutcome.recentSigners,
-          controllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
-          carried = CertifiedRoundCommitteeProjector.CarriedControllerState(
-            activeScores = lastOutcome.activeAdmissionScores.toMap,
-            peerQuality = lastOutcome.peerQuality.toMap,
-            peerTiers = lastOutcome.peerTiers,
-            viewChanges = lastOutcome.peerViewChanges.toMap,
-            selfHealth = lastOutcome.peerSelfHealth.toMap
-          ),
-          config = config,
-          coreCommitteeSize = coreCommitteeSize,
-          forcedTier1Peers = certifiedNextRoundValue.fold(Set.empty[PeerId])(_.admittedPeers.toSet),
-          withdrawnPeers = withdrawnPeers
-        )
+        membershipProjection = certifiedRoundProjection.fold(
+          CertifiedRoundCommitteeProjector.project(
+            key = key,
+            selectedFacilitators = selectedFacilitators,
+            recentSigners = lastOutcome.recentSigners,
+            controllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+            carried = CertifiedRoundCommitteeProjector.CarriedControllerState(
+              activeScores = lastOutcome.activeAdmissionScores.toMap,
+              peerQuality = lastOutcome.peerQuality.toMap,
+              peerTiers = lastOutcome.peerTiers,
+              viewChanges = lastOutcome.peerViewChanges.toMap,
+              selfHealth = lastOutcome.peerSelfHealth.toMap
+            ),
+            config = config,
+            coreCommitteeSize = coreCommitteeSize,
+            forcedTier1Peers = Set.empty,
+            withdrawnPeers = withdrawnPeers
+          )
+        )(_.committee)
         admissionSizing = membershipProjection.admissionSizing
         expansionAllowedThisRound = membershipProjection.expansionAllowed
         maxExpansionThisRound = membershipProjection.maxExpansionThisRound

@@ -1716,7 +1716,11 @@ class StateTransitions[
           val contextMatch = outcomeContext.get(o) === context
           StateTransitions.downloadOutcomeDisposition(keyMatch, artifactMatch, contextMatch, isRecovery) match {
             case StateTransitions.DownloadOutcomeDisposition.AcceptExact(isRecoveryEffective) =>
-              (o, isRecoveryEffective).pure[F]
+              // Layer preflight is a trust boundary, not an after-initialization callback.
+              // In certified consensus it verifies the peer-supplied outcome against an
+              // independently trusted predecessor before any application or consensus
+              // storage is mutated. Legacy layers keep the inert default hook.
+              ctx.onOutcomePreInitialize(o).as((o, isRecoveryEffective))
 
             // If the specific-outcome endpoint reports Conflict, fetchOutcomeFromCluster falls
             // back to the peer's latest outcome. That can legitimately be N+1 after download
@@ -1729,7 +1733,8 @@ class StateTransitions[
                   s"[DownloadInit] Recovery-plan validator requires exact anchor outcome for key=$key; peer returned newer key=${outcomeKey.get(o)}"
                 ).raiseError[F, (Outcome, Boolean)]
               else
-                ctx.advancer
+                ctx.onOutcomePreInitialize(o) >>
+                  ctx.advancer
                   .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
                   ConsensusLog.info(
                     log,
@@ -1752,7 +1757,6 @@ class StateTransitions[
           }
         }
       recoveryPermit <- plannedCommittee.traverse(_ => ctx.firstRoundStartGate.arm(outcomeKey.get(outcome)))
-      _ <- ctx.onOutcomePreInitialize(outcome)
       // B2 readmission gate: refuse to facilitate while self is on probation per the carried
       // outcome. A peer that was B1-evicted during isolation comes back
       // via recovery with a downloaded snapshot containing a `readmissionCountdown[selfId]` entry,
