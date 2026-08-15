@@ -21,16 +21,17 @@ import io.constellationnetwork.security.signature.Signed
 
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *
-  * A QC cannot authenticate the committee declared inside that same QC. Download therefore starts from one of two independent authorities
-  * only:
+  * A QC cannot authenticate the committee declared inside that same QC. Download therefore starts only from an independent local
+  * authority:
   *
   *   - at the exact activation key, the locally downloaded/state-proof-validated A-1 snapshot and its signed controller evidence; or
   *   - after activation, a predecessor sidecar that this node previously produced or accepted through this validator, tied back to the
-  *     locally validated public snapshot.
+  *     locally validated public snapshot; or
+  *   - one canonical locally persisted uncertified root: certified-consensus genesis or an already verified signed recovery-plan anchor.
   *
   * The resulting frozen state is passed to the ordinary [[CertifiedConsensus]] adoption verifier through `certifiedOutcomeAdoption`. No
-  * alternate encoder, canonicalizer, hash, QC verifier, or committee rule is introduced. A signed operator recovery-plan anchor is
-  * validated by its existing preflight and intentionally bypasses this QC path.
+  * alternate encoder, canonicalizer, hash, QC verifier, or committee rule is introduced. A signed operator recovery-plan anchor is first
+  * validated by its existing exact-anchor preflight; its certified child then follows this ordinary bound-QC path.
   */
 object GlobalCertifiedDownloadValidator {
 

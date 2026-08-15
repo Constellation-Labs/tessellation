@@ -181,7 +181,6 @@ object GlobalSnapshotConsensus {
       // Startup resolves this exact object once for both the join fence and live engine. Every
       // downstream component reads the same projection; the fallback is retained defensively.
       resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
-      resolvedCertifiedConsensusActivationKey = effectiveConsensusConfig.certifiedConsensusActivationKey
 
       certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
         appConfig.snapshot.snapshotPath / "certifiedVoteLocks"

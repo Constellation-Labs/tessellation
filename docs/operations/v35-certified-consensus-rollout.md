@@ -93,14 +93,29 @@ dormant.
 Before activation, verify the ordinary-download lineage boundary on every source node:
 
 - the exact activation outcome validates from the locally stored, state-proof-checked
-  A-1 snapshot;
+  A-1 snapshot. The predecessor artifact is hashed with its historical ordinal hasher,
+  while the newly reset v35 committee value is hashed with the current hasher, matching
+  live activation even across a hash-transition boundary;
+- predecessor validation is read-only: it reconstructs and checks the persisted state
+  proof without synchronizing/rewinding the MPT and without deleting snapshot files;
+- certified-consensus genesis key 0 and an exact signed recovery-plan anchor are the
+  only locally persisted uncertified roots. Their first certified child is projected
+  through the same typed committee projector and verified through the ordinary bound-QC
+  adoption path;
 - a restart after activation retains both the current and immediately preceding
   certified outcome sidecars and validates the current outcome from that predecessor;
 - a missing/corrupt predecessor fails before application storage, consensus storage,
   safety locks, or sidecars change; and
 - a fresh post-activation node has a signed operator recovery plan or separately
-  announced trusted checkpoint. Until contiguous certificate-chain download exists,
-  it cannot securely bootstrap from one arbitrary Ready peer.
+announced trusted checkpoint. Until contiguous certificate-chain download exists,
+it cannot securely bootstrap from one arbitrary Ready peer.
+
+The signed recovery-plan equality check applies only while installing its exact anchor.
+After that anchor is locally accepted, successor outcomes use the ordinary certified
+lineage validator. Remove the one-shot recovery-plan option and restart normally after
+the recovery barrier completes, as required by the recovery-plan runbook; leaving it
+configured deliberately keeps exact-anchor initialization policy armed for a later
+download attempt.
 
 The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
 to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary

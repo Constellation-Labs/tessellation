@@ -98,10 +98,20 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    state-proof-validated A-1 artifact/context is the independent root. After activation,
    the node must hold the immediately preceding outcome in its locally produced or
    previously validated certified sidecar and tie that sidecar back to its local public
-   snapshot. The existing bound-outcome verifier then re-derives the candidate against
-   that predecessor. A fresh post-activation node without local lineage or an explicit
-   signed recovery-plan/checkpoint fails closed; one authenticated peer response is not
-   membership authority.
+   snapshot. This predecessor check is non-mutating: it reconstructs the state proof
+   without synchronizing the MPT or deleting local files. Historical artifact identity
+   uses the ordinal-selected hasher; the newly reset activation value uses the current
+   hasher, exactly as live state creation does. The existing bound-outcome verifier then
+   re-derives the candidate against that predecessor.
+
+   Two explicit uncertified roots are also locally authoritative: certified-consensus
+   genesis and an exact operator-signed recovery-plan anchor. Production persists only
+   their canonical typed root shape. The first certified child is derived with the same
+   committee projector and verified with the same bound-outcome path; structural shape
+   by itself never authenticates peer-supplied bytes. Recovery-plan equality is checked
+   only at the anchor, not against later certified successors. A fresh post-activation
+   node without local lineage or an explicit signed recovery-plan/checkpoint fails
+   closed; one authenticated peer response is not membership authority.
 10. Persist each local certified vote lock before emitting its `OutcomeVote`, and
     persist every verified QC advancement before it can influence gossip or commit
     progression. DAG L0 and Currency L0 share one generic

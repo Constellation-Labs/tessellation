@@ -9,15 +9,18 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalCertifiedDow
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, GlobalStateProofSelector, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
 
 object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
+
+  implicit val globalStateProofSelector: GlobalStateProofSelector =
+    GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
@@ -52,7 +55,8 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
     implicit val (jsonSerializer, hasher, securityProvider) = res
 
     canonicalRoot.map { root =>
-      val wrongEligible = root.copy(eligibleFacilitators = io.constellationnetwork.node.shared.infrastructure.consensus.state.EligibleFacilitators.empty)
+      val wrongEligible =
+        root.copy(eligibleFacilitators = io.constellationnetwork.node.shared.infrastructure.consensus.state.EligibleFacilitators.empty)
       val wrongHash = root.copy(finished = root.finished.copy(facilitatorsHash = Hash.fromBytes(Array[Byte](1))))
       val missingProofWindow = root.copy(recentProofSizes = scala.collection.immutable.SortedMap.empty)
 
