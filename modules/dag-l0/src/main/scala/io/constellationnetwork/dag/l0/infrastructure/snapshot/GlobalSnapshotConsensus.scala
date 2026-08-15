@@ -85,6 +85,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   */
 object GlobalSnapshotConsensus {
 
+  private[snapshot] def recoveryPlanPreflightRequired(outcomeKey: SnapshotOrdinal, anchorKey: SnapshotOrdinal): Boolean =
+    outcomeKey === anchorKey
+
   def make[F[_]: Async: Parallel: Random: JsonSerializer: HasherSelector: SecurityProvider: Metrics, R <: CliMethod](
     sharedCfg: SharedConfig,
     gossip: Gossip[F],
@@ -267,7 +270,7 @@ object GlobalSnapshotConsensus {
       recoveryPlanPreflight = (outcome: GlobalConsensusOutcome) =>
         configuredRecoveryPlan.flatMap(_.traverse_ { verified =>
           val plan = verified.plan
-          if (outcome.key =!= plan.anchor.ordinal) Async[F].unit
+          if (!recoveryPlanPreflightRequired(outcome.key, plan.anchor.ordinal)) Async[F].unit
           else
             for {
               hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>

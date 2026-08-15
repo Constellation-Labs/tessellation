@@ -101,7 +101,7 @@ object SnapshotDownloadStorage {
       )(
         implicit hasher: Hasher[F],
         stateProofSelector: StateProofSelector
-      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
         (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), readSnapshotInfo(ordinal)).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
             for {
@@ -149,8 +149,6 @@ object SnapshotDownloadStorage {
             } yield result
           case _ => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
         }
-      }
-
       def readCombinedValidated(
         ordinal: SnapshotOrdinal
       )(

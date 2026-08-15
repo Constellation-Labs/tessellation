@@ -15,9 +15,9 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Even
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
+import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.HasherSelector
 
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *

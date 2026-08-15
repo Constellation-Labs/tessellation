@@ -4,7 +4,7 @@ import cats.effect.kernel.{Async, Temporal}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
 import cats.syntax.all._
-import cats.{Eq, Show}
+import cats.{Eq, Monad, Show}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration._
@@ -1680,8 +1680,8 @@ class StateTransitions[
     * labels: `success`, `self_in_probation` (B2 gate fired), `no_outcome_available` (fetchOutcomeFromCluster exhausted retries),
     * `outcome_validation_failed` (post-retry artifact/context mismatch), `certified_outcome_validation_failed` (layer preflight rejected
     * missing/invalid certified lineage before mutation), `storage_init_failed` (trySetInitialConsensusOutcome returned false), `other`
-    * (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and
-    * `dag_consensus_force_leave_triggered` to identify why a recovering peer ends up in Leaving.
+    * (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and `dag_consensus_force_leave_triggered` to identify
+    * why a recovering peer ends up in Leaving.
     */
   private def initDownloadOutcome(outcome: String): F[Unit] =
     Metrics[F].incrementCounter(
@@ -2415,8 +2415,8 @@ object StateTransitions {
 
   /** Enforce the downloaded-outcome trust boundary before any application or consensus mutation.
     *
-    * Kept generic so every L0 layer shares the same sequencing invariant and tests can prove
-    * that a failed layer preflight never evaluates the mutation effect.
+    * Kept generic so every L0 layer shares the same sequencing invariant and tests can prove that a failed layer preflight never evaluates
+    * the mutation effect.
     */
   private[consensus] def validateDownloadBeforeMutation[F[_]: Monad, A](
     validate: F[Unit],

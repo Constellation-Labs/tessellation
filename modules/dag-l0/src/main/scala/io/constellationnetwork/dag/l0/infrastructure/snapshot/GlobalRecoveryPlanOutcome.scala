@@ -36,8 +36,8 @@ object GlobalRecoveryPlanOutcome {
 
   /** Recognize the locally persisted, independently authorized root shape.
     *
-    * Presence in the certified-outcome sidecar is the local provenance boundary: production writes an uncertified outcome there only for
-    * an already verified recovery-plan anchor (or certified-consensus genesis). This structural check prevents an arbitrary legacy outcome
+    * Presence in the certified-outcome sidecar is the local provenance boundary: production writes an uncertified outcome there only for an
+    * already verified recovery-plan anchor (or certified-consensus genesis). This structural check prevents an arbitrary legacy outcome
     * from being promoted to a v35 root. It does not confer authority on peer-supplied bytes.
     */
   def isCanonicalRoot(outcome: GlobalConsensusOutcome): Boolean = {
