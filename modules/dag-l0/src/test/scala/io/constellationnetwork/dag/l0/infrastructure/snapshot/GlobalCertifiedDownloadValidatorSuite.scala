@@ -9,9 +9,9 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalCertifiedDow
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.{EligibleFacilitators, Facilitators}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, GlobalStateProofSelector, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -63,6 +63,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
 
   test("only a canonical locally persisted uncertified root receives root authority") { implicit res =>
     implicit val (jsonSerializer, hasher, securityProvider) = res
+    implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
 
     for {
       root <- canonicalRoot
@@ -78,15 +79,13 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       )
       validGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](root)
       substitutedGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](substitutedCommittee)
-    } yield {
-
+    } yield
       expect.same(Right(TrustedParentKind.AuthorizedRoot), GlobalCertifiedDownloadValidator.trustedParentKind(root)) &&
-      expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongEligible).isLeft) &&
-      expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongHash).isLeft) &&
-      expect(GlobalCertifiedDownloadValidator.trustedParentKind(missingProofWindow).isLeft) &&
-      expect.same(Right(()), validGenesis) &&
-      expect.same(Left("genesis_outcome_not_proof_signer_root"), substitutedGenesis)
-    }
+        expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongEligible).isLeft) &&
+        expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongHash).isLeft) &&
+        expect(GlobalCertifiedDownloadValidator.trustedParentKind(missingProofWindow).isLeft) &&
+        expect.same(Right(()), validGenesis) &&
+        expect.same(Left("genesis_outcome_not_proof_signer_root"), substitutedGenesis)
   }
 
   test("the shared artifact hasher preserves the historical V1 projection and current typed artifact") { implicit res =>
@@ -95,14 +94,44 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
     canonicalRoot.flatMap { root =>
       val historicalHash = Hash.fromBytes(Array[Byte](11))
       val currentHash = Hash.fromBytes(Array[Byte](22))
-      val historical = typedArtifactHasher(KryoHash, _.isInstanceOf[io.constellationnetwork.schema.GlobalIncrementalSnapshotV1], historicalHash)
+      val historical =
+        typedArtifactHasher(KryoHash, _.isInstanceOf[io.constellationnetwork.schema.GlobalIncrementalSnapshotV1], historicalHash)
       val current = typedArtifactHasher(JsonHash, _.isInstanceOf[GlobalIncrementalSnapshot], currentHash)
 
       (
-        GlobalSnapshotArtifactHasher.hash[IO](root.finished.signedMajorityArtifact.value)(historical),
-        GlobalSnapshotArtifactHasher.hash[IO](root.finished.signedMajorityArtifact.value)(current)
+        GlobalSnapshotArtifactHasher.historicalHash[IO](root.finished.signedMajorityArtifact.value)(historical),
+        GlobalSnapshotArtifactHasher.currentHash[IO](root.finished.signedMajorityArtifact.value)(current)
       ).mapN { (historicalResult, currentResult) =>
         expect.same(historicalHash, historicalResult) && expect.same(currentHash, currentResult)
+      }
+    }
+  }
+
+  test("exact activation reconstructs Finished.snapshotHash with current hashing across a historical parent boundary") { implicit res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+
+    canonicalRoot.flatMap { root =>
+      val historicalHash = Hash.fromBytes(Array[Byte](31))
+      val currentHash = Hash.fromBytes(Array[Byte](32))
+      val historical =
+        typedArtifactHasher(KryoHash, _.isInstanceOf[GlobalIncrementalSnapshotV1], historicalHash)
+      val current = typedArtifactHasher(JsonHash, _.isInstanceOf[GlobalIncrementalSnapshot], currentHash)
+      implicit val hasherSelector: HasherSelector[IO] = new HasherSelector[IO] {
+        def getForOrdinal(ordinal: SnapshotOrdinal): Hasher[IO] = historical
+        def getCurrent: Hasher[IO] = current
+      }
+
+      (
+        GlobalCertifiedDownloadValidator.reconstructActivationParentFinished[IO](
+          root.finished.signedMajorityArtifact,
+          root.finished.context
+        ),
+        hasherSelector.forOrdinal(root.key)(implicit selected =>
+          GlobalSnapshotArtifactHasher.historicalHash[IO](root.finished.signedMajorityArtifact.value)(selected)
+        )
+      ).mapN { (finished, parentLinkHash) =>
+        expect.same(currentHash, finished.snapshotHash) &&
+        expect.same(historicalHash, parentLinkHash)
       }
     }
   }

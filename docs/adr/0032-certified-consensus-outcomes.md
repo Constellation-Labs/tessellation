@@ -208,6 +208,9 @@ aligned v35 jar/config when their own metagraph activates it.
   standalone typed outcome cannot authenticate the lineage of the committee used to
   verify its own QCs; long-range ordinary rollback remains out of scope until a
   contiguous certified chain or separately trusted checkpoint is implemented.
+- Recovery-plan format v1 accepts JSON-era incremental anchors only. Its single anchor
+  hash cannot safely encode both a Kryo-era public parent identity and the local rollback
+  locator, so every planned node rejects that historical case before joining or mutation.
 - Missing and corrupt pre-finalization vote-lock records have deliberately different
   semantics: missing is no prior durable vote, while corrupt is a hard local safety
   failure. Operators must preserve the `certifiedVoteLocks` directory through ordinary

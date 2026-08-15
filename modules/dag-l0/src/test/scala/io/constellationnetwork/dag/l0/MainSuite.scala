@@ -11,6 +11,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.{JsonHash, KryoHash}
 
 import com.monovore.decline.Command
 import eu.timepit.refined.auto._
@@ -108,6 +109,11 @@ object MainSuite extends SimpleIOSuite {
     expect(Main.validateRecoveryActivationSpacing(at(1997L), activation).isRight) &&
     expect(Main.validateRecoveryActivationSpacing(at(2000L), activation).isRight) &&
     expect(Main.validateRecoveryActivationSpacing(at(2001L), activation).isRight)
+  }
+
+  pureTest("recovery-plan v1 accepts JSON anchors and rejects ambiguous historical Kryo anchors") {
+    expect(Main.validateRecoveryAnchorHashLogic(recoveryPlan, JsonHash).isRight) &&
+    expect(Main.validateRecoveryAnchorHashLogic(recoveryPlan, KryoHash).isLeft)
   }
 
   pureTest("ordinary rollback is unchanged before v35 and requires a signed plan at or after activation") {

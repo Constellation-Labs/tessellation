@@ -48,8 +48,8 @@ import io.constellationnetwork.schema.peer.PeerId
   *
   * The floor is consensus-critical: divergent values across operators would derive divergent Core committees and silently fork the cluster.
   * `coreCommitteeSize` is keyed by `AppEnvironment`, resolved to a flat `Option[Int]` at the consensus construction site, and (as of v20)
-  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at
-  * handshake by the config hash, in addition to the jar hash already gating the peer connection. `minObservations` and `minRatio` reuse the
+  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at L0
+  * join handshake by the config hash, in addition to the independent advertised-version hash. `minObservations` and `minRatio` reuse the
   * existing `minParticipationObservations` / `minParticipationRatio` config knobs.
   *
   * ==Chronic-core replacement ladder==
@@ -88,7 +88,7 @@ object CommitteeBuilder {
     * The cert quorum is computed FROM the Core size (`max(1, ceil(size * quorumThresholdFraction))`, see `QuorumPolicy`), so every size is
     * arithmetically quorum-viable; 2 is the smallest committee where leader rotation and mutual attestation are meaningful (the
     * `minLeaderPoolSize` rationale: with a single peer, `viewNumber % 1 = 0` makes view change a no-op). Hence `max(2, quorum-viable)` = 2.
-    * Compiled-in constant, jar-hash gated.
+    * Compiled-in constant, release-version gated by coordinated deployment.
     */
   val MinViableCoreSize: Int = CommitteeViability.MinimumCoordinatedCommitteeSize
 

@@ -14,7 +14,7 @@ import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.domain.snapshot.ForkRecoveryService
 import io.constellationnetwork.dag.l0.domain.snapshot.recovery._
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.{GlobalRecoveryPlanOutcome, GlobalSnapshotArtifactHasher}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalRecoveryPlanOutcome
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
@@ -46,10 +46,10 @@ import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
-import io.constellationnetwork.security.{Hasher, HasherSelector}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -149,6 +149,24 @@ object Main
       RecoveryPlanTooCloseToCertifiedActivation(anchor, activation)
     )
   }
+
+  private[dag] final case class RecoveryPlanHistoricalAnchorUnsupported(anchor: SnapshotOrdinal) extends NoStackTrace {
+    override def getMessage: String =
+      s"GL0 recovery-plan v1 does not support Kryo-era anchor=${anchor.value.value}; " +
+        "choose a JSON-era incremental anchor so the signed checkpoint hash is also an unambiguous rollback locator"
+  }
+
+  /** Recovery-plan v1 has one anchor hash serving as both public fork identity and incremental-storage locator. Those identities are the
+    * same in the JSON era. Historical Kryo snapshots require two typed hashes, which v1 deliberately does not guess or overload.
+    */
+  private[dag] def validateRecoveryAnchorHashLogic(
+    plan: Gl0RecoveryPlan,
+    logic: HashLogic
+  ): Either[RecoveryPlanHistoricalAnchorUnsupported, Unit] =
+    logic match {
+      case JsonHash => Right(())
+      case KryoHash => Left(RecoveryPlanHistoricalAnchorUnsupported(plan.anchor.ordinal))
+    }
 
   private[dag] final case class CertifiedRollbackRequiresRecoveryPlan(
     anchor: SnapshotOrdinal,
@@ -292,6 +310,14 @@ object Main
           SignedValidator.make[IO]
         )
       }.asResource
+      validateVerifiedRecoveryPlan = (verified: Gl0RecoveryPlanLoader.Verified) => {
+        val plan = verified.plan
+        val anchorLogic = hasherSelector.getForOrdinal(plan.anchor.ordinal).getLogic(plan.anchor.ordinal)
+
+        validateRecoveryAnchorCompatibility(plan, recoveryCheckpoint).liftTo[IO] >>
+          validateRecoveryActivationSpacing(plan, certifiedConsensusActivationOrdinal).liftTo[IO] >>
+          validateRecoveryAnchorHashLogic(plan, anchorLogic).liftTo[IO]
+      }
 
       programs = Programs.make[IO, Run](
         sharedPrograms,
@@ -431,15 +457,7 @@ object Main
               loadedConsensusConfig.quorumThresholdFraction,
               SignedValidator.make[IO]
             )
-          }.flatTap(
-            _.traverse_(verified =>
-              validateRecoveryAnchorCompatibility(verified.plan, recoveryCheckpoint).liftTo[IO] >>
-                validateRecoveryActivationSpacing(
-                  verified.plan,
-                  certifiedConsensusActivationOrdinal
-                ).liftTo[IO]
-            )
-          ).flatMap(configuredRecoveryPlanRef.set) >>
+          }.flatTap(_.traverse_(validateVerifiedRecoveryPlan)).flatMap(configuredRecoveryPlanRef.set) >>
             storages.node.setValidatorMode >>
             gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
@@ -472,15 +490,7 @@ object Main
               loadedConsensusConfig.quorumThresholdFraction,
               SignedValidator.make[IO]
             )
-          }.flatTap(
-            _.traverse_(verified =>
-              validateRecoveryAnchorCompatibility(verified.plan, recoveryCheckpoint).liftTo[IO] >>
-                validateRecoveryActivationSpacing(
-                  verified.plan,
-                  certifiedConsensusActivationOrdinal
-                ).liftTo[IO]
-            )
-          ).flatMap(configuredRecoveryPlanRef.set) >>
+          }.flatTap(_.traverse_(validateVerifiedRecoveryPlan)).flatMap(configuredRecoveryPlanRef.set) >>
             storages.node.setValidatorMode >>
             gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
@@ -535,73 +545,58 @@ object Main
                 loadedConsensusConfig.quorumThresholdFraction,
                 SignedValidator.make[IO]
               )
-            }.flatTap(
-              _.traverse_(verified =>
-                validateRecoveryAnchorCompatibility(verified.plan, recoveryCheckpoint).liftTo[IO] >>
-                  validateRecoveryActivationSpacing(
-                    verified.plan,
-                    certifiedConsensusActivationOrdinal
-                  ).liftTo[IO]
-              )
-            ).flatTap(configuredRecoveryPlanRef.set)
-              .flatMap { verifiedRecoveryPlan =>
-                val recoveryPlan = verifiedRecoveryPlan.map(_.plan)
-                val activation = certifiedConsensusActivationOrdinal
-                val validateBeforeLoad = (
-                  source: RollbackLoader.Source,
-                  snapshotInfo: GlobalSnapshotInfo,
-                  snapshot: Signed[GlobalIncrementalSnapshot]
-                ) =>
-                  recoveryPlan match {
-                    case Some(plan) =>
-                      for {
-                        _ <- source match {
-                          case RollbackLoader.Source.Incremental => IO.unit
-                          case RollbackLoader.Source.FullSnapshot =>
-                            Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot").raiseError[IO, Unit]
+            }.flatTap(_.traverse_(validateVerifiedRecoveryPlan)).flatTap(configuredRecoveryPlanRef.set).flatMap { verifiedRecoveryPlan =>
+              val recoveryPlan = verifiedRecoveryPlan.map(_.plan)
+              val activation = certifiedConsensusActivationOrdinal
+              val validateBeforeLoad = (
+                source: RollbackLoader.Source,
+                snapshotInfo: GlobalSnapshotInfo,
+                snapshot: Signed[GlobalIncrementalSnapshot]
+              ) =>
+                recoveryPlan match {
+                  case Some(plan) =>
+                    for {
+                      _ <- source match {
+                        case RollbackLoader.Source.Incremental => IO.unit
+                        case RollbackLoader.Source.FullSnapshot =>
+                          Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot").raiseError[IO, Unit]
+                      }
+                      hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
+                      _ <- Gl0RecoveryPlan
+                        .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
+                        .liftTo[IO]
+                      ineligiblePlannedPeers <- plan.committee.toList.filterA { peerId =>
+                        peerId.toPublic[IO].map(_.toAddress).map { address =>
+                          !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
                         }
-                        hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher =>
-                          GlobalSnapshotArtifactHasher.toHashed[IO](snapshot)
+                      }
+                      _ <- Gl0RecoveryPlan
+                        .IneligibleCommitteeMembers(
+                          s"collateral check failed=${ineligiblePlannedPeers.map(_.value.value).mkString(",")}"
                         )
-                        _ <- Gl0RecoveryPlan
-                          .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
-                          .liftTo[IO]
-                        ineligiblePlannedPeers <- plan.committee.toList.filterA { peerId =>
-                          peerId.toPublic[IO].map(_.toAddress).map { address =>
-                            !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
-                          }
-                        }
-                        _ <- Gl0RecoveryPlan
-                          .IneligibleCommitteeMembers(
-                            s"collateral check failed=${ineligiblePlannedPeers.map(_.value.value).mkString(",")}"
-                          )
-                          .raiseError[IO, Unit]
-                          .whenA(ineligiblePlannedPeers.nonEmpty)
-                        // Consume authority only after every static, exact-anchor, and collateral
-                        // preflight passed, but before RollbackLoader traverses or mutates storage.
-                        _ <- verifiedRecoveryPlan.traverse_(verified => recoveryPlanReceipt.consume(verified.signed))
-                      } yield ()
-                    case None => validateOrdinaryRollbackAnchor(snapshot.ordinal, activation).liftTo[IO]
-                  }
+                        .raiseError[IO, Unit]
+                        .whenA(ineligiblePlannedPeers.nonEmpty)
+                      // Consume authority only after every static, exact-anchor, and collateral
+                      // preflight passed, but before RollbackLoader traverses or mutates storage.
+                      _ <- verifiedRecoveryPlan.traverse_(verified => recoveryPlanReceipt.consume(verified.signed))
+                    } yield ()
+                  case None => validateOrdinaryRollbackAnchor(snapshot.ordinal, activation).liftTo[IO]
+                }
 
-                programs.rollbackLoader
-                  .load(m.rollbackHash, programs.download, Some(validateBeforeLoad))
-                  .map(loaded => (recoveryPlan, loaded._1, loaded._2))
-              }
+              programs.rollbackLoader
+                .load(m.rollbackHash, programs.download, Some(validateBeforeLoad))
+                .map(loaded => (recoveryPlan, loaded._1, loaded._2))
+            }
 
             loadRollback.flatMap {
               case (recoveryPlan, snapshotInfo, snapshot) =>
                 for {
                   // Preserve the legacy rollback hasher selection when no plan is present. A
-                  // recovery plan, however, is bound to the historical snapshot hash and must
-                  // seed the outcome with the same ordinal-selected hasher used by preflight.
-                  // Otherwise a hasher migration between the anchor and current tip could pass
-                  // authorization and then install a different parent hash.
+                  // recovery plan is bound to the ordinal-selected public anchor hash. Plan v1
+                  // rejects Kryo-era anchors at startup, so this is JSON for every accepted plan.
                   hashedSnapshot <- recoveryPlan.fold(
-                    hasherSelector.withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.toHashed[IO](snapshot))
-                  )(_ =>
-                    hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => GlobalSnapshotArtifactHasher.toHashed[IO](snapshot))
-                  )
+                    hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                  )(_ => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO]))
                   // Rollback bootstrap: preserve the rolled-back snapshot's proof signers as
                   // the checkpoint's live seed committee. That keeps lastSigners/Core anchored
                   // to signed evidence instead of turning a non-signer rollback server into a

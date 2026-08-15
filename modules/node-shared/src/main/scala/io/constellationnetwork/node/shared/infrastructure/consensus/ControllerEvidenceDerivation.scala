@@ -35,8 +35,8 @@ import eu.timepit.refined.types.numeric.NonNegLong
   * earns 20 per entry and crosses the promote threshold (100) after 5 entries -- saturating well above promote within one window. A peer
   * that signs only half its eligible rounds nets 20-15=5 per two entries and stays pinned near the demote threshold.
   *
-  * Compiled-in constants (jar-hash gated, the `TierTransitions.DemotionConsecutiveMisses` convention); promote to config if runtime tuning
-  * is ever needed.
+  * Compiled-in constants (advertised-release-version gated, the `TierTransitions.DemotionConsecutiveMisses` convention); promote to config
+  * if runtime tuning is ever needed.
   */
 object ControllerEvidenceDerivation {
 
@@ -118,7 +118,7 @@ object ControllerEvidenceDerivation {
     * Tier 1. Aligning the two means the moment the tier derivation sheds a silent Core peer, the chronic classification ALSO bars the
     * Core-floor from immediately re-promoting it (the demote-then-repromote loop behind the ordinal-3150040 quorum-infeasible stall). Small
     * enough to react within one evidence window; large enough that a single slow round (GC pause, network blip) does not strip a healthy
-    * peer. Compiled-in constant, jar-hash gated, same convention as `DemotionConsecutiveMisses`.
+    * peer. Compiled-in constant, advertised-release-version gated, same convention as `DemotionConsecutiveMisses`.
     */
   val ChronicMissThreshold: Int = TierTransitions.DemotionConsecutiveMisses
 

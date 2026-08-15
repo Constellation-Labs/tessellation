@@ -314,7 +314,7 @@ object GlobalSnapshotConsensusFunctions {
           }
       }
 
-      def getLastArtifactHash = GlobalSnapshotArtifactHasher.hash(lastArtifact.value)(lastArtifactHasher)
+      def getLastArtifactHash = GlobalSnapshotArtifactHasher.historicalHash(lastArtifact.value)(lastArtifactHasher)
 
       def balanceEventMetric(stage: String, eventType: String, count: Long): F[Unit] = {
         val tags = Seq(

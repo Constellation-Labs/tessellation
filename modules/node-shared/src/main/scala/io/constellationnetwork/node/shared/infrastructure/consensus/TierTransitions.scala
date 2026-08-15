@@ -76,8 +76,8 @@ object TierTransitions {
     * additionally persist a windowed roundStart-membership history and count a miss only for rounds the peer was actually in roundStart;
     * see the alpha-deploy handoff for that follow-up.
     *
-    * Compiled-in constant, not config: gated by the jar hash (every node runs the same value), so it needs no slot in
-    * `deterministicConfigHash`. Promote to config later if runtime tuning is wanted.
+    * Compiled-in constant, not config: gated by the advertised release version (every coordinated node runs the same value), so it needs no
+    * slot in `deterministicConfigHash`. Promote to config later if runtime tuning is wanted.
     */
   val DemotionConsecutiveMisses: Int = 3
 

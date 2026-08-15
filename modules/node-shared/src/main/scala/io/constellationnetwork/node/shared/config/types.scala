@@ -393,7 +393,7 @@ object types {
     // Stage 4 (v32) activates the read side: `penaltyUntil` joins the eligibility filtering
     // in both StateCreators, so divergent operator values would change committee derivation.
     // Consensus-critical: included in `deterministicConfigHash` since v32 so divergent values
-    // are rejected at the Facility handshake instead of silently forking.
+    // are rejected by the L0 join fence; Facility comparison remains a post-join diagnostic.
     penaltyDurationOrdinals: Int = 100,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
@@ -706,9 +706,9 @@ object types {
     //     byzantine). Acceptable because observed silent peers are crash-faulty (network,
     //     JVM hang), not byzantine, and the wedge under crash faults is far more damaging
     //     than the theoretical f=2 tolerance we lose. quorumThresholdFraction is in
-    //     deterministicConfigHash so a v16-config and v17-config cluster reject each other during
-    //     the Facility phase; the join-time `versionHash` separately fences differently advertised
-    //     software versions. Currency-l0 is unaffected (defaults to 1.0
+    //     deterministicConfigHash so a v16-config and v17-config cluster reject each other at
+    //     L0 joining; Facility comparison remains diagnostic. The independent `versionHash`
+    //     separately fences differently advertised software versions. Currency-l0 is unaffected (defaults to 1.0
     //     unanimity, applies to small metagraph clusters where unanimity is preferred).
     //   v18: Active-set tightening via the recentSigners window. Adds an Option-wrapped
     //     `recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]` to
@@ -782,13 +782,13 @@ object types {
     //     the latter is the alpha.90 issue 2 stale-VCC view-mismatch gate.
     //     v21: `viewInterval` raised 30s -> 60s (deploy unit A). Pure value change; it
     //     alters `deterministicConfigHash` (viewIntervalMs is folded in below), so the
-    //     cross-version fences are `deterministicConfigHash` during the Facility phase and the
-    //     advertised-version `versionHash` at join. This schema-version bump remains an audit anchor.
+    //     cross-version fences are the L0 join-time `deterministicConfigHash` and independent
+    //     advertised-version `versionHash`. Facility comparison remains diagnostic. This schema-version bump remains an audit anchor.
     //     v22: testnet Core committee floor 3 -> 2 plus sustained-silence demotion
     //     hysteresis (deploy unit B; a Core peer is demoted only after it is absent from
     //     the most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, not on a
-    //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so
-    //     the config-hash + jar-hash are the gate; v22 is the audit anchor for B.
+    //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so the
+    //     independent config-hash and advertised-version join fences are the gate; v22 is the audit anchor for B.
     //     v23: leader selection also narrows the Core leader pool to peers present in the
     //     most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, when that
     //     leaves at least `minLeaderPoolSize` candidates. Deterministic: `recentSigners`
@@ -803,8 +803,8 @@ object types {
     //     view>seed proposals; followers validate TC-carried proposals (view linkage, quorum,
     //     parent/facilitator hash, witness pool, divergent + carry-forward highest-QC). `Proposal`
     //     gains `timeoutCertificate: Option[TimeoutCertificate]` -- a wire change, so deploy as a
-    //     coordinated cold L0 restart. The advertised-version `versionHash` gates joining while
-    //     `deterministicConfigHash` gates Facilities; this bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
+    //     coordinated cold L0 restart. Both the advertised-version `versionHash` and
+    //     `deterministicConfigHash` gate L0 joining; Facility comparison remains diagnostic. This bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
     //     rehydration.
     //     v26: active-facilitator expansion. The recent-signer-only admission filter now keeps
     //     recent signers first, then fills toward `activeFacilitatorTarget` with deterministic
@@ -839,8 +839,8 @@ object types {
     //     `deterministicConfigHash`. Signed-bytes shape changed: peerHistory reinstated with
     //     an evidence-only payload (perPeer empty, recentRoundEndTimes omitted,
     //     controllerEvidence + penaltyUntil signed), so deploy as a coordinated cold L0
-    //     restart. The advertised-version `versionHash` gates joining while
-    //     `deterministicConfigHash` gates Facilities; this bump is the audit anchor.
+    //     restart. Both the advertised-version `versionHash` and `deterministicConfigHash`
+    //     gate L0 joining; Facility comparison remains diagnostic. This bump is the audit anchor.
     //     v33: escalating quorum-denominator shrink (QuorumDenominatorShrink). After
     //     `quorumShrinkActivationViews` viewInterval units of silence since the parent
     //     outcome closed, the REQUIRED quorum for phase/VCC/TC feasibility at the stuck key
@@ -899,8 +899,8 @@ object types {
     // LIVENESS quorum threshold is computed against `coreFacilitators.value.size`; divergent
     // operator values would derive divergent Core committees and silently fork. Now in
     // `deterministicConfigHash` so a v19 (no-hash) and v20 (with-hash) cluster compute
-    // different hashes and reject each other at the Facility handshake. The separate join-time
-    // `versionHash` hashes the advertised version string (or `CL_VERSION_HASH`), not the jar bytes.
+    // different hashes and reject each other at L0 joining. Facility comparison remains diagnostic.
+    // The separate `versionHash` hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes.
     coreCommitteeSize: Option[Int] = None,
     // v33 quorum-denominator shrink rung (QuorumDenominatorShrink): number of `viewInterval`
     // units of wall silence since the parent outcome's `consensusEndTime` after which the
@@ -924,12 +924,12 @@ object types {
 
     /** Deterministic hash of consensus-critical config values.
       *
-      * All nodes in a consensus round MUST have the same config to produce the same results. This hash is included in Facility declarations
-      * so that config divergence is detected immediately during the CollectingFacilities phase, rather than causing mysterious forks
-      * downstream.
+      * All nodes in a consensus round MUST have the same config to produce the same results. L0 advertises this hash during joining and
+      * requires exact equality before peering. It is also included in Facility declarations as a post-join structured diagnostic.
       *
       * '''Consensus-critical fields''' (included in hash):
-      *   - `maxFacilitatorCount`: determines eligible facilitator list size and rendezvous hashing
+      *   - `maxFacilitatorCount`: legacy controller-sizing scalar
+      *   - `facilitatorSelectionMax`: environment-resolved live selector cap
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
       *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
@@ -1186,8 +1186,8 @@ object types {
     //
     // v20 update: the env-resolved value is now also folded into `ConsensusConfig.coreCommitteeSize`
     // at the consensus construction site, which in turn folds into `deterministicConfigHash`,
-    // so a Facility-time handshake refusal is the second line of defence against divergent
-    // operator values. The join-time advertised-version `versionHash` is a separate software fence.
+    // so the strict L0 config-hash join fence rejects divergent operator values. Facility
+    // comparison remains a post-join diagnostic. The advertised-version `versionHash` is a separate software fence.
     // The `Map[AppEnvironment, PosInt]` shape is
     // preserved -- env resolution still happens at the construction site
     // (GlobalSnapshotConsensus / CurrencySnapshotConsensus); only the resolved scalar is

@@ -53,6 +53,12 @@ value with the exact anchor and canonical committee, signs it once with the desi
 existing node key using `Signed.forAsyncHasher`, decodes and verifies the result, and writes a new
 file atomically. Do not hand-construct signature bytes or invent a second hashing format.
 
+Plan format v1 supports JSON-era incremental anchors only. Its one `snapshotHash` is both the
+fork checkpoint identity and the rollback locator; those identities are unambiguous after the
+historical Kryo epoch. Every planned node rejects a Kryo-era anchor before rollback or joining.
+Supporting such an anchor would require an explicitly versioned plan with separate locator and
+historical parent hashes, not an inferred conversion during an incident.
+
 ```bash
 CL_KEYSTORE=/secure/lead-node.p12 \
 CL_KEYALIAS=alias \
@@ -93,6 +99,7 @@ Startup fails closed unless all of the following hold:
 - the committee does not exceed the environment-resolved `snapshot.max-facilitator-count` used by
   the live facilitator selector (not the distinct legacy controller-sizing scalar);
 - the command's rollback hash and loaded snapshot ordinal/hash exactly match the plan anchor; and
+- the anchor uses the JSON hash era (v1 rejects historical Kryo anchors); and
 - every planned member satisfies collateral against the loaded anchor.
 
 The two-member minimum is a coordination floor, not a reward-population cap. The separate

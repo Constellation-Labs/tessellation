@@ -71,7 +71,7 @@ object GlobalCertifiedDownloadValidator {
   private[snapshot] def validateGenesisRoot[F[_]: Async: HasherSelector](candidate: GlobalConsensusOutcome): F[Either[String, Unit]] =
     HasherSelector[F].withCurrent { implicit hasher =>
       for {
-        snapshotHash <- GlobalSnapshotArtifactHasher.hash[F](candidate.finished.signedMajorityArtifact.value)
+        snapshotHash <- GlobalSnapshotArtifactHasher.currentHash[F](candidate.finished.signedMajorityArtifact.value)
         committee = SortedSet.from(candidate.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId))
         expected = GlobalRecoveryPlanOutcome.seed(
           candidate.finished.signedMajorityArtifact,
@@ -84,6 +84,29 @@ object GlobalCertifiedDownloadValidator {
           _ <- Either.cond(committee.nonEmpty, (), "genesis_proof_signers_empty")
           _ <- Either.cond(candidate === expected, (), "genesis_outcome_not_proof_signer_root")
         } yield ()
+    }
+
+  /** Reconstruct the activation parent's live consensus identity with the current hasher.
+    *
+    * State-proof validation remains ordinal-selected, and proposal parent links retain their historical V1 projection.
+    * `Finished.snapshotHash`, however, is produced by live consensus with the current hasher, so the exact-activation bridge must preserve
+    * that identity even when A-1 belongs to the historical Kryo epoch.
+    */
+  private[snapshot] def reconstructActivationParentFinished[F[_]: Async: HasherSelector](
+    snapshot: Signed[GlobalIncrementalSnapshot],
+    context: GlobalSnapshotInfo
+  ): F[Finished] =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value).map { snapshotHash =>
+        Finished(
+          snapshot,
+          context,
+          EventTrigger,
+          Candidates.empty,
+          Hash.empty,
+          snapshotHash
+        )
+      }
     }
 
   def make[F[_]: Async: HasherSelector](
@@ -257,7 +280,7 @@ object GlobalCertifiedDownloadValidator {
         locallyValidatedSnapshot(parentOrdinal).flatMap(_.traverse {
           case (snapshot, context) =>
             for {
-              snapshotHash <- HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+              finished <- reconstructActivationParentFinished[F](snapshot, context)
               proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
               legacy = GlobalConsensusOutcome(
                 key = parentOrdinal,
@@ -265,14 +288,7 @@ object GlobalCertifiedDownloadValidator {
                 removedFacilitators = RemovedFacilitators.empty,
                 withdrawnFacilitators = WithdrawnFacilitators.empty,
                 eligibleFacilitators = EligibleFacilitators(proofSigners),
-                finished = Finished(
-                  snapshot,
-                  context,
-                  EventTrigger,
-                  Candidates.empty,
-                  Hash.empty,
-                  snapshotHash
-                )
+                finished = finished
               )
               reset <- HasherSelector[F].withCurrent(implicit hasher =>
                 GlobalSnapshotConsensusStateCreator
@@ -293,12 +309,14 @@ object GlobalCertifiedDownloadValidator {
             case Right(kind) =>
               val snapshotHash = kind match {
                 case TrustedParentKind.Certified =>
-                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
                 case TrustedParentKind.AuthorizedRoot
                     if config.certifiedConsensusActivationKey == 0L && parentOrdinal === SnapshotOrdinal.MinValue =>
-                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
                 case TrustedParentKind.AuthorizedRoot =>
-                  HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+                  HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher =>
+                    GlobalSnapshotArtifactHasher.historicalHash[F](snapshot.value)
+                  )
               }
 
               snapshotHash.map { hash =>
