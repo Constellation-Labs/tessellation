@@ -6,9 +6,11 @@ is the single largest behavioral change since v4.0.0 and replaces the flat
 rendezvous-hashing facilitator set described in [README sections 9-10](README.md#9-facilitator-selection).
 
 Every consensus round now partitions its facilitators into three deterministic
-tiers. **Core (Tier 2)** is the liveness quorum and the leader pool. **Tier 1**
-signs the snapshot and earns rewards and witnesses certificates, but does not
-count toward the cert quorum denominator. **Witness (Tier 0)** observes only.
+tiers. **Core (Tier 2)** exclusively controls leaders and liveness certificates.
+**Tier 1** signs the snapshot and earns rewards and witnesses certificates, but
+does not count toward the certificate quorum denominator. Once the full-committee
+floor is active, the frozen Core+Tier-1 committee controls Facility-phase
+progression and artifact finality. **Witness (Tier 0)** observes only.
 The partition is derived every round from consensus-agreed signed state, so two
 honest nodes deciding the same round compute byte-identical committees; this is
 load-bearing, because the committee feeds `roundStartFacilitators` ->
@@ -43,19 +45,22 @@ The tier integers are defined in `TierTransitions.scala:42-49`:
 
 | Tier | Constant | Value | What it can do |
 |------|----------|-------|----------------|
-| Core | `TierTransitions.Core` | `2` | Full facilitator. In the **liveness quorum**; phase transitions and liveness certificates derive their normal denominator from Core. Only Core peers are eligible to **lead** a round. |
-| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and earn a delegated validator share while seated. They cannot lead, and they do **not** count toward the normal liveness denominator, so a silent Tier-1 peer cannot wedge leader rotation. |
+| Core | `TierTransitions.Core` | `2` | Full facilitator. Liveness certificates derive their normal denominator from Core. Only Core peers are eligible to **lead** a round. |
+| Tier 1 | `TierTransitions.Tier1` | `1` | Witness-eligible (B1/B2/VCC/TC witness pool). Tier-1 peers **sign** each round's `signedMajorityArtifact` and earn a delegated validator share while seated. They cannot lead or count toward liveness-certificate quorums, so an individual silent Tier-1 peer cannot wedge leader rotation. Outside bootstrap, Tier-1 remains in the frozen committee used by the Facility-phase and finality floors. |
 | Witness | `TierTransitions.Witness` | `0` | Observation only. Open membership; in the v19 transition path peers fall here only via explicit eviction. |
 
-The key safety property: **the liveness quorum is gated on Core only.** The
-quorum threshold is `q = ceil(coreFacilitators.size * quorumThresholdFraction)`
-(see `CommitteeBuilder.scala:13-16` scaladoc and `QuorumPolicy`). The round-start
+The key split is: **Core exclusively controls leaders and liveness certificates;
+the frozen Core+Tier-1 committee controls Facility-phase progression and artifact
+finality outside bootstrap.** The liveness-certificate threshold is
+`q = ceil(coreFacilitators.size * quorumThresholdFraction)` (see
+`CommitteeBuilder.scala:13-16` scaladoc and `QuorumPolicy`). The round-start
 committee carries `coreFacilitators` and `tier1Facilitators` separately
 (`GlobalSnapshotConsensusStateCreator.scala:729-730`,
-`coreFacilitators = CoreFacilitators(committees.core)`), and the round-creator
-comment at `GlobalSnapshotConsensusStateCreator.scala:61-66` states the contract:
-quorum threshold is computed against `coreFacilitators.value.size`, NOT the full
-round-start committee.
+`coreFacilitators = CoreFacilitators(committees.core)`). No individual Tier-1
+peer, and not every Tier-1 peer, is required under the shipped two-thirds floor;
+however, more than one-third silent frozen seats can halt Facility progression or
+finality. That fail-closed boundary is deliberate and requires operator recovery
+once participation is already below the current committee quorum.
 
 Snapshot finalization is a separate gate. During bootstrap it preserves the legacy
 Core-sized/strict-majority behavior. Outside bootstrap, finality uses the frozen
