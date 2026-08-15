@@ -93,15 +93,18 @@ dormant.
 Before activation, verify the ordinary-download lineage boundary on every source node:
 
 - the exact activation outcome validates from the locally stored, state-proof-checked
-  A-1 snapshot. The predecessor artifact is hashed with its historical ordinal hasher,
-  while the newly reset v35 committee value is hashed with the current hasher, matching
-  live activation even across a hash-transition boundary;
+  A-1 snapshot. State-proof/file validation uses the ordinal-selected historical
+  rules, while the reconstructed legacy outcome identity and newly reset v35 committee
+  hash use the current consensus hasher, matching live activation even across a
+  hash-transition boundary. The shared Global L0 artifact-hash helper preserves the V1
+  projection required by historical Kryo hashes;
 - predecessor validation is read-only: it reconstructs and checks the persisted state
   proof without synchronizing/rewinding the MPT and without deleting snapshot files;
 - certified-consensus genesis key 0 and an exact signed recovery-plan anchor are the
-  only locally persisted uncertified roots. Their first certified child is projected
-  through the same typed committee projector and verified through the ordinary bound-QC
-  adoption path;
+  only locally persisted uncertified roots. Genesis authority is bound exactly to the
+  artifact's proof signers; the recovery committee remains bound to its operator-signed
+  plan. Their first certified child is projected through the same typed committee
+  projector and verified through the ordinary bound-QC adoption path;
 - a restart after activation retains both the current and immediately preceding
   certified outcome sidecars and validates the current outcome from that predecessor;
 - a missing/corrupt predecessor fails before application storage, consensus storage,

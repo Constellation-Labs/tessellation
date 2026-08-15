@@ -8,7 +8,9 @@ import scala.collection.immutable.SortedSet
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalCertifiedDownloadValidator.TrustedParentKind
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.{EligibleFacilitators, Facilitators}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, GlobalStateProofSelector, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -51,19 +53,57 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         committee
       )
 
+  private def typedArtifactHasher(logic: HashLogic, expected: Any => Boolean, result: Hash): Hasher[IO] = new Hasher[IO] {
+    def hash[A: io.circe.Encoder](data: A): IO[Hash] = IO.pure(if (expected(data)) result else Hash.empty)
+    def hashBytes(bytes: Array[Byte]): IO[Hash] = IO.pure(Hash.empty)
+    def compare[A: io.circe.Encoder](data: A, expectedHash: Hash): IO[Boolean] = hash(data).map(_ === expectedHash)
+    def getLogic(ordinal: SnapshotOrdinal): HashLogic = logic
+    def prefixedHash[A: io.circe.Encoder](data: A, prefix: Array[Byte]): IO[Hash] = hash(data)
+  }
+
   test("only a canonical locally persisted uncertified root receives root authority") { implicit res =>
     implicit val (jsonSerializer, hasher, securityProvider) = res
 
-    canonicalRoot.map { root =>
-      val wrongEligible =
+    for {
+      root <- canonicalRoot
+      substituteKey <- KeyPairGenerator.makeKeyPair[IO]
+      substitute = PeerId.fromPublic(substituteKey.getPublic)
+      wrongEligible =
         root.copy(eligibleFacilitators = io.constellationnetwork.node.shared.infrastructure.consensus.state.EligibleFacilitators.empty)
-      val wrongHash = root.copy(finished = root.finished.copy(facilitatorsHash = Hash.fromBytes(Array[Byte](1))))
-      val missingProofWindow = root.copy(recentProofSizes = scala.collection.immutable.SortedMap.empty)
+      wrongHash = root.copy(finished = root.finished.copy(facilitatorsHash = Hash.fromBytes(Array[Byte](1))))
+      missingProofWindow = root.copy(recentProofSizes = scala.collection.immutable.SortedMap.empty)
+      substitutedCommittee = root.copy(
+        facilitators = Facilitators(List(substitute)),
+        eligibleFacilitators = EligibleFacilitators(List(substitute))
+      )
+      validGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](root)
+      substitutedGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](substitutedCommittee)
+    } yield {
 
       expect.same(Right(TrustedParentKind.AuthorizedRoot), GlobalCertifiedDownloadValidator.trustedParentKind(root)) &&
       expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongEligible).isLeft) &&
       expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongHash).isLeft) &&
-      expect(GlobalCertifiedDownloadValidator.trustedParentKind(missingProofWindow).isLeft)
+      expect(GlobalCertifiedDownloadValidator.trustedParentKind(missingProofWindow).isLeft) &&
+      expect.same(Right(()), validGenesis) &&
+      expect.same(Left("genesis_outcome_not_proof_signer_root"), substitutedGenesis)
+    }
+  }
+
+  test("the shared artifact hasher preserves the historical V1 projection and current typed artifact") { implicit res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+
+    canonicalRoot.flatMap { root =>
+      val historicalHash = Hash.fromBytes(Array[Byte](11))
+      val currentHash = Hash.fromBytes(Array[Byte](22))
+      val historical = typedArtifactHasher(KryoHash, _.isInstanceOf[io.constellationnetwork.schema.GlobalIncrementalSnapshotV1], historicalHash)
+      val current = typedArtifactHasher(JsonHash, _.isInstanceOf[GlobalIncrementalSnapshot], currentHash)
+
+      (
+        GlobalSnapshotArtifactHasher.hash[IO](root.finished.signedMajorityArtifact.value)(historical),
+        GlobalSnapshotArtifactHasher.hash[IO](root.finished.signedMajorityArtifact.value)(current)
+      ).mapN { (historicalResult, currentResult) =>
+        expect.same(historicalHash, historicalResult) && expect.same(currentHash, currentResult)
+      }
     }
   }
 

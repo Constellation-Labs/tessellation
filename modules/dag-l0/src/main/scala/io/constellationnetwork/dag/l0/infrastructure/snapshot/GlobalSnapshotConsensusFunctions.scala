@@ -314,10 +314,7 @@ object GlobalSnapshotConsensusFunctions {
           }
       }
 
-      def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
-        case JsonHash => lastArtifactHasher.hash(lastArtifact.value)
-        case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
-      }
+      def getLastArtifactHash = GlobalSnapshotArtifactHasher.hash(lastArtifact.value)(lastArtifactHasher)
 
       def balanceEventMetric(stage: String, eventType: String, count: Long): F[Unit] = {
         val tags = Seq(

@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.Duration
 
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
@@ -67,6 +67,24 @@ object GlobalCertifiedDownloadValidator {
       _ <- Either.cond(contextMatches, (), "trusted_predecessor_context_mismatch")
       _ <- Either.cond(hashMatches, (), "trusted_predecessor_hash_mismatch")
     } yield ()
+
+  private[snapshot] def validateGenesisRoot[F[_]: Async: HasherSelector](candidate: GlobalConsensusOutcome): F[Either[String, Unit]] =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      for {
+        snapshotHash <- GlobalSnapshotArtifactHasher.hash[F](candidate.finished.signedMajorityArtifact.value)
+        committee = SortedSet.from(candidate.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId))
+        expected = GlobalRecoveryPlanOutcome.seed(
+          candidate.finished.signedMajorityArtifact,
+          candidate.finished.context,
+          snapshotHash,
+          committee
+        )
+      } yield
+        for {
+          _ <- Either.cond(committee.nonEmpty, (), "genesis_proof_signers_empty")
+          _ <- Either.cond(candidate === expected, (), "genesis_outcome_not_proof_signer_root")
+        } yield ()
+    }
 
   def make[F[_]: Async: HasherSelector](
     config: ConsensusConfig,
@@ -239,7 +257,7 @@ object GlobalCertifiedDownloadValidator {
         locallyValidatedSnapshot(parentOrdinal).flatMap(_.traverse {
           case (snapshot, context) =>
             for {
-              hashed <- HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher => snapshot.toHashed[F])
+              snapshotHash <- HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
               proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
               legacy = GlobalConsensusOutcome(
                 key = parentOrdinal,
@@ -253,7 +271,7 @@ object GlobalCertifiedDownloadValidator {
                   EventTrigger,
                   Candidates.empty,
                   Hash.empty,
-                  hashed.hash
+                  snapshotHash
                 )
               )
               reset <- HasherSelector[F].withCurrent(implicit hasher =>
@@ -270,18 +288,27 @@ object GlobalCertifiedDownloadValidator {
 
       (certifiedOutcomeSidecar.read(parentOrdinal), locallyValidatedSnapshot(parentOrdinal)).tupled.flatMap {
         case (Some(parent), Right((snapshot, context))) =>
-          HasherSelector[F].forOrdinal(parentOrdinal) { implicit hasher =>
-            snapshot.toHashed[F].map { hashed =>
-              for {
-                _ <- validatePredecessorBindings(
+          trustedParentKind(parent) match {
+            case Left(error) => error.asLeft[TrustedParent].pure[F]
+            case Right(kind) =>
+              val snapshotHash = kind match {
+                case TrustedParentKind.Certified =>
+                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+                case TrustedParentKind.AuthorizedRoot
+                    if config.certifiedConsensusActivationKey == 0L && parentOrdinal === SnapshotOrdinal.MinValue =>
+                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+                case TrustedParentKind.AuthorizedRoot =>
+                  HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher => GlobalSnapshotArtifactHasher.hash[F](snapshot.value))
+              }
+
+              snapshotHash.map { hash =>
+                validatePredecessorBindings(
                   parent.key === parentOrdinal,
                   parent.finished.signedMajorityArtifact === snapshot,
                   parent.finished.context === context,
-                  parent.finished.snapshotHash === hashed.hash
-                )
-                kind <- trustedParentKind(parent)
-              } yield TrustedParent(parent, kind)
-            }
+                  parent.finished.snapshotHash === hash
+                ).as(TrustedParent(parent, kind))
+              }
           }
         case (None, _)        => "trusted_predecessor_sidecar_missing".asLeft[TrustedParent].pure[F]
         case (_, Left(error)) => error.asLeft[TrustedParent].pure[F]
@@ -292,7 +319,11 @@ object GlobalCertifiedDownloadValidator {
       val active = config.certifiedConsensusActiveAt(candidate.key.value.value)
       val genesisCompatibility = candidate.key.value.value == 0L && candidate.finished.certifiedOutcome.isEmpty
 
-      if (!active || genesisCompatibility) Async[F].unit
+      if (!active) Async[F].unit
+      else if (genesisCompatibility)
+        validateGenesisRoot(candidate).flatMap(
+          _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_genesis:$error")).liftTo[F]
+        )
       else {
         val trustedParent =
           if (config.certifiedConsensusActivatesAt(candidate.key.value.value)) exactActivationParent(candidate)

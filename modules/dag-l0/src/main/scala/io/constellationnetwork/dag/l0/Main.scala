@@ -14,7 +14,7 @@ import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.dag.l0.domain.snapshot.ForkRecoveryService
 import io.constellationnetwork.dag.l0.domain.snapshot.recovery._
 import io.constellationnetwork.dag.l0.http.p2p.P2PClient
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalRecoveryPlanOutcome
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.{GlobalRecoveryPlanOutcome, GlobalSnapshotArtifactHasher}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
@@ -560,7 +560,9 @@ object Main
                           case RollbackLoader.Source.FullSnapshot =>
                             Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot").raiseError[IO, Unit]
                         }
-                        hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
+                        hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher =>
+                          GlobalSnapshotArtifactHasher.toHashed[IO](snapshot)
+                        )
                         _ <- Gl0RecoveryPlan
                           .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
                           .liftTo[IO]
@@ -596,8 +598,10 @@ object Main
                   // Otherwise a hasher migration between the anchor and current tip could pass
                   // authorization and then install a different parent hash.
                   hashedSnapshot <- recoveryPlan.fold(
-                    hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
-                  )(_ => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO]))
+                    hasherSelector.withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.toHashed[IO](snapshot))
+                  )(_ =>
+                    hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => GlobalSnapshotArtifactHasher.toHashed[IO](snapshot))
+                  )
                   // Rollback bootstrap: preserve the rolled-back snapshot's proof signers as
                   // the checkpoint's live seed committee. That keeps lastSigners/Core anchored
                   // to signed evidence instead of turning a non-signer rollback server into a

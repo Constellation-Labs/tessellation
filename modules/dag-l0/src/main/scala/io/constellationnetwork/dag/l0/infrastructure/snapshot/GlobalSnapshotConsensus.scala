@@ -273,7 +273,7 @@ object GlobalSnapshotConsensus {
           else
             for {
               hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
-                outcome.finished.signedMajorityArtifact.toHashed[F]
+                GlobalSnapshotArtifactHasher.toHashed[F](outcome.finished.signedMajorityArtifact)
               }
               expected = GlobalRecoveryPlanOutcome.seed(
                 outcome.finished.signedMajorityArtifact,
