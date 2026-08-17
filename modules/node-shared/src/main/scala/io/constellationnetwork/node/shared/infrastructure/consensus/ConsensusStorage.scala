@@ -1,10 +1,10 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import cats.Order
 import cats.effect.Clock
 import cats.effect.kernel.{Async, Ref}
 import cats.kernel.Next
 import cats.syntax.all._
+import cats.{Eq, Order}
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -31,6 +31,20 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, B]): F[Option[B]]
 
+  /** Atomically installs a state transition together with its exact process-local post-commit effect, then runs that effect.
+    *
+    * The effect remains registered when it fails or is cancelled and is replayed by the next `resumePendingStateEffect`/state update. This
+    * closes the otherwise terminal gap where `Finished` (or any other next phase) is visible but persistence/gossip failed after the state
+    * write. The closure is deliberately local-only: consensus state is volatile across process restart, and Currency L0's Finished status
+    * does not retain enough data to reconstruct its signed binary effect without changing the public schema.
+    */
+  def condModifyStateWithSideEffect[B](key: Key)(
+    modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, (B, F[Unit])]
+  ): F[Option[B]]
+
+  /** Replay the exact post-commit effect retained for the current state-attempt, if any. Stale effects are discarded without execution. */
+  def resumePendingStateEffect(key: Key): F[Unit]
+
   def getResources(key: Key): F[ConsensusResources[Artifact, Kind]]
 
   private[consensus] def getTimeTrigger: F[Option[FiniteDuration]]
@@ -47,7 +61,10 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   // without relying on gossip self-loopback. Rumor handler still uses it for peer-inbound writes.
   def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]]
 
-  private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]]
+  // Public for the same exact-self-store reason as Facility and signatures. A leader must
+  // install the Proposal it captured before direct delivery; otherwise a missing self-loopback
+  // can enter the re-spread path and rebuild a different certificate envelope for the same view.
+  def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact, Kind]]]
 
   // Public (not private[consensus]) because the advancer's buildSignatureTransition
   // calls addSignature(selfId, ...) to locally self-store the node's own MajoritySignature
@@ -287,7 +304,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   private[consensus] def tryUpdateLastConsensusOutcomeWithCleanup(
     previousLastKey: Previous[Key],
     lastOutcome: Outcome
-  ): F[Boolean]
+  ): F[ConsensusStorage.OutcomeUpdateResult]
 
   private[consensus] def getOwnRegistrationKey: F[Option[Key]]
 
@@ -328,7 +345,16 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     * `ConsensusCommand.RoundCompleted` snapshot this value and tag the command so the FSM can drop the command if the round has since
     * advanced (view change / phase transition / new attempt).
     */
-  private[consensus] def getRoundAttemptId: F[Long]
+  /** Process-local state epoch used to bind delayed engine commands. This is not serialized or included in consensus hashes. */
+  def getRoundAttemptId: F[Long]
+
+  /** Global attempt epoch at which `key` last installed its current state.
+    *
+    * Unlike a per-key counter, this token is directly comparable with [[getRoundAttemptId]]. A delayed command is current only when both
+    * values match. Historical Finished states intentionally remain readable until the following outcome commits; their older token keeps a
+    * late `CheckUpdate` from completing the newer active round.
+    */
+  private[consensus] def getStateAttemptId(key: Key): F[Option[Long]]
 
   /** Per-key monotonic generation bumped when attempt-progress evidence changes: Facilities, Proposals, artifact signatures, binary
     * signatures, acknowledgements, withdrawals, or artifacts. Inbound auxiliary admission/eviction/view-change/timeout votes do not bump
@@ -378,6 +404,15 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 }
 
 object ConsensusStorage {
+
+  private final case class PendingStateEffect[F[_]](attemptId: Long, effect: F[Unit])
+
+  sealed trait OutcomeUpdateResult extends Product with Serializable
+  object OutcomeUpdateResult {
+    case object Advanced extends OutcomeUpdateResult
+    case object AlreadyCurrent extends OutcomeUpdateResult
+    case object Conflict extends OutcomeUpdateResult
+  }
 
   private[consensus] def retainVoteLockAcrossAbandon(policy: LegacyViewChangePolicy): Boolean =
     policy == LegacyViewChangePolicy.FreezeAfterVote
@@ -444,7 +479,7 @@ object ConsensusStorage {
         Option[ConsensusState[Key, Status, Outcome, Kind]] => F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], B)]]
       )
 
-  def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
+  def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome: Eq, Kind](
     consensusConfig: ConsensusConfig,
     viewChangePolicy: LegacyViewChangePolicy = LegacyViewChangePolicy.PreserveLegacy
   )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] = {
@@ -474,6 +509,7 @@ object ConsensusStorage {
       timeoutCertificateApplyScheduledR <- MapRef.ofConcurrentHashMap[F, Key, Set[(Hash, Long, Long)]]()
       assembledEvictionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[EvictionCertificate]]()
       assembledAdmissionCertsR <- MapRef.ofConcurrentHashMap[F, Key, Set[AdmissionCertificate]]()
+      pendingStateEffectsR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusStorage.PendingStateEffect[F]]()
       // Monotonic counter bumped on every successful state mutation via condModifyState. Used by
       // the FSM to drop stale ConsensusCommand.RoundCompleted commands — one queued before a
       // subsequent view change / phase transition would otherwise wipe the newly-advanced round.
@@ -481,6 +517,11 @@ object ConsensusStorage {
       // view change at T+165s advanced the round to view=1 CollectingSignatures, the stale
       // RoundCompleted fired 104ms before the final signature arrived and dropped the round.
       roundAttemptIdR <- Ref.of[F, Long](0L)
+      // Per-key record of the GLOBAL state epoch at which this key last changed. Retained
+      // effects compare against this record so an unrelated key cannot invalidate them, while
+      // delayed FSM commands additionally compare it with roundAttemptIdR to prove that their
+      // key is still the active state transition.
+      stateAttemptIdR <- MapRef.ofConcurrentHashMap[F, Key, Long]()
       resourceGenerationR <- MapRef.ofConcurrentHashMap[F, Key, Long]()
       // Per-peer highest observed key from incoming keyed rumors (declarations, votes, acks,
       // withdraws, artifacts). Feeds live "peer is ahead of me" detection in AbandonmentTracker
@@ -523,9 +564,60 @@ object ConsensusStorage {
             maybeResult <- modifyStateFn(maybeState)
             maybeB <- maybeResult.traverse {
               case (newMaybeState, b) =>
-                statesR(key).set(newMaybeState) >> roundAttemptIdR.update(_ + 1).as(b)
+                Async[F].uncancelable { _ =>
+                  statesR(key).set(newMaybeState) >>
+                    roundAttemptIdR.modify { current =>
+                      val next = current + 1L
+                      (next, next)
+                    }.flatMap(next => stateAttemptIdR(key).set(next.some)) >>
+                    // A plain state mutation supersedes any retained effect from the prior
+                    // attempt. The specialized method below installs the replacement effect
+                    // in the same uncancelable commit boundary.
+                    pendingStateEffectsR(key).set(none)
+                }.as(b)
             }
           } yield maybeB
+
+        def condModifyStateWithSideEffect[B](key: Key)(
+          modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, (B, F[Unit])]
+        ): F[Option[B]] =
+          for {
+            maybeState <- statesR(key).get
+            maybeResult <- modifyStateFn(maybeState)
+            maybeB <- maybeResult.traverse {
+              case (newMaybeState, (b, effect)) =>
+                Async[F].uncancelable { _ =>
+                  for {
+                    _ <- statesR(key).set(newMaybeState)
+                    attemptId <- roundAttemptIdR.modify { current =>
+                      val next = current + 1L
+                      (next, next)
+                    }
+                    _ <- stateAttemptIdR(key).set(attemptId.some)
+                    _ <- pendingStateEffectsR(key).set(ConsensusStorage.PendingStateEffect(attemptId, effect).some)
+                  } yield b
+                }
+            }
+            _ <- maybeB.traverse_(_ => resumePendingStateEffect(key))
+          } yield maybeB
+
+        def resumePendingStateEffect(key: Key): F[Unit] =
+          pendingStateEffectsR(key).get.flatMap {
+            case None => Async[F].unit
+            case Some(pending) =>
+              stateAttemptIdR(key).get.map(_.getOrElse(0L)).flatMap { currentAttemptId =>
+                if (currentAttemptId =!= pending.attemptId)
+                  pendingStateEffectsR(key).update(_.filterNot(_.attemptId === pending.attemptId))
+                else
+                  // The effect itself remains cancelable. Once it returns successfully, stay
+                  // masked through the conditional delete so a delivered effect cannot be
+                  // replayed solely because cancellation landed between delivery and cleanup.
+                  Async[F].uncancelable { poll =>
+                    poll(pending.effect) >>
+                      pendingStateEffectsR(key).update(_.filterNot(_.attemptId === pending.attemptId))
+                  }
+              }
+          }
 
         def trySetInitialConsensusOutcome(initialOutcome: Outcome): F[Boolean] =
           lastOutcomeR.modify {
@@ -545,20 +637,26 @@ object ConsensusStorage {
         private[consensus] def tryUpdateLastConsensusOutcomeWithCleanup(
           previousLastKey: Previous[Key],
           newLastOutcome: Outcome
-        ): F[Boolean] =
+        ): F[ConsensusStorage.OutcomeUpdateResult] =
           lastOutcomeR.modify {
             case Some(lastOutcome) if _key.get(lastOutcome.value) === previousLastKey.a =>
-              (ConsensusOutcomeWrapper.of(newLastOutcome).some, true)
+              (ConsensusOutcomeWrapper.of(newLastOutcome).some, ConsensusStorage.OutcomeUpdateResult.Advanced)
+            case current @ Some(lastOutcome) if lastOutcome.value === newLastOutcome =>
+              (current, ConsensusStorage.OutcomeUpdateResult.AlreadyCurrent)
             case other =>
-              (other, false)
+              (other, ConsensusStorage.OutcomeUpdateResult.Conflict)
           }.flatTap { result =>
-            cleanupStateAndResource(previousLastKey.a).whenA(result)
+            cleanupStateAndResource(previousLastKey.a).whenA(result == ConsensusStorage.OutcomeUpdateResult.Advanced)
           }
 
         private def cleanupStateAndResource(key: Key): F[Unit] =
-          condModifyState[Unit](key) { _ =>
-            (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
-          }.void >> clearResources(key)
+          // This key is historical: cleaning it must not advance the active round epoch. In
+          // particular, outcome N commits while state N is current and removes state N-1. If
+          // that removal bumped roundAttemptIdR, the exact ConsensusFinished(N) token would be
+          // stale before it was even enqueued.
+          statesR(key).set(none) >>
+            stateAttemptIdR(key).set(none) >>
+            clearResources(key)
 
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]] =
           // Latest-write-wins. The previous `.orElse(facility.some)` first-write-wins semantics produced the
@@ -908,6 +1006,7 @@ object ConsensusStorage {
         def clearResources(key: Key): F[Unit] =
           resourcesR(key).set(none) >>
             resourceGenerationR(key).update(current => Some(current.getOrElse(0L) + 1L)) >>
+            pendingStateEffectsR(key).set(none) >>
             voteLocksR(key).set(none) >>
             assembledVccR(key).set(none) >>
             assembledVccApplyScheduledR(key).set(none) >>
@@ -1075,10 +1174,12 @@ object ConsensusStorage {
                     assembledAdmissionCertsR(key).set(none) >>
                     timeoutCertificateApplyScheduledR(key).set(none) >>
                     statesR(key).set(none) >>
+                    pendingStateEffectsR(key).set(none) >>
                     // softResetRoundState bypasses condModifyState, so explicitly advance the
                     // attempt epoch. This invalidates any AbandonRound/RoundCompleted decision
                     // sampled by the monitor before the reset.
                     roundAttemptIdR.update(_ + 1L) >>
+                    stateAttemptIdR(key).set(none) >>
                     true.pure[F]
                 }
           }
@@ -1127,6 +1228,8 @@ object ConsensusStorage {
 
         def getRoundAttemptId: F[Long] = roundAttemptIdR.get
 
+        def getStateAttemptId(key: Key): F[Option[Long]] = stateAttemptIdR(key).get
+
         def getResourceGeneration(key: Key): F[Long] = resourceGenerationR(key).get.map(_.getOrElse(0L))
 
         def markPacemakerEmissionProgress(key: Key): F[Unit] =
@@ -1143,8 +1246,8 @@ object ConsensusStorage {
         def getPeerCurrentKeys: F[Map[PeerId, Key]] = peerCurrentKeysR.get
 
         def pruneStaleResources(activeKey: Key): F[Unit] =
-          (resourcesR.keys, resourceGenerationR.keys).tupled.flatMap {
-            case (resourceKeys, generationKeys) =>
+          (resourcesR.keys, resourceGenerationR.keys, pendingStateEffectsR.keys, stateAttemptIdR.keys).tupled.flatMap {
+            case (resourceKeys, generationKeys, effectKeys, stateAttemptKeys) =>
               // Only prune keys STRICTLY LESS THAN activeKey. Pre-arrived declarations for future
               // rounds (within the `declarationRangeLimit` window) are already admitted by
               // `updateResources` and must survive completion of earlier rounds; wiping them here
@@ -1159,7 +1262,9 @@ object ConsensusStorage {
               // declarationRangeLimit]`) bounds memory growth; preserving future keys here is
               // consistent with that contract.
               resourceKeys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourcesR(k).set(none)) >>
-                generationKeys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourceGenerationR(k).set(none))
+                generationKeys.filter(Order[Key].lt(_, activeKey)).traverse_(k => resourceGenerationR(k).set(none)) >>
+                effectKeys.filter(Order[Key].lt(_, activeKey)).traverse_(k => pendingStateEffectsR(k).set(none)) >>
+                stateAttemptKeys.filter(Order[Key].lt(_, activeKey)).traverse_(k => stateAttemptIdR(k).set(none))
           }
 
         def pruneStalePeerRegistrations(activePeers: Set[PeerId]): F[Unit] =
@@ -1170,9 +1275,12 @@ object ConsensusStorage {
           peerRegistrationsR.set(Map.empty) >> peerCurrentKeysR.set(Map.empty)
 
         def cleanupConflictedRound(key: Key): F[Unit] =
-          condModifyState[Unit](key) { _ =>
-            (none[ConsensusState[Key, Status, Outcome, Kind]], ()).some.pure[F]
-          }.void >> clearResources(key)
+          // A losing current round must invalidate queued commands, then remove its per-key
+          // epoch rather than leaving one MapRef entry per conflict.
+          roundAttemptIdR.update(_ + 1L) >>
+            statesR(key).set(none) >>
+            stateAttemptIdR(key).set(none) >>
+            clearResources(key)
 
         def clearAllConsensusState: F[Unit] =
           for {
@@ -1182,10 +1290,14 @@ object ConsensusStorage {
             _ <- roundAttemptIdR.update(_ + 1L)
             stateKeys <- statesR.keys
             _ <- stateKeys.traverse_(k => statesR(k).set(none))
+            stateAttemptKeys <- stateAttemptIdR.keys
+            _ <- stateAttemptKeys.traverse_(k => stateAttemptIdR(k).set(none))
             resourceKeys <- resourcesR.keys
             _ <- resourceKeys.traverse_(k => resourcesR(k).set(none))
             resourceGenerationKeys <- resourceGenerationR.keys
             _ <- resourceGenerationKeys.traverse_(k => resourceGenerationR(k).set(none))
+            pendingEffectKeys <- pendingStateEffectsR.keys
+            _ <- pendingEffectKeys.traverse_(k => pendingStateEffectsR(k).set(none))
             voteLockKeys <- voteLocksR.keys
             _ <- voteLockKeys.traverse_(k => voteLocksR(k).set(none))
             vccKeys <- assembledVccR.keys

@@ -122,6 +122,14 @@ object Main
       Either.cond(plan.anchor === checkpoint, (), ConflictingRecoveryAnchors(plan.anchor, checkpoint))
     }
 
+  private[dag] def validateRecoveryAnchorSource(
+    source: RollbackLoader.Source
+  ): Either[Gl0RecoveryPlan.UnsupportedAnchorSource, Unit] =
+    source match {
+      case RollbackLoader.Source.Incremental  => Right(())
+      case RollbackLoader.Source.FullSnapshot => Left(Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot"))
+    }
+
   private[dag] final case class RecentCoreReconstructionDiagnostic(
     source: String,
     entries: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]
@@ -463,20 +471,16 @@ object Main
               Gl0RecoveryPlanLoader.Role.RollbackLead(nodeId, m.rollbackHash)
             ).flatTap(configuredRecoveryPlanRef.set).flatMap { verifiedRecoveryPlan =>
               val recoveryPlan = verifiedRecoveryPlan.map(_.plan)
+              val validateRecoveryPlanSource: RollbackLoader.Source => IO[Unit] =
+                source => recoveryPlan.traverse_(_ => validateRecoveryAnchorSource(source).liftTo[IO])
               val validateRecoveryPlanBeforeLoad: (
                 RollbackLoader.Source,
                 GlobalSnapshotInfo,
                 Signed[GlobalIncrementalSnapshot]
               ) => IO[Unit] =
-                (source, snapshotInfo, snapshot) =>
+                (_, snapshotInfo, snapshot) =>
                   recoveryPlan.traverse_ { plan =>
                     for {
-                      _ <- source match {
-                        case RollbackLoader.Source.Incremental =>
-                          IO.unit
-                        case RollbackLoader.Source.FullSnapshot =>
-                          Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot").raiseError[IO, Unit]
-                      }
                       hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
                       _ <- Gl0RecoveryPlan
                         .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
@@ -498,9 +502,16 @@ object Main
                     } yield ()
                   }
 
-              programs.rollbackLoader.load(m.rollbackHash, programs.download, recoveryPlan.as(validateRecoveryPlanBeforeLoad)).map {
-                case (snapshotInfo, snapshot) => (recoveryPlan, snapshotInfo, snapshot)
-              }
+              programs.rollbackLoader
+                .load(
+                  m.rollbackHash,
+                  programs.download,
+                  recoveryPlan.as(validateRecoveryPlanSource),
+                  recoveryPlan.as(validateRecoveryPlanBeforeLoad)
+                )
+                .map {
+                  case (snapshotInfo, snapshot) => (recoveryPlan, snapshotInfo, snapshot)
+                }
             }
 
             loadRollback.flatMap {

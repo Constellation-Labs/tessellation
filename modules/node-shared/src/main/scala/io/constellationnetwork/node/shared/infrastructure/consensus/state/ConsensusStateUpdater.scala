@@ -75,15 +75,16 @@ object ConsensusStateUpdater {
       private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
 
       def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact, Kind]): F[StateUpdateResult] =
-        tryUpdateExistingConsensus(key, updateConsensus(resources))
+        consensusStorage.resumePendingStateEffect(key) >>
+          tryUpdateExistingConsensus(key, updateConsensus(resources))
 
       private def tryUpdateExistingConsensus(
         key: Key,
         fn: ConsensusState[Key, Status, Outcome, Kind] => F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])]
       ): F[StateUpdateResult] =
         consensusStorage
-          .condModifyState(key)(toUpdateStateFn(fn))
-          .flatMap(evalEffect)
+          .condModifyStateWithSideEffect(key)(toUpdateStateFn(fn))
+          .map(_.flatten)
           .flatTap(logIfUpdatedState)
 
       private def toUpdateStateFn(
@@ -96,9 +97,6 @@ object ConsensusStateUpdater {
           }
         }
       }
-
-      private def evalEffect(maybeResultAndEffect: Option[(StateUpdateResult, F[Unit])]): F[StateUpdateResult] =
-        maybeResultAndEffect.flatTraverse { case (result, effect) => effect.as(result) }
 
       private def logIfUpdatedState(updateResult: StateUpdateResult): F[Unit] =
         updateResult.traverse {

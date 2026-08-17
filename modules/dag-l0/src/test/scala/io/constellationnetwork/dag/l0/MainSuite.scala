@@ -99,6 +99,13 @@ object MainSuite extends SimpleIOSuite {
     expect(Main.validateRecoveryAnchorCompatibility(recoveryPlan, Some(wrongHash)).isLeft)
   }
 
+  pureTest("recovery-plan v1 accepts incremental anchors and rejects full-snapshot sources") {
+    val source = io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader.Source
+
+    expect(Main.validateRecoveryAnchorSource(source.Incremental).isRight) &&
+    expect(Main.validateRecoveryAnchorSource(source.FullSnapshot).isLeft)
+  }
+
   test("GL0 recovery-plan CLI option is inert by default and requires an explicit path") {
     val command = Command("dag-l0-test", "test parser")(method.RunRollback.recoveryPlanPathOpts)
     val path = Path("/tmp/reviewed-gl0-recovery-plan.json")

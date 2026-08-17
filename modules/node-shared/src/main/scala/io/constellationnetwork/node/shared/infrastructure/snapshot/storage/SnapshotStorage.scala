@@ -178,16 +178,16 @@ object SnapshotStorage {
           } >>
           snapshotInfoLocalFileSystemStorage
             .write(snapshot.ordinal, snapshotInfo)
-            .attempt
-            .flatMap {
-              case Right(_) =>
-                snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
-                  snapshot.ordinal
-                    .partialPreviousN(inMemoryCapacity)
-                    .fold(Applicative[F].unit)(offloadQueue.offer) >>
-                  combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
-              case Left(e) =>
-                logger.error(e)(s"Failed writing snapshot info to disk! ordinal=${snapshot.ordinal}. Skipping cutoff and checkpoint.")
+            .handleErrorWith { error =>
+              logger.error(error)(s"Failed writing required snapshot info to disk! ordinal=${snapshot.ordinal}") >>
+                error.raiseError[F, Unit]
+            }
+            .flatMap { _ =>
+              snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
+                snapshot.ordinal
+                  .partialPreviousN(inMemoryCapacity)
+                  .fold(Applicative[F].unit)(offloadQueue.offer) >>
+                combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
             }
       }
 
@@ -205,19 +205,29 @@ object SnapshotStorage {
 
           def offer = enqueue(snapshot, state).as(true)
 
+          def isExactCurrentValue(current: Signed[S], currentHasher: Hasher[F]): F[Boolean] = {
+            val incomingHash = hasher.hash(snapshot.value)
+            val currentHash = currentHasher.hash(current.value)
+            (currentHash, incomingHash).mapN(_ === _)
+          }
+
           def loop(implicit hasher: Hasher[F]): F[Boolean] =
             headRef.access.flatMap {
               case (v, setter) =>
                 v match {
                   case None =>
                     setter((snapshot, hasher, state).some).ifM(offer, loop)
-                  case Some((current, currentHasher, _)) =>
+                  case Some((current, currentHasher, currentState)) =>
                     isNextSnapshot(current, currentHasher, snapshot).flatMap { isNext =>
                       if (isNext) setter((snapshot, hasher, state).some).ifM(offer, loop)
                       else
-                        logger
-                          .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
-                          .as(false)
+                        isExactCurrentValue(current, currentHasher).flatMap {
+                          case true => enqueue(current, currentState)(currentHasher).as(true)
+                          case false =>
+                            logger
+                              .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
+                              .as(false)
+                        }
                     }
                 }
             }

@@ -60,11 +60,11 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
-        // No outcome exists yet — round cannot run. Unconditional (no attempt-id): the queue is
-        // already quiescent and the FSM must Idle cleanly.
+        // No outcome exists yet — round cannot run. Bind the release to the current local epoch;
+        // even a startup completion must not cancel a recovery attempt created before it drains.
         ConsensusLog.warn(logger, Category.Lifecycle, "n/a", "n/a", LogEvent.NoPreviousOutcome) >>
           Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
-          queue.offer(ConsensusCommand.RoundCompleted(None))
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
 
       case Some(outcome) =>
         val nextKey = outcomeKey.get(outcome).next
@@ -127,7 +127,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 "facilitators" -> count.toString
               ) >>
                 Metrics[F].incrementCounter("dag_consensus_validator_solo_blocked") >>
-                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
             } else {
               Metrics[F].incrementCounter(
                 "dag_consensus_round_facilitated",
@@ -179,7 +179,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           Seq(unsafeLabelName("outcome") -> "no_state")
         ) >>
           ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.NoState) >>
-          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
     }
 
   private def doInitialCheck(key: Key): F[Unit] =

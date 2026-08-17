@@ -279,10 +279,13 @@ object GlobalSnapshotConsensusStateCreator {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
       priorAbandonmentCount: Int
     ): F[StateCreateResult] =
-      consensusStorage
-        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount)))
-        .flatMap(evalEffect)
-        .flatTap(logIfCreated)
+      consensusStorage.resumePendingStateEffect(key) >>
+        consensusStorage
+          .condModifyStateWithSideEffect(key)(
+            toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount))
+          )
+          .map(_.flatten)
+          .flatTap(logIfCreated)
 
     // Reads the stored self-Facility (written at round creation by the effect above) and retransmits
     // it via the same direct-push path. Returns F.unit if no stored declaration exists, which happens
@@ -743,70 +746,6 @@ object GlobalSnapshotConsensusStateCreator {
 
         time <- Clock[F].monotonic
 
-        // Build Facility once, then:
-        //   1. Store locally so self-facility is present without depending on gossip self-loopback.
-        //   2. Direct-push to the active facilitator set (same delivery class as Proposal / Signature)
-        //      so peers receive it through the reliable path, not the best-effort broadcast.
-        // `eventHashes` is captured at effect run time (same as before) to reflect the current mempool.
-        // v15: `selfHealthHint` is also captured at effect run time so the most recently-derived
-        // hint (Healthy/Degraded/Critical) rides on the outgoing Facility -- the leader aggregates
-        // these across the committee into `Proposal.observedSelfHealth`.
-        effect = for {
-          _ <-
-            if (membershipPolicy.allowsAutomaticRemoval)
-              auditTier1FinalityParticipation(
-                key,
-                lastOutcome,
-                committees.core.toSet,
-                committees.tier1.toSet,
-                resources,
-                time,
-                expansionAllowedThisRound
-              ).handleErrorWith { error =>
-                logger.warn(error)(s"Tier-1 finality audit failed for key=$key; continuing round") >>
-                  Metrics[F].incrementCounter(
-                    "dag_consensus_tier1_finality_audit_total",
-                    Seq(Metrics.unsafeLabelName("outcome") -> "error")
-                  )
-              }
-            else
-              tier1FinalityMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_tier1_finality_audit_total",
-                  Seq(Metrics.unsafeLabelName("outcome") -> "disabled_by_membership_policy")
-                )
-          _ <- HasherSelector[F].withCurrent { implicit hasher =>
-            DagAwaitingParentQueue.maintain(
-              eventMempool,
-              lastOutcome.finished.context,
-              dagAwaitingParentConfig,
-              maxAwaitingParentReactivationPerRound,
-              logger
-            )
-          }
-          _ <- DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, lastOutcome.finished.context, logger).void
-          eventHashes <- eventMempool.getEventHashes
-          selfHealth <- localHealthMonitor.current
-          // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the
-          // round-finalize median absorbs outliers and the consume-site clamp pins
-          // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
-          proposerClockMs <- Clock[F].realTime.map(_.toMillis)
-          facility = Facility(
-            eventHashes,
-            candidates,
-            maybeTrigger,
-            lastOutcome.finished.facilitatorsHash,
-            lastOutcome.key,
-            lastOutcome.finished.snapshotHash,
-            consensusConfigHash = consensusConfigHash.some,
-            selfHealthHint = selfHealth.some,
-            proposerClockMs = proposerClockMs.some
-          )
-          declaration = ConsensusPeerDeclaration(key, facility)
-          _ <- consensusStorage.addFacility(selfId, key, facility)
-          _ <- gossip.spreadDirect(declaration, signingFacilitators.toSet)
-        } yield ()
-
         // v19 multi-committee derivation. Partition `active` into Core / Tier 1 / Witness
         // using the stage-4 controller inputs (evidence-derived tiers + quality when the
         // signed controllerEvidence window has entries; the carried-forward lastOutcome maps
@@ -1031,6 +970,69 @@ object GlobalSnapshotConsensusStateCreator {
               (if (priorAbandonmentCount > 0) Seq("suppressedRetryViewSeed" -> priorAbandonmentCount.toString) else Seq.empty)
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }
+
+        // Complete every dynamic/fallible read and local maintenance action before committing
+        // the state. The retained post-commit effect below may be replayed after delivery fails or
+        // is cancelled, so it must contain only the exact Facility self-store and gossip delivery.
+        _ <-
+          if (membershipPolicy.allowsAutomaticRemoval)
+            auditTier1FinalityParticipation(
+              key,
+              lastOutcome,
+              committees.core.toSet,
+              committees.tier1.toSet,
+              resources,
+              time,
+              expansionAllowedThisRound
+            ).handleErrorWith { error =>
+              logger.warn(error)(s"Tier-1 finality audit failed for key=$key; continuing round") >>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_tier1_finality_audit_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> "error")
+                )
+            }
+          else
+            tier1FinalityMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
+              Metrics[F].incrementCounter(
+                "dag_consensus_tier1_finality_audit_total",
+                Seq(Metrics.unsafeLabelName("outcome") -> "disabled_by_membership_policy")
+              )
+        _ <- HasherSelector[F].withCurrent { implicit hasher =>
+          DagAwaitingParentQueue.maintain(
+            eventMempool,
+            lastOutcome.finished.context,
+            dagAwaitingParentConfig,
+            maxAwaitingParentReactivationPerRound,
+            logger
+          )
+        }
+        _ <- DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, lastOutcome.finished.context, logger).void
+        eventHashes <- eventMempool.getEventHashes
+        selfHealth <- localHealthMonitor.current
+        // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the
+        // round-finalize median absorbs outliers and the consume-site clamp pins
+        // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
+        proposerClockMs <- Clock[F].realTime.map(_.toMillis)
+        facility = Facility(
+          eventHashes,
+          candidates,
+          maybeTrigger,
+          lastOutcome.finished.facilitatorsHash,
+          lastOutcome.key,
+          lastOutcome.finished.snapshotHash,
+          consensusConfigHash = consensusConfigHash.some,
+          selfHealthHint = selfHealth.some,
+          proposerClockMs = proposerClockMs.some
+        )
+        declaration = ConsensusPeerDeclaration(key, facility)
+        effect = ConsensusStateCreator.exactFacilityEffect[F, GlobalSnapshotKey](
+          facility,
+          declaration,
+          signingFacilitators.toSet
+        )(
+          captured => consensusStorage.addFacility(selfId, key, captured).void,
+          (captured, targets) => gossip.spreadDirect(captured, targets)
+        )
 
       } yield (state, effect)
   }

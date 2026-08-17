@@ -149,7 +149,16 @@ object BinaryTracker {
           enqueuedAt: SnapshotOrdinal
         ): F[Boolean] =
           stateRef.modify { state =>
-            if (state.tracked.size >= maxTrackedBinaries) (state, false)
+            // Finalization effects are replayed at least once after an operational
+            // failure. Exact binary identity is the idempotence key: keep the existing
+            // pending/confirmed entry rather than consuming capacity with duplicates.
+            if (
+              state.tracked.exists {
+                case pending: PendingBinary     => pending.binary.hash === binary.hash
+                case confirmed: ConfirmedBinary => confirmed.pendingBinary.binary.hash === binary.hash
+              }
+            ) (state, true)
+            else if (state.tracked.size >= maxTrackedBinaries) (state, false)
             else
               (
                 state.copy(

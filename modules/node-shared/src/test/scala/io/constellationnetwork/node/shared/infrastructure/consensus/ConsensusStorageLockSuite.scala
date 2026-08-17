@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import cats.Eq
 import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.syntax.all._
@@ -27,6 +28,8 @@ import weaver.SimpleIOSuite
 object ConsensusStorageLockSuite extends SimpleIOSuite {
 
   private final case class StoredOutcome(key: SnapshotOrdinal)
+
+  private implicit val storedOutcomeEq: Eq[StoredOutcome] = Eq.fromUniversalEquals
 
   private implicit val storedOutcomeKeyLens: Lens[StoredOutcome, SnapshotOrdinal] =
     Lens[StoredOutcome, SnapshotOrdinal](_.key)(key => outcome => outcome.copy(key = key))

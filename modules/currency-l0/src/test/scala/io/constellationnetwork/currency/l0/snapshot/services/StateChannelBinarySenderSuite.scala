@@ -476,7 +476,37 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("sender enqueue caps the queue (drop path does not throw and keeps the prefix)") { res =>
+  test("enqueue replays are idempotent for pending and confirmed binaries even at capacity") { res =>
+    implicit val (_, hs, sp, _, _) = res
+
+    forall(binaryGen) { binary =>
+      for {
+        tracker <- BinaryTracker.make[IO](maxTrackedBinaries = 1)
+        hashed <- binary.toHashed
+        first <- tracker.enqueue(hashed, SnapshotOrdinal(1L), SnapshotOrdinal(2L))
+        pendingReplay <- tracker.enqueue(hashed, SnapshotOrdinal(10L), SnapshotOrdinal(20L))
+        pendingState <- tracker.getState
+        proof = GlobalSnapshotConfirmationProof(Hash("confirmed"), SnapshotOrdinal(3L), EpochProgress.MinValue)
+        _ <- tracker.updateState(state => BinaryTracker.markConfirmedUpToHighest(state, Set(hashed.hash), proof))
+        confirmedReplay <- tracker.enqueue(hashed, SnapshotOrdinal(30L), SnapshotOrdinal(40L))
+        confirmedState <- tracker.getState
+        expectedPending = PendingBinary(
+          hashed,
+          SnapshotOrdinal(1L),
+          SnapshotOrdinal(2L),
+          NonNegLong.MinValue,
+          none
+        )
+      } yield
+        expect(first)
+          .and(expect(pendingReplay))
+          .and(expect.eql(pendingState.tracked.toList, List[TrackedBinary](expectedPending)))
+          .and(expect(confirmedReplay))
+          .and(expect.eql(confirmedState.tracked.toList, List[TrackedBinary](ConfirmedBinary(expectedPending, proof))))
+    }
+  }
+
+  test("sender enqueue backpressures at capacity and keeps the exact queued prefix") { res =>
     implicit val (_, hs, sp, metrics, j) = res
 
     forall(Gen.listOfN(6, binaryGen)) { binaries =>
@@ -486,12 +516,18 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         result <- Resource.eval(
           for {
             hashed <- binaries.traverse(_.toHashed)
-            _ <- hashed.traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none)) // exercises the drop log + metric branch
+            accepted <- hashed.take(4).traverse_(b => sender.enqueue(b, SnapshotOrdinal(1L), none)).attempt
+            rejected <- sender.enqueue(hashed(4), SnapshotOrdinal(1L), none).attempt
             state <- tracker.getState
           } yield
-            expect
-              .eql(state.tracked.size, 4)
-              .and(expect.eql(state.tracked.collect { case p: PendingBinary => p.binary.hash }.toList, hashed.take(4).map(_.hash)))
+            expect(accepted.isRight)
+              .and(expect(rejected.isLeft))
+              .and(expect(rejected.swap.exists(_.getMessage.contains("queue is full"))))
+              .and(
+                expect
+                  .eql(state.tracked.size, 4)
+                  .and(expect.eql(state.tracked.collect { case p: PendingBinary => p.binary.hash }.toList, hashed.take(4).map(_.hash)))
+              )
         )
       } yield result).use(IO.pure)
     }

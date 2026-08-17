@@ -42,8 +42,11 @@ object LastSnapshotStorage {
           case None =>
             // This is mainly for tests
             (none, logger.warn("Empty snapshotR setting as initial") >> setInitial(snapshot, state))
-          case _ =>
-            (none, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
+          case current @ Some(_) =>
+            (
+              current,
+              MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!"))
+            )
         }.flatten
 
       def setInitial(snapshot: Hashed[S], state: SI): F[Unit] =

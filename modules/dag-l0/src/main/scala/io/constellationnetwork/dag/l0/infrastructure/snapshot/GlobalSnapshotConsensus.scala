@@ -315,7 +315,10 @@ object GlobalSnapshotConsensus {
           facilitatorSelector,
           peerHistorySidecar,
           HealthDerivedMembershipPolicy.RetainSigningLeases,
-          (key: GlobalSnapshotKey) => consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key))
+          (key: GlobalSnapshotKey) =>
+            consensusStorage.getRoundAttemptId.flatMap { expectedAttemptId =>
+              consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key, expectedAttemptId))
+            }
         )
 
       peerQualityTracker <- PeerQualityTracker.make[F]

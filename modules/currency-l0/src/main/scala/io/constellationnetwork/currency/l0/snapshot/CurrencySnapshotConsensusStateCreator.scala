@@ -74,10 +74,13 @@ object CurrencySnapshotConsensusStateCreator {
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
       priorAbandonmentCount: Int
     ): F[StateCreateResult] =
-      consensusStorage
-        .condModifyState(key)(toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount)))
-        .flatMap(evalEffect)
-        .flatTap(logIfCreated)
+      consensusStorage.resumePendingStateEffect(key) >>
+        consensusStorage
+          .condModifyStateWithSideEffect(key)(
+            toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount))
+          )
+          .map(_.flatten)
+          .flatTap(logIfCreated)
 
     // Reads the stored self-Facility and re-sends via direct push. Mirrors dag-l0.
     def retransmitOwnFacility(key: CurrencySnapshotKey, targets: Set[PeerId]): F[Unit] =
@@ -463,32 +466,6 @@ object CurrencySnapshotConsensusStateCreator {
         time <- Clock[F].monotonic
         lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
 
-        // Build Facility once, self-store locally (no reliance on gossip self-loopback), then
-        // direct-push to the active facilitator set. Matches the dag-l0 creator -- see rationale there.
-        effect = for {
-          eventHashes <- eventMempool.getEventHashes
-          // v15: see GlobalSnapshotConsensusStateCreator for full rationale -- the hint is
-          // captured at effect run time so the most recent LocalHealthMonitor sample rides
-          // with the outgoing Facility.
-          selfHealth <- localHealthMonitor.current
-          // v19 phase 2: wall-clock millis at signing time. See dag-l0 mirror.
-          proposerClockMs <- Clock[F].realTime.map(_.toMillis)
-          facility = Facility(
-            eventHashes,
-            candidates,
-            maybeTrigger,
-            lastOutcome.finished.facilitatorsHash,
-            lastGlobalSnapshotOrdinal,
-            lastOutcome.finished.snapshotHash,
-            consensusConfigHash = consensusConfigHash.some,
-            selfHealthHint = selfHealth.some,
-            proposerClockMs = proposerClockMs.some
-          )
-          declaration = ConsensusPeerDeclaration(key, facility)
-          _ <- consensusStorage.addFacility(selfId, key, facility)
-          _ <- gossip.spreadDirect(declaration, active.toSet)
-        } yield ()
-
         // v19 multi-committee derivation, including the chronic-core replacement ladder
         // (evidence-derived `chronicMisses` bars chronic peers from Core and swaps them for
         // healthy reserves). Mirror of dag-l0; see CommitteeBuilder scaladoc for the ladder.
@@ -662,6 +639,34 @@ object CurrencySnapshotConsensusStateCreator {
               (if (priorAbandonmentCount > 0) Seq("retryCount" -> priorAbandonmentCount.toString) else Seq.empty)
           ConsensusLog.info(logger, Category.Lifecycle, key.show, role, Event.RoundStarted, (basePairs ++ optionalPairs): _*)
         }
+
+        // Sample all Facility inputs before the state commit. A retained retry must only repeat
+        // self-storage and direct gossip of this immutable declaration; it must never re-read the
+        // mempool, local health, or wall clock.
+        eventHashes <- eventMempool.getEventHashes
+        selfHealth <- localHealthMonitor.current
+        // v19 phase 2: wall-clock millis at signing time. See dag-l0 mirror.
+        proposerClockMs <- Clock[F].realTime.map(_.toMillis)
+        facility = Facility(
+          eventHashes,
+          candidates,
+          maybeTrigger,
+          lastOutcome.finished.facilitatorsHash,
+          lastGlobalSnapshotOrdinal,
+          lastOutcome.finished.snapshotHash,
+          consensusConfigHash = consensusConfigHash.some,
+          selfHealthHint = selfHealth.some,
+          proposerClockMs = proposerClockMs.some
+        )
+        declaration = ConsensusPeerDeclaration(key, facility)
+        effect = ConsensusStateCreator.exactFacilityEffect[F, CurrencySnapshotKey](
+          facility,
+          declaration,
+          active.toSet
+        )(
+          captured => consensusStorage.addFacility(selfId, key, captured).void,
+          (captured, targets) => gossip.spreadDirect(captured, targets)
+        )
 
       } yield (state, effect)
   }

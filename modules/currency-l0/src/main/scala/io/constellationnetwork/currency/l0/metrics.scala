@@ -22,6 +22,9 @@ object metrics {
   def updateDroppedStateChannelBinaryMetrics[F[_]: Monad: Metrics](): F[Unit] =
     Metrics[F].incrementCounter("dag_binaries_state_channel_dropped_total")
 
+  def updateBackpressuredStateChannelBinaryMetrics[F[_]: Monad: Metrics](): F[Unit] =
+    Metrics[F].incrementCounter("dag_binaries_state_channel_backpressure_total")
+
   private def getTrackerStateTags(state: TrackerState): TagSeq =
     Seq(
       ("binaries_tracked_number", state.tracked.size.toString),

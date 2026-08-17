@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import cats.Eq
 import cats.data.NonEmptySet
 import cats.effect.IO
 
@@ -23,6 +24,8 @@ import weaver.SimpleIOSuite
 object ConsensusStorageSoftResetSuite extends SimpleIOSuite {
 
   private final case class Outcome(key: SnapshotOrdinal)
+
+  private implicit val outcomeEq: Eq[Outcome] = Eq.fromUniversalEquals
 
   private implicit val outcomeKey: Lens[Outcome, SnapshotOrdinal] =
     Lens[Outcome, SnapshotOrdinal](_.key)(key => _.copy(key = key))

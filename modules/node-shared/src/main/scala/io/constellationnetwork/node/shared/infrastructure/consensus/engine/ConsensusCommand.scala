@@ -75,6 +75,10 @@ object ConsensusCommand {
       extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
 
   final case class CheckUpdate[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+
+  /** Process-local retry of a failed state transition/effect. The attempt token prevents a delayed retry from touching a replacement round.
+    */
+  final case class RetryCheckUpdate[Key](key: Key, expectedAttemptId: Long) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class CheckViewChangeAssembly[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
   final case class CheckViewChangeApply[Key](key: Key, fromView: Long, toView: Long)
       extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
@@ -101,17 +105,16 @@ object ConsensusCommand {
   // certificate assembly for `target` at round `key`.
   final case class CheckAdmissionAssembly[Key](key: Key, target: PeerId) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
 
-  /** Complete the currently running FSM attempt after its volatile state was intentionally cleared, then immediately start from the latest
-    * persisted outcome. Unlike a bare `StartRound`, this command cannot be deferred forever by the FSM's BUSY flag. It is enqueued by the
-    * same-key soft-reset path on the serialized command loop.
+  /** Complete the exact FSM attempt whose volatile state was intentionally cleared, then immediately start from the latest persisted
+    * outcome. Unlike a bare `StartRound`, this command cannot be deferred forever by the FSM's BUSY flag. `expectedAttemptId` is the global
+    * storage epoch read immediately after the reset; a delayed command cannot complete or cancel a newer round.
     */
-  final case class RestartAfterSoftReset[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
+  final case class RestartAfterSoftReset[Key](key: Key, expectedAttemptId: Long) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
 
-  /** Round ended without producing an outcome. `expectedAttemptId = Some(n)` causes the FSM to drop the command if the round has advanced
-    * past attempt `n` (state mutation bumped `ConsensusStorage.roundAttemptId`). `None` means unconditional — reserved for force-recovery
-    * paths where the round must always complete.
+  /** Round ended without producing an outcome. The token is mandatory: no queued completion may cancel a replacement round that advanced
+    * after this command was emitted.
     */
-  final case class RoundCompleted(expectedAttemptId: Option[Long] = None) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
+  final case class RoundCompleted(expectedAttemptId: Long) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
 
   /** Request to abandon the round at `key` for `reason`. `expectedAttemptId` and `expectedResourceGeneration` bind the asynchronous monitor
     * decision to the exact local state and declarations it inspected; the command-loop handler drops the command if any intervening state
@@ -143,6 +146,6 @@ object ConsensusCommand {
     startPolicy: RollbackStartPolicy = RollbackStartPolicy.Immediate
   ) extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
   case object WithdrawFromConsensus extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
-  final case class ConsensusFinished[Key, Outcome](key: Key, outcome: Outcome, trigger: ConsensusTrigger)
+  final case class ConsensusFinished[Key, Outcome](key: Key, outcome: Outcome, trigger: ConsensusTrigger, expectedAttemptId: Long)
       extends ConsensusCommand[Key, Nothing, Nothing, Outcome]
 }

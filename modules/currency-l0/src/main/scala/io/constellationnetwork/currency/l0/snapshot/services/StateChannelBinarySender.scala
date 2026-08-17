@@ -9,7 +9,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.currency.l0.metrics.{updateDroppedStateChannelBinaryMetrics, updateStateChannelRetryParametersMetrics}
+import io.constellationnetwork.currency.l0.metrics.{updateBackpressuredStateChannelBinaryMetrics, updateStateChannelRetryParametersMetrics}
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
@@ -142,12 +142,23 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
       enqueued <- tracker.enqueue(binary, currencySnapshotOrdinal, currentGlobalOrdinal)
       _ <-
         if (enqueued)
-          logger.info(s"[Queue] Enqueued binary ${binary.hash} at ordinal $currencySnapshotOrdinal")
-        else
-          logger.error(
-            s"[Queue] Send queue is full (bound=$maxTrackedBinaries reached); dropping binary ${binary.hash} " +
-              s"at ordinal $currencySnapshotOrdinal. The chain head is not draining; metagraph may require resync."
-          ) >> updateDroppedStateChannelBinaryMetrics()
+          // Observability cannot turn a successful queue mutation into a failed retained effect.
+          logger.info(s"[Queue] Enqueued binary ${binary.hash} at ordinal $currencySnapshotOrdinal").attempt.void
+        else {
+          val observeBackpressure =
+            logger.error(
+              s"[Queue] Send queue is full (bound=$maxTrackedBinaries reached); backpressuring binary ${binary.hash} " +
+                s"at ordinal $currencySnapshotOrdinal until the chain head drains."
+            ) >> updateBackpressuredStateChannelBinaryMetrics()
+
+          // The binary chain is hash-linked. Treating a full queue as success would clear the
+          // retained Finished effect and permanently skip this link. The independent queue worker
+          // can still drain existing entries while finalization retries this exact binary.
+          observeBackpressure.attempt.void >>
+            Async[F].raiseError[Unit](
+              new IllegalStateException(s"State-channel binary queue is full (bound=$maxTrackedBinaries)")
+            )
+        }
     } yield ()
 
   def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] =

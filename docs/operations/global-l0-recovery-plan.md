@@ -86,8 +86,10 @@ Startup fails closed unless all of the following hold:
 
 Recovery-plan format v1 accepts only a signed **incremental** snapshot as the rollback target. A
 full-snapshot hash normally causes rollback to synthesize a new first incremental snapshot whose
-hash is different from the supplied source hash; plan mode rejects that source explicitly rather
-than adding a second anchor interpretation. Plan mode also requires the exact incremental and its
+hash is different from the supplied source hash; plan mode rejects that source immediately after
+read-only source discrimination, before synthetic-incremental construction, detailed anchor and
+collateral validation, one-shot receipt consumption, or rollback-storage mutation. Plan mode also
+requires the exact incremental and its
 same-ordinal snapshot-info file to be locally readable. Anchor/source and anchor-balance collateral
 checks run before chain traversal can initialize snapshot storage, sync MPT state, or prune local
 history. Ordinary rollback retains its existing full-snapshot and traversal behavior.

@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import scala.concurrent.duration._
 
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 
 import weaver.FunSuite
@@ -11,6 +12,11 @@ object OpenAdmissionPolicySuite extends FunSuite {
 
   private def peer(c: Char): PeerId = PeerId(Hex(c.toString * 128))
   private def peer(index: Int): PeerId = PeerId(Hex(f"$index%0128x"))
+  private def proofHistory(rounds: List[Set[PeerId]]): AdmissionProofHistory.History =
+    rounds.zipWithIndex.foldLeft(AdmissionProofHistory.History.empty) {
+      case (history, (signers, index)) =>
+        AdmissionProofHistory.observe(history, index.toLong + 1L, Hash.fromBytes(s"parent-$index".getBytes("UTF-8")), signers)
+    }
 
   private val committee = Set(peer('1'), peer('2'), peer('3'), peer('4'), peer('5'), peer('6'))
 
@@ -281,6 +287,68 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect.same(Some(3), threeToFourBeforeNewSignerProvesItself.headroom.map(_.nextFinalityFloor)) &&
     expect(!threeToFourBeforeNewSignerProvesItself.allowsOpenAdmission) &&
     expect(threeToFourAfterNewSignerProvesItself.allowsOpenAdmission)
+  }
+
+  test("a floor-raising admission requires three consecutive exact-headroom parents in both lanes") {
+    val committeeOfThree = (1 to 3).map(peer).toSet
+    val incomplete = proofHistory(List.fill(2)(committeeOfThree))
+    val complete = proofHistory(List.fill(3)(committeeOfThree))
+    def evaluate(history: AdmissionProofHistory.History, cadenceAllowed: Boolean) =
+      OpenAdmissionPolicy.evaluate(
+        cadenceAllowed = cadenceAllowed,
+        currentCommittee = committeeOfThree,
+        locallyObservedParentSigners = Some(committeeOfThree),
+        quorumThresholdFraction = 2.0 / 3.0,
+        headroomGateActive = true,
+        locallyObservedParentProofHistory = Some(history)
+      )
+
+    val building = evaluate(incomplete, cadenceAllowed = true)
+    val onCadence = evaluate(complete, cadenceAllowed = true)
+    val offCadence = evaluate(complete, cadenceAllowed = false)
+
+    expect(building.headroom.exists(_.allowsExpansion)) &&
+    expect(building.sustainedHeadroom.exists(e => e.raisesFinalityFloor && !e.allowsAdmission)) &&
+    expect(!building.allowsProbationAdmission) &&
+    expect(!building.allowsOpenAdmission) &&
+    expect(onCadence.allowsProbationAdmission) &&
+    expect(onCadence.allowsOpenAdmission) &&
+    expect(offCadence.allowsProbationAdmission) &&
+    expect(!offCadence.allowsOpenAdmission)
+  }
+
+  test("floor-neutral admission does not wait for sustained history") {
+    val committeeOfFive = (1 to 5).map(peer).toSet
+    val decision = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfFive,
+      locallyObservedParentSigners = Some(committeeOfFive.take(4)),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = true,
+      locallyObservedParentProofHistory = Some(AdmissionProofHistory.History.empty)
+    )
+
+    expect(decision.headroom.exists(_.allowsExpansion)) &&
+    expect(decision.sustainedHeadroom.exists(e => !e.raisesFinalityFloor && e.allowsAdmission)) &&
+    expect(decision.allowsProbationAdmission) &&
+    expect(decision.allowsOpenAdmission)
+  }
+
+  test("bootstrap bypass also bypasses incomplete sustained history until the threshold-crossing batch") {
+    val singleton = Set(peer(1))
+    val decision = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = singleton,
+      locallyObservedParentSigners = Some(singleton),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = false,
+      locallyObservedParentProofHistory = Some(AdmissionProofHistory.History.empty)
+    )
+
+    expect.same(None, decision.headroom) &&
+    expect.same(None, decision.sustainedHeadroom) &&
+    expect(decision.allowsProbationAdmission) &&
+    expect(decision.allowsOpenAdmission)
   }
 
   test("off-cadence certificate filtering suppresses open expansion but retains probation recovery") {

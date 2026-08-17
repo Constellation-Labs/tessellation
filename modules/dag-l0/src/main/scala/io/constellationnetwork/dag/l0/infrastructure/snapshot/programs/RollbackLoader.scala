@@ -49,6 +49,17 @@ object RollbackLoader {
   private[programs] def runPreflightThen[F[_]: Async, A](preflight: F[Unit], mutate: => F[A]): F[A] =
     preflight >> mutate
 
+  /** Resolve source policy before evaluating source-specific loading. Recovery-plan v1 uses this to reject a full-snapshot source before
+    * constructing its synthetic first incremental, running detailed anchor validation, consuming the one-shot receipt, or mutating rollback
+    * storage. Ordinary rollback supplies no source preflight and retains its exact path.
+    */
+  private[programs] def runSourcePreflightThen[F[_]: Async, A](
+    source: Source,
+    preflight: Option[Source => F[Unit]],
+    load: => F[A]
+  ): F[A] =
+    preflight.fold(load)(validate => runPreflightThen(validate(source), load))
+
   def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
@@ -111,6 +122,7 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
   def load(
     rollbackHash: Hash,
     download: Download[F, GlobalIncrementalSnapshot],
+    preSourceValidate: Option[RollbackLoader.Source => F[Unit]] = None,
     preLoadValidate: Option[(RollbackLoader.Source, GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot]) => F[Unit]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
@@ -138,8 +150,11 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
               snapshotTraverse.loadChain()
             }
 
-            preLoadValidate.fold(loadIncremental) { validate =>
+            preLoadValidate.fold(
+              RollbackLoader.runSourcePreflightThen(RollbackLoader.Source.Incremental, preSourceValidate, loadIncremental)
+            ) { validate =>
               val preflight = for {
+                _ <- preSourceValidate.traverse_(_(RollbackLoader.Source.Incremental))
                 exactSnapshot <- incrementalGlobalSnapshotLocalFileSystemStorage
                   .read(rollbackHash)
                   .flatMap(_.liftTo[F](RollbackLoader.PreflightIncrementalMissing(rollbackHash)))
@@ -165,9 +180,13 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                   }
               }
 
-            preLoadValidate.fold(loadFull) { validate =>
-              loadFull.flatTap { case (info, snapshot) => validate(RollbackLoader.Source.FullSnapshot, info, snapshot) }
-            }
+            RollbackLoader.runSourcePreflightThen(
+              RollbackLoader.Source.FullSnapshot,
+              preSourceValidate,
+              preLoadValidate.fold(loadFull) { validate =>
+                loadFull.flatTap { case (info, snapshot) => validate(RollbackLoader.Source.FullSnapshot, info, snapshot) }
+              }
+            )
         }
         .flatTap {
           case (_, lastInc) =>
