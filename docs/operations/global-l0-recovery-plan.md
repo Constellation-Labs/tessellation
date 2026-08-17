@@ -148,6 +148,13 @@ receipt exists. A crash after file creation conservatively burns the authority e
 payload is incomplete. Generate a new signed plan ID to retry a failed coordinated operation; never
 delete a receipt to make an old authorization reusable.
 
+If any planned node exits after consuming its receipt but before the first-round barrier releases,
+do not restart that node with the consumed plan and do not continue the partially aligned
+operation. Stop the planned cohort, re-confirm the common anchor and committee, generate a newly
+signed plan with a fresh `planId`, distribute it to every planned member, and restart the
+coordinated procedure from step 6 below. Keep every old receipt and plan in the incident record.
+The fresh ID authorizes a new attempt; it does not make the earlier authorization reusable.
+
 ## Runbook
 
 1. Stop restart automation and stop the entire IntegrationNet fleet.
@@ -172,6 +179,9 @@ delete a receipt to make an old authorization reusable.
    orchestration must remove the option after the authorized invocation.
 9. Verify the lead logs the plan ID, exact anchor, exact committee, and alignment of every planned
    peer before the first round.
+   If any planned process exits after receipt consumption but before that alignment completes,
+   stop the planned cohort and restart step 5 with a fresh signed `planId`; never delete a receipt
+   or restart only the failed process against the consumed plan.
 10. Verify the first completed round contains the expected committee and a healthy proof margin.
 11. Before re-enabling automatic restart or leave/fork recovery, perform a second coordinated
     full-fleet cold restart **without** `--recovery-plan`/`CL_GL0_RECOVERY_PLAN_PATH`. The initial
