@@ -12,11 +12,11 @@ import io.constellationnetwork.security.signature.Signed
 
 import fs2.io.file.Path
 
-/** Process-local authorization backed by a durable, exclusive consumed-plan receipt.
+/** Initialization-local authorization backed by a durable, exclusive consumed-plan receipt.
   *
-  * A successfully consumed signed plan may be retried idempotently by the same process. A fresh process always starts with an empty
-  * in-memory authorization and therefore encounters the durable `CREATE_NEW` receipt, failing closed. The receipt directory must be outside
-  * every rollback-pruned snapshot subdirectory.
+  * A successfully consumed signed plan may be retried idempotently by the same receipt instance. A fresh initialization, including an
+  * in-process application restart, starts with an empty in-memory authorization and therefore encounters the durable `CREATE_NEW` receipt,
+  * failing closed. The receipt directory must be outside every rollback-pruned snapshot subdirectory.
   */
 trait Gl0RecoveryPlanReceipt[F[_]] {
   def consume(signed: Signed[Gl0RecoveryPlan]): F[Unit]
@@ -31,7 +31,7 @@ object Gl0RecoveryPlanReceipt {
 
   final case class PlanIdReusedInProcess(planId: String)
       extends IllegalStateException(
-        s"GL0 recovery planId=$planId was reused for different signed content in the same process"
+        s"GL0 recovery planId=$planId was reused for different signed content in the same receipt initialization"
       )
 
   def make[F[_]: Async: JsonSerializer](base: Path): F[Gl0RecoveryPlanReceipt[F]] =
