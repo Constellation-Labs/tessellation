@@ -143,16 +143,17 @@ minimum remains two because mutual attestation and leader rotation are not meani
 singleton. This is a recovery viability floor, not a reward-population cap.
 
 Each node durably writes `<snapshotPath>/recoveryPlanReceipts/<planId>.consumed` with exclusive
-create semantics. Reuse by the same process is idempotent; a fresh process fails closed if the
-receipt exists. A crash after file creation conservatively burns the authority even if the audit
-payload is incomplete. Generate a new signed plan ID to retry a failed coordinated operation; never
-delete a receipt to make an old authorization reusable.
+create semantics. Reuse by the same receipt initialization is idempotent. A new initialization,
+including an in-process application restart, rebuilds the in-memory receipt state and fails closed
+when the durable receipt exists. A crash after file creation conservatively burns the authority
+even if the audit payload is incomplete. Generate a new signed plan ID to retry a failed
+coordinated operation; never delete a receipt to make an old authorization reusable.
 
 If any planned node exits after consuming its receipt but before the first-round barrier releases,
 do not restart that node with the consumed plan and do not continue the partially aligned
 operation. Stop the planned cohort, re-confirm the common anchor and committee, generate a newly
 signed plan with a fresh `planId`, distribute it to every planned member, and restart the
-coordinated procedure from step 6 below. Keep every old receipt and plan in the incident record.
+coordinated procedure from step 5 below. Keep every old receipt and plan in the incident record.
 The fresh ID authorizes a new attempt; it does not make the earlier authorization reusable.
 
 ## Runbook
