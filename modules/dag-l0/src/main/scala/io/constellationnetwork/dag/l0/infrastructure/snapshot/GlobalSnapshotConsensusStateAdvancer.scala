@@ -168,6 +168,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     // (see `PeerHistorySidecarStorage` scaladoc + `project_alpha92_wedge_may21.md`).
     peerHistorySidecar: PeerHistorySidecarStorage[F],
     membershipPolicy: HealthDerivedMembershipPolicy,
+    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
     // an attempt-bound `RestartAfterSoftReset` on the owning serialized command loop so the reset is a total transition rather than an
     // inert state, without allowing a delayed retry to complete a newer round.
@@ -196,7 +197,18 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       override def afterConsensusOutcomeCommitted(outcome: GlobalConsensusOutcome): F[Unit] =
-        peerHistorySidecar.write(outcome.finished.signedMajorityArtifact.value.ordinal, outcome.toOperationalState)
+        onUnsignedRecoverySuccessor.fold(
+          peerHistorySidecar.write(outcome.finished.signedMajorityArtifact.value.ordinal, outcome.toOperationalState)
+        ) { onSuccessor =>
+          // The unsigned override is invocation-local authority. Its post-CAS
+          // disarm must run even when the sidecar write fails, while preserving
+          // the existing behavior of surfacing that write failure to the caller.
+          // A fresh external JVM may deliberately re-arm from the environment.
+          peerHistorySidecar
+            .write(outcome.finished.signedMajorityArtifact.value.ordinal, outcome.toOperationalState)
+            .attempt
+            .flatMap(result => onSuccessor(outcome) >> result.liftTo[F])
+        }
 
       /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
         * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.

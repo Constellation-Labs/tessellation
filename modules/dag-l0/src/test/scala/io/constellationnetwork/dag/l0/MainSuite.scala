@@ -5,7 +5,7 @@ import cats.effect.IO
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.cli.method
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlan, RecoveryCheckpoint}
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlan, Gl0RecoverySeedCommittee, RecoveryCheckpoint}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
@@ -99,11 +99,68 @@ object MainSuite extends SimpleIOSuite {
     expect(Main.validateRecoveryAnchorCompatibility(recoveryPlan, Some(wrongHash)).isLeft)
   }
 
+  pureTest("an unsigned recovery seed is bound to the same independent checkpoint comparison") {
+    expect(Main.validateRecoverySeedAnchorCompatibility(recoveryAnchor, None).isRight) &&
+    expect(Main.validateRecoverySeedAnchorCompatibility(recoveryAnchor, Some(recoveryAnchor)).isRight) &&
+    expect(
+      Main
+        .validateRecoverySeedAnchorCompatibility(recoveryAnchor.copy(snapshotHash = Hash("44" * 32)), Some(recoveryAnchor))
+        .isLeft
+    )
+  }
+
+  pureTest("signed plan and unsigned env recovery inputs are mutually exclusive") {
+    expect(Main.validateRecoveryConfigurationExclusive(recoveryPlanConfigured = false, recoverySeedConfigured = false).isRight) &&
+    expect(Main.validateRecoveryConfigurationExclusive(recoveryPlanConfigured = true, recoverySeedConfigured = false).isRight) &&
+    expect(Main.validateRecoveryConfigurationExclusive(recoveryPlanConfigured = false, recoverySeedConfigured = true).isRight) &&
+    expect(Main.validateRecoveryConfigurationExclusive(recoveryPlanConfigured = true, recoverySeedConfigured = true).isLeft)
+  }
+
+  pureTest("unsigned recovery next-seat headroom counts only selected proof signers") {
+    val seed = Gl0RecoverySeedCommittee.parse(s"${self.value.value},${peerB.value.value},${peerC.value.value}").toOption.get
+    val foreign = PeerId(Hex("dd" * 64))
+    val pending = Main.recoverySeedHeadroom(seed, Set(self, peerB, foreign), 2.0 / 3.0)
+    val ready = Main.recoverySeedHeadroom(seed, Set(self, peerB, peerC, foreign), 2.0 / 3.0)
+
+    expect.same(2, pending.observed) &&
+    expect.same(3, pending.required) &&
+    expect.same(SortedSet(peerC), pending.absent) &&
+    expect.same(1, pending.deficit) &&
+    expect(!pending.isReady) &&
+    expect.same(3, ready.observed) &&
+    expect.same(0, ready.deficit) &&
+    expect(ready.isReady)
+  }
+
+  pureTest("headroom deficit is quorum deficit rather than all absent selected members") {
+    val peerD = PeerId(Hex("dd" * 64))
+    val peerE = PeerId(Hex("ee" * 64))
+    val seed = Gl0RecoverySeedCommittee
+      .parse(s"${self.value.value},${peerB.value.value},${peerC.value.value},${peerD.value.value},${peerE.value.value}")
+      .toOption
+      .get
+    val headroom = Main.recoverySeedHeadroom(seed, Set(self, peerB, peerC, peerD), 2.0 / 3.0)
+
+    expect(headroom.isReady) &&
+    expect.same(0, headroom.deficit) &&
+    expect.same(SortedSet(peerE), headroom.absent)
+  }
+
   pureTest("recovery-plan v1 accepts incremental anchors and rejects full-snapshot sources") {
     val source = io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader.Source
 
     expect(Main.validateRecoveryAnchorSource(source.Incremental).isRight) &&
     expect(Main.validateRecoveryAnchorSource(source.FullSnapshot).isLeft)
+  }
+
+  pureTest("unsigned recovery seed requires an incremental source and the exact rollback hash") {
+    val source = io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader.Source
+    val expected = Hash("55" * 32)
+
+    expect(Main.validateRecoverySeedAnchorSource(source.Incremental).isRight) &&
+    expect(Main.validateRecoverySeedAnchorSource(source.FullSnapshot).isLeft) &&
+    expect(Main.validateRecoverySeedRollbackHash(expected, expected).isRight) &&
+    expect(Main.validateRecoverySeedRollbackHash(expected, Hash("66" * 32)).isLeft)
   }
 
   test("GL0 recovery-plan CLI option is inert by default and requires an explicit path") {
@@ -113,6 +170,17 @@ object MainSuite extends SimpleIOSuite {
     IO(
       expect.same(Some(None), command.parse(Seq.empty).toOption) &&
         expect.same(Some(Some(path)), command.parse(Seq("--recovery-plan", path.toString)).toOption)
+    )
+  }
+
+  test("GL0 recovery seed is env-only and inert when the env is absent") {
+    val command = Command("dag-l0-test", "test parser")(method.RunRollback.recoverySeedCommitteeOpts)
+    val parsed = Gl0RecoverySeedCommittee.parse(s"${peerC.value.value},${self.value.value},${peerB.value.value}")
+
+    IO(
+      expect.same(Some(None), command.parse(Seq.empty).toOption) &&
+        expect(command.parse(Seq("--recovery-seed-committee", peerB.value.value)).isLeft) &&
+        expect.same(Some(SortedSet(self, peerB, peerC)), parsed.toOption.map(_.committee))
     )
   }
 }

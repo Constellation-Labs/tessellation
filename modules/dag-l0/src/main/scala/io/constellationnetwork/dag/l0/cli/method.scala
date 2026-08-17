@@ -4,6 +4,7 @@ import cats.data.NonEmptySet
 import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.config.types._
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.Gl0RecoverySeedCommittee
 import io.constellationnetwork.env._
 import io.constellationnetwork.env.env._
 import io.constellationnetwork.ext.decline.WithOpts
@@ -20,14 +21,12 @@ import io.constellationnetwork.security.hash.Hash
 
 import com.monovore.decline.Opts
 import com.monovore.decline.refined._
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 
 object method {
 
   sealed trait Run extends CliMethod {
-
     def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig = AppConfig(
       trust = c.trust,
       rewards = MainnetRewardsConfig.classicMainnetRewardsConfig,
@@ -104,7 +103,8 @@ object method {
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
     allowanceListPath: Option[AllowanceListPath],
-    recoveryPlanPath: Option[Path] = None
+    recoveryPlanPath: Option[Path] = None,
+    recoverySeedCommittee: Option[Gl0RecoverySeedCommittee] = None
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -125,6 +125,16 @@ object method {
         )
         .orNone
 
+    val recoverySeedCommitteeOpts: Opts[Option[Gl0RecoverySeedCommittee]] =
+      Opts
+        .env[String](
+          Gl0RecoverySeedCommittee.EnvironmentVariable,
+          help =
+            "DANGER: repeatable unsigned exact GL0 rollback committee; fresh selected-source JVMs re-arm while set; coordinated fleet recovery only"
+        )
+        .mapValidated(raw => Gl0RecoverySeedCommittee.parse(raw).leftMap(_.getMessage).toValidatedNel)
+        .orNone
+
     val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
       (
         StorePath.opts,
@@ -139,7 +149,8 @@ object method {
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
         AllowanceListPath.opts,
-        recoveryPlanPathOpts
+        recoveryPlanPathOpts,
+        recoverySeedCommitteeOpts
       ).mapN(RunRollback.apply)
     }
   }
@@ -172,7 +183,8 @@ object method {
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
     allowanceListPath: Option[AllowanceListPath],
-    recoveryPlanPath: Option[Path] = None
+    recoveryPlanPath: Option[Path] = None,
+    recoverySeedCommittee: Option[Gl0RecoverySeedCommittee] = None
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -190,7 +202,8 @@ object method {
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
         AllowanceListPath.opts,
-        RunRollback.recoveryPlanPathOpts
+        RunRollback.recoveryPlanPathOpts,
+        RunRollback.recoverySeedCommitteeOpts
       ).mapN(RunValidator.apply)
     }
   }

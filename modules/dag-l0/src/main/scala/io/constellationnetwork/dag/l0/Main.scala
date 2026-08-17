@@ -113,6 +113,64 @@ object Main
         s"checkpoint=(${configured.network},${configured.ordinal.value.value},${configured.snapshotHash.value})"
   }
 
+  private[dag] final case class ConflictingRecoverySeedAnchors(
+    selected: RecoveryCheckpoint,
+    configured: RecoveryCheckpoint
+  ) extends NoStackTrace {
+    override def getMessage: String =
+      s"GL0 recovery seed anchor conflicts with configured recovery checkpoint: " +
+        s"selected=(${selected.network},${selected.ordinal.value.value},${selected.snapshotHash.value}) " +
+        s"checkpoint=(${configured.network},${configured.ordinal.value.value},${configured.snapshotHash.value})"
+  }
+
+  private[dag] case object ConflictingRecoveryConfiguration extends NoStackTrace {
+    override def getMessage: String =
+      s"Configure either --recovery-plan/CL_GL0_RECOVERY_PLAN_PATH or ${Gl0RecoverySeedCommittee.EnvironmentVariable}, never both"
+  }
+
+  private[dag] case object RecoverySeedConfiguredWithoutSeedlist extends NoStackTrace {
+    override def getMessage: String =
+      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} is configured but no GL0 seedlist is present"
+  }
+
+  private[dag] final case class RecoverySeedRollbackHashMismatch(expected: Hash, got: Hash) extends NoStackTrace {
+    override def getMessage: String =
+      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} loaded rollback hash mismatch: expected=${expected.value} got=${got.value}"
+  }
+
+  private[dag] final case class RecoverySeedUnsupportedAnchorSource(got: String) extends NoStackTrace {
+    override def getMessage: String =
+      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} requires an incremental snapshot rollback hash; loaded anchor source=$got"
+  }
+
+  private[dag] def validateRecoveryConfigurationExclusive(
+    recoveryPlanConfigured: Boolean,
+    recoverySeedConfigured: Boolean
+  ): Either[ConflictingRecoveryConfiguration.type, Unit] =
+    Either.cond(!(recoveryPlanConfigured && recoverySeedConfigured), (), ConflictingRecoveryConfiguration)
+
+  private[dag] final case class RecoverySeedHeadroom(
+    observed: Int,
+    required: Int,
+    absent: SortedSet[PeerId]
+  ) {
+    def isReady: Boolean = observed >= required
+    def deficit: Int = math.max(required - observed, 0)
+  }
+
+  private[dag] def recoverySeedHeadroom(
+    seed: Gl0RecoverySeedCommittee,
+    completedSigners: Set[PeerId],
+    quorumThresholdFraction: Double
+  ): RecoverySeedHeadroom = {
+    val observed = seed.committee.intersect(completedSigners)
+    RecoverySeedHeadroom(
+      observed.size,
+      QuorumPolicy.fromFraction(seed.committee.size + 1, quorumThresholdFraction),
+      seed.committee.diff(completedSigners)
+    )
+  }
+
   /** A one-shot committee plan must not weaken or bypass the independently configured, seedlist-majority fork anchor. */
   private[dag] def validateRecoveryAnchorCompatibility(
     plan: Gl0RecoveryPlan,
@@ -122,6 +180,14 @@ object Main
       Either.cond(plan.anchor === checkpoint, (), ConflictingRecoveryAnchors(plan.anchor, checkpoint))
     }
 
+  private[dag] def validateRecoverySeedAnchorCompatibility(
+    selected: RecoveryCheckpoint,
+    configured: Option[RecoveryCheckpoint]
+  ): Either[ConflictingRecoverySeedAnchors, Unit] =
+    configured.fold[Either[ConflictingRecoverySeedAnchors, Unit]](Right(())) { checkpoint =>
+      Either.cond(selected === checkpoint, (), ConflictingRecoverySeedAnchors(selected, checkpoint))
+    }
+
   private[dag] def validateRecoveryAnchorSource(
     source: RollbackLoader.Source
   ): Either[Gl0RecoveryPlan.UnsupportedAnchorSource, Unit] =
@@ -129,6 +195,17 @@ object Main
       case RollbackLoader.Source.Incremental  => Right(())
       case RollbackLoader.Source.FullSnapshot => Left(Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot"))
     }
+
+  private[dag] def validateRecoverySeedAnchorSource(
+    source: RollbackLoader.Source
+  ): Either[RecoverySeedUnsupportedAnchorSource, Unit] =
+    source match {
+      case RollbackLoader.Source.Incremental  => Right(())
+      case RollbackLoader.Source.FullSnapshot => Left(RecoverySeedUnsupportedAnchorSource("full_snapshot"))
+    }
+
+  private[dag] def validateRecoverySeedRollbackHash(expected: Hash, got: Hash): Either[RecoverySeedRollbackHashMismatch, Unit] =
+    Either.cond(expected === got, (), RecoverySeedRollbackHashMismatch(expected, got))
 
   private[dag] final case class RecentCoreReconstructionDiagnostic(
     source: String,
@@ -184,8 +261,145 @@ object Main
         case m: RunValidatorWithJoinAttempt => m.recoveryPlanPath
         case _: RunGenesis                  => none[fs2.io.file.Path]
       }
-      initiallyHoldConsensusFirstRound = recoveryPlanPath.isDefined
+      recoverySeedCommittee = method match {
+        case m: RunRollback                 => m.recoverySeedCommittee
+        case m: RunValidator                => m.recoverySeedCommittee
+        case _: RunValidatorWithJoinAttempt => none[Gl0RecoverySeedCommittee]
+        case _: RunGenesis                  => none[Gl0RecoverySeedCommittee]
+      }
+      _ <- validateRecoveryConfigurationExclusive(recoveryPlanPath.isDefined, recoverySeedCommittee.isDefined).liftTo[IO].asResource
+      validatedRecoverySeed <- recoverySeedCommittee.traverse { seed =>
+        nodeShared.seedlist
+          .fold[Either[Throwable, Set[PeerId]]](Left(RecoverySeedConfiguredWithoutSeedlist)) { entries =>
+            Right(entries.iterator.map(_.peerId).toSet)
+          }
+          .flatMap { seedlist =>
+            Gl0RecoverySeedCommittee
+              .validate(
+                seed,
+                nodeId,
+                seedlist,
+                nodeShared.customAllowanceList.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet)),
+                recoveryPlanMaxFacilitatorCount,
+                loadedConsensusConfig.quorumThresholdFraction
+              )
+              .leftWiden[Throwable]
+          }
+          .liftTo[IO]
+      }.asResource
+      recoveryRole = method match {
+        case _: RunRollback                                   => "rollback_lead"
+        case _: RunValidator | _: RunValidatorWithJoinAttempt => "planned_validator"
+        case _: RunGenesis                                    => "none"
+      }
+      resetRecoverySeedGauges =
+        Metrics[IO].updateGauge("dag_consensus_recovery_seed_armed", 0L) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_committee_size", 0L) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_deficit", 0L) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 0L)
+      initializeRecoverySeedMetrics = (seed: Gl0RecoverySeedCommittee) =>
+        ConsensusLog.warn(
+          logger,
+          ConsensusLog.Category.Recovery,
+          "startup",
+          "n/a",
+          ConsensusLog.Event.DownloadInitStart,
+          "reason" -> "unsigned_recovery_seed_configured",
+          "role" -> recoveryRole,
+          "committeeSize" -> seed.committee.size.toString,
+          "committee" -> seed.committee.toList.map(ConsensusLog.pid).mkString(","),
+          "warning" -> "trusted_operator_override_rearms_on_each_fresh_external_jvm_while_env_is_set"
+        ) >>
+          Metrics[IO]
+            .incrementCounter(
+              "dag_consensus_recovery_seed_configured_total",
+              Seq(Metrics.unsafeLabelName("role") -> recoveryRole)
+            ) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_armed", 1L) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_committee_size", seed.committee.size.toLong) >>
+          Metrics[IO].updateGauge(
+            "dag_consensus_recovery_seed_headroom_deficit",
+            recoverySeedHeadroom(seed, Set.empty, loadedConsensusConfig.quorumThresholdFraction).deficit.toLong
+          ) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 0L)
+      // The metrics registry outlives an in-process application restart. An
+      // armed invocation therefore resets its gauges when its resource is
+      // released; counters remain historical. Keep env-absent startup exactly
+      // inert so ordinary and signed-plan nodes do not gain unsigned gauges.
+      _ <- validatedRecoverySeed
+        .traverse(seed => Resource.make(initializeRecoverySeedMetrics(seed).attempt.void)(_ => resetRecoverySeedGauges.attempt.void))
+        .void
+      initiallyHoldConsensusFirstRound = recoveryPlanPath.isDefined || validatedRecoverySeed.isDefined
       configuredRecoveryPlanRef <- Ref.of[IO, Option[Gl0RecoveryPlanLoader.Verified]](None).asResource
+      configuredRecoverySeedRef <- Ref.of[IO, Option[Gl0RecoverySeedCommittee]](validatedRecoverySeed).asResource
+      recoverySeedHeadroomReachedRef <- Ref.of[IO, Boolean](false).asResource
+      clearConfiguredRecoverySeed = (outcome: GlobalConsensusOutcome) => {
+        val completedSigners = outcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
+
+        // The unsigned override is per-invocation startup authority, not
+        // durable consensus state. Disarm on the first accepted successor
+        // independently of proof headroom. In-process restart methods never
+        // carry this authority; each fresh external JVM launch deliberately
+        // re-arms while the environment remains configured.
+        val disarmAuthority = configuredRecoverySeedRef.getAndSet(None).flatMap {
+          case Some(_) =>
+            (ConsensusLog.info(
+              logger,
+              ConsensusLog.Category.Recovery,
+              outcome.key.toString,
+              "n/a",
+              ConsensusLog.Event.RollbackQuorumFeasible,
+              "reason" -> "unsigned_recovery_seed_disarmed_after_first_accepted_successor",
+              "action" -> "external_env_controls_rearm_on_next_fresh_jvm"
+            ) >>
+              Metrics[IO].updateGauge("dag_consensus_recovery_seed_armed", 0L) >>
+              Metrics[IO].incrementCounter("dag_consensus_recovery_seed_disarmed_total")).attempt.void
+          case None => IO.unit
+        }
+
+        val recordHeadroom = validatedRecoverySeed.traverse_ { seed =>
+          recoverySeedHeadroomReachedRef.get.flatMap {
+            case true => IO.unit
+            case false =>
+              val headroom = recoverySeedHeadroom(seed, completedSigners, loadedConsensusConfig.quorumThresholdFraction)
+              val fields = List(
+                "observed" -> headroom.observed.toString,
+                "required" -> headroom.required.toString,
+                "deficit" -> headroom.deficit.toString,
+                "absentCount" -> headroom.absent.size.toString,
+                "absent" -> headroom.absent.toList.map(ConsensusLog.pid).mkString(",")
+              )
+
+              if (headroom.isReady)
+                recoverySeedHeadroomReachedRef.set(true) >>
+                  (ConsensusLog.info(
+                    logger,
+                    ConsensusLog.Category.Recovery,
+                    outcome.key.toString,
+                    "n/a",
+                    ConsensusLog.Event.RollbackQuorumFeasible,
+                    ("reason" -> "unsigned_recovery_seed_next_seat_headroom_reached") :: fields: _*
+                  ) >>
+                    Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_deficit", 0L) >>
+                    Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 1L) >>
+                    Metrics[IO].incrementCounter("dag_consensus_recovery_seed_headroom_reached_total")).attempt.void
+              else
+                (ConsensusLog.warn(
+                  logger,
+                  ConsensusLog.Category.Recovery,
+                  outcome.key.toString,
+                  "n/a",
+                  ConsensusLog.Event.RollbackFirstRoundDeferred,
+                  ("reason" -> "unsigned_recovery_seed_awaiting_next_seat_headroom") :: fields: _*
+                ) >>
+                  Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_deficit", headroom.deficit.toLong) >>
+                  Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 0L) >>
+                  Metrics[IO].incrementCounter("dag_consensus_recovery_seed_headroom_pending_total")).attempt.void
+          }
+        }
+
+        disarmAuthority >> recordHeadroom
+      }
       recoveryPlanReceipt <- Gl0RecoveryPlanReceipt
         .make[IO](cfg.snapshot.snapshotPath / "recoveryPlanReceipts")
         .asResource
@@ -242,6 +456,8 @@ object Main
           nodeShared.loggerBundle,
           getPeerChainTips,
           configuredRecoveryPlanRef.get,
+          configuredRecoverySeedRef.get,
+          validatedRecoverySeed.as(clearConfiguredRecoverySeed),
           recoveryPlanReceipt,
           initiallyHoldConsensusFirstRound,
           consensusEc
@@ -440,7 +656,8 @@ object Main
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
                 m.allowanceListPath,
-                m.recoveryPlanPath
+                m.recoveryPlanPath,
+                recoverySeedCommittee = None
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(
@@ -471,8 +688,11 @@ object Main
               Gl0RecoveryPlanLoader.Role.RollbackLead(nodeId, m.rollbackHash)
             ).flatTap(configuredRecoveryPlanRef.set).flatMap { verifiedRecoveryPlan =>
               val recoveryPlan = verifiedRecoveryPlan.map(_.plan)
+              val recoverySeed = validatedRecoverySeed
               val validateRecoveryPlanSource: RollbackLoader.Source => IO[Unit] =
                 source => recoveryPlan.traverse_(_ => validateRecoveryAnchorSource(source).liftTo[IO])
+              val validateRecoverySeedSource: RollbackLoader.Source => IO[Unit] =
+                source => recoverySeed.traverse_(_ => validateRecoverySeedAnchorSource(source).liftTo[IO])
               val validateRecoveryPlanBeforeLoad: (
                 RollbackLoader.Source,
                 GlobalSnapshotInfo,
@@ -501,40 +721,70 @@ object Main
                       _ <- verifiedRecoveryPlan.traverse_(verified => recoveryPlanReceipt.consume(verified.signed))
                     } yield ()
                   }
+              val validateRecoverySeedBeforeLoad: (
+                RollbackLoader.Source,
+                GlobalSnapshotInfo,
+                Signed[GlobalIncrementalSnapshot]
+              ) => IO[Unit] =
+                (_, snapshotInfo, snapshot) =>
+                  recoverySeed.traverse_ { seed =>
+                    for {
+                      hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
+                      _ <- validateRecoverySeedRollbackHash(m.rollbackHash, hashedSnapshot.hash).liftTo[IO]
+                      _ <- validateRecoverySeedAnchorCompatibility(
+                        RecoveryCheckpoint(cfg.environment.toString, snapshot.ordinal, hashedSnapshot.hash),
+                        recoveryCheckpoint
+                      ).liftTo[IO]
+                      ineligibleSeedPeers <- seed.committee.toList.filterA { peerId =>
+                        peerId.toPublic[IO].map(_.toAddress).map { address =>
+                          !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
+                        }
+                      }
+                      _ <- Gl0RecoverySeedCommittee
+                        .Invalid(s"collateral check failed=${ineligibleSeedPeers.map(_.value.value).mkString(",")}")
+                        .raiseError[IO, Unit]
+                        .whenA(ineligibleSeedPeers.nonEmpty)
+                    } yield ()
+                  }
 
               programs.rollbackLoader
                 .load(
                   m.rollbackHash,
                   programs.download,
-                  recoveryPlan.as(validateRecoveryPlanSource),
-                  recoveryPlan.as(validateRecoveryPlanBeforeLoad)
+                  recoveryPlan.as(validateRecoveryPlanSource).orElse(recoverySeed.as(validateRecoverySeedSource)),
+                  recoveryPlan.as(validateRecoveryPlanBeforeLoad).orElse(recoverySeed.as(validateRecoverySeedBeforeLoad))
                 )
                 .map {
-                  case (snapshotInfo, snapshot) => (recoveryPlan, snapshotInfo, snapshot)
+                  case (snapshotInfo, snapshot) => (recoveryPlan, recoverySeed, snapshotInfo, snapshot)
                 }
             }
 
             loadRollback.flatMap {
-              case (recoveryPlan, snapshotInfo, snapshot) =>
+              case (recoveryPlan, recoverySeed, snapshotInfo, snapshot) =>
                 for {
-                  // Preserve the legacy rollback hasher selection when no plan is present. A
-                  // recovery plan, however, is bound to the historical snapshot hash and must
+                  // Preserve the legacy rollback hasher selection when no recovery override is present. A
+                  // recovery override, however, is bound operationally to the historical snapshot hash and must
                   // seed the outcome with the same ordinal-selected hasher used by preflight.
                   // Otherwise a hasher migration between the anchor and current tip could pass
                   // authorization and then install a different parent hash.
                   hashedSnapshot <- recoveryPlan.fold(
-                    hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                    recoverySeed.fold(
+                      hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[IO])
+                    )(_ => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO]))
                   )(_ => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO]))
+                  recoveryCommittee = recoveryPlan.map(_.committee).orElse(recoverySeed.map(_.committee))
                   // Rollback bootstrap: preserve the rolled-back snapshot's proof signers as
                   // the checkpoint's live seed committee. That keeps lastSigners/Core anchored
                   // to signed evidence instead of turning a non-signer rollback server into a
                   // self-only chain tip. Only fall back to self-only when the checkpoint has no
                   // proofs at all (genesis / malformed legacy edge). An explicitly verified
-                  // recovery plan replaces this seed with its canonical committee.
+                  // recovery override replaces this seed with its canonical committee.
                   proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId, proofSigners, recoveryPlan.map(_.committee))
+                  bootstrapFacilitators = rollbackBootstrapFacilitators(nodeId, proofSigners, recoveryCommittee)
                   bootstrapMode = recoveryPlan.fold {
-                    if (bootstrapFacilitators === proofSigners) "proof_signers" else "self_only_fallback"
+                    recoverySeed.fold {
+                      if (bootstrapFacilitators === proofSigners) "proof_signers" else "self_only_fallback"
+                    }(_ => "operator_recovery_seed")
                   }(_ => "operator_recovery_plan")
                   _ <- ConsensusLog.info(
                     logger,
@@ -550,6 +800,17 @@ object Main
                     "proofSigners" -> proofSigners.map(ConsensusLog.pid).sorted.mkString(","),
                     "bootstrapFacilitators" -> bootstrapFacilitators.map(ConsensusLog.pid).sorted.mkString(",")
                   )
+                  _ <- recoverySeed.traverse_(_ =>
+                    ConsensusLog.info(
+                      logger,
+                      ConsensusLog.Category.Recovery,
+                      snapshot.ordinal.toString,
+                      "n/a",
+                      ConsensusLog.Event.DownloadInitStart,
+                      "reason" -> "unsigned_recovery_seed_anchor_selected",
+                      "anchorHash" -> hashedSnapshot.hash.value
+                    )
+                  )
                   _ <- Metrics[IO].incrementCounter(
                     "dag_consensus_rollback_bootstrap_total",
                     Seq(Metrics.unsafeLabelName("mode") -> bootstrapMode)
@@ -561,7 +822,7 @@ object Main
                   // the window classifies as post-bootstrap and penalties apply immediately. If we're
                   // rolling back to a solo/bootstrap-era snapshot, the window starts in bootstrap mode
                   // and the cluster re-stabilizes naturally.
-                  rollbackProofSize = Main.rollbackProofSize(snapshot.proofs.size.toInt, recoveryPlan.map(_.committee.size))
+                  rollbackProofSize = Main.rollbackProofSize(snapshot.proofs.size.toInt, recoveryCommittee.map(_.size))
                   // Persisted operational history if the rollback snapshot carries it.
                   // Older snapshots have `peerHistory = None`, so seedOperational stays empty
                   // and the cluster bootstraps from zero. Newer snapshots restore
@@ -583,7 +844,7 @@ object Main
                   // behavior, which is the right thing for snapshots written by older nodes.
                   peerHistorySidecar <- PeerHistorySidecarStorage.make[IO](cfg.snapshot.snapshotPath / "peerHistory")
                   sidecarPeerHistory <- peerHistorySidecar.read(snapshot.value.ordinal)
-                  // A recovery plan is an explicit replacement of the signing committee. Do not
+                  // A recovery override is an explicit replacement of the signing committee. Do not
                   // let locally persisted penalty/tier/probation sidecars silently filter that
                   // committee on the first derived round. Ordinary rollback retains the exact
                   // legacy restoration behavior.
@@ -591,7 +852,7 @@ object Main
                     sidecarPeerHistory
                       .orElse(snapshot.value.peerHistory)
                       .getOrElse(ConsensusOperationalState.empty),
-                    recoveryPlan.isDefined
+                    recoveryCommittee.isDefined
                   )
                   // Project the consolidated per-peer record back out to the five PeerId-keyed
                   // dimensions on the outcome. A peer absent from `perPeer` is treated as
@@ -653,11 +914,20 @@ object Main
                   seedControllerEvidence = seedOperational.controllerEvidence.filter(_.nonEmpty)
                   seedPenaltyUntil = seedOperational.penaltyUntil.filter(_.nonEmpty)
                   recentCoreDiagnostic <- recoveryPlan.fold(
-                    reconstructRecentCoreFacilitatorsDiagnostic(
-                      peerHistorySidecar,
-                      snapshot.value.ordinal,
-                      snapshot.value.peerHistory,
-                      loadedConsensusConfig.tighteningWindow
+                    recoverySeed.fold(
+                      reconstructRecentCoreFacilitatorsDiagnostic(
+                        peerHistorySidecar,
+                        snapshot.value.ordinal,
+                        snapshot.value.peerHistory,
+                        loadedConsensusConfig.tighteningWindow
+                      )
+                    )(_ =>
+                      IO.pure(
+                        RecentCoreReconstructionDiagnostic(
+                          "operator_recovery_seed_flush",
+                          SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]]
+                        )
+                      )
                     )
                   )(_ =>
                     IO.pure(
@@ -718,15 +988,19 @@ object Main
                     controllerEvidence = seedControllerEvidence,
                     penaltyUntil = seedPenaltyUntil
                   )
-                  rollbackOutcome = recoveryPlan.fold(legacyRollbackOutcome)(plan =>
-                    GlobalRecoveryPlanOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, plan.committee)
-                  )
+                  rollbackOutcome = recoveryPlan.fold(
+                    recoverySeed.fold(legacyRollbackOutcome)(seed =>
+                      GlobalRecoveryPlanOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, seed.committee)
+                    )
+                  )(plan => GlobalRecoveryPlanOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, plan.committee))
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     rollbackOutcome,
-                    startPolicy = recoveryPlan.fold[RollbackStartPolicy](RollbackStartPolicy.LegacyDeferred)(plan =>
-                      RollbackStartPolicy.RequireAlignedCommittee(plan.committee)
-                    )
+                    startPolicy = recoveryPlan.fold[RollbackStartPolicy](
+                      recoverySeed.fold[RollbackStartPolicy](RollbackStartPolicy.LegacyDeferred)(seed =>
+                        RollbackStartPolicy.RequireAlignedCommittee(seed.committee)
+                      )
+                    )(plan => RollbackStartPolicy.RequireAlignedCommittee(plan.committee))
                   )
                 } yield result
             }
@@ -751,7 +1025,8 @@ object Main
                 m.trustRatingsPath,
                 m.prioritySeedlistPath,
                 m.allowanceListPath,
-                m.recoveryPlanPath
+                m.recoveryPlanPath,
+                recoverySeedCommittee = None
               )
             ) >>
             services.restart.setNodeForkedRestartMethod(

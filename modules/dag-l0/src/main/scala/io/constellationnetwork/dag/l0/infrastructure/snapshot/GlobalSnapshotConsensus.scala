@@ -17,7 +17,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt}
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt, Gl0RecoverySeedCommittee}
 import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
@@ -69,6 +69,7 @@ import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops._
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Json
 import org.http4s.client.Client
@@ -122,6 +123,8 @@ object GlobalSnapshotConsensus {
     // Map.empty and no admission votes fire (safe default).
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     configuredRecoveryPlan: F[Option[Gl0RecoveryPlanLoader.Verified]],
+    configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
+    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
     recoveryPlanReceipt: Gl0RecoveryPlanReceipt[F],
     initiallyHoldConsensusFirstRound: Boolean,
     // Shared consensus-health Ref from SharedServices. When provided, the engine's
@@ -285,6 +288,45 @@ object GlobalSnapshotConsensus {
             _ <- recoveryAnchorRef.set(outcome.some)
           } yield ()
         })
+      recoverySeedPreflight = (outcome: GlobalConsensusOutcome) =>
+        configuredRecoverySeed.flatMap(_.traverse_ { seed =>
+          for {
+            hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
+              outcome.finished.signedMajorityArtifact.toHashed[F]
+            }
+            expected = GlobalRecoveryPlanOutcome.seed(
+              outcome.finished.signedMajorityArtifact,
+              outcome.finished.context,
+              hashedSnapshot.hash,
+              seed.committee
+            )
+            _ <- new IllegalStateException(
+              s"Downloaded GL0 recovery outcome does not match unsigned seed: " +
+                s"gotAnchor=${outcome.key.value.value}/${hashedSnapshot.hash.value}"
+            ).raiseError[F, Unit].unlessA(outcome === expected)
+            ineligible <- seed.committee.toList.filterA { peerId =>
+              peerId.toPublic[F].map(_.toAddress).map { address =>
+                !outcome.finished.context.balances.get(address).getOrElse(Balance.empty).satisfiesCollateral(collateral)
+              }
+            }
+            _ <- new IllegalStateException(
+              s"Downloaded GL0 unsigned recovery seed outcome has uncollateralized members=${ineligible.map(_.value.value).mkString(",")}"
+            ).raiseError[F, Unit].whenA(ineligible.nonEmpty)
+            _ <- recoveryAnchorRef.set(outcome.some)
+            _ <- Metrics[F]
+              .incrementCounter(
+                "dag_consensus_recovery_outcome_validated_total",
+                Seq(Metrics.unsafeLabelName("mode") -> "operator_recovery_seed")
+              )
+              .attempt
+              .void
+          } yield ()
+        })
+      recoveryPreflight = (outcome: GlobalConsensusOutcome) => recoveryPlanPreflight(outcome) >> recoverySeedPreflight(outcome)
+      plannedRecoveryCommittee = configuredRecoveryPlan.flatMap {
+        case Some(verified) => verified.plan.committee.some.pure[F]
+        case None           => configuredRecoverySeed.map(_.map(_.committee))
+      }
 
       // Alpha.94: node-local sidecar for the post-finalization `ConsensusOperationalState`.
       // Closes the one-round-stale `snapshot.peerHistory` gap surfaced in `project_alpha92_wedge_may21.md`.
@@ -315,6 +357,7 @@ object GlobalSnapshotConsensus {
           facilitatorSelector,
           peerHistorySidecar,
           HealthDerivedMembershipPolicy.RetainSigningLeases,
+          onUnsignedRecoverySuccessor,
           (key: GlobalSnapshotKey) =>
             consensusStorage.getRoundAttemptId.flatMap { expectedAttemptId =>
               consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key, expectedAttemptId))
@@ -488,9 +531,9 @@ object GlobalSnapshotConsensus {
           peersCommittedAheadProbe,
           injectedHealthRef,
           Some(consensusQueue),
-          onOutcomePreInitialize = Some(recoveryPlanPreflight),
+          onOutcomePreInitialize = Some(recoveryPreflight),
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
-          plannedRecoveryCommittee = Some(configuredRecoveryPlan.map(_.map(_.plan.committee)))
+          plannedRecoveryCommittee = Some(plannedRecoveryCommittee)
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
