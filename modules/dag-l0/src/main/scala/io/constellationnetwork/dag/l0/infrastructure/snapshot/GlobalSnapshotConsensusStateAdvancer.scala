@@ -154,6 +154,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     facilitatorSelector: FacilitatorSelector,
     seedlistPeerIds: Set[PeerId],
     membershipPolicy: HealthDerivedMembershipPolicy,
+    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
     // an attempt-bound `RestartAfterSoftReset` on the owning serialized command loop so the reset is a total transition rather than an
     // inert state, without allowing a delayed retry to complete a newer round.
@@ -182,10 +183,14 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       override def afterConsensusOutcomeCommitted(outcome: GlobalConsensusOutcome): F[Unit] =
-        // V35 owns both the certified-outcome and peer-history sidecars in the typed
-        // onOutcomeFinalized hook assembled by GlobalSnapshotConsensus. Keeping this
-        // layer-local maintenance hook inert avoids a duplicate write after the shared CAS.
-        Applicative[F].unit
+        onUnsignedRecoverySuccessor.fold(
+          Applicative[F].unit
+        ) { onSuccessor =>
+          // V35 owns both sidecars in the typed onOutcomeFinalized hook. This
+          // post-CAS hook has one owner only: disarming invocation-local unsigned
+          // recovery authority after the first real successor commits.
+          onSuccessor(outcome)
+        }
 
       /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
         * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.

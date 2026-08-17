@@ -12,7 +12,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
-/** One canonical constructor for the exact synthetic anchor outcome authorized by a GL0 recovery plan.
+/** One canonical constructor for the exact synthetic anchor outcome selected by a GL0 operator-recovery override.
   *
   * Keeping this in one typed function prevents the rollback lead and planned validators from drifting on which operational windows are
   * flushed. It introduces no serialization or hashing scheme; the real signed artifact/context/hash and existing outcome schema are reused.

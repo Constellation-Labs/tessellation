@@ -12,12 +12,13 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt}
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt, Gl0RecoverySeedCommittee}
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
 import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
@@ -73,6 +74,8 @@ object Services {
     loggerBundle: LoggerBundle[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     configuredRecoveryPlan: F[Option[Gl0RecoveryPlanLoader.Verified]],
+    configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
+    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
     recoveryPlanReceipt: Gl0RecoveryPlanReceipt[F],
     initiallyHoldConsensusFirstRound: Boolean,
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
@@ -152,6 +155,8 @@ object Services {
             queues.rumor,
             getPeerChainTips,
             configuredRecoveryPlan,
+            configuredRecoverySeed,
+            onUnsignedRecoverySuccessor,
             recoveryPlanReceipt,
             initiallyHoldConsensusFirstRound,
             // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state

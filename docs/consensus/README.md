@@ -319,6 +319,20 @@ The schema-compatible retry and legacy-view safety boundary shipped with that
 operator tool is documented in the
 [v4.1.0-rc.8 IntegrationNet bridge release note](../release/v4.1.0-rc.8-integrationnet-bridge.md).
 
+Rc.9 adds an unsigned, trusted-operator alternative for the normal
+one-rollback-lead/all-other-validators cold-start topology. The exact committee
+comes from `CL_GL0_RECOVERY_SEED_COMMITTEE` on the named controlled nodes only;
+it reuses the same typed synthetic outcome and exact all-member barrier, then
+disarms for that JVM invocation on the first accepted successor while tracking
+selected-member next-seat proof headroom as a separate rollout gate. The
+external environment is intentionally repeatable: every fresh selected-source
+JVM launch re-arms it until the operator comments or removes the variable. It
+does not pin later ordinal committees inside one invocation. Each re-armed
+launch is a full operational reseed from which membership and reward breadth
+must regrow; no cleanup restart, symlink change, or jar swap is required for
+that recovery invocation. See the
+[trusted recovery seed runbook](../operations/global-l0-recovery-seed-committee.md).
+
 ### Round-Blocked States
 
 > **Note (v2 change):** The FSM blocks round starts when the node is in recovery or leaving states to prevent infinite loops.
