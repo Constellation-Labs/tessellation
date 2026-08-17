@@ -197,6 +197,13 @@ telemetry is best-effort and cannot strand the gate. There is no arbitrary plan-
 named member is part of the exact all-member barrier. A missing or mismatched member therefore
 keeps every planned node held, regardless of whether a quorum subset happens to be online.
 
+If any planned node exits after consuming its receipt but before the first-round barrier releases,
+do not restart that node with the consumed plan and do not continue the partially aligned
+operation. Stop the planned cohort, re-confirm the common anchor and committee, generate a newly
+signed plan with a fresh `planId`, distribute it to every planned member, and restart the
+coordinated procedure from step 6 below. Keep every old receipt and plan in the incident record.
+The fresh ID authorizes a new attempt; it does not make the earlier authorization reusable.
+
 ## Runbook
 
 1. Stop restart automation and stop the entire IntegrationNet fleet.
@@ -231,6 +238,9 @@ keeps every planned node held, regardless of whether a quorum subset happens to 
 9. Verify the lead logs the plan ID, exact anchor, exact committee, and alignment of every planned
    peer before the first round. Require the held-gate gauge to move from `1` to `0` only after the
    `exact_planned_committee_aligned` record.
+   If any planned process exits after receipt consumption but before that alignment completes,
+   stop the planned cohort and restart step 5 with a fresh signed `planId`; never delete a receipt
+   or restart only the failed process against the consumed plan.
 10. Verify the first completed round contains the expected committee and a healthy proof margin.
 11. Confirm snapshot-streaming resumes on the canonical hash at the first re-produced ordinal; do
     not treat process health alone as proof that its database followed the new lineage.
