@@ -49,9 +49,8 @@ object ProposalCertificateEnvelope {
 
   /** Store and deliver one immutable proposal value.
     *
-    * Direct gossip does not guarantee self-loopback. Self-storage first makes the leader's
-    * subsequent CollectingProposals transition consume the exact envelope captured above rather
-    * than falling through to a mutable assembly-storage re-read. Both operations remain
+    * Direct gossip does not guarantee self-loopback. Self-storage first makes the leader's subsequent CollectingProposals transition
+    * consume the exact envelope captured above rather than falling through to a mutable assembly-storage re-read. Both operations remain
     * replay-safe because callers close over the same proposal/declaration values.
     */
   def exactProposalEffect[F[_]: Monad, Proposal, Declaration](

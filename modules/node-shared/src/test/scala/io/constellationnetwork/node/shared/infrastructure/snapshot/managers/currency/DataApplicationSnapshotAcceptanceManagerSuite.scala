@@ -192,8 +192,8 @@ object DataApplicationSnapshotAcceptanceManagerSuite extends MutableIOSuite {
 
     override def getLastSynchronizedGlobalSnapshotCombined: IO[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] = IO.pure(None)
 
-    override def getLastSynchronizedAllowSpends
-      : IO[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]] = IO.pure(None)
+    override def getLastSynchronizedAllowSpends: IO[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]] =
+      IO.pure(None)
 
     override def getLastSynchronizedTokenLocks: IO[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] = IO.pure(None)
 
@@ -244,12 +244,13 @@ object DataApplicationSnapshotAcceptanceManagerSuite extends MutableIOSuite {
           combineCalls <- probe.combineCallsR.get
           deserializeCalls <- probe.deserializeStateCallsR.get
           hashCalls <- probe.hashCalculatedStateCallsR.get
-        } yield expect(stored.contains(CurrentCalculatedState))
-          .and(expect(getCalls == 1))
-          .and(expect(setCalls == 0))
-          .and(expect(combineCalls == 0))
-          .and(expect(deserializeCalls == 0))
-          .and(expect(hashCalls == 1))
+        } yield
+          expect(stored.contains(CurrentCalculatedState))
+            .and(expect(getCalls == 1))
+            .and(expect(setCalls == 0))
+            .and(expect(combineCalls == 0))
+            .and(expect(deserializeCalls == 0))
+            .and(expect(hashCalls == 1))
       }
   }
 
@@ -274,12 +275,13 @@ object DataApplicationSnapshotAcceptanceManagerSuite extends MutableIOSuite {
           exists <- storage.exists(ordinal)
           setCalls <- probe.setCalculatedStateCallsR.get
           combineCalls <- probe.combineCallsR.get
-        } yield expect(
-          result.left.exists {
-            case DataApplicationSnapshotAcceptanceManager.CalculatedStateHashDoesNotMatchMajority(`localHash`, `certifiedHash`) => true
-            case _                                                                                                             => false
-          }
-        ).and(expect(!exists)).and(expect(setCalls == 0)).and(expect(combineCalls == 0))
+        } yield
+          expect(
+            result.left.exists {
+              case DataApplicationSnapshotAcceptanceManager.CalculatedStateHashDoesNotMatchMajority(`localHash`, `certifiedHash`) => true
+              case _                                                                                                              => false
+            }
+          ).and(expect(!exists)).and(expect(setCalls == 0)).and(expect(combineCalls == 0))
       }
   }
 
@@ -304,11 +306,12 @@ object DataApplicationSnapshotAcceptanceManagerSuite extends MutableIOSuite {
           setCalls <- probe.setCalculatedStateCallsR.get
           combineCalls <- probe.combineCallsR.get
           hashCalls <- probe.hashCalculatedStateCallsR.get
-        } yield expect(result.left.exists(_.getMessage.contains("Calculated state is ahead of replayed artifact")))
-          .and(expect(!exists))
-          .and(expect(setCalls == 0))
-          .and(expect(combineCalls == 0))
-          .and(expect(hashCalls == 0))
+        } yield
+          expect(result.left.exists(_.getMessage.contains("Calculated state is ahead of replayed artifact")))
+            .and(expect(!exists))
+            .and(expect(setCalls == 0))
+            .and(expect(combineCalls == 0))
+            .and(expect(hashCalls == 0))
       }
   }
 
@@ -342,13 +345,14 @@ object DataApplicationSnapshotAcceptanceManagerSuite extends MutableIOSuite {
           combineCalls <- probe.combineCallsR.get
           deserializeCalls <- probe.deserializeStateCallsR.get
           hashCalls <- probe.hashCalculatedStateCallsR.get
-        } yield expect(installed == (artifactOrdinal, CurrentCalculatedState))
-          .and(expect(stored.contains(CurrentCalculatedState)))
-          .and(expect(getCalls == 2))
-          .and(expect(setCalls == 1))
-          .and(expect(combineCalls == 1))
-          .and(expect(deserializeCalls == 1))
-          .and(expect(hashCalls == 2))
+        } yield
+          expect(installed == (artifactOrdinal, CurrentCalculatedState))
+            .and(expect(stored.contains(CurrentCalculatedState)))
+            .and(expect(getCalls == 2))
+            .and(expect(setCalls == 1))
+            .and(expect(combineCalls == 1))
+            .and(expect(deserializeCalls == 1))
+            .and(expect(hashCalls == 2))
       }
   }
 }

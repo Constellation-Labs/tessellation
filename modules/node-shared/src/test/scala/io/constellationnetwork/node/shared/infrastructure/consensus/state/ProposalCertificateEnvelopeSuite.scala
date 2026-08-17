@@ -28,11 +28,12 @@ object ProposalCertificateEnvelopeSuite extends SimpleIOSuite {
       readsAfterReplay <- (evictionReads.get, admissionReads.get).tupled
       proposals <- emitted.get
       expected = ProposalCertificateEnvelope.Captured(List("ecs-a", "ecs-b"), List("acs-a"))
-    } yield expect.all(
-      readsAfterConstruction == (1 -> 1),
-      readsAfterReplay == readsAfterConstruction,
-      proposals == Vector(expected, expected)
-    )
+    } yield
+      expect.all(
+        readsAfterConstruction == (1 -> 1),
+        readsAfterReplay == readsAfterConstruction,
+        proposals == Vector(expected, expected)
+      )
   }
 
   test("a failed first emission retries the captured envelope without consulting changed assembly storage") {
@@ -79,13 +80,14 @@ object ProposalCertificateEnvelopeSuite extends SimpleIOSuite {
       _ <- effect.attempt
       _ <- effect
       observed <- steps.get
-    } yield expect(
-      observed == Vector(
-        "store" -> "proposal-a",
-        "deliver" -> "declaration-a",
-        "store" -> "proposal-a",
-        "deliver" -> "declaration-a"
+    } yield
+      expect(
+        observed == Vector(
+          "store" -> "proposal-a",
+          "deliver" -> "declaration-a",
+          "store" -> "proposal-a",
+          "deliver" -> "declaration-a"
+        )
       )
-    )
   }
 }

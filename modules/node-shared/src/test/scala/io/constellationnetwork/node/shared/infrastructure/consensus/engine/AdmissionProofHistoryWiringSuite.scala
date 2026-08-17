@@ -47,20 +47,21 @@ object AdmissionProofHistoryWiringSuite extends SimpleIOSuite {
       secondDecision = decision(second, cadenceAllowed = true)
       thirdOnCadence = decision(third, cadenceAllowed = true)
       thirdOffCadence = decision(third, cadenceAllowed = false)
-    } yield expect.all(
-      first.exists(_.depth == 1),
-      duplicate.exists(_.depth == 1),
-      second.exists(_.depth == 2),
-      !firstDecision.allowsProbationAdmission,
-      !firstDecision.allowsOpenAdmission,
-      !duplicateDecision.allowsProbationAdmission,
-      !secondDecision.allowsProbationAdmission,
-      third.exists(_.parents.map(_.ordinal) == Vector(100L, 101L, 102L)),
-      thirdOnCadence.allowsProbationAdmission,
-      thirdOnCadence.allowsOpenAdmission,
-      thirdOffCadence.allowsProbationAdmission,
-      !thirdOffCadence.allowsOpenAdmission
-    )
+    } yield
+      expect.all(
+        first.exists(_.depth == 1),
+        duplicate.exists(_.depth == 1),
+        second.exists(_.depth == 2),
+        !firstDecision.allowsProbationAdmission,
+        !firstDecision.allowsOpenAdmission,
+        !duplicateDecision.allowsProbationAdmission,
+        !secondDecision.allowsProbationAdmission,
+        third.exists(_.parents.map(_.ordinal) == Vector(100L, 101L, 102L)),
+        thirdOnCadence.allowsProbationAdmission,
+        thirdOnCadence.allowsOpenAdmission,
+        thirdOffCadence.allowsProbationAdmission,
+        !thirdOffCadence.allowsOpenAdmission
+      )
   }
 
   test("download and rollback pre-initialize wiring clear history before the layer callback") {
@@ -77,15 +78,16 @@ object AdmissionProofHistoryWiringSuite extends SimpleIOSuite {
       afterRollback <- ref.get
       observedByCallbacks <- callbackObservations.get
       afterResetDecision = decision(firstNewLineage, cadenceAllowed = true)
-    } yield expect.all(
-      beforeDownload.depth == AdmissionProofHistory.RequiredConsecutiveParents,
-      afterDownload == AdmissionProofHistory.History.empty,
-      firstNewLineage.exists(_.parents.map(_.ordinal) == Vector(50L)),
-      !afterResetDecision.allowsProbationAdmission,
-      !afterResetDecision.allowsOpenAdmission,
-      afterRollback == AdmissionProofHistory.History.empty,
-      observedByCallbacks == Vector("download" -> 0, "rollback" -> 0)
-    )
+    } yield
+      expect.all(
+        beforeDownload.depth == AdmissionProofHistory.RequiredConsecutiveParents,
+        afterDownload == AdmissionProofHistory.History.empty,
+        firstNewLineage.exists(_.parents.map(_.ordinal) == Vector(50L)),
+        !afterResetDecision.allowsProbationAdmission,
+        !afterResetDecision.allowsOpenAdmission,
+        afterRollback == AdmissionProofHistory.History.empty,
+        observedByCallbacks == Vector("download" -> 0, "rollback" -> 0)
+      )
   }
 
   test("Currency-style absent proof wiring is inert and retains cadence-only behavior") {
@@ -104,15 +106,16 @@ object AdmissionProofHistoryWiringSuite extends SimpleIOSuite {
         locallyObservedParentProofHistory = None
       )
       offCadence = onCadence.copy(cadenceAllowed = false)
-    } yield expect.all(
-      observed.isEmpty,
-      after == before,
-      onCadence.headroom.isEmpty,
-      onCadence.sustainedHeadroom.isEmpty,
-      onCadence.allowsProbationAdmission,
-      onCadence.allowsOpenAdmission,
-      offCadence.allowsProbationAdmission,
-      !offCadence.allowsOpenAdmission
-    )
+    } yield
+      expect.all(
+        observed.isEmpty,
+        after == before,
+        onCadence.headroom.isEmpty,
+        onCadence.sustainedHeadroom.isEmpty,
+        onCadence.allowsProbationAdmission,
+        onCadence.allowsOpenAdmission,
+        offCadence.allowsProbationAdmission,
+        !offCadence.allowsOpenAdmission
+      )
   }
 }
