@@ -101,8 +101,17 @@ object OpenAdmissionPolicy {
   def penaltyBlocksCertificate(target: PeerId, probation: Set[PeerId], activePenaltyPeers: Set[PeerId]): Boolean =
     activePenaltyPeers.contains(target) && !probation.contains(target)
 
-  final case class Decision(cadenceAllowed: Boolean, headroom: Option[FinalityHeadroom.Evaluation]) {
-    val allowsProbationAdmission: Boolean = headroom.forall(_.allowsExpansion)
+  final case class Decision(
+    cadenceAllowed: Boolean,
+    headroom: Option[FinalityHeadroom.Evaluation],
+    sustainedHeadroom: Option[AdmissionProofHistory.Evaluation]
+  ) {
+    private val allowsSustainedFloorStep: Boolean = sustainedHeadroom.forall(_.allowsAdmission)
+
+    // Probation remains a separate recovery lane for cadence, probing, and penalty handling. It
+    // cannot bypass a floor-raising batch: that would recreate the same grow-then-wedge failure as
+    // open admission. Floor-neutral recovery remains immediate because allowsAdmission is true.
+    val allowsProbationAdmission: Boolean = headroom.forall(_.allowsExpansion) && allowsSustainedFloorStep
     val allowsOpenAdmission: Boolean = cadenceAllowed && allowsProbationAdmission
   }
 
@@ -114,13 +123,17 @@ object OpenAdmissionPolicy {
     * observed current-committee parent signers >= finality floor(current committee size + max admission seats)
     * }}}
     *
-    * The headroom gate is active only when the full-committee finality floor is active. Legacy Global L0 therefore disables it during
-    * bootstrap, where finality still uses the Core-only gate and a newly admitted Tier-1 seat does not raise the requirement. V35 always
-    * uses the frozen full-committee floor, including immediately after its activation reset, so it must keep this gate active even while
-    * the legacy proof-size window still reports bootstrap. This also preserves legacy singleton growth without allowing a v35 singleton to
-    * admit a second seat it cannot finalize with.
+    * Global L0 bypasses headroom only while a bootstrap admission batch remains below the proof threshold. The batch that reaches that
+    * threshold is gated because it can activate full-committee finality immediately. This still lets a singleton grow without requiring an
+    * unseated second signer before the crossing batch. V35 always uses the frozen full-committee floor, including immediately after its
+    * activation reset, so its headroom gate remains active even while the legacy proof-size window still reports bootstrap.
     *
-    * Cadence is deliberately applied only to open expansion. Probation recovery uses the same headroom result on every round.
+    * A batch that raises the finality floor additionally requires the same exact headroom on three consecutive finalized parents. That
+    * evidence is a bounded node-local history of actual snapshot proofs, so it remains vote-emission-only just like the one-parent check.
+    * Floor-neutral batches do not wait for history because the added seat is not immediately necessary for finality.
+    *
+    * Cadence is deliberately applied only to open expansion. Probation recovery evaluates on every round, but shares both denominator
+    * safety gates: exempting a floor-raising probation seat would recreate the same grow-then-wedge failure through the recovery lane.
     *
     * `None` also leaves the local headroom gate inactive. Currency L0 uses that path because its unanimity policy could never prove an
     * unseated `(n + 1)`th signer; post-bootstrap Global L0 supplies its locally observed parent proof set.
@@ -131,13 +144,28 @@ object OpenAdmissionPolicy {
     locallyObservedParentSigners: Option[Set[PeerId]],
     quorumThresholdFraction: Double,
     headroomGateActive: Boolean,
-    maxAdmissionSeats: Int = 1
+    maxAdmissionSeats: Int = 1,
+    // `None` means this layer has no node-local proof-history gate (Currency L0). Global L0
+    // supplies `Some(History.empty)` after restart so an incomplete history fails closed only for
+    // a batch that raises the finality floor.
+    locallyObservedParentProofHistory: Option[AdmissionProofHistory.History] = None
   ): Decision = {
     val headroomEvidence = locallyObservedParentSigners.filter(_ => headroomGateActive)
     val headroom = headroomEvidence.fold(Option.empty[FinalityHeadroom.Evaluation]) { observedSigners =>
       Some(FinalityHeadroom.evaluate(currentCommittee, observedSigners, quorumThresholdFraction, maxAdmissionSeats))
     }
+    val sustainedHeadroom =
+      locallyObservedParentProofHistory
+        .filter(_ => headroomEvidence.nonEmpty)
+        .map(
+          AdmissionProofHistory.evaluate(
+            _,
+            currentCommittee,
+            quorumThresholdFraction,
+            maxAdmissionSeats
+          )
+        )
 
-    Decision(cadenceAllowed, headroom)
+    Decision(cadenceAllowed, headroom, sustainedHeadroom)
   }
 }

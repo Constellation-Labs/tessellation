@@ -107,6 +107,12 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     candidate: Outcome
   ): F[Either[String, CertifiedOutcomeAdoption[F, ConsensusState[Key, Status, Outcome, Kind]]]]
 
+  /** Layer-local, idempotent maintenance that requires the exact newly committed outcome. It runs after the shared last-outcome CAS and
+    * never participates in consensus bytes or state derivation. GL0 uses it for the post-finalization peer-history sidecar; the default is
+    * inert.
+    */
+  def afterConsensusOutcomeCommitted(outcome: Outcome): F[Unit]
+
   def logger(implicit async: Async[F]): SelfAwareStructuredLogger[F] =
     Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 

@@ -134,7 +134,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     * nearly-finished round.
     */
   private def offerRoundCompleted: F[Unit] =
-    storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+    storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
 
   private def retryAfterRetriableAbandon(key: Key, reason: AbandonReason): F[Unit] = {
     val shouldBackoff = reason match {

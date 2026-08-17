@@ -85,6 +85,59 @@ object ConsensusRetrySafetySuite extends FunSuite {
     )
   }
 
+  test("a failed CheckUpdate retry never adopts a newer round's attempt token") {
+    val oldAttempt = 7L
+    val newerAttempt = 8L
+
+    expect
+      .same(
+        none[Long],
+        ConsensusEventLoop.checkUpdateRetryAttempt(
+          currentAttemptId = newerAttempt,
+          stateAttemptId = oldAttempt.some,
+          statePresent = true,
+          retainedAttemptId = oldAttempt.some
+        )
+      )
+      .and(
+        expect.same(
+          none[Long],
+          ConsensusEventLoop.checkUpdateRetryAttempt(
+            currentAttemptId = newerAttempt,
+            stateAttemptId = oldAttempt.some,
+            statePresent = true,
+            retainedAttemptId = none
+          )
+        )
+      )
+  }
+
+  test("a CheckUpdate retry keeps the exact current state attempt") {
+    val attempt = 7L
+
+    expect
+      .same(
+        attempt.some,
+        ConsensusEventLoop.checkUpdateRetryAttempt(
+          currentAttemptId = attempt,
+          stateAttemptId = attempt.some,
+          statePresent = true,
+          retainedAttemptId = none
+        )
+      )
+      .and(
+        expect.same(
+          attempt.some,
+          ConsensusEventLoop.checkUpdateRetryAttempt(
+            currentAttemptId = attempt,
+            stateAttemptId = attempt.some,
+            statePresent = true,
+            retainedAttemptId = attempt.some
+          )
+        )
+      )
+  }
+
   test("certified-view abandon guard matches the exact parent and view transition only") {
     val parent = Hash.fromBytes("certified-parent".getBytes("UTF-8"))
     val otherParent = Hash.fromBytes("other-parent".getBytes("UTF-8"))

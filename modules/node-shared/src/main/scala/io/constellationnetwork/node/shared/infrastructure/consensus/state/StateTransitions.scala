@@ -227,12 +227,15 @@ class StateTransitions[
     for {
       resources <- storage.getResources(key)
       maybeUpdate <- updater.tryUpdateConsensus(key, resources)
-      _ <- maybeUpdate.traverse_ {
-        case (_, newState) =>
-          advancer
-            .getConsensusOutcome(newState)
-            .map { case (prevKey, outcome) => finalizeAndNotify(newState, prevKey, outcome) }
-            .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
+      // A retained post-commit effect may have failed after the state reached Finished.
+      // On retry the updater legitimately reports no new transition, so inspect the current
+      // state as well as a newly-updated state and resume the same finalization tail.
+      currentState <- maybeUpdate.fold(storage.getState(key)) { case (_, state) => state.some.pure[F] }
+      _ <- currentState.traverse_ { state =>
+        advancer
+          .getConsensusOutcome(state)
+          .map { case (prevKey, outcome) => finalizeAndNotify(state, prevKey, outcome) }
+          .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
       }
     } yield ()
 
@@ -1522,141 +1525,156 @@ class StateTransitions[
     newState: ConsensusState[Key, Status, Outcome, Kind],
     prevKey: Previous[Key],
     outcome: Outcome
-  ): F[Unit] =
+  ): F[Unit] = {
+    val activeKey = outcomeKey.get(outcome)
+    val trigger = outcomeTrigger.get(outcome)
+
+    // The last-outcome CAS and tokenized FSM notification are the only critical tail.
+    // Queue is unbounded; masking this short Ref/CAS/offer sequence closes cancellation
+    // between committing the outcome and releasing the Busy FSM. A retry observes
+    // AlreadyCurrent and safely offers the same token again.
+    Async[F].uncancelable { _ =>
+      storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome).flatMap {
+        case result @ (ConsensusStorage.OutcomeUpdateResult.Advanced | ConsensusStorage.OutcomeUpdateResult.AlreadyCurrent) =>
+          storage.getRoundAttemptId.flatMap { expectedAttemptId =>
+            queue
+              .offer(ConsensusFinished(activeKey, outcome, trigger, expectedAttemptId))
+              .as(result: ConsensusStorage.OutcomeUpdateResult)
+          }
+        case ConsensusStorage.OutcomeUpdateResult.Conflict =>
+          Async[F].pure[ConsensusStorage.OutcomeUpdateResult](ConsensusStorage.OutcomeUpdateResult.Conflict)
+      }
+    }.flatMap {
+      case ConsensusStorage.OutcomeUpdateResult.Advanced =>
+        // Non-idempotent local accounting runs at most once. Every item is isolated so
+        // observability/maintenance cannot suppress the already-enqueued completion.
+        runOutcomeHook("finalized", outcome)(ctx.onOutcomeFinalized) >>
+          ctx.peerQualityTracker.recordRoundSuccess(newState.facilitators.value.toSet).attempt.void >>
+          ctx.nodeStorage.decrementJoiningGracePeriod.attempt.void >>
+          finalizedRoundObservability(newState, outcome).attempt.void >>
+          finalizedRoundIdempotentMaintenance(activeKey, outcome)
+
+      case ConsensusStorage.OutcomeUpdateResult.AlreadyCurrent =>
+        // A prior attempt committed the outcome but failed before its completion command
+        // drained. Do not repeat peer-quality/grace counters; idempotent maintenance may resume.
+        finalizedRoundIdempotentMaintenance(activeKey, outcome)
+
+      case ConsensusStorage.OutcomeUpdateResult.Conflict =>
+        // Another value already won. Remove only this conflicting round; the winning
+        // tokenized completion (if local) remains responsible for releasing the FSM.
+        (storage.cleanupConflictedRound(activeKey) >>
+          Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
+          ConsensusLog.warn(
+            log,
+            Category.Lifecycle,
+            activeKey.show,
+            "n/a",
+            LogEvent.OutcomeConflict,
+            "reason" -> "same_key_different_outcome"
+          )).attempt.void
+    }
+  }
+
+  private def finalizedRoundIdempotentMaintenance(activeKey: Key, outcome: Outcome): F[Unit] =
+    advancer.afterConsensusOutcomeCommitted(outcome).attempt.void >>
+      storage.pruneStaleResources(activeKey).attempt.void >>
+      ctx.clusterStorage.getResponsivePeers
+        .flatMap(peers => storage.pruneStalePeerRegistrations(peers.iterator.map(_.id).toSet + ctx.selfId))
+        .attempt
+        .void >>
+      ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).attempt.void
+
+  private def finalizedRoundObservability(
+    newState: ConsensusState[Key, Status, Outcome, Kind],
+    outcome: Outcome
+  ): F[Unit] = {
+    val key = outcomeKey.get(outcome)
+    val trigger = outcomeTrigger.get(outcome)
+    val withdrawnCount = newState.withdrawnFacilitators.value.size
+    val removedCount = newState.removedFacilitators.value.size
+    val signedArtifact = outcomeArtifact.get(outcome)
+    val signerSet = signedArtifact.proofs.toList.map(_.id.toPeerId).toSet
+    val activeSet = newState.facilitators.value.toSet
+    val signerIds = signerSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
+    val facilitatorIds = activeSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
+    val missingActiveSigners = (activeSet -- signerSet).toList.sorted
+    val missingActiveSignerIds = missingActiveSigners.map(ConsensusLog.pid).mkString(",")
+    val signerCount = signedArtifact.proofs.size
+    val missingActiveSignerCount = missingActiveSigners.size
+    val missingActiveSignerRatio =
+      if (activeSet.nonEmpty) missingActiveSignerCount.toDouble / activeSet.size.toDouble else 0.0
+
     for {
       now <- Async[F].monotonic
       duration = now - newState.createdAt
+      leaderScore <- ctx.peerQualityTracker.getQualityScore(newState.leader)
       _ <- Metrics[F].recordTime("dag_consensus_duration", duration)
       _ <- Metrics[F].recordTimeHistogram("dag_consensus_duration", duration)
-
-      _ <- ctx.peerQualityTracker.recordRoundSuccess(newState.facilitators.value.toSet)
-      leaderScore <- ctx.peerQualityTracker.getQualityScore(newState.leader)
-      updated <- storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome)
-      _ <- ctx.nodeStorage.decrementJoiningGracePeriod
-      // Prune stale resources for keys other than the newly completed key.
-      // This prevents memory growth from abandoned rounds leaving behind resource entries.
-      activeKey = outcomeKey.get(outcome)
-      _ <- storage.pruneStaleResources(activeKey)
-      // Prune peer registrations from peers no longer in the cluster.
-      // Peer registrations must be pruned to prevent stale departed-peer entries from
-      // corrupting lagging detection in StallDetector (peersAtDifferentKey count).
-      responsivePeers <- ctx.clusterStorage.getResponsivePeers
-      activePeerIds = responsivePeers.map(_.id) + ctx.selfId
-      _ <- storage.pruneStalePeerRegistrations(activePeerIds)
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_outcome_finalized",
+        Seq(unsafeLabelName("trigger_type") -> trigger.toString)
+      )
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_round_completed_total",
+        Seq(
+          unsafeLabelName("peer_id") -> ConsensusLog.pid(newState.leader),
+          unsafeLabelName("trigger_type") -> trigger.toString
+        )
+      )
+      _ <- Metrics[F].updateGauge("dag_consensus_round_facilitator_count", newState.facilitators.value.size)
+      _ <- Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size)
+      _ <- ConsensusLog.info(
+        log,
+        Category.Lifecycle,
+        key.show,
+        ConsensusLog.role(ctx.selfId, newState.leader),
+        LogEvent.RoundCompleted,
+        (Seq(
+          "trigger" -> trigger.toString,
+          "duration" -> s"${duration.toMillis}ms",
+          "facilitators" -> newState.facilitators.value.size.toString,
+          "facilitatorIds" -> facilitatorIds,
+          "signerCount" -> signerCount.toString,
+          "signerIds" -> signerIds,
+          "missingActiveSignerCount" -> missingActiveSignerCount.toString,
+          "missingActiveSignerIds" -> missingActiveSignerIds,
+          "leader" -> ConsensusLog.pid(newState.leader),
+          "leaderScore" -> f"$leaderScore%.2f",
+          "view" -> newState.viewNumber.toString
+        ) ++
+          (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
+          (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
+      )
+      _ <- Metrics[F].updateGauge("dag_consensus_last_signer_count", signerCount.toLong)
+      _ <- Metrics[F].updateGauge("dag_consensus_missing_active_signer_count", missingActiveSignerCount.toLong)
+      _ <- Metrics[F].updateGauge("dag_consensus_missing_active_signer_ratio", missingActiveSignerRatio)
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_outcome_signer_count_total",
+        Seq(unsafeLabelName("signer_count") -> signerCount.toString)
+      )
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_outcome_signer_vs_active_total",
+        Seq(
+          unsafeLabelName("signer_count") -> signerCount.toString,
+          unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
+        )
+      )
+      responders = newState.observedResponders.value.toSet
+      committee = newState.roundStartFacilitators.value
       _ <-
-        if (updated) {
-          val key = activeKey
-          val trigger = outcomeTrigger.get(outcome)
-
-          val withdrawnCount = newState.withdrawnFacilitators.value.size
-          val removedCount = newState.removedFacilitators.value.size
-
-          runOutcomeHook("finalized", outcome)(ctx.onOutcomeFinalized) >>
-            Metrics[F].incrementCounter(
-              "dag_consensus_outcome_finalized",
-              Seq(unsafeLabelName("trigger_type") -> trigger.toString)
-            ) >>
-            Metrics[F].incrementCounter(
-              "dag_consensus_round_completed_total",
-              Seq(
-                unsafeLabelName("peer_id") -> ConsensusLog.pid(newState.leader),
-                unsafeLabelName("trigger_type") -> trigger.toString
-              )
-            ) >>
-            Metrics[F].updateGauge("dag_consensus_round_facilitator_count", newState.facilitators.value.size) >>
-            Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size) >> {
-              // Diagnostic: include actual signers so we can compare across nodes. Different
-              // nodes completing "same" ordinal with different signer sets is a fork — this
-              // exposes it in logs rather than leaving it invisible.
-              val signedArtifact = outcomeArtifact.get(outcome)
-              val signerSet = signedArtifact.proofs.toList.map(_.id.toPeerId).toSet
-              val activeSet = newState.facilitators.value.toSet
-              val signerIds = signerSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
-              val facilitatorIds = activeSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
-              val missingActiveSigners = (activeSet -- signerSet).toList.sorted
-              val missingActiveSignerIds = missingActiveSigners.map(ConsensusLog.pid).mkString(",")
-              val signerCount = signedArtifact.proofs.size
-              val missingActiveSignerCount = missingActiveSigners.size
-              val missingActiveSignerRatio =
-                if (activeSet.nonEmpty) missingActiveSignerCount.toDouble / activeSet.size.toDouble else 0.0
-
-              ConsensusLog.info(
-                log,
-                Category.Lifecycle,
-                key.show,
-                ConsensusLog.role(ctx.selfId, newState.leader),
-                LogEvent.RoundCompleted,
-                (Seq(
-                  "trigger" -> trigger.toString,
-                  "duration" -> s"${duration.toMillis}ms",
-                  "facilitators" -> newState.facilitators.value.size.toString,
-                  "facilitatorIds" -> facilitatorIds,
-                  "signerCount" -> signerCount.toString,
-                  "signerIds" -> signerIds,
-                  "missingActiveSignerCount" -> missingActiveSignerCount.toString,
-                  "missingActiveSignerIds" -> missingActiveSignerIds,
-                  "leader" -> ConsensusLog.pid(newState.leader),
-                  "leaderScore" -> f"$leaderScore%.2f",
-                  "view" -> newState.viewNumber.toString
-                ) ++
-                  (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
-                  (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
-              ) >>
-                Metrics[F].updateGauge("dag_consensus_last_signer_count", signerCount.toLong) >>
-                Metrics[F].updateGauge("dag_consensus_missing_active_signer_count", missingActiveSignerCount.toLong) >>
-                Metrics[F].updateGauge("dag_consensus_missing_active_signer_ratio", missingActiveSignerRatio) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_outcome_signer_count_total",
-                  Seq(unsafeLabelName("signer_count") -> signerCount.toString)
-                ) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_outcome_signer_vs_active_total",
-                  Seq(
-                    unsafeLabelName("signer_count") -> signerCount.toString,
-                    unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
-                  )
-                )
-            } >> {
-              // Per-peer observed_responders accounting: for each canonical committee member,
-              // increment either `credited` (peer was in observedResponders, will get
-              // completed+=1 in lastOutcome.peerQuality) or `omitted` (committee member that
-              // missed observedResponders). The omission ratchet is what pushes a peer out of
-              // the leader-rotation band over time. Label name `peer_id` matches the existing
-              // dag_consensus_peer_quality_* family so a single Prometheus query joins them.
-              // Skipped during bootstrap when observedResponders is empty.
-              val responders: Set[PeerId] = newState.observedResponders.value.toSet
-              val committee = newState.roundStartFacilitators.value
-              if (responders.isEmpty || committee.isEmpty) Async[F].unit
-              else {
-                val peerIdLabel = unsafeLabelName("peer_id")
-                committee.toList.traverse_ { pid =>
-                  val labels: Metrics.TagSeq = Seq(peerIdLabel -> ConsensusLog.pid(pid))
-                  if (responders.contains(pid))
-                    Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
-                  else
-                    Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
-                }
-              }
-            } >>
-            ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
-            queue.offer(ConsensusFinished(key, outcome, trigger))
-        } else {
-          // OUTCOME_CONFLICT: another round completed first and stored its outcome.
-          // Clean up the stale state and resources for this key to prevent memory leaks.
-          // Without this cleanup, finished state entries accumulate in statesR/resourcesR
-          // since cleanupStateAndResource only runs on the success path.
-          storage.cleanupConflictedRound(activeKey) >>
-            Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
-            ConsensusLog.warn(
-              log,
-              Category.Lifecycle,
-              activeKey.show,
-              "n/a",
-              LogEvent.OutcomeConflict,
-              "reason" -> "concurrent_finalization"
-            )
+        if (responders.isEmpty || committee.isEmpty) Async[F].unit
+        else {
+          val peerIdLabel = unsafeLabelName("peer_id")
+          committee.toList.traverse_ { pid =>
+            val labels: Metrics.TagSeq = Seq(peerIdLabel -> ConsensusLog.pid(pid))
+            if (responders.contains(pid))
+              Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
+            else
+              Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
+          }
         }
     } yield ()
+  }
 
   def registerPeer(peer: Peer): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {

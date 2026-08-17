@@ -1,16 +1,24 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import cats.Eq
 import cats.data.NonEmptySet
 import cats.effect.IO
 import cats.syntax.all._
 
+import scala.concurrent.duration._
+
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.ProposalQC
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
 import io.chrisdavenport.mapref.MapRef
+import monocle.Lens
 import weaver.SimpleIOSuite
 
 /** Behavioral tests for the VoteLock subsystem of ConsensusStorage. Full ConsensusStorage requires many type-class witnesses that make a
@@ -19,6 +27,28 @@ import weaver.SimpleIOSuite
   */
 object ConsensusStorageLockSuite extends SimpleIOSuite {
 
+  private final case class StoredOutcome(key: SnapshotOrdinal)
+
+  private implicit val storedOutcomeEq: Eq[StoredOutcome] = Eq.fromUniversalEquals
+
+  private implicit val storedOutcomeKeyLens: Lens[StoredOutcome, SnapshotOrdinal] =
+    Lens[StoredOutcome, SnapshotOrdinal](_.key)(key => outcome => outcome.copy(key = key))
+
+  private val consensusConfig = ConsensusConfig(
+    timeTriggerInterval = 10.seconds,
+    declarationTimeout = 10.seconds,
+    declarationRangeLimit = 100L,
+    lockDuration = 10.seconds,
+    eventCutter = EventCutterConfig(
+      maxBinarySizeBytes = PosInt(1024),
+      maxUpdateNodeParametersSize = PosInt(1024)
+    )
+  )
+
+  private def storage(
+    policy: LegacyViewChangePolicy
+  ): IO[ConsensusStorage[IO, Unit, SnapshotOrdinal, Unit, Unit, Unit, StoredOutcome, Unit]] =
+    ConsensusStorage.make[IO, Unit, SnapshotOrdinal, Unit, Unit, Unit, StoredOutcome, Unit](consensusConfig, policy)
   private val hashA: Hash = Hash.fromBytes("A".getBytes("UTF-8"))
   private val hashB: Hash = Hash.fromBytes("B".getBytes("UTF-8"))
   private val facHash: Hash = Hash.fromBytes("FAC".getBytes("UTF-8"))
@@ -38,7 +68,7 @@ object ConsensusStorageLockSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyFreezeAfterVote) match {
         case Right(newLock)  => (newLock.some, Right(newLock))
         case Left(rejection) => (maybeLock, Left(rejection))
       }

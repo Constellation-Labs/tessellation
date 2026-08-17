@@ -63,6 +63,148 @@ object ConsensusRetrySafetyIOSuite extends SimpleIOSuite {
     } yield expect(wasDispatched)
   }
 
+  pureTest("soft-reset restart failure policy is state-aware and fail-closed on an inconclusive probe") {
+    import ConsensusEventLoop.SoftResetRestartFailureDisposition._
+
+    expect.same(ReleaseAbsentState, ConsensusEventLoop.softResetRestartFailureDisposition(Right(false))) &&
+    expect.same(PreservePresentState, ConsensusEventLoop.softResetRestartFailureDisposition(Right(true))) &&
+    expect.same(
+      RetryStateProbe,
+      ConsensusEventLoop.softResetRestartFailureDisposition(Left(new RuntimeException("state probe")))
+    )
+  }
+
+  test("absent soft-reset state releases Busy despite cleanup and pending failures") {
+    for {
+      cleanupAttempts <- Ref.of[IO, Int](0)
+      pendingAttempts <- Ref.of[IO, Int](0)
+      resourceAttempts <- Ref.of[IO, Int](0)
+      completions <- Ref.of[IO, Int](0)
+      ticks <- Ref.of[IO, Int](0)
+      monitorRearms <- Ref.of[IO, Int](0)
+      retries <- Ref.of[IO, Int](0)
+      _ <- ConsensusEventLoop.recoverRestartAfterSoftResetFailure[IO](
+        true.pure[IO],
+        false.pure[IO],
+        cleanupAttempts.update(_ + 1) >> IO.raiseError(new RuntimeException("cleanup")),
+        pendingAttempts.update(_ + 1) >> IO.raiseError(new RuntimeException("pending")),
+        resourceAttempts.update(_ + 1) >> IO.raiseError(new RuntimeException("resources")),
+        completions.update(_ + 1),
+        NodeState.Ready.pure[IO],
+        ticks.update(_ + 1),
+        monitorRearms.update(_ + 1),
+        retries.update(_ + 1)
+      )
+      cleanupCount <- cleanupAttempts.get
+      pendingCount <- pendingAttempts.get
+      resourceCount <- resourceAttempts.get
+      completionCount <- completions.get
+      tickCount <- ticks.get
+      rearmCount <- monitorRearms.get
+      retryCount <- retries.get
+    } yield
+      expect.all(
+        cleanupCount == 1,
+        pendingCount == 1,
+        resourceCount == 1,
+        completionCount == 1,
+        tickCount == 1,
+        rearmCount == 0,
+        retryCount == 0
+      )
+  }
+
+  test("absent soft-reset state does not schedule a round while the node lifecycle owns recovery") {
+    for {
+      completions <- Ref.of[IO, Int](0)
+      ticks <- Ref.of[IO, Int](0)
+      retries <- Ref.of[IO, Int](0)
+      _ <- ConsensusEventLoop.recoverRestartAfterSoftResetFailure[IO](
+        true.pure[IO],
+        false.pure[IO],
+        IO.unit,
+        IO.unit,
+        IO.unit,
+        completions.update(_ + 1),
+        NodeState.WaitingForDownload.pure[IO],
+        ticks.update(_ + 1),
+        IO.unit,
+        retries.update(_ + 1)
+      )
+      completionCount <- completions.get
+      tickCount <- ticks.get
+      retryCount <- retries.get
+    } yield expect.all(completionCount == 1, tickCount == 0, retryCount == 0)
+  }
+
+  test("soft-reset state probe failure performs no mutation and requeues the same restart path") {
+    for {
+      mutations <- Ref.of[IO, Int](0)
+      retries <- Ref.of[IO, Int](0)
+      mutate = mutations.update(_ + 1)
+      _ <- ConsensusEventLoop.recoverRestartAfterSoftResetFailure[IO](
+        true.pure[IO],
+        IO.raiseError(new RuntimeException("state probe")),
+        mutate,
+        mutate,
+        mutate,
+        mutate,
+        NodeState.Ready.pure[IO],
+        mutate,
+        mutate,
+        retries.update(_ + 1)
+      )
+      mutationCount <- mutations.get
+      retryCount <- retries.get
+    } yield expect.all(mutationCount == 0, retryCount == 1)
+  }
+
+  test("stale soft-reset restart preserves rebuilt state and only ensures its monitor") {
+    for {
+      destructiveEffects <- Ref.of[IO, Int](0)
+      monitorRearms <- Ref.of[IO, Int](0)
+      retries <- Ref.of[IO, Int](0)
+      destructive = destructiveEffects.update(_ + 1)
+      _ <- ConsensusEventLoop.recoverRestartAfterSoftResetFailure[IO](
+        true.pure[IO],
+        true.pure[IO],
+        destructive,
+        destructive,
+        destructive,
+        destructive,
+        NodeState.Ready.pure[IO],
+        destructive,
+        monitorRearms.update(_ + 1),
+        retries.update(_ + 1)
+      )
+      destructiveCount <- destructiveEffects.get
+      rearmCount <- monitorRearms.get
+      retryCount <- retries.get
+    } yield expect.all(destructiveCount == 0, rearmCount == 1, retryCount == 0)
+  }
+
+  test("an attempt-stale soft-reset restart cannot mutate or complete the current round") {
+    for {
+      mutations <- Ref.of[IO, Int](0)
+      retries <- Ref.of[IO, Int](0)
+      mutate = mutations.update(_ + 1)
+      _ <- ConsensusEventLoop.recoverRestartAfterSoftResetFailure[IO](
+        false.pure[IO],
+        mutate.as(false),
+        mutate,
+        mutate,
+        mutate,
+        mutate,
+        NodeState.Ready.pure[IO],
+        mutate,
+        mutate,
+        retries.update(_ + 1)
+      )
+      mutationCount <- mutations.get
+      retryCount <- retries.get
+    } yield expect.all(mutationCount == 0, retryCount == 0)
+  }
+
   pureTest("planned initialization resumes from every partial-install lifecycle state only") {
     expect(ConsensusEventLoop.plannedInitializationRetryableState(NodeState.Observing)) &&
     expect(ConsensusEventLoop.plannedInitializationRetryableState(NodeState.WaitingForReady)) &&

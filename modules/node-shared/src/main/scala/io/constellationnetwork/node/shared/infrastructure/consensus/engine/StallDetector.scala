@@ -69,7 +69,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
   // emit once their local stability threshold is met, and certificate assembly requires a
   // majority of signed votes to agree, so streak drift across honest nodes only delays
   // re-admission; it cannot cause divergent outcomes.
-  b2AtTipStreakRef: Ref[F, Map[PeerId, Int]]
+  b2AtTipStreakRef: Ref[F, Map[PeerId, Int]],
+  // Actual finalized parent proof subsets are node-local and therefore live outside Outcome.
+  // This bounded history controls vote emission only; AdmissionCertificate validation and apply
+  // remain independent of it.
+  admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History]
 ) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
@@ -1535,6 +1539,42 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     probedTargets: Set[PeerId],
     probationProbeDue: Boolean
   ): F[AdmissionVoteEmission] = {
+    val locallyObservedParentSigners = locallyObservedParentSignersOf(state.lastOutcome)
+    val parentOrdinal = ctx.lastOutcomeKeyOf(state.lastOutcome) match {
+      case ordinal: SnapshotOrdinal => ordinal.value.value.some
+      case _                        => none[Long]
+    }
+    val parentHash = lastSnapshotHashOf(state.lastOutcome)
+
+    val observeHistory = StallDetector.observeAdmissionProofHistory(
+      admissionProofHistoryRef,
+      locallyObservedParentSigners,
+      parentOrdinal,
+      parentHash
+    )
+
+    observeHistory.flatMap { history =>
+      maybeEmitAdmissionVotesWithHistory(
+        key,
+        state,
+        resources,
+        roundStartFacilitatorsHash,
+        probedTargets,
+        probationProbeDue,
+        history
+      )
+    }
+  }
+
+  private def maybeEmitAdmissionVotesWithHistory(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    resources: ConsensusResources[Artifact, Kind],
+    roundStartFacilitatorsHash: Hash,
+    probedTargets: Set[PeerId],
+    probationProbeDue: Boolean,
+    locallyObservedParentProofHistory: Option[AdmissionProofHistory.History]
+  ): F[AdmissionVoteEmission] = {
     val probation = probationPeersOf(state.lastOutcome)
     val alreadyVotedBySelf: Set[PeerId] = resources.admissionVotes.collect {
       case (target, voters) if voters.contains(selfId) => target
@@ -1580,7 +1620,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       headroomGateActive = headroomGateActive,
       // The proposal validator may accept this many certificates. Prove headroom for the
       // largest possible batch rather than assuming the IntegrationNet value remains one.
-      maxAdmissionSeats = admissionBatchSize
+      maxAdmissionSeats = admissionBatchSize,
+      locallyObservedParentProofHistory = locallyObservedParentProofHistory
     )
     // The atomic lane cannot wait for this node to assemble an ECS: certificates are proposal
     // payloads, not separately gossiped resources, so asymmetric vote delivery could otherwise
@@ -1632,10 +1673,12 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       openAdmissionPolicy.headroom match {
         case Some(headroom) if !headroom.allowsExpansion && atomicReplacementAdmissionAllowed => "atomic_replacement"
         case Some(headroom) if !headroom.allowsExpansion                                      => "insufficient_headroom"
-        case _ if !openAdmissionPolicy.cadenceAllowed                                         => "off_cadence"
-        case Some(_)                                                                          => "allowed"
-        case None if bootstrapActive && locallyObservedParentSigners.nonEmpty                 => "bootstrap_cadence_only"
-        case None                                                                             => "cadence_only"
+        case _ if openAdmissionPolicy.sustainedHeadroom.exists(!_.allowsAdmission) =>
+          "insufficient_sustained_headroom"
+        case _ if !openAdmissionPolicy.cadenceAllowed                         => "off_cadence"
+        case Some(_)                                                          => "allowed"
+        case None if bootstrapActive && locallyObservedParentSigners.nonEmpty => "bootstrap_cadence_only"
+        case None                                                             => "cadence_only"
       }
     val policyOutcomeLabel = Metrics.unsafeLabelName("outcome")
     val recordOpenAdmissionPolicy =
@@ -1654,6 +1697,26 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         Metrics[F].updateGauge(
           "dag_consensus_open_admission_headroom_gate_active",
           if (openAdmissionPolicy.headroom.nonEmpty) 1L else 0L
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_sustained_gate_active",
+          if (openAdmissionPolicy.sustainedHeadroom.exists(_.raisesFinalityFloor)) 1L else 0L
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_sustained_history_depth",
+          openAdmissionPolicy.sustainedHeadroom.fold(0L)(_.observedParents.toLong)
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_sustained_history_required",
+          openAdmissionPolicy.sustainedHeadroom.fold(0L)(_.requiredParents.toLong)
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_sustained_qualifying_parents",
+          openAdmissionPolicy.sustainedHeadroom.fold(0L)(_.qualifyingParents.toLong)
+        ) >>
+        Metrics[F].updateGauge(
+          "dag_consensus_open_admission_sustained_vote_allowed",
+          if (openAdmissionPolicy.sustainedHeadroom.forall(_.allowsAdmission)) 1L else 0L
         ) >>
         openAdmissionPolicy.headroom.fold(Async[F].unit) { headroom =>
           Metrics[F].updateGauge(
@@ -1883,6 +1946,18 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                     .getOrElse("n/a"),
                   "openNextFinalityFloor" -> openAdmissionPolicy.headroom.map(_.nextFinalityFloor.toString).getOrElse("n/a"),
                   "openFinalityMargin" -> openAdmissionPolicy.headroom.map(_.margin.toString).getOrElse("n/a"),
+                  "sustainedGateActive" -> openAdmissionPolicy.sustainedHeadroom
+                    .exists(_.raisesFinalityFloor)
+                    .toString,
+                  "sustainedHistoryDepth" -> openAdmissionPolicy.sustainedHeadroom
+                    .map(_.observedParents.toString)
+                    .getOrElse("n/a"),
+                  "sustainedHistoryRequired" -> openAdmissionPolicy.sustainedHeadroom
+                    .map(_.requiredParents.toString)
+                    .getOrElse("n/a"),
+                  "sustainedQualifyingParents" -> openAdmissionPolicy.sustainedHeadroom
+                    .map(_.qualifyingParents.toString)
+                    .getOrElse("n/a"),
                   "minStreak" -> minStreak.toString,
                   "tipLagTolerance" -> AdmissionTipReadiness.OrdinalLagTolerance.toString,
                   "expectedOrdinal" -> expectedOrdinal.map(_.value.value.toString).getOrElse("none"),
@@ -1913,6 +1988,30 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
 }
 
 object StallDetector {
+
+  /** Advance the bounded, node-local parent-proof history at a real monitor/round boundary.
+    *
+    * Global L0 supplies both proof signers and a snapshot ordinal. A layer that supplies proof signers without an ordinal fails closed by
+    * clearing history. Currency L0 supplies no proof view, so this path is inert and its cadence-only admission policy remains unchanged.
+    */
+  private[consensus] def observeAdmissionProofHistory[F[_]: Sync](
+    admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History],
+    locallyObservedParentSigners: Option[Set[PeerId]],
+    parentOrdinal: Option[Long],
+    parentHash: Hash
+  ): F[Option[AdmissionProofHistory.History]] =
+    (locallyObservedParentSigners, parentOrdinal) match {
+      case (Some(signers), Some(ordinal)) =>
+        admissionProofHistoryRef.modify { previous =>
+          val next = AdmissionProofHistory.observe(previous, ordinal, parentHash, signers)
+          (next, next.some)
+        }
+      case (Some(_), None) =>
+        // A layer that opts into actual-proof gating but cannot identify a snapshot ordinal
+        // fails closed until a valid lineage is available.
+        admissionProofHistoryRef.set(AdmissionProofHistory.History.empty).as(AdmissionProofHistory.History.empty.some)
+      case (None, _) => none[AdmissionProofHistory.History].pure[F]
+    }
 
   /** Give a newly accepted pacemaker request exactly one serialized-loop opportunity before a local abandon may remove the state it needs
     * for certificate assembly. Duplicate requests return `newPacemakerRequestEnqueued = false`, so an infeasible transition escapes via the

@@ -183,6 +183,13 @@ object Main
   ): Either[CertifiedRollbackRequiresRecoveryPlan, Unit] =
     Either.cond(anchor < activation, (), CertifiedRollbackRequiresRecoveryPlan(anchor, activation))
 
+  private[dag] def validateRecoveryAnchorSource(
+    source: RollbackLoader.Source
+  ): Either[Gl0RecoveryPlan.UnsupportedAnchorSource, Unit] =
+    source match {
+      case RollbackLoader.Source.Incremental  => Right(())
+      case RollbackLoader.Source.FullSnapshot => Left(Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot"))
+    }
   private[dag] final case class RecentCoreReconstructionDiagnostic(
     source: String,
     entries: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]
@@ -548,44 +555,49 @@ object Main
             }.flatTap(_.traverse_(validateVerifiedRecoveryPlan)).flatTap(configuredRecoveryPlanRef.set).flatMap { verifiedRecoveryPlan =>
               val recoveryPlan = verifiedRecoveryPlan.map(_.plan)
               val activation = certifiedConsensusActivationOrdinal
-              val validateBeforeLoad = (
-                source: RollbackLoader.Source,
-                snapshotInfo: GlobalSnapshotInfo,
-                snapshot: Signed[GlobalIncrementalSnapshot]
-              ) =>
-                recoveryPlan match {
-                  case Some(plan) =>
-                    for {
-                      _ <- source match {
-                        case RollbackLoader.Source.Incremental => IO.unit
-                        case RollbackLoader.Source.FullSnapshot =>
-                          Gl0RecoveryPlan.UnsupportedAnchorSource("full_snapshot").raiseError[IO, Unit]
-                      }
-                      hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
-                      _ <- Gl0RecoveryPlan
-                        .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
-                        .liftTo[IO]
-                      ineligiblePlannedPeers <- plan.committee.toList.filterA { peerId =>
-                        peerId.toPublic[IO].map(_.toAddress).map { address =>
-                          !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
+              val validateRecoveryPlanSource: RollbackLoader.Source => IO[Unit] =
+                source => recoveryPlan.traverse_(_ => validateRecoveryAnchorSource(source).liftTo[IO])
+              val validateRecoveryPlanBeforeLoad: (
+                RollbackLoader.Source,
+                GlobalSnapshotInfo,
+                Signed[GlobalIncrementalSnapshot]
+              ) => IO[Unit] =
+                (_, snapshotInfo, snapshot) =>
+                  recoveryPlan match {
+                    case Some(plan) =>
+                      for {
+                        hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
+                        _ <- Gl0RecoveryPlan
+                          .validateLoadedAnchor(plan, snapshot.ordinal.value.value, hashedSnapshot.hash)
+                          .liftTo[IO]
+                        ineligiblePlannedPeers <- plan.committee.toList.filterA { peerId =>
+                          peerId.toPublic[IO].map(_.toAddress).map { address =>
+                            !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)
+                          }
                         }
-                      }
-                      _ <- Gl0RecoveryPlan
-                        .IneligibleCommitteeMembers(
-                          s"collateral check failed=${ineligiblePlannedPeers.map(_.value.value).mkString(",")}"
-                        )
-                        .raiseError[IO, Unit]
-                        .whenA(ineligiblePlannedPeers.nonEmpty)
-                      // Consume authority only after every static, exact-anchor, and collateral
-                      // preflight passed, but before RollbackLoader traverses or mutates storage.
-                      _ <- verifiedRecoveryPlan.traverse_(verified => recoveryPlanReceipt.consume(verified.signed))
-                    } yield ()
-                  case None => validateOrdinaryRollbackAnchor(snapshot.ordinal, activation).liftTo[IO]
-                }
+                        _ <- Gl0RecoveryPlan
+                          .IneligibleCommitteeMembers(
+                            s"collateral check failed=${ineligiblePlannedPeers.map(_.value.value).mkString(",")}"
+                          )
+                          .raiseError[IO, Unit]
+                          .whenA(ineligiblePlannedPeers.nonEmpty)
+                        // Consume authority only after every static, exact-anchor, and collateral
+                        // preflight passed, but before RollbackLoader traverses or mutates storage.
+                        _ <- verifiedRecoveryPlan.traverse_(verified => recoveryPlanReceipt.consume(verified.signed))
+                      } yield ()
+                    case None => validateOrdinaryRollbackAnchor(snapshot.ordinal, activation).liftTo[IO]
+                  }
 
               programs.rollbackLoader
-                .load(m.rollbackHash, programs.download, Some(validateBeforeLoad))
-                .map(loaded => (recoveryPlan, loaded._1, loaded._2))
+                .load(
+                  m.rollbackHash,
+                  programs.download,
+                  recoveryPlan.as(validateRecoveryPlanSource),
+                  recoveryPlan.as(validateRecoveryPlanBeforeLoad)
+                )
+                .map {
+                  case (snapshotInfo, snapshot) => (recoveryPlan, snapshotInfo, snapshot)
+                }
             }
 
             loadRollback.flatMap {

@@ -155,7 +155,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     seedlistPeerIds: Set[PeerId],
     membershipPolicy: HealthDerivedMembershipPolicy,
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
-    // `RestartAfterSoftReset(key)` on the owning serialized command loop so the reset is a total transition rather than an inert state.
+    // an attempt-bound `RestartAfterSoftReset` on the owning serialized command loop so the reset is a total transition rather than an
+    // inert state, without allowing a delayed retry to complete a newer round.
     scheduleSoftResetRestart: GlobalSnapshotKey => F[Unit]
   )(implicit globalStateProofSelector: GlobalStateProofSelector): GlobalSnapshotConsensusStateAdvancer[F] =
     new GlobalSnapshotConsensusStateAdvancer[F] {
@@ -179,6 +180,12 @@ object GlobalSnapshotConsensusStateAdvancer {
             _ <- clearCommittedEvents(artifact.value)
           } yield ()
         }
+
+      override def afterConsensusOutcomeCommitted(outcome: GlobalConsensusOutcome): F[Unit] =
+        // V35 owns both the certified-outcome and peer-history sidecars in the typed
+        // onOutcomeFinalized hook assembled by GlobalSnapshotConsensus. Keeping this
+        // layer-local maintenance hook inert avoids a duplicate write after the shared CAS.
+        Applicative[F].unit
 
       /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
         * re-building the proposal to ensure the MptStore starts from a clean pre-mutation state.
@@ -2073,9 +2080,10 @@ object GlobalSnapshotConsensusStateAdvancer {
         * eviction/admission cert slots; peer declarations preserved as the bootstrap source for the rebuild), increments the soft-reset
         * budget counter, clears the stale-local-view rejection counter.
         *
-        * A fired reset immediately enqueues `RestartAfterSoftReset(key)` on the owning serialized command loop. That command explicitly
-        * completes the still-BUSY FSM attempt and starts from the latest persisted outcome. A bare `StartRound` is insufficient here: while
-        * BUSY it becomes a pending trigger waiting for the very `RoundCompleted` that clearing the round made impossible (the Aug 11 halt).
+        * A fired reset immediately enqueues an attempt-bound `RestartAfterSoftReset` on the owning serialized command loop. That command
+        * explicitly completes the still-BUSY FSM attempt and starts from the latest persisted outcome, but is discarded if a newer attempt
+        * has already taken ownership. A bare `StartRound` is insufficient here: while BUSY it becomes a pending trigger waiting for the
+        * very `RoundCompleted` that clearing the round made impossible (the Aug 11 halt).
         *
         * Category labels distinguish the two call sites in Prometheus + structured logs: `stale_local_view` (VCC-validation rejections from
         * `logVccReject`) and `artifact_mismatch` (consecutive_validation_failures from the artifact-hash mismatch path below).
@@ -2496,7 +2504,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       /** Validate structural invariants on every embedded `AdmissionCertificate`. Mirrors `validateProposalEcs` with symmetric checks for
         * re-admission targets:
-        *   - reject during bootstrap (no B2 activity until cluster stabilizes)
+        *   - permit bounded bootstrap growth; the local vote-emission policy gates the batch that can activate full-committee finality
         *   - at least `q` unique voter PeerIds (quorum at this round's committee)
         *   - all votes within a cert agree on (targetPeer, reason, facilitatorsHash)
         *   - cert's facilitatorsHash matches the round's facilitatorsHash
@@ -3813,6 +3821,18 @@ object GlobalSnapshotConsensusStateAdvancer {
         for {
           facilitatorsHash <- signatureFacilitators.hash
           view = state.viewNumber.toLong
+          acceptedAt <- Async[F].monotonic.attempt.map(_.toOption)
+          // Prepare the only fallible cryptographic input before taking the vote lock.
+          // Signing locally is not observable; storage/gossip starts only after the lock
+          // accepts this exact (key, view, hash).
+          signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
+          selfMajoritySig = MajoritySignature(
+            signature,
+            facilitatorsHash,
+            state.lastOutcome.finished.snapshotHash,
+            view,
+            majorityInfo.hash
+          )
           localLock <- consensusStorage.getVoteLock(state.key)
           effectiveLockedQc = VoteLock.maxByView(
             localLock.flatMap(_.lockedQc),
@@ -3836,104 +3856,98 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
                 .as(none[Transition])
             case Right(_) =>
-              for {
-                acceptedAt <- Async[F].monotonic
-                // Sign the proposal artifact hash directly. The Signed[artifact] downstream expects proofs to
-                // verify against the artifact hash (not a domain-widened canonical byte sequence); widening
-                // breaks toFinishedPhase -> verifySignatureProof(hash, proof). Safety against double-signing
-                // is enforced at the VoteLock gate above (tryLockVote), which already rejects a second vote
-                // at the same (key, view) for a different hash.
-                signature <- Signature.fromHash(keyPair.getPrivate, majorityInfo.hash)
-                // Self-store our MajoritySignature into the local resources immediately. Mirrors
-                // the Fix-2 self-store-of-Facility pattern (commit 82179f2ec) for the signature
-                // phase. Without this, our own signature only enters `resources.signatures` via
-                // the gossip round-trip through RumorHandler; if three other peers' signatures
-                // cross quorum in ~1-3ms (the ord-10 fast-path race), our node
-                // finalizes its own round without its own signature and drops off `lastSigners`
-                // in the next round's state creator. The complementary defence is the
-                // `signatureGracePeriod` in buildFinishedTransition that also catches late
-                // peer signatures; self-store closes the local-race half deterministically
-                // at zero added latency.
-                selfMajoritySig = MajoritySignature(
-                  signature,
-                  facilitatorsHash,
-                  state.lastOutcome.finished.snapshotHash,
-                  view,
-                  majorityInfo.hash
-                )
-                _ <- consensusStorage.addSignature(selfId, state.key, selfMajoritySig).void
-                signatureEmittedAt <- Async[F].monotonic
-                _ <- Metrics[F].recordTimeHistogram(
-                  "dag_consensus_proposal_accept_to_signature_time",
-                  signatureEmittedAt - acceptedAt
-                )
-                _ <- recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash)
-                // Round succeeded — discard the proposal savepoint so it won't be restored on the next ordinal
-                _ <- proposalSavepointRef.set(none)
-                _ <- ConsensusLog
-                  .info(
-                    logger,
-                    Category.Phase,
-                    state.key.show,
-                    "n/a",
-                    Event.Eviction,
-                    "assembly" -> "evictions_applied",
-                    "targets" -> evictedTargets.toList.map(ConsensusLog.pid).mkString(","),
-                    "count" -> evictedTargets.size.toString
-                  )
-                  .whenA(evictedTargets.nonEmpty)
-                _ <- ConsensusLog
-                  .info(
-                    logger,
-                    Category.Phase,
-                    state.key.show,
-                    "n/a",
-                    Event.Admission,
-                    "assembly" -> "admissions_applied",
-                    "targets" -> admittedTargets.toList.map(ConsensusLog.pid).mkString(","),
-                    "count" -> admittedTargets.size.toString
-                  )
-                  .whenA(admittedTargets.nonEmpty)
-                // Should never fire (validation rejects over-cap proposals); a hit means an
-                // over-cap proposal slipped past validateProposalAcs.
-                _ <- (ConsensusLog
-                  .info(
-                    logger,
-                    Category.Phase,
-                    state.key.show,
-                    "n/a",
-                    Event.Admission,
-                    "stage" -> "apply_cap",
-                    "kept" -> admissionSelection.kept.map(c => ConsensusLog.pid(c.targetPeer)).mkString(","),
-                    "dropped" -> admissionSelection.dropped.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
-                  ) >> Metrics[F].incrementCounter("dag_consensus_admission_cert_capped_total"))
-                  .whenA(admissionSelection.dropped.nonEmpty)
-              } yield
-                Transition(
-                  newState = state.copy(
-                    facilitators = postEvictionFacilitators,
-                    removedFacilitators = postEvictionRemoved,
-                    admittedFacilitators = postAdmissionAdmitted,
-                    // Controller evidence stage 1: certificate-applied eviction targets only
-                    // (removedFacilitators also carries facility-phase fork-evictions, which
-                    // the cert-anchored controllerEvidence / penaltyUntil fields must exclude).
-                    certifiedEvictionTargets = state.certifiedEvictionTargets ++ evictedTargets,
-                    // v7 codex turn 2 fix #5: REPLACE on accept (not union). Each accepted
-                    // proposal canonically replaces state.observedResponders. View-N's set
-                    // does NOT bleed into view-N+1 accounting after an honest view change.
-                    observedResponders = ObservedResponders(leaderObservedResponders.toSet),
-                    // v15: REPLACE on accept, same rationale as observedResponders.
-                    observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
-                    acceptedTimeoutCertificateVoters = acceptedTimeoutVoters,
-                    status = CollectingSignatures(
-                      majorityInfo,
-                      status.majorityTrigger,
-                      Candidates(leaderAdmissionNominee.toSet),
-                      facilitatorsHash,
-                      state.lastOutcome.finished.snapshotHash
+              val storeOwnSignature =
+                consensusStorage.addSignature(selfId, state.key, selfMajoritySig).flatMap {
+                  case Some(_) => Async[F].unit
+                  case None =>
+                    new IllegalStateException(
+                      s"Vote locked but self signature was rejected for key=${state.key.show} view=$view"
+                    ).raiseError[F, Unit]
+                }
+
+              val signatureTiming =
+                acceptedAt.traverse_ { started =>
+                  Async[F].monotonic.flatMap { emittedAt =>
+                    Metrics[F].recordTimeHistogram("dag_consensus_proposal_accept_to_signature_time", emittedAt - started)
+                  }
+                }
+
+              val observability =
+                signatureTiming.attempt.void >>
+                  recordProposalAffinity(proposalHashes, status.proposalArtifactInfo.hash).attempt.void >>
+                  ConsensusLog
+                    .info(
+                      logger,
+                      Category.Phase,
+                      state.key.show,
+                      "n/a",
+                      Event.Eviction,
+                      "assembly" -> "evictions_applied",
+                      "targets" -> evictedTargets.toList.map(ConsensusLog.pid).mkString(","),
+                      "count" -> evictedTargets.size.toString
                     )
-                  ),
-                  sideEffect = spreadSignature(
+                    .whenA(evictedTargets.nonEmpty)
+                    .attempt
+                    .void >>
+                  ConsensusLog
+                    .info(
+                      logger,
+                      Category.Phase,
+                      state.key.show,
+                      "n/a",
+                      Event.Admission,
+                      "assembly" -> "admissions_applied",
+                      "targets" -> admittedTargets.toList.map(ConsensusLog.pid).mkString(","),
+                      "count" -> admittedTargets.size.toString
+                    )
+                    .whenA(admittedTargets.nonEmpty)
+                    .attempt
+                    .void >>
+                  (ConsensusLog
+                    .info(
+                      logger,
+                      Category.Phase,
+                      state.key.show,
+                      "n/a",
+                      Event.Admission,
+                      "stage" -> "apply_cap",
+                      "kept" -> admissionSelection.kept.map(c => ConsensusLog.pid(c.targetPeer)).mkString(","),
+                      "dropped" -> admissionSelection.dropped.map(c => ConsensusLog.pid(c.targetPeer)).mkString(",")
+                    ) >> Metrics[F].incrementCounter("dag_consensus_admission_cert_capped_total"))
+                    .whenA(admissionSelection.dropped.nonEmpty)
+                    .attempt
+                    .void
+
+              Transition(
+                newState = state.copy(
+                  facilitators = postEvictionFacilitators,
+                  removedFacilitators = postEvictionRemoved,
+                  admittedFacilitators = postAdmissionAdmitted,
+                  // Controller evidence stage 1: certificate-applied eviction targets only
+                  // (removedFacilitators also carries facility-phase fork-evictions, which
+                  // the cert-anchored controllerEvidence / penaltyUntil fields must exclude).
+                  certifiedEvictionTargets = state.certifiedEvictionTargets ++ evictedTargets,
+                  // v7 codex turn 2 fix #5: REPLACE on accept (not union). Each accepted
+                  // proposal canonically replaces state.observedResponders. View-N's set
+                  // does NOT bleed into view-N+1 accounting after an honest view change.
+                  observedResponders = ObservedResponders(leaderObservedResponders.toSet),
+                  // v15: REPLACE on accept, same rationale as observedResponders.
+                  observedSelfHealth = ObservedSelfHealth(leaderObservedSelfHealth),
+                  acceptedTimeoutCertificateVoters = acceptedTimeoutVoters,
+                  status = CollectingSignatures(
+                    majorityInfo,
+                    status.majorityTrigger,
+                    Candidates(leaderAdmissionNominee.toSet),
+                    facilitatorsHash,
+                    state.lastOutcome.finished.snapshotHash
+                  )
+                ),
+                // ConsensusStateUpdater retains this exact closure atomically with the
+                // CollectingSignatures state. A failure after vote-locking therefore resumes
+                // self-store/savepoint/gossip instead of leaving a locked proposal phase.
+                sideEffect = storeOwnSignature >>
+                  proposalSavepointRef.set(none) >>
+                  spreadSignature(
                     state,
                     state.key,
                     signature,
@@ -3941,8 +3955,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                     state.lastOutcome.finished.snapshotHash,
                     view,
                     majorityInfo.hash
-                  )
-                ).some
+                  ) >> observability
+              ).some.pure[F]
           }
         } yield result
       }
@@ -4297,7 +4311,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                           )
                         ),
                         sideEffect = persistAndGossip(signedArtifact, status.majorityArtifactInfo.context) >>
-                          recordPeerTierMetrics(state.lastOutcome.peerTiers, nextPeerTiers)
+                          // Telemetry is not a critical finalization effect. A partial metric
+                          // update must never replay snapshot persistence or mempool clearing.
+                          recordPeerTierMetrics(state.lastOutcome.peerTiers, nextPeerTiers).attempt.void
                       ).pure[F]
                     }
                 } else {
@@ -4389,9 +4405,12 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Unit] = {
         val targets =
           if (state.certifiedConsensusActive) state.roundStartFacilitators.value.toSet else state.facilitators.value.toSet
+        val declaration = ConsensusPeerDeclaration(key, proposal)
 
-        gossip.spreadDirect(ConsensusPeerDeclaration(key, proposal), targets) >>
-          gossip.spreadCommon(ConsensusArtifact(key, artifact))
+        ProposalCertificateEnvelope.exactProposalEffect(proposal, declaration)(
+          captured => consensusStorage.addProposal(selfId, key, captured).void,
+          captured => gossip.spreadDirect(captured, targets) >> gossip.spreadCommon(ConsensusArtifact(key, artifact))
+        )
       }
 
       private def spreadSignature(
@@ -4436,11 +4455,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
         persist.ifM(
-          clearCommittedEvents(signedArtifact.value) >> recordMetrics(signedArtifact),
-          ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >> MonadThrow[F]
-            .raiseError(
-              new RuntimeException("Persist failed")
-            )
+          clearCommittedEvents(signedArtifact.value) >> recordMetrics(signedArtifact).attempt.void,
+          ConsensusLog
+            .error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed)
+            .attempt
+            .void >> MonadThrow[F].raiseError(new RuntimeException("Persist failed"))
         )
       }
 

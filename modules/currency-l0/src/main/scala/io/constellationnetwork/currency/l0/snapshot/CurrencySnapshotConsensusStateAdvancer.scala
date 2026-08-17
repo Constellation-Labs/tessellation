@@ -2,10 +2,10 @@ package io.constellationnetwork.currency.l0.snapshot
 
 import java.security.KeyPair
 
-import cats.Applicative
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
+import cats.{Applicative, MonadThrow}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.{FiniteDuration, _}
@@ -113,6 +113,8 @@ object CurrencySnapshotConsensusStateAdvancer {
         artifact: Signed[CurrencySnapshotArtifact],
         context: CurrencySnapshotContext
       ): F[Unit] = Applicative[F].unit
+
+      override def afterConsensusOutcomeCommitted(outcome: CurrencyConsensusOutcome): F[Unit] = Applicative[F].unit
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
@@ -2516,9 +2518,12 @@ object CurrencySnapshotConsensusStateAdvancer {
       ): F[Unit] = {
         val targets =
           if (state.certifiedConsensusActive) state.roundStartFacilitators.value.toSet else state.facilitators.value.toSet
+        val declaration = ConsensusPeerDeclaration(key, proposal)
 
-        gossip.spreadDirect(ConsensusPeerDeclaration(key, proposal), targets) >>
-          gossip.spreadCommon(ConsensusArtifact(key, artifact))
+        ProposalCertificateEnvelope.exactProposalEffect(proposal, declaration)(
+          captured => consensusStorage.addProposal(selfId, key, captured).void,
+          captured => gossip.spreadDirect(captured, targets) >> gossip.spreadCommon(ConsensusArtifact(key, artifact))
+        )
       }
 
       private def spreadSignature(
@@ -2570,24 +2575,40 @@ object CurrencySnapshotConsensusStateAdvancer {
         hashedBinary: Hashed[StateChannelSnapshotBinary],
         state: CurrencySnapshotConsensusState,
         context: CurrencySnapshotContext
-      )(implicit hasher: Hasher[F]): F[Unit] =
+      )(implicit hasher: Hasher[F]): F[Unit] = {
+        val parentArtifact = state.lastOutcome.finished.signedMajorityArtifact.value
+        val parentGlobalSnapshotOrdinal =
+          parentArtifact.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
+
         stateChannelSnapshotService
-          .consume(
+          .persist(
             signedArtifact,
-            hashedBinary,
-            state.lastOutcome.facilitators.value,
-            context
+            context,
+            parentArtifact.dataApplication,
+            parentGlobalSnapshotOrdinal
           )
-          .ifM(
-            // Persist succeeded: this is the winning, persisted artifact, so clear the events it
-            // committed from the mempool (active and suspended). Mirror of dag-l0.
-            clearCommittedEvents(signedArtifact.value) >>
-              recordMetrics(signedArtifact, hashedBinary, context) >>
-              notifyDataApplication(signedArtifact),
-            ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >>
-              recordMetrics(signedArtifact, hashedBinary, context) >>
-              notifyDataApplication(signedArtifact)
-          )
+          .flatMap {
+            case true =>
+              // Persist succeeded: this is the winning, persisted artifact, so clear the events it
+              // committed from the mempool (active and suspended). Mirror of dag-l0.
+              clearCommittedEvents(signedArtifact.value) >>
+                notifyDataApplication(signedArtifact) >>
+                // Telemetry is not part of finalization correctness. Swallow failures here so
+                // partial cumulative-counter updates cannot replay persistence/application work.
+                recordMetrics(signedArtifact, hashedBinary, context).attempt.void >>
+                // Keep binary enqueue as the final critical action. StateChannelBinarySender
+                // makes post-mutation logging/metrics best-effort, so no later failure can cause a
+                // confirmed/pruned binary to be reintroduced by retained-effect replay.
+                stateChannelSnapshotService.enqueueBinary(hashedBinary, signedArtifact.ordinal)
+
+            case false =>
+              // Do not clear the retained Finished effect. Advancing the outcome after a
+              // conflicting/out-of-order local prepend would publish a binary and notify the data
+              // application for an artifact this node explicitly rejected.
+              ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >>
+                MonadThrow[F].raiseError(new RuntimeException("Currency snapshot persist failed"))
+          }
+      }
 
       private def clearCommittedEvents(artifact: CurrencySnapshotArtifact): F[Unit] =
         committedEvents(artifact).flatMap { committed =>

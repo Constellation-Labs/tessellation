@@ -5,6 +5,8 @@ import cats.effect.Sync
 import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
+import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ConsensusResources, ConsensusStorage}
 import io.constellationnetwork.schema.peer.PeerId
@@ -67,9 +69,6 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
       none.pure[F]
   }
 
-  protected def evalEffect(maybeResultAndEffect: Option[(StateCreateResult, F[Unit])]): F[StateCreateResult] =
-    maybeResultAndEffect.flatTraverse { case (result, effect) => effect.as(result) }
-
   protected def logIfCreated(createResult: StateCreateResult): F[Unit] =
     createResult.traverse_(state =>
       ConsensusLog.info(
@@ -83,4 +82,20 @@ abstract class ConsensusStateCreator[F[_]: Sync, Key: Show, Artifact, Context, S
         "view" -> state.viewNumber.toString
       )
     )
+}
+
+object ConsensusStateCreator {
+
+  /** Build the replayable post-commit operation from values captured before the state commit. Callers must perform every dynamic read
+    * before constructing `facility` and `declaration`; a retained retry then only repeats the exact self-store and direct delivery.
+    */
+  private[constellationnetwork] def exactFacilityEffect[F[_]: Monad, Key](
+    facility: Facility,
+    declaration: ConsensusPeerDeclaration[Key, Facility],
+    targets: Set[PeerId]
+  )(
+    selfStore: Facility => F[Unit],
+    spreadDirect: (ConsensusPeerDeclaration[Key, Facility], Set[PeerId]) => F[Unit]
+  ): F[Unit] =
+    selfStore(facility) >> spreadDirect(declaration, targets)
 }
