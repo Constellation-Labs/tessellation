@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.{Applicative, MonadThrow}
 
-import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.node.{DownloadMode, NodeStorage}
 import io.constellationnetwork.schema.node.{InvalidNodeStateTransition, NodeState, NodeStateTransition}
 
 import fs2.Stream
@@ -27,16 +27,16 @@ object NodeStorage {
       stateRef <- Ref.of[F, NodeState](NodeState.Initial)
       stateTopic <- Topic[F, NodeState]
       graceRef <- Ref.of[F, Int](joiningGraceRounds)
-      recoveryRef <- Ref.of[F, Boolean](false)
+      downloadModeRef <- Ref.of[F, DownloadMode](DownloadMode.Full)
       validatorRef <- Ref.of[F, Boolean](false)
       _ <- stateTopic.publish1(NodeState.Initial)
-    } yield make(stateRef, stateTopic, graceRef, recoveryRef, validatorRef)
+    } yield make(stateRef, stateTopic, graceRef, downloadModeRef, validatorRef)
 
   def make[F[_]: Concurrent](
     nodeState: Ref[F, NodeState],
     nodeStateTopic: Topic[F, NodeState],
     joiningGracePeriod: Ref[F, Int],
-    recoveryDownloadRef: Ref[F, Boolean],
+    downloadModeRef: Ref[F, DownloadMode],
     validatorModeRef: Ref[F, Boolean]
   ): NodeStorage[F] =
     new NodeStorage[F] {
@@ -102,13 +102,19 @@ object NodeStorage {
         joiningGracePeriod.get.map(_ > 0)
 
       def setRecoveryDownload: F[Unit] =
-        recoveryDownloadRef.set(true)
+        downloadModeRef.set(DownloadMode.Recovery)
 
       def clearRecoveryDownload: F[Unit] =
-        recoveryDownloadRef.set(false)
+        downloadModeRef.set(DownloadMode.Full)
 
       def isRecoveryDownload: F[Boolean] =
-        recoveryDownloadRef.get
+        downloadModeRef.get.map(_ != DownloadMode.Full)
+
+      def setFollowerCatchUpDownload: F[Unit] =
+        downloadModeRef.set(DownloadMode.FollowerCatchUp)
+
+      def getDownloadMode: F[DownloadMode] =
+        downloadModeRef.get
 
       def setValidatorMode: F[Unit] =
         validatorModeRef.set(true)

@@ -50,7 +50,12 @@ object AbandonReason {
   }
 
   /** This node is behind the network — peers are at a higher ordinal. */
-  final case class Lagging(peersAhead: Int, totalPeers: Int, totalRegs: Int) extends AbandonReason {
+  final case class Lagging(
+    peersAhead: Int,
+    totalPeers: Int,
+    totalRegs: Int,
+    followerCatchUpEligible: Boolean = false
+  ) extends AbandonReason {
     def message: String = s"lagging behind network: $peersAhead/$totalPeers ready peers at higher key (totalRegs=$totalRegs)"
     def label: String = "lagging"
     def retriable: Boolean = false
@@ -447,7 +452,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                               key,
                               reason.label,
                               "locked_lagging_corroborated",
-                              retainRoundOnTransitionFailure = true
+                              retainRoundOnTransitionFailure = true,
+                              preferFollowerCatchUp = AbandonmentTracker.followerCatchUpEligible(reason)
                             )
                           case AbandonmentTracker.LockedAttemptAction.Retain => Async[F].unit
                         })
@@ -679,7 +685,14 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                "recoverySuppressed" -> (shouldRecover && !willRecover).toString
              )
              _ <-
-               if (willRecover) triggerRecoveryDownload(key, consecutiveCount, reason.label, recoveryCause)
+               if (willRecover)
+                 triggerRecoveryDownload(
+                   key,
+                   consecutiveCount,
+                   reason.label,
+                   recoveryCause,
+                   preferFollowerCatchUp = AbandonmentTracker.followerCatchUpEligible(reason)
+                 )
                else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
            } yield ()
          })
@@ -727,7 +740,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     key: Key,
     consecutiveCount: Int,
     triggerReason: String,
-    triggerClass: String
+    triggerClass: String,
+    preferFollowerCatchUp: Boolean = false
   ): F[Unit] =
     totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
       val shouldForceLeave = totalAttempts >= maxTotalRecoveryAttempts
@@ -767,14 +781,21 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
           Seq(
             Metrics.unsafeLabelName("trigger") -> triggerReason,
             Metrics.unsafeLabelName("trigger_class") -> triggerClass,
-            Metrics.unsafeLabelName("action") -> (if (shouldForceLeave) "force_leave" else "waiting_for_download")
+            Metrics.unsafeLabelName("action") -> (if (shouldForceLeave) "force_leave"
+                                                  else if (preferFollowerCatchUp) "follower_catch_up"
+                                                  else "waiting_for_download")
           )
         ) >>
         (if (shouldForceLeave)
            Metrics[F].incrementCounter("dag_consensus_force_leave_triggered") >>
              forceLeave(key, totalAttempts)
          else
-           attemptRecoveryDownload(key, triggerReason, triggerClass))
+           attemptRecoveryDownload(
+             key,
+             triggerReason,
+             triggerClass,
+             preferFollowerCatchUp = preferFollowerCatchUp
+           ))
     }
 
   /** Force the node to leave the cluster after exhausting all recovery attempts. This breaks pathological loops where downloaded state
@@ -855,7 +876,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     key: Key,
     triggerReason: String,
     triggerClass: String,
-    retainRoundOnTransitionFailure: Boolean = false
+    retainRoundOnTransitionFailure: Boolean = false,
+    preferFollowerCatchUp: Boolean = false
   ): F[Unit] = {
     val recoveryStates = List(
       NodeState.Ready,
@@ -875,9 +897,10 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
 
     // Signal that this download is a recovery (not a fresh join).
     // DownloadDaemon will use the incremental recoveryDownload path.
-    ctx.nodeStorage.setRecoveryDownload >>
+    (if (preferFollowerCatchUp) ctx.nodeStorage.setFollowerCatchUpDownload else ctx.nodeStorage.setRecoveryDownload) >>
       tryStates(recoveryStates).flatMap {
         case Some(fromState) =>
+          val downloadMode = if (preferFollowerCatchUp) "follower_catch_up" else "recovery"
           val observe = ConsensusLog.info(
             logger,
             Category.Lifecycle,
@@ -886,6 +909,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
             LogEvent.RecoveryStateTransition,
             "trigger" -> triggerReason,
             "triggerClass" -> triggerClass,
+            "downloadMode" -> downloadMode,
             "from" -> fromState.toString,
             "to" -> "WaitingForDownload"
           ) >>
@@ -896,7 +920,9 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                 Metrics.unsafeLabelName("trigger_class") -> triggerClass,
                 Metrics.unsafeLabelName("outcome") -> "transitioned"
               )
-            )
+            ) >> Metrics[F]
+              .incrementCounter("dag_consensus_follower_catch_up_requested_total")
+              .whenA(preferFollowerCatchUp)
 
           observe.attempt.void >>
             consecutiveAbandonCountRef.set((none[Key], 0)) >>
@@ -952,6 +978,15 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
 }
 
 object AbandonmentTracker {
+
+  /** Only a node outside the frozen round committee may fast-forward through a committed successor. Committee members remain responsible
+    * for that round and must use the full recovery boundary instead of silently skipping their voting obligation.
+    */
+  private[consensus] def followerCatchUpEligible(reason: AbandonReason): Boolean =
+    reason match {
+      case lagging: AbandonReason.Lagging => lagging.followerCatchUpEligible
+      case _                              => false
+    }
 
   private[consensus] sealed abstract class LockedAttemptAction(val label: String)
   private[consensus] object LockedAttemptAction {

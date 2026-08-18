@@ -88,6 +88,40 @@ object Download {
 
   /** Per-Ready-peer advertised tip. */
   private[snapshot] final case class PeerTip(ordinal: SnapshotOrdinal, hash: Hash)
+  private[snapshot] final case class PeerTipSample(queriedPeerCount: Int, tips: List[PeerTip])
+
+  /** Reuse the convergence path's existing tolerance. A larger gap belongs to the full recovery workflow, which revalidates/rebuilds all
+    * layer stores and re-observes the moving tip.
+    */
+  private[snapshot] val MaxFollowerCatchUpGap: Long = 2L
+  private[snapshot] val MinFollowerCatchUpCorroborators: Int = 2
+
+  /** Select an exact, non-destructive forward target for the follower fast path.
+    *
+    * A strict majority of the entire queried Ready/WaitingForReady pool, and at least two independent peers, must agree on one `(ordinal,
+    * hash)`. Timed-out probes remain in the denominator. The target must be one or two ordinals ahead. A single response, same-ordinal
+    * disagreement, rollback, and larger gaps deliberately fall through to full recovery.
+    */
+  private[snapshot] def chooseFollowerCatchUpTarget(
+    localOrdinal: SnapshotOrdinal,
+    tips: List[PeerTip],
+    queriedPeerCount: Int
+  ): Option[PeerTip] =
+    tips
+      .groupBy(identity)
+      .maxByOption(_._2.size)
+      .collect {
+        case (target, agreeing)
+            if queriedPeerCount > 0 &&
+              agreeing.size > queriedPeerCount / 2 &&
+              agreeing.size >= MinFollowerCatchUpCorroborators &&
+              target.ordinal.value.value > localOrdinal.value.value &&
+              target.ordinal.value.value - localOrdinal.value.value <= MaxFollowerCatchUpGap =>
+          target
+      }
+
+  private[snapshot] def matchesFollowerCatchUpTarget(target: PeerTip, downloadedOrdinal: SnapshotOrdinal, downloadedHash: Hash): Boolean =
+    downloadedOrdinal === target.ordinal && downloadedHash === target.hash
 
   /** Categorical label for the `dag_download_*_outcome_total{outcome}` counter family.
     *
@@ -557,6 +591,115 @@ object Download {
       else if (remote === local) "same_ordinal"
       else "rollback"
 
+    /** Fast path for an ordinary non-committee follower that missed at most two canonical snapshots.
+      *
+      * The AbandonmentTracker selects this mode only when the lagging node is outside the frozen round committee. We still independently
+      * require a strict responder-majority on the exact forward target, then reuse the normal hash walk, signature checks, checkpoint gate,
+      * state-proof/context derivation, and strict LastN prepend. No cluster rejoin or random 1-5-round observe delay is needed: after the
+      * contiguous gap is installed, `observeWithLimit(..., downloadedOrdinal)` registers at that exact tip and returns immediately.
+      *
+      * Any missing local state, ambiguous peer view, gap > 2, validation failure, or state-transition failure falls back to the established
+      * recovery download. The fallback is intentionally inside this method so DownloadDaemon cannot mistake an unavailable fast path for
+      * successful recovery.
+      */
+    override def followerCatchUp(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
+      def fallback(reason: String, error: Option[Throwable] = None): F[Unit] = {
+        val observe = error.fold(logger.warn(s"[FollowerCatchUp] Falling back to recovery: reason=$reason")) { err =>
+          logger.warn(err)(s"[FollowerCatchUp] Falling back to recovery: reason=$reason")
+        }
+
+        observe >>
+          Metrics[F].incrementCounter(
+            "dag_follower_catch_up_total",
+            Seq(
+              Metrics.unsafeLabelName("outcome") -> "fallback",
+              Metrics.unsafeLabelName("reason") -> reason
+            )
+          ) >>
+          nodeStorage.getNodeState.flatMap {
+            case NodeState.WaitingForDownload => Async[F].unit
+            case _                            => nodeStorage.setNodeState(NodeState.WaitingForDownload)
+          } >> recoveryDownload
+      }
+
+      (lastNGlobalSnapshotStorage.getCombined, getReadyPeerTipSample).tupled.flatMap {
+        case (None, _) => fallback("missing_local_state")
+        case (Some((local, _)), sample) =>
+          Download.chooseFollowerCatchUpTarget(local.ordinal, sample.tips, sample.queriedPeerCount) match {
+            case None => fallback("uncorroborated_or_out_of_range")
+            case Some(target) =>
+              val gap = target.ordinal.value.value - local.ordinal.value.value
+              val fast =
+                nodeStorage
+                  .tryModifyState(
+                    NodeState.WaitingForDownload,
+                    NodeState.DownloadInProgress,
+                    NodeState.WaitingForObserving
+                  ) {
+                    for {
+                      localCombined <- lastNGlobalSnapshotStorage.getCombined.flatMap(
+                        _.liftTo[F](new IllegalStateException("Follower catch-up local state disappeared after preflight"))
+                      )
+                      (localSnapshot, localContext) = localCombined
+                      _ <- new IllegalStateException(
+                        s"Follower catch-up local anchor changed during preflight: " +
+                          s"expected=${local.ordinal.show}/${local.hash.value.take(8)} " +
+                          s"actual=${localSnapshot.ordinal.show}/${localSnapshot.hash.value.take(8)}"
+                      ).raiseError[F, Unit]
+                        .unlessA(
+                          localSnapshot.ordinal === local.ordinal && localSnapshot.hash === local.hash
+                        )
+                      _ <- logger.info(
+                        s"[FollowerCatchUp] Installing corroborated forward gap: local=${local.ordinal.show}, " +
+                          s"target=${target.ordinal.show}, gap=$gap"
+                      )
+                      _ <- consensus.manager.resetForRecovery
+                      // A lagging observer's local event view may be stale. Clearing it is safe because this path is forbidden to frozen
+                      // committee members and every accepted event remains available from the gossip/facility hash union.
+                      _ <- eventMempool.clear
+                      result <- download(
+                        target.hash,
+                        target.ordinal,
+                        (localSnapshot.signed, localContext).some
+                      )
+                      downloaded <- hasherSelector.forOrdinal(result._1.ordinal)(implicit hasher => result._1.toHashed)
+                      _ <- new IllegalStateException(
+                        s"Follower catch-up returned a different target: " +
+                          s"expected=${target.ordinal.show}/${target.hash.value.take(8)} " +
+                          s"actual=${downloaded.ordinal.show}/${downloaded.hash.value.take(8)}"
+                      ).raiseError[F, Unit].unlessA(Download.matchesFollowerCatchUpTarget(target, downloaded.ordinal, downloaded.hash))
+                    } yield result
+                  }
+                  .flatMap { result =>
+                    val (snapshot, _) = result
+                    for {
+                      observed <- observeWithLimit(result, snapshot.ordinal)
+                      ((observedSnapshot, observedContext), observationLimit) = observed
+                      _ <- HasherSelector[F].withCurrent { implicit hasher =>
+                        globalSnapshotConsensusStorage.setHeadForRecovery(observedSnapshot, observedContext)
+                      }
+                      _ <- consensus.manager.startFacilitatingAfterDownload(
+                        observationLimit,
+                        observedSnapshot,
+                        observedContext,
+                        isRecovery = true
+                      )
+                      _ <- Metrics[F].incrementCounter(
+                        "dag_follower_catch_up_total",
+                        Seq(
+                          Metrics.unsafeLabelName("outcome") -> "success",
+                          Metrics.unsafeLabelName("reason") -> "forward_gap"
+                        )
+                      )
+                      _ <- Metrics[F].updateGauge("dag_follower_catch_up_gap", gap)
+                    } yield ()
+                  }
+
+              fast.handleErrorWith(error => fallback("fast_path_failed", error.some))
+          }
+      }
+    }
+
     def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       def getLatestMetadataWithPeer: F[(L0Peer, SnapshotMetadata)] = {
         val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
@@ -996,8 +1139,10 @@ object Download {
     // block the shortcut decision indefinitely; one that errors or times out simply doesn't vote.
     private val perPeerTipTimeout: FiniteDuration = 3.seconds
 
-    /** Query every responsive Ready or WaitingForReady peer's `/global-snapshots/latest/metadata` in parallel. Used by both the normal
-      * observe path and the recovery observe path to decide whether the cluster is already at our tip (shortcut) or ahead (fetch forward).
+    /** Query every responsive Ready or WaitingForReady peer's `/global-snapshots/latest/metadata` in parallel. The sample retains the
+      * queried population size so the follower fast path counts timed-out probes against its corroboration denominator. Used by both the
+      * normal observe path and the recovery observe path to decide whether the cluster is already at our tip (shortcut) or ahead (fetch
+      * forward).
       *
       * Pool widened beyond Ready to include WaitingForReady (matches the alpha.63/64 widening of PeerSelect, SelectablePeerDiscoveryDelay,
       * StateTransitions.selectPeer, and SnapshotRoutes.validStateForSnapshotReturn). On a stalled rollback-lead topology the only Ready
@@ -1006,23 +1151,26 @@ object Download {
       * ordinal the cluster cannot produce. Including WaitingForReady peers makes the shortcut decision robust under stall. SnapshotRoutes
       * already serves `/global-snapshots/latest/metadata` from WaitingForReady via the LastN fallback added in alpha.64.
       */
-    private def getReadyPeerTips: F[List[PeerTip]] =
+    private def getReadyPeerTipSample: F[PeerTipSample] =
       clusterStorage.getResponsivePeers
-        .map(_.filter(p => p.state === NodeState.Ready || p.state === NodeState.WaitingForReady))
-        .map(_.toList)
-        .flatMap(
-          _.parTraverse(peer =>
-            Async[F]
-              .timeout(p2pClient.globalSnapshot.getLatestMetadata.run(peer), perPeerTipTimeout)
-              .map(m => PeerTip(m.ordinal, m.hash).some)
-              .handleErrorWith(err =>
-                logger
-                  .warn(err)(s"[Download] Unable to fetch latest metadata from peer ${peer.show}")
-                  .as(none[PeerTip])
-              )
-          )
-        )
-        .map(_.flatten)
+        .map(_.toList.filter(p => p.state === NodeState.Ready || p.state === NodeState.WaitingForReady))
+        .flatMap { peers =>
+          peers
+            .parTraverse(peer =>
+              Async[F]
+                .timeout(p2pClient.globalSnapshot.getLatestMetadata.run(peer), perPeerTipTimeout)
+                .map(m => PeerTip(m.ordinal, m.hash).some)
+                .handleErrorWith(err =>
+                  logger
+                    .warn(err)(s"[Download] Unable to fetch latest metadata from peer ${peer.show}")
+                    .as(none[PeerTip])
+                )
+            )
+            .map(results => PeerTipSample(peers.size, results.flatten))
+        }
+
+    private def getReadyPeerTips: F[List[PeerTip]] =
+      getReadyPeerTipSample.map(_.tips)
 
     def observe(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result

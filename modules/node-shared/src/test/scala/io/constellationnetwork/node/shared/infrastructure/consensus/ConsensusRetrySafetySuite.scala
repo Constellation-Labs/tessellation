@@ -238,6 +238,15 @@ object ConsensusRetrySafetySuite extends FunSuite {
     )
   }
 
+  test("only a lagging non-committee observer is eligible for bounded follower catch-up") {
+    val committeeMember = AbandonReason.Lagging(2, 3, 3, followerCatchUpEligible = false)
+    val observer = AbandonReason.Lagging(2, 3, 3, followerCatchUpEligible = true)
+
+    expect(!AbandonmentTracker.followerCatchUpEligible(committeeMember)) &&
+    expect(AbandonmentTracker.followerCatchUpEligible(observer)) &&
+    expect(!AbandonmentTracker.followerCatchUpEligible(AbandonReason.RoundTimeout(60L, None)))
+  }
+
   test("Currency preserves rc.7 higher-view voting and same-key retry policy") {
     val priorVote = VoteLock(highestVotedView = 0L.some, votedHashAtHighestView = proposalHash.some, lockedQc = None)
     val higherViewVote = priorVote.acceptVote(

@@ -13,7 +13,7 @@ import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventC
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
-import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.node.{DownloadMode, NodeStorage}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
@@ -133,6 +133,8 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
     def setRecoveryDownload: IO[Unit] = IO.unit
     def clearRecoveryDownload: IO[Unit] = IO.unit
     def isRecoveryDownload: IO[Boolean] = false.pure[IO]
+    def setFollowerCatchUpDownload: IO[Unit] = IO.unit
+    def getDownloadMode: IO[DownloadMode] = DownloadMode.Full.pure[IO]
     def setValidatorMode: IO[Unit] = IO.unit
     def isValidatorMode: IO[Boolean] = false.pure[IO]
   }
