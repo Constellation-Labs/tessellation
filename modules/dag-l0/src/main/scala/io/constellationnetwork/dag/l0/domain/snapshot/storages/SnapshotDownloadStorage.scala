@@ -14,7 +14,10 @@ trait SnapshotDownloadStorage[F[_]] {
 
   def deletePersisted(ordinal: SnapshotOrdinal): F[Unit]
 
-  def isPersisted(hash: Hash): F[Boolean]
+  /** Return true only when the content-addressed hash file, ordinal index, and derived snapshot-info form a usable replay anchor.
+    * Implementations may repair the narrow torn-write case where exact bytes exist under `hash` but the ordinal hardlink is absent.
+    */
+  def ensurePersistedAnchor(hash: Hash, ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Boolean]
 
   def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof)(implicit hasher: Hasher[F]): F[Boolean]
   def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]]

@@ -60,7 +60,7 @@ digraph RecoveryDecisionTree {
     FullResult -> Rejoin [label="success"];
     FullResult -> FallbackCheck [label="failure"];
 
-    FallbackCheck [shape=diamond, label="error is\nRecoveryFallbackEligible?\n(CannotFetchGenesisSnapshot,\nInvalidChain)"];
+    FallbackCheck [shape=diamond, label="error is\nRecoveryFallbackEligible?\n(genesis unavailable, timeout,\nmissing replay input, typed\nchain/context failure)"];
     FallbackCheck -> SetFallback [label="yes"];
     FallbackCheck -> RetryFull [label="no"];
 
@@ -73,7 +73,7 @@ digraph RecoveryDecisionTree {
     Backoff -> CheckTotalAttempts;
 
     // Recovery download steps
-    RecoveryDownload [label="recoveryDownload()\n\n1. Clear in-memory caches (NOT disk)\n2. Fetch latest tip from peers\n   (prefer RecoveryPeerHint)\n3. Walk back from tip, stop at persisted hash\n4. Enforce configured recovery checkpoint\n5. setForRecovery bypasses sequential prepend", style="rounded,filled", fillcolor="lightcyan"];
+    RecoveryDownload [label="recoveryDownload()\n\n1. Clear in-memory heads/mempool; retain disk except\n   a majority-corroborated rollback suffix\n2. Fetch latest tip from peers\n   (prefer RecoveryPeerHint)\n3. Walk back to complete hash + ordinal + info anchor\n   (repair exact missing hardlink only)\n4. Validate chain/signatures/checkpoint/state proof\n5. Replay with progress watchdog\n6. setForRecovery bypasses sequential prepend", style="rounded,filled", fillcolor="lightcyan"];
 
     RecoveryDownload -> DownloadResult;
 

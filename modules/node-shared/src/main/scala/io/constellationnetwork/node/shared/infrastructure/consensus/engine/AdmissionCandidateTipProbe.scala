@@ -102,16 +102,17 @@ object AdmissionCandidateTipProbe {
       .map { case (probation, open) => List(probation, open).flatten }
   }
 
-  /** Choose at most the fixed first open target, and never retry it within one continuous monitor attempt. */
+  /** Choose at most the fixed first open target, and never retry it within one continuous monitor attempt.
+    *
+    * Cached gossip evidence must not suppress this probe. A Ready peer can advertise a parent that is within the legacy lag tolerance while
+    * its consensus FSM remains one round behind. After the nominee's current-round Facility arrives, open admission therefore re-observes
+    * it directly on the cadence round; a failed probe is an abstention, not permission to reuse the cache or walk to another candidate.
+    */
   private[consensus] def targetForRound(
     openAdmissionTargets: List[PeerId],
-    probedTargets: Set[PeerId],
-    cachedChainTips: Map[PeerId, ChainTip],
-    isReady: ChainTip => Boolean
+    probedTargets: Set[PeerId]
   ): Option[PeerId] =
-    openAdmissionTargets.headOption.filter { target =>
-      !probedTargets.contains(target) && !cachedChainTips.get(target).exists(isReady)
-    }
+    openAdmissionTargets.headOption.filterNot(probedTargets.contains)
 
   /** Pick one fixed probation target for the whole round. The parent hash is round-stable entropy, so every monitor tick selects the same
     * target and a failed probe cannot walk the candidate set.
@@ -168,7 +169,35 @@ object AdmissionCandidateTipProbe {
     }.toSet
   }
 
-  /** Merge a direct response only when it names the exact expected parent. */
+  /** Open admission requires two independent, local observations of the same fixed nominee:
+    *
+    *   1. a fresh authenticated response naming the exact expected parent; and 2. an authenticated Facility declaration already observed
+    *      for the current consensus round and bound to this voter's round.
+    *
+    * The second observation proves that the peer's consensus FSM has actually entered the round. `Ready` plus a nearby snapshot tip is not
+    * sufficient: an admitted peer one round behind can otherwise occupy the next finality denominator without contributing a timely
+    * signature. Both observations govern vote emission only; the quorum-certified AdmissionCertificate remains membership authority.
+    */
+  private[consensus] def readyOpenTarget(
+    target: Option[PeerId],
+    observation: Observation,
+    hasCurrentRoundFacility: PeerId => Boolean,
+    expectedHash: Hash,
+    expectedOrdinal: Option[SnapshotOrdinal]
+  ): Set[PeerId] = {
+    val freshExact = observation match {
+      case Observation.Attempted(Some(tip)) => AdmissionTipReadiness.isExact(tip, expectedHash, expectedOrdinal)
+      case _                                => false
+    }
+
+    target.filter(pid => freshExact && hasCurrentRoundFacility(pid)).toSet
+  }
+
+  /** Merge a direct response only when it names the exact expected parent.
+    *
+    * An attempted stale, conflicting, or unavailable response removes any cached entry for that target. Otherwise the cache could silently
+    * restore the same nearby-tip evidence the direct probe was introduced to supersede.
+    */
   private[consensus] def mergeExactResult(
     cachedChainTips: Map[PeerId, ChainTip],
     result: Option[(PeerId, Option[ChainTip])],
@@ -178,7 +207,8 @@ object AdmissionCandidateTipProbe {
     result match {
       case Some((target, Some(tip))) if AdmissionTipReadiness.isExact(tip, expectedHash, expectedOrdinal) =>
         cachedChainTips.updated(target, tip)
-      case _ => cachedChainTips
+      case Some((target, _)) => cachedChainTips.removed(target)
+      case None              => cachedChainTips
     }
 
   def make[F[_]: Async](
@@ -221,8 +251,8 @@ object AdmissionCandidateTipProbe {
 
 /** Exact interpretation of a fresh, direct candidate response.
   *
-  * Cached gossip tips intentionally retain rc.6 behavior in [[StallDetector]]. A direct response is contemporaneous, so it becomes vote
-  * evidence only when both ordinal and hash name the expected parent.
+  * Global L0 open admission and probation recovery require both ordinal and hash to name the expected parent. The bounded-lag cached-tip
+  * rule remains only for layers without the direct probe (currently Currency L0).
   */
 object AdmissionTipReadiness {
 

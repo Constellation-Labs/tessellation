@@ -67,7 +67,57 @@ object SnapshotDownloadStorage {
 
       def deletePersisted(ordinal: SnapshotOrdinal): F[Unit] = persistedStorage.delete(ordinal)
 
-      def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
+      def ensurePersistedAnchor(hash: Hash, ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Boolean] =
+        persistedStorage
+          .ensureOrdinalLink(hash, ordinal)
+          .flatMap { status =>
+            def record(outcome: String): F[Unit] =
+              Metrics[F].incrementCounter(
+                "dag_download_persisted_anchor_total",
+                Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+              )
+
+            val observe = status match {
+              case SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Linked | SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Missing |
+                  _: SnapshotLocalFileSystemStorage.OrdinalLinkStatus.OrdinalOccupied =>
+                Async[F].unit
+              case SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Repaired =>
+                logger.warn(
+                  s"[ensurePersistedAnchor] repaired missing ordinal hardlink for ordinal=${ordinal.show} hash=${hash.value.take(8)}"
+                ) >> Metrics[F].incrementCounter("dag_download_persisted_hardlink_repaired_total")
+              case other =>
+                logger.warn(
+                  s"[ensurePersistedAnchor] rejected unusable persisted anchor ordinal=${ordinal.show} hash=${hash.value.take(8)} " +
+                    s"reason=${other.label}"
+                )
+            }
+
+            if (!status.usable) {
+              val metric = status match {
+                // Missing hashes and occupied fork ordinals are the normal backward-walk path;
+                // counting every one would obscure the repair/corruption signals.
+                case SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Missing |
+                    _: SnapshotLocalFileSystemStorage.OrdinalLinkStatus.OrdinalOccupied =>
+                  Async[F].unit
+                case other => record(other.label)
+              }
+              observe >> metric.as(false)
+            } else
+              // Do not call hasCorrectSnapshotInfo here: its MPT-backed proof builder assumes the
+              // replay anchor has already been installed. At walk-back time we only require an
+              // exact info entry; readCombined performs the full proof validation after syncing
+              // that candidate's state, and discards a mismatch before replay.
+              hasSnapshotInfo(ordinal).flatMap { usable =>
+                val outcome = if (usable) status.label else "snapshot_info_missing"
+                observe >> record(outcome).as(usable)
+              }
+          }
+
+      private def hasSnapshotInfo(ordinal: SnapshotOrdinal): F[Boolean] =
+        hashSelect.select(ordinal) match {
+          case JsonHash => snapshotInfoStorage.exists(ordinal)
+          case KryoHash => snapshotInfoKryoStorage.exists(ordinal)
+        }
 
       def hasCorrectSnapshotInfo(
         ordinal: SnapshotOrdinal,

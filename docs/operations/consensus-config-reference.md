@@ -86,8 +86,12 @@ Anchoring case 2 at Core-complete (not first-quorum) fixes the alpha.153 regress
 Global-L0 open admission has an additional non-configurable local safety invariant. A
 Core voter emits only when the actual locally observed parent proofs from current
 committee members already meet the exact finality floor for a committee one seat
-larger. The invariant starts outside bootstrap with the existing full-committee
-finality floor. Bootstrap retains its legacy Core-only finality gate, which is not
+larger, the canonical nominee returns authenticated metadata naming the exact parent,
+and that voter has received the nominee's authenticated Facility bound to the same current
+round. Cached nearby-tip evidence cannot suppress or replace the fresh direct probe.
+These local checks prevent a Ready follower whose consensus FSM is one round behind
+from entering the next finality denominator. The invariant starts outside bootstrap
+with the existing full-committee finality floor. Bootstrap retains its legacy Core-only finality gate, which is not
 raised by a newly admitted Tier-1 seat. This is deliberately not part of proposal
 validation or state derivation, because valid proof subsets can differ between honest
 nodes. Tier-1 eviction likewise
