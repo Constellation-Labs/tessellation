@@ -22,7 +22,7 @@ import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
-import SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
+import SnapshotLocalFileSystemStorage.{OrdinalLinkStatus, UnableToPersistSnapshot}
 
 object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers {
 
@@ -73,6 +73,9 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     implicit H: Hasher[IO]
   ): IO[File] =
     snapshot.toHashed.map(hashed => tmpDir / "hash" / hashPathGenerator.get(hashed.hash.value))
+
+  private def mkHashFile(tmpDir: File, hash: io.constellationnetwork.security.hash.Hash): File =
+    tmpDir / "hash" / hashPathGenerator.get(hash.value)
 
   private def mkOrdinalFile(tmpDir: File, snapshot: Signed[GlobalIncrementalSnapshot]): File =
     tmpDir / "ordinal" / ordinalPathGenerator.get(snapshot.ordinal.value.value.toString)
@@ -149,6 +152,121 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
               ordinalFile = mkOrdinalFile(tmpDir, snapshot)
 
             } yield expect.all(hashFile.exists, ordinalFile.isSameFileAs(hashFile))
+        }
+      }
+    }
+  }
+
+  test("ensureOrdinalLink - accepts an exact existing hash and ordinal pair") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            for {
+              hashed <- snapshot.toHashed
+              _ <- storage.write(snapshot)
+              status <- storage.ensureOrdinalLink(hashed.hash, hashed.ordinal)
+            } yield expect.same(OrdinalLinkStatus.Linked, status)
+        }
+      }
+    }
+  }
+
+  test("ensureOrdinalLink - atomically repairs a valid hash file whose ordinal hardlink is missing") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            for {
+              hashed <- snapshot.toHashed
+              _ <- storage.write(snapshot)
+              ordinalFile = mkOrdinalFile(tmpDir, snapshot)
+              _ <- IO.blocking(ordinalFile.delete())
+              status <- storage.ensureOrdinalLink(hashed.hash, hashed.ordinal)
+              hashFile <- mkHashFile(tmpDir, snapshot)
+            } yield
+              expect.all(
+                status == OrdinalLinkStatus.Repaired,
+                ordinalFile.exists,
+                ordinalFile.isSameFileAs(hashFile)
+              )
+        }
+      }
+    }
+  }
+
+  test("ensureOrdinalLink - rejects an ordinal-only snapshot whose content-addressed index is missing") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            for {
+              hashed <- snapshot.toHashed
+              _ <- storage.write(snapshot)
+              hashFile <- mkHashFile(tmpDir, snapshot)
+              _ <- IO.blocking(hashFile.delete())
+              status <- storage.ensureOrdinalLink(hashed.hash, hashed.ordinal)
+            } yield
+              expect.all(
+                status == OrdinalLinkStatus.HashIndexMissing,
+                mkOrdinalFile(tmpDir, snapshot).exists
+              )
+        }
+      }
+    }
+  }
+
+  test("ensureOrdinalLink - never overwrites an occupied ordinal from another branch") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    val differentHash = io.constellationnetwork.security.hash.Hash(List.fill(64)('a').mkString)
+
+    File.temporaryDirectory() { tmpDir =>
+      mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            for {
+              hashed <- snapshot.toHashed
+              _ <- storage.write(snapshot)
+              status <- storage.ensureOrdinalLink(differentHash, hashed.ordinal)
+              stillStored <- storage.read(hashed.ordinal)
+            } yield
+              expect.all(
+                status == OrdinalLinkStatus.OrdinalOccupied(hashed.ordinal, hashed.hash),
+                stillStored.contains(snapshot)
+              )
+        }
+      }
+    }
+  }
+
+  test("ensureOrdinalLink - rejects bytes stored under the wrong hash path") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    val forgedPathHash = io.constellationnetwork.security.hash.Hash(List.fill(64)('b').mkString)
+
+    File.temporaryDirectory() { tmpDir =>
+      mkLocalFileSystemStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            for {
+              hashed <- snapshot.toHashed
+              _ <- storage.write(snapshot)
+              realHashFile <- mkHashFile(tmpDir, snapshot)
+              forgedHashFile = mkHashFile(tmpDir, forgedPathHash)
+              _ <- IO.blocking {
+                forgedHashFile.parent.createDirectories()
+                forgedHashFile.writeByteArray(realHashFile.loadBytes)
+                mkOrdinalFile(tmpDir, snapshot).delete()
+              }
+              status <- storage.ensureOrdinalLink(forgedPathHash, hashed.ordinal)
+            } yield expect.same(OrdinalLinkStatus.HashContentMismatch(hashed.ordinal, hashed.hash), status)
         }
       }
     }

@@ -77,6 +77,79 @@ abstract class SnapshotLocalFileSystemStorage[
   def exists(hash: Hash): F[Boolean] =
     exists(toHashName(hash))
 
+  /** Prove that the ordinal and content-addressed indexes identify the same snapshot, repairing only the torn-write case where the
+    * content-addressed file is valid but its ordinal hardlink is absent.
+    *
+    * Snapshot persistence is intentionally two-indexed: `hash/.../<hash>` owns the bytes and `ordinal/.../<ordinal>` is a hardlink. A
+    * process stop between moving the bytes under the hash and creating the hardlink leaves `exists(hash) == true` while `read(ordinal) ==
+    * None`. Treating the hash path alone as a replay anchor then stops a backward chain walk at an anchor that forward replay cannot read.
+    *
+    * This repair is deliberately narrow:
+    *   - the decoded snapshot must carry `expectedOrdinal`;
+    *   - hashing those bytes must produce `expectedHash`;
+    *   - an occupied ordinal is never overwritten here (fork replacement remains the validated download replay's job);
+    *   - the new hardlink is read back and re-verified before the result is reported usable.
+    *
+    * No snapshot bytes are synthesized or accepted by this helper. Callers remain responsible for their normal signature, checkpoint, and
+    * state-proof validation before using the snapshot as consensus/application state.
+    */
+  def ensureOrdinalLink(expectedHash: Hash, expectedOrdinal: SnapshotOrdinal)(
+    implicit hasher: Hasher[F]
+  ): F[SnapshotLocalFileSystemStorage.OrdinalLinkStatus] = {
+    import SnapshotLocalFileSystemStorage.OrdinalLinkStatus
+
+    def identify(snapshot: Signed[S]): F[(SnapshotOrdinal, Hash)] =
+      snapshot.toHashed.map(hashed => (hashed.ordinal, hashed.hash))
+
+    def exact(snapshot: Signed[S]): F[Boolean] =
+      identify(snapshot).map { case (ordinal, hash) => ordinal === expectedOrdinal && hash === expectedHash }
+
+    read(expectedOrdinal).flatMap {
+      case Some(snapshot) =>
+        identify(snapshot).flatMap {
+          case (ordinal, hash) if ordinal === expectedOrdinal && hash === expectedHash =>
+            read(expectedHash).flatMap {
+              case Some(hashSnapshot) =>
+                identify(hashSnapshot).map {
+                  case (hashOrdinal, hashValue) if hashOrdinal === expectedOrdinal && hashValue === expectedHash =>
+                    OrdinalLinkStatus.Linked
+                  case (hashOrdinal, hashValue) => OrdinalLinkStatus.HashContentMismatch(hashOrdinal, hashValue)
+                }
+              case None =>
+                exists(expectedHash).map {
+                  case true  => OrdinalLinkStatus.HashUnreadable
+                  case false => OrdinalLinkStatus.HashIndexMissing
+                }
+            }
+          case (ordinal, hash) => OrdinalLinkStatus.OrdinalOccupied(ordinal, hash).pure[F].widen
+        }
+      case None =>
+        exists(expectedHash).ifM(
+          read(expectedHash).flatMap {
+            case Some(snapshot) =>
+              exact(snapshot).ifM(
+                write(snapshot).handleErrorWith {
+                  // Another repair/download fiber may have installed the ordinal after our initial
+                  // read. Re-read and verify that winner; every other filesystem error remains loud.
+                  case _: UnableToPersistSnapshot => Applicative[F].unit
+                  case error                      => error.raiseError[F, Unit]
+                } >> read(expectedOrdinal).flatMap {
+                  case Some(relinked) =>
+                    exact(relinked).map {
+                      case true  => OrdinalLinkStatus.Repaired
+                      case false => OrdinalLinkStatus.RepairIncomplete
+                    }
+                  case None => OrdinalLinkStatus.RepairIncomplete.pure[F].widen
+                },
+                identify(snapshot).map { case (ordinal, hash) => OrdinalLinkStatus.HashContentMismatch(ordinal, hash) }
+              )
+            case None => OrdinalLinkStatus.HashUnreadable.pure[F].widen
+          },
+          OrdinalLinkStatus.Missing.pure[F].widen
+        )
+    }
+  }
+
   def delete(ordinal: SnapshotOrdinal): F[Unit] =
     delete(toOrdinalName(ordinal))
 
@@ -254,6 +327,32 @@ abstract class SnapshotLocalFileSystemStorage[
 }
 
 object SnapshotLocalFileSystemStorage {
+
+  sealed trait OrdinalLinkStatus {
+    def label: String
+    def usable: Boolean = false
+  }
+
+  object OrdinalLinkStatus {
+    case object Linked extends OrdinalLinkStatus {
+      val label: String = "linked"
+      override val usable: Boolean = true
+    }
+    case object Repaired extends OrdinalLinkStatus {
+      val label: String = "repaired"
+      override val usable: Boolean = true
+    }
+    case object Missing extends OrdinalLinkStatus { val label: String = "missing" }
+    case object HashIndexMissing extends OrdinalLinkStatus { val label: String = "hash_index_missing" }
+    case object HashUnreadable extends OrdinalLinkStatus { val label: String = "hash_unreadable" }
+    case object RepairIncomplete extends OrdinalLinkStatus { val label: String = "repair_incomplete" }
+    final case class OrdinalOccupied(actualOrdinal: SnapshotOrdinal, actualHash: Hash) extends OrdinalLinkStatus {
+      val label: String = "ordinal_occupied"
+    }
+    final case class HashContentMismatch(actualOrdinal: SnapshotOrdinal, actualHash: Hash) extends OrdinalLinkStatus {
+      val label: String = "hash_content_mismatch"
+    }
+  }
 
   case class UnableToPersistSnapshot(ordinalName: String, hashName: String, hashFileExists: Boolean) extends NoStackTrace {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."

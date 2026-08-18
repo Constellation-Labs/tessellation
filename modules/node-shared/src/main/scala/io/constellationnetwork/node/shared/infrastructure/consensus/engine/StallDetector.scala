@@ -1518,9 +1518,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           .debug(logger, Category.Facilitator, key.toString, role, LogEvent.PeerQuality, "trackedPeers" -> "0")
     }
 
-  /** Admission emission trigger. For each probation peer (those in `readmissionCountdown`), if their gossiped chain tip in the mesh matches
-    * the committee's expected tip or is within a small ordinal lag tolerance, emit an `AdmissionVote` for them and queue certificate
-    * assembly. Core peers also emit a bounded open-expansion vote for the parent Proposal's canonical nominee.
+  /** Admission emission trigger. Core peers emit a bounded open-expansion vote for the parent Proposal's canonical nominee only after a
+    * fresh direct metadata response names the exact parent and the nominee has sent a Facility bound to this current round. Probation
+    * recovery remains a separate lane because a peer deliberately held in probation cannot emit a Facility.
     *
     * '''Witness channel''': probation peers are excluded from `state.facilitators` by the state-creator filter, so they never send Facility
     * declarations for the active round. The committee cannot witness them via `resources.peerDeclarationsMap`. Instead, every peer —
@@ -1531,7 +1531,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     * the committee has just finalized N+1.
     *
     * Safety: storage is first-write-wins per `(voter, target)`, so re-invocations within a round are idempotent. The fixed open target is
-    * probed once per monitor attempt. The fixed probation target is probed at most once per local one-second maximum-poll interval, and a
+    * probed once per monitor attempt regardless of cached gossip tips. A failed, stale, or conflicting direct response overrides cached
+    * evidence and causes abstention. The fixed probation target is probed at most once per local one-second maximum-poll interval, and a
     * throttled tick preserves its streak without authorizing a vote from stale evidence.
     *
     * Determinism: every Core peer reads the same proposal-carried parent nominee. A local chain-tip observation controls abstention only.
@@ -1597,10 +1598,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val selfIsCore = core.contains(selfId)
     val admissionVoteAuthority =
       AdmissionVoterPool.allowsVoteEmission(selfId, requireCoreCertification, core)
-    // Preserve rc.6's cached gossip-tip policy byte-for-behavior. The new direct
-    // request is held to the stricter exact-parent rule in mergeExactResult below;
-    // changing this shared predicate would also alter Currency L0, which is outside
-    // this IntegrationNet GL0 mitigation.
+    // Preserve the cached gossip-tip policy for layers without a direct probe (currently
+    // Currency L0). Global L0 open and probation lanes use fresh exact observations below.
+    // Certified atomic replacement deliberately tightens the legacy cache predicate without
+    // allowing a failed direct response to fall back to cached evidence.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
       AdmissionTipReadiness.isCachedReady(tip, expectedTip, expectedOrdinal, requireCoreCertification)
     val coreSize = math.max(1, state.coreFacilitators.value.size)
@@ -1752,7 +1753,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       else Async[F].unit
 
     if (!admissionVoteAuthority || (probation.isEmpty && openAdmissionTargets.isEmpty))
-      (recordOpenAdmissionPolicy >> clearStreaks).as(
+      (recordOpenAdmissionPolicy >> clearStreaks >> Metrics[F].updateGauge(
+        "dag_consensus_open_admission_candidate_current_facility",
+        0L
+      )).as(
         AdmissionVoteEmission(probedTargets, AdmissionCandidateTipProbe.Observation.NotAttempted)
       )
     else
@@ -1772,13 +1776,22 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           if !alreadyVotedBySelf.contains(target)
           if probationProbeDue
         } yield target
-        val openProbeTarget = for {
+        val fixedOpenTarget = for {
           _ <- admissionCandidateTipProbe
-          target <- AdmissionCandidateTipProbe.targetForRound(
-            openAdmissionTargets,
-            probedTargets
-          )
+          target <- AdmissionCandidateTipProbe.targetForRound(openAdmissionTargets, probedTargets)
         } yield target
+        // Wait for actual current-key consensus participation before spending the one-shot
+        // authenticated metadata probe. If the Facility arrives later in this round, a later
+        // monitor tick can still launch the probe; an absent Facility does not burn the cadence.
+        val openProbeTarget = fixedOpenTarget.filter { target =>
+          StallDetector.hasCurrentRoundFacility(
+            resources.peerDeclarationsMap,
+            selfId,
+            target,
+            expectedTip,
+            expectedOrdinal
+          )
+        }
 
         admissionCandidateTipProbe
           .fold(List.empty[(PeerId, AdmissionCandidateTipProbe.Lane, Option[ChainTip])].pure[F]) { probes =>
@@ -1788,6 +1801,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
             val probationObservation: AdmissionCandidateTipProbe.Observation =
               directProbeResults.collectFirst {
                 case (_, lane, tip) if lane.isProbationRecovery =>
+                  AdmissionCandidateTipProbe.Observation.Attempted(tip)
+              }.getOrElse(AdmissionCandidateTipProbe.Observation.NotAttempted)
+            val openObservation: AdmissionCandidateTipProbe.Observation =
+              directProbeResults.collectFirst {
+                case (_, lane, tip) if !lane.isProbationRecovery =>
                   AdmissionCandidateTipProbe.Observation.Attempted(tip)
               }.getOrElse(AdmissionCandidateTipProbe.Observation.NotAttempted)
             val nextProbedTargets = probedTargets ++ directProbeResults.collect {
@@ -1811,6 +1829,26 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
               case (target, lane, Some(_)) => (target, lane, "not_ready")
               case (target, lane, None)    => (target, lane, "unavailable")
             }
+            def hasCurrentRoundFacility(target: PeerId): Boolean =
+              StallDetector.hasCurrentRoundFacility(
+                resources.peerDeclarationsMap,
+                selfId,
+                target,
+                expectedTip,
+                expectedOrdinal
+              )
+            val openCandidateCurrentFacility = fixedOpenTarget.exists(hasCurrentRoundFacility)
+            val openAlignmentOutcomes = directProbeResults.collect {
+              case (target, lane, None) if !lane.isProbationRecovery =>
+                (target, "tip_unavailable")
+              case (target, lane, Some(tip))
+                  if !lane.isProbationRecovery && !AdmissionTipReadiness.isExact(tip, expectedTip, expectedOrdinal) =>
+                (target, "tip_not_exact")
+              case (target, lane, Some(_)) if !lane.isProbationRecovery && hasCurrentRoundFacility(target) =>
+                (target, "aligned")
+              case (target, lane, Some(_)) if !lane.isProbationRecovery =>
+                (target, "facility_missing_or_misaligned")
+            }
             val recordDirectProbe = directProbeOutcomes.traverse_ {
               case (_, lane, outcome) =>
                 Metrics[F].incrementCounter(
@@ -1818,6 +1856,18 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                   Seq(Metrics.unsafeLabelName("outcome") -> outcome, Metrics.unsafeLabelName("lane") -> lane.label)
                 )
             }
+            val recordOpenAlignment = openAlignmentOutcomes.traverse_ {
+              case (_, outcome) =>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_open_admission_candidate_alignment_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+                )
+            }
+            val recordOpenCandidateFacility =
+              Metrics[F].updateGauge(
+                "dag_consensus_open_admission_candidate_current_facility",
+                if (openCandidateCurrentFacility) 1L else 0L
+              )
 
             // Global L0 advances the fixed probation streak only from this tick's fresh exact
             // direct response. Currency has no direct probe and retains the legacy cached-mesh
@@ -1845,7 +1895,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                   (updated, updated)
                 }
 
-            recordDirectProbe >> updateStreaks.flatMap { streaks =>
+            recordDirectProbe >> recordOpenAlignment >> recordOpenCandidateFacility >> updateStreaks.flatMap { streaks =>
               // Require multiple consecutive at-tip observations before emitting. A single tick of
               // match is insufficient evidence that the peer has stably caught up — observed
               // in E2E: B1 evicted gl0-2 while it was still downloading, then B2 re-admitted
@@ -1880,15 +1930,29 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                     !alreadyVotedBySelf.contains(pid) && streaks.getOrElse(pid, 0) >= minStreak
                   }
               val readyCandidatesAtTip: List[PeerId] =
-                AdmissionCandidateTipProbe.readyOpenTargets(
-                  openAdmissionTargets,
-                  cachedChainTips,
-                  directProbeResults,
-                  admissionCandidateTipProbe.nonEmpty,
-                  expectedTip,
-                  expectedOrdinal,
-                  isAdmissionReadyTip
-                )
+                if (admissionCandidateTipProbe.nonEmpty)
+                  AdmissionCandidateTipProbe
+                    .readyOpenTarget(
+                      openProbeTarget,
+                      openObservation,
+                      hasCurrentRoundFacility,
+                      expectedTip,
+                      expectedOrdinal
+                    )
+                    .toList
+                else openAdmissionTargets.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
+              val openCandidateExactTip = openObservation match {
+                case AdmissionCandidateTipProbe.Observation.Attempted(Some(tip)) =>
+                  AdmissionTipReadiness.isExact(tip, expectedTip, expectedOrdinal)
+                case _ => false
+              }
+              val openCandidateAlignmentOutcome =
+                openAlignmentOutcomes.headOption
+                  .map(_._2)
+                  .orElse {
+                    fixedOpenTarget.filterNot(hasCurrentRoundFacility).as("waiting_for_current_facility")
+                  }
+                  .getOrElse("not_applicable")
               // Admission-gate diagnostic log per probation peer per tick.
               // Follow-up to the alpha.50 ZERO-admission-certs finding: lets operators verify
               // which gate is the actual blocker -- empty probation, atTip false, streak < minStreak,
@@ -1941,6 +2005,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                   "canonicalNominees" -> canonicalNominees.size.toString,
                   "openTargets" -> openAdmissionTargets.size.toString,
                   "candidateReady" -> readyCandidatesAtTip.size.toString,
+                  "candidateExactTip" -> openCandidateExactTip.toString,
+                  "candidateCurrentFacility" -> openCandidateCurrentFacility.toString,
+                  "candidateAlignmentOutcome" -> openCandidateAlignmentOutcome,
                   "candidateVoteQuorum" -> voteQuorum.toString,
                   "openCadenceAllowed" -> openAdmissionPolicy.cadenceAllowed.toString,
                   "openVoteAllowed" -> openAdmissionPolicy.allowsOpenAdmission.toString,
@@ -1994,6 +2061,36 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
 }
 
 object StallDetector {
+
+  /** True only when `target` has entered the same current round as this Core voter.
+    *
+    * `ConsensusResources` is already scoped by consensus key, but Facility has no view field and storage is latest-write-wins across view
+    * changes. Comparing the target's parent, facilitator binding, and deterministic-config fingerprint with the voter's own current
+    * Facility therefore proves the strongest schema-compatible alignment available. The target still needs a fresh exact metadata response
+    * before admission voting; neither observation is consensus state on its own.
+    */
+  private[consensus] def hasCurrentRoundFacility(
+    declarations: Map[PeerId, PeerDeclarations],
+    voter: PeerId,
+    target: PeerId,
+    expectedParentHash: Hash,
+    expectedParentOrdinal: Option[SnapshotOrdinal]
+  ): Boolean = {
+    def isExpectedParent(facility: declaration.Facility): Boolean =
+      facility.lastSnapshotHash === expectedParentHash &&
+        expectedParentOrdinal.exists(_ === facility.lastGlobalSnapshotOrdinal)
+
+    (
+      declarations.get(voter).flatMap(_.facility),
+      declarations.get(target).flatMap(_.facility)
+    ).mapN { (voterFacility, targetFacility) =>
+      isExpectedParent(voterFacility) &&
+      isExpectedParent(targetFacility) &&
+      targetFacility.facilitatorsHash === voterFacility.facilitatorsHash &&
+      voterFacility.consensusConfigHash.nonEmpty &&
+      targetFacility.consensusConfigHash === voterFacility.consensusConfigHash
+    }.getOrElse(false)
+  }
 
   /** Advance the bounded, node-local parent-proof history at a real monitor/round boundary.
     *

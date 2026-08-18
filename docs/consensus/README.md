@@ -605,9 +605,14 @@ Sparse negative-evidence: when `StallDetector` decides to push a peer toward rem
 
 ### AdmissionVote (B2)
 
-Symmetric positive-evidence: every committee member that observes a probation peer gossiping the committee's expected tip emits a signed `AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)`. Quorum assembles into an `AdmissionCertificate` via `AdmissionCertificateBuilder`. Reasons are an open ADT; only `AdmissionReason.ReadyAtTip` is wired today.
+Symmetric positive-evidence: eligible voters sign `AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)`, and a quorum of distinct voter PeerIds assembles into an `AdmissionCertificate` via `AdmissionCertificateBuilder`. Reasons are an open ADT; only `AdmissionReason.ReadyAtTip` is wired today. Local observations decide only whether a voter emits; the accepted certificate is membership authority.
 
-The observation reads the shared chain-tip view (`getPeerChainTips`), which `EventGossipDaemon` populates by a round-robin **witness sweep across all responsive peers** -- not just the gossip mesh. This observation channel is distinct from the certificate *witness pool* (the voters, `eligibleFacilitators - target`) and is a liveness precondition of B2 (ADR-0022): it must cover the full probation-candidate set independent of the mesh degree (`meshHigh`), sized by `chainTipWitnessRefreshInterval` so every responsive peer's tip is refreshed within the admission tip-validity window. Scoping the observation to the gossip mesh left candidates outside the mesh unobservable and starved B2 on clusters larger than the mesh (IntegrationNet, v4.1.0).
+There are two deliberately different evidence lanes:
+
+- **Open expansion:** the parent Proposal carries one canonical nominee chosen by deterministic rendezvous rank. On the five-round admission cadence, each Core voter first waits for that Ready nominee's authenticated Facility declaration bound to the same current round, then directly fetches its authenticated snapshot metadata even if cached gossip says it is nearby. The response must name the exact parent ordinal and hash. Failure, mismatch, or absence means abstain; a late Facility can still trigger the one-shot probe later in the round, and the voter never walks to a second candidate. Parent entropy changes the ranking, but rendezvous has no no-repeat guarantee.
+- **Penalty/probation recovery:** a carried probation peer cannot emit a Facility until its certificate clears probation. This lane therefore probes one deterministic target through the authenticated chain-tip endpoint and requires the configured streak of fresh exact-parent observations. It remains cadence-independent and uses its wider recovery witness pool.
+
+Currency L0 has no direct-probe wiring and retains its legacy cached-chain-tip admission behavior. Global L0's exact-tip/Facility rule adds no declaration or snapshot field: it reuses existing authenticated metadata, signed Facilities, AdmissionVotes, and AdmissionCertificates.
 
 ---
 
@@ -949,9 +954,11 @@ Poll (100ms-1000ms adaptive)
   → Detect status/resource changes → queue CheckUpdate
   → While in any signatures-collecting phase: heartbeat CheckUpdate every tick (re-evaluates
     the signatureGracePeriod gate without waiting for a resource change)
-  → On every tick, if state.lastOutcome carries a probation peer whose gossiped chain tip
-    (witnessed by the round-robin sweep over ALL responsive peers, not just the mesh; see §6)
-    matches the committed tip: emit AdmissionVote, queue CheckAdmissionAssembly
+  → On an open-admission cadence round, probe the one proposal-carried nominee directly;
+    emit AdmissionVote only when it names the exact parent and has already sent a Facility
+    bound to this current round
+  → Independently probe the fixed probation target; emit only after its configured streak
+    of fresh exact-parent responses (probation cannot require a Facility)
   → Reset roundStartTime on view advance (per-view round-duration budget)
   → Calculate phase-adaptive timeout
   → Early view change cases (no stall counted):
@@ -1194,13 +1201,26 @@ Recovery can be triggered by three independent paths, all converging on `Waiting
 
 5. **`DownloadDaemon` dispatch** (`DownloadDaemon.scala:69`) — Acquires the download semaphore and selects a path based on `isRecoveryDownload`:
    - **Recovery path** (`download.recoveryDownload`):
-     - Clear in-memory caches (lastN, lastGlobal) — NOT disk
+     - Clear in-memory snapshot/consensus heads and the event mempool. Persisted history is retained except when the selected network tip is
+       below the local tip: that rollback suffix is removed only after the existing strict-majority `(ordinal, hash)` corroboration gate.
      - Fetch latest tip from peers (preferring `RecoveryPeerHint` targets when set)
-     - Download only the gap (walk back from tip, stop at persisted hash on disk)
+     - Download only the gap. Walk backward over the peer-supplied hash chain and stop only at a complete local replay anchor: the
+       content-addressed bytes must hash to the expected value, the ordinal hardlink must identify those same bytes, and snapshot-info must
+       exist at that ordinal. A hash file by itself is never an anchor.
+     - If exact hash-addressed bytes exist but their ordinal hardlink is missing, recreate only that hardlink and verify it by reading and
+       hashing the result. An occupied ordinal is never overwritten by this repair. If snapshot-info is missing, continue walking and use
+       normal validated replay to rebuild the incomplete range.
      - Enforce any configured seedlist-signed recovery checkpoint: the checkpoint file is verified at startup, downloaded/observed snapshots must pass the checkpoint hash at the checkpoint ordinal, and a local persisted chain whose resolved anchor is already at/above the checkpoint must also prove the checkpoint locally.
+     - Replay validates every successor's parent hash, ordinal/height sequence, signatures, checkpoint, derived context, and state proof
+       before it becomes application state. Replacing an ordinal's local hash/ordinal indexes is uncancelable; recovery may run for hours
+       while progressing, but an inactivity watchdog retries it after ten minutes without an ordinal advance.
      - `setForRecovery` bypasses sequential prepend requirement on `SnapshotStorage`
    - **Full path** (`download.download`): used when a node has never run before.
-   - **Full → recovery switch**: if a full download fails with an error tagged `RecoveryFallbackEligible` (currently `CannotFetchGenesisSnapshot` and `InvalidChain` in dag-l0; `InvalidChain` in currency-l0), the daemon sets `isRecoveryDownload` and retries with the recovery path. Detection uses the `RecoveryFallbackEligible` marker trait — a `getClass.getSimpleName` match would silently break on rename (`RecoveryFallbackEligible.scala`).
+   - **Full → recovery switch**: if a full download fails with an error tagged `RecoveryFallbackEligible` (including unavailable genesis,
+     start timeout, missing replay input, typed chain-link/sequence mismatch, and context-creation failure in dag-l0; `InvalidChain` in
+     currency-l0), the daemon sets `isRecoveryDownload` and retries with the recovery path. Detection uses the
+     `RecoveryFallbackEligible` marker trait — a `getClass.getSimpleName` match would silently break on rename
+     (`RecoveryFallbackEligible.scala`).
    - **Retry**: failures sleep with exponential backoff capped at 60s and re-enter the loop until either success or the node leaves `WaitingForDownload`.
 
 6. **rejoinAfterRecovery** — Send `twoWayHandshake` to all known peers. Restores P2P mesh membership after `LocalHealthcheck` pruned the node during isolation.
@@ -1228,6 +1248,16 @@ Independent of the recovery pipeline above, `StallDetector` re-broadcasts the lo
 ### Failure Handling
 
 - **Download failure during isolation**: `isRecovery` flag preserved across retries. `DownloadDaemon` sleeps with capped exponential backoff (10s → 60s) and retries `recoveryDownload`. Metadata fetch has 5 retries with exponential backoff (~60s).
+- **Deep replay**: the recovery watchdog is progress-based, not a fixed total deadline. `dag_download_recovery_progress_ordinal` (decreasing
+  during hash walk-back and increasing during forward replay) and
+  `dag_download_recovery_progress_epoch` distinguish a healthy multi-hour replay from a stalled fiber;
+  `dag_download_recovery_inactivity_timeout_total` counts the latter.
+- **Persisted-index repair**: `dag_download_persisted_anchor_total{outcome}` distinguishes a complete anchor, a repaired missing hardlink,
+  missing hash index, missing snapshot-info, and corrupt/mismatched local bytes. `dag_download_persisted_hardlink_repaired_total` counts
+  every exact hardlink repair, including repairs whose snapshot-info must still be rebuilt by replay.
+  `dag_download_replay_snapshot_missing_total{source}` identifies any replay source that disappears after the backward walk. Typed
+  `dag_download_start_outcome_total` labels separate parent-link, sequence, replay-source, and context-creation failures; `chain_invalid`
+  remains only as a legacy catch-all.
 - **Stale chain tips**: When all peers are unreachable during isolation, `clearMesh` fires before `onForkDetected` is invoked so the recovering node does not reuse stale tips after restore.
 - **Force leave**: After `totalRecoveryAttempts ≥ 15` (3× recovery cycles), node transitions to `Leaving → Offline`. Requires manual restart.
 
@@ -1294,15 +1324,18 @@ full Mermaid sequence diagram.
 
 ### Known Limitations
 
-#### Kill 4/8 Observe Deadlock
+#### Kill 4/8 Observe Deadlock (pre-index-repair behavior)
 
 When both partitions lose quorum (4+4 with minQuorum=5), neither side can
 produce snapshots. After restore, one recovering node may have persisted a
 forked ordinal whose successor was never produced on the canonical chain.
-The download walker gets stuck looking for a non-existent ordinal.
+Before the exact-anchor repair, the download walker could stop at a content-addressed hash whose ordinal hardlink was missing, then get stuck
+looking for the non-existent ordinal during replay. The walker now repairs an exact missing hardlink or continues to a complete anchor and
+rebuilds the range under the existing validation pipeline. A 4+4 partition can still halt production while neither side has quorum; this
+change repairs a follower's local history after a canonical branch exists and does not manufacture quorum.
 
-**Mitigation:** External monitoring restarts the stuck node. 7/8 nodes
-self-recover.
+**Pre-rc.11 mitigation:** external monitoring restarted the stuck node, although a torn persisted index survived restarts. **Current
+behavior:** recovery retries locally and remains in download states until a validated canonical replay completes.
 
 #### Session Token on Eviction
 

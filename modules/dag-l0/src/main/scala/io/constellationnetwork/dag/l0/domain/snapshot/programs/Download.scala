@@ -1,9 +1,9 @@
 package io.constellationnetwork.dag.l0.domain.snapshot.programs
 
-import cats.effect.Async
 import cats.effect.std.Random
+import cats.effect.{Async, Ref}
 import cats.syntax.all._
-import cats.{Applicative, MonadError, Parallel}
+import cats.{Applicative, Parallel}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -86,6 +86,32 @@ case class RollbackTargetNotCorroborated(
 
 object Download {
 
+  /** Run a long recovery operation with an inactivity watchdog rather than a total wall-clock deadline. Deep canonical replay is allowed to
+    * take hours as long as ordinals continue moving; a fiber that makes no recorded progress for `maxIdle` is cancelled and retried by
+    * DownloadDaemon. This preserves the original hung-fiber protection without repeatedly cancelling healthy 10k-90k ordinal catch-up.
+    */
+  private[snapshot] def withInactivityTimeout[F[_]: Async, A](
+    maxIdle: FiniteDuration,
+    checkEvery: FiniteDuration
+  )(use: F[Unit] => F[A]): F[A] = {
+    def awaitStall(lastProgress: Ref[F, FiniteDuration]): F[Unit] =
+      Async[F].sleep(checkEvery) >>
+        (Async[F].monotonic, lastProgress.get).mapN(_ - _).flatMap { idle =>
+          if (idle >= maxIdle) DownloadStartTimedOut.raiseError[F, Unit]
+          else awaitStall(lastProgress)
+        }
+
+    for {
+      startedAt <- Async[F].monotonic
+      lastProgress <- Ref.of[F, FiniteDuration](startedAt)
+      touch = Async[F].monotonic.flatMap(lastProgress.set)
+      result <- Async[F].race(use(touch), awaitStall(lastProgress)).flatMap {
+        case Left(value) => value.pure[F]
+        case Right(_)    => DownloadStartTimedOut.raiseError[F, A]
+      }
+    } yield result
+  }
+
   /** Per-Ready-peer advertised tip. */
   private[snapshot] final case class PeerTip(ordinal: SnapshotOrdinal, hash: Hash)
   private[snapshot] final case class PeerTipSample(queriedPeerCount: Int, tips: List[PeerTip])
@@ -147,6 +173,10 @@ object Download {
     case object SnapshotSignaturesInvalid extends DownloadOutcome { val label = "snapshot_signatures_invalid" }
     case object RecoveryCheckpointFork extends DownloadOutcome { val label = "recovery_checkpoint_fork" }
     case object ChainInvalid extends DownloadOutcome { val label = "chain_invalid" }
+    case object ChainLinkMismatch extends DownloadOutcome { val label = "chain_link_mismatch" }
+    case object ChainSequenceMismatch extends DownloadOutcome { val label = "chain_sequence_mismatch" }
+    case object ReplaySnapshotMissing extends DownloadOutcome { val label = "replay_snapshot_missing" }
+    case object ContextCreationFailed extends DownloadOutcome { val label = "context_creation_failed" }
     case object HashOrdinalMismatch extends DownloadOutcome { val label = "hash_ordinal_mismatch" }
     case object FirstIncrementalMissing extends DownloadOutcome { val label = "first_incremental_missing" }
     case object FetchSnapshotFailed extends DownloadOutcome { val label = "fetch_snapshot_failed" }
@@ -303,6 +333,40 @@ object Download {
           .flatMap(hashed => raiseOnCheckpointMismatch(snapshot.ordinal, hashed.hash))
       else Applicative[F].unit
 
+    /** Validate the only chain identity relation that is not contained in an individual snapshot: the next snapshot must point at the hash
+      * of its exact ordinal predecessor. Hash the predecessor under its own ordinal's hasher so this helper also remains correct at a
+      * serialization boundary.
+      */
+    private def validateNextSnapshot(
+      previous: Signed[GlobalIncrementalSnapshot],
+      next: Signed[GlobalIncrementalSnapshot],
+      source: SnapshotSource
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      hasherSelector.forOrdinal(previous.ordinal) { implicit hasher =>
+        previous.toHashed.flatMap { hashedPrevious =>
+          Applicative[F].unlessA(next.lastSnapshotHash === hashedPrevious.hash)(
+            ChainLinkMismatch(
+              previous.ordinal,
+              hashedPrevious.hash,
+              next.ordinal,
+              next.lastSnapshotHash,
+              source
+            ).raiseError[F, Unit]
+          ) >>
+            Applicative[F].unlessA(Validator.isNextSnapshot(hashedPrevious, next.value))(
+              ChainSequenceMismatch(
+                previous.ordinal,
+                previous.height.value.value,
+                previous.subHeight.value.value,
+                next.ordinal,
+                next.height.value.value,
+                next.subHeight.value.value,
+                source
+              ).raiseError[F, Unit]
+            )
+        }
+      }
+
     // Forward `validateChain` only re-validates ordinals ABOVE its starting anchor, so a checkpoint at or
     // below the anchor would never be proven against the (already-persisted) local chain. Verify it directly:
     // a forked local snapshot at the checkpoint ordinal is then caught even when the node has local history
@@ -326,12 +390,12 @@ object Download {
     val observationOffset = NonNegLong(1L)
     val fetchSnapshotDelayBetweenTrials = 10.seconds
 
-    // Outer watchdog for Download.start (both full path and recovery path). Picked generously:
+    // Outer watchdog for the full Download.start path. Picked generously:
     // a fresh-join full download from genesis can take several minutes through validateChain +
-    // MPT trie build (~890k entries observed on testnet). Anything longer than this is almost
-    // certainly a hung fiber, not a slow legitimate download. Wraps `start` in timeoutTo so a
-    // hang raises DownloadStartTimedOut, which fires the .onError instrumentation and lets the
-    // FSM revert state to WaitingForDownload for retry.
+    // MPT trie build (~890k entries observed on testnet). Anything longer than this is a
+    // better fit for the progress-aware recovery path. Wraps `start` in timeoutTo so a timeout
+    // raises DownloadStartTimedOut, returns the FSM to WaitingForDownload, and statically selects
+    // recovery mode on the next daemon attempt.
     val downloadStartMaxDuration: FiniteDuration = 10.minutes
 
     // Upper bound on the iterations validateChain spends searching for a valid persisted
@@ -454,10 +518,10 @@ object Download {
     /** Incremental recovery download: fetches only the gap between local tip and network tip.
       *
       * Unlike full download, this path:
-      *   - Does NOT clear in-memory caches (lastNGlobalSnapshotStorage, lastGlobalSnapshotStorage)
-      *   - Does NOT clear the event mempool — forked events from a minority fork will be rejected by consensus validation when proposed, so
-      *     stale mempool entries are harmless
-      *   - Does NOT clear the MPT store
+      *   - Retains persisted history at or below the selected network tip and cleans only a corroborated rollback suffix above it
+      *   - Clears in-memory snapshot heads, consensus-manager state, and the event mempool before rebuilding from persisted/downloaded
+      *     state
+      *   - Re-synchronizes the MPT to the validated recovery result before observation
       *   - Observes exactly one round (waits for the next snapshot) before facilitating
       *   - Uses setForRecovery on lastNGlobalSnapshotStorage (sets single snapshot, no backfill)
       *
@@ -481,6 +545,10 @@ object Download {
       case InvalidStateProof(_)                                        => DownloadOutcome.StateProofInvalid
       case InvalidSnapshotSignatures(_, _)                             => DownloadOutcome.SnapshotSignaturesInvalid
       case CheckpointForkDetected(_, _, _)                             => DownloadOutcome.RecoveryCheckpointFork
+      case _: ChainLinkMismatch                                        => DownloadOutcome.ChainLinkMismatch
+      case _: ChainSequenceMismatch                                    => DownloadOutcome.ChainSequenceMismatch
+      case _: ReplaySnapshotMissing                                    => DownloadOutcome.ReplaySnapshotMissing
+      case _: SnapshotContextCreationFailed                            => DownloadOutcome.ContextCreationFailed
       case InvalidChain                                                => DownloadOutcome.ChainInvalid
       case HashAndOrdinalMismatch                                      => DownloadOutcome.HashOrdinalMismatch
       case FirstIncrementalNotFound                                    => DownloadOutcome.FirstIncrementalMissing
@@ -499,6 +567,10 @@ object Download {
       case CannotFetchSnapshot                                         => DownloadOutcome.FetchSnapshotFailed
       case InvalidSnapshotSignatures(_, _)                             => DownloadOutcome.SnapshotSignaturesInvalid
       case CheckpointForkDetected(_, _, _)                             => DownloadOutcome.RecoveryCheckpointFork
+      case _: ChainLinkMismatch                                        => DownloadOutcome.ChainLinkMismatch
+      case _: ChainSequenceMismatch                                    => DownloadOutcome.ChainSequenceMismatch
+      case _: ReplaySnapshotMissing                                    => DownloadOutcome.ReplaySnapshotMissing
+      case _: SnapshotContextCreationFailed                            => DownloadOutcome.ContextCreationFailed
       case InvalidChain                                                => DownloadOutcome.ChainInvalid
       case other                                                       => DownloadOutcome.Unclassified(other.getClass.getSimpleName)
     }
@@ -734,11 +806,23 @@ object Download {
         getLatestMetadataWithPeer.map(_._2)
 
       def recoveryStart: F[DownloadResult] = {
-        val body =
+        def body(touch: F[Unit]): F[DownloadResult] = {
+          def recordProgress(phase: String, ordinal: SnapshotOrdinal): F[Unit] =
+            touch >>
+              Metrics[F].updateGauge("dag_download_recovery_progress_ordinal", ordinal.value.value.toDouble) >>
+              Async[F].realTimeInstant.flatMap(now =>
+                Metrics[F].updateGauge("dag_download_recovery_progress_epoch", now.getEpochSecond.toDouble)
+              ) >>
+              Metrics[F].incrementCounter(
+                "dag_download_recovery_progress_total",
+                Seq(Metrics.unsafeLabelName("phase") -> phase)
+              )
+
           for {
             _ <- recordDownloadPhase("recovery", "start_entered")
             localHead <- lastNGlobalSnapshotStorage.get
             (sourcePeer, metadata) <- getLatestMetadataWithPeer
+            _ <- recordProgress("metadata", metadata.ordinal)
             localOrdinal = localHead.map(_.ordinal)
             direction = localOrdinal.fold("unknown")(recoveryDirection(_, metadata.ordinal))
             _ <- logger.info(
@@ -778,6 +862,7 @@ object Download {
             // Clean up snapshots above the network tip (e.g. from a minority fork).
             _ <- snapshotStorage.cleanupAbove(metadata.ordinal)
             _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
+            _ <- recordProgress("cleanup", metadata.ordinal)
             // Clear in-memory snapshot caches. During a network partition the node may have
             // produced minority-fork snapshots whose hashes differ from the canonical chain.
             // If we keep stale cache entries, the download replay will fail when it tries to
@@ -793,18 +878,19 @@ object Download {
             _ <- eventMempool.clear
             _ <- logger.info("[RecoveryDownload] Cleared event mempool")
             // Fetch only the gap: the download() hash-chain walker already stops at persisted snapshots
-            result <- download(metadata.hash, metadata.ordinal, none)
+            result <- downloadWithProgress(metadata.hash, metadata.ordinal, none, recordProgress)
             _ <- logger.info(
               s"[RecoveryDownload] Gap fetched. Latest downloaded: ordinal=${result._1.ordinal.show}, target=${metadata.ordinal.show}, " +
                 s"direction=${recoveryDirection(localOrdinal.getOrElse(result._1.ordinal), result._1.ordinal)}"
             )
           } yield result
+        }
+
+        // A fixed total timeout repeatedly cancelled healthy deep replays (11k-92k ordinals on IntegrationNet). Keep the same ten-minute
+        // hung-fiber bound, but measure inactivity: every backward-walk/replay ordinal refreshes the deadline. The short persisted-index
+        // replacement is uncancelable, so even a genuine stall cannot leave a hash-only snapshot behind.
         val guardedBody =
-          Async[F].timeoutTo(
-            body,
-            downloadStartMaxDuration,
-            DownloadStartTimedOut.raiseError[F, DownloadResult]
-          )
+          Download.withInactivityTimeout[F, DownloadResult](downloadStartMaxDuration, 30.seconds)(body)
         guardedBody
           .flatTap(_ => recordStartOutcome("recovery", DownloadOutcome.Success) >> recordDownloadPhase("recovery", "start_success"))
           .onError {
@@ -812,7 +898,9 @@ object Download {
               val outcome = classifyStartError(err)
               val maybeLog =
                 if (outcome.isUnclassified) logUnclassifiedStartError(err) else Async[F].unit
-              maybeLog >> recordStartOutcome("recovery", outcome)
+              val timeoutMetric =
+                Metrics[F].incrementCounter("dag_download_recovery_inactivity_timeout_total").whenA(err == DownloadStartTimedOut)
+              maybeLog >> timeoutMetric >> recordStartOutcome("recovery", outcome)
           }
       }
 
@@ -1112,7 +1200,7 @@ object Download {
               fetchNextSnapshot(result)
                 .flatMap(nextResult => go(nextResult, currentLimit))
                 .recoverWith {
-                  case err @ (CannotFetchSnapshot | InvalidChain) =>
+                  case err @ (CannotFetchSnapshot | InvalidChain | _: SnapshotContextCreationFailed) =>
                     reEvaluateLimit(lastSnapshot).flatMap {
                       case (newLimit, true) =>
                         logger.info(
@@ -1204,20 +1292,14 @@ object Download {
       def retryPolicy = limitRetries[F](fetchNextRetryCap).join(constantDelay(fetchSnapshotDelayBetweenTrials))
 
       def isWorthRetrying(err: Throwable): F[Boolean] = err match {
-        case CannotFetchSnapshot | InvalidChain => true.pure[F]
-        case _                                  => false.pure[F]
+        case CannotFetchSnapshot | _: SnapshotContextCreationFailed => true.pure[F]
+        case _                                                      => false.pure[F]
       }
 
       retryingOnSomeErrors(retryPolicy, isWorthRetrying, retry.noop[F, Throwable]) {
         val (lastSnapshot, lastContext) = result
         hasherSelector.withCurrent(implicit hs => fetchSnapshot(none, lastSnapshot.ordinal.next)).flatMap { snapshot =>
-          hasherSelector.withCurrent { implicit hasher =>
-            lastSnapshot.toHashed[F]
-          }.flatMap { hashed =>
-            Applicative[F].unlessA {
-              Validator.isNextSnapshot(hashed, snapshot.value)
-            }(InvalidChain.raiseError[F, Unit])
-          } >>
+          validateNextSnapshot(lastSnapshot, snapshot, SnapshotSource.Network) >>
             validateSnapshotSignatures(snapshot) >>
             checkpointGate(snapshot) >>
             HasherSelector[F].withCurrent { implicit hasher =>
@@ -1228,11 +1310,9 @@ object Download {
                   snapshot,
                   fetchSnapshotByOrdinal
                 )
+            }.adaptError { case error => SnapshotContextCreationFailed(snapshot.ordinal, error) }.flatTap { _ =>
+              snapshotStorage.writePersisted(snapshot)
             }
-              .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
-              .flatTap { _ =>
-                snapshotStorage.writePersisted(snapshot)
-              }
               .map((snapshot, _))
 
         }
@@ -1241,7 +1321,15 @@ object Download {
 
     def download(hash: Hash, ordinal: SnapshotOrdinal, state: Option[DownloadResult])(
       implicit hasherSelector: HasherSelector[F]
-    ): F[DownloadResult] = {
+    ): F[DownloadResult] =
+      downloadWithProgress(hash, ordinal, state, (_, _) => Applicative[F].unit)
+
+    private def downloadWithProgress(
+      hash: Hash,
+      ordinal: SnapshotOrdinal,
+      state: Option[DownloadResult],
+      onProgress: (String, SnapshotOrdinal) => F[Unit]
+    )(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
 
       def go(
         tmpMap: Map[SnapshotOrdinal, Hash],
@@ -1249,34 +1337,37 @@ object Download {
         stepOrdinal: SnapshotOrdinal
       ): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
-          snapshotStorage.getHighestSnapshotInfoOrdinal(lte = stepOrdinal).flatMap {
-            validateChain(tmpMap, _, ordinal, state)
-          },
+          onProgress("walk_back", stepOrdinal) >>
+            snapshotStorage.getHighestSnapshotInfoOrdinal(lte = stepOrdinal).flatMap {
+              validateChain(tmpMap, _, ordinal, state, onProgress)
+            },
           snapshotStorage
             .readTmp(stepOrdinal)
             .flatMap {
               case Some(snapshot) =>
-                hasherSelector.withCurrent(implicit hasher => snapshot.toHashed[F]).map { hashed =>
+                hasherSelector.forOrdinal(stepOrdinal)(implicit hasher => snapshot.toHashed[F]).map { hashed =>
                   if (hashed.hash === stepHash) hashed.some else none[Hashed[GlobalIncrementalSnapshot]]
                 }
               case None => none[Hashed[GlobalIncrementalSnapshot]].pure[F]
             }
             .flatMap {
               _.map(_.pure[F])
-                .getOrElse(hasherSelector.withCurrent(implicit hs => fetchSnapshot(stepHash.some, stepOrdinal)).flatMap { snapshot =>
-                  hasherSelector.withCurrent { implicit hasher =>
-                    snapshotStorage.writeTmp(snapshot).flatMap(_ => snapshot.toHashed[F])
-                  }
+                .getOrElse(hasherSelector.forOrdinal(stepOrdinal)(implicit hs => fetchSnapshot(stepHash.some, stepOrdinal)).flatMap {
+                  snapshot =>
+                    hasherSelector.forOrdinal(stepOrdinal) { implicit hasher =>
+                      snapshotStorage.writeTmp(snapshot).flatMap(_ => snapshot.toHashed[F])
+                    }
                 })
                 .flatMap { hashed =>
                   def updated = tmpMap + (hashed.ordinal -> hashed.hash)
 
-                  PartialPrevious[SnapshotOrdinal]
-                    .partialPrevious(hashed.ordinal)
-                    .map {
-                      go(updated, hashed.lastSnapshotHash, _)
-                    }
-                    .getOrElse(HashAndOrdinalMismatch.raiseError[F, DownloadResult])
+                  onProgress("walk_back", hashed.ordinal) >>
+                    PartialPrevious[SnapshotOrdinal]
+                      .partialPrevious(hashed.ordinal)
+                      .map {
+                        go(updated, hashed.lastSnapshotHash, _)
+                      }
+                      .getOrElse(HashAndOrdinalMismatch.raiseError[F, DownloadResult])
                 }
             }
         )
@@ -1284,8 +1375,14 @@ object Download {
       go(Map.empty, hash, ordinal)
     }
 
-    def isSnapshotPersistedOrReachedGenesis(hash: Hash, ordinal: SnapshotOrdinal): F[Boolean] = {
-      def isSnapshotPersisted = snapshotStorage.isPersisted(hash)
+    def isSnapshotPersistedOrReachedGenesis(hash: Hash, ordinal: SnapshotOrdinal)(
+      implicit hasherSelector: HasherSelector[F]
+    ): F[Boolean] = {
+      // A raw content-addressed file is not enough: forward replay also needs its ordinal index and
+      // matching derived snapshot-info. If any piece is absent, continue walking backward and let
+      // the existing validated replay reconstruct the incomplete range.
+      def isSnapshotPersisted =
+        hasherSelector.forOrdinal(ordinal)(implicit hasher => snapshotStorage.ensurePersistedAnchor(hash, ordinal))
 
       def didReachGenesis = ordinal === lastFullGlobalSnapshotOrdinal
 
@@ -1298,7 +1395,8 @@ object Download {
       tmpMap: Map[SnapshotOrdinal, Hash],
       startingOrdinal: Option[SnapshotOrdinal],
       endingOrdinal: SnapshotOrdinal,
-      state: Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
+      state: Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)],
+      onProgress: (String, SnapshotOrdinal) => F[Unit]
     )(implicit hasherSelector: HasherSelector[F]): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
 
       type Agg = DownloadResult
@@ -1306,23 +1404,29 @@ object Download {
       def go(lastSnapshot: Signed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo): F[Agg] = {
         val nextOrdinal = lastSnapshot.ordinal.next
 
-        def readSnapshot: F[Option[Signed[GlobalIncrementalSnapshot]]] = tmpMap
-          .get(nextOrdinal)
+        val expectedTmpHash = tmpMap.get(nextOrdinal)
+        val replaySource = expectedTmpHash.fold[SnapshotSource](SnapshotSource.Persisted)(_ => SnapshotSource.Temporary)
+
+        def readSnapshot: F[Option[Signed[GlobalIncrementalSnapshot]]] = expectedTmpHash
           .as(snapshotStorage.readTmp(nextOrdinal))
           .getOrElse(snapshotStorage.readPersisted(nextOrdinal))
 
         def persistLastSnapshot: F[Unit] =
-          Applicative[F].whenA(tmpMap.contains(lastSnapshot.ordinal)) {
-            snapshotStorage.readPersisted(lastSnapshot.ordinal).flatMap {
-              _.map(snapshot =>
-                hasherSelector
-                  .withCurrent(implicit hasher => snapshot.toHashed[F])
-                  .map(_.hash)
-                  .flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
-              ).getOrElse(Applicative[F].unit)
-            } >>
-              snapshotStorage
-                .moveTmpToPersisted(lastSnapshot)
+          // The persisted hash move, old ordinal unlink, canonical tmp move, and new ordinal link form one local index replacement. A
+          // timeout may wait for this short region, but cannot cancel between those operations and manufacture another hash-only orphan.
+          Async[F].uncancelable { _ =>
+            Applicative[F].whenA(tmpMap.contains(lastSnapshot.ordinal)) {
+              snapshotStorage.readPersisted(lastSnapshot.ordinal).flatMap {
+                _.map(snapshot =>
+                  hasherSelector
+                    .forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[F])
+                    .map(_.hash)
+                    .flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
+                ).getOrElse(Applicative[F].unit)
+              } >>
+                snapshotStorage
+                  .moveTmpToPersisted(lastSnapshot)
+            }
           }
 
         def processNextOrFinish: F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
@@ -1331,7 +1435,8 @@ object Download {
           } else
             readSnapshot.flatMap {
               case Some(snapshot) =>
-                validateSnapshotSignatures(snapshot) >>
+                validateNextSnapshot(lastSnapshot, snapshot, replaySource) >>
+                  validateSnapshotSignatures(snapshot) >>
                   checkpointGate(snapshot) >>
                   HasherSelector[F].withCurrent { implicit hasher =>
                     globalSnapshotContextFns
@@ -1341,7 +1446,7 @@ object Download {
                         snapshot,
                         fetchSnapshotByOrdinal
                       )
-                  }
+                  }.adaptError { case error => SnapshotContextCreationFailed(snapshot.ordinal, error) }
                     .flatTap(newContext =>
                       hasherSelector.withCurrent { implicit hasher =>
                         snapshotStorage
@@ -1359,9 +1464,15 @@ object Download {
                     )
                     .flatMap { state =>
                       updateStoragesWithDownloadedSnapshot(snapshot, state) >>
+                        onProgress("replay", snapshot.ordinal) >>
                         go(snapshot, state)
                     }
-              case None => InvalidChain.raiseError[F, Agg]
+              case None =>
+                Metrics[F].incrementCounter(
+                  "dag_download_replay_snapshot_missing_total",
+                  Seq(Metrics.unsafeLabelName("source") -> replaySource.label)
+                ) >>
+                  ReplaySnapshotMissing(nextOrdinal, expectedTmpHash, replaySource).raiseError[F, Agg]
             }
 
         // Use syncFullIfNeeded for atomic initialization - avoids race condition where
@@ -1439,6 +1550,7 @@ object Download {
           case (s, c) =>
             verifyLocalCheckpoint(s.ordinal) >>
               updateStoragesWithDownloadedSnapshot(s, c) >>
+              onProgress("replay_anchor", s.ordinal) >>
               go(s, c)
         }
     }
@@ -1552,6 +1664,59 @@ object Download {
 
   case object InvalidChain extends NoStackTrace with RecoveryFallbackEligible
 
+  sealed trait SnapshotSource { def label: String }
+  object SnapshotSource {
+    case object Network extends SnapshotSource { val label: String = "network" }
+    case object Temporary extends SnapshotSource { val label: String = "temporary" }
+    case object Persisted extends SnapshotSource { val label: String = "persisted" }
+  }
+
+  final case class ChainLinkMismatch(
+    previousOrdinal: SnapshotOrdinal,
+    expectedParentHash: Hash,
+    nextOrdinal: SnapshotOrdinal,
+    foundParentHash: Hash,
+    source: SnapshotSource
+  ) extends RuntimeException(
+        s"Snapshot chain-link mismatch from source=${source.label} at ordinal=${nextOrdinal.value.value}: " +
+          s"previousOrdinal=${previousOrdinal.value.value}, expectedParentHash=${expectedParentHash.value}, " +
+          s"foundParentHash=${foundParentHash.value}"
+      )
+      with NoStackTrace
+      with RecoveryFallbackEligible
+
+  final case class ChainSequenceMismatch(
+    previousOrdinal: SnapshotOrdinal,
+    previousHeight: Long,
+    previousSubHeight: Long,
+    nextOrdinal: SnapshotOrdinal,
+    nextHeight: Long,
+    nextSubHeight: Long,
+    source: SnapshotSource
+  ) extends RuntimeException(
+        s"Snapshot sequence mismatch from source=${source.label}: " +
+          s"previous=${previousOrdinal.value.value}/$previousHeight/$previousSubHeight, " +
+          s"next=${nextOrdinal.value.value}/$nextHeight/$nextSubHeight"
+      )
+      with NoStackTrace
+      with RecoveryFallbackEligible
+
+  final case class ReplaySnapshotMissing(
+    ordinal: SnapshotOrdinal,
+    expectedHash: Option[Hash],
+    source: SnapshotSource
+  ) extends RuntimeException(
+        s"Snapshot replay source=${source.label} missing ordinal=${ordinal.value.value}, " +
+          s"expectedHash=${expectedHash.fold("none")(_.value)}"
+      )
+      with NoStackTrace
+      with RecoveryFallbackEligible
+
+  final case class SnapshotContextCreationFailed(ordinal: SnapshotOrdinal, cause: Throwable)
+      extends RuntimeException(s"Snapshot context creation failed at ordinal=${ordinal.value.value}", cause)
+      with NoStackTrace
+      with RecoveryFallbackEligible
+
   case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
 
   case class InvalidSnapshotSignatures(ordinal: SnapshotOrdinal, reason: String) extends NoStackTrace
@@ -1568,5 +1733,5 @@ object Download {
   //   3. Allows DownloadDaemon to schedule a fresh start() attempt
   // Without this watchdog, a hung start() leaves the node permanently in DownloadInProgress with
   // no metric increment and no FSM revert -- the observed silent-peer mode in alpha.70.
-  case object DownloadStartTimedOut extends NoStackTrace
+  case object DownloadStartTimedOut extends NoStackTrace with RecoveryFallbackEligible
 }

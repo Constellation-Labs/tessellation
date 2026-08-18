@@ -6,6 +6,9 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.Candidates
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.generators.peerGen
@@ -26,6 +29,22 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
   private val expectedHash = Hash("expected")
   private val differentHash = Hash("different")
   private val rendezvousEntropy = Hash("ab" * 32)
+
+  private def facility(
+    ordinalValue: Long = 100L,
+    parentHash: Hash = expectedHash,
+    facilitatorsHash: Hash = Hash("facilitators"),
+    configHash: Option[Hash] = Hash("config").some
+  ): Facility =
+    Facility(
+      eventHashes = Set.empty,
+      candidates = Candidates(Set.empty),
+      trigger = None,
+      facilitatorsHash = facilitatorsHash,
+      lastGlobalSnapshotOrdinal = ordinal(ordinalValue),
+      lastSnapshotHash = parentHash,
+      consensusConfigHash = configHash
+    )
 
   test("fresh direct readiness accepts the exact expected tip") {
     val tip = ChainTip(ordinal(100L), expectedHash)
@@ -157,6 +176,7 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
     val exact = ChainTip(ordinal(100L), expectedHash)
     val behind = ChainTip(ordinal(99L), differentHash)
     val conflict = ChainTip(ordinal(100L), differentHash)
+    val cached = ChainTip(ordinal(98L), differentHash)
 
     IO.pure(
       expect.same(
@@ -170,6 +190,90 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
         expect.same(
           Map.empty[PeerId, ChainTip],
           AdmissionCandidateTipProbe.mergeExactResult(Map.empty, (target -> conflict.some).some, expectedHash, ordinal(100L).some)
+        ) &&
+        expect.same(
+          Map.empty[PeerId, ChainTip],
+          AdmissionCandidateTipProbe.mergeExactResult(Map(target -> cached), (target -> behind.some).some, expectedHash, ordinal(100L).some)
+        ) &&
+        expect.same(
+          Map.empty[PeerId, ChainTip],
+          AdmissionCandidateTipProbe
+            .mergeExactResult(Map(target -> cached), (target -> none[ChainTip]).some, expectedHash, ordinal(100L).some)
+        )
+    )
+  }
+
+  test("open readiness requires both a fresh exact parent and a current-round Facility") {
+    val target = PeerId(Hex("01" * 64))
+    val exact = ChainTip(ordinal(100L), expectedHash)
+    val behind = ChainTip(ordinal(99L), differentHash)
+
+    val aligned = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(exact.some),
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
+    )
+    val noFacility = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(exact.some),
+      _ => false,
+      expectedHash,
+      ordinal(100L).some
+    )
+    val staleTip = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(behind.some),
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
+    )
+    val notAttempted = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.NotAttempted,
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
+    )
+
+    IO.pure(
+      expect.same(Set(target), aligned) &&
+        expect(noFacility.isEmpty) &&
+        expect(staleTip.isEmpty) &&
+        expect(notAttempted.isEmpty)
+    )
+  }
+
+  test("current-round Facility requires exact parent and the voter's round bindings") {
+    val voter = PeerId(Hex("01" * 64))
+    val target = PeerId(Hex("02" * 64))
+    val voterDeclaration = PeerDeclarations.empty.copy(facility = facility().some)
+
+    def aligned(targetFacility: Facility): Boolean =
+      StallDetector.hasCurrentRoundFacility(
+        Map(voter -> voterDeclaration, target -> PeerDeclarations.empty.copy(facility = targetFacility.some)),
+        voter,
+        target,
+        expectedHash,
+        ordinal(100L).some
+      )
+
+    IO.pure(
+      expect(aligned(facility())) &&
+        expect(!aligned(facility(ordinalValue = 99L))) &&
+        expect(!aligned(facility(parentHash = differentHash))) &&
+        expect(!aligned(facility(facilitatorsHash = Hash("other-facilitators")))) &&
+        expect(!aligned(facility(configHash = None))) &&
+        expect(!aligned(facility(configHash = Hash("other-config").some))) &&
+        expect(
+          !StallDetector.hasCurrentRoundFacility(
+            Map(voter -> voterDeclaration),
+            voter,
+            target,
+            expectedHash,
+            ordinal(100L).some
+          )
         )
     )
   }

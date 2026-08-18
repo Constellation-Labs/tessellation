@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l0.domain.snapshot.programs
 import cats.syntax.option._
 
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.Download.PeerTip
+import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
 
@@ -161,5 +162,9 @@ object DownloadSuite extends FunSuite {
     expect(Download.matchesFollowerCatchUpTarget(target, nextOrd, nextHash)) &&
     expect(!Download.matchesFollowerCatchUpTarget(target, nextTwoOrd, nextHash)) &&
     expect(!Download.matchesFollowerCatchUpTarget(target, nextOrd, altHashSameOrd))
+  }
+
+  test("a full-download timeout is statically eligible for recovery fallback") {
+    expect(Download.DownloadStartTimedOut.isInstanceOf[RecoveryFallbackEligible])
   }
 }
