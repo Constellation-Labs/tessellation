@@ -5,8 +5,7 @@ import java.security.KeyPair
 import cats.effect.Async
 import cats.effect.kernel.Ref
 import cats.effect.std.Supervisor
-import cats.syntax.functor._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -14,6 +13,7 @@ import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
+import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.Daemon
@@ -22,7 +22,9 @@ import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.Coll
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGossipDaemon
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
+import io.constellationnetwork.schema.SnapshotOrdinal._
 import io.constellationnetwork.schema.mpt.GlobalStateKey
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
@@ -71,13 +73,42 @@ object Daemons {
           services.eventMempool,
           eventGossipDaemon,
           services.consensus.triggerEventConsensus,
-          services.consensus.storage.getLastConsensusOutcome.map(
-            _.fold(0) { outcome =>
+          (
+            services.consensus.storage.getLastConsensusOutcome,
+            services.consensus.storage.getPeerCurrentKeys,
+            storages.cluster.getResponsivePeers
+          ).mapN { (maybeOutcome, peerCurrentKeys, responsivePeers) =>
+            maybeOutcome.fold(
+              GlobalSnapshotEventsPublisherDaemon.EventTriggerContext(
+                None,
+                0,
+                GlobalSnapshotEventsPublisherDaemon.FollowerHeadroom.unavailable
+              )
+            ) { outcome =>
               val facilitators = outcome.facilitators.value.toSet
               val proofSigners = outcome.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
-              GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(facilitators, proofSigners)
+              val responsivePeerIds = responsivePeers.iterator
+                .filterNot(peer => peer.state === NodeState.Leaving || peer.state === NodeState.Offline)
+                .map(_.id)
+                .toSet
+
+              GlobalSnapshotEventsPublisherDaemon.EventTriggerContext(
+                generation = GlobalSnapshotEventsPublisherDaemon
+                  .EventTriggerGeneration(outcome.key, outcome.finished.snapshotHash)
+                  .some,
+                participatingFacilitators = GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(
+                  facilitators,
+                  proofSigners
+                ),
+                followerHeadroom = GlobalSnapshotEventsPublisherDaemon.followerHeadroom(
+                  outcome.key.next,
+                  responsivePeerIds,
+                  peerCurrentKeys,
+                  nodeId
+                )
+              )
             }
-          ),
+          },
           effectiveConsensusConfig
         ),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),

@@ -61,6 +61,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
             expect.same(Some(9), effective.coreCommitteeSize) &&
             expect.same(0, effective.quorumShrinkActivationViews) &&
             expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
+            expect.same(9, effective.eventTriggerThreshold) &&
             expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
             expect.same(10, effective.activeAdmissionRecentSignerWindow) &&
             expect.same(Some(19), effective.activeFacilitatorTarget) &&

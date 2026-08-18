@@ -1,8 +1,11 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 
+import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.SimpleIOSuite
 
 object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
@@ -13,6 +16,7 @@ object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
   private val peerB = peer('b')
   private val peerC = peer('c')
   private val formerPeer = peer('d')
+  private def ordinal(value: Long): SnapshotOrdinal = SnapshotOrdinal(NonNegLong.unsafeFrom(value))
   private val integrationnetMinimum = GlobalSnapshotEventsPublisherDaemon.minimumEventTriggerParticipants(
     bootstrapCompleteProofsThreshold = 3
   )
@@ -83,5 +87,77 @@ object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
 
     expect.same(2, misconfiguredMinimum) &&
     expect(!GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(1, misconfiguredMinimum))
+  }
+
+  pureTest("follower headroom uses a supermajority of every responsive peer, including unknown keys") {
+    val expected = ordinal(101L)
+    val headroom = GlobalSnapshotEventsPublisherDaemon.followerHeadroom(
+      expected,
+      responsivePeerIds = Set(peerB, peerC, formerPeer),
+      peerCurrentKeys = Map(peerB -> expected, peerC -> expected),
+      selfId = peerA
+    )
+
+    expect.same(3, headroom.aligned) &&
+    expect.same(4, headroom.total) &&
+    expect.same(3, headroom.required) &&
+    expect(headroom.allowsAcceleration)
+  }
+
+  pureTest("a behind follower closes state-channel acceleration without blocking normal consensus") {
+    val expected = ordinal(101L)
+    val headroom = GlobalSnapshotEventsPublisherDaemon.followerHeadroom(
+      expected,
+      responsivePeerIds = Set(peerB, peerC, formerPeer),
+      peerCurrentKeys = Map(peerB -> expected, peerC -> ordinal(100L)),
+      selfId = peerA
+    )
+
+    expect.same(2, headroom.aligned) &&
+    expect.same(3, headroom.required) &&
+    expect(!headroom.allowsAcceleration)
+  }
+
+  pureTest("state-channel trigger intent resets on a completed-outcome generation change") {
+    val hashA = Hash("a" * 64)
+    val hashB = Hash("b" * 64)
+    val firstGeneration = Some(GlobalSnapshotEventsPublisherDaemon.EventTriggerGeneration(ordinal(100L), hashA))
+    val nextGeneration = Some(GlobalSnapshotEventsPublisherDaemon.EventTriggerGeneration(ordinal(101L), hashB))
+    val first = GlobalSnapshotEventsPublisherDaemon.StateChannelTriggerIntent.empty.record(firstGeneration, hashA)
+    val next = first.record(nextGeneration, hashB)
+
+    expect.same(Set(hashA), first.hashes) &&
+    expect.same(Set(hashB), next.hashes)
+  }
+
+  pureTest("state-channel trigger intent resets when recovery replaces the same ordinal with a different hash") {
+    val eventHashA = Hash("a" * 64)
+    val eventHashB = Hash("b" * 64)
+    val generationA = Some(GlobalSnapshotEventsPublisherDaemon.EventTriggerGeneration(ordinal(100L), Hash("c" * 64)))
+    val generationB = Some(GlobalSnapshotEventsPublisherDaemon.EventTriggerGeneration(ordinal(100L), Hash("d" * 64)))
+    val first = GlobalSnapshotEventsPublisherDaemon.StateChannelTriggerIntent.empty.record(generationA, eventHashA)
+    val recovered = first.record(generationB, eventHashB)
+
+    expect.same(Set(eventHashB), recovered.hashes)
+  }
+
+  pureTest("semantic re-delivery cannot inflate a state-channel trigger batch") {
+    val hash = Hash("a" * 64)
+    val generation = Some(GlobalSnapshotEventsPublisherDaemon.EventTriggerGeneration(ordinal(100L), Hash("c" * 64)))
+    val once = GlobalSnapshotEventsPublisherDaemon.StateChannelTriggerIntent.empty.record(generation, hash)
+    val twice = once.record(generation, hash)
+
+    expect.same(Set(hash), twice.hashes)
+  }
+
+  pureTest("consuming captured intent does not remove a later state-channel event") {
+    val hashA = Hash("a" * 64)
+    val hashB = Hash("b" * 64)
+    val generation = Some(GlobalSnapshotEventsPublisherDaemon.EventTriggerGeneration(ordinal(100L), Hash("c" * 64)))
+    val captured = GlobalSnapshotEventsPublisherDaemon.StateChannelTriggerIntent.empty.record(generation, hashA)
+    val withLaterArrival = captured.record(generation, hashB)
+    val remaining = withLaterArrival.consume(captured.hashes)
+
+    expect.same(Set(hashB), remaining.hashes)
   }
 }

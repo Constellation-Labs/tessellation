@@ -27,6 +27,17 @@ import io.circe.Encoder
   */
 trait EventMempool[F[_], Event, Key] {
 
+  /** Add a signed event envelope and report whether this invocation inserted that exact envelope.
+    *
+    * Trigger scheduling must distinguish a genuinely new envelope from an idempotent re-delivery. The legacy `add` result intentionally did
+    * not expose that distinction: both cases returned the stored entry. Using a separate atomic result avoids the racy `contains(hash) >>
+    * add(event)` pattern while preserving `add` for callers that only need storage semantics. Callers that need semantic deduplication must
+    * key it by the unsigned event value; ECDSA makes independently-created signed envelope hashes non-deterministic.
+    */
+  def addWithStatus(
+    event: Signed[Event]
+  ): F[Either[MempoolRejectionReason, MempoolAddResult[Event, Key]]]
+
   /** Add an event to the mempool.
     *
     * @param event
@@ -145,6 +156,16 @@ trait EventMempool[F[_], Event, Key] {
   def clear: F[Unit]
 }
 
+/** Result of an atomic mempool insertion attempt.
+  *
+  * `inserted=false` is a successful idempotent delivery of the exact signed envelope: `entry` is the already-stored value. It is not a
+  * rejection and must not create fresh event-trigger intent or gossip fan-out.
+  */
+final case class MempoolAddResult[Event, Key](
+  entry: MempoolEntry[Event, Key],
+  inserted: Boolean
+)
+
 /** Configuration for the event mempool.
   *
   * TODO: Add a `trimOldEvents(maxAge: FiniteDuration)` method that the gossip daemon could call periodically. Currently events are only
@@ -194,7 +215,9 @@ object EventMempool {
   ): EventMempool[F, Event, Key] =
     new EventMempool[F, Event, Key] {
 
-      def add(event: Signed[Event]): F[Either[MempoolRejectionReason, MempoolEntry[Event, Key]]] =
+      def addWithStatus(
+        event: Signed[Event]
+      ): F[Either[MempoolRejectionReason, MempoolAddResult[Event, Key]]] =
         for {
           hashed <- event.toHashed
           stateKeys <- keyExtractor.extractKeys(hashed.signed.value)
@@ -203,11 +226,15 @@ object EventMempool {
             state.entries.get(hashed.hash) match {
               case Some(existing) =>
                 // Duplicate: return existing entry without modifying state
-                (state, existing.asRight[MempoolRejectionReason])
+                (state, MempoolAddResult(existing, inserted = false).asRight[MempoolRejectionReason])
 
               case None if state.entries.size >= config.maxSize =>
                 // Mempool full: reject without modifying state
-                (state, (MempoolRejectionReason.MempoolFull: MempoolRejectionReason).asLeft[MempoolEntry[Event, Key]])
+                (
+                  state,
+                  (MempoolRejectionReason.MempoolFull: MempoolRejectionReason)
+                    .asLeft[MempoolAddResult[Event, Key]]
+                )
 
               case None =>
                 // New event: atomically insert
@@ -215,10 +242,13 @@ object EventMempool {
                   entries = state.entries + (hashed.hash -> entry),
                   insertionOrder = state.insertionOrder :+ hashed.hash
                 )
-                (newState, entry.asRight[MempoolRejectionReason])
+                (newState, MempoolAddResult(entry, inserted = true).asRight[MempoolRejectionReason])
             }
           }
         } yield result
+
+      def add(event: Signed[Event]): F[Either[MempoolRejectionReason, MempoolEntry[Event, Key]]] =
+        addWithStatus(event).map(_.map(_.entry))
 
       def get(hash: Hash): F[Option[Hashed[Event]]] =
         storage.get.map(_.entries.get(hash).map(_.hashed))

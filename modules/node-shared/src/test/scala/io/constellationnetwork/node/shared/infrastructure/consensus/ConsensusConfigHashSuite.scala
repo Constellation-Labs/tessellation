@@ -126,6 +126,13 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
   }
 
+  pureTest("EventTrigger batching and cooldown are NOT in deterministicConfigHash (local scheduling only)") {
+    val oneAtATime = baseConfig.copy(eventTriggerThreshold = 1, eventTriggerCooldown = 5.seconds)
+    val batched = baseConfig.copy(eventTriggerThreshold = 9, eventTriggerCooldown = 43.seconds)
+
+    expect.same(oneAtATime.deterministicConfigHash, batched.deterministicConfigHash)
+  }
+
   pureTest("the environment-resolved facilitator selector cap participates independently in the join hash") {
     val a = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(1000))
     val b = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(300))

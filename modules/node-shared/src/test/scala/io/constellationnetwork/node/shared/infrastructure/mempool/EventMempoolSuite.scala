@@ -97,6 +97,22 @@ object EventMempoolSuite extends SimpleIOSuite {
       )
   }
 
+  test("addWithStatus atomically distinguishes a new insertion from an idempotent delivery") {
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+      mempool <- EventMempool.make[IO, TestEvent, TestKey](noopExtractor, defaultConfig)
+      ev = fakeSignedEvent("trigger-intent")
+      first <- mempool.addWithStatus(ev)
+      duplicate <- mempool.addWithStatus(ev)
+    } yield
+      expect.all(
+        first.exists(_.inserted),
+        duplicate.exists(result => !result.inserted),
+        first.map(_.entry.hashed.hash) == duplicate.map(_.entry.hashed.hash)
+      )
+  }
+
   // ── capacity ─────────────────────────────────────────────────
 
   test("add is rejected with MempoolFull when at capacity") {

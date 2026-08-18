@@ -624,7 +624,13 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       restartSuppressed = abandonRequested && !shouldAbandon
 
       abandonReason: AbandonReason =
-        if (isLagging) AbandonReason.Lagging(peersAtHigherKey, totalRegisteredPeers, totalAllRegs)
+        if (isLagging)
+          AbandonReason.Lagging(
+            peersAtHigherKey,
+            totalRegisteredPeers,
+            totalAllRegs,
+            followerCatchUpEligible = !state.roundStartFacilitators.value.contains(selfId)
+          )
         else if (readyParticipationShouldAbandon)
           AbandonReason.ReadyParticipationQuorumInfeasible(
             readyParticipationStatus.activeReady,
