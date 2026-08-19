@@ -21,6 +21,19 @@ trait EvictionVoter[F[_], Key] {
     target: PeerId,
     reason: EvictionReason
   ): F[Unit]
+
+  /** Emit during round creation, before the new [[io.constellationnetwork.node.shared.infrastructure.consensus.state.ConsensusState]] is
+    * visible in storage. The default preserves compatibility with voters that do not need explicit round context; the gossiping voter
+    * overrides it so the vote is bound to the same frozen committee and parent hash as the state being created.
+    */
+  def emitEvictionVoteForRound(
+    key: Key,
+    target: PeerId,
+    reason: EvictionReason,
+    roundStartFacilitators: List[PeerId],
+    gossipFacilitators: List[PeerId],
+    lastSnapshotHash: Hash
+  ): F[Unit] = emitEvictionVote(key, target, reason)
 }
 
 object EvictionVoter {
