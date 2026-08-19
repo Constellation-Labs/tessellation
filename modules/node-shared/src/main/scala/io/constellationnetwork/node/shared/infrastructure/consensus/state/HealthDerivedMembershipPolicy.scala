@@ -6,27 +6,25 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ActiveFacili
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 
-/** Layer policy for membership changes derived from transient health observations.
+/** Layer policy for membership changes derived from transient health observations or quorum-certified evidence.
   *
-  * Global L0's conservative bridge creates no new health-derived removal debt. It retains leases not already excluded by carried debt or
-  * administrative policy. Local Facility arrival, eviction votes, and timeout voters may still drive progress within a round, but they
-  * cannot create a new reason to delete a peer from the next round's signing committee. Currency L0 retains the legacy automatic removal
-  * behavior.
+  * Global L0 never removes a signing lease from node-local Facility arrival, withdrawal timing, or timeout observations. Its certified
+  * policy may separately accept an EvictionCertificate after the Proposal path validates the target, tip, committee hash, Core witness
+  * pool, quorum, and signatures. Currency L0 retains the legacy automatic-removal behavior.
   *
   * This policy changes behavior only. It is not serialized, hashed, or copied into consensus state.
   */
 sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
 
   def allowsAutomaticRemoval: Boolean
+  def acceptsEvictionCertificates: Boolean
 
   /** Filter both newly observed and outcome-carried Facility removals through the layer policy. */
   final def persistentFacilityRemovals(healthDerivedPeers: Set[PeerId]): Set[PeerId] =
     if (allowsAutomaticRemoval) healthDerivedPeers else Set.empty
 
   final def acceptedEvictionTargets(certifiedTargets: Set[PeerId]): Set[PeerId] =
-    if (allowsAutomaticRemoval) certifiedTargets else Set.empty
-
-  final def acceptsEvictionCertificates: Boolean = allowsAutomaticRemoval
+    if (acceptsEvictionCertificates) certifiedTargets else Set.empty
 
   /** Canonical facilitator source at a certified-view or signature boundary.
     *
@@ -35,6 +33,15 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
     */
   final def canonicalFacilitators(activeFacilitators: List[PeerId], roundStartFacilitators: List[PeerId]): List[PeerId] =
     if (allowsAutomaticRemoval) activeFacilitators else roundStartFacilitators
+
+  /** Apply a Proposal's already-validated eviction certificates without allowing node-local health observations to affect membership. */
+  final def canonicalFacilitatorsAfterCertifiedEviction(
+    activeFacilitators: List[PeerId],
+    roundStartFacilitators: List[PeerId],
+    certifiedTargets: Set[PeerId]
+  ): List[PeerId] =
+    if (certifiedTargets.nonEmpty && acceptsEvictionCertificates) activeFacilitators
+    else canonicalFacilitators(activeFacilitators, roundStartFacilitators)
 
   /** Leader pool after a certified VCC/TC. GL0 must not narrow frozen Core with node-local withdrawal observations. */
   def certifiedViewChangeLeaderPool(
@@ -74,6 +81,7 @@ object HealthDerivedMembershipPolicy {
     */
   case object RetainSigningLeases extends HealthDerivedMembershipPolicy {
     val allowsAutomaticRemoval: Boolean = false
+    val acceptsEvictionCertificates: Boolean = false
 
     def certifiedViewChangeLeaderPool(
       coreFacilitators: List[PeerId],
@@ -104,9 +112,47 @@ object HealthDerivedMembershipPolicy {
     }
   }
 
+  /** Global L0 policy: retain leases across node-local health observations, but accept an explicitly certified Tier-1 replacement.
+    *
+    * Timeout and Facility-removal behavior is identical to `RetainSigningLeases`. The only removal authority added here is an
+    * EvictionCertificate whose target, tip binding, facilitator hash, Core witness pool, quorum, and signatures are validated by the normal
+    * Proposal path.
+    */
+  case object CertifiedEvictionOnly extends HealthDerivedMembershipPolicy {
+    val allowsAutomaticRemoval: Boolean = false
+    val acceptsEvictionCertificates: Boolean = true
+
+    def certifiedViewChangeLeaderPool(
+      coreFacilitators: List[PeerId],
+      activeFacilitators: List[PeerId],
+      roundStartFacilitators: List[PeerId]
+    ): List[PeerId] = leaderPool(coreFacilitators, roundStartFacilitators)
+
+    def timeoutMembership(
+      facilitators: List[PeerId],
+      coreFacilitators: List[PeerId],
+      roundStartFacilitators: List[PeerId],
+      timeoutVoters: Set[PeerId],
+      shrinkFloor: Int
+    ): TimeoutMembership = {
+      val canonical = canonicalFacilitators(facilitators, roundStartFacilitators)
+      TimeoutMembership(
+        facilitators = canonical,
+        coreFacilitators = coreFacilitators,
+        leaderPool = certifiedViewChangeLeaderPool(coreFacilitators, facilitators, roundStartFacilitators),
+        evaluatedActive = canonical,
+        shrinkApplied = false,
+        shrinkEvaluated = false,
+        exclusionCount = 0,
+        recentSignerPoolSize = 0
+      )
+    }
+  }
+
   /** Exact rc.6 behavior retained for Currency L0. */
   case object LegacyAutomaticRemoval extends HealthDerivedMembershipPolicy {
     val allowsAutomaticRemoval: Boolean = true
+    val acceptsEvictionCertificates: Boolean = true
 
     def certifiedViewChangeLeaderPool(
       coreFacilitators: List[PeerId],
