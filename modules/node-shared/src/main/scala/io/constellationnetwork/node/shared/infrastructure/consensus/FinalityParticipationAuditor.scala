@@ -47,16 +47,18 @@ object FinalityParticipationAuditor {
 
   final case class Observation(history: MissHistory, decision: Option[Decision])
 
-  /** Combine proof-miss hysteresis, the exact current-seat finality deficit, and the existing membership-change cadence.
+  /** Combine proof-miss hysteresis, exact finality headroom, and the existing membership-change cadence.
     *
-    * This remains a local vote-emission decision. A Core quorum of existing EvictionVotes is still required before membership changes.
+    * A vote is useful both when the current committee has already fallen below its floor and in the membership HOLD where the current
+    * committee still finalizes but cannot add a replacement seat. This remains a local vote-emission decision. A Core quorum of existing
+    * EvictionVotes is still required before membership changes.
     */
   def shouldEmitSilentEvictionVote(
     decision: Decision,
     headroom: FinalityHeadroom.Evaluation,
     cadenceAllowed: Boolean
   ): Boolean =
-    decision.shouldVote && headroom.allowsSilentEviction && cadenceAllowed
+    decision.shouldVote && (headroom.allowsSilentEviction || headroom.allowsCertifiedReplacement) && cadenceAllowed
 
   /** Preserve the intended elapsed-time meaning of an N-round miss window when EventTrigger accelerates rounds.
     *
