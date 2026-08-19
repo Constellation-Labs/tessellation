@@ -4,6 +4,7 @@ import cats.Applicative
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.EvictionReason
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 
 /** Emits (signs, stores locally, gossips) an `EvictionVote` on behalf of this node.
   *
