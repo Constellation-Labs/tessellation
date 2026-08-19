@@ -6,14 +6,22 @@ import cats.syntax.all._
 
 /** Local, generation-bound gate for the first consensus round after a deferred bootstrap/recovery initialization.
   *
-  * The gate is armed before consensus/event daemons start. Binding it to the installed key creates a generation token. Only a serialized
-  * release command carrying that exact `(key, generation)` may open it; a delayed release from an older rollback cannot open a newer hold.
-  * While held, every ordinary start source (`StartRound`, `TimeTick`, and `FacilitateByEvent`) is dropped by the FSM.
+  * Explicit recovery may construct the engine held; normal rollback/download initialization arms the gate on the serialized command loop
+  * before that initialization can schedule a round. Binding it to the installed key creates a generation token. Only a serialized release
+  * command carrying that exact `(key, generation)` may open it; a delayed release from an older rollback cannot open a newer hold. While
+  * held, every ordinary start source (`StartRound`, `TimeTick`, and `FacilitateByEvent`) is dropped by the FSM.
   */
 trait FirstRoundStartGate[F[_], Key] {
   def arm(key: Key): F[FirstRoundStartGate.Permit[Key]]
   def isHeld: F[Boolean]
   def isPending(permit: FirstRoundStartGate.Permit[Key]): F[Boolean]
+
+  /** Open only when a validated initialization has superseded a hold for a different parent key.
+    *
+    * This is the follower-catch-up escape for a node that no longer belongs to the newer committee. It cannot open the current generation,
+    * and every old permit remains invalid because a subsequent arm uses a strictly larger generation.
+    */
+  def openIfSupersededBy(key: Key): F[Boolean]
 
   /** Establish the first round before opening the gate. The state transition itself is uncancelable, while the establishment effect remains
     * cancelable: failure or cancellation leaves the exact permit held and retryable.
@@ -60,6 +68,12 @@ object FirstRoundStartGate {
             case Held(generation, Some(key)) => generation === permit.generation && key === permit.key
             case _                           => false
           }
+
+          def openIfSupersededBy(key: Key): F[Boolean] =
+            state.modify {
+              case Held(generation, Some(existing)) if existing =!= key => Open(generation) -> true
+              case current                                              => current -> false
+            }
 
           def releaseAfter(permit: Permit[Key])(scheduleFirstRound: F[Unit]): F[Boolean] =
             Async[F].uncancelable { poll =>

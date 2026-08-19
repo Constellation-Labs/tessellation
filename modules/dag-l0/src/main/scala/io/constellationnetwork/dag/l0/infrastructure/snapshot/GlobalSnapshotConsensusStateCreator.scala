@@ -6,7 +6,7 @@ import cats.effect.kernel.{Clock, Ref, Sync}
 import cats.effect.std.Queue
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
@@ -428,12 +428,18 @@ object GlobalSnapshotConsensusStateCreator {
       lastOutcome: GlobalConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
-      priorAbandonmentCount: Int
+      priorAbandonmentCount: Int,
+      expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
     ): F[StateCreateResult] =
       consensusStorage.resumePendingStateEffect(key) >>
         consensusStorage
           .condModifyStateWithSideEffect(key)(
-            toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount))
+            toCreateStateFn(
+              validateExpectedRoundStartFacilitators(
+                facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount),
+                expectedRoundStartFacilitators
+              )
+            )
           )
           .map(_.flatten)
           .flatTap(logIfCreated)

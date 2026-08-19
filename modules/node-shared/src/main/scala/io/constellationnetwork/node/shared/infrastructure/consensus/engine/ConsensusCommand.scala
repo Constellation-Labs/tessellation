@@ -54,13 +54,16 @@ object ConsensusCommand {
   /** Local startup policy for the first round after rollback. This is an in-process control type, not a consensus or wire schema.
     *
     * `RequireAlignedCommittee` is the fail-closed emergency-recovery policy: the rollback lead waits without a timeout escape until the
-    * exact named peers have joined the current session and serve the exact seeded outcome. It never substitutes an unrelated Ready peer.
+    * exact named peers have joined the current session and serve the exact seeded outcome. `RequireOutcomeAlignedQuorum` is the normal
+    * post-bootstrap GL0 policy: it waits for the configured quorum of the anchor-derived committee. Neither policy substitutes an unrelated
+    * Ready peer or changes consensus bytes.
     */
   sealed trait RollbackStartPolicy
   object RollbackStartPolicy {
     case object Immediate extends RollbackStartPolicy
     case object LegacyDeferred extends RollbackStartPolicy
     final case class RequireAlignedCommittee(committee: SortedSet[PeerId]) extends RollbackStartPolicy
+    final case class RequireOutcomeAlignedQuorum(committee: SortedSet[PeerId]) extends RollbackStartPolicy
   }
 
   final case class RumorReceived(rumor: Either[PeerRumor[_], CommonRumor[_]]) extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
@@ -68,8 +71,8 @@ object ConsensusCommand {
   case object TimeTick extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
   case object FacilitateByEvent extends ConsensusCommand[Nothing, Nothing, Nothing, Nothing]
 
-  /** Serialized, generation-bound establishment and release of the local first-round recovery gate. The expected committee is local signed
-    * recovery-plan input, not a wire or consensus schema field.
+  /** Serialized, generation-bound establishment and release of the local first-round startup gate. The expected committee is process-local
+    * orchestration input from either the normal anchor or an explicit recovery selection, not a wire or consensus schema field.
     */
   final case class ReleaseFirstRoundStart[Key](permit: FirstRoundStartGate.Permit[Key], expectedCommittee: SortedSet[PeerId])
       extends ConsensusCommand[Key, Nothing, Nothing, Nothing]

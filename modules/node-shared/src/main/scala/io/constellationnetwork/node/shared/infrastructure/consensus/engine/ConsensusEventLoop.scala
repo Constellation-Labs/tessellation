@@ -239,8 +239,8 @@ object ConsensusEventLoop {
   ): Boolean =
     disposition == InitDownloadFailureDisposition.HoldObservingAndRetry && state === NodeState.Observing
 
-  /** A signed-plan initialization is idempotent for its exact installed outcome and gate generation. It may therefore resume from any
-    * lifecycle state reached by the non-transactional initialization tail, rather than bouncing through a fresh download and losing the
+  /** A first-round-aligned initialization is idempotent for its exact installed outcome and gate generation. It may therefore resume from
+    * any lifecycle state reached by the non-transactional initialization tail, rather than bouncing through a fresh download and losing the
     * only barrier installer.
     */
   private[consensus] def plannedInitializationRetryableState(state: NodeState): Boolean =
@@ -325,7 +325,8 @@ object ConsensusEventLoop {
     onOutcomeSafetyInitialized: Option[Outcome => F[Unit]] = None,
     onOutcomeRollbackInitialized: Option[(Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit]] = None,
     initiallyHoldFirstRound: Boolean = false,
-    plannedRecoveryCommittee: Option[F[Option[SortedSet[PeerId]]]] = None
+    plannedRecoveryCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -373,7 +374,8 @@ object ConsensusEventLoop {
         onOutcomeSafetyInitialized.getOrElse((_: Outcome) => Async[F].unit),
         onOutcomeRollbackInitialized.getOrElse((_: Outcome, _: ConsensusCommand.RollbackStartPolicy) => Async[F].unit),
         initiallyHoldFirstRound,
-        plannedRecoveryCommittee.getOrElse(none[SortedSet[PeerId]].pure[F])
+        plannedRecoveryCommittee.getOrElse(none[SortedSet[PeerId]].pure[F]),
+        normalFirstRoundAlignment
       )
       _ <- Metrics[F].updateGauge("dag_consensus_first_round_start_gate_held", if (initiallyHoldFirstRound) 1L else 0L)
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
@@ -607,16 +609,27 @@ object ConsensusEventLoop {
                                 scheduleCheckUpdateRetry(key, expectedAttemptId.some)
                               case init @ ConsensusCommand.InitializeFromDownload(_, _, _, _) =>
                                 (ctx.plannedRecoveryCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
-                                  case (Right(Some(_)), _) | (_, Right(true)) =>
-                                    // A planned initialization may already have installed the exact anchor and advanced
+                                  case (planned, held) if planned.exists(_.nonEmpty) || held.contains(true) =>
+                                    val explicitRecovery = planned.exists(_.nonEmpty)
+                                    val message =
+                                      if (explicitRecovery)
+                                        "Signed recovery-plan initialization failed after a partial install; retrying the exact generation"
+                                      else
+                                        "Normal first-round alignment initialization failed after a partial install; retrying the exact generation"
+                                    val observeResume =
+                                      ctx.logger.warn(message) >>
+                                        (if (explicitRecovery)
+                                           Metrics[F].incrementCounter("dag_consensus_recovery_plan_init_resume_total")
+                                         else
+                                           Metrics[F].incrementCounter(
+                                             "dag_consensus_normal_first_round_alignment_init_resume_total"
+                                           ))
+
+                                    // An aligned first-round initialization may already have installed the exact anchor and advanced
                                     // Observing -> WaitingForReady before a later prerequisite failed. Re-entering download would
-                                    // strand that state and can never recreate the all-member barrier. Retry the exact idempotent
-                                    // initialization until it installs/observes the same outcome and starts the barrier fiber.
-                                    (ctx.logger.warn(
-                                      "Signed recovery-plan initialization failed after a partial install; retrying the exact generation"
-                                    ) >> Metrics[F].incrementCounter(
-                                      "dag_consensus_recovery_plan_init_resume_total"
-                                    )).attempt.void >>
+                                    // strand that state and can never recreate its barrier. Retry the exact idempotent initialization
+                                    // until it installs/observes the same outcome and starts the barrier fiber.
+                                    observeResume.attempt.void >>
                                       Async[F]
                                         .start(
                                           Async[F].sleep(1.second) >> nodeStorage.getNodeState.flatMap { state =>
@@ -648,11 +661,12 @@ object ConsensusEventLoop {
                               case rollback @ ConsensusCommand.InitializeFromRollback(
                                     _,
                                     _,
-                                    ConsensusCommand.RollbackStartPolicy.RequireAlignedCommittee(_)
+                                    ConsensusCommand.RollbackStartPolicy.RequireAlignedCommittee(_) |
+                                    ConsensusCommand.RollbackStartPolicy.RequireOutcomeAlignedQuorum(_)
                                   ) =>
-                                // The signed recovery plan is fail-closed and idempotent for the
-                                // exact installed anchor. Retry the serialized initialization if an
-                                // operational effect failed before or after its barrier was spawned.
+                                // Aligned rollback initialization is fail-closed and idempotent for
+                                // the exact installed anchor. Retry the serialized initialization if
+                                // an operational effect failed before or after its barrier was spawned.
                                 Async[F].start(Async[F].sleep(1.second) >> queue.offer(rollback)).void
                               case _ => Async[F].unit
                             })

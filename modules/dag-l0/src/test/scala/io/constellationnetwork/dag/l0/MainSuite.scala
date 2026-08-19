@@ -6,6 +6,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.cli.method
 import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlan, Gl0RecoverySeedCommittee, RecoveryCheckpoint}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.RollbackStartPolicy
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
@@ -55,6 +56,30 @@ object MainSuite extends SimpleIOSuite {
     val signers = List.empty[PeerId]
 
     expect.same(List(self), Main.rollbackBootstrapFacilitators(self, signers))
+  }
+
+  pureTest("normal established rollback requires an anchor-signer lead and the exact aligned committee") {
+    val committee = SortedSet(self, peerB, peerC)
+
+    expect.same(
+      Right(RollbackStartPolicy.RequireOutcomeAlignedQuorum(committee)),
+      Main.normalRollbackStartPolicy(self, committee, postBootstrap = true)
+    ) &&
+    expect(
+      Main
+        .normalRollbackStartPolicy(PeerId(Hex("dd" * 64)), committee, postBootstrap = true)
+        .left
+        .exists(_.isInstanceOf[Main.NormalRollbackLeadNotInAnchorCommittee])
+    )
+  }
+
+  pureTest("true-bootstrap rollback retains the legacy delayed start even when the lead is outside proof signers") {
+    val committee = SortedSet(peerB, peerC)
+
+    expect.same(
+      Right(RollbackStartPolicy.LegacyDeferred),
+      Main.normalRollbackStartPolicy(self, committee, postBootstrap = false)
+    )
   }
 
   pureTest("an operator recovery plan replaces proof signers in canonical PeerId order") {

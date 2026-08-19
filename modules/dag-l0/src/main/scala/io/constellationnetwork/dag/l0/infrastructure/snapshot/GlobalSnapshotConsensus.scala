@@ -41,6 +41,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -68,6 +69,7 @@ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops._
 
 import eu.timepit.refined.auto._
@@ -88,6 +90,29 @@ object GlobalSnapshotConsensus {
 
   private[snapshot] def recoveryPlanPreflightRequired(outcomeKey: SnapshotOrdinal, anchorKey: SnapshotOrdinal): Boolean =
     outcomeKey === anchorKey
+
+  /** Extract the established anchor committee without duplicating bootstrap semantics in the shared engine. */
+  private[snapshot] def normalFirstRoundCommittee(
+    facilitators: List[PeerId],
+    recentProofSizes: Iterable[Int],
+    bootstrapCompleteProofsThreshold: Int
+  ): Option[SortedSet[PeerId]] =
+    Option.when(recentProofSizes.exists(_ >= bootstrapCompleteProofsThreshold))(SortedSet.from(facilitators))
+
+  /** Recognize the existing GL0 Facility as a first-round timing pulse. Every compared field is already carried by the declaration; this
+    * helper introduces no encoder, signature domain, hash, or wire value.
+    */
+  private[snapshot] def isNormalFirstRoundFacilityPulse(
+    key: GlobalSnapshotKey,
+    parentSnapshotHash: Hash,
+    parentFacilitatorsHash: Hash,
+    consensusConfigHash: Hash,
+    facility: Facility
+  ): Boolean =
+    facility.lastGlobalSnapshotOrdinal === key &&
+      facility.lastSnapshotHash === parentSnapshotHash &&
+      facility.facilitatorsHash === parentFacilitatorsHash &&
+      facility.consensusConfigHash.contains(consensusConfigHash)
 
   def make[F[_]: Async: Parallel: Random: JsonSerializer: HasherSelector: SecurityProvider: Metrics, R <: CliMethod](
     sharedCfg: SharedConfig,
@@ -341,6 +366,24 @@ object GlobalSnapshotConsensus {
         case Some(verified) => verified.plan.committee.some.pure[F]
         case None           => configuredRecoverySeed.map(_.map(_.committee))
       }
+      isGlobalBootstrap = (outcome: GlobalConsensusOutcome) =>
+        !outcome.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold)
+      normalFirstRoundAlignment = NormalFirstRoundAlignment[GlobalSnapshotKey, GlobalConsensusOutcome](
+        committeeOf = outcome =>
+          normalFirstRoundCommittee(
+            outcome.facilitators.value,
+            outcome.recentProofSizes.values,
+            effectiveConsensusConfig.bootstrapCompleteProofsThreshold
+          ),
+        facilityMatches = (key, outcome, facility) =>
+          isNormalFirstRoundFacilityPulse(
+            key,
+            outcome.finished.snapshotHash,
+            outcome.finished.facilitatorsHash,
+            effectiveConsensusConfig.deterministicConfigHash,
+            facility
+          )
+      )
 
       stateAdvancer =
         GlobalSnapshotConsensusStateAdvancer.make(
@@ -542,7 +585,7 @@ object GlobalSnapshotConsensus {
           timeoutVoter,
           rawEvictionVoter,
           admissionVoter,
-          (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
+          isGlobalBootstrap,
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
           (o: GlobalConsensusOutcome) => o.controllerEvidence.flatMap(_.get(o.key)).fold(Set.empty[PeerId])(_.roundStartFacilitators.toSet),
@@ -606,7 +649,8 @@ object GlobalSnapshotConsensus {
             }
           ),
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
-          plannedRecoveryCommittee = Some(plannedRecoveryCommittee)
+          plannedRecoveryCommittee = Some(plannedRecoveryCommittee),
+          normalFirstRoundAlignment = normalFirstRoundAlignment.some
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)
