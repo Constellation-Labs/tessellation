@@ -64,34 +64,58 @@ class GossipingEvictionVoter[F[
           "target" -> ConsensusLog.pid(target)
         )
       case Some(state) =>
-        HasherSelector[F].withCurrent { implicit hasher =>
-          // Canonical committee hash for vote content so every voter signs the
-          // same hash value — EvictionCertificateBuilder matches votes by this
-          // field. Using mutable state.facilitators would block cert assembly
-          // when different voters captured different withdrawal timings.
-          state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
-            val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
-            val vote = EvictionVote(target, reason, facilitatorsHash, lastSnapshotHash)
-            vote.sign(keyPair).flatMap { signedVote =>
-              // Spread to live peers only — gossip delivery target, not vote content.
-              val targets = state.facilitators.value.toSet - selfId
-              storage.addEvictionVote(selfId, key, signedVote) >>
-                gossip.spreadDirect(ConsensusPeerEvictionVote[Key](key, signedVote), targets) >>
-                ConsensusLog
-                  .info(
-                    logger,
-                    Category.Phase,
-                    key.toString,
-                    "n/a",
-                    LogEvent.Eviction,
-                    "emitted" -> "eviction_vote",
-                    "target" -> ConsensusLog.pid(target),
-                    "reason" -> reason.toString,
-                    "targets" -> targets.size.toString
-                  )
-                  .void
-            }
-          }
+        signStoreAndGossip(
+          key,
+          target,
+          reason,
+          state.roundStartFacilitators.value,
+          state.facilitators.value,
+          lastSnapshotHashOf(state.lastOutcome)
+        )
+    }
+
+  override def emitEvictionVoteForRound(
+    key: Key,
+    target: PeerId,
+    reason: EvictionReason,
+    roundStartFacilitators: List[PeerId],
+    gossipFacilitators: List[PeerId],
+    lastSnapshotHash: Hash
+  ): F[Unit] =
+    signStoreAndGossip(key, target, reason, roundStartFacilitators, gossipFacilitators, lastSnapshotHash)
+
+  private def signStoreAndGossip(
+    key: Key,
+    target: PeerId,
+    reason: EvictionReason,
+    roundStartFacilitators: List[PeerId],
+    gossipFacilitators: List[PeerId],
+    lastSnapshotHash: Hash
+  ): F[Unit] =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      // Canonical committee hash for vote content so every voter signs the same hash value.
+      // The explicit context path is used during round creation, before storage exposes state.
+      roundStartFacilitators.hash.flatMap { facilitatorsHash =>
+        val vote = EvictionVote(target, reason, facilitatorsHash, lastSnapshotHash)
+        vote.sign(keyPair).flatMap { signedVote =>
+          // Spread to live peers only — gossip delivery target, not vote content.
+          val targets = gossipFacilitators.toSet - selfId
+          storage.addEvictionVote(selfId, key, signedVote) >>
+            gossip.spreadDirect(ConsensusPeerEvictionVote[Key](key, signedVote), targets) >>
+            ConsensusLog
+              .info(
+                logger,
+                Category.Phase,
+                key.toString,
+                "n/a",
+                LogEvent.Eviction,
+                "emitted" -> "eviction_vote",
+                "target" -> ConsensusLog.pid(target),
+                "reason" -> reason.toString,
+                "targets" -> targets.size.toString
+              )
+              .void
         }
+      }
     }
 }
