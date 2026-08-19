@@ -15,8 +15,9 @@ environment and the coordinated cold restart, not an on-chain signature.
 The feature is inert when the environment variable is absent. It changes no
 public schema and needs no ordinal activation. It does change initial consensus
 behavior when armed, so every node in the fleet must run the same distinctly
-tagged rc.9 jar and effective consensus configuration. Rc.8 and rc.9 must never
-be mixed.
+tagged release and effective consensus configuration. The feature first shipped
+in rc.9; any later release carrying it must still be deployed fleet-wide under
+its own advertised version. Mixed consensus behavior is unsupported.
 
 ## Required topology
 
@@ -78,6 +79,13 @@ The existing generation-bound all-member barrier then holds every named node
 until all named peers are in the current cluster session, are `Ready` or
 `WaitingForReady`, and serve the exact same outcome. Unrelated Ready peers do
 not count. There is no timeout bypass.
+
+Rc.12's ordinary Global L0 first-round synchronizer is complementary and has
+strictly lower startup precedence. When this recovery environment is present,
+the operator-selected committee continues to require **all** named members on
+the current poll; it is not weakened to the normal anchor committee's `Q(N)`
+barrier and does not use the normal session alignment cache. See
+[Global L0 first-round alignment](global-l0-first-round-alignment.md).
 
 The override is per-JVM-invocation authority. It remains armed through the first
 round and disarms in that running process on the first accepted successor
@@ -157,7 +165,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    replaced ordinal. Snapshot-streaming treats source-node history as final and
    its ordinal uniqueness cannot reconcile an abandoned fork automatically.
 3. Stop the full IntegrationNet fleet. Confirm every node will start the same
-   immutable rc.9 release/version and effective `deterministicConfigHash`.
+   immutable release/version and effective `deterministicConfigHash`.
 4. Select a canonical **incremental** anchor by exact ordinal, hash, snapshot
    content, state proof, and snapshot info—not by recency alone. If a signed
    recovery checkpoint is configured, confirm it is the same anchor.

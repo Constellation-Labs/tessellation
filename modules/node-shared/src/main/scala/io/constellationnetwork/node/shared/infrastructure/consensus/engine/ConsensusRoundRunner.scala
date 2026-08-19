@@ -6,6 +6,8 @@ import cats.effect.std.Supervisor
 import cats.kernel.Next
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -13,6 +15,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -58,6 +61,12 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       cancelRoundFibers
 
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
+    runRound(trigger, none)
+
+  def runRound(
+    trigger: Option[ConsensusTrigger],
+    expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
+  ): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
         // No outcome exists yet — round cannot run. Bind the release to the current local epoch;
@@ -84,10 +93,15 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           "declarationTimeout" -> config.declarationTimeout.toString,
           "timeTriggerInterval" -> config.timeTriggerInterval.toString
         ) >>
-          facilitateRound(outcome, nextKey, trigger)
+          facilitateRound(outcome, nextKey, trigger, expectedRoundStartFacilitators)
     }
 
-  private def facilitateRound(lastOutcome: Outcome, key: Key, trigger: Option[ConsensusTrigger]): F[Unit] =
+  private def facilitateRound(
+    lastOutcome: Outcome,
+    key: Key,
+    trigger: Option[ConsensusTrigger],
+    expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
+  ): F[Unit] =
     for {
       resources <- storage.getResources(key)
       // Retry/view-change history is passed as a compatibility and diagnostic signal only. Consensus
@@ -97,7 +111,14 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
         case Some(maxToView) => maxToView + 1
         case None            => 0L
       }).toInt
-      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources, priorAbandonmentCount)
+      facilitated <- creator.tryFacilitateConsensus(
+        key,
+        lastOutcome,
+        trigger,
+        resources,
+        priorAbandonmentCount,
+        expectedRoundStartFacilitators
+      )
 
       // Validators must not produce solo — solo production from multiple validators creates
       // divergent forks when they restart simultaneously. Abort the round if this is a

@@ -331,6 +331,14 @@ must regrow; no cleanup restart, symlink change, or jar swap is required for
 that recovery invocation. See the
 [trusted recovery seed runbook](../operations/global-l0-recovery-seed-committee.md).
 
+Rc.12 aligns an established GL0 anchor committee before the first ordinary
+post-rollback round. The rollback lead waits for an exact `Q(N)` of anchor
+proof signers with no timeout escape; members of that set wait for the first
+existing authenticated Facility pulse instead of starting independent timers.
+The explicit recovery plan/seed paths keep their stronger all-member barrier.
+See the
+[Global L0 first-round alignment runbook](../operations/global-l0-first-round-alignment.md).
+
 ### Round-Blocked States
 
 > **Note (v2 change):** The FSM blocks round starts when the node is in recovery or leaving states to prevent infinite loops.

@@ -4,7 +4,7 @@ import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.l0.snapshot.schema.{CollectingFacilities, CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
@@ -72,12 +72,18 @@ object CurrencySnapshotConsensusStateCreator {
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
-      priorAbandonmentCount: Int
+      priorAbandonmentCount: Int,
+      expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
     ): F[StateCreateResult] =
       consensusStorage.resumePendingStateEffect(key) >>
         consensusStorage
           .condModifyStateWithSideEffect(key)(
-            toCreateStateFn(facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount))
+            toCreateStateFn(
+              validateExpectedRoundStartFacilitators(
+                facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount),
+                expectedRoundStartFacilitators
+              )
+            )
           )
           .map(_.flatten)
           .flatTap(logIfCreated)

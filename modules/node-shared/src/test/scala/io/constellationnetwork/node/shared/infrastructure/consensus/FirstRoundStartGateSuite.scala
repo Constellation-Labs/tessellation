@@ -86,4 +86,31 @@ object FirstRoundStartGateSuite extends SimpleIOSuite {
       openAfterRetry <- gate.isHeld.map(!_)
     } yield expect.all(heldAfterCancellation, pendingAfterCancellation, releasedOnRetry, openAfterRetry)
   }
+
+  test("a validated newer initialization opens a stale hold but cannot open the current generation") {
+    for {
+      gate <- FirstRoundStartGate.make[IO, Int](initiallyHeld = false)
+      stale <- gate.arm(10)
+      sameKeyOpened <- gate.openIfSupersededBy(10)
+      stillPending <- gate.isPending(stale)
+      newerKeyOpened <- gate.openIfSupersededBy(11)
+      stalePendingAfterOpen <- gate.isPending(stale)
+      current <- gate.arm(11)
+      staleRelease <- gate.releaseAfter(stale)(IO.unit)
+      currentPending <- gate.isPending(current)
+      currentKeyOpened <- gate.openIfSupersededBy(11)
+      currentStillPending <- gate.isPending(current)
+    } yield
+      expect.all(
+        !sameKeyOpened,
+        stillPending,
+        newerKeyOpened,
+        !stalePendingAfterOpen,
+        !staleRelease,
+        currentPending,
+        !currentKeyOpened,
+        currentStillPending,
+        current.generation > stale.generation
+      )
+  }
 }

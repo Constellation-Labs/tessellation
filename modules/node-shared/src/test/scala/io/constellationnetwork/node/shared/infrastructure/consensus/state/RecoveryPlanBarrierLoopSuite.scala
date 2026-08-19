@@ -19,6 +19,7 @@ import weaver.SimpleIOSuite
 object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
 
   private final case class Observation(aligned: Boolean)
+  private final case class FollowerObservation(localAlignedCount: Int, facilityPulseAligned: Boolean)
 
   private final case class BarrierOutcome(artifact: Signed[Int], operationalValue: Int)
   private implicit val barrierOutcomeEq: Eq[BarrierOutcome] =
@@ -129,6 +130,67 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
       observedInspections <- inspections.get
       observedOffers <- offers.get
     } yield expect.same(2, observedInspections) && expect.same(2, observedOffers)
+  }
+
+  test("shared first-round barrier has no elapsed-attempt escape below quorum") {
+    val belowQuorumAttempts = 20
+
+    for {
+      inspections <- Ref.of[IO, Int](0)
+      offers <- Ref.of[IO, Int](0)
+      pending <- Ref.of[IO, Boolean](true)
+      inspect = inspections.modify { current =>
+        val next = current + 1
+        next -> Observation(aligned = next > belowQuorumAttempts)
+      }
+      _ <- StateTransitions.runFirstRoundAlignmentLoop(
+        inspect,
+        (observation: Observation) => observation.aligned,
+        (_: Observation, _: Long) => IO.unit,
+        IO.unit,
+        offers.update(_ + 1) >> pending.set(false),
+        pending.get,
+        (_, _) => IO.unit
+      )
+      observedInspections <- inspections.get
+      observedOffers <- offers.get
+    } yield
+      expect.same(belowQuorumAttempts + 1, observedInspections) &&
+        expect.same(1, observedOffers)
+  }
+
+  test("asymmetric follower views cannot release without an authenticated aligned Facility pulse") {
+    val observations = List(
+      FollowerObservation(localAlignedCount = 5, facilityPulseAligned = false),
+      FollowerObservation(localAlignedCount = 2, facilityPulseAligned = false),
+      FollowerObservation(localAlignedCount = 1, facilityPulseAligned = true)
+    )
+
+    for {
+      remaining <- Ref.of[IO, List[FollowerObservation]](observations)
+      seen <- Ref.of[IO, List[FollowerObservation]](List.empty)
+      offers <- Ref.of[IO, Int](0)
+      pending <- Ref.of[IO, Boolean](true)
+      inspect <- IO.pure(
+        remaining.modify {
+          case head :: tail => tail -> head
+          case Nil          => Nil -> observations.last
+        }
+      )
+      _ <- StateTransitions.runFirstRoundAlignmentLoop(
+        inspect,
+        (observation: FollowerObservation) => observation.facilityPulseAligned,
+        (observation: FollowerObservation, _: Long) => seen.update(_ :+ observation),
+        IO.unit,
+        offers.update(_ + 1) >> pending.set(false),
+        pending.get,
+        (_, _) => IO.unit
+      )
+      observed <- seen.get
+      observedOffers <- offers.get
+    } yield
+      expect.same(observations, observed) &&
+        expect.same(1, observedOffers)
   }
 
   pureTest("recovery-plan alignment uses outcome value equality and ignores only Signed proof-subset differences") {

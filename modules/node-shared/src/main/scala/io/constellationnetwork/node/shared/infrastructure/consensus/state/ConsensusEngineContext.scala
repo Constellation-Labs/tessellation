@@ -11,7 +11,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, FirstRoundStartGate, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -152,7 +152,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // diagnostic/local liveness state only. It must not seed proposal-critical `viewNumber` or
   // leader selection; alpha.104 showed nodes can restart the same key with different local retry
   // counts and then emit non-coalescing VCVs from different views.
-  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)]
+  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)],
+  normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
 )
 
 object ConsensusEngineContext {
@@ -185,7 +186,8 @@ object ConsensusEngineContext {
     lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None,
     onOutcomePreInitialize: Outcome => F[Unit],
     initiallyHoldFirstRound: Boolean,
-    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]]
+    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]],
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -224,6 +226,7 @@ object ConsensusEngineContext {
         lastOutcomeEndTimeMsOf,
         onOutcomePreInitialize,
         recoveredAtKey,
-        retriableAtSameKey
+        retriableAtSameKey,
+        normalFirstRoundAlignment
       )
 }
