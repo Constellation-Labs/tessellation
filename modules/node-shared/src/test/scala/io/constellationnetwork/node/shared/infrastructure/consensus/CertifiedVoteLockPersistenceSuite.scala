@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import cats.Eq
 import cats.data.NonEmptySet
 import cats.effect._
 import cats.effect.kernel.Outcome
@@ -43,6 +44,7 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
     } yield (base, serializer, hasher, provider)
 
   final case class TestOutcome(key: SnapshotOrdinal)
+  private implicit val testOutcomeEq: Eq[TestOutcome] = Eq.fromUniversalEquals
   private implicit val outcomeKeyLens: Lens[TestOutcome, SnapshotOrdinal] =
     Lens[TestOutcome, SnapshotOrdinal](_.key)(key => _.copy(key = key))
 

@@ -3,6 +3,9 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 import cats.effect.{IO, Ref}
 import cats.syntax.functor._
 
+import scala.collection.immutable.SortedSet
+
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex

@@ -210,7 +210,7 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
     node: TestNode,
     value: ProposalValue,
     certificate: CertifiedOutcome
-  ): IO[(Boolean, PersistedCertifiedOutcome)] = {
+  ): IO[(ConsensusStorage.OutcomeUpdateResult, PersistedCertifiedOutcome)] = {
     val outcome = PersistedCertifiedOutcome(roundKey, value.artifactHash, value, certificate)
 
     node.storage
@@ -301,7 +301,7 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
     } yield
       expect.all(
         verified0 === Right(()),
-        persistedAtView0._1,
+        persistedAtView0._1 == ConsensusStorage.OutcomeUpdateResult.Advanced,
         vcc.votes.size === QuorumPolicy.supermajority(world.committee.size).toLong,
         lVote.value.highestKnownCertifiedQc.contains(certified0.proposalQc),
         carried.contains(certified0.proposalQc),
@@ -315,7 +315,7 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         safeValidation.contains(value0),
         cSafeLock.isRight,
         verifiedAtView1 === Right(()),
-        persistedAtView1._1,
+        persistedAtView1._1 == ConsensusStorage.OutcomeUpdateResult.Advanced,
         aLast === cLast,
         aBytes.exists(left => cBytes.exists(right => left.sameElements(right)))
       )

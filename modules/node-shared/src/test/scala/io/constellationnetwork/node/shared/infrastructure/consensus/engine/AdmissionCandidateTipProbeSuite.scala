@@ -126,49 +126,32 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
 
   test("cached readiness neither suppresses the direct open probe nor qualifies a failed direct response") {
     val target = PeerId(Hex("01" * 64))
-    val cachedExact = ChainTip(ordinal(100L), expectedHash)
-    val cachedReady: ChainTip => Boolean = _ => true
 
     val selected = AdmissionCandidateTipProbe.targetForRound(List(target), Set.empty)
-    val ready = AdmissionCandidateTipProbe.readyOpenTargets(
-      List(target),
-      Map(target -> cachedExact),
-      List((target, AdmissionCandidateTipProbe.Lane.OpenReady, none[ChainTip])),
-      directProbesEnabled = true,
-      expectedHash = expectedHash,
-      expectedOrdinal = ordinal(100L).some,
-      cachedTipIsReady = cachedReady
+    val ready = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(none[ChainTip]),
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
     )
 
     IO.pure(expect.same(target.some, selected) && expect(ready.isEmpty))
   }
 
-  test("a wrong-hash cache entry cannot qualify an exact-direct open lane, while Currency retains cached behavior") {
+  test("a wrong-hash direct response cannot qualify the current-Facility open lane") {
     val target = PeerId(Hex("01" * 64))
-    val cachedConflict = ChainTip(ordinal(100L), differentHash)
     val directConflict = ChainTip(ordinal(100L), differentHash)
-    val legacyCachedReady: ChainTip => Boolean = _ => true
 
-    val directReady = AdmissionCandidateTipProbe.readyOpenTargets(
-      List(target),
-      Map(target -> cachedConflict),
-      List((target, AdmissionCandidateTipProbe.Lane.OpenReady, directConflict.some)),
-      directProbesEnabled = true,
-      expectedHash = expectedHash,
-      expectedOrdinal = ordinal(100L).some,
-      cachedTipIsReady = legacyCachedReady
-    )
-    val currencyReady = AdmissionCandidateTipProbe.readyOpenTargets(
-      List(target),
-      Map(target -> cachedConflict),
-      List.empty,
-      directProbesEnabled = false,
-      expectedHash = expectedHash,
-      expectedOrdinal = ordinal(100L).some,
-      cachedTipIsReady = legacyCachedReady
+    val directReady = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(directConflict.some),
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
     )
 
-    IO.pure(expect(directReady.isEmpty) && expect.same(List(target), currencyReady))
+    IO.pure(expect(directReady.isEmpty))
   }
 
   test("a fresh direct response must exactly match the expected parent before it becomes vote evidence") {
