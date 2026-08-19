@@ -85,7 +85,7 @@ object GlobalSnapshotConsensusStateCreator {
 
     /** Track every auditable parent-round Tier-1 signer from actual local snapshot proofs and audit one deterministic target. Reuse the
       * existing B1 vote path only after the round-count and elapsed-time miss floors, on the existing membership-change cadence, and when
-      * the observed signer population is below the current committee's finality floor.
+      * the observed signer population is either below the current finality floor or trapped below the next-seat floor.
       *
       * The local proof subset, monotonic time, and resulting headroom decision are evidence for local vote emission only. They never enter
       * the outcome, artifact, committee hash, or state proof. A membership change still requires the normal Core-quorum EvictionCertificate
@@ -96,6 +96,8 @@ object GlobalSnapshotConsensusStateCreator {
       lastOutcome: GlobalConsensusOutcome,
       currentCore: Set[PeerId],
       currentTier1: Set[PeerId],
+      roundStartFacilitators: List[PeerId],
+      gossipFacilitators: List[PeerId],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
       observedAt: FiniteDuration,
       cadenceAllowed: Boolean
@@ -193,7 +195,15 @@ object GlobalSnapshotConsensusStateCreator {
               val alreadyVoted = resources.evictionVotes.get(audit.target).exists(_.contains(selfId))
               val emit =
                 if (alreadyVoted) Sync[F].unit
-                else evictionVoter.emitEvictionVote(key, audit.target, EvictionReason.Silent)
+                else
+                  evictionVoter.emitEvictionVoteForRound(
+                    key,
+                    audit.target,
+                    EvictionReason.Silent,
+                    roundStartFacilitators,
+                    gossipFacilitators,
+                    lastOutcome.finished.snapshotHash
+                  )
 
               emit >>
                 // Queue assembly before the first Facility is sent. Every honest Core voter
@@ -975,12 +985,14 @@ object GlobalSnapshotConsensusStateCreator {
         // the state. The retained post-commit effect below may be replayed after delivery fails or
         // is cancelled, so it must contain only the exact Facility self-store and gossip delivery.
         _ <-
-          if (membershipPolicy.allowsAutomaticRemoval)
+          if (membershipPolicy.acceptsEvictionCertificates)
             auditTier1FinalityParticipation(
               key,
               lastOutcome,
               committees.core.toSet,
               committees.tier1.toSet,
+              state.roundStartFacilitators.value,
+              state.facilitators.value,
               resources,
               time,
               expansionAllowedThisRound
