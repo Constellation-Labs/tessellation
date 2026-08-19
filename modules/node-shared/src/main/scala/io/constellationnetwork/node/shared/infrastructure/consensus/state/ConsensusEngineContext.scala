@@ -11,7 +11,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, FirstRoundStartGate, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -102,10 +102,6 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // forever (gl0-4 in fork-recovery E2E). Same wiring source as `StallDetector`'s B2
   // admission emission — see the ConsensusEventLoop construction site.
   probationPeersOf: Outcome => Set[PeerId],
-  // Consensus-agreed active committee carried by the downloaded outcome. A validator
-  // already in this set is recovering an existing seat even when ordinary startup,
-  // rather than FollowerCatchUp, initiated its download.
-  facilitatorsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId],
   // Layer-specific extraction of consensus-agreed peerQuality from the carried outcome.
   // Used to widen the witness pool for B1/B2/VCC cert assembly beyond the round-start
   // committee. peerQuality lives in the concrete outcome type (GlobalConsensusOutcome /
@@ -156,7 +152,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // diagnostic/local liveness state only. It must not seed proposal-critical `viewNumber` or
   // leader selection; alpha.104 showed nodes can restart the same key with different local retry
   // counts and then emit non-coalescing VCVs from different views.
-  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)]
+  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)],
+  normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
 )
 
 object ConsensusEngineContext {
@@ -184,13 +181,13 @@ object ConsensusEngineContext {
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
-    facilitatorsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
     lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None,
     onOutcomePreInitialize: Outcome => F[Unit],
     initiallyHoldFirstRound: Boolean,
-    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]]
+    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]],
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
@@ -224,12 +221,12 @@ object ConsensusEngineContext {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        facilitatorsOf,
         peerQualityOf,
         lastOutcomeKeyOf,
         lastOutcomeEndTimeMsOf,
         onOutcomePreInitialize,
         recoveredAtKey,
-        retriableAtSameKey
+        retriableAtSameKey,
+        normalFirstRoundAlignment
       )
 }

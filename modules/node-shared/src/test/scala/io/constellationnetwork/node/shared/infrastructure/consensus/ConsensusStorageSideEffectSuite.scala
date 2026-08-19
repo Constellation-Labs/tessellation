@@ -4,6 +4,7 @@ import cats.Eq
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
@@ -112,6 +113,29 @@ object ConsensusStorageSideEffectSuite extends SimpleIOSuite {
       expect(first.isLeft, s"the first effect delivery should fail, got $first") &&
         expect(committed.exists(_.status == "committed"), s"state must commit before effect delivery, got $committed") &&
         expect(count == 2, s"one failed delivery plus one successful replay expected, got $count invocations")
+  }
+
+  test("first-round committee mismatch fails before state commit or retained Facility effect") {
+    val key = SnapshotOrdinal.unsafeApply(9L)
+    val expectedMember = PeerId(Hex("02" * 64))
+    val expected = SortedSet(leader, expectedMember)
+    val actual = SortedSet(leader)
+
+    for {
+      consensusStorage <- storage
+      effectAttempts <- Ref.of[IO, Int](0)
+      modify: ModifyStateFn[IO, SnapshotOrdinal, String, Outcome, Unit, (Unit, IO[Unit])] = _ =>
+        ConsensusStateCreator
+          .validateExpectedRoundStartFacilitators(expected.some, actual)
+          .liftTo[IO]
+          .as((state(key, "must-not-commit").some, ((), effectAttempts.update(_ + 1))).some)
+      result <- consensusStorage.condModifyStateWithSideEffect(key)(modify).attempt
+      committed <- consensusStorage.getState(key)
+      attempts <- effectAttempts.get
+    } yield
+      expect(result.left.exists(_.isInstanceOf[ConsensusStateCreator.UnexpectedRoundStartFacilitators])) &&
+        expect(committed.isEmpty, s"mismatched state must not commit, got $committed") &&
+        expect.same(0, attempts)
   }
 
   test("cancellation after state commit retains the exact effect for replay") {

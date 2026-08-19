@@ -8,7 +8,7 @@ import cats.effect.kernel.{Async, Fiber, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
@@ -40,6 +40,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -67,6 +68,7 @@ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops._
 
 import eu.timepit.refined.auto._
@@ -84,6 +86,29 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *   ConsensusEventLoop for FSM and command processing
   */
 object GlobalSnapshotConsensus {
+
+  /** Extract the established anchor committee without duplicating bootstrap semantics in the shared engine. */
+  private[snapshot] def normalFirstRoundCommittee(
+    facilitators: List[PeerId],
+    recentProofSizes: Iterable[Int],
+    bootstrapCompleteProofsThreshold: Int
+  ): Option[SortedSet[PeerId]] =
+    Option.when(recentProofSizes.exists(_ >= bootstrapCompleteProofsThreshold))(SortedSet.from(facilitators))
+
+  /** Recognize the existing GL0 Facility as a first-round timing pulse. Every compared field is already carried by the declaration; this
+    * helper introduces no encoder, signature domain, hash, or wire value.
+    */
+  private[snapshot] def isNormalFirstRoundFacilityPulse(
+    key: GlobalSnapshotKey,
+    parentSnapshotHash: Hash,
+    parentFacilitatorsHash: Hash,
+    consensusConfigHash: Hash,
+    facility: Facility
+  ): Boolean =
+    facility.lastGlobalSnapshotOrdinal === key &&
+      facility.lastSnapshotHash === parentSnapshotHash &&
+      facility.facilitatorsHash === parentFacilitatorsHash &&
+      facility.consensusConfigHash.contains(consensusConfigHash)
 
   def make[F[_]: Async: Parallel: Random: JsonSerializer: HasherSelector: SecurityProvider: Metrics, R <: CliMethod](
     sharedCfg: SharedConfig,
@@ -327,6 +352,24 @@ object GlobalSnapshotConsensus {
         case Some(verified) => verified.plan.committee.some.pure[F]
         case None           => configuredRecoverySeed.map(_.map(_.committee))
       }
+      isGlobalBootstrap = (outcome: GlobalConsensusOutcome) =>
+        !outcome.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold)
+      normalFirstRoundAlignment = NormalFirstRoundAlignment[GlobalSnapshotKey, GlobalConsensusOutcome](
+        committeeOf = outcome =>
+          normalFirstRoundCommittee(
+            outcome.facilitators.value,
+            outcome.recentProofSizes.values,
+            effectiveConsensusConfig.bootstrapCompleteProofsThreshold
+          ),
+        facilityMatches = (key, outcome, facility) =>
+          isNormalFirstRoundFacilityPulse(
+            key,
+            outcome.finished.snapshotHash,
+            outcome.finished.facilitatorsHash,
+            effectiveConsensusConfig.deterministicConfigHash,
+            facility
+          )
+      )
 
       // Alpha.94: node-local sidecar for the post-finalization `ConsensusOperationalState`.
       // Closes the one-round-stale `snapshot.peerHistory` gap surfaced in `project_alpha92_wedge_may21.md`.
@@ -514,7 +557,7 @@ object GlobalSnapshotConsensus {
           timeoutVoter,
           rawEvictionVoter,
           admissionVoter,
-          (o: GlobalConsensusOutcome) => !o.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold),
+          isGlobalBootstrap,
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
           (key: GlobalSnapshotKey) =>
@@ -533,7 +576,8 @@ object GlobalSnapshotConsensus {
           Some(consensusQueue),
           onOutcomePreInitialize = Some(recoveryPreflight),
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
-          plannedRecoveryCommittee = Some(plannedRecoveryCommittee)
+          plannedRecoveryCommittee = Some(plannedRecoveryCommittee),
+          normalFirstRoundAlignment = normalFirstRoundAlignment.some
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

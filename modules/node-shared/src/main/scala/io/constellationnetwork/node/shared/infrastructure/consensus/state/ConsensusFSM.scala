@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
 import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
 
@@ -83,7 +84,7 @@ class ConsensusFSM[F[
   def handle(cmd: ConsensusCommand[Key, Artifact, Ctx, Outcome]): F[Unit] =
     cmd match {
       case ReleaseFirstRoundStart(permit, expectedCommittee) =>
-        ctx.firstRoundStartGate.releaseAfter(permit)(establishRecoveryFirstRound(permit, expectedCommittee)).flatMap {
+        ctx.firstRoundStartGate.releaseAfter(permit)(establishAlignedFirstRound(permit, expectedCommittee)).flatMap {
           case true =>
             Async[F]
               .start(
@@ -162,13 +163,14 @@ class ConsensusFSM[F[
       }
     }
 
-  /** The operator-plan gate opens only after the exact planned round is actually established on this serialized FSM. If establishment fails
-    * or is cancelled, retain any deterministic partial state for the next attempt, but reset local runner bookkeeping so the same
-    * generation can resume it. Ordinary queued triggers remain gated throughout.
+  /** An aligned first-round gate opens only after the exact expected round is established on this serialized FSM. If establishment fails or
+    * is cancelled, retain any deterministic partial state for the next attempt, but reset local runner bookkeeping so the same generation
+    * can resume it. Ordinary queued triggers remain gated throughout. This boundary is shared by normal rollback and explicit operator
+    * recovery.
     */
-  private def establishRecoveryFirstRound(
+  private def establishAlignedFirstRound(
     permit: FirstRoundStartGate.Permit[Key],
-    expectedCommittee: SortedSet[io.constellationnetwork.schema.peer.PeerId]
+    expectedCommittee: SortedSet[PeerId]
   ): F[Unit] = {
     val nextKey = permit.key.next
     val cleanupFailedAttempt =
@@ -180,7 +182,7 @@ class ConsensusFSM[F[
       parent = permit.key,
       expectedCommittee = expectedCommittee,
       runningBefore = isRunning.get,
-      start = startRoundUngated(TimeTrigger.some),
+      start = startRoundUngated(TimeTrigger.some, expectedCommittee.some),
       inspect = (isRunning.get, storage.getState(nextKey)).mapN { (running, state) =>
         ConsensusFSM.FirstRoundInspection(
           running,
@@ -342,7 +344,10 @@ class ConsensusFSM[F[
   /** Enforce the recovery hold at the actual state-creation boundary. Command dispatch also filters ordinary triggers for observability,
     * but direct callers (round completion and soft-reset retry) must not bypass a newly re-armed gate.
     */
-  private def startRoundUngated(trigger: Option[ConsensusTrigger]): F[Unit] =
+  private def startRoundUngated(
+    trigger: Option[ConsensusTrigger],
+    expectedRoundStartFacilitators: Option[SortedSet[PeerId]] = None
+  ): F[Unit] =
     isRunning.get.ifM(
       ifTrue = log.debug(s"Ignoring StartRound($trigger) — round already running"),
       ifFalse = {
@@ -363,7 +368,9 @@ class ConsensusFSM[F[
               ) >>
               Metrics[F].updateGauge("dag_consensus_fsm_round_running", 1)).attempt.void >>
               isRunning.set(true) >>
-              roundRunner.runRound(trigger)
+              expectedRoundStartFacilitators.fold(roundRunner.runRound(trigger)) { expected =>
+                roundRunner.runRound(trigger, expected.some)
+              }
           else
             (ConsensusLog.warn(
               log,
@@ -377,10 +384,17 @@ class ConsensusFSM[F[
         }
 
         startAttempt.handleErrorWith { error =>
+          val recordCommitteeMismatch = error match {
+            case _: ConsensusStateCreator.UnexpectedRoundStartFacilitators =>
+              Metrics[F].incrementCounter("dag_consensus_first_round_committee_mismatch_total")
+            case _ => Async[F].unit
+          }
+
           ConsensusFSM.recoverRoundStartFailure(
             cleanup = roundRunner.cleanupRound,
             markIdle = isRunning.set(false),
-            observe = log.error(error)(s"Round start failed for trigger=$trigger; retaining state and retrying"),
+            observe = recordCommitteeMismatch.attempt.void >>
+              log.error(error)(s"Round start failed for trigger=$trigger; retaining state and retrying"),
             pause = Async[F].sleep(1.second),
             enqueueRetry = ctx.queue.offer(StartRound(trigger))
           )
@@ -520,8 +534,8 @@ class ConsensusFSM[F[
 
 object ConsensusFSM {
 
-  /** Lifecycle states that intentionally participate in consensus. Observing validators and signed-plan WaitingForReady members need the
-    * first completed round to reach Ready; a retry restricted to Ready would strand that recovery barrier.
+  /** Lifecycle states that intentionally participate in consensus. Observing validators and first-round-aligned WaitingForReady members
+    * need the first completed round to reach Ready; a retry restricted to Ready would strand the alignment barrier.
     */
   private[consensus] def consensusParticipatingState(state: NodeState): Boolean =
     state === NodeState.Observing || state === NodeState.WaitingForReady || state === NodeState.Ready
@@ -529,7 +543,7 @@ object ConsensusFSM {
   private[consensus] final case class FirstRoundInspection[Key](
     running: Boolean,
     parent: Option[Key],
-    committee: Option[SortedSet[io.constellationnetwork.schema.peer.PeerId]]
+    committee: Option[SortedSet[PeerId]]
   )
 
   /** Establish-and-inspect boundary shared by the production FSM and fault-injection tests. The caller's gate remains held around this
@@ -538,7 +552,7 @@ object ConsensusFSM {
     */
   private[consensus] def establishFirstRound[F[_]: Async, Key: Eq: Show](
     parent: Key,
-    expectedCommittee: SortedSet[io.constellationnetwork.schema.peer.PeerId],
+    expectedCommittee: SortedSet[PeerId],
     runningBefore: F[Boolean],
     start: F[Unit],
     inspect: F[FirstRoundInspection[Key]],

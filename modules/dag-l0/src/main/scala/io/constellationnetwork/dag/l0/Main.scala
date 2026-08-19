@@ -143,6 +143,31 @@ object Main
       s"${Gl0RecoverySeedCommittee.EnvironmentVariable} requires an incremental snapshot rollback hash; loaded anchor source=$got"
   }
 
+  private[dag] final case class NormalRollbackLeadNotInAnchorCommittee(lead: PeerId, committee: SortedSet[PeerId]) extends NoStackTrace {
+    override def getMessage: String =
+      s"Normal post-bootstrap rollback lead=${lead.value.value} is not in anchor committee(size=${committee.size}); " +
+        s"select a signer as lead or use ${Gl0RecoverySeedCommittee.EnvironmentVariable}"
+  }
+
+  /** Select the ordinary GL0 rollback start policy without changing recovery override precedence.
+    *
+    * True bootstrap retains the legacy delayed start. An established chain requires the rollback lead to belong to the anchor's proof
+    * signer committee, then waits for a structurally aligned quorum of that exact set. Explicit recovery plan/seed callers bypass this
+    * helper and retain their stronger all-member barrier.
+    */
+  private[dag] def normalRollbackStartPolicy(
+    lead: PeerId,
+    committee: SortedSet[PeerId],
+    postBootstrap: Boolean
+  ): Either[NormalRollbackLeadNotInAnchorCommittee, RollbackStartPolicy] =
+    if (!postBootstrap) Right(RollbackStartPolicy.LegacyDeferred)
+    else
+      Either.cond(
+        committee.contains(lead),
+        RollbackStartPolicy.RequireOutcomeAlignedQuorum(committee),
+        NormalRollbackLeadNotInAnchorCommittee(lead, committee)
+      )
+
   private[dag] def validateRecoveryConfigurationExclusive(
     recoveryPlanConfigured: Boolean,
     recoverySeedConfigured: Boolean
@@ -993,11 +1018,21 @@ object Main
                       GlobalRecoveryPlanOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, seed.committee)
                     )
                   )(plan => GlobalRecoveryPlanOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, plan.committee))
+                  normalRollbackStartPolicy <- {
+                    val committee = SortedSet.from(bootstrapFacilitators)
+                    val postBootstrap =
+                      seedRecentProofSizes.values.exists(_ >= loadedConsensusConfig.bootstrapCompleteProofsThreshold)
+
+                    if (recoveryCommittee.nonEmpty || !postBootstrap)
+                      (RollbackStartPolicy.LegacyDeferred: RollbackStartPolicy).pure[IO]
+                    else
+                      Main.normalRollbackStartPolicy(nodeId, committee, postBootstrap).liftTo[IO]
+                  }
                   result <- services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     rollbackOutcome,
                     startPolicy = recoveryPlan.fold[RollbackStartPolicy](
-                      recoverySeed.fold[RollbackStartPolicy](RollbackStartPolicy.LegacyDeferred)(seed =>
+                      recoverySeed.fold[RollbackStartPolicy](normalRollbackStartPolicy)(seed =>
                         RollbackStartPolicy.RequireAlignedCommittee(seed.committee)
                       )
                     )(plan => RollbackStartPolicy.RequireAlignedCommittee(plan.committee))

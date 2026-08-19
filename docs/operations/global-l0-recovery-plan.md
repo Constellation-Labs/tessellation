@@ -142,6 +142,12 @@ members to install and serve the same outcome before any member may start the fi
 minimum remains two because mutual attestation and leader rotation are not meaningful for a
 singleton. This is a recovery viability floor, not a reward-population cap.
 
+Rc.12's normal post-rollback `Q(N)` first-round synchronizer does not replace
+this rule. A verified plan has higher startup precedence, continues to poll
+every named member on the current attempt, and retains this exact all-member
+condition. See
+[Global L0 first-round alignment](global-l0-first-round-alignment.md).
+
 Each node durably writes `<snapshotPath>/recoveryPlanReceipts/<planId>.consumed` with exclusive
 create semantics. Reuse by the same receipt initialization is idempotent. A new initialization,
 including an in-process application restart, rebuilds the in-memory receipt state and fails closed

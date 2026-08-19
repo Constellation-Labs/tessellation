@@ -271,4 +271,163 @@ object StateTransitionsSuite extends SimpleIOSuite {
 
     expect(singleton.invalidCommittee) && expect(!singleton.aligned) && expect(!nonReadyLead.aligned)
   }
+
+  pureTest("normal first-round alignment counts an exact committee quorum and ignores unrelated Ready peers") {
+    val self = pid("normal-lead")
+    val peerA = pid("normal-a")
+    val peerB = pid("normal-b")
+    val peerC = pid("normal-c")
+    val absentA = pid("normal-absent-a")
+    val absentB = pid("normal-absent-b")
+    val unrelated = pid("normal-unrelated")
+    val committee = SortedSet(self, peerA, peerB, peerC, absentA, absentB)
+    val responsive = Map(
+      peerA -> NodeState.Ready,
+      peerB -> NodeState.WaitingForReady,
+      peerC -> NodeState.Ready,
+      unrelated -> NodeState.Ready
+    )
+    val outcomes = Map(
+      peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+      peerB -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+      peerC -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+      unrelated -> StateTransitions.RecoveryPlanPeerOutcome.Aligned
+    )
+    val status = StateTransitions.firstRoundAlignmentBarrierStatus(
+      self,
+      committee,
+      StateTransitions.FirstRoundAlignmentRequirement.AtLeast(4),
+      selfReady = true,
+      responsivePeerStates = responsive,
+      peerOutcomes = outcomes
+    )
+
+    expect(status.aligned) &&
+    expect.same(4, status.alignedCount) &&
+    expect.same(4, status.required) &&
+    expect.same(0, status.deficit) &&
+    expect.same(SortedSet(absentA, absentB), status.missingSession) &&
+    expect(!status.expectedExternal.contains(unrelated))
+  }
+
+  pureTest("normal first-round alignment holds at quorum minus one without treating elapsed attempts as authority") {
+    val self = pid("normal-lead")
+    val peerA = pid("normal-a")
+    val peerB = pid("normal-b")
+    val peerC = pid("normal-c")
+    val committee = SortedSet(self, peerA, peerB, peerC)
+    val status = StateTransitions.firstRoundAlignmentBarrierStatus(
+      self,
+      committee,
+      StateTransitions.FirstRoundAlignmentRequirement.AtLeast(3),
+      selfReady = true,
+      responsivePeerStates = Map(peerA -> NodeState.Ready, peerB -> NodeState.WaitingForReady, peerC -> NodeState.Ready),
+      peerOutcomes = Map(
+        peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
+        peerB -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched,
+        peerC -> StateTransitions.RecoveryPlanPeerOutcome.FetchFailed
+      )
+    )
+
+    expect(!status.aligned) &&
+    expect.same(2, status.alignedCount) &&
+    expect.same(1, status.deficit) &&
+    expect(status.mismatchedOutcome.contains(peerB)) &&
+    expect(status.fetchFailed.contains(peerC))
+  }
+
+  pureTest("normal first-round pulse accepts any exact current-session committee origin and rejects unrelated origins") {
+    val self = pid("pulse-self")
+    val nonLeadMember = pid("pulse-non-lead")
+    val otherMember = pid("pulse-other")
+    val unrelated = pid("pulse-unrelated")
+    val committee = SortedSet(self, nonLeadMember, otherMember)
+    val status = StateTransitions.normalFirstRoundPulseStatus(
+      committee,
+      matchingFacilityOrigins = Set(nonLeadMember, unrelated),
+      aheadProbeOrigins = Set.empty,
+      responsivePeerStates = Map(nonLeadMember -> NodeState.Ready, unrelated -> NodeState.Ready),
+      peerOutcomes = Map(
+        nonLeadMember -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned,
+        unrelated -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned
+      )
+    )
+
+    expect.same(Some(nonLeadMember), status.releaseOrigin) &&
+    expect.same(SortedSet(nonLeadMember), status.matchingFacilityOrigins) &&
+    expect(!status.matchingFacilityOrigins.contains(unrelated)) &&
+    expect.same("aligned", status.outcomeLabel)
+  }
+
+  pureTest("normal first-round pulse routes an advanced origin to recovery and never opens on invalid local evidence") {
+    val self = pid("pulse-self")
+    val ahead = pid("pulse-ahead")
+    val aligned = pid("pulse-aligned")
+    val mismatched = pid("pulse-mismatched")
+    val wrongState = pid("pulse-observing")
+    val committee = SortedSet(self, ahead, aligned, mismatched, wrongState)
+    val status = StateTransitions.normalFirstRoundPulseStatus(
+      committee,
+      matchingFacilityOrigins = Set(ahead, aligned, mismatched, wrongState),
+      aheadProbeOrigins = Set.empty,
+      responsivePeerStates = Map(
+        ahead -> NodeState.WaitingForReady,
+        aligned -> NodeState.Ready,
+        mismatched -> NodeState.Ready,
+        wrongState -> NodeState.Observing
+      ),
+      peerOutcomes = Map(
+        ahead -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead,
+        aligned -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned,
+        mismatched -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Mismatched,
+        wrongState -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned
+      )
+    )
+
+    expect(status.releaseOrigin.isEmpty) &&
+    expect.same(Some(ahead), status.aheadOrigin) &&
+    expect.same(Some(NodeState.Observing), status.invalidState.get(wrongState)) &&
+    expect(status.mismatchedOutcome.contains(mismatched)) &&
+    expect.same("peer_ahead", status.outcomeLabel)
+  }
+
+  pureTest("normal first-round pulse never reopens an old generation after peer-ahead recovery starts") {
+    val self = pid("pulse-self")
+    val aligned = pid("pulse-aligned")
+    val status = StateTransitions.normalFirstRoundPulseStatus(
+      SortedSet(self, aligned),
+      matchingFacilityOrigins = Set(aligned),
+      aheadProbeOrigins = Set.empty,
+      responsivePeerStates = Map(aligned -> NodeState.Ready),
+      peerOutcomes = Map(aligned -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned)
+    )
+
+    expect(StateTransitions.shouldReleaseNormalFirstRoundPulse(status, recoveryAlreadyTriggered = false)) &&
+    expect(!StateTransitions.shouldReleaseNormalFirstRoundPulse(status, recoveryAlreadyTriggered = true))
+  }
+
+  pureTest("a future declaration can trigger catch-up but cannot replace the Facility release pulse") {
+    val self = pid("pulse-self")
+    val future = pid("pulse-future")
+    val committee = SortedSet(self, future)
+    val alignedAtParent = StateTransitions.normalFirstRoundPulseStatus(
+      committee,
+      matchingFacilityOrigins = Set.empty,
+      aheadProbeOrigins = Set(future),
+      responsivePeerStates = Map(future -> NodeState.Ready),
+      peerOutcomes = Map(future -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned)
+    )
+    val committedAhead = StateTransitions.normalFirstRoundPulseStatus(
+      committee,
+      matchingFacilityOrigins = Set.empty,
+      aheadProbeOrigins = Set(future),
+      responsivePeerStates = Map(future -> NodeState.Ready),
+      peerOutcomes = Map(future -> StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead)
+    )
+
+    expect(alignedAtParent.releaseOrigin.isEmpty) &&
+    expect(alignedAtParent.aheadOrigin.isEmpty) &&
+    expect.same(Some(future), committedAhead.aheadOrigin) &&
+    expect(committedAhead.releaseOrigin.isEmpty)
+  }
 }
