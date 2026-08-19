@@ -360,6 +360,7 @@ object GlobalSnapshotConsensus {
           onUnsignedRecoverySuccessor,
           (key: GlobalSnapshotKey) =>
             consensusStorage.getRoundAttemptId.flatMap { expectedAttemptId =>
+              consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key, expectedAttemptId))
             }
         )
 
