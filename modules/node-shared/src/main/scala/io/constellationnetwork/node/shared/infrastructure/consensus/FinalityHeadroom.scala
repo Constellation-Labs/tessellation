@@ -42,6 +42,14 @@ object FinalityHeadroom {
     val allowsSilentEviction: Boolean = currentMargin < 0
 
     val holdsMembership: Boolean = !allowsExpansion && !allowsSilentEviction
+
+    /** The current committee still finalizes, but its observed signer set cannot support another seat.
+      *
+      * A persistently silent Tier-1 seat may be replaced from this state only through the existing Core-quorum eviction-certificate path.
+      * This flag never mutates membership by itself and deliberately remains distinct from `allowsSilentEviction`, which describes an
+      * already-finality-deficient committee.
+      */
+    val allowsCertifiedReplacement: Boolean = holdsMembership
   }
 
   /** Evaluate the protocol-derived invariant for the largest admission batch the proposal may carry:
