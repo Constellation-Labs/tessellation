@@ -1542,10 +1542,10 @@ class StateTransitions[
     (for {
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.DownloadInitStart)
       plannedCommittee <- ctx.plannedRecoveryCommittee
-      // isRecoveryEffective = true if either the caller flagged this as recovery, OR the cluster
-      // has advanced past our downloaded ordinal (peer returned a newer outcome). In both cases
-      // we skip the 43s TimeTrigger deferral so the node joins the cluster immediately.
-      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery, plannedCommittee)
+      // The fetch result preserves the caller recovery signal and marks a newer accepted
+      // outcome as recovery. Active membership below additionally recognizes an ordinary
+      // startup download as recovery once the signed outcome is available.
+      (outcome, fetchRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery, plannedCommittee)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
         .flatMap { o =>
           // Explicit post-retry validation: retryingOnFailuresAndAllErrors returns the last value
@@ -1591,6 +1591,13 @@ class StateTransitions[
               ).raiseError[F, (Outcome, Boolean)]
           }
         }
+      // A validator restarting through the ordinary full-download daemon is not labelled
+      // `isRecovery` by its caller. If the signed outcome already carries self in the active
+      // committee, delaying its first round by a complete TimeTrigger interval makes every
+      // declaration arrive after the healthy committee has finalized. Treat that
+      // consensus-agreed membership as recovery. A genuinely new candidate is not in the
+      // committee and retains the initial-join delay that protects bootstrap.
+      isRecoveryEffective = fetchRecoveryEffective || ctx.facilitatorsOf(outcome).contains(ctx.selfId)
       recoveryPermit <- plannedCommittee.traverse(_ => ctx.firstRoundStartGate.arm(outcomeKey.get(outcome)))
       _ <- ctx.onOutcomePreInitialize(outcome)
       // B2 readmission gate: refuse to facilitate while self is on probation per the carried

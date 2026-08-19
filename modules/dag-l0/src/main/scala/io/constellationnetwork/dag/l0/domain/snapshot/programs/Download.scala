@@ -1513,11 +1513,13 @@ object Download {
               snapshotStorage.readCombined(ord).flatMap {
                 case Some(result) => result.some.pure[F]
                 case None         =>
-                  // readCombined self-healed by deleting the bad pair at `ord`. The next call to
-                  // getHighestSnapshotInfoOrdinal will return a strictly-lower ord, but we also
-                  // pass `ord` explicitly (rather than `ord - 1`) to keep the bound aligned with
-                  // any new write races. SnapshotOrdinal.MinValue terminates if we reach genesis.
-                  findHighestValidPersisted(ord, attempts - 1)
+                  // Always decrease the search bound. A missing or unreadable snapshot can leave
+                  // its info file in place, so asking for the highest info at `ord` again would
+                  // select the same unusable pair until the attempt budget is exhausted.
+                  PartialPrevious[SnapshotOrdinal]
+                    .partialPrevious(ord)
+                    .map(findHighestValidPersisted(_, attempts - 1))
+                    .getOrElse(none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F])
               }
           }
 

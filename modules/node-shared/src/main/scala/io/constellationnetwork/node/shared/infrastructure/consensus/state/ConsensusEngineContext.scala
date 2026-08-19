@@ -102,6 +102,10 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // forever (gl0-4 in fork-recovery E2E). Same wiring source as `StallDetector`'s B2
   // admission emission — see the ConsensusEventLoop construction site.
   probationPeersOf: Outcome => Set[PeerId],
+  // Consensus-agreed active committee carried by the downloaded outcome. A validator
+  // already in this set is recovering an existing seat even when ordinary startup,
+  // rather than FollowerCatchUp, initiated its download.
+  facilitatorsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId],
   // Layer-specific extraction of consensus-agreed peerQuality from the carried outcome.
   // Used to widen the witness pool for B1/B2/VCC cert assembly beyond the round-start
   // committee. peerQuality lives in the concrete outcome type (GlobalConsensusOutcome /
@@ -180,6 +184,7 @@ object ConsensusEngineContext {
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
+    facilitatorsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
     lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None,
@@ -219,6 +224,7 @@ object ConsensusEngineContext {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
+        facilitatorsOf,
         peerQualityOf,
         lastOutcomeKeyOf,
         lastOutcomeEndTimeMsOf,

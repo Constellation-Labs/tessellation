@@ -332,6 +332,7 @@ object ConsensusEventLoop {
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
     _artifact: monocle.Lens[Outcome, Signed[Artifact]],
+    _facilitators: monocle.Lens[Outcome, Facilitators],
     _trigger: monocle.Lens[Outcome, ConsensusTrigger]
   ): F[BuiltConsensusLoop[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
@@ -366,6 +367,7 @@ object ConsensusEventLoop {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
+        (outcome: Outcome) => _facilitators.get(outcome).value.toSet,
         peerQualityOf,
         _key.get _,
         lastOutcomeEndTimeMsOf,
