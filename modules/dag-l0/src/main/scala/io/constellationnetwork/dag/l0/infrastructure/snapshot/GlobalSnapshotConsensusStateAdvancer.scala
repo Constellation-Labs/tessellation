@@ -3140,12 +3140,15 @@ object GlobalSnapshotConsensusStateAdvancer {
           if (evictedTargets.isEmpty) state.facilitators
           else Facilitators(state.facilitators.value.filterNot(evictedTargets.contains))
         // GL0 retain mode signs the same canonical round-start membership that proposal
-        // construction hashed. The mutable active set reflects node-local withdrawal timing and
-        // must not enter MajoritySignature.facilitatorsHash. Legacy automatic-removal policy keeps
-        // the post-eviction active set.
-        val signatureFacilitators = membershipPolicy.canonicalFacilitators(
+        // construction hashed unless the Proposal carried a validated eviction certificate. The
+        // mutable active set reflects node-local withdrawal timing and must not enter
+        // MajoritySignature.facilitatorsHash; a certified target is consensus evidence rather
+        // than a local withdrawal. Legacy automatic-removal policy also keeps the post-eviction
+        // active set.
+        val signatureFacilitators = membershipPolicy.canonicalFacilitatorsAfterCertifiedEviction(
           postEvictionFacilitators.value,
-          state.roundStartFacilitators.value
+          state.roundStartFacilitators.value,
+          evictedTargets
         )
         val postEvictionRemoved =
           if (evictedTargets.isEmpty) state.removedFacilitators
