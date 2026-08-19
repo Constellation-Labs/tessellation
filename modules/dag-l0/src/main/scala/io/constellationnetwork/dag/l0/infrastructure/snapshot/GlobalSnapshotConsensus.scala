@@ -356,11 +356,10 @@ object GlobalSnapshotConsensus {
           mptStore,
           facilitatorSelector,
           peerHistorySidecar,
-          HealthDerivedMembershipPolicy.RetainSigningLeases,
+          HealthDerivedMembershipPolicy.CertifiedEvictionOnly,
           onUnsignedRecoverySuccessor,
           (key: GlobalSnapshotKey) =>
             consensusStorage.getRoundAttemptId.flatMap { expectedAttemptId =>
-              consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key, expectedAttemptId))
             }
         )
 
@@ -389,7 +388,7 @@ object GlobalSnapshotConsensus {
           rawEvictionVoter,
           consensusQueue,
           tier1FinalityMissHistoryRef,
-          HealthDerivedMembershipPolicy.RetainSigningLeases
+          HealthDerivedMembershipPolicy.CertifiedEvictionOnly
         )
 
       stateRemover =
@@ -509,7 +508,7 @@ object GlobalSnapshotConsensus {
           effectiveConsensusConfig,
           facilitatorSelector,
           peerQualityTracker,
-          HealthDerivedMembershipPolicy.RetainSigningLeases,
+          HealthDerivedMembershipPolicy.CertifiedEvictionOnly,
           viewChangeVoter,
           timeoutVoter,
           rawEvictionVoter,
