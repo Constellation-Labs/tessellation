@@ -42,13 +42,21 @@ The override breaks only that cycle:
 4. Returning validators join normally and re-enter through the existing
    quorum-certified admission path.
 
+Starting with rc.13, the same one-shot invocation also publishes and requires a
+current `GlobalSnapshotSync` in the first successor. If the inherited signed
+sync view contains other peers, Global L0 can validate an atomic dormant-lineage
+reset from signed state instead of voting forever for an obsolete sync target.
+See [Currency L0 dormant-lineage resurrection](currency-l0-dormant-resurrection.md).
+
 ## Safety and compatibility contract
 
 - The flag defaults to false. Without it, proof-signer ordering and the
   pre-existing non-signer self-only fallback are unchanged.
-- It adds no snapshot field, state-proof field, activation ordinal, or
-  deterministic configuration input. Existing snapshot decoders and state-
-  proof verification are unchanged.
+- It adds no snapshot field, state-proof field, hash construction, or activation
+  ordinal. Rc.13 uses an existing artifact value as a per-lineage marker and
+  adds the already-existing GL0 retention values to the deterministic config
+  fingerprint. All Currency validators must therefore run rc.13 before the
+  marked reset successor is produced.
 - It does intentionally choose a different initial facilitator set for the
   first post-rollback outcome. Consequently the new history's facilitator set,
   `facilitatorsHash`, proof population, and later consensus history differ from
@@ -110,8 +118,11 @@ is a protocol bound on admission rate rather than a wall-clock SLA.
 The flag is consumed only after `programs.rollback.rollback` returns the chosen
 Currency snapshot and context. The `metagraphSyncData` fast-path lookup,
 fallback snapshot walk, state reconstruction, cleanup, and storage
-initialization all run exactly as before. The flag changes only the facilitator
-lists used to seed `CurrencyConsensusOutcome` after rollback has completed.
+initialization all run before the recovery publication. Rc.13 then completes
+the normal `RollbackDone` session lifecycle, publishes the required sync event,
+arms the first-successor guard, and starts solo consensus. The operational flag
+authorizes emission only; every validator recognizes and validates any reset
+from signed/consensus-carried inputs.
 
 ## DAG L0 parity
 
@@ -147,10 +158,13 @@ helper would expose an operation whose safety contract is not shared.
    - `dag_consensus_rollback_proof_signer_count` reports the checkpoint signer
      count;
    - `dag_consensus_rollback_bootstrap_facilitator_count` is `1`.
-4. Wait until at least five new Currency ordinals have finalized. This proves
-   both solo progress and enough chain depth for the first validator's `tip + 4`
-   observation.
-5. Before any service manager or monitor is re-enabled, confirm its configured
+4. For rc.13 dormant-lineage recovery, first require the exact recovery binary
+   to appear in canonical GL0: the construction guard falls to zero at local
+   Currency commit, while the publication-pending gauge remains one until GL0
+   confirmation. Then let the lead reach at least five new Currency ordinals;
+   this proves solo progress and supplies the first validator's `tip + 4`
+   observation window.
+5. Before any automated restart action is re-enabled, confirm its configured
    command is the ordinary startup command and contains no
    `--allow-solo-consensus` flag.
 

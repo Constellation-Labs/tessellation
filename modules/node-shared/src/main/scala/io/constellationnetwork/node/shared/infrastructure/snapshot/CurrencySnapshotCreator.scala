@@ -30,8 +30,10 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationEr
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.{
   CurrencySnapshotAcceptanceManager,
-  DataApplicationSnapshotAcceptanceManager
+  DataApplicationSnapshotAcceptanceManager,
+  ProcessedGlobalSnapshotHistory
 }
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage.RequiredRecoveryRefresh
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.artifact.SharedArtifact
@@ -72,7 +74,9 @@ trait CurrencySnapshotCreator[F[_]] {
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     // v20: see ConsensusFunctions for full rationale -- packed by caller from
     // the consensus-agreed previous round outcome.
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    historicalDependencyResolution: Boolean = false,
+    expectedRecoveryHistoryMarker: Boolean = false
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -84,7 +88,8 @@ object CurrencySnapshotCreator {
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
     currencyEventsCutter: CurrencyEventsCutter[F],
-    currencySnapshotValidationErrorStorage: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason]
+    currencySnapshotValidationErrorStorage: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
+    requiredRecoveryRefresh: Option[F[Option[RequiredRecoveryRefresh]]] = None
   ): CurrencySnapshotCreator[F] = new CurrencySnapshotCreator[F] {
 
     private def maxProposalSizeInBytes(facilitators: Set[PeerId]): PosLong =
@@ -108,7 +113,9 @@ object CurrencySnapshotCreator {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       shouldPerformMetagraphSpecificValidations: Boolean,
       maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      historicalDependencyResolution: Boolean = false,
+      expectedRecoveryHistoryMarker: Boolean = false
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -118,6 +125,16 @@ object CurrencySnapshotCreator {
         awaitedEvents: Set[CurrencySnapshotEvent] = Set.empty[CurrencySnapshotEvent]
       ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
         for {
+          maybeRequiredRecoveryRefresh <- requiredRecoveryRefresh.fold(none[RequiredRecoveryRefresh].pure[F])(
+            identity
+          )
+          // Size-cut retries rebuild the proposal from the cutter's reduced event set. The cutter
+          // predates GlobalSnapshotSyncEvent and therefore cannot carry this one-shot recovery
+          // requirement itself. Reinsert the exact signed requirement on every retry; omitting it
+          // must remain impossible even when an unrelated oversized event is cut.
+          effectiveEventsForAcceptance = maybeRequiredRecoveryRefresh.fold(eventsForAcceptance) { required =>
+            eventsForAcceptance + GlobalSnapshotSyncEvent(required.value)
+          }
           lastArtifactHash <- lastArtifactHasher.hash(lastArtifact.value)
           currentOrdinal = lastArtifact.ordinal.next
 
@@ -139,7 +156,7 @@ object CurrencySnapshotCreator {
           ) =
             dataApplicationSnapshotAcceptanceManager match {
               case Some(_) =>
-                eventsForAcceptance.toList.foldLeft(
+                effectiveEventsForAcceptance.toList.foldLeft(
                   (
                     List.empty[Signed[Block]],
                     List.empty[Signed[DataApplicationBlock]],
@@ -162,12 +179,12 @@ object CurrencySnapshotCreator {
                 }
               case None =>
                 (
-                  eventsForAcceptance.collect { case BlockEvent(b) => b }.toList,
+                  effectiveEventsForAcceptance.collect { case BlockEvent(b) => b }.toList,
                   List.empty,
-                  eventsForAcceptance.collect { case CurrencyMessageEvent(cm) => cm }.toList,
-                  eventsForAcceptance.collect { case GlobalSnapshotSyncEvent(gsse) => gsse }.toList,
-                  eventsForAcceptance.collect { case TokenLockBlockEvent(tlb) => tlb }.toList,
-                  eventsForAcceptance.collect { case AllowSpendBlockEvent(asb) => asb }.toList
+                  effectiveEventsForAcceptance.collect { case CurrencyMessageEvent(cm) => cm }.toList,
+                  effectiveEventsForAcceptance.collect { case GlobalSnapshotSyncEvent(gsse) => gsse }.toList,
+                  effectiveEventsForAcceptance.collect { case TokenLockBlockEvent(tlb) => tlb }.toList,
+                  effectiveEventsForAcceptance.collect { case AllowSpendBlockEvent(asb) => asb }.toList
                 )
             }
 
@@ -194,6 +211,13 @@ object CurrencySnapshotCreator {
           feeTransactions = dataApplicationAcceptanceResult
             .map(result => SortedSet.from(result.feeTransactions))
             .orElse(feeTransactionFn.map(f => f()))
+
+          parentSharedArtifacts = lastArtifact.artifacts.toList.flatten
+          recoveryHistoryMarkerPresent = ProcessedGlobalSnapshotHistory.markerPresent(parentSharedArtifacts)
+          previouslyProcessedGlobalSnapshots = ProcessedGlobalSnapshotHistory.payload(parentSharedArtifacts)
+          recoveryResetMarkerRequired = maybeRequiredRecoveryRefresh.exists(
+            _.mode == RecoveryGlobalSnapshotSync.ResetInheritedMultiPeerView
+          )
 
           currencySnapshotAcceptanceResult <-
             currencySnapshotAcceptanceManager
@@ -227,7 +251,11 @@ object CurrencySnapshotCreator {
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
                 shouldPerformMetagraphSpecificValidations,
-                lastArtifact.proofs
+                lastArtifact.proofs,
+                previouslyProcessedGlobalSnapshots,
+                recoveryHistoryMarkerPresent,
+                historicalDependencyResolution,
+                expectedRecoveryHistoryMarker || recoveryResetMarkerRequired
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
@@ -301,6 +329,12 @@ object CurrencySnapshotCreator {
             else currencySnapshotAcceptanceResult.globalSyncView.some,
             peerHistory
           )
+
+          _ <- maybeRequiredRecoveryRefresh.traverse_ {
+            case required if !artifact.globalSnapshotSyncs.exists(_.contains(required.value)) =>
+              RequiredRecoveryGlobalSnapshotSyncMissing(currentOrdinal).raiseError[F, Unit]
+            case _ => Applicative[F].unit
+          }
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)
 
@@ -383,4 +417,8 @@ object CurrencySnapshotCreator {
 
 case class UnableToReduceProposalByCutting(ordinal: SnapshotOrdinal) extends NoStackTrace {
   override val getMessage = s"Unable to reduce proposal by cutting for ${ordinal.show}"
+}
+
+case class RequiredRecoveryGlobalSnapshotSyncMissing(ordinal: SnapshotOrdinal) extends NoStackTrace {
+  override val getMessage: String = s"Required recovery GlobalSnapshotSync is missing from Currency L0 proposal at ordinal=${ordinal.show}"
 }

@@ -24,7 +24,8 @@ case class CurrencyMessagesAcceptanceResult(
 case class GlobalSnapshotSyncAcceptanceResult(
   contextUpdate: SortedMap[PeerId, Signed[GlobalSnapshotSync]],
   accepted: List[Signed[GlobalSnapshotSync]],
-  notAccepted: List[Signed[GlobalSnapshotSync]]
+  notAccepted: List[Signed[GlobalSnapshotSync]],
+  isRecoveryReset: Boolean = false
 )
 
 case class CurrencySnapshotAcceptanceResult(

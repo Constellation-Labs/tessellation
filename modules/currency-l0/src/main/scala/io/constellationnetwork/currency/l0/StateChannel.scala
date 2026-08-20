@@ -28,14 +28,31 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 import io.circe.Json
-import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object StateChannel {
 
   private val awakePeriod = 10.seconds
+
+  /** One construction/signing/enqueue path shared by normal publication and the rollback recovery barrier. No custom serialization or hash
+    * domain is introduced; the existing GlobalSnapshotSync and Signed.forAsyncHasher paths remain authoritative.
+    */
+  def publishGlobalSnapshotSync[F[_]: Async: Hasher: SecurityProvider](
+    snapshot: Hashed[GlobalIncrementalSnapshot],
+    parent: GlobalSnapshotSyncReference,
+    session: io.constellationnetwork.schema.cluster.SessionToken,
+    selfKeyPair: KeyPair,
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
+  ): F[Signed[GlobalSnapshotSync]] = {
+    val sync = GlobalSnapshotSync(parent.ordinal, snapshot.ordinal, snapshot.hash, session)
+    for {
+      signedGlobalSnapshotSync <- Signed.forAsyncHasher(sync, selfKeyPair)
+      _ <- enqueueConsensusEventFn(GlobalSnapshotSyncEvent(signedGlobalSnapshotSync)).run()
+    } yield signedGlobalSnapshotSync
+  }
 
   def run[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Parallel: JsonSerializer: Hasher](
     services: Services[F, Run],
@@ -82,7 +99,8 @@ object StateChannel {
     services: Services[F, Run],
     dataApplicationService: Option[BaseDataApplicationL0Service[F]],
     selfKeyPair: KeyPair,
-    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _]
+    enqueueConsensusEventFn: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
+    publishSyncEvents: Boolean = true
   )(implicit S: Supervisor[F], stateProofSelector: GlobalStateProofSelector): F[Unit] = {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -106,21 +124,37 @@ object StateChannel {
         }
       }.value
 
-      (lastSentGlobalSnapshotSync, storages.session.getToken).flatMapN {
-        case (Some(lastGlobalSnapshotSyncRef), Some(session)) =>
-          val sync = GlobalSnapshotSync(lastGlobalSnapshotSyncRef.ordinal, snapshot.ordinal, snapshot.hash, session)
-          for {
-            signedGlobalSnapshotSync <- Signed.forAsyncHasher(sync, selfKeyPair)
-            globalSyncEvent = GlobalSnapshotSyncEvent(signedGlobalSnapshotSync)
-            _ <- enqueueConsensusEventFn(globalSyncEvent).run()
-            _ <- storages.lastGlobalSnapshotSync.set(globalSyncEvent.value)
-          } yield ()
-        case (Some(_), None) =>
-          logger.warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
-        case (None, Some(_)) =>
-          logger.warn("Couldn't send GlobalSnapshotSyncEvent. Last sent reference is missing")
-        case _ =>
-          logger.error("Couldn't construct GlobalSnapshotSyncEvent. Last sent reference and session are missing")
+      (storages.lastGlobalSnapshotSync.getRequiredRecoveryRefresh, storages.recoverySyncPublication.get).tupled.flatMap {
+        case (Some(required), _) =>
+          val anchorAge = Math.max(0L, snapshot.ordinal.value.value - required.value.globalSnapshotOrdinal.value.value)
+          val remaining = Math.max(0L, required.validThroughGlobalParent.value.value - snapshot.ordinal.value.value)
+          Metrics[F].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", anchorAge) >>
+            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", remaining)
+        case (None, Some(publication)) =>
+          val anchorAge = Math.max(0L, snapshot.ordinal.value.value - publication.refresh.globalSnapshotOrdinal.value.value)
+          val remaining = Math.max(0L, publication.validThroughGlobalParent.value.value - snapshot.ordinal.value.value)
+          Metrics[F].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", anchorAge) >>
+            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", remaining)
+        case (None, None) =>
+          (lastSentGlobalSnapshotSync, storages.session.getToken).flatMapN {
+            case (Some(lastGlobalSnapshotSyncRef), Some(session)) =>
+              for {
+                signedGlobalSnapshotSync <- publishGlobalSnapshotSync(
+                  snapshot,
+                  lastGlobalSnapshotSyncRef,
+                  session,
+                  selfKeyPair,
+                  enqueueConsensusEventFn
+                )
+                _ <- storages.lastGlobalSnapshotSync.set(signedGlobalSnapshotSync)
+              } yield ()
+            case (Some(_), None) =>
+              logger.warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
+            case (None, Some(_)) =>
+              logger.warn("Couldn't send GlobalSnapshotSyncEvent. Last sent reference is missing")
+            case _ =>
+              logger.error("Couldn't construct GlobalSnapshotSyncEvent. Last sent reference and session are missing")
+          }
       }
     }
 
@@ -137,11 +171,26 @@ object StateChannel {
           .write(snapshot.ordinal, GlobalSnapshotWithStateDeltas(snapshot.signed, state.activeAllowSpends, state.activeTokenLocks))
       } yield ()
 
+    def confirmStateChannelBinaries(snapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] =
+      services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
+        logger.error(error)("Error when confirming state channel binary") >>
+          updateFailedConfirmingStateChannelBinaryMetrics() >>
+          Async[F].unit
+      }
+
+    /** Initial download may start from a tip newer than the GL0 snapshot that included a pending recovery binary. The exact inclusion is
+      * still inside the same retained window that bounded reset acceptance, so scan that canonical window before deciding the durable
+      * outbox is unresolved. No artifact derivation depends on this scan; it only restores an operational publication receipt.
+      */
+    def confirmRetainedStateChannelBinaries: F[Unit] =
+      sharedStorages.lastNGlobalSnapshot.getLastN.flatMap(_.sortBy(_.ordinal).traverse_(confirmStateChannelBinaries))
+
     def handleInitialSnapshot(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
       for {
         _ <- logger.info(s"Initializing global snapshot storages with ordinal=${snapshot.ordinal}")
         _ <- storages.lastSyncGlobalSnapshot.setInitial(snapshot, state)
         _ <- sharedStorages.lastNGlobalSnapshot.setInitialFetchingGL0(snapshot, state, services.globalL0.asLeft.some, none)
+        _ <- confirmRetainedStateChannelBinaries
         _ <- sharedStorages.lastGlobalSnapshot.setInitial(snapshot, state)
         _ <- persistGlobalSnapshot(snapshot, state)
         _ <- ensureMptInitialized(snapshot.ordinal, state)
@@ -167,13 +216,9 @@ object StateChannel {
         _ <- sharedStorages.lastNGlobalSnapshot.set(snapshot, context)
         _ <- sharedStorages.lastGlobalSnapshot.set(snapshot, context)
         _ <- persistGlobalSnapshot(snapshot, context)
-        _ <- sendGlobalSnapshotSyncConsensusEvent(snapshot)
+        _ <- sendGlobalSnapshotSyncConsensusEvent(snapshot).whenA(publishSyncEvents)
         _ <- triggerOnGlobalSnapshotPullHook(snapshot, context)
-        _ <- services.stateChannelBinarySender.confirm(snapshot).handleErrorWith { error =>
-          logger.error(error)("Error when confirming state channel binary") >>
-            updateFailedConfirmingStateChannelBinaryMetrics() >>
-            Async[F].unit
-        }
+        _ <- confirmStateChannelBinaries(snapshot)
       } yield ()
 
     def processSnapshotList(snapshots: List[Hashed[GlobalIncrementalSnapshot]]): F[Unit] =

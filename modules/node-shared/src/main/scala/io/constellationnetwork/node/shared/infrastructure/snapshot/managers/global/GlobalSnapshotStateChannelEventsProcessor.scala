@@ -15,7 +15,13 @@ import io.constellationnetwork.node.shared.config.types.FieldsAddedOrdinals
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.HistoricalGlobalSnapshotResolver.{
+  MissingInsideRetainedWindow,
+  OutsideRetainedWindow
+}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.ProcessedGlobalSnapshotHistory.ProcessedHistoryUnproven
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -30,6 +36,7 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
+import eu.timepit.refined.auto._
 import io.circe.Decoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -37,6 +44,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   type BinaryCurrencyPair = (Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])
   type BalanceUpdate = SortedMap[Address, Balance]
   type MetagraphAcceptanceResult = (NonEmptyList[BinaryCurrencyPair], BalanceUpdate)
+  type SelectedBranches = NonEmptyList[NonEmptyList[Signed[StateChannelSnapshotBinary]]]
 
   def process(
     snapshotOrdinal: SnapshotOrdinal,
@@ -57,7 +65,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async: JsonSerializer: Parallel](
+  def make[F[_]: Async: JsonSerializer: Parallel: Metrics](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
@@ -68,6 +76,9 @@ object GlobalSnapshotStateChannelEventsProcessor {
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
+
+      private type CurrencyProcessingResult =
+        (SortedMap[Address, MetagraphAcceptanceResult], Set[StateChannelOutput])
 
       // Ordinal-gated SC fee-balance source, resolved from config here rather than threaded as a bare
       // ordinal. Fail closed: an unset env defaults to MaxValue so the context-balance path stays OFF
@@ -150,24 +161,26 @@ object GlobalSnapshotStateChannelEventsProcessor {
           .flatMap { case (_, validatedEvents) => processStateChannelEvents(snapshotOrdinal, lastGlobalSnapshotInfo, validatedEvents) }
           .flatMap {
             case (scSnapshots, returnedSCEvents) =>
-              processCurrencySnapshots(
+              processCurrencySnapshotBranchesWithReturned(
                 snapshotOrdinal,
                 lastGlobalSnapshotInfo,
                 scSnapshots,
+                validationType,
                 getGlobalSnapshotByOrdinal
-              ).map { accepted =>
-                val (lastCurrencyStates, incomingCurrencyState) = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
-                val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
-                // TODO: ASSUMING that owner addresses are restricted from being shared at this point
-                val balanceUpdates = accepted.values.map(_._2).foldLeft(SortedMap.empty[Address, Balance])(_ ++ _)
+              ).map {
+                case (accepted, typedReturned) =>
+                  val (lastCurrencyStates, incomingCurrencyState) = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
+                  val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
+                  // TODO: ASSUMING that owner addresses are restricted from being shared at this point
+                  val balanceUpdates = accepted.values.map(_._2).foldLeft(SortedMap.empty[Address, Balance])(_ ++ _)
 
-                StateChannelAcceptanceResult(
-                  finalScSnapshots,
-                  lastCurrencyStates,
-                  returnedSCEvents,
-                  balanceUpdates,
-                  incomingCurrencyState
-                )
+                  StateChannelAcceptanceResult(
+                    finalScSnapshots,
+                    lastCurrencyStates,
+                    returnedSCEvents ++ typedReturned,
+                    balanceUpdates,
+                    incomingCurrencyState
+                  )
               }
           }
       }
@@ -194,16 +207,22 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastState: CurrencySnapshotInfo,
         lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot],
+        validationType: StateChannelValidationType,
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-      )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
-        currencySnapshotContextFns
-          .createContext(
-            CurrencySnapshotContext(currencyAddress, lastState),
-            lastSnapshot,
-            snapshot,
-            getGlobalSnapshotByOrdinal
-          )
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] = {
+        val createContext = validationType match {
+          case StateChannelValidationType.Full       => currencySnapshotContextFns.createContext _
+          case StateChannelValidationType.Historical => currencySnapshotContextFns.createHistoricalContext _
+        }
+
+        createContext(
+          CurrencySnapshotContext(currencyAddress, lastState),
+          lastSnapshot,
+          snapshot,
+          getGlobalSnapshotByOrdinal
+        )
           .map(_.snapshotInfo)
+      }
 
       /** Processes currency snapshots for each metagraph address, applying fee deduction logic.
         *
@@ -219,13 +238,59 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-      )(implicit hasher: Hasher[F]): F[SortedMap[Address, MetagraphAcceptanceResult]] = {
+      )(implicit hasher: Hasher[F]): F[SortedMap[Address, MetagraphAcceptanceResult]] =
+        processCurrencySnapshotsWithReturned(
+          snapshotOrdinal,
+          lastGlobalSnapshotInfo,
+          events,
+          StateChannelValidationType.Full,
+          getGlobalSnapshotByOrdinal
+        ).map(_._1)
+
+      private def processCurrencySnapshotsWithReturned(
+        snapshotOrdinal: SnapshotOrdinal,
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+        events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+        validationType: StateChannelValidationType,
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[CurrencyProcessingResult] =
+        processCurrencySnapshotBranchesWithReturned(
+          snapshotOrdinal,
+          lastGlobalSnapshotInfo,
+          events.map { case (address, selected) => address -> NonEmptyList.one(selected) },
+          validationType,
+          getGlobalSnapshotByOrdinal
+        )
+
+      private def processCurrencySnapshotBranchesWithReturned(
+        snapshotOrdinal: SnapshotOrdinal,
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+        events: SortedMap[Address, SelectedBranches],
+        validationType: StateChannelValidationType,
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[CurrencyProcessingResult] = {
         val isFeeRequired = feeCalculator.isFeeRequired(snapshotOrdinal)
 
         events.toList.parTraverse {
           case (address, binaries) =>
             type Result = Option[MetagraphAcceptanceResult]
-            type Agg = (Result, List[Signed[StateChannelSnapshotBinary]])
+
+            sealed trait BranchResult
+            final case class BranchCompleted(result: Result) extends BranchResult
+            final case class BranchDependencyRejected(
+              result: Result,
+              rejected: List[Signed[StateChannelSnapshotBinary]],
+              reason: String,
+              error: Throwable
+            ) extends BranchResult
+            final case class BranchTerminalRejected(
+              result: Result,
+              rejected: List[Signed[StateChannelSnapshotBinary]],
+              reason: String
+            ) extends BranchResult
+
+            def completed(result: Result): F[BranchResult] =
+              Async[F].pure(BranchCompleted(result): BranchResult)
 
             val stubBinary: Signed[StateChannelSnapshotBinary] = Signed(
               StateChannelSnapshotBinary(Hash.empty, Array.emptyByteArray, SnapshotFee.MinValue),
@@ -245,133 +310,191 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 .map(init => (stubBinary, init.some))
                 .map(s => (NonEmptyList.one(s), SortedMap.empty[Address, Balance]))
 
-            (initialState, binaries.toList.reverse)
-              .tailRecM[F, Result] {
-                case (state, Nil) => state.asRight[Agg].pure[F]
+            def normalize(result: Result): Result =
+              result.map { case (snaps, balances) => (snaps.reverse, balances) }.flatMap {
+                case (nel, balances) if initialState.nonEmpty => NonEmptyList.fromList(nel.tail).map((_, balances))
+                case value                                    => value.some
+              }
 
-                case (None, head :: tail) =>
-                  deserialize[Signed[CurrencySnapshot]](head).map {
-                    case Some(snapshot) => // full snapshot - we don't subtract fee
-                      (
-                        (NonEmptyList.one((head, snapshot.asLeft.some)), emptyBalanceUpdate).some,
-                        tail
-                      ).asLeft
-                    case None => // no full snapshot yet - we only accept the binary if fee is not required
-                      if (isFeeRequired) none.asRight
-                      else ((NonEmptyList.one((head, none)), emptyBalanceUpdate).some, tail).asLeft
-                  }
+            def recordDependencyRejection(reason: String, count: Int, error: Throwable): F[Unit] =
+              Metrics[F].incrementCounterBy(
+                "dag_l0_state_channel_dependency_rejection_total",
+                count,
+                Seq(Metrics.unsafeLabelName("reason") -> reason)
+              ) >> logger.warn(error)(
+                s"Returning unsupported state-channel lineage address=${address.show} reason=$reason count=$count"
+              )
 
-                case (Some((nel, balanceUpdate)), head :: tail) =>
-                  val current: Result = (nel, balanceUpdate).some
-                  nel.head match {
-                    case (_, None) =>
-                      deserialize[Signed[CurrencySnapshot]](head).map {
-                        case Some(snapshot) => // full snapshot - we don't subtract fee
-                          (
-                            (nel.prepend((head, snapshot.asLeft.some)), balanceUpdate).some,
-                            tail
-                          ).asLeft
-                        case None => // no full snapshot yet - we only accept the binary if fee is not required
-                          if (isFeeRequired) current.asRight
-                          else ((nel.prepend((head, none)), balanceUpdate).some, tail).asLeft
-                      }
+            def processSelected(selectedBinaries: List[Signed[StateChannelSnapshotBinary]]): F[BranchResult] = {
+              def dependencyRejected(
+                current: Result,
+                rejected: List[Signed[StateChannelSnapshotBinary]],
+                reason: String,
+                error: Throwable
+              ): F[BranchResult] =
+                recordDependencyRejection(reason, rejected.size, error) >>
+                  Async[F].pure(BranchDependencyRejected(normalize(current), rejected, reason, error): BranchResult)
 
-                    case (_, lastCurrState @ Some(Left(fullSnapshot))) =>
-                      deserialize[Signed[CurrencyIncrementalSnapshot]](head).map {
-                        case Some(snapshot) => // first incremental - we don't subtract fee
-                          (
-                            (
-                              nel.prepend((head, (snapshot, fullSnapshot.value.info.toCurrencySnapshotInfo).asRight.some)),
-                              balanceUpdate
-                            ).some,
-                            tail
-                          ).asLeft
-                        case None => // no first incremental yet - we only accept the binary if fee is not required
-                          if (isFeeRequired) current.asRight
-                          else ((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail).asLeft
-                      }
+              def terminalRejected(
+                current: Result,
+                rejected: List[Signed[StateChannelSnapshotBinary]],
+                reason: String
+              ): F[BranchResult] =
+                Metrics[F].incrementCounterBy(
+                  "dag_l0_state_channel_rejection_total",
+                  rejected.size,
+                  Seq(Metrics.unsafeLabelName("reason") -> reason)
+                ) >> Async[F].pure(BranchTerminalRejected(normalize(current), rejected, reason): BranchResult)
 
-                    case (_, lastCurrState @ Some(Right((lastIncremental, lastState)))) =>
-                      deserialize[Signed[CurrencyIncrementalSnapshot]](head).flatMap {
-                        case Some(snapshot) => // second or subsequent incremental snapshot - we do subtract fee
-                          applyCurrencySnapshot(
-                            address,
-                            lastState,
-                            lastIncremental,
-                            snapshot,
-                            getGlobalSnapshotByOrdinal
-                          ).flatMap { state =>
-                            val maybeFeeAddress = state.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
+              def loop(state: Result, remaining: List[Signed[StateChannelSnapshotBinary]]): F[BranchResult] =
+                remaining match {
+                  case Nil => completed(normalize(state))
 
-                            // Fee deduction: if fee is required, we need a fee address (owner address from
-                            // currency messages). Without one we reject. With one, we check the local balance
-                            // accumulator first (to account for fees already deducted earlier in this batch),
-                            // falling back to lastGlobalSnapshotInfo.balances for the initial balance lookup.
-                            //
-                            // We deliberately use lastGlobalSnapshotInfo.balances (the deterministic context
-                            // passed into accept()) rather than mptStore.getBalance, because accept() mutates
-                            // the MptStore as a side-effect (syncFromStateChanges). When validateArtifact
-                            // calls accept() a second time (to validate the leader's artifact), the MptStore
-                            // has already been updated by the validator's own proposal computation, producing
-                            // a different balance than the leader saw — causing currencyAcceptanceBalanceUpdate
-                            // to diverge. Using the immutable context snapshot avoids this entirely, and also
-                            // correctly reflects block-level balance changes (updatedGlobalBalances) that the
-                            // MptStore does not yet contain at the time of fee calculation.
-                            maybeFeeAddress
-                              .filter(_ => isFeeRequired)
-                              .fold(
-                                if (!isFeeRequired)
-                                  ((nel.prepend((head, (snapshot, state).asRight.some)), balanceUpdate).some, tail).asLeft[Result].pure[F]
-                                else
-                                  current.asRight[Agg].pure[F]
-                              ) { feeAddress =>
-                                val localBalance = balanceUpdate.get(feeAddress)
-                                // Ordinal-gated balance source (commit dd6e83a19): at/after the gate use the deterministic
-                                // accept() context (lastGlobalSnapshotInfo.balances); below it the pre-fix mptStore.getBalance
-                                // path so already-signed history re-derives byte-identically. The in-batch localBalance
-                                // accumulator takes precedence either way.
-                                val initialBalanceF: F[Balance] =
-                                  if (snapshotOrdinal >= scFeeBalanceFromContextOrdinal)
-                                    lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty).pure[F]
-                                  else
-                                    mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty))
-                                localBalance.fold(initialBalanceF)(_.pure[F]).map { balance =>
-                                  // We're inside the Some(feeAddress) handler, so isFeeRequired is always true here.
-                                  // If fee deduction succeeds, continue processing; otherwise reject remaining binaries.
-                                  (balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance)) match {
-                                    case Some(newBalanceUpdate) =>
-                                      ((nel.prepend((head, (snapshot, state).asRight.some)), newBalanceUpdate).some, tail)
-                                        .asLeft[Result]
-                                    case None => // insufficient balance to cover fee — reject remaining binaries
-                                      current.asRight[Agg]
-                                  }): Either[Agg, Result]
+                  case head :: tail if state.isEmpty =>
+                    deserialize[Signed[CurrencySnapshot]](head).flatMap {
+                      case Some(snapshot) =>
+                        loop((NonEmptyList.one((head, snapshot.asLeft.some)), emptyBalanceUpdate).some, tail)
+                      case None if isFeeRequired => terminalRejected(none, head :: tail, "fee_required_unparseable")
+                      case None                  => loop((NonEmptyList.one((head, none)), emptyBalanceUpdate).some, tail)
+                    }
+
+                  case head :: tail =>
+                    val current = state
+                    val (nel, balanceUpdate) = state.get
+
+                    nel.head match {
+                      case (_, None) =>
+                        deserialize[Signed[CurrencySnapshot]](head).flatMap {
+                          case Some(snapshot)        => loop((nel.prepend((head, snapshot.asLeft.some)), balanceUpdate).some, tail)
+                          case None if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
+                          case None                  => loop((nel.prepend((head, none)), balanceUpdate).some, tail)
+                        }
+
+                      case (_, lastCurrState @ Some(Left(fullSnapshot))) =>
+                        deserialize[Signed[CurrencyIncrementalSnapshot]](head).flatMap {
+                          case Some(snapshot) =>
+                            loop(
+                              (
+                                nel.prepend((head, (snapshot, fullSnapshot.value.info.toCurrencySnapshotInfo).asRight.some)),
+                                balanceUpdate
+                              ).some,
+                              tail
+                            )
+                          case None if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
+                          case None                  => loop((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail)
+                        }
+
+                      case (_, lastCurrState @ Some(Right((lastIncremental, lastState)))) =>
+                        deserialize[Signed[CurrencyIncrementalSnapshot]](head).flatMap {
+                          case Some(snapshot) =>
+                            applyCurrencySnapshot(
+                              address,
+                              lastState,
+                              lastIncremental,
+                              snapshot,
+                              validationType,
+                              getGlobalSnapshotByOrdinal
+                            ).flatMap { nextState =>
+                              val maybeFeeAddress = nextState.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
+
+                              maybeFeeAddress
+                                .filter(_ => isFeeRequired)
+                                .fold(
+                                  if (!isFeeRequired)
+                                    loop((nel.prepend((head, (snapshot, nextState).asRight.some)), balanceUpdate).some, tail)
+                                  else terminalRejected(current, head :: tail, "fee_address_missing")
+                                ) { feeAddress =>
+                                  val initialBalanceF =
+                                    if (snapshotOrdinal >= scFeeBalanceFromContextOrdinal)
+                                      lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty).pure[F]
+                                    else
+                                      mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty))
+
+                                  balanceUpdate.get(feeAddress).fold(initialBalanceF)(_.pure[F]).flatMap { balance =>
+                                    balance.minus(head.fee).toOption match {
+                                      case Some(updated) =>
+                                        loop(
+                                          (
+                                            nel.prepend((head, (snapshot, nextState).asRight.some)),
+                                            balanceUpdate + (feeAddress -> updated)
+                                          ).some,
+                                          tail
+                                        )
+                                      case None => terminalRejected(current, head :: tail, "fee_balance_insufficient")
+                                    }
+                                  }
                                 }
-                              }
-                          }.handleErrorWith { e => // we don't accept neither binary nor incremental
-                            logger.warn(e)(
-                              s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
-                            ) >> Async[F].pure(current.asRight)
-                          }
-                        case None => // again we only let it through if fee is not required
-                          if (isFeeRequired)
-                            Async[F].pure(current.asRight) // was: none.asRight but why clean it out rather than using current state?
-                          else ((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail).asLeft.pure[F]
-                      }
+                            }.handleErrorWith {
+                              case error: OutsideRetainedWindow =>
+                                dependencyRejected(current, head :: tail, "outside_retention", error)
+                              case error: ProcessedHistoryUnproven =>
+                                dependencyRejected(current, head :: tail, "processed_history_unproven", error)
+                              case error: MissingInsideRetainedWindow =>
+                                Metrics[F].incrementCounter(
+                                  "dag_l0_state_channel_dependency_rejection_total",
+                                  Seq(Metrics.unsafeLabelName("reason") -> "missing_recent")
+                                ) >> error.raiseError[F, BranchResult]
+                              case error =>
+                                logger.warn(error)(
+                                  s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
+                                ) >> completed(normalize(current))
+                            }
+
+                          case None if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
+                          case None                  => loop((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail)
+                        }
+                    }
+                }
+
+              loop(initialState, selectedBinaries.reverse)
+            }
+
+            def tryBranches(
+              remaining: List[NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+              rejected: List[Signed[StateChannelSnapshotBinary]]
+            ): F[(Address, Result, List[Signed[StateChannelSnapshotBinary]])] =
+              remaining match {
+                case Nil => (address, none[MetagraphAcceptanceResult], rejected).pure[F]
+                case branch :: alternatives =>
+                  processSelected(branch.toList).flatMap {
+                    case BranchCompleted(result) => (address, result, rejected).pure[F]
+                    case BranchDependencyRejected(Some(prefix), suffix, _, _) =>
+                      (address, prefix.some, rejected ++ suffix).pure[F]
+                    case BranchDependencyRejected(None, suffix, _, _) if alternatives.nonEmpty =>
+                      Metrics[F].incrementCounter("dag_l0_state_channel_dependency_branch_fallback_total") >>
+                        tryBranches(alternatives, rejected ++ suffix)
+                    case BranchDependencyRejected(None, suffix, _, _) =>
+                      (address, none[MetagraphAcceptanceResult], rejected ++ suffix).pure[F]
+                    case BranchTerminalRejected(Some(prefix), suffix, _) =>
+                      (address, prefix.some, rejected ++ suffix).pure[F]
+                    case BranchTerminalRejected(None, suffix, _) if alternatives.nonEmpty =>
+                      Metrics[F].incrementCounter("dag_l0_state_channel_terminal_branch_fallback_total") >>
+                        tryBranches(alternatives, rejected ++ suffix)
+                    case BranchTerminalRejected(None, suffix, _) =>
+                      (address, none[MetagraphAcceptanceResult], rejected ++ suffix).pure[F]
                   }
               }
-              .map(_.map { case (snaps, balances) => (snaps.reverse, balances) })
-              .map { maybeProcessed =>
-                initialState match {
-                  case Some(_) => maybeProcessed.flatMap { case (nel, balances) => NonEmptyList.fromList(nel.tail).map((_, balances)) }
-                  case None    => maybeProcessed
-                }
-              }
-              .map(result => address -> result)
+
+            tryBranches(binaries.toList, List.empty)
         }.map { results =>
-          results.foldLeft(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
-            case (acc, (address, Some(result))) => acc + (address -> result)
-            case (acc, (_, None))               => acc
+          val accepted = results.foldLeft(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
+            case (acc, (address, Some(result), _)) => acc + (address -> result)
+            case (acc, (_, None, _))               => acc
           }
+          val returned = results.flatMap { case (address, _, binaries) => binaries.map(StateChannelOutput(address, _)) }.toSet
+          (accepted, returned)
+        }.flatTap {
+          case (accepted, returned) =>
+            val acceptedCount = accepted.valuesIterator.map(_._1.size).sum
+            Metrics[F].incrementCounterBy(
+              "dag_l0_state_channel_currency_result_total",
+              acceptedCount,
+              Seq(Metrics.unsafeLabelName("outcome") -> "accepted")
+            ) >> Metrics[F].incrementCounterBy(
+              "dag_l0_state_channel_currency_result_total",
+              returned.size,
+              Seq(Metrics.unsafeLabelName("outcome") -> "typed_rejected")
+            )
         }
       }
 
@@ -379,8 +502,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
         ordinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelOutput]
-      )(implicit hasher: Hasher[F]): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelOutput])] =
-        stateChannelManager.accept(ordinal, lastGlobalSnapshotInfo, events)
+      )(implicit hasher: Hasher[F]): F[(SortedMap[Address, SelectedBranches], Set[StateChannelOutput])] =
+        stateChannelManager.acceptBranches(ordinal, lastGlobalSnapshotInfo, events)
 
     }
 

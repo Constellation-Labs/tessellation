@@ -34,6 +34,7 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   CurrencyArtifactMismatch,
   SnapshotDifferentThanExpected,
@@ -94,7 +95,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     clusterStorageInstance: ClusterStorage[F],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
     eventGossipClient: EventGossipClient[F, CurrencySnapshotEvent],
-    facilitatorSelector: FacilitatorSelector
+    facilitatorSelector: FacilitatorSelector,
+    lastGlobalSnapshotSyncStorage: LastSentGlobalSnapshotSyncStorage[F]
   )(
     implicit eventEncoder: Encoder[CurrencySnapshotEvent],
     eventDecoder: Decoder[CurrencySnapshotEvent]
@@ -111,7 +113,27 @@ object CurrencySnapshotConsensusStateAdvancer {
         context: CurrencySnapshotContext
       ): F[Unit] = Applicative[F].unit
 
-      override def afterConsensusOutcomeCommitted(outcome: CurrencyConsensusOutcome): F[Unit] = Applicative[F].unit
+      override def afterConsensusOutcomeCommitted(outcome: CurrencyConsensusOutcome): F[Unit] =
+        lastGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap {
+          case Some(required) if outcome.finished.signedMajorityArtifact.globalSnapshotSyncs.exists(_.contains(required.value)) =>
+            lastGlobalSnapshotSyncStorage.clearRequiredRecoveryRefresh >>
+              Metrics[F].updateGauge(
+                "dag_currency_l0_recovery_sync_construction_guard_armed",
+                0L,
+                Seq(Metrics.unsafeLabelName("mode") -> required.mode.metricLabel)
+              ) >>
+              Metrics[F].incrementCounter(
+                "dag_currency_l0_recovery_sync_refresh_total",
+                Seq(
+                  Metrics.unsafeLabelName("mode") -> required.mode.metricLabel,
+                  // This releases only the first-successor construction guard. The durable
+                  // publication-pending gauge and outbox remain authoritative until canonical
+                  // Global L0 inclusion.
+                  Metrics.unsafeLabelName("outcome") -> "local_committed"
+                )
+              )
+          case _ => Applicative[F].unit
+        }
 
       protected val clusterStorage: ClusterStorage[F] = clusterStorageInstance
       protected val config: ConsensusConfig = consensusConfig
@@ -2053,33 +2075,40 @@ object CurrencySnapshotConsensusStateAdvancer {
           parentArtifact.globalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue)
 
         stateChannelSnapshotService
-          .persist(
-            signedArtifact,
-            context,
-            parentArtifact.dataApplication,
-            parentGlobalSnapshotOrdinal
-          )
-          .flatMap {
-            case true =>
-              // Persist succeeded: this is the winning, persisted artifact, so clear the events it
-              // committed from the mempool (active and suspended). Mirror of dag-l0.
-              clearCommittedEvents(signedArtifact.value) >>
-                notifyDataApplication(signedArtifact) >>
-                // Telemetry is not part of finalization correctness. Swallow failures here so
-                // partial cumulative-counter updates cannot replay persistence/application work.
-                recordMetrics(signedArtifact, hashedBinary, context).attempt.void >>
-                // Keep binary enqueue as the final critical action. StateChannelBinarySender
-                // makes post-mutation logging/metrics best-effort, so no later failure can cause a
-                // confirmed/pruned binary to be reintroduced by retained-effect replay.
-                stateChannelSnapshotService.enqueueBinary(hashedBinary, signedArtifact.ordinal)
+          // Two-phase durable outbox: the intent exists before snapshot persistence but is not
+          // publishable until the exact artifact is committed. Startup reconciles a crash in the
+          // narrow interval between these two durable writes against Currency snapshot storage.
+          .prepareRecoveryBinary(signedArtifact, hashedBinary) >>
+          stateChannelSnapshotService
+            .persist(
+              signedArtifact,
+              context,
+              parentArtifact.dataApplication,
+              parentGlobalSnapshotOrdinal
+            )
+            .flatMap {
+              case true =>
+                stateChannelSnapshotService.commitRecoveryBinary(hashedBinary.hash, signedArtifact, context.snapshotInfo) >>
+                  // Persist succeeded: this is the winning, persisted artifact, so clear the events it
+                  // committed from the mempool (active and suspended). Mirror of dag-l0.
+                  clearCommittedEvents(signedArtifact.value) >>
+                  notifyDataApplication(signedArtifact) >>
+                  // Telemetry is not part of finalization correctness. Swallow failures here so
+                  // partial cumulative-counter updates cannot replay persistence/application work.
+                  recordMetrics(signedArtifact, hashedBinary, context).attempt.void >>
+                  // Keep binary enqueue as the final critical action. StateChannelBinarySender
+                  // makes post-mutation logging/metrics best-effort, so no later failure can cause a
+                  // confirmed/pruned binary to be reintroduced by retained-effect replay.
+                  stateChannelSnapshotService.enqueueBinary(hashedBinary, signedArtifact.ordinal)
 
-            case false =>
-              // Do not clear the retained Finished effect. Advancing the outcome after a
-              // conflicting/out-of-order local prepend would publish a binary and notify the data
-              // application for an artifact this node explicitly rejected.
-              ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >>
-                MonadThrow[F].raiseError(new RuntimeException("Currency snapshot persist failed"))
-          }
+              case false =>
+                // Do not clear the retained Finished effect. Advancing the outcome after a
+                // conflicting/out-of-order local prepend would publish a binary and notify the data
+                // application for an artifact this node explicitly rejected.
+                stateChannelSnapshotService.abortPreparedRecoveryBinary(hashedBinary.hash) >>
+                  ConsensusLog.error(logger, Category.Lifecycle, signedArtifact.ordinal.show, "n/a", Event.PersistFailed) >>
+                  MonadThrow[F].raiseError(new RuntimeException("Currency snapshot persist failed"))
+            }
       }
 
       private def clearCommittedEvents(artifact: CurrencySnapshotArtifact): F[Unit] =

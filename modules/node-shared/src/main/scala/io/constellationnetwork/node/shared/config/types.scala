@@ -899,7 +899,13 @@ object types {
     // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
     // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
     // included in `deterministicConfigHash` -- divergent values are rejected at L0 joining and surfaced during Facility processing.
-    quorumShrinkActivationViews: Int = 0
+    quorumShrinkActivationViews: Int = 0,
+    // Cross-layer historical-dependency boundary. These values already decide Currency L0
+    // GlobalSnapshotSync target selection and rc.13 reset acceptance. They are copied from
+    // SharedConfig.lastGlobalSnapshotsSync at each L0 construction site so a misconfigured
+    // validator cannot join its local cluster with a different retained interval.
+    lastGlobalSnapshotSyncOffset: Long = 0L,
+    lastGlobalSnapshotsInMemory: Int = 0
   ) {
 
     /** Deterministic hash of consensus-critical config values.
@@ -1034,6 +1040,8 @@ object types {
           // cert/phase acceptance quorum at a wedged key; divergent operator values would
           // make one node accept a shrunken VCC/TC that another rejects.
           s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
+          s"lastGlobalSnapshotSyncOffset=$lastGlobalSnapshotSyncOffset," +
+          s"lastGlobalSnapshotsInMemory=$lastGlobalSnapshotsInMemory," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))

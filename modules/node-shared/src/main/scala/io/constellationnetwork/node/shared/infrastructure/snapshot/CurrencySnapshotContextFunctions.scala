@@ -21,24 +21,33 @@ import derevo.derive
 import eu.timepit.refined.auto._
 
 abstract class CurrencySnapshotContextFunctions[F[_]]
-    extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
+    extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext] {
+  def createHistoricalContext(
+    context: CurrencySnapshotContext,
+    lastArtifact: Signed[CurrencyIncrementalSnapshot],
+    signedArtifact: Signed[CurrencyIncrementalSnapshot],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext]
+}
 
 object CurrencySnapshotContextFunctions {
   def make[F[_]: Async: Parallel: JsonSerializer](validator: CurrencySnapshotValidator[F])(
     implicit currencyStateProofSelector: CurrencyStateProofSelector
   ) =
     new CurrencySnapshotContextFunctions[F] {
-      def createContext(
+      private def create(
         context: CurrencySnapshotContext,
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot],
-        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+        historicalDependencyResolution: Boolean
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] = for {
         validatedS <- validator.validateSignedSnapshot(
           lastArtifact,
           context,
           signedArtifact,
-          getGlobalSnapshotByOrdinal
+          getGlobalSnapshotByOrdinal,
+          historicalDependencyResolution
         )
         validatedContext <- validatedS match {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
@@ -53,6 +62,22 @@ object CurrencySnapshotContextFunctions {
           }
         }
       } yield validatedContext
+
+      def createContext(
+        context: CurrencySnapshotContext,
+        lastArtifact: Signed[CurrencyIncrementalSnapshot],
+        signedArtifact: Signed[CurrencyIncrementalSnapshot],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] =
+        create(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, historicalDependencyResolution = false)
+
+      def createHistoricalContext(
+        context: CurrencySnapshotContext,
+        lastArtifact: Signed[CurrencyIncrementalSnapshot],
+        signedArtifact: Signed[CurrencyIncrementalSnapshot],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] =
+        create(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, historicalDependencyResolution = true)
 
     }
 

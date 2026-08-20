@@ -5,22 +5,30 @@ import java.security.KeyPair
 import cats.Monad
 import cats.data.NonEmptySet
 import cats.effect.Async
-import cats.effect.std.Supervisor
 import cats.syntax.all._
 
+import io.constellationnetwork.currency.l0.snapshot.storage.RecoverySyncPublicationStorage
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer, SizeCalculator}
+import io.constellationnetwork.json.{JsonSerializer, SizeCalculator}
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.DataApplicationSnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.{
+  OrdinalLinkStatus,
+  UnableToPersistSnapshot
+}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
+  LastSentGlobalSnapshotSyncStorage,
+  SnapshotInfoLocalFileSystemStorage,
+  SnapshotLocalFileSystemStorage
+}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
@@ -41,6 +49,22 @@ trait StateChannelSnapshotService[F[_]] {
     maybeParentDataApplication: Option[DataApplicationPart],
     parentGlobalSnapshotOrdinal: SnapshotOrdinal
   )(implicit hasher: Hasher[F]): F[Boolean]
+
+  /** Write a non-publishable recovery outbox intent before local snapshot persistence. */
+  def prepareRecoveryBinary(
+    signedArtifact: Signed[CurrencySnapshotArtifact],
+    binaryHashed: Hashed[StateChannelSnapshotBinary]
+  )(implicit hasher: Hasher[F]): F[Unit]
+
+  /** Make the prepared recovery binary publishable immediately after the exact Currency artifact is durable. */
+  def commitRecoveryBinary(
+    binaryHash: Hash,
+    signedArtifact: Signed[CurrencySnapshotArtifact],
+    context: CurrencySnapshotInfo
+  )(implicit hasher: Hasher[F]): F[Unit]
+
+  /** Remove only a non-committed intent when local persistence definitively rejects the artifact. */
+  def abortPreparedRecoveryBinary(binaryHash: Hash): F[Unit]
 
   /** Last critical finalization step: enqueue the exact persisted snapshot binary.
     *
@@ -76,9 +100,17 @@ object StateChannelSnapshotService {
   def make[F[_]: Async: JsonSerializer: SecurityProvider](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
+    snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[
+      F,
+      CurrencySnapshotStateProof,
+      CurrencySnapshotInfo
+    ],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     stateChannelBinarySender: StateChannelBinarySender[F],
+    lastSentGlobalSnapshotSyncStorage: LastSentGlobalSnapshotSyncStorage[F],
+    recoverySyncPublicationStorage: RecoverySyncPublicationStorage[F],
     feeCalculator: FeeCalculator[F],
     snapshotSizeConfig: SnapshotSizeConfig
   ): StateChannelSnapshotService[F] =
@@ -156,11 +188,90 @@ object StateChannelSnapshotService {
         result <- StateChannelSnapshotService.continueAfterPersist(persisted, accepted, rejected)
       } yield result
 
-      def enqueueBinary(binaryHashed: Hashed[StateChannelSnapshotBinary], currencySnapshotOrdinal: SnapshotOrdinal): F[Unit] =
-        lastGlobalSnapshotStorage.get.flatMap { lastGlobalSnapshot =>
-          val lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
-          stateChannelBinarySender.enqueue(binaryHashed, currencySnapshotOrdinal, lastGlobalSnapshotSigners)
+      def prepareRecoveryBinary(
+        signedArtifact: Signed[CurrencySnapshotArtifact],
+        binaryHashed: Hashed[StateChannelSnapshotBinary]
+      )(implicit hasher: Hasher[F]): F[Unit] =
+        lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap {
+          case Some(required) =>
+            signedArtifact.toHashed.flatMap { currencyArtifact =>
+              recoverySyncPublicationStorage.prepare(required, binaryHashed, currencyArtifact).void
+            }
+          case None => Async[F].unit
         }
+
+      private def ensureRecoveryArtifactDurable(
+        signedArtifact: Signed[CurrencySnapshotArtifact],
+        expectedInfo: CurrencySnapshotInfo
+      )(implicit hasher: Hasher[F]): F[Unit] =
+        signedArtifact.toHashed.flatMap { artifact =>
+          def verify: F[OrdinalLinkStatus] =
+            snapshotLocalFileSystemStorage.ensureOrdinalLink(artifact.hash, artifact.ordinal)
+
+          def requireUsable(status: OrdinalLinkStatus): F[Unit] =
+            if (!status.usable)
+              Async[F].raiseError(
+                new IllegalStateException(
+                  s"Recovery Currency artifact is not durable in both snapshot indexes: " +
+                    s"ordinal=${artifact.ordinal} hash=${artifact.hash} status=${status.label}"
+                )
+              )
+            else
+              List(
+                snapshotLocalFileSystemStorage.read(artifact.hash),
+                snapshotLocalFileSystemStorage.read(artifact.ordinal)
+              ).sequence.flatMap { copies =>
+                copies.traverse(_.traverse(_.toHashed)).flatMap { hashedCopies =>
+                  val exactArtifact = hashedCopies.forall(
+                    _.exists(value => value.hash === artifact.hash && value.proofsHash === artifact.proofsHash)
+                  )
+
+                  snapshotInfoLocalFileSystemStorage.read(artifact.ordinal).flatMap { persistedInfo =>
+                    Async[F].raiseUnless(exactArtifact && persistedInfo.contains(expectedInfo))(
+                      new IllegalStateException(
+                        s"Recovery Currency artifact/context read-back mismatch: ordinal=${artifact.ordinal} " +
+                          s"hash=${artifact.hash} proofsHash=${artifact.proofsHash}"
+                      )
+                    )
+                  }
+                }
+              }
+
+          verify.flatMap {
+            case OrdinalLinkStatus.Missing =>
+              snapshotLocalFileSystemStorage
+                .write(signedArtifact)
+                .handleErrorWith {
+                  // A concurrent persistence/repair may have won after the initial check. The
+                  // authoritative decision is the exact read-back below, never this exception.
+                  case _: UnableToPersistSnapshot => Async[F].unit
+                  case error                      => error.raiseError[F, Unit]
+                } >> verify.flatMap(requireUsable)
+            case status => requireUsable(status)
+          }
+        }
+
+      def commitRecoveryBinary(
+        binaryHash: Hash,
+        signedArtifact: Signed[CurrencySnapshotArtifact],
+        context: CurrencySnapshotInfo
+      )(implicit hasher: Hasher[F]): F[Unit] =
+        lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap {
+          case Some(_) =>
+            ensureRecoveryArtifactDurable(signedArtifact, context) >>
+              recoverySyncPublicationStorage.markLocallyCommitted(binaryHash).void
+          case None => Async[F].unit
+        }
+
+      def abortPreparedRecoveryBinary(binaryHash: Hash): F[Unit] =
+        recoverySyncPublicationStorage.abortPrepared(binaryHash)
+
+      def enqueueBinary(binaryHashed: Hashed[StateChannelSnapshotBinary], currencySnapshotOrdinal: SnapshotOrdinal): F[Unit] =
+        for {
+          lastGlobalSnapshot <- lastGlobalSnapshotStorage.get
+          lastGlobalSnapshotSigners = lastGlobalSnapshot.map(_.signed.proofs.map(_.id.toPeerId))
+          _ <- stateChannelBinarySender.enqueue(binaryHashed, currencySnapshotOrdinal, lastGlobalSnapshotSigners)
+        } yield ()
 
     }
 }
