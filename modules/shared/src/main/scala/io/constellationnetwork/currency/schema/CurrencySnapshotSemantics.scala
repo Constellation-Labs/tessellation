@@ -11,10 +11,8 @@ import eu.timepit.refined.auto._
 
 /** Versioned Currency snapshot semantics.
   *
-  * This is deliberately independent of the Tessellation/metagraph jar SemVer. The
-  * value is carried in every signed Currency snapshot, so historical replay selects
-  * semantics from the lineage itself after validating the transition from its signed
-  * parent.
+  * This is deliberately independent of the Tessellation/metagraph jar SemVer. The value is carried in every signed Currency snapshot, so
+  * historical replay selects semantics from the lineage itself after validating the transition from its signed parent.
   */
 object CurrencySnapshotSemantics {
   val LegacyVersion: SnapshotVersion = SnapshotVersion("0.0.1")
@@ -23,8 +21,8 @@ object CurrencySnapshotSemantics {
   def usesDeterministicHistory(version: SnapshotVersion): Boolean =
     version == DeterministicHistoryVersion
 
-  /** An absent public activation resolves to [[SnapshotOrdinal.MaxValue]] and must
-    * stay dormant even for a malformed or theoretical MaxValue reference.
+  /** An absent public activation resolves to `SnapshotOrdinal.MaxValue` and must stay dormant even for a malformed or theoretical MaxValue
+    * reference.
     */
   def isActivationAuthorized(
     activationReference: SnapshotOrdinal,
@@ -32,10 +30,9 @@ object CurrencySnapshotSemantics {
   ): Boolean =
     activationOrdinal != SnapshotOrdinal.MaxValue && activationReference >= activationOrdinal
 
-  /** Legacy processing history is proven through the selected Global L0 view when
-    * no still-unacknowledged ordinal at or below that view exists. Ordinals above
-    * the selected view have not become inputs to this Currency artifact yet and do
-    * not make a historical transition ambiguous.
+  /** Legacy processing history is proven through the selected Global L0 view when no still-unacknowledged ordinal at or below that view
+    * exists. Ordinals above the selected view have not become inputs to this Currency artifact yet and do not make a historical transition
+    * ambiguous.
     */
   def legacyHistoryResolvedThrough(
     unappliedGlobalChangeOrdinals: SortedSet[SnapshotOrdinal],
@@ -45,11 +42,9 @@ object CurrencySnapshotSemantics {
 
   /** Selects the next signed snapshot-protocol version.
     *
-    * `activationReference` is the consensus-derived Global L0 ordinal selected for
-    * the Currency artifact, never a process clock or the validator's current tip.
-    * Once activated, a lineage cannot downgrade. The initial transition waits until
-    * GL0 reports no unresolved spend-action history because legacy process-local
-    * state cannot prove which non-empty ordinals were already applied.
+    * `activationReference` is the consensus-derived Global L0 ordinal selected for the Currency artifact, never a process clock or the
+    * validator's current tip. Once activated, a lineage cannot downgrade. The initial transition waits until GL0 reports no unresolved
+    * spend-action history because legacy process-local state cannot prove which non-empty ordinals were already applied.
     */
   def nextVersion(
     parentVersion: SnapshotVersion,

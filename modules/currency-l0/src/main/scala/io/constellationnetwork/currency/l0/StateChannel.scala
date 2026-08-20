@@ -178,10 +178,9 @@ object StateChannel {
           Async[F].unit
       }
 
-    /** Initial download may start from a tip newer than the GL0 snapshot that included a pending recovery binary. The exact inclusion is
-      * still inside the same retained window that bounded reset acceptance, so scan that canonical window before deciding the durable
-      * outbox is unresolved. No artifact derivation depends on this scan; it only restores an operational publication receipt.
-      */
+    // Initial download may start from a tip newer than the GL0 snapshot that included a pending recovery binary. The exact inclusion is
+    // still inside the same retained window that bounded reset acceptance, so scan that canonical window before deciding the durable
+    // outbox is unresolved. No artifact derivation depends on this scan; it only restores an operational publication receipt.
     def confirmRetainedStateChannelBinaries: F[Unit] =
       sharedStorages.lastNGlobalSnapshot.getLastN.flatMap(_.sortBy(_.ordinal).traverse_(confirmStateChannelBinaries))
 

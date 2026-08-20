@@ -63,10 +63,12 @@ import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher, forAsyncHasher}
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
@@ -338,6 +340,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 val lastGlobalSnapshotsSyncConfig =
                   LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
                 val globalL0Service = new GlobalL0Service[IO] {
+                  private val historyPeerId = PeerId(Hex("history-peer"))
+                  private val historyProof = SignatureProof(ID.Id(Hex("history-peer")), Signature(Hex("history-signature")))
+
                   override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
 
                   override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
@@ -353,7 +358,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   def pullGlobalSnapshots(ordinal: SnapshotOrdinal)
                     : IO[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] = ???
 
-                  override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
+                  override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] =
+                    Signed(
+                      generateSnapshot(historyPeerId).copy(ordinal = ordinal),
+                      NonEmptySet.one(historyProof)
+                    ).toHashed[IO].map(_.some)
 
                   override def pullGlobalSnapshot(hash: Hash): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
                 }

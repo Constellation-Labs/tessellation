@@ -28,7 +28,7 @@ import io.constellationnetwork.security.signature.Signed
   *     locally validated public snapshot; or
   *   - one canonical locally persisted uncertified root: certified-consensus genesis or an already verified signed recovery-plan anchor.
   *
-  * The resulting frozen state is passed to the ordinary [[CertifiedConsensus]] adoption verifier through `certifiedOutcomeAdoption`. No
+  * The resulting frozen state is passed to the ordinary `CertifiedConsensus` adoption verifier through `certifiedOutcomeAdoption`. No
   * alternate encoder, canonicalizer, hash, QC verifier, or committee rule is introduced. A signed operator recovery-plan anchor is first
   * validated by its existing exact-anchor preflight; its certified child then follows this ordinary bound-QC path.
   */

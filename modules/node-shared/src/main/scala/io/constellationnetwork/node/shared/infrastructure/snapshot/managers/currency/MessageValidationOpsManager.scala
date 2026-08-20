@@ -28,11 +28,15 @@ import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class MessageValidationOpsManager[F[_]: Async: Metrics](
+class MessageValidationOpsManager[F[_]: Async](
   messageValidator: CurrencyMessageValidator[F],
-  globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
+  globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
+  metrics: Option[Metrics[F]] = None
 ) {
   val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("MessageValidationOps")
+
+  private def recordMetric(update: Metrics[F] => F[Unit]): F[Unit] =
+    metrics.traverse_(telemetry => update(telemetry).attempt.void)
 
   def acceptMessages(
     lastContextMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
@@ -136,16 +140,15 @@ class MessageValidationOpsManager[F[_]: Async: Metrics](
     val inherited = lastGlobalSnapshotSyncView.getOrElse(SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]])
 
     def recordReset(outcome: String): F[Unit] =
-      Metrics[F]
-        .incrementCounter(
+      recordMetric(
+        _.incrementCounter(
           "dag_currency_l0_recovery_sync_refresh_total",
           Seq(
             Metrics.unsafeLabelName("mode") -> "reset",
             Metrics.unsafeLabelName("outcome") -> outcome
           )
         )
-        .attempt
-        .void
+      )
 
     def rejectAll(reason: String): F[GlobalSnapshotSyncAcceptanceResult] =
       logger.warn(s"RECOVERY_SYNC_RESET_REJECTED reason=$reason") >>
@@ -241,9 +244,10 @@ class MessageValidationOpsManager[F[_]: Async: Metrics](
 }
 
 object MessageValidationOpsManager {
-  def make[F[_]: Async: Metrics](
+  def make[F[_]: Async](
     messageValidator: CurrencyMessageValidator[F],
-    globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
+    globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
+    metrics: Option[Metrics[F]] = None
   ): MessageValidationOpsManager[F] =
-    new MessageValidationOpsManager[F](messageValidator, globalSnapshotSyncValidator)
+    new MessageValidationOpsManager[F](messageValidator, globalSnapshotSyncValidator, metrics)
 }

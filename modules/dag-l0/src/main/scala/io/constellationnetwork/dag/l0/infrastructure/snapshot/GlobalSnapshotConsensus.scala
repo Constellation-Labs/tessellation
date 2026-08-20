@@ -191,7 +191,8 @@ object GlobalSnapshotConsensus {
             feeCalculator,
             mptStore,
             sharedCfg.fieldsAddedOrdinals,
-            sharedCfg.environment
+            sharedCfg.environment,
+            Some(Metrics[F])
           ),
           sharedServices.updateNodeParametersAcceptanceManager,
           sharedServices.updateDelegatedStakeAcceptanceManager,

@@ -146,7 +146,8 @@ object SharedServices {
         validators.feeTransactionValidator,
         validators.globalSnapshotSyncValidator,
         storages.lastNGlobalSnapshot,
-        storages.lastGlobalSnapshot
+        storages.lastGlobalSnapshot,
+        Some(Metrics[F])
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)

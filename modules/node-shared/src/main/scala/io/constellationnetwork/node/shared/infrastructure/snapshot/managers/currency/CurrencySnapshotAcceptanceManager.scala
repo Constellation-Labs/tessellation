@@ -93,7 +93,9 @@ object CurrencySnapshotAcceptanceManager {
     if (isRecoveryReset) resolved
     else previous.filter(_.ordinal >= resolved.ordinal).getOrElse(resolved)
 
-  def make[F[_]: Async: Parallel: JsonSerializer: Metrics](
+  // This manager is also embedded by snapshot-streaming, which has no Metrics runtime.
+  // Node applications pass Some(Metrics[F]); library-only consumers retain the legacy source API.
+  def make[F[_]: Async: Parallel: JsonSerializer](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     environment: AppEnvironment,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
@@ -105,7 +107,8 @@ object CurrencySnapshotAcceptanceManager {
     feeTransactionValidator: FeeTransactionValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    metrics: Option[Metrics[F]] = None
   )(
     implicit currencyStateProofSelector: CurrencyStateProofSelector
   ): F[CurrencySnapshotAcceptanceManager[F]] = for {
@@ -119,12 +122,14 @@ object CurrencySnapshotAcceptanceManager {
 
     messageOps = MessageValidationOpsManager.make[F](
       messageValidator,
-      globalSnapshotSyncValidator
+      globalSnapshotSyncValidator,
+      metrics
     )
 
     globalSnapshotOps = GlobalSnapshotOpsManager.make[F](
       lastGlobalSnapshotsSyncConfig,
-      globalSnapshotsAlreadyProcessed
+      globalSnapshotsAlreadyProcessed,
+      metrics
     )
 
     allowSpendOps = AllowSpendOpsManager.make[F]
@@ -143,13 +148,14 @@ object CurrencySnapshotAcceptanceManager {
       globalSnapshotOps,
       allowSpendOps,
       tokenLockOps,
-      balanceOps
+      balanceOps,
+      metrics
     ): CurrencySnapshotAcceptanceManager[F]
 }
 
 /** Main implementation with parallelized operations for improved performance
   */
-private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonSerializer: Metrics](
+private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonSerializer](
   fieldsAddedOrdinals: FieldsAddedOrdinals,
   environment: AppEnvironment,
   lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
@@ -160,7 +166,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
   globalSnapshotOps: GlobalSnapshotOpsManager[F],
   allowSpendOps: AllowSpendOpsManager[F],
   tokenLockOps: TokenLockOpsManager[F],
-  balanceOps: BalanceOpsManager[F]
+  balanceOps: BalanceOpsManager[F],
+  metrics: Option[Metrics[F]]
 )(implicit currencyStateProofSelector: CurrencyStateProofSelector)
     extends CurrencySnapshotAcceptanceManager[F] {
   private val feeTransactionSecurityActivationOrdinal = fieldsAddedOrdinals.feeTransactionSecurityFor(environment)
@@ -373,13 +380,15 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         ) && !transitionHistoryProven
       ) "blocked_unproven"
       else "legacy"
-    _ <- Metrics[F]
-      .incrementCounter(
-        "dag_currency_l0_snapshot_protocol_total",
-        Seq(Metrics.unsafeLabelName("outcome") -> transitionOutcome)
-      )
-      .attempt
-      .void
+    _ <- metrics.traverse_ { telemetry =>
+      telemetry
+        .incrementCounter(
+          "dag_currency_l0_snapshot_protocol_total",
+          Seq(Metrics.unsafeLabelName("outcome") -> transitionOutcome)
+        )
+        .attempt
+        .void
+    }
     // Signed CurrencySnapshot.version is the semantic boundary. Version 1.0.0 never
     // consults the archive/network callback, including during historical recreation.
     dependencyMode = GlobalSnapshotOpsManager.selectDependencyMode(historicalDependencyResolution, deterministicHistoryActive)

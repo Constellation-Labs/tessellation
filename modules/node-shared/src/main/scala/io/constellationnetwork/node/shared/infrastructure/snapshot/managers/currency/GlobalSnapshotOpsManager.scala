@@ -29,12 +29,16 @@ import retry.implicits.retrySyntaxError
   * retention boundary so an unsupported dormant lineage cannot turn local archive availability into a consensus input. Signed
   * protocol-1.0.0 history uses only signed parent history plus the consensus-retained window during both live processing and replay.
   */
-class GlobalSnapshotOpsManager[F[_]: Async: Metrics](
+class GlobalSnapshotOpsManager[F[_]: Async](
   lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-  globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]]
+  globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]],
+  metrics: Option[Metrics[F]] = None
 ) {
   private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotOps")
   private val retainedCount = lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value
+
+  private def recordMetric(update: Metrics[F] => F[Unit]): F[Unit] =
+    metrics.traverse_(telemetry => update(telemetry).attempt.void)
 
   private def getGlobalSnapshotWithRetry(
     purpose: Purpose,
@@ -149,13 +153,12 @@ class GlobalSnapshotOpsManager[F[_]: Async: Metrics](
           )
           .fold(
             error =>
-              Metrics[F]
-                .incrementCounter(
+              recordMetric(
+                _.incrementCounter(
                   "dag_currency_l0_processed_history_total",
                   Seq(Metrics.unsafeLabelName("outcome") -> "unproven")
                 )
-                .attempt
-                .void >> error.raiseError[F, (SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])],
+              ) >> error.raiseError[F, (SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])],
             plan =>
               for {
                 snapshots <- resolveGlobalSnapshots(
@@ -171,22 +174,20 @@ class GlobalSnapshotOpsManager[F[_]: Async: Metrics](
                   lastUnsyncGlobalSnapshotOrdinal,
                   updatedLastSyncGlobalFromPeersInConsensus
                 )
-                _ <- Metrics[F]
-                  .incrementCounterBy(
+                _ <- recordMetric(
+                  _.incrementCounterBy(
                     "dag_currency_l0_processed_history_total",
                     plan.carried.size,
                     Seq(Metrics.unsafeLabelName("outcome") -> "carried")
                   )
-                  .attempt
-                  .void
-                _ <- Metrics[F]
-                  .incrementCounterBy(
+                )
+                _ <- recordMetric(
+                  _.incrementCounterBy(
                     "dag_currency_l0_processed_history_total",
                     plan.newlyRequired.size,
                     Seq(Metrics.unsafeLabelName("outcome") -> "processed")
                   )
-                  .attempt
-                  .void
+                )
               } yield (spendActions, plan.cumulative)
           )
     }
@@ -281,8 +282,8 @@ class GlobalSnapshotOpsManager[F[_]: Async: Metrics](
     recordDependencyBy(purpose, outcome, 1)
 
   private def recordDependencyBy(purpose: Purpose, outcome: String, count: Int): F[Unit] =
-    Metrics[F]
-      .incrementCounterBy(
+    recordMetric(
+      _.incrementCounterBy(
         "dag_l0_state_channel_dependency_total",
         count,
         Seq(
@@ -290,8 +291,7 @@ class GlobalSnapshotOpsManager[F[_]: Async: Metrics](
           Metrics.unsafeLabelName("outcome") -> outcome
         )
       )
-      .attempt
-      .void
+    )
 }
 
 object GlobalSnapshotOpsManager {
@@ -308,9 +308,10 @@ object GlobalSnapshotOpsManager {
     else if (historicalReplay) HistoricalReplay
     else LiveBounded
 
-  def make[F[_]: Async: Metrics](
+  def make[F[_]: Async](
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-    globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]]
+    globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]],
+    metrics: Option[Metrics[F]] = None
   ): GlobalSnapshotOpsManager[F] =
-    new GlobalSnapshotOpsManager[F](lastGlobalSnapshotsSyncConfig, globalSnapshotsAlreadyProcessed)
+    new GlobalSnapshotOpsManager[F](lastGlobalSnapshotsSyncConfig, globalSnapshotsAlreadyProcessed, metrics)
 }
