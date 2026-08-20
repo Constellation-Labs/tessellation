@@ -173,12 +173,14 @@ activation decisions. An absent environment entry resolves to disabled; local de
 activates at genesis. Public activation values must not be added until their rollout
 keys are announced.
 
-This ADR does not change `GlobalIncrementalSnapshot`, `GlobalSnapshotInfo`,
-`GlobalSnapshotStateProof`, `CurrencyIncrementalSnapshot`, `CurrencySnapshotInfo`,
-artifact hashing, state-proof calculation, or the meaning of artifact signatures.
-Passive metagraph software that validates finalized global snapshots does not need to
-understand the v35 consensus envelope. Active Currency L0 facilitators do need the
-aligned v35 jar/config when their own metagraph activates it.
+This certified-consensus decision does not change `GlobalIncrementalSnapshot`,
+`GlobalSnapshotInfo`, `GlobalSnapshotStateProof`, `CurrencyIncrementalSnapshot`,
+`CurrencySnapshotInfo`, artifact hashing, state-proof calculation, or the meaning of
+artifact signatures. The same release also carries the separately gated, existing-field
+Currency snapshot version transition in
+[ADR-0033](0033-versioned-currency-snapshot-history.md). Passive metagraph software that
+only validates finalized global snapshots does not need to understand the v35 consensus
+envelope, but active Currency stacks must upgrade before the ADR-0033 global boundary.
 
 ## Consequences
 

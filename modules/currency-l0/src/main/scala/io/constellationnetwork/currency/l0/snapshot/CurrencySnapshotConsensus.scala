@@ -35,6 +35,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
@@ -86,6 +87,7 @@ object CurrencySnapshotConsensus {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
+    lastGlobalSnapshotSyncStorage: LastSentGlobalSnapshotSyncStorage[F],
     rumorQueue: Queue[F, Hashed[RumorRaw]],
     // B2 witness channel — see GlobalSnapshotConsensus for the full rationale.
     getPeerChainTips: F[Map[PeerId, ChainTip]],
@@ -160,7 +162,8 @@ object CurrencySnapshotConsensus {
           clusterStorage,
           eventMempool,
           eventGossipClient,
-          facilitatorSelector
+          facilitatorSelector,
+          lastGlobalSnapshotSyncStorage
         )
 
       peerQualityTracker <- PeerQualityTracker.make[F]

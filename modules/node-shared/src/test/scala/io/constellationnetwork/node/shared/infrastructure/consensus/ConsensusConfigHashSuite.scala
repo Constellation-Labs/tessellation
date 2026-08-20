@@ -140,4 +140,21 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(a.deterministicConfigHash != b.deterministicConfigHash) &&
     expect.same(Some(PosInt(20)), a.maxFacilitatorCount)
   }
+
+  pureTest("Currency/Global retained-window semantics participate in the deterministic join fence") {
+    val base = baseConfig.copy(lastGlobalSnapshotSyncOffset = 2L, lastGlobalSnapshotsInMemory = 50)
+    val differentOffset = base.copy(lastGlobalSnapshotSyncOffset = 3L)
+    val differentRetention = base.copy(lastGlobalSnapshotsInMemory = 51)
+
+    expect(base.deterministicConfigHash != differentOffset.deterministicConfigHash) &&
+    expect(base.deterministicConfigHash != differentRetention.deterministicConfigHash) &&
+    expect(differentOffset.deterministicConfigHash != differentRetention.deterministicConfigHash)
+  }
+
+  pureTest("Currency snapshot protocol v1 activation participates in the deterministic join fence") {
+    val dormant = baseConfig.copy(currencySnapshotProtocolV1ActivationOrdinal = Long.MaxValue)
+    val scheduled = baseConfig.copy(currencySnapshotProtocolV1ActivationOrdinal = 6000000L)
+
+    expect(dormant.deterministicConfigHash != scheduled.deterministicConfigHash)
+  }
 }

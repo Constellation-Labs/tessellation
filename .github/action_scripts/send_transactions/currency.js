@@ -171,6 +171,50 @@ const waitForMetagraphOrdinalProgression = async (networkOptions, label) => {
   )
 }
 
+// Dev activates Currency snapshot protocol 1.0.0 at Global L0 ordinal zero. The
+// generated CI metagraph is therefore the permanent cross-boundary fixture: its
+// genesis snapshot may be legacy, but an ordinary successor must carry the signed
+// deterministic-history version before transaction assertions begin.
+const waitForMetagraphSnapshotProtocol = async (
+  networkOptions,
+  expectedVersion = '1.0.0',
+) => {
+  const deadline = Date.now() + BALANCE_QUERY_TIMEOUT
+  let lastVersion = null
+  let lastOrdinal = null
+  let attempt = 0
+
+  while (Date.now() <= deadline) {
+    attempt += 1
+    try {
+      const response = await axios.get(
+        `${networkOptions.l0MetagraphUrl}/snapshots/latest`,
+      )
+      lastVersion = response.data?.value?.version ?? null
+      lastOrdinal = response.data?.value?.ordinal ?? null
+
+      if (lastVersion === expectedVersion) {
+        logMessage(
+          `Metagraph snapshot protocol reached ${expectedVersion} at ordinal ${lastOrdinal} on attempt ${attempt}`,
+        )
+        return
+      }
+    } catch (error) {
+      // The metagraph may still be starting. Keep the bounded readiness poll and
+      // report the last successfully decoded version if the deadline expires.
+    }
+
+    logMessage(
+      `Waiting for metagraph snapshot protocol ${expectedVersion}; current version ${lastVersion} at ordinal ${lastOrdinal}`,
+    )
+    await sleep(BALANCE_QUERY_INTERVAL)
+  }
+
+  throw Error(
+    `Metagraph snapshot protocol did not reach ${expectedVersion} within ${BALANCE_QUERY_TIMEOUT} ms; last version ${lastVersion} at ordinal ${lastOrdinal}`,
+  )
+}
+
 const batchTransaction = async (
   origin,
   destination,
@@ -570,6 +614,8 @@ const sendTransactionsUsingUrls = async (networkOptions) => {
   const account2 = dag4.createAccount()
   account2.loginSeedPhrase(SECOND_WALLET_SEED_PHRASE)
   account2.connect(dagConfig)
+
+  await waitForMetagraphSnapshotProtocol(networkOptions)
 
   // DAG
   await transferTest(account1, account2, 10, 0, 1)

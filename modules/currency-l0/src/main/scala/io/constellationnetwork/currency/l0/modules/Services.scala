@@ -91,6 +91,21 @@ object Services {
     for {
       implicit0(hasher: Hasher[F]) <- hasherSelector.getCurrent.pure[F]
 
+      // Resolve a process death between recovery-outbox preparation and local Currency commit
+      // before the sender is allowed to restore anything. A matching durable Currency artifact
+      // promotes the exact binary; an absent artifact discards only the non-publishable intent;
+      // a conflicting artifact fails startup closed.
+      _ <- storages.recoverySyncPublication.reconcilePrepared { ordinal =>
+        (storages.snapshot.getHashed(ordinal), storages.snapshotInfoLocalFileSystemStorage.read(ordinal)).tupled.flatMap {
+          case (Some(artifact), Some(info)) =>
+            CurrencySnapshotInfo
+              .stateProofBuilder[F]
+              .buildProof(info, ordinal)
+              .map(proof => Option.when(proof === artifact.stateProof)(artifact))
+          case _ => none[Hashed[CurrencyIncrementalSnapshot]].pure[F]
+        }
+      }
+
       stateChannelBinarySender <- StateChannelBinarySender.make(
         storages.identifier,
         storages.globalL0Cluster,
@@ -100,7 +115,8 @@ object Services {
         selfId,
         cfg.environment,
         customPeersAllowanceList,
-        storages.cluster
+        storages.cluster,
+        storages.recoverySyncPublication
       )
 
       l0NodeContext = L0NodeContext
@@ -122,9 +138,13 @@ object Services {
         .make[F](
           keyPair,
           storages.snapshot,
+          storages.incrementalSnapshotLocalFileSystemStorage,
+          storages.snapshotInfoLocalFileSystemStorage,
           storages.lastSyncGlobalSnapshot,
           dataApplicationAcceptanceManager,
           stateChannelBinarySender,
+          storages.lastGlobalSnapshotSync,
+          storages.recoverySyncPublication,
           feeCalculator,
           cfg.snapshotSize
         )
@@ -136,7 +156,8 @@ object Services {
         dataApplicationAcceptanceManager,
         cfg.snapshotSize,
         sharedServices.currencyEventsCutter,
-        storages.currencySnapshotEventValidationError
+        storages.currencySnapshotEventValidationError,
+        Some(storages.lastGlobalSnapshotSync.getRequiredRecoveryRefresh)
       )
 
       validator = CurrencySnapshotValidator.make[F](
@@ -190,6 +211,7 @@ object Services {
           globalL0Service.pullGlobalSnapshot,
           maybeCustomArtifacts,
           storages.eventMempool,
+          storages.lastGlobalSnapshotSync,
           queues.rumor,
           getPeerChainTips,
           sharedServices.localHealthMonitor,

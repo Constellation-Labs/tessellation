@@ -1,51 +1,88 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency
 
-import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.DurationInt
 
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.GlobalSnapshotOpsManager._
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.HistoricalGlobalSnapshotResolver._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SpendAction
 import io.constellationnetwork.security.Hashed
 
+import eu.timepit.refined.auto._
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies
 import retry.implicits.retrySyntaxError
 
-class GlobalSnapshotOpsManager[F[_]: Async: Parallel](
+/** Historical Global L0 inputs used by Currency L0 artifact recreation.
+  *
+  * Signed Currency protocol-0.0.1 history keeps the legacy callback semantics during historical replay. Live processing always enforces the
+  * retention boundary so an unsupported dormant lineage cannot turn local archive availability into a consensus input. Signed
+  * protocol-1.0.0 history uses only signed parent history plus the consensus-retained window during both live processing and replay.
+  */
+class GlobalSnapshotOpsManager[F[_]: Async: Metrics](
   lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-  lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
   globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]]
 ) {
-  val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotOps")
+  private val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotOps")
+  private val retainedCount = lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value
 
-  def getGlobalSnapshotWithRetry(
+  private def getGlobalSnapshotWithRetry(
+    purpose: Purpose,
     ordinal: SnapshotOrdinal,
+    parentOrdinal: SnapshotOrdinal,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[Hashed[GlobalIncrementalSnapshot]] = {
     val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
+
     getGlobalSnapshotByOrdinal(ordinal)
       .retryingOnFailuresAndAllErrors(
-        wasSuccessful = maybeSnapshot => maybeSnapshot.isDefined.pure[F],
+        wasSuccessful = maybeSnapshot => maybeSnapshot.exists(_.ordinal === ordinal).pure[F],
         policy = retryPolicy,
         onFailure = (_, retryDetails) =>
-          logger.warn(s"Got None when trying to fetch incremental global snapshot $ordinal {attempt=${retryDetails.retriesSoFar}}"),
-        onError = (err, retryDetails) =>
-          logger.error(err)(s"Error when trying to fetch incremental global snapshot $ordinal {attempt=${retryDetails.retriesSoFar}}")
+          logger.warn(s"Global snapshot ordinal=$ordinal unavailable or mismatched attempt=${retryDetails.retriesSoFar}"),
+        onError = (error, retryDetails) =>
+          logger.error(error)(s"Global snapshot ordinal=$ordinal fetch failed attempt=${retryDetails.retriesSoFar}")
       )
-      .flatMap {
-        case Some(snapshot) => snapshot.pure[F]
-        case None =>
-          new RuntimeException(s"Global snapshot not found for ordinal $ordinal after retries")
-            .raiseError[F, Hashed[GlobalIncrementalSnapshot]]
-      }
+      .flatMap(
+        _.filter(_.ordinal === ordinal).liftTo[F](MissingInsideRetainedWindow(purpose, ordinal, parentOrdinal))
+      )
+  }
+
+  def resolveGlobalSnapshot(
+    purpose: Purpose,
+    ordinal: SnapshotOrdinal,
+    parentOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    mode: DependencyMode
+  ): F[Hashed[GlobalIncrementalSnapshot]] = {
+    val recent = lastGlobalSnapshots.find(_.ordinal === ordinal)
+
+    mode match {
+      case DeterministicHistory | LiveBounded =>
+        HistoricalGlobalSnapshotResolver
+          .resolve(purpose, ordinal, parentOrdinal, retainedCount, lastGlobalSnapshots)(_.ordinal)
+          .fold(
+            error => recordDependency(purpose, errorOutcome(error)) >> error.raiseError[F, Hashed[GlobalIncrementalSnapshot]],
+            snapshot => recordDependency(purpose, "recent") >> snapshot.pure[F]
+          )
+
+      case HistoricalReplay =>
+        recent.fold(
+          getGlobalSnapshotWithRetry(purpose, ordinal, parentOrdinal, getGlobalSnapshotByOrdinal)
+            .flatTap(_ => recordDependency(purpose, "fetched"))
+        )(snapshot => recordDependency(purpose, "recent") >> snapshot.pure[F])
+    }
   }
 
   def getLastGlobalSnapshotsSpendActions(
@@ -55,144 +92,225 @@ class GlobalSnapshotOpsManager[F[_]: Async: Parallel](
     currencyId: Address,
     metagraphSyncData: Option[SortedMap[Address, snapshot.MetagraphSyncDataInfo]],
     currentCurrencySnapshotOrdinal: SnapshotOrdinal,
+    previousGlobalSyncView: Option[GlobalSyncView],
+    previouslyDeclared: SortedSet[SnapshotOrdinal],
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
-    updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal
-  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] = {
-    val emptySpendActions = SortedMap.empty[Address, List[SpendAction]]
-    val emptyProcessedGlobalSnapshots = SortedSet.empty[SnapshotOrdinal]
+    updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal,
+    mode: DependencyMode,
+    deterministicProcessedHistory: Boolean
+  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] =
+    if (deterministicProcessedHistory)
+      getDeterministicSpendActions(
+        globalSnapshotViewOrdinal,
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal,
+        currencyId,
+        metagraphSyncData,
+        previousGlobalSyncView,
+        previouslyDeclared,
+        lastUnsyncGlobalSnapshotOrdinal,
+        updatedLastSyncGlobalFromPeersInConsensus,
+        mode
+      )
+    else
+      getLegacySpendActions(
+        globalSnapshotViewOrdinal,
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal,
+        currencyId,
+        metagraphSyncData,
+        currentCurrencySnapshotOrdinal,
+        lastUnsyncGlobalSnapshotOrdinal,
+        updatedLastSyncGlobalFromPeersInConsensus,
+        mode
+      )
 
-    metagraphSyncData match {
-      case None => (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
-      case Some(metagraphSyncData) =>
-        metagraphSyncData.get(currencyId) match {
-          case None => (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
-          case Some(syncDataInfo) =>
-            for {
-              allMetagraphsGlobalSnapshotsAlreadyProcessed <- globalSnapshotsAlreadyProcessed.get
-
-              metagraphOrdinalsByCurrencyOrdinal =
-                allMetagraphsGlobalSnapshotsAlreadyProcessed.getOrElse(currencyId, Map.empty)
-
-              allProcessedOrdinals =
-                metagraphOrdinalsByCurrencyOrdinal.values.flatten.toSet
-
-              alreadyProcessedForCurrentOrdinal =
-                metagraphOrdinalsByCurrencyOrdinal.getOrElse(currentCurrencySnapshotOrdinal, List.empty)
-
-              unappliedGlobalOrdinalsToProcess = syncDataInfo.unappliedGlobalChangeOrdinals
-                .filter(o => o <= globalSnapshotViewOrdinal && !allProcessedOrdinals.contains(o))
-
-              globalOrdinalsToProcess = (alreadyProcessedForCurrentOrdinal ++ unappliedGlobalOrdinalsToProcess).toSet
-
-              result <-
-                if (globalOrdinalsToProcess.isEmpty) {
-                  (emptySpendActions, emptyProcessedGlobalSnapshots).pure[F]
-                } else {
-                  for {
-                    spendActions <- processUnappliedOrdinals(
-                      globalOrdinalsToProcess,
-                      lastGlobalSnapshots,
-                      getGlobalSnapshotByOrdinal,
-                      lastUnsyncGlobalSnapshotOrdinal,
-                      updatedLastSyncGlobalFromPeersInConsensus
-                    )
-                    _ <- globalSnapshotsAlreadyProcessed.update { current =>
-                      val currentMetagraphProcessedOrdinals = current.getOrElse(currencyId, Map.empty)
-
-                      val updatedMetagraphProcessedOrdinals = currentMetagraphProcessedOrdinals
-                        .updated(
-                          currentCurrencySnapshotOrdinal,
-                          currentMetagraphProcessedOrdinals
-                            .getOrElse(currentCurrencySnapshotOrdinal, List.empty)
-                            ++ unappliedGlobalOrdinalsToProcess
-                        )
-                        .view
-                        .mapValues(_.distinct.sorted)
-                        .toSeq
-                        .sortBy(_._1.value.value)
-                        .takeRight(lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value)
-                        .toMap
-
-                      current.updated(currencyId, updatedMetagraphProcessedOrdinals)
-                    }
-
-                    _ <- globalSnapshotsAlreadyProcessed.get.flatMap { processed =>
-                      val totalAddresses = processed.size
-                      val totalEntries = processed.values.map(_.size).sum
-                      val totalOrdinals = processed.values.flatMap(_.values).map(_.size).sum
-                      logger.info(
-                        s"--- [ORDINAL=$globalSnapshotViewOrdinal] globalSnapshotsAlreadyProcessed size: $totalAddresses addresses, $totalEntries entries, $totalOrdinals total ordinals"
-                      )
-                    }
-                  } yield (spendActions, unappliedGlobalOrdinalsToProcess)
-                }
-            } yield result
-        }
-    }
-  }
-
-  private def processUnappliedOrdinals(
-    unappliedOrdinals: Set[SnapshotOrdinal],
+  private def getDeterministicSpendActions(
+    globalSnapshotViewOrdinal: SnapshotOrdinal,
     lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    currencyId: Address,
+    metagraphSyncData: Option[SortedMap[Address, snapshot.MetagraphSyncDataInfo]],
+    previousGlobalSyncView: Option[GlobalSyncView],
+    previouslyDeclared: SortedSet[SnapshotOrdinal],
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
-    updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal
-  ): F[SortedMap[Address, List[SpendAction]]] = {
-    val snapshotCache = lastGlobalSnapshots.map(s => s.ordinal -> s).toMap
-    val (cached, missing) = unappliedOrdinals.partition(snapshotCache.contains)
-
-    val fromCache = cached.toList.flatMap { ordinal =>
-      snapshotCache.get(ordinal).flatMap(_.spendActions).toList
+    updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal,
+    mode: DependencyMode
+  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] =
+    metagraphSyncData.flatMap(_.get(currencyId)) match {
+      case None => (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal]).pure[F]
+      case Some(syncDataInfo) =>
+        ProcessedGlobalSnapshotHistory
+          .derive(
+            previousGlobalSyncView,
+            previouslyDeclared,
+            syncDataInfo.unappliedGlobalChangeOrdinals,
+            globalSnapshotViewOrdinal
+          )
+          .fold(
+            error =>
+              Metrics[F]
+                .incrementCounter(
+                  "dag_currency_l0_processed_history_total",
+                  Seq(Metrics.unsafeLabelName("outcome") -> "unproven")
+                )
+                .attempt
+                .void >> error.raiseError[F, (SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])],
+            plan =>
+              for {
+                snapshots <- resolveGlobalSnapshots(
+                  UnappliedSpendAction,
+                  plan.newlyRequired,
+                  lastUnsyncGlobalSnapshotOrdinal,
+                  lastGlobalSnapshots,
+                  getGlobalSnapshotByOrdinal,
+                  mode
+                )
+                spendActions = combineSpendActions(
+                  snapshots.flatMap(_.spendActions).toList,
+                  lastUnsyncGlobalSnapshotOrdinal,
+                  updatedLastSyncGlobalFromPeersInConsensus
+                )
+                _ <- Metrics[F]
+                  .incrementCounterBy(
+                    "dag_currency_l0_processed_history_total",
+                    plan.carried.size,
+                    Seq(Metrics.unsafeLabelName("outcome") -> "carried")
+                  )
+                  .attempt
+                  .void
+                _ <- Metrics[F]
+                  .incrementCounterBy(
+                    "dag_currency_l0_processed_history_total",
+                    plan.newlyRequired.size,
+                    Seq(Metrics.unsafeLabelName("outcome") -> "processed")
+                  )
+                  .attempt
+                  .void
+              } yield (spendActions, plan.cumulative)
+          )
     }
 
-    val fetchMissing = missing.toList.parTraverse { ordinal =>
-      getGlobalSnapshotWithRetry(ordinal, getGlobalSnapshotByOrdinal)
-        .map(_.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]]))
+  private def getLegacySpendActions(
+    globalSnapshotViewOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    currencyId: Address,
+    metagraphSyncData: Option[SortedMap[Address, snapshot.MetagraphSyncDataInfo]],
+    currentCurrencySnapshotOrdinal: SnapshotOrdinal,
+    lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+    updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal,
+    mode: DependencyMode
+  ): F[(SortedMap[Address, List[SpendAction]], SortedSet[SnapshotOrdinal])] =
+    metagraphSyncData.flatMap(_.get(currencyId)) match {
+      case None => (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal]).pure[F]
+      case Some(syncDataInfo) =>
+        for {
+          processed <- globalSnapshotsAlreadyProcessed.get
+          byCurrencyOrdinal = processed.getOrElse(currencyId, Map.empty)
+          allProcessed = byCurrencyOrdinal.valuesIterator.flatten.toSet
+          alreadyForCurrent = byCurrencyOrdinal.getOrElse(currentCurrencySnapshotOrdinal, List.empty)
+          newlyRequired = syncDataInfo.unappliedGlobalChangeOrdinals
+            .filter(ordinal => ordinal <= globalSnapshotViewOrdinal && !allProcessed.contains(ordinal))
+          required = (alreadyForCurrent ++ newlyRequired).toSet
+          result <-
+            if (required.isEmpty)
+              (SortedMap.empty[Address, List[SpendAction]], SortedSet.empty[SnapshotOrdinal]).pure[F]
+            else
+              for {
+                snapshots <- required.toList.sorted.traverse { ordinal =>
+                  resolveGlobalSnapshot(
+                    UnappliedSpendAction,
+                    ordinal,
+                    lastUnsyncGlobalSnapshotOrdinal,
+                    lastGlobalSnapshots,
+                    getGlobalSnapshotByOrdinal,
+                    mode
+                  )
+                }
+                spendActions = combineSpendActions(
+                  snapshots.flatMap(_.spendActions),
+                  lastUnsyncGlobalSnapshotOrdinal,
+                  updatedLastSyncGlobalFromPeersInConsensus
+                )
+                _ <- globalSnapshotsAlreadyProcessed.update { current =>
+                  val currentByOrdinal = current.getOrElse(currencyId, Map.empty)
+                  val updatedByOrdinal = currentByOrdinal
+                    .updated(
+                      currentCurrencySnapshotOrdinal,
+                      (currentByOrdinal.getOrElse(currentCurrencySnapshotOrdinal, List.empty) ++ newlyRequired).distinct.sorted
+                    )
+                    .toSeq
+                    .sortBy(_._1.value.value)
+                    .takeRight(retainedCount)
+                    .toMap
+                  current.updated(currencyId, updatedByOrdinal)
+                }
+              } yield (spendActions, newlyRequired)
+        } yield result
     }
 
-    fetchMissing.map(fromFetched =>
-      combineSpendActions(fromCache ++ fromFetched, lastUnsyncGlobalSnapshotOrdinal, updatedLastSyncGlobalFromPeersInConsensus)
-    )
-  }
+  private def resolveGlobalSnapshots(
+    purpose: Purpose,
+    ordinals: SortedSet[SnapshotOrdinal],
+    parentOrdinal: SnapshotOrdinal,
+    lastGlobalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    mode: DependencyMode
+  ): F[List[Hashed[GlobalIncrementalSnapshot]]] =
+    ordinals.toList.traverse { ordinal =>
+      resolveGlobalSnapshot(purpose, ordinal, parentOrdinal, lastGlobalSnapshots, getGlobalSnapshotByOrdinal, mode)
+    }
 
   private def combineSpendActions(
     spendActionsList: List[SortedMap[Address, List[SpendAction]]],
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
     updatedLastSyncGlobalFromPeersInConsensus: SnapshotOrdinal
   ): SortedMap[Address, List[SpendAction]] =
-    if (lastUnsyncGlobalSnapshotOrdinal > updatedLastSyncGlobalFromPeersInConsensus) {
-      spendActionsList
-        .reduceOption(_ |+| _)
-        .getOrElse(SortedMap.empty)
-    } else {
-      spendActionsList
-        .reduceOption(_ ++ _)
-        .getOrElse(SortedMap.empty)
-    }
+    if (lastUnsyncGlobalSnapshotOrdinal > updatedLastSyncGlobalFromPeersInConsensus)
+      spendActionsList.reduceOption(_ |+| _).getOrElse(SortedMap.empty)
+    else
+      spendActionsList.reduceOption(_ ++ _).getOrElse(SortedMap.empty)
 
-  def updateGlobalSnapshotCache(
-    snapshot: Hashed[GlobalIncrementalSnapshot]
-  ): F[Unit] =
-    for {
-      _ <- lastGlobalSnapshotsCached.update { current =>
-        val updated = current.updated(snapshot.ordinal, snapshot)
-        updated.toSeq
-          .sortBy(_._1.value.value)
-          .takeRight(lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value)
-          .toMap
-      }
-    } yield ()
+  private def errorOutcome(error: Error): String = error match {
+    case _: OutsideRetainedWindow       => "outside_retention"
+    case _: MissingInsideRetainedWindow => "missing_recent"
+  }
+
+  private def recordDependency(purpose: Purpose, outcome: String): F[Unit] =
+    recordDependencyBy(purpose, outcome, 1)
+
+  private def recordDependencyBy(purpose: Purpose, outcome: String, count: Int): F[Unit] =
+    Metrics[F]
+      .incrementCounterBy(
+        "dag_l0_state_channel_dependency_total",
+        count,
+        Seq(
+          Metrics.unsafeLabelName("purpose") -> purpose.metricLabel,
+          Metrics.unsafeLabelName("outcome") -> outcome
+        )
+      )
+      .attempt
+      .void
 }
 
 object GlobalSnapshotOpsManager {
-  def make[F[_]: Async: Parallel](
+  sealed trait DependencyMode
+  case object HistoricalReplay extends DependencyMode
+  case object LiveBounded extends DependencyMode
+  case object DeterministicHistory extends DependencyMode
+
+  /** Signed Currency snapshot protocol 1.0.0 outranks the caller's replay mode. Once a lineage enters deterministic history, live creation
+    * and historical recreation resolve dependencies identically from the retained consensus window.
+    */
+  def selectDependencyMode(historicalReplay: Boolean, deterministicHistoryActive: Boolean): DependencyMode =
+    if (deterministicHistoryActive) DeterministicHistory
+    else if (historicalReplay) HistoricalReplay
+    else LiveBounded
+
+  def make[F[_]: Async: Metrics](
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-    lastGlobalSnapshotsCached: SignallingRef[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]],
     globalSnapshotsAlreadyProcessed: SignallingRef[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]]
   ): GlobalSnapshotOpsManager[F] =
-    new GlobalSnapshotOpsManager[F](
-      lastGlobalSnapshotsSyncConfig,
-      lastGlobalSnapshotsCached,
-      globalSnapshotsAlreadyProcessed
-    )
+    new GlobalSnapshotOpsManager[F](lastGlobalSnapshotsSyncConfig, globalSnapshotsAlreadyProcessed)
 }

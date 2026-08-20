@@ -10,7 +10,12 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.getFeeAddresses
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{
+  CurrencyMessageValidator,
+  GlobalSnapshotSyncValidator,
+  RecoveryGlobalSnapshotSync
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -19,10 +24,11 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class MessageValidationOpsManager[F[_]: Async](
+class MessageValidationOpsManager[F[_]: Async: Metrics](
   messageValidator: CurrencyMessageValidator[F],
   globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
 ) {
@@ -116,7 +122,9 @@ class MessageValidationOpsManager[F[_]: Async](
     lastGlobalSnapshotSyncView: Option[SortedMap[PeerId, Signed[GlobalSnapshotSync]]],
     globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
     metagraphId: Address,
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    recoveryResetContext: Option[RecoveryGlobalSnapshotSync.ValidationContext],
+    resetRecognitionEnabled: Boolean
   )(implicit hs: Hasher[F]): F[GlobalSnapshotSyncAcceptanceResult] = {
     val ordering = Order
       .whenEqual[Signed[GlobalSnapshotSync]](
@@ -125,35 +133,115 @@ class MessageValidationOpsManager[F[_]: Async](
       )
       .toOrdering
 
-    globalSnapshotSyncsForAcceptance
-      .sorted(ordering)
-      .foldLeftM(
-        (
-          lastGlobalSnapshotSyncView.getOrElse(SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]]),
-          List.empty[Signed[GlobalSnapshotSync]],
-          List.empty[Signed[GlobalSnapshotSync]]
+    val inherited = lastGlobalSnapshotSyncView.getOrElse(SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]])
+
+    def recordReset(outcome: String): F[Unit] =
+      Metrics[F]
+        .incrementCounter(
+          "dag_currency_l0_recovery_sync_refresh_total",
+          Seq(
+            Metrics.unsafeLabelName("mode") -> "reset",
+            Metrics.unsafeLabelName("outcome") -> outcome
+          )
         )
-      ) {
-        case ((lastSyncs, toAdd, toReject), sync) =>
-          globalSnapshotSyncValidator.validate(sync, metagraphId, facilitators, lastSyncs).map {
-            case Validated.Valid(_) =>
-              val peerId = sync.proofs.head.id.toPeerId
-              val updatedLastSyncs = lastSyncs.updated(peerId, sync)
-              val updatedToAdd = sync :: toAdd
+        .attempt
+        .void
 
-              (updatedLastSyncs, updatedToAdd, toReject)
-            case Validated.Invalid(_) =>
-              val updatedToReject = sync :: toReject
+    def rejectAll(reason: String): F[GlobalSnapshotSyncAcceptanceResult] =
+      logger.warn(s"RECOVERY_SYNC_RESET_REJECTED reason=$reason") >>
+        recordReset("rejected") >>
+        GlobalSnapshotSyncAcceptanceResult(inherited, List.empty, globalSnapshotSyncsForAcceptance).pure[F]
 
-              (lastSyncs, toAdd, updatedToReject)
+    def validateRecoveryReset(sync: Signed[GlobalSnapshotSync]): F[Boolean] = {
+      val signer = sync.proofs.head.id.toPeerId
+
+      recoveryResetContext match {
+        case None =>
+          logger.warn("RECOVERY_SYNC_RESET_CANDIDATE_INVALID reason=missing_consensus_context").as(false)
+        case Some(context) =>
+          RecoveryGlobalSnapshotSync.validateReset(signer, sync.value, context) match {
+            case Left(error) =>
+              logger.warn(s"RECOVERY_SYNC_RESET_CANDIDATE_INVALID reason=${error.productPrefix}").as(false)
+            case Right(_) =>
+              globalSnapshotSyncValidator
+                .validate(sync, metagraphId, facilitators, inherited, GlobalSnapshotSyncValidator.RecoveryReset)
+                .flatMap {
+                  case Validated.Valid(_) => true.pure[F]
+                  case Validated.Invalid(errors) =>
+                    val reason = errors.toNonEmptyList.toList.map(_.getClass.getSimpleName.stripSuffix("$")).mkString("_")
+                    logger.warn(s"RECOVERY_SYNC_RESET_CANDIDATE_INVALID reason=validator_$reason").as(false)
+                }
           }
       }
-      .map { case (contextUpdate, toAdd, toReject) => GlobalSnapshotSyncAcceptanceResult(contextUpdate, toAdd, toReject) }
+    }
+
+    def acceptOrdinary(
+      candidates: List[Signed[GlobalSnapshotSync]]
+    ): F[GlobalSnapshotSyncAcceptanceResult] =
+      candidates
+        .sorted(ordering)
+        .foldLeftM(
+          (
+            inherited,
+            List.empty[Signed[GlobalSnapshotSync]],
+            List.empty[Signed[GlobalSnapshotSync]]
+          )
+        ) {
+          case ((lastSyncs, toAdd, toReject), sync) =>
+            globalSnapshotSyncValidator.validate(sync, metagraphId, facilitators, lastSyncs).map {
+              case Validated.Valid(_) =>
+                val peerId = sync.proofs.head.id.toPeerId
+                val updatedLastSyncs = lastSyncs.updated(peerId, sync)
+                val updatedToAdd = sync :: toAdd
+
+                (updatedLastSyncs, updatedToAdd, toReject)
+              case Validated.Invalid(_) =>
+                val updatedToReject = sync :: toReject
+
+                (lastSyncs, toAdd, updatedToReject)
+            }
+        }
+        .map { case (contextUpdate, toAdd, toReject) => GlobalSnapshotSyncAcceptanceResult(contextUpdate, toAdd, toReject) }
+
+    if (!resetRecognitionEnabled)
+      acceptOrdinary(globalSnapshotSyncsForAcceptance)
+    else {
+      val (resetShaped, ordinaryCandidates) = globalSnapshotSyncsForAcceptance.partition { sync =>
+        val signer = sync.proofs.head.id.toPeerId
+        RecoveryGlobalSnapshotSync.hasResetShape(signer, sync.parentOrdinal, inherited.keySet, facilitators)
+      }
+
+      resetShaped
+        .traverse(sync => validateRecoveryReset(sync).tupleLeft(sync))
+        .flatMap { classified =>
+          val validResets = classified.collect { case (sync, true) => sync }
+          val invalidResets = classified.collect { case (sync, false) => sync }
+
+          acceptOrdinary(ordinaryCandidates).flatMap { ordinary =>
+            validResets match {
+              case reset :: Nil if ordinary.accepted.isEmpty =>
+                val signer = reset.proofs.head.id.toPeerId
+                logger.warn(s"RECOVERY_SYNC_RESET_ACCEPTED signer=${signer.value.value.take(8)}") >>
+                  recordReset("accepted") >>
+                  GlobalSnapshotSyncAcceptanceResult(
+                    SortedMap(signer -> reset),
+                    List(reset),
+                    invalidResets ++ ordinary.notAccepted,
+                    isRecoveryReset = true
+                  ).pure[F]
+              case Nil =>
+                ordinary.copy(notAccepted = invalidResets ++ ordinary.notAccepted).pure[F]
+              case _ =>
+                rejectAll("competing_valid_sync_declarations")
+            }
+          }
+        }
+    }
   }
 }
 
 object MessageValidationOpsManager {
-  def make[F[_]: Async](
+  def make[F[_]: Async: Metrics](
     messageValidator: CurrencyMessageValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
   ): MessageValidationOpsManager[F] =

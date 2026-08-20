@@ -75,7 +75,20 @@ object Main
   override protected def loadEffectiveConsensusConfig(method: Run, sharedConfig: SharedConfig): IO[Option[ConsensusConfig]] =
     loadConfigAs[AppConfigReader].flatMap { reader =>
       val appConfig = method.appConfig(reader, sharedConfig)
-      SnapshotConfig.resolveEffectiveConsensusConfig(appConfig.snapshot, appConfig.environment).liftTo[IO].map(_.some)
+      SnapshotConfig
+        .resolveEffectiveConsensusConfig(appConfig.snapshot, appConfig.environment)
+        .map(
+          _.copy(
+            lastGlobalSnapshotSyncOffset = sharedConfig.lastGlobalSnapshotsSync.syncOffset.value,
+            lastGlobalSnapshotsInMemory = sharedConfig.lastGlobalSnapshotsSync.maxLastGlobalSnapshotsInMemory.value,
+            currencySnapshotProtocolV1ActivationOrdinal = sharedConfig.fieldsAddedOrdinals
+              .currencySnapshotProtocolV1For(appConfig.environment)
+              .value
+              .value
+          )
+        )
+        .liftTo[IO]
+        .map(_.some)
     }
 
   private[dag] def rollbackBootstrapFacilitators(nodeId: PeerId, proofSigners: List[PeerId]): List[PeerId] =

@@ -61,7 +61,7 @@ object SharedValidators {
     val stateChannelValidator =
       StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes, feeCalculator)
     val currencyMessageValidator = CurrencyMessageValidator.make[F](environment, signedValidator, stateChannelAllowanceLists, seedlist)
-    val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist)
+    val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist, stateChannelAllowanceLists)
     val allowSpendChainValidator = AllowSpendChainValidator.make[F]
     val allowSpendValidator = AllowSpendValidator.make[F](addressesCfg, signedValidator)
     val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)

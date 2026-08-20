@@ -1,6 +1,6 @@
 # Consensus Configuration Reference (post-4.0)
 
-This is the operator-facing reference for the consensus and health configuration introduced into the Global L0 consensus path since v4.0.0. Most of these knobs are **consensus-critical**: they are folded into `ConsensusConfig.deterministicConfigHash`, which L0 advertises in its cluster registration and carries in every `Facility` declaration. L0 joining requires exact hash equality (including presence), while Facility comparison remains an additional structured diagnostic. The advertised `versionHash` is an independent release fence; it hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes or runtime configuration. Per-environment values are resolved through `SnapshotConfig.resolveEffectiveConsensusConfig`; startup threads that exact resolved consensus-critical projection to both the join fence and live consensus. Public `FieldsAddedOrdinals` remain outside this fingerprint. The v35 per-L0 certified-consensus activation key and `max-round-duration` are intentional exceptions because they directly select or constrain certified value derivation.
+This is the operator-facing reference for the consensus and health configuration introduced into the Global L0 consensus path since v4.0.0. Most of these knobs are **consensus-critical**: they are folded into `ConsensusConfig.deterministicConfigHash`, which L0 advertises in its cluster registration and carries in every `Facility` declaration. L0 joining requires exact hash equality (including presence), while Facility comparison remains an additional structured diagnostic. The advertised `versionHash` is an independent release fence; it hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes or runtime configuration. Per-environment values are resolved through `SnapshotConfig.resolveEffectiveConsensusConfig`; startup threads that exact resolved consensus-critical projection to both the join fence and live consensus. Most public `FieldsAddedOrdinals` remain outside this fingerprint. The v35 per-L0 certified-consensus activation key, the resolved Global L0 Currency-snapshot-protocol-v1 gate, and `max-round-duration` are intentional exceptions because they directly select or constrain deterministic derivation.
 
 This document then flags three gaps an operator will hit in the field: `LocalHealthMonitorConfig` has no HOCON binding at all, and two operational toggles (`CL_MPT_VERIFY_INCREMENTAL`, `CL_RAISE_ON_FOLLOWER_DIVERGENCE`) are read directly from `sys.env` and appear in no `.conf` file.
 
@@ -58,6 +58,14 @@ These resolve once per environment at the construction site (the coreCommitteeSi
 ### Other hashed knobs without their own table row
 
 `readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `35`), the resolved certified-consensus activation key, and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=35` is the immediate fence against mixed active-consensus wire versions; the ordinal key separately controls when v35 behavior starts.
+
+The cross-layer `lastGlobalSnapshotSyncOffset`, `lastGlobalSnapshotsInMemory`, and
+resolved `currencySnapshotProtocolV1ActivationOrdinal` are copied from shared config
+into both DAG and Currency L0 effective `ConsensusConfig` values and hash-folded. The
+last value authorizes the existing signed Currency snapshot `version` to advance from
+`0.0.1` to `1.0.0` in GLOBAL L0 ordinal space; it is separate from each cluster's
+Currency-local certified-consensus key. See
+[ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
 
 ---
 

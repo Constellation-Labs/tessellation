@@ -14,7 +14,6 @@ import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import derevo.cats.eqv
 import derevo.derive
-import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.all.NonNegLong
 
@@ -101,6 +100,9 @@ trait BinaryTracker[F[_]] {
 
   /** Generic atomic read-modify-write, used to apply a full confirmation transition without tearing. */
   def modify[A](f: TrackerState => (TrackerState, A)): F[A]
+
+  /** Remove one exact binary from retry state. Used only when a recovery publication's deterministic acceptance window has expired. */
+  def remove(binaryHash: Hash): F[Unit]
 
   def clear: F[Unit]
 }
@@ -209,6 +211,15 @@ object BinaryTracker {
         def updateState(f: TrackerState => TrackerState): F[Unit] = stateRef.update(f)
 
         def modify[A](f: TrackerState => (TrackerState, A)): F[A] = stateRef.modify(f)
+
+        def remove(binaryHash: Hash): F[Unit] =
+          stateRef.update { state =>
+            val kept = state.tracked.filter {
+              case pending: PendingBinary     => pending.binary.hash =!= binaryHash
+              case confirmed: ConfirmedBinary => confirmed.pendingBinary.binary.hash =!= binaryHash
+            }
+            state.copy(tracked = kept, inFlight = state.inFlight - binaryHash)
+          }
 
         def clear: F[Unit] = stateRef.set(TrackerState.empty)
       }

@@ -8,6 +8,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
+import io.constellationnetwork.currency.schema.CurrencySnapshotSemantics
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.currency.validations.FeeTransactionSignatureValidator.isEnabled
@@ -20,8 +21,13 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalS
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.metagraphsBalancesAdjustments
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{
+  CurrencyMessageValidator,
+  GlobalSnapshotSyncValidator,
+  RecoveryGlobalSnapshotSync
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
@@ -29,6 +35,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
@@ -37,7 +44,7 @@ import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
-import eu.timepit.refined.auto.autoUnwrap
+import eu.timepit.refined.auto._
 import fs2.concurrent.SignallingRef
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -59,7 +66,10 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
     shouldPerformMetagraphSpecificValidations: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    previouslyProcessedGlobalSnapshots: SortedSet[SnapshotOrdinal],
+    historicalDependencyResolution: Boolean,
+    parentSnapshotVersion: SnapshotVersion
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -70,7 +80,20 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 }
 
 object CurrencySnapshotAcceptanceManager {
-  def make[F[_]: Async: Parallel: JsonSerializer](
+
+  /** A validated recovery reset is an authoritative lineage replacement, not an ordinary monotonic update. Its canonical retained-window
+    * target must therefore replace even a numerically newer parent view, which may name an orphaned GL0 branch. Ordinary snapshots retain
+    * the legacy non-regression rule.
+    */
+  private[currency] def selectGlobalSyncView(
+    previous: Option[GlobalSyncView],
+    resolved: GlobalSyncView,
+    isRecoveryReset: Boolean
+  ): GlobalSyncView =
+    if (isRecoveryReset) resolved
+    else previous.filter(_.ordinal >= resolved.ordinal).getOrElse(resolved)
+
+  def make[F[_]: Async: Parallel: JsonSerializer: Metrics](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     environment: AppEnvironment,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
@@ -85,63 +108,48 @@ object CurrencySnapshotAcceptanceManager {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   )(
     implicit currencyStateProofSelector: CurrencyStateProofSelector
-  ): F[CurrencySnapshotAcceptanceManager[F]] =
-    for {
+  ): F[CurrencySnapshotAcceptanceManager[F]] = for {
+    globalSnapshotsAlreadyProcessed <- SignallingRef.of[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]](Map.empty)
+    blockOps = BlockAcceptanceOpsManager.make[F](
+      blockAcceptanceManager,
+      tokenLockBlockAcceptanceManager,
+      allowSpendBlockAcceptanceManager,
+      collateral
+    )
 
-      // Holds a cache of the most recent GlobalIncrementalSnapshots by their SnapshotOrdinal.
-      // Used to avoid redundant network calls and repeated deserialization of global snapshots
-      // when multiple currency snapshots are being processed concurrently or in sequence.
-      lastGlobalSnapshotsCached <- SignallingRef.of[F, Map[SnapshotOrdinal, Hashed[GlobalIncrementalSnapshot]]](Map.empty)
+    messageOps = MessageValidationOpsManager.make[F](
+      messageValidator,
+      globalSnapshotSyncValidator
+    )
 
-      // Tracks which global snapshot ordinals have already been processed for each metagraph address.
-      // This avoids re-extracting global-layer artifacts such as SpendActions when multiple
-      // currency snapshots are produced before lastGlobalSnapshotInfo is updated.
-      // Not maintaining this state would result in applying the same actions multiple times,
-      // leading to inconsistencies like double deduction and snapshot diff mismatches.
-      globalSnapshotsAlreadyProcessed <- SignallingRef.of[F, Map[Address, Map[SnapshotOrdinal, List[SnapshotOrdinal]]]](Map.empty)
+    globalSnapshotOps = GlobalSnapshotOpsManager.make[F](
+      lastGlobalSnapshotsSyncConfig,
+      globalSnapshotsAlreadyProcessed
+    )
 
-      // Initialize operational components
-      blockOps = BlockAcceptanceOpsManager.make[F](
-        blockAcceptanceManager,
-        tokenLockBlockAcceptanceManager,
-        allowSpendBlockAcceptanceManager,
-        collateral
-      )
+    allowSpendOps = AllowSpendOpsManager.make[F]
+    tokenLockOps = TokenLockOpsManager.make[F]
+    balanceOps = BalanceOpsManager.make[F](feeTransactionValidator)
 
-      messageOps = MessageValidationOpsManager.make[F](
-        messageValidator,
-        globalSnapshotSyncValidator
-      )
-
-      globalSnapshotOps = GlobalSnapshotOpsManager.make[F](
-        lastGlobalSnapshotsSyncConfig,
-        lastGlobalSnapshotsCached,
-        globalSnapshotsAlreadyProcessed
-      )
-
-      allowSpendOps = AllowSpendOpsManager.make[F]
-      tokenLockOps = TokenLockOpsManager.make[F]
-      balanceOps = BalanceOpsManager.make[F](feeTransactionValidator)
-
-    } yield
-      new CurrencySnapshotAcceptanceManagerImpl[F](
-        fieldsAddedOrdinals,
-        environment,
-        lastGlobalSnapshotsSyncConfig,
-        lastNGlobalSnapshotStorage,
-        lastGlobalSnapshotStorage,
-        blockOps,
-        messageOps,
-        globalSnapshotOps,
-        allowSpendOps,
-        tokenLockOps,
-        balanceOps
-      )
+  } yield
+    new CurrencySnapshotAcceptanceManagerImpl[F](
+      fieldsAddedOrdinals,
+      environment,
+      lastGlobalSnapshotsSyncConfig,
+      lastNGlobalSnapshotStorage,
+      lastGlobalSnapshotStorage,
+      blockOps,
+      messageOps,
+      globalSnapshotOps,
+      allowSpendOps,
+      tokenLockOps,
+      balanceOps
+    ): CurrencySnapshotAcceptanceManager[F]
 }
 
 /** Main implementation with parallelized operations for improved performance
   */
-private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonSerializer](
+private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonSerializer: Metrics](
   fieldsAddedOrdinals: FieldsAddedOrdinals,
   environment: AppEnvironment,
   lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
@@ -156,6 +164,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 )(implicit currencyStateProofSelector: CurrencyStateProofSelector)
     extends CurrencySnapshotAcceptanceManager[F] {
   private val feeTransactionSecurityActivationOrdinal = fieldsAddedOrdinals.feeTransactionSecurityFor(environment)
+  private val currencySnapshotProtocolV1ActivationOrdinal = fieldsAddedOrdinals.currencySnapshotProtocolV1For(environment)
 
   def accept(
     blocksForAcceptance: List[Signed[Block]],
@@ -175,7 +184,10 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     maybeLastGlobalSyncView: Option[GlobalSyncView],
     shouldPerformMetagraphSpecificValidations: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    previouslyProcessedGlobalSnapshots: SortedSet[SnapshotOrdinal],
+    historicalDependencyResolution: Boolean,
+    parentSnapshotVersion: SnapshotVersion
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
     initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
     tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -241,7 +253,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       feeTransactionsForAcceptance
     )
 
-    acceptedSharedArtifacts = sharedArtifactsForAcceptance
+    callerSharedArtifacts = sharedArtifactsForAcceptance
     maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
 
     (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
@@ -251,6 +263,34 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     lastUnsyncBalances = lastUnsyncGlobalSnapshotInfo.balances
     lastUnsyncLastCurrencySnapshots = lastUnsyncGlobalSnapshotInfo.lastCurrencySnapshots
     lastUnsyncMetagraphSyncData = lastUnsyncGlobalSnapshotInfo.metagraphSyncData
+    lastGlobalSnapshots <- lastNGlobalSnapshotStorage.getLastN
+    inheritedGlobalSnapshotSyncs = lastSnapshotContext.snapshotInfo.globalSnapshotSyncView.getOrElse(
+      SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]]
+    )
+    recoveryResetContext = lastUnsyncMetagraphSyncData.flatMap(_.get(metagraphId)).map { syncData =>
+      RecoveryGlobalSnapshotSync.ValidationContext(
+        currentSigners = facilitators,
+        inheritedPeerIds = inheritedGlobalSnapshotSyncs.keySet,
+        inheritedSessions = inheritedGlobalSnapshotSyncs.view.mapValues(_.session).to(SortedMap),
+        currentGlobalParent = lastUnsyncGlobalSnapshot.ordinal,
+        recentGlobalSnapshots = SortedMap.from(lastGlobalSnapshots.map(snapshot => snapshot.ordinal -> snapshot.hash)),
+        retainedCount = lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value,
+        syncOffset = lastGlobalSnapshotsSyncConfig.syncOffset.value,
+        metagraphLastAcceptedOn = syncData.globalOrdinalLastAcceptedOn,
+        unappliedGlobalChangeOrdinals = syncData.unappliedGlobalChangeOrdinals,
+        snapshotProtocolV1ActivationOrdinal = currencySnapshotProtocolV1ActivationOrdinal
+      )
+    }
+    // Recognition is globally authorized by the announced GL0 activation boundary, while
+    // validateReset independently requires the reset's selected target to be at/after it.
+    // Parent v1 keeps recognition enabled forever for a lineage even if a replayer's local
+    // GL0 cursor is temporarily behind the activation boundary.
+    resetRecognitionEnabled =
+      CurrencySnapshotSemantics.usesDeterministicHistory(parentSnapshotVersion) ||
+        CurrencySnapshotSemantics.isActivationAuthorized(
+          lastUnsyncGlobalSnapshot.ordinal,
+          currencySnapshotProtocolV1ActivationOrdinal
+        )
 
     parallelResults <- (
       messageOps.acceptMessages(
@@ -266,7 +306,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         lastSnapshotContext.snapshotInfo.globalSnapshotSyncView,
         globalSnapshotSyncsForAcceptance,
         lastSnapshotContext.address,
-        facilitators
+        facilitators,
+        recoveryResetContext,
+        resetRecognitionEnabled
       )
     ).parMapN((messages, syncs) => (messages, syncs))
 
@@ -276,7 +318,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     lastPeersParticipatedOnConsensus = lastArtifactProofs.map(_.id.toPeerId)
     peersToGetSnapshotOrdinalSync =
-      if (lastUnsyncGlobalSnapshot.ordinal > updatedLastSyncGlobalFromPeersInConsensus) {
+      if (globalSnapshotSyncAcceptanceResult.isRecoveryReset) {
+        globalSnapshotSyncAcceptanceResult.contextUpdate
+      } else if (lastUnsyncGlobalSnapshot.ordinal > updatedLastSyncGlobalFromPeersInConsensus) {
         globalSnapshotSyncAcceptanceResult.contextUpdate.filter {
           case (peerId, _) =>
             lastPeersParticipatedOnConsensus.contains(peerId)
@@ -298,32 +342,80 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       }
       .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
-    lastGlobalSnapshots <- lastNGlobalSnapshotStorage.getLastN
+    activationReference = maybeSnapshotOrdinalSync
+      .orElse(maybeLastGlobalSyncView.map(_.ordinal))
+      .getOrElse(SnapshotOrdinal.MinValue)
+    transitionHistoryProven = lastUnsyncMetagraphSyncData
+      .flatMap(_.get(metagraphId))
+      .forall(syncData =>
+        CurrencySnapshotSemantics.legacyHistoryResolvedThrough(
+          syncData.unappliedGlobalChangeOrdinals,
+          activationReference
+        )
+      )
+    snapshotVersion = CurrencySnapshotSemantics.nextVersion(
+      parentSnapshotVersion,
+      activationReference,
+      currencySnapshotProtocolV1ActivationOrdinal,
+      transitionHistoryProven
+    )
+    deterministicHistoryActive = CurrencySnapshotSemantics.usesDeterministicHistory(snapshotVersion)
+    _ <- new IllegalStateException("A recovery reset must activate deterministic Currency snapshot history")
+      .raiseError[F, Unit]
+      .whenA(globalSnapshotSyncAcceptanceResult.isRecoveryReset && !deterministicHistoryActive)
+    transitionOutcome =
+      if (CurrencySnapshotSemantics.usesDeterministicHistory(parentSnapshotVersion)) "deterministic"
+      else if (deterministicHistoryActive) "activated"
+      else if (
+        CurrencySnapshotSemantics.isActivationAuthorized(
+          activationReference,
+          currencySnapshotProtocolV1ActivationOrdinal
+        ) && !transitionHistoryProven
+      ) "blocked_unproven"
+      else "legacy"
+    _ <- Metrics[F]
+      .incrementCounter(
+        "dag_currency_l0_snapshot_protocol_total",
+        Seq(Metrics.unsafeLabelName("outcome") -> transitionOutcome)
+      )
+      .attempt
+      .void
+    // Signed CurrencySnapshot.version is the semantic boundary. Version 1.0.0 never
+    // consults the archive/network callback, including during historical recreation.
+    dependencyMode = GlobalSnapshotOpsManager.selectDependencyMode(historicalDependencyResolution, deterministicHistoryActive)
+    // Legacy artifacts preserve rc.12 behavior byte-for-byte. Version 1.0.0 derives the
+    // cumulative GlobalSnapshotsProcessed artifact only from its signed parent and GSI.
+    acceptedSharedArtifacts =
+      if (deterministicHistoryActive) callerSharedArtifacts.filterNot(_.isInstanceOf[GlobalSnapshotsProcessed])
+      else callerSharedArtifacts
 
     ordinalToFetchGlobalSnapshot <- maybeSnapshotOrdinalSync
       .orElse(maybeLastGlobalSyncView.map(_.ordinal))
       .filter(_ =!= SnapshotOrdinal.MinValue)
       .fold(fallbackOrdinal.pure[F])(_.pure[F])
 
-    lastSyncGlobalSnapshot <- lastGlobalSnapshots.find(_.ordinal === ordinalToFetchGlobalSnapshot) match {
-      case Some(value) => value.pure[F]
-      case None        => globalSnapshotOps.getGlobalSnapshotWithRetry(ordinalToFetchGlobalSnapshot, getGlobalSnapshotByOrdinal)
-    }
-
-    _ <- globalSnapshotOps.updateGlobalSnapshotCache(lastSyncGlobalSnapshot)
+    lastSyncGlobalSnapshot <- globalSnapshotOps.resolveGlobalSnapshot(
+      HistoricalGlobalSnapshotResolver.SyncTarget,
+      ordinalToFetchGlobalSnapshot,
+      lastUnsyncGlobalSnapshot.ordinal,
+      lastGlobalSnapshots,
+      getGlobalSnapshotByOrdinal,
+      dependencyMode
+    )
 
     lastGlobalSnapshotEpochProgress = lastSyncGlobalSnapshot.epochProgress
     lastGlobalSnapshotOrdinal = lastSyncGlobalSnapshot.ordinal
 
-    globalSyncView = maybeLastGlobalSyncView
-      .filter(_.ordinal >= lastSyncGlobalSnapshot.ordinal)
-      .getOrElse(
-        GlobalSyncView(
-          lastSyncGlobalSnapshot.ordinal,
-          lastSyncGlobalSnapshot.hash,
-          lastSyncGlobalSnapshot.epochProgress
-        )
-      )
+    resolvedGlobalSyncView = GlobalSyncView(
+      lastSyncGlobalSnapshot.ordinal,
+      lastSyncGlobalSnapshot.hash,
+      lastSyncGlobalSnapshot.epochProgress
+    )
+    globalSyncView = CurrencySnapshotAcceptanceManager.selectGlobalSyncView(
+      maybeLastGlobalSyncView,
+      resolvedGlobalSyncView,
+      globalSnapshotSyncAcceptanceResult.isRecoveryReset
+    )
 
     blockAcceptanceResults <- (
       blockOps.acceptTokenLockBlocks(
@@ -369,8 +461,12 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       metagraphId,
       lastUnsyncMetagraphSyncData,
       snapshotOrdinal,
+      maybeLastGlobalSyncView,
+      previouslyProcessedGlobalSnapshots,
       lastUnsyncGlobalSnapshot.ordinal,
-      updatingCombineFunctionSpendActions
+      updatingCombineFunctionSpendActions,
+      dependencyMode,
+      deterministicProcessedHistory = deterministicHistoryActive
     )
 
     metagraphIdSpendTransactions = globalSnapshotsSpendActions.flatMap {
@@ -558,9 +654,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     (allowSpendsExpiredEvents, tokenUnlocksEvents) = events
 
-    maybeGlobalSnapshotProcessedEvent: SortedSet[SharedArtifact] =
+    globalSnapshotProcessedEvents: SortedSet[SharedArtifact] =
       if (globalSnapshotsProcessed.nonEmpty)
-        SortedSet(GlobalSnapshotsProcessed(globalSnapshotsProcessed))
+        SortedSet[SharedArtifact](GlobalSnapshotsProcessed(globalSnapshotsProcessed))
       else
         SortedSet.empty[SharedArtifact]
 
@@ -572,13 +668,14 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       messagesAcceptanceResult,
       globalSnapshotSyncAcceptanceResult,
       acceptedRewardTxs,
-      acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ maybeGlobalSnapshotProcessedEvent,
+      acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents ++ globalSnapshotProcessedEvents,
       acceptedFeeTxs,
       csi,
       stateProof,
       globalSyncView,
       lastGlobalSnapshotOrdinal,
-      snapshotOrdinalToCheckFields
+      snapshotOrdinalToCheckFields,
+      snapshotVersion
     )
 
   def acceptRewardTxs(

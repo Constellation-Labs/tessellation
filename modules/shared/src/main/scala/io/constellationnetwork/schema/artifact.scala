@@ -72,15 +72,15 @@ object artifact {
     deduct: Option[Amount]
   ) extends SharedArtifact
 
-  /** Temporary artifact used to indicate which global snapshot ordinals have already been processed during the construction of a currency
-    * snapshot.
+  /** Signed acknowledgment of Global L0 ordinals processed while constructing a currency snapshot.
     *
     * This case class is included in the `artifacts` field of a `CurrencySnapshot` at the moment it is created. It signals that the listed
     * `GlobalIncrementalSnapshot` ordinals have already been consumed for extracting data — such as `SpendAction`s — and should not be
-    * reprocessed in the future.
+    * reprocessed in the future. Under Currency snapshot protocol 1.0.0, the value is cumulative for the ordinals that GL0 still reports as
+    * unapplied: the signed parent carries them forward until GL0 acknowledges them by removing them from `unappliedGlobalChangeOrdinals`.
     *
-    * ⚠️ Note: This artifact is not persisted long-term. It is only populated during snapshot creation, and once the currency snapshot is
-    * finalized, this information is discarded.
+    * This signed-chain authority replaces the former process-local cache. A JVM restart therefore cannot change whether a spend action is
+    * applied or which artifact bytes are emitted.
     *
     * Motivation: Without this mechanism, the same global snapshot data could be reprocessed multiple times across currency snapshots. This
     * would lead to inconsistencies when validating the currency snapshot inside a global snapshot — especially during `SnapshotDiff` checks
@@ -91,7 +91,7 @@ object artifact {
     * from global snapshots.
     *
     * @param ordinals
-    *   A sorted set of global snapshot ordinals that were processed in the current currency snapshot.
+    *   A sorted set of processed, still-unacknowledged global snapshot ordinals.
     */
   @derive(decoder, encoder, order, ordering, show)
   case class GlobalSnapshotsProcessed(

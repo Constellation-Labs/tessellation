@@ -1,6 +1,7 @@
 # V35 certified-consensus rollout
 
-This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md).
+This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md) and
+[ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
 
 ## Scheduled activations
 
@@ -11,18 +12,26 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
 - Every Currency L0 remains disabled here. Each metagraph has an independent ordinal
   space and must select and coordinate its own activation key. Mainnet, IntegrationNet,
   and testnet remain disabled for both layers.
+- Currency snapshot protocol `1.0.0` is also unscheduled on every public network. Its
+  gate is a GLOBAL L0 ordinal shared by all metagraph lineages, not a Currency-local v35
+  key. It may be announced in the same release window, but it remains a distinct gate.
 
 ## Compatibility boundaries
 
 - `consensusSchemaVersion=35` is an immediate active-cluster compatibility fence.
 - `certified-consensus-activation-ordinal` is the deterministic behavior boundary.
+- `fields-added-ordinals.currency-snapshot-protocol-v1` authorizes the signed Currency
+  artifact version transition from `0.0.1` to `1.0.0` using Global L0 ordinal space.
 - DAG L0 and every Currency L0 use their own snapshot ordinal space.
-- The public global/currency snapshot and state-proof schemas do not change.
+- The public global/currency snapshot and state-proof shapes do not change. The existing
+  signed Currency `version` value and artifact bytes intentionally change at the global
+  protocol-v1 boundary.
 
 Do not confuse the two gates. Nodes started with different schema/config hashes cannot
 form a healthy active consensus cluster even below the activation key. Conversely,
 deploying the aligned v35 jar with no public activation entry leaves the v35 behavior
-dormant.
+dormant. The Currency protocol gate is copied into each L0's effective consensus config
+and is therefore fenced independently as well.
 
 ## Before selecting an activation key
 
@@ -65,15 +74,27 @@ dormant.
 9. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
    and CoreCommitQC formation, artifact proof margin, view changes, reward breadth, and
    `dag_consensus_outcome_hook_duration_seconds` p95.
+10. Inventory every active metagraph. Require upgraded Currency L0 jars/configs and
+    rebuilt SDK-based Currency L1/data L1 applications before the announced global
+    protocol-v1 ordinal. Confirm each signed GSI
+    `unappliedGlobalChangeOrdinals` set is empty, or explicitly monitor the lineage's
+    deterministic `blocked_unproven` delay until all entries at or below its selected
+    Global L0 view are acknowledged. Keep dormant legacy metagraphs offline until upgraded.
+11. Replay pre-boundary Currency `0.0.1` fixtures and cross the boundary in the generated
+    dev/CI metagraph. Assert the first eligible child is `1.0.0`, descendants cannot
+    downgrade, and Global L0 accepts the state-channel binary.
 
 ## Deployment sequence
 
-1. Choose a future activation key independently for each L0 cluster.
+1. Choose a future activation key independently for each L0 cluster. If Currency
+   protocol v1 is included, separately choose and announce one future Global L0 ordinal
+   for all metagraph lineages.
 2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
    certified-vote-lock journals, configuration, and logs; verify a coherent
    pre-activation checkpoint.
 3. Install the same v35 assembly and the same resolved activation configuration on
-   every active facilitator. Do not canary a mixed active consensus fleet.
+   every active facilitator. Rebuild every active metagraph stack before the global
+   Currency-protocol boundary. Do not canary a mixed active consensus fleet.
 4. Cold-start the cluster and verify identical deterministic config hashes and normal
    legacy progress below the key.
 5. Before crossing, verify every expected active node is on the recorded jar/config.
@@ -89,6 +110,10 @@ dormant.
    `dag_consensus_certified_recovery_candidate_total`, and
    `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`
    in the activation dashboard.
+8. At the Currency protocol boundary, verify each active lineage's first eligible
+   successor carries `version=1.0.0`. Monitor
+   `dag_currency_l0_snapshot_protocol_total{outcome}` and do not restart a
+   `blocked_unproven` lineage; inspect its signed unapplied history.
 
 Before activation, verify the ordinary-download lineage boundary on every source node:
 

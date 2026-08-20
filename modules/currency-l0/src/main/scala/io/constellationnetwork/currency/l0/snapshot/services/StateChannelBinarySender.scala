@@ -10,6 +10,7 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.l0.metrics.{updateBackpressuredStateChannelBinaryMetrics, updateStateChannelRetryParametersMetrics}
+import io.constellationnetwork.currency.l0.snapshot.storage.RecoverySyncPublicationStorage
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
@@ -24,6 +25,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
+import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -50,6 +52,7 @@ object StateChannelBinarySender {
     environment: AppEnvironment,
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
     cluster: ClusterStorage[F],
+    recoverySyncPublicationStorage: RecoverySyncPublicationStorage[F],
     maxTrackedBinaries: Int = 10000
   )(implicit S: Supervisor[F]): F[StateChannelBinarySender[F]] = {
     val logger = Slf4jLogger.getLoggerFromName(this.getClass.getName)
@@ -75,8 +78,50 @@ object StateChannelBinarySender {
         selfId,
         maxTrackedBinaries,
         fa => S.supervise(fa).void,
-        logger
+        logger,
+        recoverySyncPublicationStorage.some
       )
+      _ <- recoverySyncPublicationStorage.get.flatMap {
+        case Some(publication) if publication.locallyCommitted && !publication.expired =>
+          sender.enqueue(
+            Hashed(publication.binary, publication.binaryHash, publication.proofsHash),
+            publication.currencySnapshotOrdinal,
+            none
+          ) >>
+            (Metrics[F].updateGauge(
+              "dag_currency_l0_recovery_sync_refresh_pending",
+              1L,
+              Seq(Metrics.unsafeLabelName("mode") -> publication.mode)
+            ) >>
+              Metrics[F].incrementCounter(
+                "dag_currency_l0_recovery_sync_refresh_total",
+                Seq(
+                  Metrics.unsafeLabelName("mode") -> publication.mode,
+                  Metrics.unsafeLabelName("outcome") -> "restored"
+                )
+              )).attempt.void
+        case Some(publication) if publication.expired =>
+          // Expiry stops retries; it does not mean recovery succeeded. Keep the unresolved gauge
+          // asserted until an exact retained-window confirmation clears the receipt or the operator
+          // starts a newly anchored recovery.
+          (Metrics[F].updateGauge(
+            "dag_currency_l0_recovery_sync_refresh_pending",
+            1L,
+            Seq(Metrics.unsafeLabelName("mode") -> publication.mode)
+          ) >>
+            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", 0L)).attempt.void >>
+            logger.error(
+              s"RECOVERY_SYNC_PUBLICATION_EXPIRED mode=${publication.mode} binaryHash=${publication.binaryHash} " +
+                s"validThrough=${publication.validThroughGlobalParent}; a new rollback recovery is required"
+            )
+        case Some(publication) =>
+          Async[F].raiseError[Unit](
+            new IllegalStateException(
+              s"Unreconciled recovery publication reached sender startup: binaryHash=${publication.binaryHash}"
+            )
+          )
+        case None => Async[F].unit
+      }
       _ <- startBackgroundWorker(sender, lastGlobalSnapshotStorage, logger)
     } yield sender
   }
@@ -123,7 +168,8 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
   // How a posting effect is scheduled. Production forks it on a Supervisor (non-blocking, fire-and-forget);
   // tests pass identity to run it synchronously and observe ordering deterministically.
   forkSend: F[Unit] => F[Unit],
-  logger: SelfAwareStructuredLogger[F]
+  logger: SelfAwareStructuredLogger[F],
+  recoverySyncPublicationStorage: Option[RecoverySyncPublicationStorage[F]] = None
 ) extends StateChannelBinarySender[F] {
 
   // Max pending binaries inspected per normal-mode tick (chain order). Retry mode uses the adaptive `cap`.
@@ -177,15 +223,67 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
         (pruned, pruned)
       }
       _ <- updateStateChannelRetryParametersMetrics(metricsState)
+      _ <- confirmRecoveryPublication(confirmedHashes, globalSnapshot.ordinal)
     } yield ()
 
   def clearPending: F[Unit] =
-    logger.info("[Queue] Clearing all pending binaries") >> tracker.clear
+    logger.info("[Queue] Clearing all pending binaries") >>
+      tracker.clear >>
+      // Consensus soft-reset cleanup is allowed to discard ordinary process-local retry state,
+      // but the recovery successor remains protocol-required until its exact binary is observed
+      // in canonical Global L0. Rehydrate that one durable entry immediately; waiting for a JVM
+      // restart would turn a routine soft reset into a publication outage.
+      recoverySyncPublicationStorage.traverse_ {
+        _.get.flatMap {
+          case Some(publication) if publication.locallyCommitted && !publication.expired =>
+            enqueue(
+              Hashed(publication.binary, publication.binaryHash, publication.proofsHash),
+              publication.currencySnapshotOrdinal,
+              none
+            ) >>
+              Metrics[F]
+                .incrementCounter(
+                  "dag_currency_l0_recovery_sync_refresh_total",
+                  Seq(
+                    Metrics.unsafeLabelName("mode") -> publication.mode,
+                    Metrics.unsafeLabelName("outcome") -> "restored_after_clear"
+                  )
+                )
+                .attempt
+                .void
+          case _ => Async[F].unit
+        }
+      }
 
   def processQueue(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = {
     val signers = globalSnapshot.signed.proofs.map(_.id.toPeerId).some
     val ordinal = globalSnapshot.ordinal
     for {
+      // The background worker races the incremental-snapshot handler. Check this snapshot for the
+      // exact recovery binary before applying its ordinal as an expiry boundary, so a publication
+      // included at the last usable opportunity can never be reported as expired merely because
+      // the queue tick ran first.
+      _ <- confirmRecoveryPublicationFrom(globalSnapshot)
+      expiredRecovery <- recoverySyncPublicationStorage.fold(none[RecoverySyncPublicationStorage.Publication].pure[F])(
+        _.expireAt(ordinal)
+      )
+      _ <- expiredRecovery.traverse_ { publication =>
+        tracker.remove(publication.binaryHash) >>
+          (Metrics[F].incrementCounter(
+            "dag_currency_l0_recovery_sync_refresh_total",
+            Seq(
+              Metrics.unsafeLabelName("mode") -> publication.mode,
+              Metrics.unsafeLabelName("outcome") -> "expired"
+            )
+          ) >>
+            // The receipt remains unresolved after expiry. Only exact canonical GL0 confirmation
+            // clears refresh_pending; otherwise an operator could mistake a stopped retry for success.
+            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", 0L)).attempt.void >>
+          logger.error(
+            s"RECOVERY_SYNC_PUBLICATION_EXPIRED mode=${publication.mode} binaryHash=${publication.binaryHash} " +
+              s"globalParent=$ordinal validThrough=${publication.validThroughGlobalParent}; stopping retries"
+          )
+      }
       alive <- aliveSet
       state <- tracker.getState
       _ <-
@@ -193,6 +291,41 @@ private[services] class StateChannelBinarySenderImpl[F[_]: Async: Hasher: Metric
         else processNormalMode(signers, ordinal.some, alive)
     } yield ()
   }
+
+  private def confirmRecoveryPublicationFrom(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] =
+    recoverySyncPublicationStorage.fold(Applicative[F].unit)(
+      _.get.flatMap {
+        case Some(_) =>
+          identifierStorage.get
+            .flatMap(getConfirmedHashes(_, globalSnapshot))
+            .flatMap(confirmRecoveryPublication(_, globalSnapshot.ordinal))
+        case None => Applicative[F].unit
+      }
+    )
+
+  private def confirmRecoveryPublication(confirmedHashes: Set[Hash], globalOrdinal: SnapshotOrdinal): F[Unit] =
+    recoverySyncPublicationStorage
+      .fold(none[RecoverySyncPublicationStorage.Publication].pure[F])(_.confirm(confirmedHashes))
+      .flatMap(
+        _.traverse_ { publication =>
+          (Metrics[F].updateGauge(
+            "dag_currency_l0_recovery_sync_refresh_pending",
+            0L,
+            Seq(Metrics.unsafeLabelName("mode") -> publication.mode)
+          ) >>
+            Metrics[F].incrementCounter(
+              "dag_currency_l0_recovery_sync_refresh_total",
+              Seq(
+                Metrics.unsafeLabelName("mode") -> publication.mode,
+                Metrics.unsafeLabelName("outcome") -> "gl0_confirmed"
+              )
+            )).attempt.void >>
+            logger.info(
+              s"RECOVERY_SYNC_PUBLICATION_CONFIRMED mode=${publication.mode} binaryHash=${publication.binaryHash} " +
+                s"globalOrdinal=$globalOrdinal"
+            )
+        }
+      )
 
   def processQueueWithoutSnapshot: F[Unit] =
     for {

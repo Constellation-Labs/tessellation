@@ -55,10 +55,19 @@ object types {
     // the `fields-added-ordinals.dust-sweeps` HOCON block. This runtime configuration is not covered by the join-time
     // `versionHash`, which hashes the advertised version string (or `CL_VERSION_HASH`), so operators must deploy one reviewed value
     // per environment. Default empty: an environment with no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
-    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
+    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
+    // Appended to preserve positional source compatibility for existing SDK consumers.
+    // At/after this GLOBAL L0 ordinal a Currency snapshot lineage may transition from
+    // snapshot protocol 0.0.1 to 1.0.0. The signed CurrencySnapshot.version then keeps
+    // historical replay self-describing. Public environments stay absent until the
+    // coordinated v35 rollout; dev activates from genesis so CI exercises the new path.
+    currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
       feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
+    def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
+      currencySnapshotProtocolV1.getOrElse(environment, SnapshotOrdinal.MaxValue)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
@@ -913,7 +922,16 @@ object types {
     // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
     // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
     // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
-    quorumShrinkActivationViews: Int = 0
+    quorumShrinkActivationViews: Int = 0,
+    // Cross-layer historical-dependency boundary. These values already decide Currency L0
+    // GlobalSnapshotSync target selection and protocol-v1 reset acceptance. They are copied from
+    // SharedConfig.lastGlobalSnapshotsSync at each L0 construction site so a misconfigured
+    // validator cannot join its local cluster with a different retained interval.
+    lastGlobalSnapshotSyncOffset: Long = 0L,
+    lastGlobalSnapshotsInMemory: Int = 0,
+    // Global-ordinal boundary at which Currency snapshot protocol 1.0.0 becomes
+    // legal. This is distinct from each L0's local v35 consensus-envelope key.
+    currencySnapshotProtocolV1ActivationOrdinal: Long = Long.MaxValue
   ) {
 
     def certifiedConsensusActiveAt(key: Long): Boolean =
@@ -1060,6 +1078,9 @@ object types {
           // v35: exact local snapshot key where certified outcome semantics and the
           // canonical legacy-evidence reset begin.
           s"certifiedConsensusActivationKey=$certifiedConsensusActivationKey," +
+          s"lastGlobalSnapshotSyncOffset=$lastGlobalSnapshotSyncOffset," +
+          s"lastGlobalSnapshotsInMemory=$lastGlobalSnapshotsInMemory," +
+          s"currencySnapshotProtocolV1ActivationOrdinal=$currencySnapshotProtocolV1ActivationOrdinal," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))

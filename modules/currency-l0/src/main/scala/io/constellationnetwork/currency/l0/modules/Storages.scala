@@ -15,8 +15,9 @@ import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnap
 import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
+import io.constellationnetwork.currency.l0.snapshot.storage.RecoverySyncPublicationStorage
 import io.constellationnetwork.currency.schema.CurrencyStateKey
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, CurrencySnapshotStateProof}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.{SharedConfig, SnapshotConfig}
@@ -85,6 +86,9 @@ object Storages {
         CalculatedStateLocalFileSystemStorage.make[F](snapshotConfig.calculatedStatePath)
       }
       lastGlobalSnapshotSyncStorage <- hasherSelector.withCurrent(implicit hs => LastSentGlobalSnapshotSyncStorage.make())
+      recoverySyncPublicationStorage <- hasherSelector.withCurrent { implicit hs =>
+        RecoverySyncPublicationStorage.make[F](snapshotConfig.incrementalPersistedSnapshotPath / ".recovery-sync-publication")
+      }
       currencySnapshotCleanupStorage = CurrencySnapshotCleanupStorage
         .make[F](
           snapshotLocalFileSystemStorage,
@@ -106,11 +110,13 @@ object Storages {
         snapshot = snapshotStorage,
         lastSyncGlobalSnapshot = lastGlobalSnapshotStorage,
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
+        snapshotInfoLocalFileSystemStorage = snapshotInfoLocalFileSystemStorage,
         identifier = identifierStorage,
         calculatedStateStorage = maybeCalculatedStateStorage,
         globalSnapshotsWithStateFileStorage = globalSnapshotsWithStateFileStorage,
         globalSnapshotsWithStateDeltasFileStorage = globalSnapshotsWithStateDeltasFileStorage,
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
+        recoverySyncPublication = recoverySyncPublicationStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
         currencySnapshotCleanup = currencySnapshotCleanupStorage,
         combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage,
@@ -127,9 +133,15 @@ sealed abstract class Storages[F[_]] private (
   val snapshot: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
   val lastSyncGlobalSnapshot: LastSyncGlobalSnapshotStorage[F],
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
+  val snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[
+    F,
+    CurrencySnapshotStateProof,
+    CurrencySnapshotInfo
+  ],
   val identifier: IdentifierStorage[F],
   val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
   val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F],
+  val recoverySyncPublication: RecoverySyncPublicationStorage[F],
   val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
   val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F],
   val globalSnapshotsWithStateFileStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],

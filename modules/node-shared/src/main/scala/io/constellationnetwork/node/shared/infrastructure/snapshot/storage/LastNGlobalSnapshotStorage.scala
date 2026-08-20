@@ -47,8 +47,14 @@ object LastNGlobalSnapshotStorage {
         globalSnapshotFetcher: Option[Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]]],
         fetchGL0Function: Option[(Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]]
       ): F[Unit] = for {
-        _ <- validateAndSetInitialSnapshot(snapshot, state)
-        _ <- fetchAndStoreGlobalSnapshots(snapshot, globalSnapshotFetcher, fetchGL0Function)
+        // Fetch and validate before installing either in-memory index. In particular, a missing
+        // required sync target must leave initialization retryable in this process rather than
+        // setting `combinedSnapshotsR` and making every later retry fail as "non empty".
+        globalSnapshotsFetched <- fetchGlobalSnapshots(snapshot, globalSnapshotFetcher, fetchGL0Function)
+        _ <- Async[F].uncancelable { _ =>
+          validateAndSetInitialSnapshot(snapshot, state) >>
+            updateIncrementalSnapshots(snapshot, globalSnapshotsFetched)
+        }
       } yield ()
 
       private def validateAndSetInitialSnapshot(
@@ -64,11 +70,11 @@ object LastNGlobalSnapshotStorage {
             )
         }.flatten
 
-      private def fetchAndStoreGlobalSnapshots(
+      private def fetchGlobalSnapshots(
         snapshot: Hashed[GlobalIncrementalSnapshot],
         globalSnapshotFetcher: Option[Either[GlobalL0Service[F], SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]]],
         fetchGL0Function: Option[(Option[Hash], SnapshotOrdinal) => F[Signed[GlobalIncrementalSnapshot]]]
-      ): F[Unit] = {
+      ): F[List[Hashed[GlobalIncrementalSnapshot]]] = {
         val ordinalsToFetch = (0 to lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value)
           .map(i => Math.max(1, snapshot.ordinal.value.value - i))
           .distinct
@@ -86,8 +92,21 @@ object LastNGlobalSnapshotStorage {
             .map(_.flatten)
             .map(_.sortBy(_.ordinal.value.value))
 
-          _ <- updateIncrementalSnapshots(snapshot, globalSnapshotsFetched)
-        } yield ()
+          requiredForSyncTarget = (0L to lastGlobalSnapshotsSyncConfig.syncOffset.value)
+            .map(offset => SnapshotOrdinal.unsafeApply(Math.max(1L, snapshot.ordinal.value.value - offset)))
+            .toSet
+          available = (snapshot :: globalSnapshotsFetched).iterator.map(_.ordinal).toSet
+          missingRequired = requiredForSyncTarget -- available
+          _ <- MonadThrow[F]
+            .raiseError[Unit](
+              new IllegalStateException(
+                s"Recent Global snapshot window is missing sync-target ordinals=${missingRequired.toList.sorted.mkString(",")} " +
+                  s"at parent=${snapshot.ordinal}; refusing incomplete startup window"
+              )
+            )
+            .whenA((globalSnapshotFetcher.nonEmpty || fetchGL0Function.nonEmpty) && missingRequired.nonEmpty)
+
+        } yield globalSnapshotsFetched
       }
 
       private def fetchSingleSnapshot(
