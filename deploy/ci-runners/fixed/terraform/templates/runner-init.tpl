@@ -102,6 +102,35 @@ sudo -u runner bash -c '
   nvm alias default 18
 '
 
+# --- Swap: OOM backstop -----------------------------------------------------
+# Hetzner cloud images ship with NO swap. Measured peak for one E2E job is
+# 29.7 GB of 31.3 GB (95%) on a ccx33, with ~10% of samples above 90%, so the
+# headroom is thin enough that a GC spike can tip it over. Without swap the
+# kernel does not slow the job down — it OOM-kills a process, and on
+# 2026-08-03 the victim was the Actions runner agent itself: the systemd unit
+# went to `failed` and every subsequent queued job hung forever.
+#
+# 16 GB is sized to absorb that overshoot, not to run from swap.
+# swappiness=10 (default 60) keeps this as an emergency backstop: the kernel
+# reclaims page cache first and only pages out anonymous JVM heap under real
+# pressure. Paged-out heap is slow, but the suite has generous consensus
+# timeouts and a slow job beats a killed runner.
+#
+# This does NOT make a ccx33 the right size — see README. It converts the
+# failure mode from "runner dies, queue strands" into "job runs slower".
+if ! swapon --show=NAME --noheadings | grep -q '^/swapfile$'; then
+  fallocate -l 16G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=16384
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+cat > /etc/sysctl.d/99-ci-runner-swap.conf <<'EOF'
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+EOF
+
 # --- Kernel / limits tuning for ~13 concurrent JVMs -------------------------
 # The default vm.max_map_count (65530) is the one that actually bites: 13 JVMs
 # plus docker's overlay mounts exhaust it and the JVM dies with

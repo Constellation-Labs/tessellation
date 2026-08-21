@@ -187,13 +187,18 @@ EOF
 
 # NOT --ephemeral: this pool is persistent, so the runner stays registered and
 # picks up job after job. (The autoscaled variant is the ephemeral one.)
+# --no-default-labels drops self-hosted/Linux/X64 so the runner advertises ONLY
+# our label. This matters most for ORG-level registration: without it, any
+# workflow anywhere in the org requesting "self-hosted" can be scheduled onto this
+# box and will fail on a fleet sized purely for tessellation E2E.
+#
+# NOTE: keep prose out of the double-quoted bash -c body below. Backticks inside a
+# double-quoted string are COMMAND SUBSTITUTION, so a comment containing them gets
+# executed — an earlier version of this comment lived inside the string and emitted
+# `runs-on:: command not found` on every run.
 sudo -u runner bash -c "
   set -euo pipefail
   cd '${RUNNER_DIR}'
-  # --no-default-labels drops self-hosted/Linux/X64 so the runner advertises ONLY
-  # our label. This matters most for ORG-level registration: without it, any
-  # workflow anywhere in the org using `runs-on: self-hosted` can be scheduled
-  # onto this box and will fail on a fleet sized purely for tessellation E2E.
   ./config.sh --unattended --replace \
     --url '${REGISTER_URL}' \
     --token '${REG_TOKEN}' \

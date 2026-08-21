@@ -14,8 +14,8 @@ autoscaler for burst) without touching CI config.
 |---|---|---|
 | Shape | one ephemeral server per job | N always-on servers, 1 runner each |
 | Concurrency | elastic (up to `max_runners`) | `runner_count`, hard |
-| PR wall-clock | ~25 min (unchanged) | ~75 min at 3 runners (3 waves) |
-| **Est. cost** | **~€437/mo (76% saving)** | **~€976/mo (47% saving)** |
+| PR wall-clock | ~25 min (unchanged) | ~23 min at 3 runners |
+| **Est. cost** | **~€353/mo (81% saving)** | **~€976/mo (47% saving)** |
 | Dedicated Hetzner project | **required** | not required |
 | Credentials | new HC project token + classic PAT | existing HC token; **no PAT needed** (UI-copied registration tokens work) |
 | Extra moving parts | controller service (SPOF) | none |
@@ -25,7 +25,7 @@ autoscaler for burst) without touching CI config.
 ## Which to use
 
 **`autoscaled/` is the better answer on cost and speed** — it keeps today's ~25
-min PR feedback *and* saves ~76%, because CI duty cycle is only ~9% (~198
+min PR feedback *and* saves ~81%, because CI duty cycle is only ~9% (~198
 job-hours/month of real demand). It also gets per-job isolation for free.
 
 **`fixed/` exists because `autoscaled/` needs a dedicated Hetzner Cloud project.**
@@ -42,7 +42,8 @@ UI, so no classic PAT has to be minted at all. See
 
 The honest limitation of `fixed/`: per-core price is flat across the CCX line, so
 always-on cloud **only saves money by accepting queueing**. At full 9-way
-concurrency it costs ~58% *more* than GitHub. See
+concurrency it costs ~58% *more* than GitHub (measured job durations make 3
+runners roughly match today's wall-clock, which is better than first estimated). See
 [`fixed/README.md`](fixed/README.md#the-honest-trade-off) for the full table.
 
 A third option, not implemented here: Hetzner **bare metal** (AX162 — 48 cores for
@@ -70,8 +71,16 @@ A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
 3 `dl1` + support), each JVM defaulting to `-Xmx8g` with
 `-XX:ActiveProcessorCount=8`. The whole 9-group matrix is **~70 min of work**.
 
-Validated end-to-end on the fork 2026-07-31 → 08-03: **all 11 jobs passed** on a
-single runner. Peak per job: **26.7 GB RAM**, **load 15.42**, 7% disk.
+Validated end-to-end twice on a single `ccx33` runner:
+
+- **fork, 2026-07-31 → 08-03** — all 11 jobs passed; peak 26.7 GB, load 15.42
+- **`Constellation-Labs/tessellation`, 2026-08-21** — **all 12 jobs passed**
+  (10 E2E groups on Hetzner, ~66 min sequential); peak **29.7 GB (95%)**, load
+  12.01, 10% of active samples above 90% memory
+
+The second run passed `allow-spends` and `spend` — the two that had failed
+earlier — which shows the `ccx33` is *marginal* rather than broken. It is still
+rejected: a fleet that clears 95% memory on luck is a flake source.
 
 | | `ccx33` (8c/32 GB) | **`ccx43` (16c/64 GB)** | `ccx53` (32c/128 GB) |
 |---|---|---|---|
@@ -83,16 +92,19 @@ single runner. Peak per job: **26.7 GB RAM**, **load 15.42**, 7% disk.
 **`ccx33` is rejected on evidence, not caution.** It passed once, then failed
 twice in two distinct ways on repeat runs:
 
-- **Memory** — p90 99%, peak 100% of 32 GB, **no swap**. The kernel OOM-killed the
-  Actions runner agent itself during `allow-spends`; the unit went `failed` and the
-  remaining 8 jobs queued forever.
+- **Memory** — p90 99%, peak 100% of 32 GB, with no swap at the time. The kernel
+  OOM-killed the Actions runner agent itself during `allow-spends`; the unit went
+  `failed` and the remaining 8 jobs queued forever. Cloud-init now provisions a
+  16 GB swapfile so this degrades to paging instead of a kill — but a box that
+  needs swap to survive is still undersized.
 - **CPU** — peak load 15.42/8 cores (193%); 16% of samples over 1.0/core. GL0's
   `/global-snapshots/latest/combined` returned **HTTP 503** under the contention and
   `spend` failed.
 
 On `ccx43` those peaks become ~42% memory and ~96% load, with only 0.7% of samples
-above load 16. Memory is the harder constraint: with no swap, exceeding it kills
-the runner rather than failing a test.
+above load 16. Memory is the harder constraint, which is why the runners now carry
+a 16 GB swap backstop (`vm.swappiness=10`) — it converts an OOM kill into a slow
+job, without making a smaller box the right choice.
 
 Prices are `hel1`, from the Hetzner Cloud API for this account (net == gross). CCX
 (dedicated vCPU) throughout — **not** CPX (shared); see the timing fragility note

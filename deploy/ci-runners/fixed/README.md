@@ -61,6 +61,22 @@ on the first full run.
 | `allow-spends` | 15 | 18m29s |
 | **total** | | **~70 min** |
 
+### Swap: the OOM backstop
+
+Hetzner images ship with no swap, so cloud-init adds a **16 GB swapfile with
+`vm.swappiness=10`**. That is deliberately an emergency backstop, not a way to
+run from disk: the kernel reclaims page cache first and only pages out anonymous
+JVM heap under genuine pressure.
+
+It changes the failure mode, not the sizing. Without swap, overshooting RAM makes
+the kernel **kill a process** — and on 2026-08-03 the victim was the Actions
+runner agent itself, so the unit went `failed` and every queued job hung forever.
+With swap, the same overshoot makes the job **slower**, which the suite's generous
+consensus timeouts can absorb.
+
+Sizing still matters (see below); swap just stops a marginal box from taking the
+whole queue down with it.
+
 ### Why `ccx33` (8 vCPU / 32 GB) is rejected
 
 It passed once, then failed **twice in two different ways** under repeat runs —
@@ -242,10 +258,12 @@ after any change to the topology or heap settings:
 ssh admin@<runner-ip> 'docker stats --no-stream; free -m; uptime; nproc'
 ```
 
-Watch memory first — it is the harder limit, since these boxes run **no swap** and
-the kernel kills the runner agent rather than the test. Load above 1.0/core is
-survivable (the workflow already sets generous consensus timeouts) but shows up as
-HTTP 503s from GL0's snapshot routes before it shows up as anything legible.
+Watch memory first — it is the harder limit. Cloud-init now provisions 16 GB of
+swap as a backstop, so an overshoot degrades to paging rather than an OOM kill, but
+`free -m` showing swap in active use means the box is undersized. Load above
+1.0/core is survivable (the workflow already sets generous consensus timeouts) but
+shows up as HTTP 503s from GL0's snapshot routes before it shows up as anything
+legible.
 
 ## Known risks
 

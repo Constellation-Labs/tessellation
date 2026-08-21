@@ -159,9 +159,10 @@ docker stats --no-stream
 free -m; nproc; uptime          # peak RSS, and load vs core count
 ```
 
-- **Memory is the binding constraint.** These boxes have no swap, so exceeding it
-  makes the kernel kill the runner agent, not fail a test — the job reports
-  `cancelled` with no useful log.
+- **Memory is the binding constraint.** Without swap, exceeding it makes the kernel
+  kill the runner agent rather than fail a test — the job reports `cancelled` with
+  no useful log. The fixed variant provisions a 16 GB swap backstop for this; if
+  you adopt the same for ephemeral runners, bake it into the snapshot image.
 - **Load above 1.0/core is survivable but not free.** It first shows up as HTTP
   503s from GL0's `/global-snapshots/latest/combined`, which reads like a flaky
   test rather than starvation. If that appears, step **up** rather than tuning

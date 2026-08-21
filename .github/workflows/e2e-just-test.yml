@@ -117,7 +117,7 @@ jobs:
           - { name: allow-spends,           tests: "allow-spends", timeout: 45 }
           - { name: spend,                  tests: "spend", timeout: 45 }
           - { name: data-with-fee,          tests: "data-with-fee", timeout: 45 }
-          - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
+          - { name: snapshot-streaming,    tests: "snapshot-streaming", timeout: 45 }
           # 5 gl0 nodes, 3 at genesis + 2 staggered. The stagger keeps the committee churning, which
           # is what supplies the chronic-Tier-1-plus-promote-qualified committee that is the only
           # state distinguishing full-committee payout from the removed evidence-score filter.

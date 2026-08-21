@@ -67,8 +67,8 @@ config:
   #
   # Prices below are hel1, pulled from the Hetzner API for this account (net ==
   # gross). Monthly totals assume ~540 job-servers/mo (9 E2E jobs x ~60 runs) at
-  # ~1.47 billed hours each — Hetzner rounds every partial hour UP to a full
-  # calendar hour, so a ~28 min job usually costs 1-2 h. Add the EUR 22.99/mo
+  # ~1.22 billed hours each — Hetzner rounds every partial hour UP to a full
+  # calendar hour, so a 4-18 min job usually costs 1-2 h. Add the EUR 22.99/mo
   # controller.
   #
   #   ccx33  8c /  32 GB  EUR 0.2612/h  ~= EUR 195/mo total  (89%) — REJECTED, see below
@@ -87,8 +87,9 @@ config:
   # starving GL0's snapshot route into HTTP 503 and failing `spend`. ccx43 puts
   # those peaks at ~42% memory / ~96% load, with only 0.7% of samples above 16.
   #
-  # Memory is the binding constraint, not CPU: with no swap, exceeding it kills the
-  # runner process rather than failing a test.
+  # Memory is the binding constraint, not CPU. The fixed variant provisions a 16 GB
+  # swap backstop so an overshoot degrades to paging instead of killing the runner
+  # process; bake the equivalent into any snapshot image used here.
   #
   # CCX (dedicated vCPU) not CPX (shared): this suite is timing-sensitive and
   # docker-compose.test.yaml documents at length how shared-CPU contention
