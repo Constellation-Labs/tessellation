@@ -33,6 +33,17 @@ trait SnapshotDownloadStorage[F[_]] {
   def readCombinedValidated(
     ordinal: SnapshotOrdinal
   )(implicit hasher: Hasher[F], stateProofSelector: StateProofSelector): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+
+  /** Read and validate the persisted pair while deriving the context proof with an explicitly selected source ordinal.
+    *
+    * This differs from `readCombinedValidated` for the first incremental after a full-snapshot checkpoint: its artifact is stored at the
+    * next ordinal, while its context and state proof come from the full snapshot. Development's canonical root is the 0 -> 1 instance;
+    * public historical checkpoints are non-zero. Ordinary snapshots must pass their own ordinal for both arguments.
+    */
+  def readCombinedValidatedAtProofOrdinal(
+    ordinal: SnapshotOrdinal,
+    proofOrdinal: SnapshotOrdinal
+  )(implicit hasher: Hasher[F], stateProofSelector: StateProofSelector): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
   def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit]
 
   def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit]

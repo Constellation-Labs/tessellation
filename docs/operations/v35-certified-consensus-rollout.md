@@ -49,9 +49,25 @@ and is therefore fenced independently as well.
    configured `Q(N+1)` next-seat headroom. Under supermajority a participating pair can
    grow; under unanimity no finite `N` can prove an unseated `(N+1)`th signer, so a
    non-genesis certified activation in unanimity mode fails closed. The exact activation
-   never falls back to local `self`. An activation configured at or before the first facilitated key is genesis
-   mode: there is no legacy-to-certified exact-key transition, and intentional
-   single-node development genesis remains supported.
+   never falls back to local `self`. An activation configured at or before the first
+   facilitated key is genesis mode: there is no legacy-to-certified exact-key transition,
+   and intentional single-node development genesis remains supported. Both L0 layers
+   facilitate from their first incremental snapshot at ordinal 1 (the full genesis
+   snapshot occupies ordinal 0), so the shipped dev activation `0` authenticates the
+   exact canonical ordinal-1 outcome and persists it as the predecessor of the first
+   certified round. The proof set is bound to the locally state-proof-validated root;
+   Currency additionally binds the exact embedded artifact proof set in its binary.
+   Currency genesis defers its first child by one ordinary round interval, matching DAG
+   L0, and a downloader that sees that root bypasses the legacy four-snapshot observation
+   offset so it initializes consensus at ordinal 1. A data-application follower restores
+   its locally compiled genesis calculated state at that boundary and verifies its
+   application-defined hash against the signed root proof. The genesis producer must
+   commit that real hash, not the legacy `Hash.empty` placeholder, and the follower must
+   not substitute a peer's potentially newer calculated state. Together these let
+   joining validators persist the authority root before ordinal 2 appears. A follower
+   that first appears only after the root window still needs the
+   separately trusted checkpoint described below; one peer's terminal private outcome is
+   not long-range membership authority.
 4. Prove that the signed activation seed is live: its observed parent signers must meet
    the frozen-committee finality floor, and any planned admission batch must satisfy
    `observed parent signers >= Q(seed size + batch size)`. V35 enforces this headroom
@@ -83,6 +99,47 @@ and is therefore fenced independently as well.
 11. Replay pre-boundary Currency `0.0.1` fixtures and cross the boundary in the generated
     dev/CI metagraph. Assert the first eligible child is `1.0.0`, descendants cannot
     downgrade, and Global L0 accepts the state-channel binary.
+12. Build, test, version, and deploy Snapshot Streaming against the exact Tessellation
+    SDK selected for activation. The Tessellation PR workflow compiling
+    Snapshot Streaming `release/testnet` against the candidate SDK is a compatibility
+    test only; it is not the separately versioned Snapshot Streaming release artifact.
+    That CI build must resolve both `lastLegacyStateProofOrdinal` and
+    `fieldsAddedOrdinals.subTrieRoots` into `GlobalStateProofSelector`; development enables
+    sub-trie roots at ordinal 0 so the E2E validates the same signed proof shape rather than
+    compiling against it while leaving it dormant.
+    For IntegrationNet, prepare the corresponding change in the separate
+    `Constellation-Labs/snapshot-streaming` repository on its
+    `release/integrationnet` branch: pin `project/Dependencies.scala` to the exact
+    published Tessellation release SDK, build and run on the repository-supported JDK
+    21 toolchain, and run that repository's tests and assembly. Its assembly currently
+    has multiple entry points and no `Main-Class`; before using its standalone deploy
+    workflow, either set `assembly / mainClass` to
+    `org.constellation.snapshotstreaming.App` or invoke that class explicitly with
+    `java -cp`. Add a post-restart process/current-ordinal health check: copying a jar
+    and restarting systemd is not proof that indexing resumed.
+    Do not inherit Snapshot Streaming's checked-in `reference.conf` environment default:
+    the current external IntegrationNet branch defaults to `testnet`, and its Terraform
+    application config neither overrides it nor includes the SDK's classpath
+    `application.conf`. Make the generated config begin with
+    `include classpath("application")`, set `snapshotStreaming.environment = integrationnet`
+    explicitly, and log/assert the resolved selector at startup. Before launch, record
+    `environment=integrationnet`, `lastLegacyStateProofOrdinal=5075000`, and
+    `subTrieRootsActivationOrdinal=5880000`; a two-argument selector with the wrong
+    environment remains incompatible.
+    The Tessellation `release/integrationnet` workflow does not publish or deploy
+    Snapshot Streaming. Record the SS source commit, workflow run, jar checksum/image
+    digest, and Tessellation SDK version; verify that artifact re-derives and accepts
+    candidate Global state proofs before selecting the activation key. Do not cross the
+    activation key while the prior Snapshot Streaming build is deployed.
+    IntegrationNet has already crossed the independent sub-trie proof gate at ordinal
+    `5880000`; therefore its order is stricter: prove the currently deployed out-of-band
+    artifact's source/checksum and full-proof compatibility, or update and deploy the
+    reproducible `release/integrationnet` SS branch, before restarting/resuming Tessellation
+    at any current checkpoint. Do not move the old proof gate forward: replay at and above
+    `5880000` must continue using the proof shape already signed there. The external SS
+    restart path resets its configured next ordinal and clears its OpenSearch index; back
+    up the stores and explicitly approve/coordinate that rebuild rather than treating the
+    release-branch push as a harmless rolling restart.
 
 ## Deployment sequence
 
@@ -94,7 +151,11 @@ and is therefore fenced independently as well.
    pre-activation checkpoint.
 3. Install the same v35 assembly and the same resolved activation configuration on
    every active facilitator. Rebuild every active metagraph stack before the global
-   Currency-protocol boundary. Do not canary a mixed active consensus fleet.
+   Currency-protocol boundary. Deploy the separately built and verified matching
+   Snapshot Streaming artifact from its own environment release branch before crossing
+   either activated state-application boundary. A green Tessellation PR
+   `snapshot-streaming` E2E is necessary compatibility evidence, not proof that this
+   production artifact was released. Do not canary a mixed active consensus fleet.
 4. Cold-start the cluster and verify identical deterministic config hashes and normal
    legacy progress below the key.
 5. Before crossing, verify every expected active node is on the recorded jar/config.
@@ -125,11 +186,12 @@ Before activation, verify the ordinary-download lineage boundary on every source
   projection required by historical Kryo hashes;
 - predecessor validation is read-only: it reconstructs and checks the persisted state
   proof without synchronizing/rewinding the MPT and without deleting snapshot files;
-- certified-consensus genesis key 0 and an exact signed recovery-plan anchor are the
-  only locally persisted uncertified roots. Genesis authority is bound exactly to the
-  artifact's proof signers; the recovery committee remains bound to its operator-signed
-  plan. Their first certified child is projected through the same typed committee
-  projector and verified through the ordinary bound-QC adoption path;
+- the canonical first incremental genesis root at key 1 and an exact signed
+  recovery-plan anchor are the only locally persisted uncertified roots. Genesis
+  authority is bound exactly to the locally validated artifact's proof signers; the
+  recovery committee remains bound to its operator-signed plan. Their first certified
+  child is projected through the same typed committee projector and verified through
+  the ordinary bound-QC adoption path;
 - a restart after activation retains both the current and immediately preceding
   certified outcome sidecars and validates the current outcome from that predecessor;
 - a missing/corrupt predecessor fails before application storage, consensus storage,

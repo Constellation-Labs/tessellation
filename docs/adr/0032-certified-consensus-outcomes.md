@@ -116,6 +116,18 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    checked only at the anchor, not against later certified successors. A fresh post-activation
    node without local lineage or an explicit signed recovery-plan/checkpoint fails
    closed; one authenticated peer response is not membership authority.
+
+   When certification is active from genesis, Currency download initializes at the
+   independently validated first incremental root rather than applying its legacy
+   four-snapshot observation offset first. For a data application it also restores the
+   locally compiled genesis calculated state and verifies its application-defined hash
+   against the proof committed by that signed root. Genesis construction therefore
+   commits the real calculated-genesis hash rather than the legacy `Hash.empty`
+   placeholder. Fetching a peer's current calculated state would race ahead of the root
+   and fail the proof check. The genesis producer defers its first child by one normal round
+   interval. This closes the ordinary coordinated-genesis handoff without weakening the
+   long-range rule: a node that misses that root window still needs a trusted checkpoint
+   or contiguous certified lineage.
 10. Persist each local certified vote lock before emitting its `OutcomeVote`, and
     persist every verified QC advancement before it can influence gossip or commit
     progression. DAG L0 and Currency L0 share one generic

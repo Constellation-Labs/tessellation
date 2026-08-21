@@ -628,11 +628,12 @@ object GlobalSnapshotConsensus {
                 // can still fetch N and release its locally-held first-round gate.
                 certifiedOutcomeSidecar.write(outcome.key, outcome)
               case _
-                  if effectiveConsensusConfig.certifiedConsensusActivationKey == 0L &&
-                    outcome.key.value.value == 0L &&
-                    GlobalRecoveryPlanOutcome.isCanonicalRoot(outcome) =>
+                  if CertifiedConsensusGenesis.isRootKey(
+                    effectiveConsensusConfig.certifiedConsensusActivationKey,
+                    outcome.key
+                  ) && GlobalRecoveryPlanOutcome.isCanonicalRoot(outcome) =>
                 // Genesis is the independently authenticated chain root. Preserve its canonical
-                // local outcome long enough to validate the first certified child at key 1.
+                // local outcome long enough to validate the first certified child at key 2.
                 certifiedOutcomeSidecar.write(outcome.key, outcome)
               case _ =>
                 outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>

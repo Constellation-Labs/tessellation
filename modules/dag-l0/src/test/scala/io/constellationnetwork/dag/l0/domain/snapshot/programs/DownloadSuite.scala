@@ -35,6 +35,15 @@ object DownloadSuite extends FunSuite {
   private def decide(tips: List[PeerTip]): SnapshotOrdinal =
     Download.chooseObservationLimit(localOrd, localHash, tips, observationOffset)
 
+  test("first incremental checkpoint detection is relative to the configured full snapshot") {
+    val publicCheckpoint = SnapshotOrdinal.unsafeApply(766717L)
+
+    expect(Download.isFirstIncrementalAfterFullSnapshot(SnapshotOrdinal.MinValue, SnapshotOrdinal.MinIncrementalValue)) &&
+    expect(Download.isFirstIncrementalAfterFullSnapshot(publicCheckpoint, SnapshotOrdinal.unsafeApply(766718L))) &&
+    expect(!Download.isFirstIncrementalAfterFullSnapshot(publicCheckpoint, SnapshotOrdinal.MinIncrementalValue)) &&
+    expect(!Download.isFirstIncrementalAfterFullSnapshot(publicCheckpoint, publicCheckpoint))
+  }
+
   // ── Safe-default (do not shortcut) cases ──────────────────────────────────────
 
   test("no Ready peers respond: fall through to next-ordinal observe") {

@@ -1,19 +1,23 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import cats.data.NonEmptySet
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalCertifiedDownloadValidator.TrustedParentKind
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.{EligibleFacilitators, Facilitators}
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -41,7 +45,8 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
-      incremental <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      hashedGenesis <- signedGenesis.toHashed[IO]
+      incremental <- GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis)
       signedIncremental <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](incremental, keyPair)
       snapshotHash <- signedIncremental.toHashed.map(_.hash)
       committee = SortedSet.from(signedIncremental.proofs.toList.map(_.id.toPeerId))
@@ -77,14 +82,59 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         facilitators = Facilitators(List(substitute)),
         eligibleFacilitators = EligibleFacilitators(List(substitute))
       )
-      validGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](root)
-      substitutedGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](substitutedCommittee)
+      invalidSignedArtifact = root.finished.signedMajorityArtifact.copy(
+        proofs = NonEmptySet.fromSetUnsafe(
+          SortedSet.from(root.finished.signedMajorityArtifact.proofs.toList.map(_.copy(id = substituteKey.getPublic.toId)))
+        )
+      )
+      invalidSignatureRoot = root.copy(finished = root.finished.copy(signedMajorityArtifact = invalidSignedArtifact))
+      differentContext = root.finished.context.copy(
+        balances = SortedMap(Address.fromBytes("different-context".getBytes("UTF-8")) -> Balance.empty)
+      )
+      contextMismatchRoot = root.copy(finished = root.finished.copy(context = differentContext))
+      validGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        root,
+        root.finished.signedMajorityArtifact,
+        root.finished.context
+      )
+      rootSigners = root.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
+      authorizedGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        root,
+        root.finished.signedMajorityArtifact,
+        root.finished.context,
+        rootSigners
+      )
+      unauthorizedGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        root,
+        root.finished.signedMajorityArtifact,
+        root.finished.context,
+        Set(substitute)
+      )
+      invalidSignatureGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        invalidSignatureRoot,
+        root.finished.signedMajorityArtifact,
+        root.finished.context
+      )
+      contextMismatchGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        contextMismatchRoot,
+        root.finished.signedMajorityArtifact,
+        root.finished.context
+      )
+      substitutedGenesis <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        substitutedCommittee,
+        root.finished.signedMajorityArtifact,
+        root.finished.context
+      )
     } yield
       expect.same(Right(TrustedParentKind.AuthorizedRoot), GlobalCertifiedDownloadValidator.trustedParentKind(root)) &&
         expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongEligible).isLeft) &&
         expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongHash).isLeft) &&
         expect(GlobalCertifiedDownloadValidator.trustedParentKind(missingProofWindow).isLeft) &&
         expect.same(Right(()), validGenesis) &&
+        expect.same(Right(()), authorizedGenesis) &&
+        expect.same(Left("genesis_artifact_signer_not_seedlisted"), unauthorizedGenesis) &&
+        expect.same(Left("genesis_artifact_signature_invalid"), invalidSignatureGenesis) &&
+        expect.same(Left("genesis_context_state_proof_mismatch"), contextMismatchGenesis) &&
         expect.same(Left("genesis_outcome_not_proof_signer_root"), substitutedGenesis)
   }
 
@@ -105,6 +155,40 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         expect.same(historicalHash, historicalResult) && expect.same(currentHash, currentResult)
       }
     }
+  }
+
+  test("proof-derived genesis authority is bound to the locally validated signed snapshot") { implicit res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+    implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+
+    for {
+      trusted <- canonicalRoot
+      substituteKey <- KeyPairGenerator.makeKeyPair[IO]
+      substitutedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+        trusted.finished.signedMajorityArtifact.value,
+        substituteKey
+      )
+      substitutedHash <- GlobalSnapshotArtifactHasher.currentHash[IO](substitutedArtifact.value)
+      substitutedCommittee = SortedSet.from(substitutedArtifact.proofs.toList.map(_.id.toPeerId))
+      substituted = GlobalRecoveryPlanOutcome.seed(
+        substitutedArtifact,
+        trusted.finished.context,
+        substitutedHash,
+        substitutedCommittee
+      )
+      selfConsistent <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        substituted,
+        substitutedArtifact,
+        trusted.finished.context
+      )
+      locallyBound <- GlobalCertifiedDownloadValidator.validateGenesisRoot[IO](
+        substituted,
+        trusted.finished.signedMajorityArtifact,
+        trusted.finished.context
+      )
+    } yield
+      expect.same(Right(()), selfConsistent) &&
+        expect.same(Left("genesis_artifact_not_locally_validated"), locallyBound)
   }
 
   test("exact activation reconstructs Finished.snapshotHash with current hashing across a historical parent boundary") { implicit res =>

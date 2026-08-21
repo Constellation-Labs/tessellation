@@ -51,7 +51,6 @@ object SnapshotDownloadStorage {
       val cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 
       private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
-      private val readOnlyValidator = StateProofValidator.forGlobal[F](None)
       private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
 
       private def readSnapshotInfo(
@@ -205,12 +204,22 @@ object SnapshotDownloadStorage {
         implicit hasher: Hasher[F],
         stateProofSelector: StateProofSelector
       ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+        readCombinedValidatedAtProofOrdinal(ordinal, ordinal)
+
+      def readCombinedValidatedAtProofOrdinal(
+        ordinal: SnapshotOrdinal,
+        proofOrdinal: SnapshotOrdinal
+      )(
+        implicit hasher: Hasher[F],
+        stateProofSelector: StateProofSelector
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
         (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), readSnapshotInfo(ordinal)).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
             (info match {
               case Left(infoV2) =>
-                infoV2.stateProof(ordinal).flatMap(proof => StateProofValidator.validateProof(snapshot, proof).map(_.isValid))
-              case Right(gsi) => readOnlyValidator.validate(snapshot, gsi).map(_.isValid)
+                infoV2.stateProof(proofOrdinal).flatMap(proof => StateProofValidator.validateProof(snapshot, proof).map(_.isValid))
+              case Right(gsi) =>
+                gsi.stateProof(proofOrdinal).flatMap(proof => StateProofValidator.validateProof(snapshot, proof).map(_.isValid))
             }).map {
               case true  => (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some
               case false => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]

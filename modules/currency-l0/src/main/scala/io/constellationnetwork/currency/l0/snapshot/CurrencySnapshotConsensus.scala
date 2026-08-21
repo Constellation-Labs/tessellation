@@ -23,7 +23,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
@@ -70,6 +70,7 @@ object CurrencySnapshotConsensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     effectiveConsensusConfig: ConsensusConfig,
@@ -109,6 +110,7 @@ object CurrencySnapshotConsensus {
     // remains present only for sidecar paths; it does not participate in a second consensus projection.
     val resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
     val resolvedCertifiedConsensusActivationKey = effectiveConsensusConfig.certifiedConsensusActivationKey
+    val seedlistPeerIds = seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet)
 
     for {
       certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
@@ -295,6 +297,20 @@ object CurrencySnapshotConsensus {
       }
       peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
 
+      validateGenesisRoot = (outcome: CurrencyConsensusOutcome) =>
+        snapshotStorage.get(outcome.key).flatMap {
+          case Some(localArtifact) =>
+            CurrencyCertifiedGenesisOutcome
+              .validateAgainstLocalArtifact[F](outcome, localArtifact, seedlistPeerIds)
+              .flatMap(
+                _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_genesis:$error")).liftTo[F]
+              )
+          case None =>
+            new IllegalStateException(
+              s"downloaded_certified_outcome_genesis:trusted_snapshot_missing:${outcome.key.value.value}"
+            ).raiseError[F, Unit]
+        }
+
       loop <-
         ConsensusEventLoop.build[
           F,
@@ -350,15 +366,20 @@ object CurrencySnapshotConsensus {
           getPeerChainTips,
           none[AdmissionCandidateTipProbe.Probes[F]],
           peersCommittedAheadProbe,
-          onOutcomePreInitialize = Some((outcome: CurrencyConsensusOutcome) =>
-            new IllegalStateException(
-              s"Certified Currency L0 download requires independently trusted predecessor lineage at ordinal=${outcome.key.value.value}"
-            ).raiseError[F, Unit]
-              .whenA(
-                effectiveConsensusConfig.certifiedConsensusActiveAt(outcome.key.value.value) &&
-                  outcome.key.value.value > 0L
-              )
-          ),
+          onOutcomePreInitialize = Some { (outcome: CurrencyConsensusOutcome) =>
+            val active = effectiveConsensusConfig.certifiedConsensusActiveAt(outcome.key.value.value)
+            val genesisRoot = CertifiedConsensusGenesis.isRootKey(
+              effectiveConsensusConfig.certifiedConsensusActivationKey,
+              outcome.key
+            ) && outcome.finished.certifiedOutcome.isEmpty
+
+            if (!active) Async[F].unit
+            else if (genesisRoot) validateGenesisRoot(outcome)
+            else
+              new IllegalStateException(
+                s"Certified Currency L0 download requires independently trusted predecessor lineage at ordinal=${outcome.key.value.value}"
+              ).raiseError[F, Unit]
+          },
           onOutcomeFinalized = Some((outcome: CurrencyConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
               certifiedOutcomeSidecar.write(outcome.key, outcome) >>
@@ -371,9 +392,21 @@ object CurrencySnapshotConsensus {
               consensusStorage.deleteCertifiedVoteLocksAtOrBelow(outcome.key)
           ),
           onOutcomeSafetyInitialized = Some((outcome: CurrencyConsensusOutcome) =>
-            outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>
-              certifiedOutcomeSidecar.write(outcome.key, outcome)
+            if (
+              CertifiedConsensusGenesis.isRootKey(
+                effectiveConsensusConfig.certifiedConsensusActivationKey,
+                outcome.key
+              )
             )
+              validateGenesisRoot(outcome).adaptError {
+                case error =>
+                  new IllegalStateException(s"certified_genesis_sidecar:${error.getMessage}", error)
+              } >>
+                certifiedOutcomeSidecar.write(outcome.key, outcome)
+            else
+              outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>
+                certifiedOutcomeSidecar.write(outcome.key, outcome)
+              )
           ),
           onOutcomeRollbackInitialized = Some((_: CurrencyConsensusOutcome, _: ConsensusCommand.RollbackStartPolicy) => Async[F].unit)
         )

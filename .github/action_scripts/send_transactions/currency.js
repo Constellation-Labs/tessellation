@@ -171,6 +171,77 @@ const waitForMetagraphOrdinalProgression = async (networkOptions, label) => {
   )
 }
 
+const transactionReferencesMatch = (left, right) =>
+  left != null &&
+  right != null &&
+  String(left.ordinal) === String(right.ordinal) &&
+  left.hash === right.hash
+
+// An L0 balance can be finalized before its L1 follower has imported the
+// corresponding destination lastTxRef. Spending from that destination during
+// this short follower-alignment window can make the SDK build on stale local
+// state, creating a transaction the canonical L0 lineage must reject.
+//
+// Wait for the exact canonical reference rather than sleeping or weakening the
+// node's parent-reference validation.  The next transfer in this E2E reverses
+// direction, so its source is the destination whose reference must be aligned.
+const waitForL1ReferenceAlignment = async (
+  l0CombinedUrl,
+  l1Url,
+  address,
+  label,
+) => {
+  const deadline = Date.now() + BALANCE_QUERY_TIMEOUT
+  let lastCanonicalReference = null
+  let lastL1Reference = null
+  let attempt = 0
+
+  while (Date.now() <= deadline) {
+    attempt += 1
+
+    try {
+      const [{ data: combined }, { data: l1Reference }] = await Promise.all([
+        axios.get(l0CombinedUrl, {
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+          },
+        }),
+        axios.get(`${l1Url}/transactions/last-reference/${address}`),
+      ])
+
+      lastCanonicalReference = combined?.[1]?.lastTxRefs?.[address] ?? null
+      lastL1Reference = l1Reference ?? null
+
+      if (
+        transactionReferencesMatch(lastCanonicalReference, lastL1Reference)
+      ) {
+        logMessage(
+          `${label} L1 reference aligned with L0 for ${address} on attempt ${attempt}: ordinal ${lastL1Reference.ordinal}, hash ${lastL1Reference.hash}`,
+        )
+        return
+      }
+    } catch (error) {
+      // Either layer can be briefly unavailable while it applies the finalized
+      // snapshot. Keep this readiness check bounded and report the last values.
+    }
+
+    logMessage(
+      `${label} waiting for L1 reference alignment for ${address} on attempt ${attempt}; L0=${JSON.stringify(
+        lastCanonicalReference,
+      )}, L1=${JSON.stringify(lastL1Reference)}`,
+    )
+    await sleep(BALANCE_QUERY_INTERVAL)
+  }
+
+  throw Error(
+    `${label} L1 reference for ${address} did not align with L0 within ${BALANCE_QUERY_TIMEOUT} ms; L0=${JSON.stringify(
+      lastCanonicalReference,
+    )}, L1=${JSON.stringify(lastL1Reference)}`,
+  )
+}
+
 // Dev activates Currency snapshot protocol 1.0.0 at Global L0 ordinal zero. The
 // generated CI metagraph is therefore the permanent cross-boundary fixture: its
 // genesis snapshot may be legacy, but an ordinary successor must carry the signed
@@ -540,6 +611,7 @@ const transferTest = async (
   fee,
   txnCount,
   metagraphOpts,
+  dagNetworkOptions,
 ) => {
   let fromAccountStart, toAccountStart, isMetagraph
   if (metagraphOpts) {
@@ -574,7 +646,7 @@ const transferTest = async (
   const expectedToBalance = toAccountStart + totalAmount
 
   const { originBalance, destinationBalance } = await batchFunc(
-    metagraphOpts,
+    metagraphOpts ?? dagNetworkOptions,
     fromAccount,
     toAccount,
     amount,
@@ -595,6 +667,19 @@ const transferTest = async (
     await waitForMetagraphOrdinalProgression(
       metagraphOpts,
       'Metagraph transfer settle',
+    )
+    await waitForL1ReferenceAlignment(
+      `${metagraphOpts.l0MetagraphUrl}/snapshots/latest/combined`,
+      metagraphOpts.l1MetagraphUrl,
+      toAccount.address,
+      'Metagraph transfer settle',
+    )
+  } else if (dagNetworkOptions) {
+    await waitForL1ReferenceAlignment(
+      `${dagNetworkOptions.l0GlobalUrl}/global-snapshots/latest/combined`,
+      dagNetworkOptions.dagL1UrlFirstNode,
+      toAccount.address,
+      'DAG transfer settle',
     )
   }
 }
@@ -618,11 +703,27 @@ const sendTransactionsUsingUrls = async (networkOptions) => {
   await waitForMetagraphSnapshotProtocol(networkOptions)
 
   // DAG
-  await transferTest(account1, account2, 10, 0, 1)
-  await transferTest(account2, account1, 10, 0, 1)
+  await transferTest(account1, account2, 10, 0, 1, undefined, networkOptions)
+  await transferTest(account2, account1, 10, 0, 1, undefined, networkOptions)
 
-  await transferTest(account1, account2, 10, 0.02, 100)
-  await transferTest(account2, account1, 10, 0.02, 100)
+  await transferTest(
+    account1,
+    account2,
+    10,
+    0.02,
+    100,
+    undefined,
+    networkOptions,
+  )
+  await transferTest(
+    account2,
+    account1,
+    10,
+    0.02,
+    100,
+    undefined,
+    networkOptions,
+  )
 
   // Metagraph
   await transferTest(account1, account2, 10, 0, 1, networkOptions)

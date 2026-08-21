@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import cats.Parallel
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -8,6 +9,7 @@ import scala.concurrent.duration.Duration
 
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
@@ -15,9 +17,9 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Even
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
-import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *
@@ -68,13 +70,27 @@ object GlobalCertifiedDownloadValidator {
       _ <- Either.cond(hashMatches, (), "trusted_predecessor_hash_mismatch")
     } yield ()
 
-  private[snapshot] def validateGenesisRoot[F[_]: Async: HasherSelector](candidate: GlobalConsensusOutcome): F[Either[String, Unit]] =
+  private[snapshot] def validateGenesisRoot[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider](
+    candidate: GlobalConsensusOutcome,
+    localArtifact: Signed[GlobalIncrementalSnapshot],
+    localContext: GlobalSnapshotInfo,
+    seedlistPeerIds: Set[PeerId] = Set.empty
+  )(implicit globalStateProofSelector: GlobalStateProofSelector): F[Either[String, Unit]] =
     HasherSelector[F].withCurrent { implicit hasher =>
+      val artifact = candidate.finished.signedMajorityArtifact
+      val signerIds = artifact.proofs.toSortedSet.toList.map(_.id.toPeerId)
+      val committee = SortedSet.from(signerIds)
+
       for {
-        snapshotHash <- GlobalSnapshotArtifactHasher.currentHash[F](candidate.finished.signedMajorityArtifact.value)
-        committee = SortedSet.from(candidate.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId))
+        signatureValid <- artifact.hasValidSignature[F]
+        snapshotHash <- GlobalSnapshotArtifactHasher.currentHash[F](artifact.value)
+        // The first incremental artifact carries the full-genesis state at ordinal 0.
+        // Recompute it from the peer-supplied context before that context can become
+        // certified-lineage authority. Using key 1 here would select the wrong proof era
+        // when a format transition is configured immediately after genesis.
+        contextStateProof <- candidate.finished.context.stateProof[F](SnapshotOrdinal.MinValue)
         expected = GlobalRecoveryPlanOutcome.seed(
-          candidate.finished.signedMajorityArtifact,
+          artifact,
           candidate.finished.context,
           snapshotHash,
           committee
@@ -82,6 +98,24 @@ object GlobalCertifiedDownloadValidator {
       } yield
         for {
           _ <- Either.cond(committee.nonEmpty, (), "genesis_proof_signers_empty")
+          _ <- Either.cond(signerIds.size === committee.size, (), "genesis_artifact_duplicate_signer")
+          _ <- Either.cond(
+            seedlistPeerIds.isEmpty || committee.forall(seedlistPeerIds.contains),
+            (),
+            "genesis_artifact_signer_not_seedlisted"
+          )
+          _ <- Either.cond(signatureValid, (), "genesis_artifact_signature_invalid")
+          _ <- Either.cond(
+            Signed.sameValueAndProofs(artifact, localArtifact),
+            (),
+            "genesis_artifact_not_locally_validated"
+          )
+          _ <- Either.cond(
+            contextStateProof === artifact.value.stateProof,
+            (),
+            "genesis_context_state_proof_mismatch"
+          )
+          _ <- Either.cond(candidate.finished.context === localContext, (), "genesis_context_not_locally_validated")
           _ <- Either.cond(candidate === expected, (), "genesis_outcome_not_proof_signer_root")
         } yield ()
     }
@@ -109,7 +143,7 @@ object GlobalCertifiedDownloadValidator {
       }
     }
 
-  def make[F[_]: Async: HasherSelector](
+  def make[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider](
     config: ConsensusConfig,
     coreCommitteeSize: Int,
     seedlistPeerIds: Set[PeerId],
@@ -263,11 +297,21 @@ object GlobalCertifiedDownloadValidator {
     def locallyValidatedSnapshot(
       ordinal: SnapshotOrdinal
     ): F[Either[String, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
-      HasherSelector[F].forOrdinal(ordinal) { implicit hasher =>
-        snapshotDownloadStorage
-          .readCombinedValidated(ordinal)
-          .map(_.toRight(s"trusted_snapshot_missing:${ordinal.value.value}"))
-      }
+      // The first incremental derives its state proof from full-genesis ordinal 0, but its artifact/signatures still follow the hasher
+      // selected for ordinal 1. In development that is the current JSON hasher; preserving ordinal selection also keeps a hypothetical
+      // legacy activation-parent read honest instead of silently re-hashing historical bytes with the current scheme.
+      if (ordinal === SnapshotOrdinal.MinIncrementalValue)
+        HasherSelector[F].forOrdinal(ordinal) { implicit hasher =>
+          snapshotDownloadStorage
+            .readCombinedValidatedAtProofOrdinal(ordinal, SnapshotOrdinal.MinValue)
+            .map(_.toRight(s"trusted_snapshot_missing:${ordinal.value.value}"))
+        }
+      else
+        HasherSelector[F].forOrdinal(ordinal) { implicit hasher =>
+          snapshotDownloadStorage
+            .readCombinedValidatedAtProofOrdinal(ordinal, ordinal)
+            .map(_.toRight(s"trusted_snapshot_missing:${ordinal.value.value}"))
+        }
 
     def exactActivationParent(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] = {
       val activation = candidate.key.value.value
@@ -302,46 +346,69 @@ object GlobalCertifiedDownloadValidator {
     def trustedLocalParent(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] = {
       val parentOrdinal = SnapshotOrdinal.unsafeApply(candidate.key.value.value - 1L)
 
-      (certifiedOutcomeSidecar.read(parentOrdinal), locallyValidatedSnapshot(parentOrdinal)).tupled.flatMap {
-        case (Some(parent), Right((snapshot, context))) =>
+      certifiedOutcomeSidecar.read(parentOrdinal).flatMap {
+        case Some(parent) =>
           trustedParentKind(parent) match {
             case Left(error) => error.asLeft[TrustedParent].pure[F]
             case Right(kind) =>
-              val snapshotHash = kind match {
-                case TrustedParentKind.Certified =>
-                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
-                case TrustedParentKind.AuthorizedRoot
-                    if config.certifiedConsensusActivationKey == 0L && parentOrdinal === SnapshotOrdinal.MinValue =>
-                  HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
+              val isGenesisRoot = kind match {
                 case TrustedParentKind.AuthorizedRoot =>
-                  HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher =>
-                    GlobalSnapshotArtifactHasher.historicalHash[F](snapshot.value)
-                  )
+                  CertifiedConsensusGenesis.isRootKey(config.certifiedConsensusActivationKey, parentOrdinal)
+                case TrustedParentKind.Certified => false
               }
+              locallyValidatedSnapshot(parentOrdinal).flatMap {
+                case Left(error) => error.asLeft[TrustedParent].pure[F]
+                case Right((snapshot, context)) =>
+                  val rootValidation =
+                    if (isGenesisRoot) validateGenesisRoot(parent, snapshot, context, seedlistPeerIds)
+                    else ().asRight[String].pure[F]
 
-              snapshotHash.map { hash =>
-                validatePredecessorBindings(
-                  parent.key === parentOrdinal,
-                  parent.finished.signedMajorityArtifact === snapshot,
-                  parent.finished.context === context,
-                  parent.finished.snapshotHash === hash
-                ).as(TrustedParent(parent, kind))
+                  rootValidation.flatMap {
+                    case Left(error) => s"trusted_predecessor_genesis_invalid:$error".asLeft[TrustedParent].pure[F]
+                    case Right(_) =>
+                      val snapshotHash = kind match {
+                        case TrustedParentKind.Certified =>
+                          HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
+                        case TrustedParentKind.AuthorizedRoot if isGenesisRoot =>
+                          HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
+                        case TrustedParentKind.AuthorizedRoot =>
+                          HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher =>
+                            GlobalSnapshotArtifactHasher.historicalHash[F](snapshot.value)
+                          )
+                      }
+
+                      snapshotHash.map { hash =>
+                        validatePredecessorBindings(
+                          parent.key === parentOrdinal,
+                          if (isGenesisRoot) Signed.sameValueAndProofs(parent.finished.signedMajorityArtifact, snapshot)
+                          else parent.finished.signedMajorityArtifact === snapshot,
+                          parent.finished.context === context,
+                          parent.finished.snapshotHash === hash
+                        ).as(TrustedParent(parent, kind))
+                      }
+                  }
               }
           }
-        case (None, _)        => "trusted_predecessor_sidecar_missing".asLeft[TrustedParent].pure[F]
-        case (_, Left(error)) => error.asLeft[TrustedParent].pure[F]
+        case None => "trusted_predecessor_sidecar_missing".asLeft[TrustedParent].pure[F]
       }
     }
 
     candidate => {
       val active = config.certifiedConsensusActiveAt(candidate.key.value.value)
-      val genesisCompatibility = candidate.key.value.value == 0L && candidate.finished.certifiedOutcome.isEmpty
+      val genesisCompatibility =
+        CertifiedConsensusGenesis.isRootKey(config.certifiedConsensusActivationKey, candidate.key) &&
+          candidate.finished.certifiedOutcome.isEmpty
 
       if (!active) Async[F].unit
       else if (genesisCompatibility)
-        validateGenesisRoot(candidate).flatMap(
-          _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_genesis:$error")).liftTo[F]
-        )
+        locallyValidatedSnapshot(candidate.key).flatMap {
+          case Left(error) =>
+            new IllegalStateException(s"downloaded_certified_outcome_genesis:$error").raiseError[F, Unit]
+          case Right((snapshot, context)) =>
+            validateGenesisRoot(candidate, snapshot, context, seedlistPeerIds).flatMap(
+              _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_genesis:$error")).liftTo[F]
+            )
+        }
       else {
         val trustedParent =
           if (config.certifiedConsensusActivatesAt(candidate.key.value.value)) exactActivationParent(candidate)

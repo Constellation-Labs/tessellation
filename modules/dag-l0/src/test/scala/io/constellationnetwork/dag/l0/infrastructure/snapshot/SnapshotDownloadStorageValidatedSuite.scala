@@ -122,4 +122,148 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
           expect(invalidInfoStillPersisted)
     }
   }
+
+  test("first incremental genesis validation derives its state proof at the full-genesis ordinal") { implicit res =>
+    implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
+    implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+
+    val hashSelect = new HashSelect {
+      def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+    }
+
+    File.temporaryDirectory() { root =>
+      def path(name: String): Path = Path((root / name).pathAsString)
+
+      for {
+        tmpStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+        persistedStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+        fullSnapshotStorage <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+        snapshotInfoStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info-json"))
+        snapshotInfoKryoStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+        checkpointStorage <-
+          CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](path("checkpoint"))
+        producer <- InMemoryMerklePatriciaProducer.make[IO]()
+        mptStore <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+        storage = SnapshotDownloadStorage.make[IO](
+          tmpStorage,
+          persistedStorage,
+          fullSnapshotStorage,
+          snapshotInfoStorage,
+          snapshotInfoKryoStorage,
+          checkpointStorage,
+          hashSelect,
+          mptStore
+        )
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+        signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+        hashedGenesis <- signedGenesis.toHashed[IO]
+        firstIncremental <- GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis)
+        signedFirstIncremental <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncremental, keyPair)
+        info = genesis.info.toGlobalSnapshotInfo
+        _ <- storage.writePersisted(signedFirstIncremental)
+        _ <- storage.persistSnapshotInfoWithCutoff(firstIncremental.ordinal, info)
+        ordinaryRead <- storage.readCombinedValidated(firstIncremental.ordinal)
+        genesisAwareRead <- storage.readCombinedValidatedAtProofOrdinal(firstIncremental.ordinal, SnapshotOrdinal.MinValue)
+      } yield
+        expect.same(None, ordinaryRead) &&
+          expect.same(Some((signedFirstIncremental, info)), genesisAwareRead)
+    }
+  }
+
+  test("first incremental after a nonzero historical checkpoint validates at the checkpoint proof ordinal") { res =>
+    val (sharedKryoSerializer, sharedJsonSerializer, currentHasher, sharedSecurityProvider, sharedMetrics) = res
+    implicit val kryoSerializer: KryoSerializer[IO] = sharedKryoSerializer
+    implicit val jsonSerializer: JsonSerializer[IO] = sharedJsonSerializer
+    implicit val securityProvider: SecurityProvider[IO] = sharedSecurityProvider
+    implicit val metrics: Metrics[IO] = sharedMetrics
+
+    val checkpointOrdinal = SnapshotOrdinal.unsafeApply(42L)
+    val firstIncrementalOrdinal = SnapshotOrdinal.unsafeApply(43L)
+    implicit val checkpointStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(checkpointOrdinal)
+    implicit val historicalHasher: Hasher[IO] = new Hasher[IO] {
+      def hash[A: io.circe.Encoder](data: A): IO[Hash] = currentHasher.hash(data)
+      def hashBytes(bytes: Array[Byte]): IO[Hash] = currentHasher.hashBytes(bytes)
+      def compare[A: io.circe.Encoder](data: A, expectedHash: Hash): IO[Boolean] = currentHasher.compare(data, expectedHash)
+      def getLogic(ordinal: SnapshotOrdinal): HashLogic = KryoHash
+      def prefixedHash[A: io.circe.Encoder](data: A, prefix: Array[Byte]): IO[Hash] = currentHasher.prefixedHash(data, prefix)
+    }
+    val historicalHashSelect = new HashSelect {
+      def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash
+    }
+    implicit val hasherSelector: HasherSelector[IO] =
+      HasherSelector.forSync[IO](currentHasher, historicalHasher, historicalHashSelect)
+    val jsonStorageSelect = new HashSelect {
+      def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+    }
+
+    File.temporaryDirectory() { root =>
+      def path(name: String): Path = Path((root / name).pathAsString)
+
+      for {
+        tmpStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+        persistedStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+        fullSnapshotStorage <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+        snapshotInfoStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info-json"))
+        snapshotInfoKryoStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+        checkpointStorage <-
+          CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](path("checkpoint"))
+        producer <- InMemoryMerklePatriciaProducer.make[IO]()
+        mptStore <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+        storage = SnapshotDownloadStorage.make[IO](
+          tmpStorage,
+          persistedStorage,
+          fullSnapshotStorage,
+          snapshotInfoStorage,
+          snapshotInfoKryoStorage,
+          checkpointStorage,
+          jsonStorageSelect,
+          mptStore
+        )(
+          implicitly[cats.effect.Async[IO]],
+          implicitly[cats.Parallel[IO]],
+          hasherSelector,
+          kryoSerializer,
+          jsonSerializer,
+          metrics,
+          checkpointStateProofSelector
+        )
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+        signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+        info = genesis.info.toGlobalSnapshotInfo
+        baseIncremental <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)(
+          implicitly[cats.Parallel[IO]],
+          implicitly[cats.effect.Async[IO]],
+          historicalHasher,
+          jsonSerializer,
+          checkpointStateProofSelector
+        )
+        checkpointProof <- info.stateProof[IO](checkpointOrdinal)(
+          implicitly[cats.Parallel[IO]],
+          implicitly[cats.effect.Async[IO]],
+          historicalHasher,
+          jsonSerializer,
+          checkpointStateProofSelector
+        )
+        signedFirstIncremental <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          baseIncremental.copy(ordinal = firstIncrementalOrdinal, stateProof = checkpointProof),
+          keyPair
+        )
+        _ <- storage.writePersisted(signedFirstIncremental)
+        _ <- snapshotInfoStorage.write(firstIncrementalOrdinal, info)
+        correctRead <- storage.readCombinedValidatedAtProofOrdinal(firstIncrementalOrdinal, checkpointOrdinal)(
+          historicalHasher,
+          checkpointStateProofSelector
+        )
+        wrongSameOrdinalRead <- storage.readCombinedValidated(firstIncrementalOrdinal)(
+          historicalHasher,
+          checkpointStateProofSelector
+        )
+      } yield
+        expect.same(KryoHash, hasherSelector.getForOrdinal(firstIncrementalOrdinal).getLogic(firstIncrementalOrdinal)) &&
+          expect.same(Some((signedFirstIncremental, info)), correctRead) &&
+          expect.same(None, wrongSameOrdinalRead)
+    }
+  }
 }

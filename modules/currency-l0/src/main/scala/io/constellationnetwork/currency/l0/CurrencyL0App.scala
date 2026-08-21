@@ -15,8 +15,8 @@ import io.constellationnetwork.currency.l0.config.types._
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
-import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
+import io.constellationnetwork.currency.l0.snapshot.{CurrencyCertifiedGenesisOutcome, DataTransactionCodecs}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSyncReference
 import io.constellationnetwork.currency.schema.{CurrencySnapshotSemantics, CurrencyStateKey}
@@ -27,6 +27,7 @@ import io.constellationnetwork.node.shared.app._
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.RollbackStartPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipConfig, EventGossipDaemon}
@@ -225,7 +226,8 @@ abstract class CurrencyL0App(
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService.zip(storages.calculatedStateStorage)
+        dataApplicationService.zip(storages.calculatedStateStorage),
+        loadedConsensusConfig
       )
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck)
@@ -773,7 +775,7 @@ abstract class CurrencyL0App(
                   NodeState.GenesisReady
                 )(hasherSelector.withCurrent { implicit hasher =>
                   for {
-                    (currencySnapshot, currencySnapshotInfo, hash, identifier) <- programs.genesis.accept(dataApplicationService)(
+                    (currencySnapshot, currencySnapshotInfo, hashedBinary, identifier) <- programs.genesis.accept(dataApplicationService)(
                       m.genesisPath
                     )
                     _ <- HasherSelector[IO].withCurrent { implicit hasher =>
@@ -813,31 +815,19 @@ abstract class CurrencyL0App(
                         } yield ()
                       } else IO.unit
                     hashedSnapshot <- currencySnapshot.toHashed[IO]
-                    genesisSigners = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                    // Genesis path — seed window with the genesis snapshot's proof count.
-                    // See dag-l0 mirror for rationale.
-                    genesisRecentProofSizes = SortedMap(
-                      currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
-                    )
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
-                      CurrencyConsensusOutcome(
-                        currencySnapshot.ordinal,
-                        Facilitators(genesisSigners),
-                        RemovedFacilitators.empty,
-                        WithdrawnFacilitators.empty,
-                        EligibleFacilitators(genesisSigners),
-                        Finished(
-                          currencySnapshot,
-                          hash,
-                          CurrencySnapshotContext(identifier, currencySnapshotInfo),
-                          EventTrigger,
-                          Candidates.empty,
-                          Hash.empty,
-                          hashedSnapshot.hash
-                        ),
-                        recentProofSizes = genesisRecentProofSizes
-                      )
+                      CurrencyCertifiedGenesisOutcome.seed(
+                        currencySnapshot,
+                        hashedBinary,
+                        CurrencySnapshotContext(identifier, currencySnapshotInfo),
+                        hashedSnapshot.hash
+                      ),
+                      // Match DAG L0 genesis: give validators one normal round interval to download
+                      // and persist the first incremental root before the genesis node can finalize
+                      // its certified child. Immediate start can make ordinal 2 visible before a
+                      // follower has the independently trusted ordinal-1 sidecar.
+                      startPolicy = RollbackStartPolicy.LegacyDeferred
                     )
                   } yield ()
                 }) >>

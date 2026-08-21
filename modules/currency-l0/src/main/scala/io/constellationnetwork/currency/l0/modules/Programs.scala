@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
@@ -36,7 +37,8 @@ object Programs {
     services: Services[F, R],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
+    effectiveConsensusConfig: ConsensusConfig
   )(implicit context: L0NodeContext[F]): Programs[F] = {
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
@@ -58,7 +60,8 @@ object Programs {
         storages.snapshot,
         storages.currencySnapshotCleanup,
         storages.combinedCurrencySnapshotCheckpointStorage,
-        storages.eventMempool
+        storages.eventMempool,
+        effectiveConsensusConfig.certifiedConsensusActivationKey
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(

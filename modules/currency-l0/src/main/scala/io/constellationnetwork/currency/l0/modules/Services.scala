@@ -195,6 +195,7 @@ object Services {
           storages.cluster,
           storages.node,
           storages.lastSyncGlobalSnapshot,
+          storages.snapshot,
           maybeRewards,
           cfg.snapshot,
           effectiveConsensusConfig,

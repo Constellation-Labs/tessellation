@@ -1,0 +1,99 @@
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/App.scala b/src/main/scala/org/constellation/snapshotstreaming/App.scala
+index 83a7d1f..39b9210 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/App.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/App.scala
+@@ -31,8 +31,12 @@ object App extends IOApp {
+             KryoSerializer.forAsync[IO](shared.sharedKryoRegistrar).use { implicit ks =>
+               JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
+                 val hashSelect = makeHashSelect(appConfig, sharedCfg)
++                val environment = appConfig.snapshotStreaming.environment
+                 implicit val gsps: GlobalStateProofSelector =
+-                  GlobalStateProofSelector(sharedCfg.lastLegacyStateProofOrdinal.getOrElse(appConfig.snapshotStreaming.environment, SnapshotOrdinal.MinValue))
++                  GlobalStateProofSelector(
++                    sharedCfg.lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
++                    sharedCfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(environment, SnapshotOrdinal.MaxValue)
++                  )
+                 implicit val csps: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
+                 implicit val hasherSelector =
+                   HasherSelector.forSync[IO](Hasher.forJson[IO], Hasher.forKryo[IO], hashSelect)
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala b/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala
+index f51226b..c0a5d3d 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/AppS3.scala
+@@ -33,9 +33,13 @@ object AppS3 extends IOApp {
+             KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ kryoRegistrar, migrations).use { implicit ks =>
+               JsonSerializer.forAsync[IO].asResource.use { implicit jsonSerializer =>
+                 val hashSelect = makeHashSelect(appConfig, sharedCfg)
++                val environment = appConfig.snapshotStreaming.environment
+                 implicit val hasherSelector =
+                   HasherSelector.forSync[IO](Hasher.forJson[IO], Hasher.forKryo[IO], hashSelect)
+                 implicit val gsps: GlobalStateProofSelector =
+-                  GlobalStateProofSelector(sharedCfg.lastLegacyStateProofOrdinal.getOrElse(appConfig.snapshotStreaming.environment, SnapshotOrdinal.MinValue))
++                  GlobalStateProofSelector(
++                    sharedCfg.lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
++                    sharedCfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(environment, SnapshotOrdinal.MaxValue)
++                  )
+                 implicit val csps: CurrencyStateProofSelector = CurrencyStateProofSelector.instance
+                 val txHasher = Hasher.forKryo[IO]
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala b/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala
+index 17fb788..2dc2f06 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/SnapshotProcessor.scala
+@@ -22,13 +22,12 @@ import io.constellationnetwork.node.shared.http.p2p.clients.L0GlobalSnapshotClie
+ import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
+ import io.constellationnetwork.schema.SnapshotReference.{fromHashedSnapshot => getSnapshotReference}
+ import io.constellationnetwork.schema.address.Address
+-import io.constellationnetwork.schema.{CurrencyStateProofSelector, GlobalIncrementalSnapshot, GlobalSnapshot, GlobalSnapshotInfo, GlobalSnapshotInfoV2, GlobalSnapshotStateProof, GlobalStateProofSelector, SnapshotOrdinal}
++import io.constellationnetwork.schema.{CurrencyStateProofSelector, GlobalIncrementalSnapshot, GlobalSnapshot, GlobalSnapshotInfo, GlobalSnapshotInfoV2, GlobalStateProofSelector, SnapshotOrdinal}
+ import io.constellationnetwork.security._
+ import io.constellationnetwork.security.signature.Signed
+ import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
+ import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax.GlobalSnapshotInfoMptOps
+ import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+-import io.constellationnetwork.security.hash.Hash
+ import io.constellationnetwork.security.mpt.MptRoot
+ import io.constellationnetwork.security.mpt.producer.FileSystemMerklePatriciaProducer
+ import io.constellationnetwork.validator.StateProofValidator
+@@ -210,30 +209,18 @@ object SnapshotProcessor {
+               )
+
+               result <- if( snapshot.ordinal > sharedConfigReader.lastLegacyStateProofOrdinal.getOrElse(configuration.environment, SnapshotOrdinal.MinValue)){
+-                val stateProof = GlobalSnapshotStateProof
+-                  .apply(
+-                    Hash.empty,
+-                    Hash.empty,
+-                    Hash.empty,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    None,
+-                    Some(mptRoot.value)
+-                  )
+-                logger.info(
+-                  s"Validating mptProof for ordinal ${snapshot.ordinal.value.value}"
+-                ) >>
+-                StateProofValidator.validateProof(snapshot, stateProof)
++                // Reuse the SDK's proof assembly. Before sub-trie-root activation its
++                // result is byte-identical to the former mptRoot-only literal; after
++                // activation it deterministically derives every signed per-field root
++                // from snapshotInfo while retaining the independently built mptRoot.
++                GlobalSnapshotInfo
++                  .assembleMptProof[F](snapshotInfo, snapshot.ordinal, mptRoot.value)
++                  .flatMap { stateProof =>
++                    logger.info(
++                      s"Validating mptProof for ordinal ${snapshot.ordinal.value.value}"
++                    ) >>
++                      StateProofValidator.validateProof(snapshot, stateProof)
++                  }
+               } else {
+                 validator.validate(snapshot, snapshotInfo)
+               }

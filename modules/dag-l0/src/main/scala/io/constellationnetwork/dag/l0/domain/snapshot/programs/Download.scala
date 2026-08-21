@@ -116,6 +116,18 @@ object Download {
   private[snapshot] final case class PeerTip(ordinal: SnapshotOrdinal, hash: Hash)
   private[snapshot] final case class PeerTipSample(queriedPeerCount: Int, tips: List[PeerTip])
 
+  /** True only for the incremental snapshot immediately following this environment's configured full-snapshot checkpoint.
+    *
+    * Its context comes from the full snapshot, so its state proof is derived at `fullSnapshotOrdinal`, not at the incremental artifact's
+    * own ordinal. Keep this predicate independent of the absolute ordinal: public networks bootstrap from non-zero full-snapshot
+    * checkpoints, while development starts at ordinal zero.
+    */
+  private[snapshot] def isFirstIncrementalAfterFullSnapshot(
+    fullSnapshotOrdinal: SnapshotOrdinal,
+    incrementalOrdinal: SnapshotOrdinal
+  ): Boolean =
+    BigInt(incrementalOrdinal.value.value) === BigInt(fullSnapshotOrdinal.value.value) + 1
+
   /** Reuse the convergence path's existing tolerance. A larger gap belongs to the full recovery workflow, which revalidates/rebuilds all
     * layer stores and re-observes the moving tip.
     */
@@ -309,6 +321,40 @@ object Download {
               _ => ().pure[F]
             )
         }
+
+    /** Validate and persist the derived context paired with the first incremental snapshot after the configured full-snapshot checkpoint.
+      *
+      * The ordinary forward-replay path persists a context after deriving and validating it. Fresh-node bootstrap instead starts from the
+      * configured full snapshot plus its first incremental child, so there is no preceding replay step that would otherwise persist that
+      * child's context. V35's downloaded-outcome trust boundary intentionally requires the locally persisted artifact/context pair; leaving
+      * it absent makes a development follower reject the canonical genesis outcome as `trusted_snapshot_missing:1`.
+      *
+      * Hash/signature validation follows the artifact's historical ordinal. The state proof follows the full-snapshot checkpoint ordinal
+      * from which the supplied context was derived. On development's certified 0 -> 1 root, ordinal selection resolves to the current JSON
+      * hasher; on Mainnet/Testnet's historical non-zero checkpoints it correctly resolves to the legacy hasher.
+      */
+    private def validateAndPersistFirstIncrementalContext(
+      snapshot: Signed[GlobalIncrementalSnapshot],
+      context: GlobalSnapshotInfo,
+      fullSnapshotOrdinal: SnapshotOrdinal
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
+        for {
+          signatures <- signedValidator.validateSignatures(snapshot)
+          validated = signatures
+            .productL(signedValidator.validateUniqueSigners(snapshot))
+            .productL(signedValidator.validateSignaturesWithSeedlist(seedlist, snapshot))
+          _ <- validated.fold(
+            errors => InvalidSnapshotSignatures(snapshot.ordinal, errors.toList.mkString(", ")).raiseError[F, Unit],
+            _ => ().pure[F]
+          )
+          stateProof <- context.stateProof[F](fullSnapshotOrdinal)
+          _ <-
+            if (stateProof === snapshot.stateProof)
+              snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, context)
+            else InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+        } yield ()
+      }
 
     // L2c fork-safety: when a seedlist-signed recovery checkpoint is configured, the chain this node accepts
     // MUST pass through the checkpoint's exact (ordinal, hash). At the checkpoint ordinal a hash mismatch
@@ -1386,9 +1432,13 @@ object Download {
 
       def didReachGenesis = ordinal === lastFullGlobalSnapshotOrdinal
 
-      if (!didReachGenesis) {
-        isSnapshotPersisted
-      } else true.pure[F]
+      if (didReachGenesis) true.pure[F]
+      else if (isFirstIncrementalAfterFullSnapshot(lastFullGlobalSnapshotOrdinal, ordinal))
+        // The first incremental's persisted context is intentionally available to the certified-outcome preflight, but it is not an
+        // ordinary replay anchor: its state proof is derived from the configured full-snapshot checkpoint. Walk one step farther so generic
+        // replay always reconstructs this root from its full-snapshot authority instead of validating it with the same-ordinal proof rule.
+        false.pure[F]
+      else isSnapshotPersisted
     }
 
     def validateChain(
@@ -1579,7 +1629,11 @@ object Download {
               case Some(snapshot) => (genesis.value, snapshot).pure[F]
               case None           => FirstIncrementalNotFound.raiseError[F, (GlobalSnapshot, Signed[GlobalIncrementalSnapshot])]
             }
-            .map { case (full, incremental) => (incremental, full.info.toGlobalSnapshotInfo) }
+            .flatMap {
+              case (full, incremental) =>
+                val context = full.info.toGlobalSnapshotInfo
+                validateAndPersistFirstIncrementalContext(incremental, context, genesis.ordinal).as((incremental, context))
+            }
         }
 
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalIncrementalSnapshot]] =

@@ -543,7 +543,13 @@ object CurrencySnapshotConsensusStateAdvancer {
                     "binary_parent_mismatch"
                   )
                   decodedArtifact <- embeddedArtifact.leftMap(error => s"binary_artifact_decode:${error.getMessage}")
-                  _ <- Either.cond(decodedArtifact === candidate.finished.signedMajorityArtifact, (), "binary_artifact_mismatch")
+                  // V35 requires the complete frozen-committee artifact proof set before constructing the binary, so unlike ordinary
+                  // Signed equality the proof envelope is canonical here and must remain bound to the binary bytes.
+                  _ <- Either.cond(
+                    Signed.sameValueAndProofs(decodedArtifact, candidate.finished.signedMajorityArtifact),
+                    (),
+                    "binary_artifact_mismatch"
+                  )
                   _ <- Either.cond(hashedBinary.hash === candidate.finished.binaryArtifactHash, (), "binary_hash_mismatch")
                 } yield ()
                 result <- structure match {

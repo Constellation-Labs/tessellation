@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensusGenesis
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
@@ -38,7 +39,6 @@ import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEve
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.Peer
-import io.constellationnetwork.schema.snapshot.SnapshotMetadata
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, HasherSelector}
@@ -67,7 +67,8 @@ object Download {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
+    certifiedConsensusActivationKey: Long
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -112,35 +113,45 @@ object Download {
         }
     }
 
-    private def fetchAndSetCalculatedState(snapshot: Signed[CurrencyIncrementalSnapshot])(implicit hasher: Hasher[F]): F[Unit] =
+    private def fetchAndSetCalculatedState(snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit] =
       maybeDataApplication.map { da =>
         implicit val d = da.calculatedStateDecoder
 
         val retryPolicy = RetryPolicies.limitRetries[F](3).join(RetryPolicies.exponentialBackoff(2.seconds))
 
-        retryingOnAllErrors[(SnapshotOrdinal, DataCalculatedState)](
-          policy = retryPolicy,
-          onError = (err: Throwable, retryDetails: RetryDetails) =>
-            logger.warn(err)(s"Error fetching calculated state (attempt=${retryDetails.retriesSoFar}), selecting new peer")
-        ) {
-          clusterStorage.getResponsivePeers
-            .map(NodeState.ready)
-            .map(_.toList)
-            .flatMap(Random[F].shuffleList)
-            .flatMap {
-              case Nil =>
-                (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
-              case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
-            }
-            .flatTap {
-              case (_, calculatedState) =>
-                da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
-                  (new Exception(s"Downloaded calculated state does not match the proof stored in snapshot")
-                    .raiseError[F, Unit])
-                    .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
+        def verify(calculatedState: DataCalculatedState): F[Unit] =
+          da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
+            (new Exception(s"Calculated state does not match the proof stored in snapshot")
+              .raiseError[F, Unit])
+              .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
+          }
+
+        val calculatedState =
+          if (Download.isCertifiedGenesisRoot(snapshot.ordinal, certifiedConsensusActivationKey))
+            logger.info(
+              s"[Download] Using locally derived data-application genesis state for certified root ordinal=${snapshot.ordinal}"
+            ) >>
+              (snapshot.ordinal, da.genesis.calculated).pure[F]
+          else
+            retryingOnAllErrors[(SnapshotOrdinal, DataCalculatedState)](
+              policy = retryPolicy,
+              onError = (err: Throwable, retryDetails: RetryDetails) =>
+                logger.warn(err)(s"Error fetching calculated state (attempt=${retryDetails.retriesSoFar}), selecting new peer")
+            ) {
+              clusterStorage.getResponsivePeers
+                .map(NodeState.ready)
+                .map(_.toList)
+                .flatMap(Random[F].shuffleList)
+                .flatMap {
+                  case Nil =>
+                    (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
+                  case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
                 }
             }
-        }.flatMap { case (ordinal, calculatedState) => da.setCalculatedState(ordinal, calculatedState) }.void
+
+        calculatedState.flatTap { case (_, state) => verify(state) }.flatMap {
+          case (ordinal, state) => da.setCalculatedState(ordinal, state)
+        }.void
       }.getOrElse(Applicative[F].unit)
 
     def start: F[DownloadResult] = {
@@ -159,7 +170,11 @@ object Download {
     def observe(result: DownloadResult)(implicit hasher: Hasher[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result
 
-      val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset)
+      val observationLimit = Download.observationLimit(
+        lastSnapshot.ordinal,
+        observationOffset,
+        certifiedConsensusActivationKey
+      )
 
       def go(result: DownloadResult): F[DownloadResult] = {
         val (lastSnapshot, _) = result
@@ -244,4 +259,25 @@ object Download {
   case object CannotFetchSnapshot extends NoStackTrace
 
   case object InvalidChain extends NoStackTrace with RecoveryFallbackEligible
+
+  /** Preserve the legacy four-snapshot observation window except at a certified-consensus genesis root.
+    *
+    * The first incremental Currency snapshot is independently authenticated from its signed artifact and genesis binary. Skipping from that
+    * root to `root + observationOffset` before consensus initialization discards the only local trust anchor and leaves the follower unable
+    * to authenticate the terminal private consensus outcome. Initialize at the root first; subsequent recovery/download continues to
+    * require retained certified lineage or an explicit trusted checkpoint, as documented by ADR-0032.
+    */
+  private[programs] def observationLimit(
+    lastSnapshotOrdinal: SnapshotOrdinal,
+    observationOffset: NonNegLong,
+    certifiedConsensusActivationKey: Long
+  ): SnapshotOrdinal =
+    if (isCertifiedGenesisRoot(lastSnapshotOrdinal, certifiedConsensusActivationKey)) lastSnapshotOrdinal
+    else SnapshotOrdinal(lastSnapshotOrdinal.value |+| observationOffset)
+
+  private[programs] def isCertifiedGenesisRoot(
+    snapshotOrdinal: SnapshotOrdinal,
+    certifiedConsensusActivationKey: Long
+  ): Boolean =
+    CertifiedConsensusGenesis.isRootKey(certifiedConsensusActivationKey, snapshotOrdinal)
 }
