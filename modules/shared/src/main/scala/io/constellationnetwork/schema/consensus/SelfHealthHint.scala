@@ -9,9 +9,8 @@ import io.circe._
 
 /** A peer's self-reported consensus health classification.
   *
-  * The type is shared because it is part of v35 ProposalValue and trusted checkpoint state.
-  * Runtime health sampling remains node-shared; only the stable three-value wire vocabulary
-  * lives here.
+  * The type is shared because it is part of v35 ProposalValue and trusted checkpoint state. Runtime health sampling remains node-shared;
+  * only the stable three-value wire vocabulary lives here.
   */
 sealed trait SelfHealthHint extends EnumEntry {
   def label: String = entryName

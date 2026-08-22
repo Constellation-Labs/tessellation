@@ -462,26 +462,28 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         core.toSet,
         config.quorumThresholdFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      triggerStatements <- roundStart.map(byId).traverse(pair =>
-        signTriggerStatement[IO](
-          triggerStatement(
-            ConsensusDomain.DagL0,
-            "integrationnet",
-            ordinal.value.value,
-            prior.finished.snapshotHash,
-            fullHash,
-            config.deterministicConfigHash,
-            trigger.some
-          ),
-          pair
+      triggerStatements <- roundStart
+        .map(byId)
+        .traverse(pair =>
+          signTriggerStatement[IO](
+            triggerStatement(
+              ConsensusDomain.DagL0,
+              "integrationnet",
+              ordinal.value.value,
+              prior.finished.snapshotHash,
+              fullHash,
+              config.deterministicConfigHash,
+              trigger.some
+            ),
+            pair
+          )
         )
-      )
-    } yield PublicFrame(signedArtifact, context, CertifiedOutcome(proposalQc, commitQc), triggerStatements, nonEmpty(roundStart), nonEmpty(core))
+    } yield
+      PublicFrame(signedArtifact, context, CertifiedOutcome(proposalQc, commitQc), triggerStatements, nonEmpty(roundStart), nonEmpty(core))
   }
 
-  /** Replace only the two QC proof envelopes while retaining the exact artifact, ProposalValue,
-    * trigger evidence and round authority. This is the direct same-round proof-subset
-    * falsification that the lifecycle harness cannot provide by rotating subsets between rounds.
+  /** Replace only the two QC proof envelopes while retaining the exact artifact, ProposalValue, trigger evidence and round authority. This
+    * is the direct same-round proof-subset falsification that the lifecycle harness cannot provide by rotating subsets between rounds.
     */
   private def withCertificateRotation(
     frame: PublicFrame,
@@ -608,7 +610,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         )
       )(new IllegalStateException("scripted membership transition was not prepare-vote admissible"))
       snapshotHash <- Hasher[IO].hash(frame.artifact.value)
-      state: GlobalSnapshotConsensusState = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, schema.GlobalConsensusKind](
+      state: GlobalSnapshotConsensusState = ConsensusState[
+        GlobalSnapshotKey,
+        GlobalSnapshotStatus,
+        GlobalConsensusOutcome,
+        schema.GlobalConsensusKind
+      ](
         key = frame.artifact.ordinal,
         lastOutcome = prior,
         facilitators = Facilitators(roundStart),
@@ -780,79 +787,78 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       )
   }
 
-  test("production download validator reconstructs public root-to-tip DAG lineage and fails closed on a missing interior artifact") {
-    res =>
-      implicit val serializer: JsonSerializer[IO] = res.serializer
-      implicit val hasher: Hasher[IO] = res.hasher
-      implicit val hasherSelector: HasherSelector[IO] = res.selector
-      implicit val provider: SecurityProvider[IO] = res.provider
+  test("production download validator reconstructs public root-to-tip DAG lineage and fails closed on a missing interior artifact") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
 
-      val scripts = List(
-        Script(responders = Set(0), admitted = Some(1)),
-        // A newly admitted signer is forced into Tier 1 for its first round. The public
-        // replay projector must reconstruct this exact Core/Tier-1 split from the certified
-        // parent instead of trusting a locally inferred all-Core committee.
-        Script(responders = Set(0, 1), forceCore = Some(List(0)), proofRotation = 1)
+    val scripts = List(
+      Script(responders = Set(0), admitted = Some(1)),
+      // A newly admitted signer is forced into Tier 1 for its first round. The public
+      // replay projector must reconstruct this exact Core/Tier-1 split from the certified
+      // parent instead of trusting a locally inferred all-Core committee.
+      Script(responders = Set(0, 1), forceCore = Some(List(0)), proofRotation = 1)
+    )
+
+    for {
+      seededRoot <- signedRoot(res.pairs)
+      rootCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
+      root = GlobalRecoveryPlanOutcome.seed(
+        seededRoot.finished.signedMajorityArtifact,
+        seededRoot.finished.context,
+        seededRoot.finished.snapshotHash,
+        rootCommittee
       )
-
-      for {
-        seededRoot <- signedRoot(res.pairs)
-        rootCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
-        root = GlobalRecoveryPlanOutcome.seed(
-          seededRoot.finished.signedMajorityArtifact,
-          seededRoot.finished.context,
-          seededRoot.finished.snapshotHash,
-          rootCommittee
-        )
-        stateAdvancer = advancer(res.pairs.head)
-        built <- scripts.foldM((root, List.empty[PublicFrame])) {
-          case ((prior, frames), script) =>
-            buildFrame(prior, script, res.pairs).flatMap { frame =>
-              derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
-            }
-        }
-        candidate = built._1
-        frames = built._2
-        artifacts = Map.from(
-          (root.key -> root.finished.signedMajorityArtifact) :: frames.map(frame => frame.artifact.ordinal -> frame.artifact)
-        )
-        contexts = Map.from((root.key -> root.finished.context) :: frames.map(frame => frame.artifact.ordinal -> frame.context))
-        validator = GlobalCertifiedDownloadValidator.make[IO](
-          config = config,
-          coreCommitteeSize = 2,
-          seedlistPeerIds = Set.empty,
-          facilitatorSelector = FacilitatorSelector.make(None),
-          isContextEligible = (_, _) => IO.pure(true),
-          snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-          certifiedOutcomeSidecar = emptyOutcomeSidecar,
-          stateAdvancer = stateAdvancer
-        )
-        valid <- validator(candidate).attempt
-        missingInterior = artifacts - frames.head.artifact.ordinal
-        missingValidator = GlobalCertifiedDownloadValidator.make[IO](
-          config = config,
-          coreCommitteeSize = 2,
-          seedlistPeerIds = Set.empty,
-          facilitatorSelector = FacilitatorSelector.make(None),
-          isContextEligible = (_, _) => IO.pure(true),
-          snapshotDownloadStorage = publicDownloadStorage(missingInterior, contexts),
-          certifiedOutcomeSidecar = emptyOutcomeSidecar,
-          stateAdvancer = stateAdvancer
-        )
-        missing <- missingValidator(candidate).attempt
-      } yield {
-        val validExpectation = valid match {
-          case Right(_)    => success
-          case Left(error) => failure(s"public lineage validation unexpectedly failed: ${error.getMessage}")
-        }
-
-        validExpectation &&
-        expect(
-          missing.left.exists(
-            _.getMessage.contains(s"trusted_snapshot_missing:${frames.head.artifact.ordinal.value.value}")
-          )
-        )
+      stateAdvancer = advancer(res.pairs.head)
+      built <- scripts.foldM((root, List.empty[PublicFrame])) {
+        case ((prior, frames), script) =>
+          buildFrame(prior, script, res.pairs).flatMap { frame =>
+            derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
+          }
       }
+      candidate = built._1
+      frames = built._2
+      artifacts = Map.from(
+        (root.key -> root.finished.signedMajorityArtifact) :: frames.map(frame => frame.artifact.ordinal -> frame.artifact)
+      )
+      contexts = Map.from((root.key -> root.finished.context) :: frames.map(frame => frame.artifact.ordinal -> frame.context))
+      validator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 2,
+        seedlistPeerIds = Set.empty,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        certifiedOutcomeSidecar = emptyOutcomeSidecar,
+        stateAdvancer = stateAdvancer
+      )
+      valid <- validator(candidate).attempt
+      missingInterior = artifacts - frames.head.artifact.ordinal
+      missingValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 2,
+        seedlistPeerIds = Set.empty,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(missingInterior, contexts),
+        certifiedOutcomeSidecar = emptyOutcomeSidecar,
+        stateAdvancer = stateAdvancer
+      )
+      missing <- missingValidator(candidate).attempt
+    } yield {
+      val validExpectation = valid match {
+        case Right(_)    => success
+        case Left(error) => failure(s"public lineage validation unexpectedly failed: ${error.getMessage}")
+      }
+
+      validExpectation &&
+      expect(
+        missing.left.exists(
+          _.getMessage.contains(s"trusted_snapshot_missing:${frames.head.artifact.ordinal.value.value}")
+        )
+      )
+    }
   }
 
   test("public replay roots at configured activation A-1 rather than downloaded terminal T-1") { _ =>

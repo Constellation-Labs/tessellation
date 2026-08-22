@@ -22,8 +22,8 @@ object CertifiedConsensusSchema {
   val Version: Int = 35
 }
 
-/** Wire-only v35 types shared by DAG L0, Currency L0, public snapshot schemas and Snapshot
-  * Streaming. Construction and verification remain in node-shared `CertifiedConsensus`.
+/** Wire-only v35 types shared by DAG L0, Currency L0, public snapshot schemas and Snapshot Streaming. Construction and verification remain
+  * in node-shared `CertifiedConsensus`.
   */
 @derive(eqv, show)
 sealed trait ConsensusDomain extends Product with Serializable {
@@ -208,10 +208,9 @@ object CertifiedOutcome {
   implicit val showInstance: Show[CertifiedOutcome] = Show.fromToString
 }
 
-/** Layer evidence for a child-carried parent certificate. Currency carries only the fields that
-  * cannot be reconstructed from the already-held public signed parent artifact. Carrying the
-  * entire StateChannelSnapshotBinary is forbidden: its content embeds that artifact and would
-  * recursively embed the full lineage.
+/** Layer evidence for a child-carried parent certificate. Currency carries only the fields that cannot be reconstructed from the
+  * already-held public signed parent artifact. Carrying the entire StateChannelSnapshotBinary is forbidden: its content embeds that
+  * artifact and would recursively embed the full lineage.
   */
 @derive(eqv, show, encoder, decoder)
 sealed trait CertifiedLayerEvidenceV1
@@ -235,9 +234,9 @@ final case class CertifiedLineageEvidenceV1(
   *
   * Unlike [[CertifiedLayerEvidenceV1]], this is not a proof envelope for reconstructing an incremental artifact that the verifier already
   * holds. A compacted full Currency snapshot does not contain the exact source incremental bytes, so its historical binary cannot be
-  * reconstructed from the full snapshot. The containing full-snapshot hash is the external authority; `lastBinaryHash` is the minimal
-  * state needed to validate the next Currency binary's parent link. When source incremental history is available, checkpoint construction
-  * must still verify this value against that history before publication.
+  * reconstructed from the full snapshot. The containing full-snapshot hash is the external authority; `lastBinaryHash` is the minimal state
+  * needed to validate the next Currency binary's parent link. When source incremental history is available, checkpoint construction must
+  * still verify this value against that history before publication.
   */
 @derive(eqv, show, encoder, decoder)
 sealed trait CertifiedCheckpointLayerStateV1
@@ -251,9 +250,8 @@ object CertifiedCheckpointLayerStateV1 {
 
 /** Minimal derived state carried by an operator-authorized full-snapshot checkpoint.
   *
-  * This object does not authenticate its containing full snapshot. Authority comes only from
-  * the separately announced containing-snapshot hash; `certifiedTip` proves continuity with the
-  * source incremental tip.
+  * This object does not authenticate its containing full snapshot. Authority comes only from the separately announced containing-snapshot
+  * hash; `certifiedTip` proves continuity with the source incremental tip.
   */
 @derive(eqv, encoder, decoder)
 final case class CertifiedCheckpointV1(

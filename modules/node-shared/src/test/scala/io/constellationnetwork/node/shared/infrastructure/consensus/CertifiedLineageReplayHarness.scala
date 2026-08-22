@@ -12,9 +12,8 @@ import io.circe.{Decoder, Encoder}
   * Layer suites supply only a production transition adapter from `(trusted prior outcome, public round frame)` to the next outcome and an
   * observation containing the bytes/facts that must agree. The harness executes the identical public frames through three lifecycles:
   *
-  *   1. continuously warm state;
-  *   2. canonical serialize/deserialize of the complete private outcome after every round; and
-  *   3. fresh sequential replay from a canonically decoded independent root, without reading any intermediate private outcome.
+  *   1. continuously warm state; 2. canonical serialize/deserialize of the complete private outcome after every round; and 3. fresh
+  *      sequential replay from a canonically decoded independent root, without reading any intermediate private outcome.
   *
   * The third path is intentionally not allowed a sidecar callback. If a layer adapter cannot derive a field from its prior trusted outcome
   * plus the public frame, the test cannot manufacture it from node-local history.

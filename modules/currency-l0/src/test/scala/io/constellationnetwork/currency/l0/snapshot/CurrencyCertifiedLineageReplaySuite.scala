@@ -53,10 +53,9 @@ import weaver.MutableIOSuite
 
 /** Currency half of the v35 proof-sufficiency dynamic gate.
   *
-  * Public frames carry only a bounded binary proof envelope. Each lifecycle reconstructs the exact
-  * StateChannelSnapshotBinary from the public signed artifact through the repository JsonSerializer,
-  * verifies its complete frozen-committee proof set, and then invokes the production Currency outcome
-  * transition. No run may read an archive or a process-local consensus sidecar.
+  * Public frames carry only a bounded binary proof envelope. Each lifecycle reconstructs the exact StateChannelSnapshotBinary from the
+  * public signed artifact through the repository JsonSerializer, verifies its complete frozen-committee proof set, and then invokes the
+  * production Currency outcome transition. No run may read an archive or a process-local consensus sidecar.
   */
 object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
 
@@ -182,11 +181,16 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
       peerHistory = Some(prior.signedArtifactPeerHistory),
       certifiedLineage = (prior.finished.certifiedOutcome, prior.finished.certifiedBinary).mapN {
         case (outcome, binary) =>
-          CertifiedLineageEvidenceV1(outcome, CertifiedLayerEvidenceV1.Currency(
-            binary.value.lastSnapshotHash,
-            binary.value.fee,
-            binary.proofs
-          ).some)
+          CertifiedLineageEvidenceV1(
+            outcome,
+            CertifiedLayerEvidenceV1
+              .Currency(
+                binary.value.lastSnapshotHash,
+                binary.value.fee,
+                binary.proofs
+              )
+              .some
+          )
       }
     )
 
@@ -323,20 +327,22 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         core.toSet,
         config.quorumThresholdFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      triggerStatements <- roundStart.map(byId).traverse(pair =>
-        signTriggerStatement[IO](
-          triggerStatement(
-            ConsensusDomain.CurrencyL0,
-            "integrationnet-metagraph",
-            ordinal.value.value,
-            prior.finished.snapshotHash,
-            fullHash,
-            config.deterministicConfigHash,
-            trigger.some
-          ),
-          pair
+      triggerStatements <- roundStart
+        .map(byId)
+        .traverse(pair =>
+          signTriggerStatement[IO](
+            triggerStatement(
+              ConsensusDomain.CurrencyL0,
+              "integrationnet-metagraph",
+              ordinal.value.value,
+              prior.finished.snapshotHash,
+              fullHash,
+              config.deterministicConfigHash,
+              trigger.some
+            ),
+            pair
+          )
         )
-      )
       binaryContent <- serializer.serialize(signedArtifact)
       signedBinary <- signWith(
         StateChannelSnapshotBinary(prior.finished.binaryArtifactHash, binaryContent, SnapshotFee.MinValue),
@@ -441,11 +447,13 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
                 trustedBinary.value.lastSnapshotHash,
                 parentFrozenCommittee
               ).flatMap(
-                _.flatMap(binary => Either.cond(
-                  binary.hash === prior.finished.binaryArtifactHash,
-                  (),
-                  "parent_binary_hash_mismatch"
-                )).pure[IO]
+                _.flatMap(binary =>
+                  Either.cond(
+                    binary.hash === prior.finished.binaryArtifactHash,
+                    (),
+                    "parent_binary_hash_mismatch"
+                  )
+                ).pure[IO]
               )
             case _ => "currency_parent_layer_evidence_missing".asLeft[Unit].pure[IO]
           }
@@ -629,8 +637,12 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
       }
       candidate = built._1
       frames = built._2
-      artifacts = Map.from((root.key -> root.finished.signedMajorityArtifact) :: frames.map(frame => frame.artifact.ordinal -> frame.artifact))
-      infos = Map.from((root.key -> root.finished.context.snapshotInfo) :: frames.map(frame => frame.artifact.ordinal -> frame.context.snapshotInfo))
+      artifacts = Map.from(
+        (root.key -> root.finished.signedMajorityArtifact) :: frames.map(frame => frame.artifact.ordinal -> frame.artifact)
+      )
+      infos = Map.from(
+        (root.key -> root.finished.context.snapshotInfo) :: frames.map(frame => frame.artifact.ordinal -> frame.context.snapshotInfo)
+      )
       validator = CurrencyCertifiedDownloadValidator.make[IO](
         config = config,
         coreCommitteeSize = 2,

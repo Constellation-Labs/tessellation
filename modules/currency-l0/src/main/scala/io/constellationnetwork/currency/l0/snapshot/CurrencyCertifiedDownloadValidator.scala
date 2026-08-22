@@ -109,7 +109,7 @@ object CurrencyCertifiedDownloadValidator {
     else
       "trusted_predecessor_not_certified_or_authorized_root".asLeft
 
-  def make[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider] (
+  def make[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider](
     config: ConsensusConfig,
     coreCommitteeSize: Int,
     seedlistPeerIds: Set[PeerId],
@@ -276,7 +276,10 @@ object CurrencyCertifiedDownloadValidator {
 
               validation.as(snapshot -> CurrencySnapshotContext(currencyAddress, info))
             }
-          case _ => s"trusted_snapshot_missing:${ordinal.value.value}".asLeft[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)].pure[F]
+          case _ =>
+            s"trusted_snapshot_missing:${ordinal.value.value}"
+              .asLeft[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]
+              .pure[F]
         }
       }
     }
@@ -326,7 +329,9 @@ object CurrencyCertifiedDownloadValidator {
         case Left(error) => error.asLeft[TrustedParent].pure[F]
         case Right((snapshot, context)) =>
           HasherSelector[F].withCurrent { implicit hasher =>
-            snapshot.value.hash.map(hash => TrustedParent(publicGenesisRoot(snapshot, context, hash), TrustedParentKind.AuthorizedRoot).asRight)
+            snapshot.value.hash.map(hash =>
+              TrustedParent(publicGenesisRoot(snapshot, context, hash), TrustedParentKind.AuthorizedRoot).asRight
+            )
           }
       }
 
@@ -397,13 +402,13 @@ object CurrencyCertifiedDownloadValidator {
                   .flatMap(result =>
                     result
                       .flatMap(reconstructed =>
-                      Either.cond(
-                        reconstructed.hash === trusted.finished.binaryArtifactHash &&
-                          reconstructed.signed.value === trustedBinary.value,
-                        (),
-                        "currency_parent_binary_mismatch"
+                        Either.cond(
+                          reconstructed.hash === trusted.finished.binaryArtifactHash &&
+                            reconstructed.signed.value === trustedBinary.value,
+                          (),
+                          "currency_parent_binary_mismatch"
+                        )
                       )
-                    )
                       .pure[F]
                   )
               }
@@ -421,7 +426,7 @@ object CurrencyCertifiedDownloadValidator {
         case Some(evidence: CertifiedConsensus.CertifiedLayerEvidenceV1.Currency) =>
           validateCarriedParentBinary(trusted, round).flatMap {
             case Left(error) => error.asLeft[CurrencyConsensusOutcome].pure[F]
-            case Right(_) =>
+            case Right(_)    =>
               // The first certified binary is the authority for the legacy/genesis binary parent
               // scalar only. Committee authority remains the independently derived root above.
               val trustedForRound =
