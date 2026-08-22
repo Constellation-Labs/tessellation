@@ -215,7 +215,10 @@ do not extrapolate only from legacy logarithmic snapshot-info retention.
    `dag_consensus_certified_recovery_candidate_total`, and
    `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`, plus
    `dag_consensus_trigger_evidence_excluded_total` and
-   `dag_currency_consensus_trigger_evidence_excluded_total`, in the activation dashboard.
+   `dag_currency_consensus_trigger_evidence_excluded_total`, and
+   `dag_consensus_admission_pre_proposal_grace_ms` in the activation dashboard. At the shipped
+   one-second probe bounds, an open cadence round with a nominee may report 3500 ms while its
+   current-key Facility/probe/vote pipeline completes; a valid certificate closes the wait early.
 8. At the Currency protocol boundary, verify each active lineage's first eligible
    successor carries `version=1.0.0`. Monitor
    `dag_currency_l0_snapshot_protocol_total{outcome}` and do not restart a

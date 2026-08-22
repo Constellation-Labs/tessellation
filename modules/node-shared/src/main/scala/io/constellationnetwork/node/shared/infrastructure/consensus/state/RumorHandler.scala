@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, StallDetector}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
@@ -357,10 +357,14 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
       ) >>
         storage
           .addAdmissionVote(origin, key, signedVote)
-          .flatMap(triggerUpdateIfChanged(queue, key)) >>
-        queue.offer(
-          ConsensusCommand.CheckAdmissionAssembly(key, target)
-        )
+          .flatMap {
+            // Keep the admission pipeline ordered like the local-vote path: the last
+            // quorum vote must be assembled before proposal reevaluation can close the
+            // current round. Both commands are exact-key scoped; a duplicate vote emits
+            // neither command because it cannot change the certificate.
+            case Some(_) => StallDetector.admissionVoteFollowUpCommands(key, target).traverse_(queue.offer)
+            case None    => Async[F].unit
+          }
     }
   }
 

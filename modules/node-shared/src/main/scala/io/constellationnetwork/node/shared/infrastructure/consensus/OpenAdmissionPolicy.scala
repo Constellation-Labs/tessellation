@@ -36,8 +36,15 @@ object OpenAdmissionPolicy {
     *
     * Probation presence is evidence before the first vote exists. Without that rule, a fast facilities phase can close before a carried
     * probation peer has accumulated its required fresh observations. The recovery window includes one extra attempt interval for
-    * signed-vote gossip and certificate assembly. This policy only delays local proposal construction; it is not serialized or used to
-    * validate a proposal.
+    * signed-vote gossip and certificate assembly.
+    *
+    * Open admission needs the same lifecycle allowance even though it requires only one fresh observation: the fixed nominee must first
+    * deliver a current-round Facility, then answer the direct exact-tip probe, and only then can Core emit and assemble signed votes. At a
+    * small committee those stages can begin near the end of the inherited base grace. Reserve one interval for the probe and one for vote
+    * gossip/assembly whenever an open nominee or current-key vote exists. The two lanes run concurrently, so probation's longer window
+    * subsumes the open window when both are active.
+    *
+    * This policy only delays local proposal construction; it is not serialized or used to validate a proposal.
     */
   def preProposalGrace(
     elapsed: FiniteDuration,
@@ -55,11 +62,15 @@ object OpenAdmissionPolicy {
       if (probationProbeInterval >= probationProbeTimeout) probationProbeInterval else probationProbeTimeout
     val requiredAttempts = math.max(1, requiredProbationObservations)
     val probationGrace = perAttemptWindow * (requiredAttempts.toLong + 1L)
+    val openAdmissionGrace = perAttemptWindow * 2L
+    val openAdmissionPipelineActive = hasOpenEvidence || hasAdmissionVoteEvidence
     // `elapsed` begins at state creation, before the monitor is guaranteed to be running. Keep
     // the inherited base grace as scheduling allowance, then add the probe/assembly window. Using
     // max(base, probationGrace) would let state-creation work consume the first probe interval.
     val effectiveGrace =
-      if (probationPresent) baseGrace + probationGrace else baseGrace
+      if (probationPresent) baseGrace + probationGrace
+      else if (openAdmissionPipelineActive) baseGrace + openAdmissionGrace
+      else baseGrace
     val hasAdmissionEvidence = probationPresent || hasOpenEvidence || hasAdmissionVoteEvidence
     val shouldWait =
       maxAdmissionSeats > 0 &&

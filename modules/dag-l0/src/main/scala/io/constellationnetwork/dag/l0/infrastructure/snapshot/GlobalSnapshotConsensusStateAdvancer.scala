@@ -123,6 +123,13 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
 
+  private final case class AdmissionPreProposalWait(
+    shouldWait: Boolean,
+    voteTargetCount: Int,
+    hasAdmissionVoteEvidence: Boolean,
+    effectiveGrace: FiniteDuration
+  )
+
   private[snapshot] def completeDestructiveSoftReset[F[_]: Async](
     scheduleRestart: F[Unit],
     tickResetCount: F[Int],
@@ -1067,8 +1074,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                       removedFacilitators = RemovedFacilitators(state.removedFacilitators.value ++ persistentForkRemovals)
                     )
                   else state
-                maybeWaitForAdmissionCertificates(updatedState, resources).flatMap { waitForAcs =>
-                  if (waitForAcs)
+                maybeWaitForAdmissionCertificates(updatedState).flatMap { admissionWait =>
+                  if (admissionWait.shouldWait)
                     ConsensusLog
                       .info(
                         logger,
@@ -1080,7 +1087,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                         "active" -> updatedState.roundStartFacilitators.value.size.toString,
                         "classifierTarget" -> activeAdmissionTarget(updatedState).toString,
                         "nominees" -> openAdmissionNominees(updatedState).size.toString,
-                        "admissionVoteTargets" -> resources.admissionVotes.size.toString
+                        "admissionVoteTargets" -> admissionWait.voteTargetCount.toString,
+                        "admissionVoteEvidence" -> admissionWait.hasAdmissionVoteEvidence.toString,
+                        "effectiveGraceMs" -> admissionWait.effectiveGrace.toMillis.toString
                       )
                       .as(none[Transition])
                   else toProposalsPhase(updatedState, facilities)
@@ -1343,11 +1352,14 @@ object GlobalSnapshotConsensusStateAdvancer {
       }
 
       private def maybeWaitForAdmissionCertificates(
-        state: GlobalSnapshotConsensusState,
-        resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind]
-      ): F[Boolean] =
+        state: GlobalSnapshotConsensusState
+      ): F[AdmissionPreProposalWait] =
         for {
           now <- Async[F].monotonic
+          // A CheckUpdate may have been queued from a Facility/resource snapshot taken just
+          // before the first admission vote arrived. Read the current-key accumulator at the
+          // actual proposal boundary so the leader cannot close over that stale snapshot.
+          currentResources <- consensusStorage.getResources(state.key)
           acs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
           ecs <- consensusStorage.getAssembledEvictionCertificates(state.key)
           firstEcsSeenAt <- consensusStorage.getAssembledEvictionCertificateFirstSeen(state.key)
@@ -1355,7 +1367,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           openAllowed = openExpansionAllowedAt(state)
           hasOpenEvidence = openAllowed && openAdmissionNominees(state).nonEmpty
           hasAdmissionVoteEvidence =
-            resources.admissionVotes.keysIterator.exists(target => probation.contains(target) || openAllowed)
+            currentResources.admissionVotes.keysIterator.exists(target => probation.contains(target) || openAllowed)
           hasApplicableCertificate = acs.exists(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
           hasPairableOpenCertificate = acs.exists { cert =>
             !probation.contains(cert.targetPeer) &&
@@ -1386,7 +1398,13 @@ object GlobalSnapshotConsensusStateAdvancer {
             decision.effectiveGrace.toMillis
           )
           _ <- Metrics[F].updateGauge("dag_consensus_atomic_replacement_pair_grace_active", if (atomicPairWait) 1L else 0L)
-        } yield decision.shouldWait || atomicPairWait
+        } yield
+          AdmissionPreProposalWait(
+            shouldWait = decision.shouldWait || atomicPairWait,
+            voteTargetCount = currentResources.admissionVotes.size,
+            hasAdmissionVoteEvidence = hasAdmissionVoteEvidence,
+            effectiveGrace = decision.effectiveGrace
+          )
 
       /** Caps the assembled admission certificates attached to an outgoing proposal at the validation limit (`acs_too_many` in
         * `validateProposalAcs`). Selection is delegated to the shared `AdmissionCertificateSelector` -- see its scaladoc for the

@@ -2071,7 +2071,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                 )
                 emissionTargets.traverse_ { target =>
                   admissionVoter.emitAdmissionVote(key, target, AdmissionReason.ReadyAtTip) >>
-                    queue.offer(ConsensusCommand.CheckAdmissionAssembly(key, target))
+                    StallDetector.admissionVoteFollowUpCommands(key, target).traverse_(queue.offer)
                 }
               }.as(AdmissionVoteEmission(nextProbedTargets, probationObservation))
             }
@@ -2230,6 +2230,21 @@ object StallDetector {
       val probation = probationReady.distinct
       probation ++ openReady.filterNot(probation.toSet).distinct.take(math.max(0, maxOpenAdmissions))
     } else (probationReady ++ openReady).distinct
+
+  /** Wake both stages after a locally stored admission vote.
+    *
+    * Certificate assembly alone is insufficient when the local vote is still below quorum: unlike an inbound vote, the local emission path
+    * does not pass through `RumorHandler.triggerUpdateIfChanged`. Rechecking the state keeps the proposal in its bounded vote-aware grace
+    * while the remaining Core votes are in flight. Both commands are current-key scoped and become inert after round cleanup.
+    */
+  private[consensus] def admissionVoteFollowUpCommands[Key](
+    key: Key,
+    target: PeerId
+  ): List[ConsensusCommand[Key, Nothing, Nothing, Nothing]] =
+    List(
+      ConsensusCommand.CheckAdmissionAssembly(key, target),
+      ConsensusCommand.CheckUpdate(key)
+    )
 
   /** Select the fixed open-expansion targets a Core voter may consider in one round.
     *
