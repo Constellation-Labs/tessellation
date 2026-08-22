@@ -294,6 +294,9 @@ object ConsensusEventLoop {
     // supplies parent snapshot proof signers; Currency L0 deliberately leaves this absent
     // because unanimity cannot prove an unseated (n + 1)th signer.
     locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
+    // Monotonic certified-lineage fact. False only for the exact canonical from-genesis
+    // singleton before its first 1 -> 2 expansion.
+    expandedBeyondSingletonOf: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
@@ -407,6 +410,7 @@ object ConsensusEventLoop {
         parentRoundCommitteeOf,
         openAdmissionCadenceOf,
         locallyObservedParentSignersOf,
+        expandedBeyondSingletonOf,
         lastSnapshotHashOf,
         getPeerChainTips,
         admissionCandidateTipProbe,

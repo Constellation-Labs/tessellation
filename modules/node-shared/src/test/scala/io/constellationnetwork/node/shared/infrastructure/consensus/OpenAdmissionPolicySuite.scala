@@ -194,6 +194,7 @@ object OpenAdmissionPolicySuite extends FunSuite {
     val committeeOfTwo = Set(first, second)
     val singletonGate = OpenAdmissionPolicy.headroomRequired(
       certifiedConsensusActive = false,
+      allowSingletonBootstrapExpansion = false,
       bootstrapActive = true,
       currentCommitteeSize = 1,
       maxAdmissionSeats = 1,
@@ -201,6 +202,7 @@ object OpenAdmissionPolicySuite extends FunSuite {
     )
     val crossingGate = OpenAdmissionPolicy.headroomRequired(
       certifiedConsensusActive = false,
+      allowSingletonBootstrapExpansion = false,
       bootstrapActive = true,
       currentCommitteeSize = 2,
       maxAdmissionSeats = 1,
@@ -229,10 +231,11 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect(twoSignerCrossing.allowsOpenAdmission)
   }
 
-  test("v35 keeps next-seat headroom active while the reset proof window still reports bootstrap") {
+  test("v35 announced activation keeps next-seat headroom active while the reset proof window reports bootstrap") {
     val singleton = Set(peer(1))
     val gate = OpenAdmissionPolicy.headroomRequired(
       certifiedConsensusActive = true,
+      allowSingletonBootstrapExpansion = false,
       bootstrapActive = true,
       currentCommitteeSize = singleton.size,
       maxAdmissionSeats = 1,
@@ -250,6 +253,48 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect.same(Some(2), decision.headroom.map(_.nextFinalityFloor)) &&
     expect(!decision.allowsProbationAdmission) &&
     expect(!decision.allowsOpenAdmission)
+  }
+
+  test("v35 from-genesis lineage preserves singleton bootstrap but gates the threshold-crossing batch") {
+    val first = peer(1)
+    val second = peer(2)
+    val singleton = Set(first)
+    val committeeOfTwo = Set(first, second)
+    val singletonGate = OpenAdmissionPolicy.headroomRequired(
+      certifiedConsensusActive = true,
+      allowSingletonBootstrapExpansion = true,
+      bootstrapActive = true,
+      currentCommitteeSize = singleton.size,
+      maxAdmissionSeats = 1,
+      bootstrapCompleteProofsThreshold = 3
+    )
+    val crossingGate = OpenAdmissionPolicy.headroomRequired(
+      certifiedConsensusActive = true,
+      allowSingletonBootstrapExpansion = false,
+      bootstrapActive = true,
+      currentCommitteeSize = committeeOfTwo.size,
+      maxAdmissionSeats = 1,
+      bootstrapCompleteProofsThreshold = 3
+    )
+    val singletonDecision = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = singleton,
+      locallyObservedParentSigners = Some(singleton),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = singletonGate
+    )
+    val crossingDecision = OpenAdmissionPolicy.evaluate(
+      cadenceAllowed = true,
+      currentCommittee = committeeOfTwo,
+      locallyObservedParentSigners = Some(Set(first)),
+      quorumThresholdFraction = 2.0 / 3.0,
+      headroomGateActive = crossingGate
+    )
+
+    expect(!singletonGate) &&
+    expect(singletonDecision.allowsOpenAdmission) &&
+    expect(crossingGate) &&
+    expect(!crossingDecision.allowsOpenAdmission)
   }
 
   test("headroom covers the largest admission batch accepted by a proposal") {

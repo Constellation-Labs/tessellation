@@ -23,9 +23,33 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
 - `fields-added-ordinals.currency-snapshot-protocol-v1` authorizes the signed Currency
   artifact version transition from `0.0.1` to `1.0.0` using Global L0 ordinal space.
 - DAG L0 and every Currency L0 use their own snapshot ordinal space.
-- The public global/currency snapshot and state-proof shapes do not change. The existing
-  signed Currency `version` value and artifact bytes intentionally change at the global
-  protocol-v1 boundary.
+- The public DAG and Currency incremental snapshots gain a trailing optional
+  `certifiedLineage` field, and their full snapshots gain a trailing optional
+  `certifiedCheckpoint` field. Below activation those fields remain absent and the
+  drop-null encoder preserves legacy artifact bytes. At and after activation the
+  incremental artifact hash intentionally commits to the child-carried parent
+  certificate. Snapshot-info and state-proof schemas/calculation do not change.
+- The existing signed Currency `version` value and artifact bytes also intentionally
+  change at the separate global protocol-v1 boundary.
+
+### Historical Currency binary encoder contract
+
+Certified Currency lineage V1 carries only the parent binary's last-hash, fee, and complete
+proof envelope. A verifier reconstructs the omitted content by serializing the public signed
+Currency artifact with the same `JsonSerializer` pipeline used by
+`StateChannelSnapshotService.createBinary`: sorted/drop-null JSON, UTF-8, then brotli4j 1.12.0
+at quality 2. It then rebuilds and hashes `StateChannelSnapshotBinary` and verifies the carried
+proofs.
+
+That reconstruction makes the exact V1 output historical protocol code. The brotli4j version
+is pinned in `project/Dependencies.scala`, and `CertifiedConsensusSuite` pins a complete
+reconstruction preimage. A dependency, printer, outer `Signed` encoder, Currency artifact
+encoder, compression parameter, or native output change that alters those bytes must fail the
+golden test. Do not update the expected hash to make such a change pass.
+
+Future encoding evolution must introduce a new `CertifiedLayerEvidence` variant/version and
+retain the V1 verifier for historical lineage. The versioned sealed-trait alternative is the
+wire discriminator; application semver is not used to reinterpret historical bytes.
 
 Do not confuse the two gates. Nodes started with different schema/config hashes cannot
 form a healthy active consensus cluster even below the activation key. Conversely,
@@ -65,9 +89,10 @@ and is therefore fenced independently as well.
    commit that real hash, not the legacy `Hash.empty` placeholder, and the follower must
    not substitute a peer's potentially newer calculated state. Together these let
    joining validators persist the authority root before ordinal 2 appears. A follower
-   that first appears only after the root window still needs the
-   separately trusted checkpoint described below; one peer's terminal private outcome is
-   not long-range membership authority.
+   that first appears later must obtain the locally validated public root plus the complete
+   retained child-carried lineage through the tip. Once checkpoint adoption is implemented,
+   an independently announced full-snapshot hash may replace that history requirement. One
+   peer's terminal private outcome is never long-range membership authority.
 4. Prove that the signed activation seed is live: its observed parent signers must meet
    the frozen-committee finality floor, and any planned admission batch must satisfy
    `observed parent signers >= Q(seed size + batch size)`. V35 enforces this headroom
@@ -84,6 +109,12 @@ and is therefore fenced independently as well.
    write: no vote/commit may progress from a non-durable lock, and the lock must remain
    until the crash-atomic sidecar write has succeeded. A deliberately truncated journal
    file must fail closed rather than start consensus.
+   Exercise two honest leaders that cross the Facility phase on different valid subsets.
+   Each Facility must carry a transferably signed `TriggerStatement`; the proposal must
+   contain a leader-selected, independently verifiable quorum whose deterministic
+   majority equals the certified trigger. One malformed statement must be ignored when
+   a valid leader-bearing quorum remains, while an actually under-quorum valid set must
+   hold the phase fail-closed. Local rc.10 event-pacing state must never participate.
 8. Exercise both Tier-1 and Core atomic replacement: three consecutive elapsed proof
    misses, Core-quorum Silent and ReadyAtTip certificates, one ProposalQC carrying equal
    admitted/evicted sets, unchanged committee cardinality, and no standalone ECS acceptance.
@@ -140,6 +171,19 @@ and is therefore fenced independently as well.
     restart path resets its configured next ordinal and clears its OpenSearch index; back
     up the stores and explicitly approve/coordinate that rebuild rather than treating the
     release-branch push as a harmless rolling restart.
+13. Verify public certified-lineage retention. From A-1 (or the canonical first
+    incremental root for certification-from-genesis) through the current tip, every
+    incremental artifact and snapshot-info/context required for sequential validation
+    must be readable after a process restart. The v35 storage policy retains this
+    context range contiguously in addition to legacy logarithmic checkpoints. Do not
+    prune an interior frame until an independently announced full checkpoint is both
+    produced and supported by the download path.
+
+Capacity-plan this retained epoch before activation. At the measured 73-seat committee,
+`CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a sustained
+43-second cadence, before filesystem/JSON overhead and the additional contiguous snapshot-info
+history. Record actual disk-growth rate and free-space runway during the IntegrationNet soak;
+do not extrapolate only from legacy logarithmic snapshot-info retention.
 
 ## Deployment sequence
 
@@ -161,16 +205,17 @@ and is therefore fenced independently as well.
 5. Before crossing, verify every expected active node is on the recorded jar/config.
 6. At the key, verify the canonical legacy-window reset, frozen full/Core hashes,
    ProposalQC, CoreCommitQC, full artifact finality floor, persisted certified sidecar,
-   and identical semantic value/derived operational outcome on multiple nodes. Raw
-   sidecar files may contain different valid signature subsets and need not be
-   byte-identical.
+   child-carried parent certificate, and identical semantic value/derived operational
+   outcome on multiple nodes. Raw sidecar files and equivalent carried QCs may contain
+   different valid signature subsets and need not be byte-identical.
 7. Continue watching admission/eviction cadence, signer/reward population, finality
    headroom, view changes, round duration, direct-send queue pressure, soft resets, and
    certified recovery. Include
    `dag_consensus_certified_recovery_total`,
    `dag_consensus_certified_recovery_candidate_total`, and
-   `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`
-   in the activation dashboard.
+   `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`, plus
+   `dag_consensus_trigger_evidence_excluded_total` and
+   `dag_currency_consensus_trigger_evidence_excluded_total`, in the activation dashboard.
 8. At the Currency protocol boundary, verify each active lineage's first eligible
    successor carries `version=1.0.0`. Monitor
    `dag_currency_l0_snapshot_protocol_total{outcome}` and do not restart a
@@ -192,13 +237,29 @@ Before activation, verify the ordinary-download lineage boundary on every source
   recovery committee remains bound to its operator-signed plan. Their first certified
   child is projected through the same typed committee projector and verified through
   the ordinary bound-QC adoption path;
-- a restart after activation retains both the current and immediately preceding
-  certified outcome sidecars and validates the current outcome from that predecessor;
-- a missing/corrupt predecessor fails before application storage, consensus storage,
-  safety locks, or sidecars change; and
-- a fresh post-activation node has a signed operator recovery plan or separately
-announced trusted checkpoint. Until contiguous certificate-chain download exists,
-it cannot securely bootstrap from one arbitrary Ready peer.
+- each public child at N+1 carries N's complete `CertifiedOutcome`. A downloader starts
+  from its independently validated A-1/genesis root, walks every public artifact and
+  context in order, re-derives membership and layer state, and obtains only the terminal
+  certificate from the authenticated outcome endpoint. Signatures, unique signers,
+  parent hashes, state proofs, seedlist eligibility, committee bindings, and every
+  layer-specific link are checked before anything is installed;
+- the complete replay is atomic: a missing/corrupt interior frame fails before
+  application storage, consensus storage, safety locks, or sidecars change. No verified
+  prefix becomes authority on its own;
+- locally produced/previously validated outcome sidecars remain a bounded fast path,
+  not the long-range trust root. Deleting them may make recovery slower but cannot make
+  a peer-provided committee self-authenticating;
+- Currency children carry only the parent binary's last-hash, fee, and proof envelope.
+  The verifier reconstructs the exact binary content from the already validated public
+  parent artifact with the pinned V1 JSON+Brotli encoder, hashes it, then verifies its
+  frozen-committee proofs. Carrying the full parent binary is forbidden because it
+  would recursively embed the entire lineage; and
+- full snapshots reserve an optional `CertifiedCheckpointV1` projection. Its containing
+  full-snapshot hash must be independently announced; the certificate inside cannot
+  authorize the committee that verifies itself. The current initial-activation path
+  deliberately relies on contiguous root-to-tip retention. Do not treat the checkpoint
+  field as an operational recovery mechanism until checkpoint publication, authority
+  distribution, and download adoption are separately implemented and exercised.
 
 The signed recovery-plan equality check applies only while installing its exact anchor.
 After that anchor is locally accepted, successor outcomes use the ordinary certified
@@ -220,8 +281,9 @@ deterministically at the configured key.
 
 ## Availability and rollback
 
-V35 does not shrink the current-round safety universe. If more than one third of the
-frozen Core disappears during a round, a coordinated restart may be required.
+V35 does not shrink the current-round safety universe. Loss of the configured Core
+quorum prevents the prepare/commit certificate; loss of the configured full-committee
+quorum prevents artifact finality. Either condition may require a coordinated restart.
 
 Global L0 replacement is preventive, not subquorum recovery. It runs only while the
 original frozen Core can still certify the complete N-to-N transition. Operators must
@@ -234,11 +296,11 @@ If activation fails:
 3. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
 4. Move the activation key only through another announced, full-cluster rollout.
 
-Do not work around `trusted_predecessor_sidecar_missing` by copying a peer's JSON
-sidecar into the local directory. Local provenance is the authority: the predecessor
-must have been produced by this node, accepted through the certified preflight, or
-superseded by an explicit signed recovery plan. Copying unverified transport bytes
-reintroduces the circular committee proof this boundary is designed to reject.
+Do not work around a fast-path predecessor-sidecar error by copying a peer's JSON
+sidecar into the local directory. The validator must fall back to the retained public
+root-to-tip lineage and derive authority sequentially. Copying unverified private
+outcome bytes would reintroduce the circular committee proof this boundary is designed
+to reject.
 
 For Currency L0 emergency solo rollback, `--allow-solo-consensus` remains a one-shot,
 exactly-one-node recovery operation. Never persist it in systemd or automatic restart

@@ -1,5 +1,7 @@
 package io.constellationnetwork.currency.l0.snapshot
 
+import java.security.KeyPair
+
 import cats.effect.kernel.Clock
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
@@ -27,8 +29,8 @@ import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealth
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -47,12 +49,69 @@ abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
 
 object CurrencySnapshotConsensusStateCreator {
 
-  def make[F[_]: Async: Metrics: HasherSelector](
+  /** Canonical v35 activation bridge shared by live state creation and public-lineage replay.
+    *
+    * Keeping one implementation is safety-critical: a downloader must derive exactly the same flushed operational state and committee as a
+    * continuously running node. The only seed is signed controller evidence in the public legacy parent artifact; local sidecars never
+    * participate.
+    */
+  private[snapshot] def resetLegacyOutcome[F[_]: Async: HasherSelector](
+    key: CurrencySnapshotKey,
+    outcome: CurrencyConsensusOutcome,
+    config: ConsensusConfig
+  ): F[CurrencyConsensusOutcome] =
+    if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
+    else {
+      val maybeSeed =
+        ControllerEvidenceDerivation.certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
+
+      maybeSeed.fold(
+        Async[F].raiseError[CurrencyConsensusOutcome](
+          new IllegalStateException(
+            s"Cannot activate certified consensus at currency ordinal=${key.value.value}: signed controller evidence is absent"
+          )
+        )
+      ) { seed =>
+        HasherSelector[F].withCurrent { implicit hasher =>
+          seed.hash.map { seedHash =>
+            outcome.copy(
+              facilitators = Facilitators(seed),
+              removedFacilitators = RemovedFacilitators.empty,
+              withdrawnFacilitators = WithdrawnFacilitators.empty,
+              eligibleFacilitators = EligibleFacilitators.empty,
+              finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
+              removalPenalties = SortedMap.empty,
+              deferralCountdown = SortedMap.empty,
+              peerQuality = SortedMap.empty,
+              cumulativeMissCounts = SortedMap.empty,
+              recentProofSizes = SortedMap.empty,
+              readmissionCountdown = SortedMap.empty,
+              peerSelfHealth = SortedMap.empty,
+              peerViewChanges = SortedMap.empty,
+              recentSigners = SortedMap.empty,
+              peerTiers = SortedMap.empty,
+              activeAdmissionScores = SortedMap.empty,
+              lastTimeoutCertificateVoters = SortedSet.empty,
+              recentRoundEndTimes = SortedMap.empty,
+              controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
+              penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some,
+              // Currency ordinal-gated activation is mature and may not use the
+              // canonical from-genesis singleton expansion exception.
+              expandedBeyondSingleton = true.some
+            )
+          }
+        }
+      }
+    }
+
+  def make[F[_]: Async: Metrics: HasherSelector: SecurityProvider](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     gossip: Gossip[F],
     selfId: PeerId,
+    networkId: String,
+    keyPair: KeyPair,
     seedlist: Option[Set[SeedlistEntry]],
     facilitatorSelector: FacilitatorSelector,
     consensusConfigHash: Hash,
@@ -69,57 +128,11 @@ object CurrencySnapshotConsensusStateCreator {
 
     val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
-    /** V35 activation bridge for Currency L0.
-      *
-      * Currency artifacts do not carry `nextFacilitators`, and artifact proof subsets can differ across honest finalizers. The seed must
-      * therefore come from the latest controller-evidence entry inside the signed artifact value. If that evidence is absent, activation
-      * fails closed instead of inventing a committee from node-local data. All legacy sidecar/controller windows are then flushed just as
-      * on DAG L0.
-      */
     private def resetLegacyOutcomeAtActivation(
       key: CurrencySnapshotKey,
       outcome: CurrencyConsensusOutcome
     ): F[CurrencyConsensusOutcome] =
-      if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
-      else {
-        val maybeSeed =
-          ControllerEvidenceDerivation.certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
-
-        maybeSeed.fold(
-          Async[F].raiseError[CurrencyConsensusOutcome](
-            new IllegalStateException(
-              s"Cannot activate certified consensus at currency ordinal=${key.value.value}: signed controller evidence is absent"
-            )
-          )
-        ) { seed =>
-          HasherSelector[F].withCurrent { implicit hasher =>
-            seed.hash.map { seedHash =>
-              outcome.copy(
-                facilitators = Facilitators(seed),
-                removedFacilitators = RemovedFacilitators.empty,
-                withdrawnFacilitators = WithdrawnFacilitators.empty,
-                eligibleFacilitators = EligibleFacilitators.empty,
-                finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
-                removalPenalties = SortedMap.empty,
-                deferralCountdown = SortedMap.empty,
-                peerQuality = SortedMap.empty,
-                cumulativeMissCounts = SortedMap.empty,
-                recentProofSizes = SortedMap.empty,
-                readmissionCountdown = SortedMap.empty,
-                peerSelfHealth = SortedMap.empty,
-                peerViewChanges = SortedMap.empty,
-                recentSigners = SortedMap.empty,
-                peerTiers = SortedMap.empty,
-                activeAdmissionScores = SortedMap.empty,
-                lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
-                recentRoundEndTimes = SortedMap.empty,
-                controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
-                penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some
-              )
-            }
-          }
-        }
-      }
+      CurrencySnapshotConsensusStateCreator.resetLegacyOutcome(key, outcome, config)
 
     def tryFacilitateConsensus(
       key: CurrencySnapshotKey,
@@ -709,6 +722,25 @@ object CurrencySnapshotConsensusStateCreator {
         selfHealth <- localHealthMonitor.current
         // v19 phase 2: wall-clock millis at signing time. See dag-l0 mirror.
         proposerClockMs <- Clock[F].realTime.map(_.toMillis)
+        triggerStatement <-
+          if (state.certifiedConsensusActive)
+            HasherSelector[F].withCurrent { implicit hasher =>
+              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+                CertifiedConsensus.signTriggerStatement[F](
+                  CertifiedConsensus.triggerStatement(
+                    CertifiedConsensus.ConsensusDomain.CurrencyL0,
+                    networkId,
+                    key.value.value,
+                    lastOutcome.finished.snapshotHash,
+                    roundStartHash,
+                    consensusConfigHash,
+                    maybeTrigger
+                  ),
+                  keyPair
+                )
+              }
+            }.map(_.some)
+          else none[io.constellationnetwork.security.signature.Signed[CertifiedConsensus.TriggerStatement]].pure[F]
         facility = Facility(
           eventHashes,
           candidates,
@@ -718,7 +750,8 @@ object CurrencySnapshotConsensusStateCreator {
           lastOutcome.finished.snapshotHash,
           consensusConfigHash = consensusConfigHash.some,
           selfHealthHint = selfHealth.some,
-          proposerClockMs = proposerClockMs.some
+          proposerClockMs = proposerClockMs.some,
+          triggerStatement = triggerStatement
         )
         declaration = ConsensusPeerDeclaration(key, facility)
         effect = ConsensusStateCreator.exactFacilityEffect[F, CurrencySnapshotKey](

@@ -17,6 +17,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
@@ -60,7 +61,8 @@ object CurrencySnapshotConsensusFunctions {
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
         .validateSnapshot(
@@ -69,7 +71,8 @@ object CurrencySnapshotConsensusFunctions {
           artifact,
           facilitators,
           getGlobalSnapshotByOrdinal,
-          peerHistory
+          peerHistory,
+          certifiedLineage = certifiedLineage
         )
         .flatTap {
           case Invalid(errors) =>
@@ -87,7 +90,8 @@ object CurrencySnapshotConsensusFunctions {
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
         case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
@@ -109,7 +113,8 @@ object CurrencySnapshotConsensusFunctions {
           getGlobalSnapshotByOrdinal,
           shouldPerformMetagraphSpecificValidations = true,
           maybeCustomArtifacts,
-          peerHistory
+          peerHistory,
+          certifiedLineage = certifiedLineage
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

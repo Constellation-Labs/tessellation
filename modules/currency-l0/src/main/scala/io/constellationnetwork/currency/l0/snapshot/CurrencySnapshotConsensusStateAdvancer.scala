@@ -36,12 +36,8 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
+import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{
-  CurrencyArtifactMismatch,
-  SnapshotDifferentThanExpected,
-  SomeBlocksWereNotAccepted
-}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
@@ -78,7 +74,20 @@ abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
       CurrencySnapshotStatus,
       CurrencyConsensusOutcome,
       CurrencyConsensusKind
-    ]
+    ] {
+
+  /** Currency counterpart of DAG's root-to-tip public-round derivation. The binary is reconstructed and signature-verified from the
+    * child-carried bounded V1 envelope before this method is called; this method binds it to the public artifact and derives the private
+    * outcome without trusting peer-local sidecar fields.
+    */
+  def deriveCertifiedPublicRound(
+    state: CurrencySnapshotConsensusState,
+    artifact: Signed[CurrencySnapshotArtifact],
+    binary: Hashed[StateChannelSnapshotBinary],
+    context: CurrencySnapshotContext,
+    certified: CertifiedConsensus.CertifiedOutcome
+  ): F[Either[String, (CurrencySnapshotConsensusState, CurrencyConsensusOutcome)]]
+}
 
 object CurrencySnapshotConsensusStateAdvancer {
 
@@ -472,137 +481,166 @@ object CurrencySnapshotConsensusStateAdvancer {
               recentRoundEndTimes = newRecentRoundEndTimes,
               // Controller evidence stages 1+3 (write-only), mirror of dag-l0.
               controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
-              penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None
+              penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None,
+              expandedBeyondSingleton = Option
+                .when(state.certifiedConsensusActive)(
+                  CertifiedConsensusGenesis.nextExpandedBeyondSingleton(
+                    config.certifiedConsensusActivationKey,
+                    state.lastOutcome.key,
+                    state.lastOutcome.facilitators.value.size,
+                    state.lastOutcome.expandedBeyondSingleton,
+                    nextOutcomeFacilitators.value.size
+                  )
+                )
+                .orElse(state.lastOutcome.expandedBeyondSingleton)
             )
             (Previous(state.lastOutcome.key), outcome).some
           case _ =>
             none
         }
 
+      def deriveCertifiedPublicRound(
+        state: CurrencySnapshotConsensusState,
+        artifact: Signed[CurrencySnapshotArtifact],
+        binary: Hashed[StateChannelSnapshotBinary],
+        context: CurrencySnapshotContext,
+        certified: CertifiedConsensus.CertifiedOutcome
+      ): F[Either[String, (CurrencySnapshotConsensusState, CurrencyConsensusOutcome)]] =
+        HasherSelector[F].withCurrent { implicit hasher =>
+          val value = certified.proposalQc.value
+          val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
+          val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
+          val frozenCommittee = full.toSortedSet.toSet
+          val certifiedBinary = binary.signed
+          val binarySigners = certifiedBinary.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
+
+          for {
+            artifactHash <- artifact.value.hash
+            bound <- CertifiedConsensus.verifyBoundOutcome[F, CurrencySnapshotContext](
+              certified,
+              CertifiedConsensus.ConsensusDomain.CurrencyL0,
+              networkId,
+              state.key.value.value,
+              state.lastOutcome.finished.snapshotHash,
+              artifactHash,
+              context,
+              full,
+              core,
+              config.quorumThresholdFraction,
+              state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2),
+              config.viewInterval,
+              config.maxRoundDuration
+            )
+            artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, CurrencySnapshotArtifact](
+              artifact,
+              frozenCommittee,
+              frozenCommittee.size
+            )
+            binarySignatureValid <- certifiedBinary.hasValidSignature[F]
+            embeddedArtifact <- JsonSerializer[F]
+              .deserialize[Signed[CurrencySnapshotArtifact]](certifiedBinary.value.content)
+            structure = for {
+              _ <- CertifiedMembershipTransition
+                .applyCurrencyTo(
+                  state.roundStartFacilitators.value,
+                  value.admittedPeers.toSet,
+                  value.evictedPeers.toSet,
+                  config.activeAdmissionMaxExpansionPerRound
+                )
+                .void
+              _ <- Either.cond(artifact.value.ordinal === state.key, (), "artifact_ordinal_mismatch")
+              _ <- Either.cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
+              _ <- Either.cond(
+                artifact.value.lastSnapshotHash === state.lastOutcome.finished.snapshotHash,
+                (),
+                "artifact_parent_mismatch"
+              )
+              _ <- bound
+              _ <- artifactProofs
+              _ <- Either.cond(binarySigners === frozenCommittee, (), "binary_signers_not_complete_frozen_committee")
+              _ <- Either.cond(binarySignatureValid, (), "invalid_binary_signature")
+              _ <- Either.cond(
+                certifiedBinary.value.lastSnapshotHash === state.lastOutcome.finished.binaryArtifactHash,
+                (),
+                "binary_parent_mismatch"
+              )
+              decodedArtifact <- embeddedArtifact.leftMap(error => s"binary_artifact_decode:${error.getMessage}")
+              // V35 requires the complete frozen-committee artifact proof set before constructing the binary, so unlike ordinary
+              // Signed equality the proof envelope is canonical here and must remain bound to the binary bytes.
+              _ <- Either.cond(Signed.sameValueAndProofs(decodedArtifact, artifact), (), "binary_artifact_mismatch")
+            } yield ()
+            result <- structure match {
+              case Left(error) => error.asLeft[(CurrencySnapshotConsensusState, CurrencyConsensusOutcome)].pure[F]
+              case Right(_) =>
+                val recoveredState: CurrencySnapshotConsensusState = state.copy(
+                  facilitators = state.roundStartFacilitators,
+                  removedFacilitators = RemovedFacilitators(value.evictedPeers.toSet),
+                  withdrawnFacilitators = WithdrawnFacilitators.empty,
+                  admittedFacilitators = AdmittedFacilitators(value.admittedPeers.toSet),
+                  observedResponders = ObservedResponders(value.observedResponders.toSet),
+                  observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
+                  acceptedTimeoutCertificateVoters = value.timeoutVoters,
+                  certifiedEvictionTargets = value.evictedPeers,
+                  outcomeEndTime = value.consensusEndTime,
+                  viewNumber = value.committedView.toInt,
+                  status = Finished(
+                    artifact,
+                    binary.hash,
+                    context,
+                    value.trigger,
+                    Candidates(value.admissionNominee.toSet),
+                    value.roundStartFacilitatorsHash,
+                    value.artifactHash,
+                    certified.some,
+                    certifiedBinary.some
+                  )
+                )
+
+                getConsensusOutcome(recoveredState).map(_._2) match {
+                  case Some(derived) => (recoveredState -> derived).asRight[String].pure[F]
+                  case None =>
+                    "certified_outcome_derivation_failed"
+                      .asLeft[(CurrencySnapshotConsensusState, CurrencyConsensusOutcome)]
+                      .pure[F]
+                }
+            }
+          } yield result
+        }
+
       def certifiedOutcomeAdoption(
         state: CurrencySnapshotConsensusState,
         candidate: CurrencyConsensusOutcome
       ): F[Either[String, CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]] =
-        HasherSelector[F].withCurrent { implicit hasher =>
-          (candidate.finished.certifiedOutcome, candidate.finished.certifiedBinary).tupled match {
-            case None =>
-              "certified_outcome_or_binary_missing".asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]].pure[F]
-            case Some((certified, certifiedBinary)) =>
-              val value = certified.proposalQc.value
-              val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
-              val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
-              val frozenCommittee = full.toSortedSet.toSet
-              val binarySigners = certifiedBinary.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
-
-              for {
-                artifactHash <- candidate.finished.signedMajorityArtifact.value.hash
-                bound <- CertifiedConsensus.verifyBoundOutcome[F, CurrencySnapshotContext](
-                  certified,
-                  CertifiedConsensus.ConsensusDomain.CurrencyL0,
-                  networkId,
-                  state.key.value.value,
-                  state.lastOutcome.finished.snapshotHash,
-                  artifactHash,
-                  candidate.finished.context,
-                  full,
-                  core,
-                  config.quorumThresholdFraction,
-                  state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2),
-                  config.viewInterval,
-                  config.maxRoundDuration
-                )
-                artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, CurrencySnapshotArtifact](
+        (candidate.finished.certifiedOutcome, candidate.finished.certifiedBinary).tupled match {
+          case None =>
+            "certified_outcome_or_binary_missing".asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]].pure[F]
+          case Some((certified, certifiedBinary)) =>
+            HasherSelector[F].withCurrent { implicit hasher =>
+              certifiedBinary.toHashed[F].flatMap { binary =>
+                deriveCertifiedPublicRound(
+                  state,
                   candidate.finished.signedMajorityArtifact,
-                  frozenCommittee,
-                  frozenCommittee.size
-                )
-                binarySignatureValid <- certifiedBinary.hasValidSignature[F]
-                hashedBinary <- certifiedBinary.toHashed[F]
-                embeddedArtifact <- JsonSerializer[F]
-                  .deserialize[Signed[CurrencySnapshotArtifact]](certifiedBinary.value.content)
-                structure = for {
-                  _ <- Either.cond(candidate.key === state.key, (), "outcome_key_mismatch")
-                  _ <- Either.cond(
-                    candidate.finished.signedMajorityArtifact.value.ordinal === state.key,
-                    (),
-                    "artifact_ordinal_mismatch"
-                  )
-                  _ <- Either.cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
-                  _ <- Either.cond(
-                    candidate.finished.signedMajorityArtifact.value.lastSnapshotHash === state.lastOutcome.finished.snapshotHash,
-                    (),
-                    "artifact_parent_mismatch"
-                  )
-                  _ <- bound
-                  _ <- artifactProofs
-                  _ <- Either.cond(binarySigners === frozenCommittee, (), "binary_signers_not_complete_frozen_committee")
-                  _ <- Either.cond(binarySignatureValid, (), "invalid_binary_signature")
-                  _ <- Either.cond(
-                    certifiedBinary.value.lastSnapshotHash === state.lastOutcome.finished.binaryArtifactHash,
-                    (),
-                    "binary_parent_mismatch"
-                  )
-                  decodedArtifact <- embeddedArtifact.leftMap(error => s"binary_artifact_decode:${error.getMessage}")
-                  // V35 requires the complete frozen-committee artifact proof set before constructing the binary, so unlike ordinary
-                  // Signed equality the proof envelope is canonical here and must remain bound to the binary bytes.
-                  _ <- Either.cond(
-                    Signed.sameValueAndProofs(decodedArtifact, candidate.finished.signedMajorityArtifact),
-                    (),
-                    "binary_artifact_mismatch"
-                  )
-                  _ <- Either.cond(hashedBinary.hash === candidate.finished.binaryArtifactHash, (), "binary_hash_mismatch")
-                } yield ()
-                result <- structure match {
-                  case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]].pure[F]
-                  case Right(_) =>
-                    val recoveredState: CurrencySnapshotConsensusState = state.copy(
-                      facilitators = state.roundStartFacilitators,
-                      removedFacilitators = RemovedFacilitators(value.evictedPeers.toSet),
-                      withdrawnFacilitators = WithdrawnFacilitators.empty,
-                      admittedFacilitators = AdmittedFacilitators(value.admittedPeers.toSet),
-                      observedResponders = ObservedResponders(value.observedResponders.toSet),
-                      observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
-                      acceptedTimeoutCertificateVoters = value.timeoutVoters,
-                      certifiedEvictionTargets = value.evictedPeers,
-                      outcomeEndTime = value.consensusEndTime,
-                      viewNumber = value.committedView.toInt,
-                      status = Finished(
+                  binary,
+                  candidate.finished.context,
+                  certified
+                ).map {
+                  case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]
+                  case Right((recoveredState, derived)) if derived === candidate =>
+                    CertifiedOutcomeAdoption(
+                      certified.proposalQc.valueHash,
+                      recoveredState,
+                      persistAndGossip(
                         candidate.finished.signedMajorityArtifact,
-                        hashedBinary.hash,
-                        candidate.finished.context,
-                        value.trigger,
-                        Candidates(value.admissionNominee.toSet),
-                        value.roundStartFacilitatorsHash,
-                        value.artifactHash,
-                        certified.some,
-                        certifiedBinary.some
+                        binary,
+                        recoveredState,
+                        candidate.finished.context
                       )
-                    )
-
-                    getConsensusOutcome(recoveredState).map(_._2) match {
-                      case Some(derived) if derived === candidate =>
-                        CertifiedOutcomeAdoption(
-                          certified.proposalQc.valueHash,
-                          recoveredState,
-                          persistAndGossip(
-                            candidate.finished.signedMajorityArtifact,
-                            hashedBinary,
-                            recoveredState,
-                            candidate.finished.context
-                          )
-                        ).asRight[String].pure[F]
-                      case Some(_) =>
-                        "certified_outcome_derivation_mismatch"
-                          .asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]
-                          .pure[F]
-                      case None =>
-                        "certified_outcome_derivation_failed"
-                          .asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]
-                          .pure[F]
-                    }
+                    ).asRight[String]
+                  case Right(_) =>
+                    "certified_outcome_derivation_mismatch".asLeft[CertifiedOutcomeAdoption[F, CurrencySnapshotConsensusState]]
                 }
-              } yield result
-          }
+              }
+            }
         }
 
       def advanceStatus(
@@ -762,6 +800,26 @@ object CurrencySnapshotConsensusStateAdvancer {
           config.quorumThresholdFraction
         )
 
+      /** Mirror of DAG L0: a carried QC fixes the trigger before artifact construction. */
+      private def currentViewCertifiedQc(
+        state: CurrencySnapshotConsensusState
+      ): F[Either[String, Option[CertifiedProposalQC]]] =
+        if (!certifiedConsensusActive(state) || state.viewNumber <= state.initialViewNumber)
+          none[CertifiedProposalQC].asRight[String].pure[F]
+        else
+          for {
+            maybeVccRaw <- consensusStorage.getAssembledVcc(state.key)
+            maybeTc <- consensusStorage
+              .getResources(state.key)
+              .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
+            maybeVcc = maybeTc.fold {
+              maybeVccRaw.filter(vcc => vcc.fromView === (state.viewNumber.toLong - 1L) && vcc.toView === state.viewNumber.toLong)
+            }(_ => none[ViewChangeCertificate])
+            result <- HasherSelector[F].withCurrent { implicit hasher =>
+              highestCertifiedQc(state, maybeVcc, maybeTc)
+            }
+          } yield result
+
       /** Currency-specific adapter into the shared ProposalValue builder. */
       private def proposalValueFor(
         state: CurrencySnapshotConsensusState,
@@ -824,7 +882,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                 for {
                   expected <- proposalValueFor(
                     state,
-                    status.majorityTrigger,
+                    actual.trigger,
                     artifactInfo,
                     proposal,
                     expectedCommittedView,
@@ -848,6 +906,42 @@ object CurrencySnapshotConsensusStateAdvancer {
                     case Right(value) => (value -> carriedQc).asRight[String]
                   }
                 } yield result
+            }
+        }
+
+      /** Currency mirror of DAG trigger authorization; no local pacing or Facility arrival state participates in follower validation.
+        */
+      private def authorizeLeaderTrigger(
+        state: CurrencySnapshotConsensusState,
+        proposal: Proposal
+      )(implicit hasher: Hasher[F]): F[Either[String, ConsensusTrigger]] =
+        highestCertifiedQc(state, proposal.vcc, proposal.timeoutCertificate).flatMap {
+          case Left(error) => s"certified_qc_selection:$error".asLeft[ConsensusTrigger].pure[F]
+          case Right(Some(qc)) =>
+            Either
+              .cond(proposal.proposalValue.contains(qc.value), qc.value.trigger, "carried_qc_proposal_value_mismatch")
+              .pure[F]
+          case Right(None) =>
+            proposal.proposalValue match {
+              case None => "proposal_value_missing".asLeft[ConsensusTrigger].pure[F]
+              case Some(value) =>
+                CertifiedConsensus.validateTriggerEvidence[F](
+                  proposal.triggerEvidence.getOrElse(List.empty),
+                  CertifiedConsensus.ConsensusDomain.CurrencyL0,
+                  networkId,
+                  state.key.value.value,
+                  state.lastOutcome.finished.snapshotHash,
+                  value.roundStartFacilitatorsHash,
+                  config.deterministicConfigHash,
+                  state.roundStartFacilitators.value.toSet,
+                  CertifiedConsensus.requiredArtifactQuorum(
+                    state.roundStartFacilitators.value.size,
+                    state.coreFacilitators.value.size,
+                    config.quorumThresholdFraction
+                  ),
+                  value.trigger,
+                  state.leader
+                )
             }
         }
 
@@ -937,7 +1031,33 @@ object CurrencySnapshotConsensusStateAdvancer {
         val allHashSets = facilities.values.map(_.eventHashes).toList
         val unionHashes = allHashSets.reduceOption(_ union _).getOrElse(Set.empty[Hash])
 
-        val trigger = pickMajority(triggers).getOrElse(EventTrigger)
+        val legacyTrigger = pickMajority(triggers).getOrElse(EventTrigger)
+        val triggerSelection: F[Either[String, (List[Signed[CertifiedConsensus.TriggerStatement]], ConsensusTrigger)]] =
+          if (certifiedConsensusActive(state))
+            HasherSelector[F].withCurrent { implicit hasher =>
+              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+                CertifiedConsensus.selectTriggerEvidence[F](
+                  facilities,
+                  CertifiedConsensus.ConsensusDomain.CurrencyL0,
+                  networkId,
+                  state.key.value.value,
+                  state.lastOutcome.finished.snapshotHash,
+                  roundStartHash,
+                  config.deterministicConfigHash,
+                  state.roundStartFacilitators.value.toSet,
+                  CertifiedConsensus.requiredArtifactQuorum(
+                    state.roundStartFacilitators.value.size,
+                    state.coreFacilitators.value.size,
+                    config.quorumThresholdFraction
+                  ),
+                  state.leader
+                )
+              }
+            }
+          else
+            (List.empty[Signed[CertifiedConsensus.TriggerStatement]], legacyTrigger)
+              .asRight[String]
+              .pure[F]
 
         // v7 (mirror of dag-l0 `toProposalsPhase`): leader's positive observation of which
         // round-start facilitators sent a Facility this round, sorted at construction.
@@ -986,7 +1106,25 @@ object CurrencySnapshotConsensusStateAdvancer {
           _ <- Metrics[F].updateGauge("dag_currency_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_currency_consensus_facility_quorum_ratio", responderRatio)
 
-          result <- buildProposalTransition(stateWithEndTime, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
+          selectedTrigger <- triggerSelection
+          result <- selectedTrigger match {
+            case Left(error) =>
+              logger.warn(s"[CONSENSUS] Trigger evidence collection failed key=${state.key.show} reason=$error").as(none[Transition])
+            case Right((evidence, trigger)) =>
+              val excluded = facilities.size - evidence.size
+              Metrics[F]
+                .incrementCounterBy("dag_currency_consensus_trigger_evidence_excluded_total", excluded.toLong)
+                .whenA(excluded > 0) >>
+                buildProposalTransition(
+                  stateWithEndTime,
+                  unionHashes,
+                  candidates,
+                  trigger,
+                  observedResponders,
+                  observedSelfHealth,
+                  evidence
+                )
+          }
         } yield result
       }
 
@@ -1044,17 +1182,20 @@ object CurrencySnapshotConsensusStateAdvancer {
         candidates: Set[PeerId],
         majorityTrigger: ConsensusTrigger,
         observedResponders: List[PeerId],
-        observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+        triggerEvidence: List[Signed[CertifiedConsensus.TriggerStatement]]
       ): F[Option[Transition]] =
         HasherSelector[F].withCurrent { implicit hasher =>
           for {
-            _ <- clearTimeTriggerIfNeeded(majorityTrigger)
+            earlyCarriedQc <- currentViewCertifiedQc(state)
+            effectiveTrigger = earlyCarriedQc.toOption.flatten.fold(majorityTrigger)(_.value.trigger)
+            _ <- clearTimeTriggerIfNeeded(effectiveTrigger)
             facilitatorsHash <- hashFacilitators(state)
 
             // Pull events from mempool using hash union across all facilitator declarations
             mempoolEvents <- eventMempool.getMultiple(commonHashes).map(_.values.map(_.signed.value).toSet)
 
-            (artifact, context, _) <- createArtifact(state, majorityTrigger, mempoolEvents)
+            (artifact, context, _) <- createArtifact(state, effectiveTrigger, mempoolEvents)
 
             // Do not remove accepted events at proposal time. A proposal can lose the round, or
             // different facilitators can propose the same event at adjacent ordinals. Events are
@@ -1066,7 +1207,7 @@ object CurrencySnapshotConsensusStateAdvancer {
             role = if (isLeader) "LEADER" else "FOLLOWER"
             withdrawnCount = state.withdrawnFacilitators.value.size
             _ <- logger.info(
-              s"[CONSENSUS:$role] FACILITIES->PROPOSALS key=${state.key.show} ordinal=${artifact.ordinal.show} trigger=$majorityTrigger " +
+              s"[CONSENSUS:$role] FACILITIES->PROPOSALS key=${state.key.show} ordinal=${artifact.ordinal.show} trigger=$effectiveTrigger " +
                 s"hash=${hash.show.take(8)}... facilitators=${state.facilitators.value.size} candidates=${candidates.size} " +
                 s"admissionNominee=${admissionNominee.map(ConsensusLog.pid).getOrElse("none")} " +
                 s"leader=${state.leader.show.take(8)}... self=${selfId.show.take(8)}... view=${state.viewNumber}" +
@@ -1191,13 +1332,14 @@ object CurrencySnapshotConsensusStateAdvancer {
               proposalObservedResponders,
               proposalObservedSelfHealth,
               proposalAdmissionNominee,
+              if (carriedCertifiedQc.isDefined) List.empty else triggerEvidence,
               none
             )
             freshProposedValue <-
               if (isLeader && !aborted && certifiedConsensusActive(state) && carriedCertifiedQc.isEmpty)
                 proposalValueFor(
                   state,
-                  majorityTrigger,
+                  effectiveTrigger,
                   ArtifactInfo(artifact, context, hash),
                   baseLeaderProposal,
                   state.viewNumber.toLong,
@@ -1212,13 +1354,14 @@ object CurrencySnapshotConsensusStateAdvancer {
               Transition(
                 newState = state.copy(status =
                   CollectingProposals(
-                    majorityTrigger,
+                    effectiveTrigger,
                     ArtifactInfo(artifact, context, hash),
                     Candidates(proposalAdmissionNominee.toSet),
                     facilitatorsHash,
                     state.lastOutcome.finished.snapshotHash,
                     proposalObservedResponders,
                     proposalObservedSelfHealth,
+                    if (carriedCertifiedQc.isDefined) List.empty else triggerEvidence,
                     proposedValue = proposedValue
                   )
                 ),
@@ -1326,6 +1469,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                       status.observedResponders,
                       status.observedSelfHealth,
                       status.candidates.value.headOption,
+                      status.triggerEvidence,
                       status.proposedValue
                     )
                     logger.info(
@@ -1680,6 +1824,27 @@ object CurrencySnapshotConsensusStateAdvancer {
           logger
             .warn(s"[CONSENSUS] ACS validation failed key=${state.key.show} view=${state.viewNumber} reason=${rejection.code}")
             .as(none[Transition])
+        def resolveWithAuthorizedTrigger: F[Option[Transition]] =
+          if (!certifiedConsensusActive(state))
+            resolveLeaderProposalInner(state, status, resources, leaderProposal)
+          else
+            authorizeLeaderTrigger(state, leaderProposal).flatMap {
+              case Left(error) =>
+                logger
+                  .warn(
+                    s"[CONSENSUS] Trigger evidence validation failed key=${state.key.show} view=${state.viewNumber} reason=$error"
+                  )
+                  .as(none[Transition])
+              case Right(authorizedTrigger) =>
+                // Authorization boundary: every downstream artifact/value derivation must read
+                // this evidence-authorized trigger, never the follower's local Facility subset.
+                resolveLeaderProposalInner(
+                  state,
+                  status.copy(majorityTrigger = authorizedTrigger),
+                  resources,
+                  leaderProposal
+                )
+            }
         validateProposalVcc(state, leaderProposal, status.facilitatorsHash).flatMap {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
@@ -1687,9 +1852,9 @@ object CurrencySnapshotConsensusStateAdvancer {
               case Some(vcc) =>
                 ProposalVccValidator.verifyVccSignatures[F](vcc, state.certifiedConsensusActive).flatMap {
                   case Left(reason) => logVccReject(reason)
-                  case Right(_)     => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+                  case Right(_)     => resolveWithAuthorizedTrigger
                 }
-              case None => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+              case None => resolveWithAuthorizedTrigger
             }
             val afterViewCertSig: F[Option[Transition]] = leaderProposal.timeoutCertificate match {
               case Some(tc) =>
@@ -1794,29 +1959,86 @@ object CurrencySnapshotConsensusStateAdvancer {
         artifact: CurrencySnapshotArtifact,
         hash: Hash
       )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext]]] =
-        consensusFns
-          .validateArtifact(
-            state.lastOutcome.finished.signedMajorityArtifact,
-            state.lastOutcome.finished.context,
-            status.majorityTrigger,
-            artifact,
-            // Canonical round-start committee — matches createArtifact's read so leader and
-            // validators accept/reject against the same facilitator set. See dag-l0 equivalent.
-            state.roundStartFacilitators.value.toSet,
-            getGlobalSnapshotByOrdinal,
-            // v32 (stage 4): re-pack the evidence-only peerHistory from the validator's own
-            // lastOutcome. See the dag-l0 mirror.
-            Some(state.lastOutcome.signedArtifactPeerHistory)
-          )
-          .map {
-            case Right((validatedArtifact, context)) =>
-              ArtifactInfo(validatedArtifact, context, hash).asRight[InvalidArtifact]
-            case Left(err) =>
-              err.asLeft[ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext]]
-          }
+        validateParentLineage(state, artifact).flatMap {
+          case Left(error) =>
+            (CertifiedLineageInvalid(error): InvalidArtifact)
+              .asLeft[ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext]]
+              .pure[F]
+          case Right(certifiedLineage) =>
+            consensusFns
+              .validateArtifact(
+                state.lastOutcome.finished.signedMajorityArtifact,
+                state.lastOutcome.finished.context,
+                status.majorityTrigger,
+                artifact,
+                // Canonical round-start committee — matches createArtifact's read so leader and
+                // validators accept/reject against the same facilitator set. See dag-l0 equivalent.
+                state.roundStartFacilitators.value.toSet,
+                getGlobalSnapshotByOrdinal,
+                // v32 (stage 4): re-pack the evidence-only peerHistory from the validator's own
+                // lastOutcome. See the dag-l0 mirror.
+                Some(state.lastOutcome.signedArtifactPeerHistory),
+                // W1: preserve the verified leader-selected proof envelope byte-for-byte.
+                certifiedLineage
+              )
+              .map {
+                case Right((validatedArtifact, context)) =>
+                  ArtifactInfo(validatedArtifact, context, hash).asRight[InvalidArtifact]
+                case Left(err) =>
+                  err.asLeft[ArtifactInfo[CurrencySnapshotArtifact, CurrencySnapshotContext]]
+              }
+        }
+
+      private def validateParentLineage(
+        state: CurrencySnapshotConsensusState,
+        artifact: CurrencySnapshotArtifact
+      )(implicit hasher: Hasher[F]): F[Either[String, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]] =
+        if (!state.certifiedConsensusActive)
+          Either
+            .cond(artifact.certifiedLineage.isEmpty, none[CertifiedConsensus.CertifiedLineageEvidenceV1], "pre_v35_lineage_present")
+            .pure[F]
+        else
+          CertifiedConsensus
+            .verifyCarriedParentOutcome[F](
+              artifact.certifiedLineage,
+              state.lastOutcome.finished.certifiedOutcome,
+              CertifiedConsensus.ConsensusDomain.CurrencyL0,
+              config.quorumThresholdFraction
+            )
+            .flatMap {
+              case Left(error) =>
+                error.asLeft[Option[CertifiedConsensus.CertifiedLineageEvidenceV1]].pure[F]
+              case Right(None) => none[CertifiedConsensus.CertifiedLineageEvidenceV1].asRight[String].pure[F]
+              case Right(Some(lineage)) =>
+                (lineage.parentLayerEvidence, state.lastOutcome.finished.certifiedBinary) match {
+                  case (Some(evidence: CertifiedConsensus.CertifiedLayerEvidenceV1.Currency), Some(trustedBinary)) =>
+                    val frozenCommittee = lineage.parentOutcome.proposalQc.value.roundStartFacilitators.toSortedSet.toSet
+                    CertifiedConsensus
+                      .reconstructAndVerifyCurrencyBinary[F, CurrencySnapshotArtifact](
+                        state.lastOutcome.finished.signedMajorityArtifact,
+                        evidence,
+                        trustedBinary.value.lastSnapshotHash,
+                        frozenCommittee
+                      )
+                      .flatMap(
+                        _.flatMap { reconstructed =>
+                          Either.cond(
+                            reconstructed.hash === state.lastOutcome.finished.binaryArtifactHash,
+                            lineage.some,
+                            "currency_lineage_binary_hash_mismatch"
+                          )
+                        }.pure[F]
+                      )
+                  case (None, _) =>
+                    "currency_lineage_layer_evidence_missing".asLeft[Option[CertifiedConsensus.CertifiedLineageEvidenceV1]].pure[F]
+                  case (Some(_), None) =>
+                    "currency_lineage_trusted_binary_missing".asLeft[Option[CertifiedConsensus.CertifiedLineageEvidenceV1]].pure[F]
+                }
+            }
 
       /** Produces a human-readable description of why the leader's artifact failed validation. */
       private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
+        case CertifiedLineageInvalid(reason) => s"certifiedLineage($reason)"
         case CurrencyArtifactMismatch(errors) =>
           val descriptions = errors.map {
             case SnapshotDifferentThanExpected(expected, actual) =>
@@ -2492,19 +2714,42 @@ object CurrencySnapshotConsensusStateAdvancer {
         trigger: ConsensusTrigger,
         events: Set[CurrencySnapshotEvent]
       )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] =
-        consensusFns.createProposalArtifact(
-          state.key,
-          state.lastOutcome.finished.signedMajorityArtifact,
-          state.lastOutcome.finished.context,
-          hasher,
-          trigger,
-          events,
-          // Canonical round-start committee — matches validateLeaderArtifact.
-          state.roundStartFacilitators.value.toSet,
-          getGlobalSnapshotByOrdinal,
-          // v32 (stage 4): evidence-only signed peerHistory. See the dag-l0 mirror.
-          Some(state.lastOutcome.signedArtifactPeerHistory)
-        )
+        parentLineage(state).flatMap { certifiedLineage =>
+          consensusFns.createProposalArtifact(
+            state.key,
+            state.lastOutcome.finished.signedMajorityArtifact,
+            state.lastOutcome.finished.context,
+            hasher,
+            trigger,
+            events,
+            // Canonical round-start committee — matches validateLeaderArtifact.
+            state.roundStartFacilitators.value.toSet,
+            getGlobalSnapshotByOrdinal,
+            // v32 (stage 4): evidence-only signed peerHistory. See the dag-l0 mirror.
+            Some(state.lastOutcome.signedArtifactPeerHistory),
+            certifiedLineage
+          )
+        }
+
+      private def parentLineage(
+        state: CurrencySnapshotConsensusState
+      ): F[Option[CertifiedConsensus.CertifiedLineageEvidenceV1]] =
+        if (!state.certifiedConsensusActive) none[CertifiedConsensus.CertifiedLineageEvidenceV1].pure[F]
+        else
+          (state.lastOutcome.finished.certifiedOutcome, state.lastOutcome.finished.certifiedBinary) match {
+            case (None, None) => none[CertifiedConsensus.CertifiedLineageEvidenceV1].pure[F]
+            case (Some(outcome), Some(binary)) =>
+              CertifiedConsensus
+                .CertifiedLineageEvidenceV1(outcome, CertifiedConsensus.currencyLayerEvidence(binary).some)
+                .some
+                .pure[F]
+            case (Some(_), None) =>
+              new IllegalStateException("certified_currency_parent_binary_missing")
+                .raiseError[F, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]
+            case (None, Some(_)) =>
+              new IllegalStateException("certified_currency_parent_outcome_missing")
+                .raiseError[F, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]
+          }
 
       private val selfId: PeerId = PeerId.fromPublic(keyPair.getPublic)
 
@@ -2523,6 +2768,7 @@ object CurrencySnapshotConsensusStateAdvancer {
         observedResponders: List[PeerId],
         observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
         admissionNominee: Option[PeerId],
+        triggerEvidence: List[Signed[CertifiedConsensus.TriggerStatement]],
         proposalValue: Option[ProposalValue]
       ): Proposal =
         Proposal(
@@ -2537,6 +2783,7 @@ object CurrencySnapshotConsensusStateAdvancer {
           observedResponders = observedResponders.distinct.sorted,
           observedSelfHealth = observedSelfHealth,
           admissionNominee = admissionNominee,
+          triggerEvidence = triggerEvidence.sortBy(_.proofs.head.id.toPeerId).some.filter(_.nonEmpty),
           proposalValue = proposalValue
         )
 

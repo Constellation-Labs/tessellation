@@ -89,21 +89,85 @@ object CertifiedRoundCommitteeProjector {
         parentArtifactHash
       )
       .map(
-        _.map { nextRound =>
-          val committee = project(
-            key = key,
-            selectedFacilitators = nextRound.selectedCommittee,
-            recentSigners = parentRecentSigners,
-            controllerEvidence = parentControllerEvidence,
-            carried = parentCarried,
-            config = config,
-            coreCommitteeSize = coreCommitteeSize,
-            forcedTier1Peers = parentValue.admittedPeers.toSet
+        _.map(
+          finishCertifiedParentProjection(
+            key,
+            parentValue,
+            parentRecentSigners,
+            parentControllerEvidence,
+            parentCarried,
+            config,
+            coreCommitteeSize,
+            _
           )
-
-          FromCertifiedParent(nextRound, committee)
-        }
+        )
       )
+
+  /** Currency L0 uses the same deterministic eligibility and committee projection but deliberately retains its contraction-capable
+    * certified membership policy. This wrapper makes that one policy distinction explicit while keeping the rest of the projection shared.
+    */
+  def fromCertifiedCurrencyParent[F[_]: Monad](
+    key: SnapshotOrdinal,
+    parentValue: ProposalValue,
+    parentRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    parentControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry],
+    parentCarried: CarriedControllerState,
+    config: ConsensusConfig,
+    coreCommitteeSize: Int,
+    seedlistPeerIds: Set[PeerId],
+    isContextEligible: PeerId => F[Boolean],
+    facilitatorSelector: FacilitatorSelector,
+    parentArtifactHash: Hash
+  ): F[Either[String, FromCertifiedParent]] =
+    CertifiedNextRoundProjector
+      .projectCurrency[F](
+        parentValue.roundStartFacilitators.toSortedSet.toList,
+        parentValue.admittedPeers.toSet,
+        parentValue.evictedPeers.toSet,
+        config.activeAdmissionMaxExpansionPerRound,
+        seedlistPeerIds,
+        isContextEligible,
+        facilitatorSelector,
+        parentArtifactHash
+      )
+      .map(
+        _.map(
+          finishCertifiedParentProjection(
+            key,
+            parentValue,
+            parentRecentSigners,
+            parentControllerEvidence,
+            parentCarried,
+            config,
+            coreCommitteeSize,
+            _
+          )
+        )
+      )
+
+  private def finishCertifiedParentProjection(
+    key: SnapshotOrdinal,
+    parentValue: ProposalValue,
+    parentRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    parentControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry],
+    parentCarried: CarriedControllerState,
+    config: ConsensusConfig,
+    coreCommitteeSize: Int,
+    nextRound: CertifiedNextRoundProjector.Projection
+  ): FromCertifiedParent = {
+    val committee = project(
+      key = key,
+      selectedFacilitators = nextRound.selectedCommittee,
+      recentSigners = parentRecentSigners,
+      controllerEvidence = parentControllerEvidence,
+      carried = parentCarried,
+      config = config,
+      coreCommitteeSize = coreCommitteeSize,
+      forcedTier1Peers = parentValue.admittedPeers.toSet
+    )
+
+    FromCertifiedParent(nextRound, committee)
+  }
 
   def project(
     key: SnapshotOrdinal,

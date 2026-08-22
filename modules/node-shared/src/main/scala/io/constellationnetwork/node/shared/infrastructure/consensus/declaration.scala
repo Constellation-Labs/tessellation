@@ -7,7 +7,7 @@ import cats.syntax.show._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.ext.codecs.NonEmptySetCodec
-import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{CertifiedProposalQC, CoreCommit, ProposalValue}
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
@@ -83,7 +83,12 @@ object declaration {
     // already gates v18 <-> v19 peer connection so the partial-deploy window is
     // controlled at handshake; the field is Option-wrapped purely for derevo
     // back-compat with snapshots / facilities written before this field existed.
-    proposerClockMs: Option[Long] = None
+    proposerClockMs: Option[Long] = None,
+    // V35: gossip-envelope authentication is non-transferable because the rumor handler
+    // queues only decoded content. This inner signature lets a proposal carry the exact
+    // Facility trigger evidence its leader crossed with. None is the legacy/pre-activation
+    // shape; certified proposal validation rejects missing evidence on a fresh value.
+    triggerStatement: Option[Signed[TriggerStatement]] = None
   ) extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
@@ -520,6 +525,11 @@ object declaration {
     // asking next-round voters to rank node-local candidate universes, which can differ at
     // quorum-crossing time. None is the backward-compatible/pre-upgrade value.
     admissionNominee: Option[PeerId] = None,
+    // V35 leader-selected, follower-verified trigger evidence. Sorted by signer at every
+    // construction site. A carried ProposalQC preserves its already-certified trigger and
+    // does not re-litigate a new Facility subset, so the field is absent on that path. Option
+    // preserves the exact pre-v35 JSON shape under dropNullValues.
+    triggerEvidence: Option[List[Signed[TriggerStatement]]] = None,
     // v35: complete, view-independent semantics certified by the frozen round-start Core.
     // None decodes legacy/pre-activation proposals; v35 validation rejects None.
     proposalValue: Option[ProposalValue] = None

@@ -5,11 +5,7 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{
-  CertifiedOutcome,
-  CertifiedProposalQC,
-  ProposalValue
-}
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ControllerEvidenceDerivation
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -52,6 +48,7 @@ object schema {
             observedResponders,
             observedSelfHealth,
             _,
+            _,
             _
           ) =>
         s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
@@ -83,6 +80,8 @@ object schema {
     // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
     // original Proposal payload exactly. SortedMap so circe encodes in deterministic key order.
     observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+    // Frozen leader-selected Facility trigger evidence for byte-identical re-spread.
+    triggerEvidence: List[Signed[TriggerStatement]] = List.empty,
     // Exact local candidate used if this node is the leader and must re-spread.
     proposedValue: Option[ProposalValue] = None,
     // Leader value already validated by this node. While populated, the state stays in
@@ -255,7 +254,11 @@ object schema {
     // expired entries (<= current key) are dropped at finalization. Pure ordinal
     // comparisons only -- no per-round countdown mutation that a restart could observe
     // half-applied. Option-wrapped for circe back-compat like `controllerEvidence`.
-    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
+    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None,
+    // V35 monotonic lineage fact. False only on the canonical from-genesis singleton root;
+    // once a certified committee reaches two members this remains true forever, including
+    // after later degradation. Option preserves historical outcome decoding.
+    expandedBeyondSingleton: Option[Boolean] = None
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

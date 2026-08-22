@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{CertifiedProposalQC, CoreCommit, ProposalValue}
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
@@ -55,6 +55,12 @@ object PeerDeclarationsArbitraries {
     Arbitrary(Gen.const(None))
 
   implicit val coreCommitOptArb: Arbitrary[Option[CoreCommit]] =
+    Arbitrary(Gen.const(None))
+
+  implicit val triggerStatementOptArb: Arbitrary[Option[io.constellationnetwork.security.signature.Signed[TriggerStatement]]] =
+    Arbitrary(Gen.const(None))
+
+  implicit val triggerEvidenceArb: Arbitrary[Option[List[io.constellationnetwork.security.signature.Signed[TriggerStatement]]]] =
     Arbitrary(Gen.const(None))
 }
 

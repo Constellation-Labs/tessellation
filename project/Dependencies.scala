@@ -5,7 +5,12 @@ object Dependencies {
   object V {
     val bouncyCastle = "1.83"
     val betterFiles = "3.9.2"
-    val brotli4j = "1.12.0" // DO NOT UPDATE, >= 1.13.0 breaks backwards compat
+    // Protocol pin. V35 CertifiedLayerEvidenceV1 reconstructs the exact Brotli-compressed
+    // Signed[CurrencySnapshotArtifact] bytes before verifying the historical binary proofs.
+    // Keep 1.12.0 for the V1 verifier permanently (the golden preimage is pinned in
+    // CertifiedConsensusSuite). A future encoder must be a new layer-evidence version while
+    // retaining this implementation. Independently, >= 1.13.0 breaks existing compatibility.
+    val brotli4j = "1.12.0"
     val cats = "2.13.0"
     val catsEffect = "3.6.3"
     val catsRetry = "3.1.3"

@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -44,7 +45,8 @@ trait CurrencySnapshotValidator[F[_]] {
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     peerHistory: Option[ConsensusOperationalState] = None,
-    historicalDependencyResolution: Boolean = false
+    historicalDependencyResolution: Boolean = false,
+    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
@@ -88,7 +90,8 @@ object CurrencySnapshotValidator {
           // above already binds the value to the signing facilitators -- if it
           // were tampered with, this would have failed first.
           artifact.value.peerHistory,
-          historicalDependencyResolution
+          historicalDependencyResolution,
+          artifact.value.certifiedLineage
         ).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
@@ -101,7 +104,8 @@ object CurrencySnapshotValidator {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       peerHistory: Option[ConsensusOperationalState] = None,
-      historicalDependencyResolution: Boolean = false
+      historicalDependencyResolution: Boolean = false,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
         lastArtifact,
@@ -110,7 +114,8 @@ object CurrencySnapshotValidator {
         facilitators,
         getGlobalSnapshotByOrdinal,
         peerHistory,
-        historicalDependencyResolution
+        historicalDependencyResolution,
+        certifiedLineage
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -144,7 +149,8 @@ object CurrencySnapshotValidator {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       peerHistory: Option[ConsensusOperationalState],
-      historicalDependencyResolution: Boolean
+      historicalDependencyResolution: Boolean,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -198,7 +204,8 @@ object CurrencySnapshotValidator {
                 shouldPerformMetagraphSpecificValidations = false,
                 Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
                 peerHistory,
-                historicalDependencyResolution
+                historicalDependencyResolution,
+                certifiedLineage
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =

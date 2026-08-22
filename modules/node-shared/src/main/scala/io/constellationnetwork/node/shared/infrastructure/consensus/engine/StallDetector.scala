@@ -57,6 +57,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
   parentRoundCommitteeOf: Outcome => Set[PeerId],
   openAdmissionCadenceOf: Key => Boolean,
   locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
+  expandedBeyondSingletonOf: Outcome => Boolean,
   lastSnapshotHashOf: Outcome => Hash,
   getPeerChainTips: F[Map[PeerId, ChainTip]],
   admissionCandidateTipProbe: Option[AdmissionCandidateTipProbe.Probes[F]],
@@ -1610,8 +1611,19 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val locallyObservedParentSigners = locallyObservedParentSignersOf(state.lastOutcome)
     val configuredMaxAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
     val admissionBatchSize = math.max(1, configuredMaxAdmissions)
+    // A from-genesis singleton can finish a round before an unseated follower's
+    // current-round Facility reaches it. Permit exactly that first 1 -> 2 step to use
+    // the authenticated exact-parent probe alone. After the second seat is installed,
+    // normal Facility alignment and headroom rules apply without exception.
+    val singletonGenesisBootstrap = CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
+      state.certifiedConsensusActive,
+      config.certifiedConsensusActivationKey,
+      committee.size,
+      expandedBeyondSingletonOf(state.lastOutcome)
+    )
     val headroomGateActive = OpenAdmissionPolicy.headroomRequired(
       certifiedConsensusActive = state.certifiedConsensusActive,
+      allowSingletonBootstrapExpansion = singletonGenesisBootstrap,
       bootstrapActive = bootstrapActive,
       currentCommitteeSize = committee.size,
       maxAdmissionSeats = admissionBatchSize,
@@ -1783,7 +1795,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         // Wait for actual current-key consensus participation before spending the one-shot
         // authenticated metadata probe. If the Facility arrives later in this round, a later
         // monitor tick can still launch the probe; an absent Facility does not burn the cadence.
+        // The from-genesis singleton exception must probe immediately because the sole signer can
+        // finish before any unseated follower's Facility becomes observable.
         val openProbeTarget = fixedOpenTarget.filter { target =>
+          singletonGenesisBootstrap ||
           StallDetector.hasCurrentRoundFacility(
             resources.peerDeclarationsMap,
             selfId,
@@ -1846,6 +1861,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                 (target, "tip_not_exact")
               case (target, lane, Some(_)) if !lane.isProbationRecovery && hasCurrentRoundFacility(target) =>
                 (target, "aligned")
+              case (target, lane, Some(_)) if !lane.isProbationRecovery && singletonGenesisBootstrap =>
+                (target, "singleton_genesis_exact_tip")
               case (target, lane, Some(_)) if !lane.isProbationRecovery =>
                 (target, "facility_missing_or_misaligned")
             }
@@ -1937,7 +1954,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                       openObservation,
                       hasCurrentRoundFacility,
                       expectedTip,
-                      expectedOrdinal
+                      expectedOrdinal,
+                      currentRoundFacilityRequired = !singletonGenesisBootstrap
                     )
                     .toList
                 else openAdmissionTargets.filter(pid => chainTips.get(pid).exists(isAdmissionReadyTip))
@@ -1950,7 +1968,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                 openAlignmentOutcomes.headOption
                   .map(_._2)
                   .orElse {
-                    fixedOpenTarget.filterNot(hasCurrentRoundFacility).as("waiting_for_current_facility")
+                    fixedOpenTarget
+                      .filterNot(hasCurrentRoundFacility)
+                      .as(if (singletonGenesisBootstrap) "singleton_genesis_probe_pending" else "waiting_for_current_facility")
                   }
                   .getOrElse("not_applicable")
               // Admission-gate diagnostic log per probation peer per tick.

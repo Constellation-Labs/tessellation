@@ -228,6 +228,31 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
     )
   }
 
+  test("the from-genesis singleton bootstrap exception still requires a fresh exact parent") {
+    val target = PeerId(Hex("01" * 64))
+    val exact = ChainTip(ordinal(100L), expectedHash)
+    val conflict = ChainTip(ordinal(100L), differentHash)
+
+    val exactWithoutFacility = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(exact.some),
+      _ => false,
+      expectedHash,
+      ordinal(100L).some,
+      currentRoundFacilityRequired = false
+    )
+    val conflictWithoutFacility = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(conflict.some),
+      _ => false,
+      expectedHash,
+      ordinal(100L).some,
+      currentRoundFacilityRequired = false
+    )
+
+    IO.pure(expect.same(Set(target), exactWithoutFacility) && expect(conflictWithoutFacility.isEmpty))
+  }
+
   test("current-round Facility requires exact parent and the voter's round bindings") {
     val voter = PeerId(Hex("01" * 64))
     val target = PeerId(Hex("02" * 64))

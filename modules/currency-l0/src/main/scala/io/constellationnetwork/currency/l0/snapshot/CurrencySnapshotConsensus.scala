@@ -27,23 +27,27 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlob
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
-import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastSentGlobalSnapshotSyncStorage, OrdinalJsonSidecarStorage}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
+  LastSentGlobalSnapshotSyncStorage,
+  OrdinalJsonSidecarStorage,
+  SnapshotInfoLocalFileSystemStorage
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.snapshot.SnapshotMetadata
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.schema.{CurrencyStateProofSelector, GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 
@@ -71,6 +75,8 @@ object CurrencySnapshotConsensus {
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, CurrencySnapshotStateProof, CurrencySnapshotInfo],
+    currencyAddress: Address,
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     effectiveConsensusConfig: ConsensusConfig,
@@ -101,7 +107,10 @@ object CurrencySnapshotConsensus {
     // cancelled while the pool is still alive). When None (default, and what tests use) the loop
     // runs on the ambient runtime under the outer supervisor. See `ConsensusExecutor`.
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
-  )(implicit supervisor: Supervisor[F]): F[CurrencySnapshotConsensus[F]] = {
+  )(
+    implicit supervisor: Supervisor[F],
+    currencyStateProofSelector: CurrencyStateProofSelector
+  ): F[CurrencySnapshotConsensus[F]] = {
     implicit val daDecoder: Decoder[DataTransaction] = DataTransactionCodecs.decoder(maybeDataApplication)
     implicit val daEncoder: Encoder[DataTransaction] = DataTransactionCodecs.encoder(maybeDataApplication)
     implicit val hs: HasherSelector[F] = hasherSelector
@@ -109,7 +118,6 @@ object CurrencySnapshotConsensus {
     // Startup resolves this exact value once for both the join fence and live engine. SnapshotConfig
     // remains present only for sidecar paths; it does not participate in a second consensus projection.
     val resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
-    val resolvedCertifiedConsensusActivationKey = effectiveConsensusConfig.certifiedConsensusActivationKey
     val seedlistPeerIds = seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet)
 
     for {
@@ -167,6 +175,19 @@ object CurrencySnapshotConsensus {
           lastGlobalSnapshotSyncStorage
         )
 
+      certifiedDownloadPreflight = CurrencyCertifiedDownloadValidator.make[F](
+        effectiveConsensusConfig,
+        resolvedCoreCommitteeSize,
+        seedlistPeerIds,
+        currencyAddress,
+        facilitatorSelector,
+        consensusFns.facilitatorFilter,
+        snapshotStorage.get,
+        snapshotInfoStorage.read,
+        certifiedOutcomeSidecar,
+        consensusStateAdvancer
+      )
+
       peerQualityTracker <- PeerQualityTracker.make[F]
 
       tcaFilter = TrailingCommonAncestorFilter.make[F]
@@ -178,6 +199,8 @@ object CurrencySnapshotConsensus {
           lastGlobalSnapshotStorage,
           gossip,
           selfId,
+          networkId,
+          keyPair,
           seedlist,
           facilitatorSelector,
           effectiveConsensusConfig.deterministicConfigHash,
@@ -360,26 +383,20 @@ object CurrencySnapshotConsensus {
               effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
             ),
           (_: CurrencyConsensusOutcome) => None,
+          (o: CurrencyConsensusOutcome) =>
+            CertifiedConsensusGenesis.hasExpandedBeyondSingleton(
+              effectiveConsensusConfig.certifiedConsensusActivationKey,
+              o.key,
+              o.facilitators.value.size,
+              o.expandedBeyondSingleton
+            ),
           (o: CurrencyConsensusOutcome) => o.finished.snapshotHash,
           (o: CurrencyConsensusOutcome) => o.peerQuality.toMap,
           (o: CurrencyConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
           none[AdmissionCandidateTipProbe.Probes[F]],
           peersCommittedAheadProbe,
-          onOutcomePreInitialize = Some { (outcome: CurrencyConsensusOutcome) =>
-            val active = effectiveConsensusConfig.certifiedConsensusActiveAt(outcome.key.value.value)
-            val genesisRoot = CertifiedConsensusGenesis.isRootKey(
-              effectiveConsensusConfig.certifiedConsensusActivationKey,
-              outcome.key
-            ) && outcome.finished.certifiedOutcome.isEmpty
-
-            if (!active) Async[F].unit
-            else if (genesisRoot) validateGenesisRoot(outcome)
-            else
-              new IllegalStateException(
-                s"Certified Currency L0 download requires independently trusted predecessor lineage at ordinal=${outcome.key.value.value}"
-              ).raiseError[F, Unit]
-          },
+          onOutcomePreInitialize = Some(certifiedDownloadPreflight),
           onOutcomeFinalized = Some((outcome: CurrencyConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
               certifiedOutcomeSidecar.write(outcome.key, outcome) >>

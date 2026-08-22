@@ -76,6 +76,7 @@ object OpenAdmissionPolicy {
     */
   def headroomRequired(
     certifiedConsensusActive: Boolean,
+    allowSingletonBootstrapExpansion: Boolean,
     bootstrapActive: Boolean,
     currentCommitteeSize: Int,
     maxAdmissionSeats: Int,
@@ -83,7 +84,11 @@ object OpenAdmissionPolicy {
   ): Boolean = {
     val batchSize = math.max(1, maxAdmissionSeats)
     val threshold = math.max(1, bootstrapCompleteProofsThreshold)
-    certifiedConsensusActive || !bootstrapActive || currentCommitteeSize + batchSize >= threshold
+    val exactSingletonExpansion =
+      allowSingletonBootstrapExpansion && currentCommitteeSize == 1 && batchSize == 1
+
+    !exactSingletonExpansion &&
+    (certifiedConsensusActive || !bootstrapActive || currentCommitteeSize + batchSize >= threshold)
   }
 
   /** The five-round cadence applies only to open expansion. A peer in the existing penalty/probation recovery lane remains
@@ -125,8 +130,12 @@ object OpenAdmissionPolicy {
     *
     * Global L0 bypasses headroom only while a bootstrap admission batch remains below the proof threshold. The batch that reaches that
     * threshold is gated because it can activate full-committee finality immediately. This still lets a singleton grow without requiring an
-    * unseated second signer before the crossing batch. V35 always uses the frozen full-committee floor, including immediately after its
-    * activation reset, so its headroom gate remains active even while the legacy proof-size window still reports bootstrap.
+    * unseated second signer before the crossing batch. V35 normally uses the frozen full-committee floor, including immediately after an
+    * ordinal-gated activation reset, so its headroom gate remains active even while the legacy proof-size window still reports bootstrap.
+    * The one exception is the exact first 1 -> 2 transition of a lineage configured to use certified consensus from its canonical first
+    * incremental genesis root: that root has no mature committee to preserve, and applying the `(n + 1)` floor would require the unseated
+    * second peer to have signed before admission. A monotonic certified fact permanently closes the exception after any two-seat committee
+    * has existed; later degradation back to one signer cannot re-arm it. The exception is also limited to a one-seat batch.
     *
     * A batch that raises the finality floor additionally requires the same exact headroom on three consecutive finalized parents. That
     * evidence is a bounded node-local history of actual snapshot proofs, so it remains vote-emission-only just like the one-parent check.

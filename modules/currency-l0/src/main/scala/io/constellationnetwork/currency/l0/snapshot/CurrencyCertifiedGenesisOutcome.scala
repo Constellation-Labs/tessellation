@@ -53,7 +53,8 @@ object CurrencyCertifiedGenesisOutcome {
         snapshotHash,
         certifiedBinary = binary.signed.some
       ),
-      recentProofSizes = SortedMap(snapshot.ordinal -> snapshot.proofs.size.toInt)
+      recentProofSizes = SortedMap(snapshot.ordinal -> snapshot.proofs.size.toInt),
+      expandedBeyondSingleton = Some(proofSigners.size > 1)
     )
   }
 

@@ -25,6 +25,28 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect.same(Right(List(a, b, c, d)), expansion)
   }
 
+  test("Currency certified membership retains bounded contraction, expansion, and replacement semantics") {
+    val contraction = CertifiedMembershipTransition.applyCurrencyTo(committee, Set.empty, Set(b), maxChanges = 1)
+    val expansion = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(d), Set.empty, maxChanges = 1)
+    val replacement = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(d), Set(b), maxChanges = 1)
+
+    expect.same(Right(List(a, c)), contraction) &&
+    expect.same(Right(List(a, b, c, d)), expansion) &&
+    expect.same(Right(List(a, c, d)), replacement)
+  }
+
+  test("Currency certified membership rejects ambiguous or out-of-bounds transitions") {
+    val overlap = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(b), Set(b), maxChanges = 1)
+    val seatedAdmission = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(a), Set.empty, maxChanges = 1)
+    val unknownEviction = CertifiedMembershipTransition.applyCurrencyTo(committee, Set.empty, Set(peer(9)), maxChanges = 1)
+    val overCap = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(d, peer(5)), Set.empty, maxChanges = 1)
+
+    expect(overlap.isLeft) &&
+    expect(seatedAdmission.isLeft) &&
+    expect(unknownEviction.isLeft) &&
+    expect(overCap.isLeft)
+  }
+
   test("one-for-one replacement preserves cardinality and inherited ordering") {
     val result = CertifiedMembershipTransition.applyTo(committee, Set(d), Set(b), maxChanges = 1)
 
@@ -183,6 +205,55 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect.same(CertifiedMembershipTransition.ProposalSelection(List.empty, List.empty), unpaired) &&
     expect.same(CertifiedMembershipTransition.ProposalSelection(List(candidate), List(silent)), paired) &&
     expect.same(CertifiedMembershipTransition.ProposalSelection(List(candidate), List.empty), expansion)
+  }
+
+  test("from-genesis singleton bootstrap admits exactly one second signer without weakening mature headroom") {
+    val singleton = Set(peer(1))
+    val candidate = peer(2)
+    val observed = singleton
+
+    val strict = CertifiedMembershipTransition.allowsPrepareVote(
+      singleton,
+      observed,
+      Set(candidate),
+      Set.empty,
+      quorumFraction,
+      maxChanges = 1
+    )
+    val bootstrap = CertifiedMembershipTransition.allowsPrepareVote(
+      singleton,
+      observed,
+      Set(candidate),
+      Set.empty,
+      quorumFraction,
+      maxChanges = 1,
+      allowSingletonBootstrapExpansion = true
+    )
+    val missingParentSigner = CertifiedMembershipTransition.allowsPrepareVote(
+      singleton,
+      Set.empty,
+      Set(candidate),
+      Set.empty,
+      quorumFraction,
+      maxChanges = 1,
+      allowSingletonBootstrapExpansion = true
+    )
+    val proposal = CertifiedMembershipTransition.selectForProposal(
+      singleton,
+      observed,
+      admissions = List(candidate),
+      evictions = List.empty[PeerId],
+      (peerId: PeerId) => peerId,
+      (peerId: PeerId) => peerId,
+      quorumFraction,
+      maxChanges = 1,
+      allowSingletonBootstrapExpansion = true
+    )
+
+    expect(!strict) &&
+    expect(bootstrap) &&
+    expect(!missingParentSigner) &&
+    expect.same(CertifiedMembershipTransition.ProposalSelection(List(candidate), List.empty), proposal)
   }
 
   test("invalid membership and cap violations fail closed") {

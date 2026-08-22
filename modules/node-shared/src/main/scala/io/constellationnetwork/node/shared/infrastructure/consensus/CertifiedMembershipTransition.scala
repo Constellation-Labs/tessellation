@@ -117,11 +117,43 @@ object CertifiedMembershipTransition {
       retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
     }
 
+  /** Validate Currency L0's deliberately distinct certified membership policy.
+    *
+    * Currency retains its existing authority to contract, expand, or replace within the configured per-round bounds. The common structural
+    * checks remain identical to DAG (no overlap, no duplicate seat, no eviction outside the frozen roster); only DAG's equal-sized
+    * replacement requirement is omitted. Keeping this validator beside [[validate]] makes the policy difference explicit without copying
+    * ordering/application logic into the Currency download verifier.
+    */
+  def applyCurrencyTo(
+    roundStartCommittee: List[PeerId],
+    admittedPeers: Set[PeerId],
+    evictedPeers: Set[PeerId],
+    maxChanges: Int
+  ): Either[String, List[PeerId]] = {
+    val limit = math.max(0, maxChanges)
+    val roundStartSet = roundStartCommittee.toSet
+
+    for {
+      _ <- Either.cond(admittedPeers.intersect(evictedPeers).isEmpty, (), "currency_membership_admit_evict_overlap")
+      _ <- Either.cond(
+        admittedPeers.intersect(roundStartSet).isEmpty,
+        (),
+        "currency_membership_admitted_already_seated"
+      )
+      _ <- Either.cond(evictedPeers.subsetOf(roundStartSet), (), "currency_membership_evicted_not_seated")
+      _ <- Either.cond(admittedPeers.size <= limit, (), "currency_membership_admissions_over_cap")
+      _ <- Either.cond(evictedPeers.size <= limit, (), "currency_membership_evictions_over_cap")
+      retained = roundStartCommittee.distinct.filterNot(evictedPeers.contains)
+      retainedSet = retained.toSet
+    } yield retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
+  }
+
   /** Local Core prepare-vote policy for a structurally valid certified membership value.
     *
     * Proof subsets are intentionally local and therefore can only make this voter abstain from an admission-only expansion. They never
     * alter validation or the derived next committee. An equal-sized replacement keeps Q(N) unchanged and is independent of the local proof
-    * subset.
+    * subset. The caller may authorize the canonical from-genesis singleton's first 1 -> 2 expansion; this remains local vote policy and is
+    * accepted only when the existing singleton signer appears in the observed parent proofs.
     */
   def allowsPrepareVote(
     roundStartCommittee: Set[PeerId],
@@ -129,12 +161,20 @@ object CertifiedMembershipTransition {
     admittedPeers: Set[PeerId],
     evictedPeers: Set[PeerId],
     quorumThresholdFraction: Double,
-    maxChanges: Int
+    maxChanges: Int,
+    allowSingletonBootstrapExpansion: Boolean = false
   ): Boolean =
     validate(roundStartCommittee, admittedPeers, evictedPeers, maxChanges).exists {
       case Validated(Kind.Replacement, _) => true
       case Validated(Kind.Hold, _)        => true
       case Validated(Kind.Expansion, _) =>
+        val singletonBootstrapExpansion =
+          allowSingletonBootstrapExpansion &&
+            roundStartCommittee.size == 1 &&
+            admittedPeers.size == 1 &&
+            roundStartCommittee.subsetOf(locallyObservedParentSigners)
+
+        singletonBootstrapExpansion ||
         FinalityHeadroom
           .evaluate(
             roundStartCommittee,
@@ -150,6 +190,7 @@ object CertifiedMembershipTransition {
     * An available eviction is paired one-for-one with an admission and therefore needs no N+1 headroom. Without a pair, admissions are
     * emitted only when the same local parent-proof invariant used by Core prepare voting permits expansion. This prevents asymmetric
     * delivery of an atomic-intent ACS from making an honest leader repeatedly propose a value it would itself refuse to prepare.
+    * `allowSingletonBootstrapExpansion` is the same narrowly scoped from-genesis 1 -> 2 exception used by prepare voters.
     */
   def selectForProposal[A, E](
     roundStartCommittee: Set[PeerId],
@@ -159,7 +200,8 @@ object CertifiedMembershipTransition {
     admissionTarget: A => PeerId,
     evictionTarget: E => PeerId,
     quorumThresholdFraction: Double,
-    maxChanges: Int
+    maxChanges: Int,
+    allowSingletonBootstrapExpansion: Boolean = false
   ): ProposalSelection[A, E] = {
     val limit = math.max(0, maxChanges)
     val boundedAdmissions = admissions.take(limit)
@@ -177,7 +219,8 @@ object CertifiedMembershipTransition {
           admittedPeers,
           evictedPeers,
           quorumThresholdFraction,
-          limit
+          limit,
+          allowSingletonBootstrapExpansion
         )
       ) ProposalSelection(pairedAdmissions, boundedEvictions)
       else ProposalSelection(List.empty, List.empty)
@@ -190,7 +233,8 @@ object CertifiedMembershipTransition {
           admittedPeers,
           Set.empty,
           quorumThresholdFraction,
-          limit
+          limit,
+          allowSingletonBootstrapExpansion
         )
       ) ProposalSelection(boundedAdmissions, List.empty)
       else ProposalSelection(List.empty, List.empty)

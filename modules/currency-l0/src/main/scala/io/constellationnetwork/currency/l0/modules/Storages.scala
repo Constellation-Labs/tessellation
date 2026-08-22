@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.{CertifiedConsensusGenesis, ValidationErrorStorage}
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
@@ -48,7 +48,8 @@ object Storages {
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,
     dataApplication: Option[BaseDataApplicationL0Service[F]],
-    hasherSelector: HasherSelector[F]
+    hasherSelector: HasherSelector[F],
+    certifiedConsensusActivationKey: Long
   ): F[Storages[F]] =
     for {
       snapshotLocalFileSystemStorage <- CurrencyIncrementalSnapshotLocalFileSystemStorage.make[F](
@@ -59,6 +60,7 @@ object Storages {
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotConfig.combinedSnapshotCheckpointPath
         )
+      certifiedReplayRoot = CertifiedConsensusGenesis.publicReplayRetentionRoot(certifiedConsensusActivationKey)
       snapshotStorage <- SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotLocalFileSystemStorage,
@@ -66,7 +68,8 @@ object Storages {
           snapshotConfig.inMemoryCapacity,
           SnapshotOrdinal.MinValue,
           hasherSelector,
-          combinedCurrencySnapshotCheckpointStorage
+          combinedCurrencySnapshotCheckpointStorage,
+          certifiedReplayRoot
         )
       globalSnapshotsWithStateFileStorage <- GlobalSnapshotsWithStateLocalFileSystemStorage
         .make[F](snapshotConfig.globalSnapshotsWithStatePath, snapshotConfig.maxGlobalSnapshotsWithStateStored)

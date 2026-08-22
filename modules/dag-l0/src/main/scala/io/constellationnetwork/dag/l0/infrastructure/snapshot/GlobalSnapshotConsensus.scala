@@ -426,6 +426,8 @@ object GlobalSnapshotConsensus {
           consensusStorage,
           gossip,
           selfId,
+          appConfig.environment.entryName,
+          keyPair,
           seedlist,
           facilitatorSelector,
           effectiveConsensusConfig.deterministicConfigHash,
@@ -449,7 +451,7 @@ object GlobalSnapshotConsensus {
         resolvedCoreCommitteeSize,
         seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
         facilitatorSelector,
-        consensusFunctions,
+        consensusFunctions.facilitatorEligible,
         snapshotDownloadStorage,
         certifiedOutcomeSidecar,
         stateAdvancer
@@ -596,6 +598,13 @@ object GlobalSnapshotConsensus {
               effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
             ),
           (o: GlobalConsensusOutcome) => Some(o.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet),
+          (o: GlobalConsensusOutcome) =>
+            CertifiedConsensusGenesis.hasExpandedBeyondSingleton(
+              effectiveConsensusConfig.certifiedConsensusActivationKey,
+              o.key,
+              o.facilitators.value.size,
+              o.expandedBeyondSingleton
+            ),
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
           (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),

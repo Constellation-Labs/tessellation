@@ -82,6 +82,8 @@ package object shared {
       CertificationPurpose.Commit.getClass -> 554,
       ConsensusDomain.DagL0.getClass -> 555,
       ConsensusDomain.CurrencyL0.getClass -> 556,
-      classOf[CertifiedOutcome] -> 557
+      classOf[CertifiedOutcome] -> 557,
+      classOf[TriggerStatement] -> 558,
+      TriggerStatementPurpose.Facility.getClass -> 559
     ).union(sharedKryoRegistrar)
 }

@@ -550,7 +550,8 @@ object Main
           cfg.incremental,
           trustRatings,
           sharedConfig.environment,
-          hashSelect
+          hashSelect,
+          loadedConsensusConfig.certifiedConsensusActivationKey
         )
         .asResource
       // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Isolates

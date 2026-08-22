@@ -10,11 +10,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
-  CombinedSnapshotCheckpointFileSystemStorage,
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -40,7 +36,8 @@ object SnapshotDownloadStorage {
       GlobalSnapshotInfo
     ],
     hashSelect: HashSelect,
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    certifiedReplayRoot: Option[SnapshotOrdinal] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): SnapshotDownloadStorage[F] =
@@ -229,11 +226,17 @@ object SnapshotDownloadStorage {
 
       def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
         snapshotInfoStorage.write(ordinal, info) >> {
-          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
-
           snapshotInfoStorage.listStoredOrdinals.flatMap {
-            _.compile.toList
-              .map(_.toSet.diff(toKeep).toList)
+            _.compile.toList.map { stored =>
+              val storedSet = stored.toSet
+              val toKeep = SnapshotStorage.retainedSnapshotInfoOrdinals(
+                storedSet,
+                cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal),
+                ordinal,
+                certifiedReplayRoot
+              )
+              storedSet.diff(toKeep).toList
+            }
               .flatMap(_.traverse_(snapshotInfoStorage.delete))
           }
         }

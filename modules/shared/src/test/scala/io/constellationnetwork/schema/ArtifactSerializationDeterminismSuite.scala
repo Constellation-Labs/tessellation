@@ -5,6 +5,7 @@ import cats.effect.{IO, Resource}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.ID.Id
@@ -23,7 +24,7 @@ import io.constellationnetwork.security.signature.Signed
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.circe.syntax._
-import io.circe.{Encoder, Printer}
+import io.circe.{Decoder, Encoder, Printer}
 import weaver.MutableIOSuite
 
 /** Cross-peer serialization-determinism suite for the Global L0 signed-artifact path.
@@ -297,6 +298,29 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
       expect(fwdBytes == revBytes, "GlobalIncrementalSnapshot serialized bytes diverged across insertion order")
         .and(expect.same(fwdHash, revHash))
         .and(expect(snapshotForward == snapshotReversed, "logical equality precondition failed"))
+  }
+
+  test("trailing v35 public fields preserve legacy JSON and decode absent fields as None") { res =>
+    implicit val (j, h) = res
+    implicit val stateProofSelector: StateProofSelector = CurrencyStateProofSelector.instance
+
+    val globalFull = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+    val currencyFull = CurrencySnapshot.mkGenesis(Map.empty, None, None)
+
+    def compatible[A: Encoder: Decoder](value: A, field: String): Boolean = {
+      val encoded = value.asJson
+      val legacy = encoded.mapObject(_.remove(field))
+      productionPrinter.print(encoded) == productionPrinter.print(legacy) && legacy.as[A].contains(value)
+    }
+
+    CurrencyIncrementalSnapshot.fromCurrencySnapshot[IO](currencyFull).map { currencyIncremental =>
+      expect.all(
+        compatible(snapshotForward, "certifiedLineage"),
+        compatible(globalFull, "certifiedCheckpoint"),
+        compatible(currencyIncremental, "certifiedLineage"),
+        compatible(currencyFull, "certifiedCheckpoint")
+      )
+    }
   }
 
   // ============================================================================================

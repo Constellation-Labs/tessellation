@@ -1,5 +1,7 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import java.security.KeyPair
+
 import cats.MonadThrow
 import cats.effect.Async
 import cats.effect.kernel.{Clock, Ref, Sync}
@@ -33,7 +35,7 @@ import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ControllerEvidenceEntry, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.{Hasher, HasherSelector}
+import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -132,7 +134,10 @@ object GlobalSnapshotConsensusStateCreator {
               lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
               recentRoundEndTimes = SortedMap.empty,
               controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
-              penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some
+              penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some,
+              // An ordinal-gated activation is a mature lineage. It must never inherit the
+              // from-genesis singleton exception, even if the activation committee later shrinks.
+              expandedBeyondSingleton = true.some
             )
           }
       }
@@ -185,11 +190,13 @@ object GlobalSnapshotConsensusStateCreator {
     else Right(())
   }
 
-  def make[F[_]: Async: Metrics: HasherSelector](
+  def make[F[_]: Async: Metrics: HasherSelector: SecurityProvider](
     consensusFns: GlobalSnapshotConsensusFunctions[F],
     consensusStorage: GlobalConsensusStorage[F],
     gossip: Gossip[F],
     selfId: PeerId,
+    networkId: String,
+    keyPair: KeyPair,
     seedlist: Option[Set[SeedlistEntry]],
     facilitatorSelector: FacilitatorSelector,
     consensusConfigHash: Hash,
@@ -1175,6 +1182,25 @@ object GlobalSnapshotConsensusStateCreator {
         // round-finalize median absorbs outliers and the consume-site clamp pins
         // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
         proposerClockMs <- Clock[F].realTime.map(_.toMillis)
+        triggerStatement <-
+          if (state.certifiedConsensusActive)
+            HasherSelector[F].withCurrent { implicit hasher =>
+              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+                CertifiedConsensus.signTriggerStatement[F](
+                  CertifiedConsensus.triggerStatement(
+                    CertifiedConsensus.ConsensusDomain.DagL0,
+                    networkId,
+                    key.value.value,
+                    lastOutcome.finished.snapshotHash,
+                    roundStartHash,
+                    consensusConfigHash,
+                    maybeTrigger
+                  ),
+                  keyPair
+                )
+              }
+            }.map(_.some)
+          else none[io.constellationnetwork.security.signature.Signed[CertifiedConsensus.TriggerStatement]].pure[F]
         facility = Facility(
           eventHashes,
           candidates,
@@ -1184,7 +1210,8 @@ object GlobalSnapshotConsensusStateCreator {
           lastOutcome.finished.snapshotHash,
           consensusConfigHash = consensusConfigHash.some,
           selfHealthHint = selfHealth.some,
-          proposerClockMs = proposerClockMs.some
+          proposerClockMs = proposerClockMs.some,
+          triggerStatement = triggerStatement
         )
         declaration = ConsensusPeerDeclaration(key, facility)
         effect = ConsensusStateCreator.exactFacilityEffect[F, GlobalSnapshotKey](

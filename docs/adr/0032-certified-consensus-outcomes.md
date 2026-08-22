@@ -49,7 +49,13 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    Core prepares one exact `ProposalValue`, forms a BFT-supermajority ProposalQC,
    then forms a separately domain-separated Core commit QC. The frozen full committee
    continues to sign the unchanged artifact hash and satisfy the existing finality
-   floor.
+   floor. Every v35 Facility also contains a transferably signed, domain-separated
+   `TriggerStatement` binding layer, network, key, parent, frozen-committee hash,
+   deterministic config hash, and trigger. The leader carries a valid leader-bearing
+   Facility quorum and derives the trigger only from that evidence; followers verify
+   the same evidence without consulting their local event-pacing state. Invalid inner
+   statements are excluded, but the remaining set must still meet the unchanged
+   Facility-phase quorum.
 6. Carry the highest verified complete ProposalQC through view-change and timeout
    votes. Verify every advertised candidate before selecting the unique highest view;
    an invalid higher claim cannot eclipse a valid lower QC, and divergent valid QCs at
@@ -81,30 +87,43 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    the last legacy membership delta by one round rather than reading a fresher but
    node-local sidecar.
 9. Persist the complete typed layer `ConsensusOutcome` beside the normal snapshot after
-   (and only after) the last-outcome compare-and-set succeeds. Storage uses one generic
-   ordinal sidecar over the existing `JsonSerializer`; malformed data is a cache miss.
-   Sidecars reuse the existing logarithmic snapshot-info cutoff rather than introducing
-   another retention configuration.
-   Serve exact historical outcomes through the existing authenticated
-   `/consensus/specific/outcome` route. Before abandonment, a bounded peer sample may be
-   adopted only after the layer re-derives the outcome against its locally known parent
-   and frozen sets and verifies both Core QCs and artifact proofs. Currency additionally
-   retains/verifies its already-existing fully signed `StateChannelSnapshotBinary`,
-   because its binary hash cannot be authenticated from a scalar alone. Two valid
-   semantic value hashes fail closed. Arbitrary long-range certification is out of scope
-   until a certificate chain or trusted checkpoint is specified.
-   Ordinary download uses the same rule before any application-storage alignment or
-   consensus initialization. At the exact activation key, the locally downloaded and
-   state-proof-validated A-1 artifact/context is the independent root. After activation,
-   the node must hold the immediately preceding outcome in its locally produced or
-   previously validated certified sidecar and tie that sidecar back to its local public
-   snapshot. This predecessor check is non-mutating: it reconstructs the state proof
-   without synchronizing the MPT or deleting local files. Historical state-proof/file
-   validation uses the ordinal-selected rules. The reconstructed legacy outcome identity
-   and newly reset activation value use the current hasher, exactly as live state
-   creation does. One typed Global L0 artifact-hash helper preserves the V1 projection
-   when a caller intentionally computes a historical Kryo identity. The existing
-   bound-outcome verifier then re-derives the candidate against that predecessor.
+   (and only after) the last-outcome compare-and-set succeeds. The sidecar is a bounded
+   local fast path and same-key recovery cache, never long-range authority. Serve exact
+   terminal outcomes through the existing authenticated
+   `/consensus/specific/outcome` route. Two valid semantic value hashes fail closed.
+
+   Make the public chain self-verifying from an independently authorized root. Every
+   v35 incremental snapshot at N+1 carries N's `CertifiedOutcome`; the terminal N has no
+   child yet, so its certificate comes from the authenticated terminal-outcome response.
+   An ordinary downloader begins at the locally state-proof-validated A-1 artifact, or
+   the canonical first incremental genesis root, then validates the contiguous public
+   artifact/context sequence root-to-tip. Each step re-derives the complete layer outcome
+   and next committee, verifies signatures and unique signers against the previously
+   authorized frozen sets, checks parent/hash/state-proof adjacency, and installs nothing
+   until the complete fold succeeds. Snapshot artifacts were already durable; snapshot
+   info/context retention is extended contiguously from the configured public replay root
+   through the tip so restart cannot silently prune an interior proof input.
+
+   Currency lineage carries bounded parent-binary evidence: last-snapshot hash, fee, and
+   complete proof envelope. The verifier reconstructs the omitted binary content from the
+   already validated signed parent artifact with a pinned V1 `JsonSerializer` pipeline
+   (canonical JSON, UTF-8, brotli4j 1.12.0 quality 2), hashes the reconstructed binary,
+   and verifies the carried frozen-committee proofs. Carrying the complete binary would
+   recursively embed every ancestor and is forbidden. Reconstruction makes the exact V1
+   encoder a permanent historical verification invariant; future encoder evolution must
+   add a new `CertifiedLayerEvidence` variant while retaining V1.
+
+   Full DAG and Currency snapshots gain an optional `CertifiedCheckpointV1` projection
+   containing the certified source tip and the minimal continuation state. It never
+   self-authenticates: only a separately announced containing-full-snapshot hash can make
+   it a root. Initial activation uses contiguous public replay. Checkpoint publication,
+   authority distribution, and download adoption remain an explicit later operational
+   step; the schema is frozen now so that step does not require another snapshot shape.
+
+   Historical state-proof/file validation remains ordinal-selected. The reconstructed
+   legacy outcome identity and newly reset activation value use the current hasher,
+   exactly as live state creation does. One typed Global L0 artifact-hash helper preserves
+   the V1 projection when a caller intentionally computes a historical Kryo identity.
 
    Two explicit uncertified roots are also locally authoritative: certified-consensus
    genesis and an exact operator-signed recovery-plan anchor. Production persists only
@@ -127,7 +146,7 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    and fail the proof check. The genesis producer defers its first child by one normal round
    interval. This closes the ordinary coordinated-genesis handoff without weakening the
    long-range rule: a node that misses that root window still needs a trusted checkpoint
-   or contiguous certified lineage.
+   or the retained contiguous certified lineage.
 10. Persist each local certified vote lock before emitting its `OutcomeVote`, and
     persist every verified QC advancement before it can influence gossip or commit
     progression. DAG L0 and Currency L0 share one generic
@@ -185,14 +204,17 @@ activation decisions. An absent environment entry resolves to disabled; local de
 activates at genesis. Public activation values must not be added until their rollout
 keys are announced.
 
-This certified-consensus decision does not change `GlobalIncrementalSnapshot`,
-`GlobalSnapshotInfo`, `GlobalSnapshotStateProof`, `CurrencyIncrementalSnapshot`,
-`CurrencySnapshotInfo`, artifact hashing, state-proof calculation, or the meaning of
-artifact signatures. The same release also carries the separately gated, existing-field
-Currency snapshot version transition in
-[ADR-0033](0033-versioned-currency-snapshot-history.md). Passive metagraph software that
-only validates finalized global snapshots does not need to understand the v35 consensus
-envelope, but active Currency stacks must upgrade before the ADR-0033 global boundary.
+This decision changes the public artifact schema: DAG and Currency incremental snapshots
+gain an optional `certifiedLineage`, while their full snapshots gain an optional
+`certifiedCheckpoint`. Below activation the fields are absent and legacy drop-null bytes
+remain unchanged; at/after activation artifact hashes commit to the populated lineage.
+`GlobalSnapshotInfo`, `GlobalSnapshotStateProof`, `CurrencySnapshotInfo`, state-proof
+calculation, and the meaning of the existing artifact signatures do not change. The same
+release also carries the separately gated Currency snapshot version transition in
+[ADR-0033](0033-versioned-currency-snapshot-history.md). Consumers of public snapshot
+schemas, including Snapshot Streaming and metagraph SDK builds, must compile and test
+against the aligned SDK before activation even when they do not inspect the new fields.
+Active Currency stacks must also upgrade before the ADR-0033 global boundary.
 
 ## Consequences
 
@@ -208,20 +230,18 @@ envelope, but active Currency stacks must upgrade before the ADR-0033 global bou
   validation must measure the EventTrigger p95 impact before public activation.
 - A mixed v34/v35 active cluster is unsupported and is fenced before useful consensus
   progress. Pre-activation snapshot history remains replayable with legacy rules.
-- Public snapshot and state-proof compatibility is preserved, but the active consensus
-  message and local outcome/sidecar schemas change.
+- State-proof compatibility is preserved, but public snapshot artifacts, active consensus
+  messages, and local outcome/sidecar schemas change at the coordinated boundary.
 - Missing or corrupt certified sidecars reduce recovery availability and must never be
   treated as valid evidence; every adopted outcome is cryptographically re-verified
   against the locally known parent committee.
-- This includes initial download: layer preflight runs before the newer-outcome
-  application-storage shortcut, sidecar writes, vote-lock cleanup, or consensus CAS. A
-  missing trusted predecessor rejects the handoff without mutation. Operators adding a
-  fresh node after activation must provide an announced trusted checkpoint/recovery plan
-  until contiguous certified-outcome download is implemented.
-- Ordinary rollback at or after activation requires an operator-signed recovery plan. A
-  standalone typed outcome cannot authenticate the lineage of the committee used to
-  verify its own QCs; long-range ordinary rollback remains out of scope until a
-  contiguous certified chain or separately trusted checkpoint is implemented.
+- Initial download validates the entire retained public certificate chain before the
+  newer-outcome application-storage shortcut, sidecar writes, vote-lock cleanup, or
+  consensus CAS. A missing or invalid root/interior frame rejects the handoff atomically.
+- Ordinary rollback at or after activation still requires the explicit recovery authority
+  defined by the rollback path. A standalone typed outcome cannot authenticate the
+  committee used to verify its own QCs; the public chain must be walked from an authorized
+  root, or a separately announced checkpoint must be adopted through its dedicated path.
 - Recovery-plan format v1 accepts JSON-era incremental anchors only. Its single anchor
   hash cannot safely encode both a Kryo-era public parent identity and the local rollback
   locator, so every planned node rejects that historical case before joining or mutation.

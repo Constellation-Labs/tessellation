@@ -23,6 +23,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Cons
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.Snapshot
@@ -38,6 +39,7 @@ case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoSt
 case object NoTipsRemaining extends NoStackTrace
 case class GlobalArtifactMismatch(expected: GlobalIncrementalSnapshot, found: GlobalIncrementalSnapshot) extends InvalidArtifact
 case class CurrencyArtifactMismatch(errors: List[CurrencySnapshotValidationError]) extends InvalidArtifact
+case class CertifiedLineageInvalid(reason: String) extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
   F[_]: Async: SecurityProvider,
@@ -72,7 +74,8 @@ abstract class SnapshotConsensusFunctions[
     artifact: Artifact,
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(

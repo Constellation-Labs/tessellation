@@ -43,6 +43,7 @@ object schema {
             observedResponders,
             observedSelfHealth,
             _,
+            _,
             _
           ) =>
         s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
@@ -75,6 +76,8 @@ object schema {
     // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
     // original Proposal payload exactly.
     observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+    // Frozen leader-selected Facility trigger evidence for byte-identical re-spread.
+    triggerEvidence: List[Signed[CertifiedConsensus.TriggerStatement]] = List.empty,
     proposedValue: Option[ProposalValue] = None,
     acceptedValue: Option[ProposalValue] = None
   ) extends CurrencyConsensusStep
@@ -184,7 +187,9 @@ object schema {
     controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]] = None,
     // Controller evidence stage 3 (write-only, no consumer yet), mirror of dag-l0 schema:
     // cert-anchored absolute penalty horizon per peer. See dag-l0 mirror.
-    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
+    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None,
+    // V35 monotonic lineage fact; mirror of DAG L0. Option preserves historical decode.
+    expandedBeyondSingleton: Option[Boolean] = None
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value

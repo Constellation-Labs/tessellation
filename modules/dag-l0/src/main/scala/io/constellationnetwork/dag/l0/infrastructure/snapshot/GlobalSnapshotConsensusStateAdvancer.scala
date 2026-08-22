@@ -37,7 +37,7 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
-import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalArtifactMismatch
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{CertifiedLineageInvalid, GlobalArtifactMismatch}
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore, MptStoreSavepoint}
@@ -106,7 +106,20 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
       GlobalSnapshotStatus,
       GlobalConsensusOutcome,
       GlobalConsensusKind
-    ]
+    ] {
+
+  /** Re-derive one certified public round without trusting a peer's private outcome fields.
+    *
+    * Used by root-to-tip lineage replay. The returned state/outcome are not persisted by this method; callers install authority only after
+    * the complete child-carried chain succeeds.
+    */
+  def deriveCertifiedPublicRound(
+    state: GlobalSnapshotConsensusState,
+    artifact: Signed[GlobalSnapshotArtifact],
+    context: GlobalSnapshotContext,
+    certified: CertifiedConsensus.CertifiedOutcome
+  ): F[Either[String, (GlobalSnapshotConsensusState, GlobalConsensusOutcome)]]
+}
 
 object GlobalSnapshotConsensusStateAdvancer {
 
@@ -788,7 +801,18 @@ object GlobalSnapshotConsensusStateAdvancer {
                   // recentSigners-at-snapshot-boundary convention: None while empty so
                   // pre-deploy encodings stay byte-stable under dropNullValues.
                   controllerEvidence = if (newControllerEvidence.nonEmpty) Some(newControllerEvidence) else None,
-                  penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None
+                  penaltyUntil = if (newPenaltyUntil.nonEmpty) Some(newPenaltyUntil) else None,
+                  expandedBeyondSingleton = Option
+                    .when(state.certifiedConsensusActive)(
+                      CertifiedConsensusGenesis.nextExpandedBeyondSingleton(
+                        config.certifiedConsensusActivationKey,
+                        state.lastOutcome.key,
+                        state.lastOutcome.facilitators.value.size,
+                        state.lastOutcome.expandedBeyondSingleton,
+                        nextCommittee.size
+                      )
+                    )
+                    .orElse(state.lastOutcome.expandedBeyondSingleton)
                 )
                 (Previous(state.lastOutcome.key), outcome).some
             }
@@ -796,124 +820,132 @@ object GlobalSnapshotConsensusStateAdvancer {
             none
         }
 
+      def deriveCertifiedPublicRound(
+        state: GlobalSnapshotConsensusState,
+        artifact: Signed[GlobalSnapshotArtifact],
+        context: GlobalSnapshotContext,
+        certified: CertifiedConsensus.CertifiedOutcome
+      ): F[Either[String, (GlobalSnapshotConsensusState, GlobalConsensusOutcome)]] =
+        HasherSelector[F].withCurrent { implicit hasher =>
+          val value = certified.proposalQc.value
+          val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
+          val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
+          val frozenCommittee = full.toSortedSet.toSet
+          val requiredArtifactProofs = CertifiedConsensus.requiredArtifactQuorum(
+            frozenCommittee.size,
+            state.coreFacilitators.value.size,
+            config.quorumThresholdFraction
+          )
+
+          for {
+            artifactHash <- artifact.value.hash
+            bound <- CertifiedConsensus.verifyBoundOutcome[F, GlobalSnapshotContext](
+              certified,
+              CertifiedConsensus.ConsensusDomain.DagL0,
+              networkId,
+              state.key.value.value,
+              state.lastOutcome.finished.snapshotHash,
+              artifactHash,
+              context,
+              full,
+              core,
+              config.quorumThresholdFraction,
+              state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2),
+              config.viewInterval,
+              config.maxRoundDuration
+            )
+            artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, GlobalSnapshotArtifact](
+              artifact,
+              frozenCommittee,
+              requiredArtifactProofs
+            )
+            nextRoundProjection <- CertifiedNextRoundProjector.project[F](
+              state.roundStartFacilitators.value,
+              value.admittedPeers.toSet,
+              value.evictedPeers.toSet,
+              config.activeAdmissionMaxExpansionPerRound,
+              seedlistPeerIds,
+              consensusFns.facilitatorEligible(context, _),
+              facilitatorSelector,
+              artifactHash
+            )
+            structure = for {
+              _ <- CertifiedMembershipTransition
+                .validate(
+                  state.roundStartFacilitators.value.toSet,
+                  value.admittedPeers.toSet,
+                  value.evictedPeers.toSet,
+                  config.activeAdmissionMaxExpansionPerRound
+                )
+                .void
+              _ <- Either.cond(artifact.value.ordinal === state.key, (), "artifact_ordinal_mismatch")
+              _ <- Either.cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
+              _ <- Either.cond(
+                artifact.value.lastSnapshotHash === state.lastOutcome.finished.snapshotHash,
+                (),
+                "artifact_parent_mismatch"
+              )
+              _ <- bound
+              _ <- artifactProofs
+              _ <- nextRoundProjection.void
+            } yield ()
+            result <- structure match {
+              case Left(error) => error.asLeft[(GlobalSnapshotConsensusState, GlobalConsensusOutcome)].pure[F]
+              case Right(_) =>
+                val recoveredState: GlobalSnapshotConsensusState = state.copy(
+                  facilitators = state.roundStartFacilitators,
+                  removedFacilitators = RemovedFacilitators(value.evictedPeers.toSet),
+                  withdrawnFacilitators = WithdrawnFacilitators.empty,
+                  admittedFacilitators = AdmittedFacilitators(value.admittedPeers.toSet),
+                  observedResponders = ObservedResponders(value.observedResponders.toSet),
+                  observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
+                  acceptedTimeoutCertificateVoters = value.timeoutVoters,
+                  certifiedEvictionTargets = value.evictedPeers,
+                  outcomeEndTime = value.consensusEndTime,
+                  viewNumber = value.committedView.toInt,
+                  status = Finished(
+                    artifact,
+                    context,
+                    value.trigger,
+                    Candidates(value.admissionNominee.toSet),
+                    value.roundStartFacilitatorsHash,
+                    value.artifactHash,
+                    certified.some
+                  )
+                )
+
+                getConsensusOutcome(recoveredState).map(_._2) match {
+                  case Some(derived) => (recoveredState -> derived).asRight[String].pure[F]
+                  case None =>
+                    "certified_outcome_derivation_failed".asLeft[(GlobalSnapshotConsensusState, GlobalConsensusOutcome)].pure[F]
+                }
+            }
+          } yield result
+        }
+
       def certifiedOutcomeAdoption(
         state: GlobalSnapshotConsensusState,
         candidate: GlobalConsensusOutcome
       ): F[Either[String, CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]]] =
-        HasherSelector[F].withCurrent { implicit hasher =>
-          candidate.finished.certifiedOutcome match {
-            case None => "certified_outcome_missing".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
-            case Some(certified) =>
-              val value = certified.proposalQc.value
-              val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
-              val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
-              val frozenCommittee = full.toSortedSet.toSet
-              val requiredArtifactProofs = CertifiedConsensus.requiredArtifactQuorum(
-                frozenCommittee.size,
-                state.coreFacilitators.value.size,
-                config.quorumThresholdFraction
-              )
-
-              for {
-                artifactHash <- candidate.finished.signedMajorityArtifact.value.hash
-                bound <- CertifiedConsensus.verifyBoundOutcome[F, GlobalSnapshotContext](
-                  certified,
-                  CertifiedConsensus.ConsensusDomain.DagL0,
-                  networkId,
-                  state.key.value.value,
-                  state.lastOutcome.finished.snapshotHash,
-                  artifactHash,
-                  candidate.finished.context,
-                  full,
-                  core,
-                  config.quorumThresholdFraction,
-                  state.lastOutcome.recentRoundEndTimes.lastOption.map(_._2),
-                  config.viewInterval,
-                  config.maxRoundDuration
-                )
-                artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, GlobalSnapshotArtifact](
-                  candidate.finished.signedMajorityArtifact,
-                  frozenCommittee,
-                  requiredArtifactProofs
-                )
-                nextRoundProjection <- CertifiedNextRoundProjector.project[F](
-                  state.roundStartFacilitators.value,
-                  value.admittedPeers.toSet,
-                  value.evictedPeers.toSet,
-                  config.activeAdmissionMaxExpansionPerRound,
-                  seedlistPeerIds,
-                  consensusFns.facilitatorEligible(candidate.finished.context, _),
-                  facilitatorSelector,
-                  artifactHash
-                )
-                structure = for {
-                  _ <- Either.cond(candidate.key === state.key, (), "outcome_key_mismatch")
-                  _ <- CertifiedMembershipTransition
-                    .validate(
-                      state.roundStartFacilitators.value.toSet,
-                      value.admittedPeers.toSet,
-                      value.evictedPeers.toSet,
-                      config.activeAdmissionMaxExpansionPerRound
-                    )
-                    .void
-                  _ <- Either.cond(
-                    candidate.finished.signedMajorityArtifact.value.ordinal === state.key,
-                    (),
-                    "artifact_ordinal_mismatch"
-                  )
-                  _ <- Either.cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
-                  _ <- Either.cond(
-                    candidate.finished.signedMajorityArtifact.value.lastSnapshotHash === state.lastOutcome.finished.snapshotHash,
-                    (),
-                    "artifact_parent_mismatch"
-                  )
-                  _ <- bound
-                  _ <- artifactProofs
-                  _ <- nextRoundProjection.void
-                } yield ()
-                result <- structure match {
-                  case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
-                  case Right(_) =>
-                    val recoveredState: GlobalSnapshotConsensusState = state.copy(
-                      facilitators = state.roundStartFacilitators,
-                      removedFacilitators = RemovedFacilitators(value.evictedPeers.toSet),
-                      withdrawnFacilitators = WithdrawnFacilitators.empty,
-                      admittedFacilitators = AdmittedFacilitators(value.admittedPeers.toSet),
-                      observedResponders = ObservedResponders(value.observedResponders.toSet),
-                      observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
-                      acceptedTimeoutCertificateVoters = value.timeoutVoters,
-                      certifiedEvictionTargets = value.evictedPeers,
-                      outcomeEndTime = value.consensusEndTime,
-                      viewNumber = value.committedView.toInt,
-                      status = Finished(
-                        candidate.finished.signedMajorityArtifact,
-                        candidate.finished.context,
-                        value.trigger,
-                        Candidates(value.admissionNominee.toSet),
-                        value.roundStartFacilitatorsHash,
-                        value.artifactHash,
-                        certified.some
-                      )
-                    )
-
-                    getConsensusOutcome(recoveredState).map(_._2) match {
-                      case Some(derived) if derived === candidate =>
-                        CertifiedOutcomeAdoption(
-                          certified.proposalQc.valueHash,
-                          recoveredState,
-                          persistAndGossip(
-                            candidate.finished.signedMajorityArtifact,
-                            candidate.finished.context
-                          )
-                        ).asRight[String].pure[F]
-                      case Some(_) =>
-                        "certified_outcome_derivation_mismatch".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
-                      case None =>
-                        "certified_outcome_derivation_failed".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
-                    }
-                }
-              } yield result
-          }
+        candidate.finished.certifiedOutcome match {
+          case None => "certified_outcome_missing".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]].pure[F]
+          case Some(certified) =>
+            deriveCertifiedPublicRound(
+              state,
+              candidate.finished.signedMajorityArtifact,
+              candidate.finished.context,
+              certified
+            ).map {
+              case Left(error) => error.asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]]
+              case Right((recoveredState, derived)) if derived === candidate =>
+                CertifiedOutcomeAdoption(
+                  certified.proposalQc.valueHash,
+                  recoveredState,
+                  persistAndGossip(candidate.finished.signedMajorityArtifact, candidate.finished.context)
+                ).asRight[String]
+              case Right(_) =>
+                "certified_outcome_derivation_mismatch".asLeft[CertifiedOutcomeAdoption[F, GlobalSnapshotConsensusState]]
+            }
         }
 
       def advanceStatus(
@@ -1094,6 +1126,19 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def certifiedConsensusActive(state: GlobalSnapshotConsensusState): Boolean =
         state.certifiedConsensusActive
 
+      private def allowsSingletonGenesisBootstrapExpansion(state: GlobalSnapshotConsensusState): Boolean =
+        CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
+          state.certifiedConsensusActive,
+          config.certifiedConsensusActivationKey,
+          state.roundStartFacilitators.value.size,
+          CertifiedConsensusGenesis.hasExpandedBeyondSingleton(
+            config.certifiedConsensusActivationKey,
+            state.lastOutcome.key,
+            state.lastOutcome.facilitators.value.size,
+            state.lastOutcome.expandedBeyondSingleton
+          )
+        )
+
       private def highestCertifiedQc(
         state: GlobalSnapshotConsensusState,
         vcc: Option[ViewChangeCertificate],
@@ -1105,6 +1150,29 @@ object GlobalSnapshotConsensusStateAdvancer {
           state.coreFacilitators.value.toSet,
           config.quorumThresholdFraction
         )
+
+      /** Read the current view's already-certified value before artifact construction. A carried QC fixes the trigger across views;
+        * building first from this node's new local Facility subset would recreate the cross-view trigger mismatch before the later QC
+        * validation had a chance to preserve the lock.
+        */
+      private def currentViewCertifiedQc(
+        state: GlobalSnapshotConsensusState
+      ): F[Either[String, Option[CertifiedProposalQC]]] =
+        if (!certifiedConsensusActive(state) || state.viewNumber <= state.initialViewNumber)
+          none[CertifiedProposalQC].asRight[String].pure[F]
+        else
+          for {
+            maybeVccRaw <- consensusStorage.getAssembledVcc(state.key)
+            maybeTc <- consensusStorage
+              .getResources(state.key)
+              .map(_.timeoutCertificates.get((state.viewNumber.toLong - 1L, state.viewNumber.toLong)))
+            maybeVcc = maybeTc.fold {
+              maybeVccRaw.filter(vcc => vcc.fromView === (state.viewNumber.toLong - 1L) && vcc.toView === state.viewNumber.toLong)
+            }(_ => none[ViewChangeCertificate])
+            result <- HasherSelector[F].withCurrent { implicit hasher =>
+              highestCertifiedQc(state, maybeVcc, maybeTc)
+            }
+          } yield result
 
       /** Build the shared semantic value from layer-specific artifact/context inputs and the existing Proposal evidence. */
       private def proposalValueFor(
@@ -1168,7 +1236,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 for {
                   expected <- proposalValueFor(
                     state,
-                    status.majorityTrigger,
+                    actual.trigger,
                     artifactInfo,
                     proposal,
                     expectedCommittedView,
@@ -1217,6 +1285,44 @@ object GlobalSnapshotConsensusStateAdvancer {
                     case Right(value) => (value -> carriedQc).asRight[String]
                   }
                 } yield result
+            }
+        }
+
+      /** Resolve the one trigger under which a follower must rederive the leader artifact. Fresh values require a quorum of transferable
+        * Facility statements. A verified carried QC is already the authority across later views and must not be re-litigated against a new
+        * local Facility subset.
+        */
+      private def authorizeLeaderTrigger(
+        state: GlobalSnapshotConsensusState,
+        proposal: Proposal
+      )(implicit hasher: Hasher[F]): F[Either[String, ConsensusTrigger]] =
+        highestCertifiedQc(state, proposal.vcc, proposal.timeoutCertificate).flatMap {
+          case Left(error) => s"certified_qc_selection:$error".asLeft[ConsensusTrigger].pure[F]
+          case Right(Some(qc)) =>
+            Either
+              .cond(proposal.proposalValue.contains(qc.value), qc.value.trigger, "carried_qc_proposal_value_mismatch")
+              .pure[F]
+          case Right(None) =>
+            proposal.proposalValue match {
+              case None => "proposal_value_missing".asLeft[ConsensusTrigger].pure[F]
+              case Some(value) =>
+                CertifiedConsensus.validateTriggerEvidence[F](
+                  proposal.triggerEvidence.getOrElse(List.empty),
+                  CertifiedConsensus.ConsensusDomain.DagL0,
+                  networkId,
+                  state.key.value.value,
+                  state.lastOutcome.finished.snapshotHash,
+                  value.roundStartFacilitatorsHash,
+                  config.deterministicConfigHash,
+                  state.roundStartFacilitators.value.toSet,
+                  CertifiedConsensus.requiredArtifactQuorum(
+                    state.roundStartFacilitators.value.size,
+                    state.coreFacilitators.value.size,
+                    config.quorumThresholdFraction
+                  ),
+                  value.trigger,
+                  state.leader
+                )
             }
         }
 
@@ -1374,7 +1480,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               admissionTarget = (certificate: AdmissionCertificate) => certificate.targetPeer,
               evictionTarget = (certificate: EvictionCertificate) => certificate.targetPeer,
               quorumThresholdFraction = config.quorumThresholdFraction,
-              maxChanges = config.activeAdmissionMaxExpansionPerRound
+              maxChanges = config.activeAdmissionMaxExpansionPerRound,
+              allowSingletonBootstrapExpansion = allowsSingletonGenesisBootstrapExpansion(state)
             )
             val suppressedEvictions = assembledEvictions.size - selection.evictions.size
             val suppressedAdmissions = admissions.size - selection.admissions.size
@@ -1416,13 +1523,38 @@ object GlobalSnapshotConsensusStateAdvancer {
         val allHashSets = facilities.values.map(_.eventHashes).toList
         val unionHashes = allHashSets.reduceOption(_ union _).getOrElse(Set.empty[Hash])
 
-        val trigger = pickMajority(triggers).getOrElse(EventTrigger)
+        val legacyTrigger = pickMajority(triggers).getOrElse(EventTrigger)
+        val triggerSelection: F[Either[String, (List[Signed[CertifiedConsensus.TriggerStatement]], ConsensusTrigger)]] =
+          if (certifiedConsensusActive(state))
+            HasherSelector[F].withCurrent { implicit hasher =>
+              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+                CertifiedConsensus.selectTriggerEvidence[F](
+                  facilities,
+                  CertifiedConsensus.ConsensusDomain.DagL0,
+                  networkId,
+                  state.key.value.value,
+                  state.lastOutcome.finished.snapshotHash,
+                  roundStartHash,
+                  config.deterministicConfigHash,
+                  state.roundStartFacilitators.value.toSet,
+                  CertifiedConsensus.requiredArtifactQuorum(
+                    state.roundStartFacilitators.value.size,
+                    state.coreFacilitators.value.size,
+                    config.quorumThresholdFraction
+                  ),
+                  state.leader
+                )
+              }
+            }
+          else
+            (List.empty[Signed[CertifiedConsensus.TriggerStatement]], legacyTrigger)
+              .asRight[String]
+              .pure[F]
 
         // v7: leader's positive observation of which round-start facilitators sent a Facility
-        // declaration this round. Includes self because the leader's own Facility is implicit
-        // (`maybeGetAllDeclarations` returned the cleaned post-fork-eviction set, which excludes
-        // self by convention; self is always a responder for its own proposal). Sorted at
-        // construction for deterministic proposal-hash agreement (mirrors evictionCertificates
+        // declaration this round. Includes self defensively; the exact Facility side effect stores
+        // the leader's own declaration locally before gossip, so this is normally already present.
+        // Sorted at construction for deterministic proposal-hash agreement (mirrors evictionCertificates
         // / admissionCertificates ordering pattern). Bootstrap gate: emit empty during
         // isInBootstrap so leader-build aligns with validation gate (codex turn 2 fix #1) —
         // peerQuality update site falls back to today's "non-evicted = completed" semantic
@@ -1491,7 +1623,34 @@ object GlobalSnapshotConsensusStateAdvancer {
           _ <- Metrics[F].updateGauge("dag_consensus_observed_responders_count", observedResponders.size.toLong)
           _ <- Metrics[F].updateGauge("dag_consensus_facility_quorum_ratio", responderRatio)
 
-          result <- buildProposalTransition(stateWithEndTime, unionHashes, candidates, trigger, observedResponders, observedSelfHealth)
+          selectedTrigger <- triggerSelection
+          result <- selectedTrigger match {
+            case Left(error) =>
+              ConsensusLog
+                .warn(
+                  logger,
+                  Category.Validation,
+                  state.key.show,
+                  ConsensusLog.role(selfId, state.leader),
+                  Event.ValidationFailed,
+                  "reason" -> s"trigger_evidence_collection:$error"
+                )
+                .as(none[Transition])
+            case Right((evidence, trigger)) =>
+              val excluded = facilities.size - evidence.size
+              Metrics[F]
+                .incrementCounterBy("dag_consensus_trigger_evidence_excluded_total", excluded.toLong)
+                .whenA(excluded > 0) >>
+                buildProposalTransition(
+                  stateWithEndTime,
+                  unionHashes,
+                  candidates,
+                  trigger,
+                  observedResponders,
+                  observedSelfHealth,
+                  evidence
+                )
+          }
         } yield result
       }
 
@@ -1581,10 +1740,13 @@ object GlobalSnapshotConsensusStateAdvancer {
         candidates: Set[PeerId],
         majorityTrigger: ConsensusTrigger,
         observedResponders: List[PeerId],
-        observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
+        observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+        triggerEvidence: List[Signed[CertifiedConsensus.TriggerStatement]]
       ): F[Option[Transition]] =
         for {
-          _ <- clearTimeTriggerIfNeeded(majorityTrigger)
+          earlyCarriedQc <- currentViewCertifiedQc(state)
+          effectiveTrigger = earlyCarriedQc.toOption.flatten.fold(majorityTrigger)(_.value.trigger)
+          _ <- clearTimeTriggerIfNeeded(effectiveTrigger)
           facilitatorsHash <- hashFacilitators(state)
 
           // Pull events from mempool using hash union
@@ -1640,7 +1802,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           sp <- mptStore.savepoint
           _ <- proposalSavepointRef.set((state.key, sp).some)
 
-          (artifact, context, returnedEvents) <- createArtifact(state, majorityTrigger, mempoolEvents)
+          (artifact, context, returnedEvents) <- createArtifact(state, effectiveTrigger, mempoolEvents)
 
           // Do not remove accepted events at proposal time. A proposal can lose the round, or
           // different facilitators can propose the same event at adjacent ordinals. Events are
@@ -1673,7 +1835,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             Event.FacilitiesToProposals,
             (Seq(
               "ordinal" -> artifact.ordinal.show,
-              "trigger" -> majorityTrigger.toString,
+              "trigger" -> effectiveTrigger.toString,
               "hash" -> hash.show.take(8),
               "facilitators" -> state.facilitators.value.size.toString,
               "candidates" -> candidates.size.toString,
@@ -1886,6 +2048,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             proposalObservedResponders,
             proposalObservedSelfHealth,
             proposalAdmissionNominee,
+            if (carriedCertifiedQc.isDefined) List.empty else triggerEvidence,
             none
           )
           freshProposedValue <-
@@ -1893,7 +2056,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               HasherSelector[F].withCurrent { implicit hasher =>
                 proposalValueFor(
                   state,
-                  majorityTrigger,
+                  effectiveTrigger,
                   ArtifactInfo(artifact, context, hash),
                   baseLeaderProposal,
                   state.viewNumber.toLong,
@@ -1909,13 +2072,14 @@ object GlobalSnapshotConsensusStateAdvancer {
             Transition(
               newState = state.copy(status =
                 CollectingProposals(
-                  majorityTrigger,
+                  effectiveTrigger,
                   ArtifactInfo(artifact, context, hash),
                   Candidates(proposalAdmissionNominee.toSet),
                   facilitatorsHash,
                   state.lastOutcome.finished.snapshotHash,
                   proposalObservedResponders,
                   proposalObservedSelfHealth,
+                  if (carriedCertifiedQc.isDefined) List.empty else triggerEvidence,
                   proposedValue = proposedValue
                 )
               ),
@@ -2041,6 +2205,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                           status.observedResponders,
                           status.observedSelfHealth,
                           status.candidates.value.headOption,
+                          status.triggerEvidence,
                           status.proposedValue
                         )
                         ConsensusLog.info(
@@ -2823,6 +2988,34 @@ object GlobalSnapshotConsensusStateAdvancer {
               "view" -> state.viewNumber.toString
             )
             .as(none[Transition])
+        def resolveWithAuthorizedTrigger: F[Option[Transition]] =
+          if (!certifiedConsensusActive(state))
+            resolveLeaderProposalInner(state, status, resources, leaderProposal)
+          else
+            authorizeLeaderTrigger(state, leaderProposal).flatMap {
+              case Left(error) =>
+                ConsensusLog
+                  .warn(
+                    logger,
+                    Category.Validation,
+                    state.key.show,
+                    role,
+                    Event.ValidationFailed,
+                    "reason" -> s"trigger_evidence_validation:$error",
+                    "leader" -> ConsensusLog.pid(state.leader),
+                    "view" -> state.viewNumber.toString
+                  )
+                  .as(none[Transition])
+              case Right(authorizedTrigger) =>
+                // Authorization boundary: every downstream artifact/value derivation must read
+                // this evidence-authorized trigger, never the follower's local Facility subset.
+                resolveLeaderProposalInner(
+                  state,
+                  status.copy(majorityTrigger = authorizedTrigger),
+                  resources,
+                  leaderProposal
+                )
+            }
         validateProposalVcc(state, leaderProposal, status.facilitatorsHash).flatMap {
           case Left(reason) => logVccReject(reason)
           case Right(_) =>
@@ -2830,9 +3023,9 @@ object GlobalSnapshotConsensusStateAdvancer {
               case Some(vcc) =>
                 ProposalVccValidator.verifyVccSignatures[F](vcc, state.certifiedConsensusActive).flatMap {
                   case Left(reason) => logVccReject(reason)
-                  case Right(_)     => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+                  case Right(_)     => resolveWithAuthorizedTrigger
                 }
-              case None => resolveLeaderProposalInner(state, status, resources, leaderProposal)
+              case None => resolveWithAuthorizedTrigger
             }
             val afterViewCertSig: F[Option[Transition]] = leaderProposal.timeoutCertificate match {
               case Some(tc) =>
@@ -3162,29 +3355,66 @@ object GlobalSnapshotConsensusStateAdvancer {
         // Alpha.94: 5-arg overload (custom facilitator set) was removed with the deletion of the
         // facilitator-set-mismatch adoption branch above. The roundStartFacilitators set is the
         // only sanctioned committee for artifact re-derivation.
-        state.lastOutcome.finished.signedMajorityArtifact.toHashed.flatMap { hashedLast =>
-          consensusFns
-            .validateArtifact(
-              hashedLast.signed,
-              state.lastOutcome.finished.context,
-              status.majorityTrigger,
-              artifact,
-              state.roundStartFacilitators.value.toSet,
-              getGlobalSnapshotByOrdinal,
-              // v32 (stage 4): re-pack the evidence-only peerHistory from the validator's own
-              // lastOutcome -- must match the leader's createArtifact packing byte-identically.
-              Some(state.lastOutcome.signedArtifactPeerHistory)
-            )
-            .map {
-              case Right((validatedArtifact, context)) =>
-                ArtifactInfo(validatedArtifact, context, hash).asRight[InvalidArtifact]
-              case Left(err) =>
-                err.asLeft[ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]
+        validateParentLineage(state, artifact).flatMap {
+          case Left(error) =>
+            (CertifiedLineageInvalid(error): InvalidArtifact)
+              .asLeft[ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]
+              .pure[F]
+          case Right(certifiedLineage) =>
+            state.lastOutcome.finished.signedMajorityArtifact.toHashed.flatMap { hashedLast =>
+              consensusFns
+                .validateArtifact(
+                  hashedLast.signed,
+                  state.lastOutcome.finished.context,
+                  status.majorityTrigger,
+                  artifact,
+                  state.roundStartFacilitators.value.toSet,
+                  getGlobalSnapshotByOrdinal,
+                  // v32 (stage 4): re-pack the evidence-only peerHistory from the validator's own
+                  // lastOutcome -- must match the leader's createArtifact packing byte-identically.
+                  Some(state.lastOutcome.signedArtifactPeerHistory),
+                  // W1: embed the verified leader-carried envelope exactly. Equivalent local QC
+                  // proof subsets are never substituted into the child's signed bytes.
+                  certifiedLineage
+                )
+                .map {
+                  case Right((validatedArtifact, context)) =>
+                    ArtifactInfo(validatedArtifact, context, hash).asRight[InvalidArtifact]
+                  case Left(err) =>
+                    err.asLeft[ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]]
+                }
             }
         }
 
+      private def validateParentLineage(
+        state: GlobalSnapshotConsensusState,
+        artifact: GlobalSnapshotArtifact
+      )(implicit hasher: Hasher[F]): F[Either[String, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]] =
+        if (!state.certifiedConsensusActive)
+          Either
+            .cond(artifact.certifiedLineage.isEmpty, none[CertifiedConsensus.CertifiedLineageEvidenceV1], "pre_v35_lineage_present")
+            .pure[F]
+        else
+          CertifiedConsensus
+            .verifyCarriedParentOutcome[F](
+              artifact.certifiedLineage,
+              state.lastOutcome.finished.certifiedOutcome,
+              CertifiedConsensus.ConsensusDomain.DagL0,
+              config.quorumThresholdFraction
+            )
+            .map(
+              _.flatMap { lineage =>
+                Either.cond(
+                  lineage.forall(_.parentLayerEvidence.isEmpty),
+                  lineage,
+                  "dag_lineage_layer_evidence_present"
+                )
+              }
+            )
+
       /** Produces a human-readable description of why the leader's artifact failed validation. */
       private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
+        case CertifiedLineageInvalid(reason) => s"certifiedLineage($reason)"
         case GlobalArtifactMismatch(leader, own) =>
           val leaderScAddrs = leader.stateChannelSnapshots.keySet
           val ownScAddrs = own.stateChannelSnapshots.keySet
@@ -3677,7 +3907,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           admittedPeers,
           evictedPeers,
           config.quorumThresholdFraction,
-          config.activeAdmissionMaxExpansionPerRound
+          config.activeAdmissionMaxExpansionPerRound,
+          allowSingletonBootstrapExpansion = allowsSingletonGenesisBootstrapExpansion(state)
         )
       }
 
@@ -4345,6 +4576,10 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] =
         HasherSelector[F].withCurrent { implicit hasher =>
           val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
+          val certifiedLineage = Option
+            .when(state.certifiedConsensusActive)(state.lastOutcome.finished.certifiedOutcome)
+            .flatten
+            .map(CertifiedConsensus.CertifiedLineageEvidenceV1(_, none))
           lastArtifact.toHashed.flatMap { hashed =>
             consensusFns.createProposalArtifact(
               state.key,
@@ -4362,7 +4597,8 @@ object GlobalSnapshotConsensusStateAdvancer {
               // perPeer / recentRoundEndTimes are locally divergent (the alpha.92/129/147
               // wedge class) and stay out of the signed bytes; see
               // GlobalConsensusOutcome.signedArtifactPeerHistory.
-              Some(state.lastOutcome.signedArtifactPeerHistory)
+              Some(state.lastOutcome.signedArtifactPeerHistory),
+              certifiedLineage
             )
           }
         }
@@ -4384,6 +4620,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         observedResponders: List[PeerId],
         observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
         admissionNominee: Option[PeerId],
+        triggerEvidence: List[Signed[CertifiedConsensus.TriggerStatement]],
         proposalValue: Option[ProposalValue]
       ): Proposal =
         Proposal(
@@ -4398,6 +4635,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           observedResponders = observedResponders.distinct.sorted,
           observedSelfHealth = observedSelfHealth,
           admissionNominee = admissionNominee,
+          triggerEvidence = triggerEvidence.sortBy(_.proofs.head.id.toPeerId).some.filter(_.nonEmpty),
           proposalValue = proposalValue
         )
 

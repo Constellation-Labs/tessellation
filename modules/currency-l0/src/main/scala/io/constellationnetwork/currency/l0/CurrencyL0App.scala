@@ -160,7 +160,15 @@ abstract class CurrencyL0App(
       getPeerChainTips = peerChainTipsGetterRef.get.flatten
 
       storages <- Storages
-        .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
+        .make[IO](
+          sharedConfig,
+          sharedStorages,
+          cfg.snapshot,
+          method.globalL0Peer,
+          dataApplicationService,
+          hasherSelectorAlwaysCurrent,
+          loadedConsensusConfig.certifiedConsensusActivationKey
+        )
         .asResource
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)

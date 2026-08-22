@@ -10,20 +10,20 @@ import cats.{Applicative, Show}
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
+import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{ConsensusOperationalState, consensus}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
-import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
+import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
-import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.{decoder, encoder}
-import derevo.derive
-import io.circe._
-import io.circe.syntax._
+import io.circe.Encoder
 
 /** V35 certification primitives shared by DAG L0 and Currency L0.
   *
@@ -33,185 +33,191 @@ import io.circe.syntax._
   */
 object CertifiedConsensus {
 
-  val SchemaVersion: Int = 35
+  val SchemaVersion: Int = consensus.CertifiedConsensusSchema.Version
+
+  type ConsensusDomain = consensus.ConsensusDomain
+  val ConsensusDomain: consensus.ConsensusDomain.type = consensus.ConsensusDomain
+  type CertificationPurpose = consensus.CertificationPurpose
+  val CertificationPurpose: consensus.CertificationPurpose.type = consensus.CertificationPurpose
+  type TriggerStatementPurpose = consensus.TriggerStatementPurpose
+  val TriggerStatementPurpose: consensus.TriggerStatementPurpose.type = consensus.TriggerStatementPurpose
+  type TriggerStatement = consensus.TriggerStatement
+  val TriggerStatement: consensus.TriggerStatement.type = consensus.TriggerStatement
+  type ProposalValue = consensus.ProposalValue
+  val ProposalValue: consensus.ProposalValue.type = consensus.ProposalValue
+  type CertificationStatement = consensus.CertificationStatement
+  val CertificationStatement: consensus.CertificationStatement.type = consensus.CertificationStatement
+  type CertifiedProposalQC = consensus.CertifiedProposalQC
+  val CertifiedProposalQC: consensus.CertifiedProposalQC.type = consensus.CertifiedProposalQC
+  type CoreCommitQC = consensus.CoreCommitQC
+  val CoreCommitQC: consensus.CoreCommitQC.type = consensus.CoreCommitQC
+  type CertifiedOutcome = consensus.CertifiedOutcome
+  val CertifiedOutcome: consensus.CertifiedOutcome.type = consensus.CertifiedOutcome
+  type CertifiedLayerEvidenceV1 = consensus.CertifiedLayerEvidenceV1
+  val CertifiedLayerEvidenceV1: consensus.CertifiedLayerEvidenceV1.type = consensus.CertifiedLayerEvidenceV1
+  type CertifiedLineageEvidenceV1 = consensus.CertifiedLineageEvidenceV1
+  val CertifiedLineageEvidenceV1: consensus.CertifiedLineageEvidenceV1.type = consensus.CertifiedLineageEvidenceV1
+  type CertifiedCheckpointV1 = consensus.CertifiedCheckpointV1
+  val CertifiedCheckpointV1: consensus.CertifiedCheckpointV1.type = consensus.CertifiedCheckpointV1
+  type CertifiedCheckpointLayerStateV1 = consensus.CertifiedCheckpointLayerStateV1
+  val CertifiedCheckpointLayerStateV1: consensus.CertifiedCheckpointLayerStateV1.type = consensus.CertifiedCheckpointLayerStateV1
 
   // Resolve the same orphan-instance ambiguity documented for Proposal in declaration.scala.
   implicit val showSortedSelfHealth: Show[SortedMap[PeerId, SelfHealthHint]] =
     Show.show(_.toList.map { case (peerId, hint) => s"${peerId.show}->${hint.show}" }.mkString("{", ",", "}"))
 
-  @derive(eqv, show)
-  sealed trait ConsensusDomain extends Product with Serializable {
-    def entryName: String
-  }
-
-  object ConsensusDomain {
-    case object DagL0 extends ConsensusDomain { val entryName: String = "dag-l0" }
-    case object CurrencyL0 extends ConsensusDomain { val entryName: String = "currency-l0" }
-
-    implicit val encoder: Encoder[ConsensusDomain] = Encoder.encodeString.contramap(_.entryName)
-    implicit val decoder: Decoder[ConsensusDomain] = Decoder.decodeString.emap {
-      case DagL0.entryName      => Right(DagL0)
-      case CurrencyL0.entryName => Right(CurrencyL0)
-      case other                => Left(s"Unknown consensus certification domain: $other")
-    }
-  }
-
-  /** Prepare and commit are separate signature domains while sharing one generic statement and the normal Signed infrastructure. */
-  @derive(eqv, show)
-  sealed trait CertificationPurpose extends Product with Serializable {
-    def entryName: String
-  }
-
-  object CertificationPurpose {
-    case object Prepare extends CertificationPurpose { val entryName: String = "outcome-prepare-v35" }
-    case object Commit extends CertificationPurpose { val entryName: String = "outcome-commit-v35" }
-
-    implicit val encoder: Encoder[CertificationPurpose] = Encoder.encodeString.contramap(_.entryName)
-    implicit val decoder: Decoder[CertificationPurpose] = Decoder.decodeString.emap {
-      case Prepare.entryName => Right(Prepare)
-      case Commit.entryName  => Right(Commit)
-      case other             => Left(s"Unknown consensus certification purpose: $other")
-    }
-  }
-
-  /** The complete view-independent semantic value certified by Core.
-    *
-    * Collection types encode their canonical ordering in the type itself. There is intentionally no caller-visible normalization step:
-    * callers cannot construct an unordered committee or responder set and accidentally hash it.
-    */
-  @derive(eqv, encoder, decoder)
-  final case class ProposalValue(
-    schemaVersion: Int,
-    domain: ConsensusDomain,
-    networkId: String,
-    key: Long,
-    parentArtifactHash: Hash,
-    artifactHash: Hash,
-    contextHash: Hash,
-    roundStartFacilitators: NonEmptySet[PeerId],
-    roundStartFacilitatorsHash: Hash,
-    roundStartCore: NonEmptySet[PeerId],
-    roundStartCoreHash: Hash,
-    committedView: Long,
-    trigger: ConsensusTrigger,
-    admissionNominee: Option[PeerId],
-    admittedPeers: SortedSet[PeerId],
-    evictedPeers: SortedSet[PeerId],
-    observedResponders: SortedSet[PeerId],
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
-    timeoutVoters: SortedSet[PeerId],
-    consensusEndTime: Option[Long]
-  )
-
-  object ProposalValue {
-    implicit val showInstance: Show[ProposalValue] = Show.fromToString
-
-    def validate(value: ProposalValue): Either[String, Unit] = {
-      val fullCommittee = value.roundStartFacilitators.toSortedSet
-      val core = value.roundStartCore.toSortedSet
-
-      for {
-        _ <- Either.cond(value.schemaVersion === SchemaVersion, (), s"schema_version:${value.schemaVersion}")
-        _ <- Either.cond(value.networkId.nonEmpty, (), "network_id_empty")
-        _ <- Either.cond(value.key >= 0L, (), "key_negative")
-        _ <- Either.cond(value.committedView >= 0L, (), "committed_view_negative")
-        _ <- Either.cond(core.subsetOf(fullCommittee), (), "round_start_core_not_subset")
-        _ <- Either.cond(value.admittedPeers.intersect(value.evictedPeers).isEmpty, (), "admit_evict_overlap")
-        _ <- Either.cond(value.observedResponders.subsetOf(fullCommittee), (), "responders_not_subset")
-        _ <- Either.cond(
-          value.observedSelfHealth.keySet.subsetOf(value.observedResponders),
-          (),
-          "self_health_not_responder_subset"
-        )
-        _ <- Either.cond(value.consensusEndTime.forall(_ >= 0L), (), "consensus_end_time_negative")
-      } yield ()
-    }
-  }
-
-  /** Generic domain-separated statement signed with `Signed.forAsyncHasher`. The purpose field prevents prepare proofs from being replayed
-    * as commit proofs, while the domain/network/key/parent fields prevent cross-layer, cross-network, and cross-round replay.
-    */
-  @derive(eqv, show, encoder, decoder)
-  final case class CertificationStatement(
-    purpose: CertificationPurpose,
-    schemaVersion: Int,
-    domain: ConsensusDomain,
-    networkId: String,
-    key: Long,
-    parentArtifactHash: Hash,
-    valueHash: Hash,
-    roundStartFacilitatorsHash: Hash,
-    roundStartCoreHash: Hash,
-    certifiedView: Long
-  )
-
   type OutcomeVote = Signed[CertificationStatement]
   type CoreCommit = Signed[CertificationStatement]
 
-  /** A prepare QC embeds the complete semantic value. View-change voters can therefore transfer/re-propose it without relying on a local
-    * artifact/proposal cache.
-    */
-  @derive(eqv)
-  final case class CertifiedProposalQC(
-    value: ProposalValue,
-    valueHash: Hash,
-    signatures: NonEmptySet[SignatureProof]
-  )
-
-  object CertifiedProposalQC {
-    implicit val showInstance: Show[CertifiedProposalQC] = Show.fromToString
-    implicit val encoder: Encoder[CertifiedProposalQC] = Encoder.instance { qc =>
-      Json.obj("value" -> qc.value.asJson, "valueHash" -> qc.valueHash.asJson, "signatures" -> qc.signatures.asJson)
-    }
-    implicit val decoder: Decoder[CertifiedProposalQC] = (c: HCursor) =>
-      for {
-        value <- c.downField("value").as[ProposalValue]
-        valueHash <- c.downField("valueHash").as[Hash]
-        signatures <- c.downField("signatures").as[NonEmptySet[SignatureProof]]
-      } yield CertifiedProposalQC(value, valueHash, signatures)
-  }
-
-  @derive(eqv)
-  final case class CoreCommitQC(
-    valueHash: Hash,
-    roundStartCoreHash: Hash,
-    signatures: NonEmptySet[SignatureProof]
-  )
-
-  object CoreCommitQC {
-    implicit val showInstance: Show[CoreCommitQC] = Show.fromToString
-    implicit val encoder: Encoder[CoreCommitQC] = Encoder.instance { qc =>
-      Json.obj(
-        "valueHash" -> qc.valueHash.asJson,
-        "roundStartCoreHash" -> qc.roundStartCoreHash.asJson,
-        "signatures" -> qc.signatures.asJson
-      )
-    }
-    implicit val decoder: Decoder[CoreCommitQC] = (c: HCursor) =>
-      for {
-        valueHash <- c.downField("valueHash").as[Hash]
-        roundStartCoreHash <- c.downField("roundStartCoreHash").as[Hash]
-        signatures <- c.downField("signatures").as[NonEmptySet[SignatureProof]]
-      } yield CoreCommitQC(valueHash, roundStartCoreHash, signatures)
-  }
-
-  /** Verifiable consensus evidence persisted beside the ordinary finished outcome.
-    *
-    * The public artifact and its existing proofs stay in the layer-specific `Finished` value. This sidecar only adds the two Core
-    * certificates, and is shared by DAG L0 and Currency L0.
-    */
-  @derive(eqv, encoder, decoder)
-  final case class CertifiedOutcome(
-    proposalQc: CertifiedProposalQC,
-    coreCommitQc: CoreCommitQC
-  )
-
-  object CertifiedOutcome {
-    implicit val showInstance: Show[CertifiedOutcome] = Show.fromToString
-  }
-
   def valueHash[F[_]: Hasher](value: ProposalValue): F[Hash] =
     Hasher[F].hash(value)
+
+  def triggerStatement(
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    roundStartFacilitatorsHash: Hash,
+    consensusConfigHash: Hash,
+    trigger: Option[ConsensusTrigger]
+  ): TriggerStatement =
+    TriggerStatement(
+      TriggerStatementPurpose.Facility,
+      SchemaVersion,
+      domain,
+      networkId,
+      key,
+      parentArtifactHash,
+      roundStartFacilitatorsHash,
+      consensusConfigHash,
+      trigger
+    )
+
+  def signTriggerStatement[F[_]: Async: Hasher: SecurityProvider](
+    statement: TriggerStatement,
+    keyPair: KeyPair
+  ): F[Signed[TriggerStatement]] =
+    Signed.forAsyncHasher[F, TriggerStatement](statement, keyPair)
+
+  /** Select the transferable trigger evidence an honest leader is allowed to carry.
+    *
+    * Facility gossip authenticates the outer declaration only at receipt time, so followers cannot verify that envelope later. The inner
+    * statement is independently signed and remains transferable. Selection therefore rechecks every inner signature and binding before it
+    * can influence the certified trigger.
+    *
+    * Invalid Facilities are ignored rather than poisoning an otherwise valid phase: a faulty committee member must not gain a permanent
+    * veto merely by attaching a malformed statement after enough honest Facilities exist. The remaining evidence must still contain the
+    * leader and meet the exact protocol-derived Facility quorum supplied by the layer. If it does not, the leader waits fail-closed for
+    * more valid evidence.
+    */
+  def selectTriggerEvidence[F[_]: Async: Hasher: SecurityProvider](
+    facilities: SortedMap[PeerId, declaration.Facility],
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    roundStartFacilitatorsHash: Hash,
+    consensusConfigHash: Hash,
+    frozenCommittee: Set[PeerId],
+    requiredQuorum: Int,
+    requiredLeader: PeerId
+  ): F[Either[String, (List[Signed[TriggerStatement]], ConsensusTrigger)]] = {
+    val expectedBase = triggerStatement(
+      domain,
+      networkId,
+      key,
+      parentArtifactHash,
+      roundStartFacilitatorsHash,
+      consensusConfigHash,
+      none
+    )
+
+    facilities.toList.traverse {
+      case (peerId, facility) =>
+        facility.triggerStatement match {
+          case Some(signed)
+              if frozenCommittee.contains(peerId) &&
+                signed.proofs.size === 1L &&
+                signed.proofs.head.id.toPeerId === peerId &&
+                signed.value.trigger === facility.trigger &&
+                signed.value.copy(trigger = none) === expectedBase =>
+            signed.hasValidSignature[F].map(Option.when(_)(signed))
+          case _ => none[Signed[TriggerStatement]].pure[F]
+        }
+    }.map { maybeEvidence =>
+      val evidence = maybeEvidence.flatten
+      val signers = evidence.map(_.proofs.head.id.toPeerId)
+      val selected = pickMajority(evidence.flatMap(_.value.trigger)).getOrElse(EventTrigger)
+
+      for {
+        _ <- Either.cond(
+          evidence.size >= requiredQuorum,
+          (),
+          s"trigger_evidence_under_quorum:${evidence.size}/$requiredQuorum"
+        )
+        _ <- Either.cond(signers.contains(requiredLeader), (), "trigger_evidence_missing_leader")
+      } yield evidence -> selected
+    }
+  }
+
+  /** Verify a leader-carried Facility trigger-evidence set and return its one authorized trigger.
+    *
+    * The caller supplies the protocol-derived Facility phase threshold. The function never reads local event pacing, local Facility arrival
+    * state, or an incidental declaration cache. Evidence order is irrelevant; signer identity comes from each inner signature. An all-None
+    * carried set deterministically selects EventTrigger, exactly matching the production Facility-phase default. At/after v35 activation
+    * callers fail closed on a missing Facility statement before this verifier can authorize a fresh proposal.
+    */
+  def validateTriggerEvidence[F[_]: Async: Hasher: SecurityProvider](
+    evidence: List[Signed[TriggerStatement]],
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    roundStartFacilitatorsHash: Hash,
+    consensusConfigHash: Hash,
+    frozenCommittee: Set[PeerId],
+    requiredQuorum: Int,
+    proposedTrigger: ConsensusTrigger,
+    requiredLeader: PeerId
+  ): F[Either[String, ConsensusTrigger]] = {
+    val entries = evidence.map(signed => signed.proofs.head.id.toPeerId -> signed)
+    val signers = entries.map(_._1)
+    val expectedBase = triggerStatement(
+      domain,
+      networkId,
+      key,
+      parentArtifactHash,
+      roundStartFacilitatorsHash,
+      consensusConfigHash,
+      none
+    )
+    val structure = for {
+      _ <- Either.cond(evidence.nonEmpty, (), "trigger_evidence_empty")
+      _ <- Either.cond(evidence.forall(_.proofs.size === 1L), (), "trigger_evidence_requires_single_signer")
+      _ <- Either.cond(signers.distinct.size === signers.size, (), "trigger_evidence_duplicate_signer")
+      _ <- Either.cond(signers.toSet.subsetOf(frozenCommittee), (), "trigger_evidence_signer_outside_committee")
+      _ <- Either.cond(signers.contains(requiredLeader), (), "trigger_evidence_missing_leader")
+      _ <- Either.cond(signers.size >= requiredQuorum, (), s"trigger_evidence_under_quorum:${signers.size}/$requiredQuorum")
+      _ <- Either.cond(
+        evidence.forall { signed =>
+          val value = signed.value
+          value.copy(trigger = none) === expectedBase
+        },
+        (),
+        "trigger_evidence_binding_mismatch"
+      )
+      selected = pickMajority(evidence.flatMap(_.value.trigger)).getOrElse(EventTrigger)
+      _ <- Either.cond(selected === proposedTrigger, (), "trigger_evidence_majority_mismatch")
+    } yield selected
+
+    structure match {
+      case Left(error) => error.asLeft[ConsensusTrigger].pure[F]
+      case Right(selected) =>
+        evidence
+          .traverse(_.hasValidSignature[F])
+          .map(valid => Either.cond(valid.forall(identity), selected, "trigger_evidence_invalid_signature"))
+    }
+  }
 
   /** Construct the common semantic value for either L0 layer.
     *
@@ -540,7 +546,7 @@ object CertifiedConsensus {
     configuredFraction: Double
   ): F[Either[String, Option[CertifiedProposalQC]]] =
     lock.flatMap(_.lockedQc).fold(none[CertifiedProposalQC].asRight[String].pure[F]) { qc =>
-      verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction).map(_.as(qc.some))
+      verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction).flatMap(_.as(qc.some).pure[F])
     }
 
   /** Verify every advertised QC before choosing the highest valid one.
@@ -616,6 +622,193 @@ object CertifiedConsensus {
         verifyCoreCommitQc(outcome.proposalQc, outcome.coreCommitQc, frozenCore, configuredFraction)
     }
 
+  /** Validate the exact child-carried certificate envelope against this node's already-trusted parent outcome.
+    *
+    * The semantic value must be identical, but the valid prepare/commit proof subset may differ. The returned object is therefore always
+    * the leader-carried envelope, never a locally reconstructed substitute. Artifact reconstruction must embed this returned value exactly
+    * (wiring invariant W1), otherwise honest followers could produce different child bytes from equivalent certificates.
+    *
+    * `None -> None` is the only root/activation case. Once a trusted parent has a certificate, omission fails closed; carrying a
+    * certificate before the trusted parent does is equally invalid. This makes the exception local-authority-derived rather than
+    * peer-asserted.
+    */
+  def verifyCarriedParentOutcome[F[_]: Async: Hasher: SecurityProvider](
+    carried: Option[CertifiedLineageEvidenceV1],
+    trustedParent: Option[CertifiedOutcome],
+    domain: ConsensusDomain,
+    configuredFraction: Double
+  ): F[Either[String, Option[CertifiedLineageEvidenceV1]]] =
+    (trustedParent, carried) match {
+      case (None, None)    => none[CertifiedLineageEvidenceV1].asRight[String].pure[F]
+      case (None, Some(_)) => "certified_lineage_unexpected_at_root".asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
+      case (Some(_), None) => "certified_lineage_missing_after_root".asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
+      case (Some(expected), Some(actual)) =>
+        val expectedValue = expected.proposalQc.value
+        val actualValue = actual.parentOutcome.proposalQc.value
+        val frozenCommittee = expectedValue.roundStartFacilitators.toSortedSet.toSet
+        val frozenCore = expectedValue.roundStartCore.toSortedSet.toSet
+        val structure = for {
+          _ <- Either.cond(actualValue.domain === domain, (), "certified_lineage_domain_mismatch")
+          _ <- Either.cond(actualValue === expectedValue, (), "certified_lineage_parent_value_mismatch")
+          _ <- Either.cond(
+            actual.parentOutcome.proposalQc.valueHash === expected.proposalQc.valueHash,
+            (),
+            "certified_lineage_parent_value_hash_mismatch"
+          )
+        } yield ()
+
+        structure match {
+          case Left(error) => error.asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
+          case Right(_) =>
+            verifyOutcome(actual.parentOutcome, frozenCommittee, frozenCore, configuredFraction)
+              .flatMap(_.as(actual.some).pure[F])
+        }
+    }
+
+  /** Validate a full-checkpoint payload against state already derived from certified incremental history.
+    *
+    * This function never grants checkpoint authority. Callers must first bind the containing full snapshot to an independently announced
+    * hash. When root-to-tip history is available, this comparison is the publication/ingest audit that proves the compacted fields are an
+    * exact projection of the certified source tip. Equivalent valid QC proof subsets are accepted; all derived continuation fields remain
+    * exact.
+    */
+  def verifyCheckpointProjection[F[_]: Async: Hasher: SecurityProvider](
+    checkpoint: CertifiedCheckpointV1,
+    expectedTip: CertifiedOutcome,
+    expectedNextRoundFacilitators: NonEmptySet[PeerId],
+    expectedOperationalState: ConsensusOperationalState,
+    expectedPeerSelfHealth: SortedMap[PeerId, SelfHealthHint],
+    expectedExpandedBeyondSingleton: Boolean,
+    expectedLayerState: CertifiedCheckpointLayerStateV1,
+    domain: ConsensusDomain,
+    configuredFraction: Double
+  ): F[Either[String, Unit]] = {
+    val expectedValue = expectedTip.proposalQc.value
+    val actualValue = checkpoint.certifiedTip.proposalQc.value
+    val frozenCommittee = expectedValue.roundStartFacilitators.toSortedSet.toSet
+    val frozenCore = expectedValue.roundStartCore.toSortedSet.toSet
+
+    val structure = for {
+      _ <- Either.cond(actualValue.domain === domain, (), "certified_checkpoint_domain_mismatch")
+      _ <- Either.cond(actualValue === expectedValue, (), "certified_checkpoint_tip_value_mismatch")
+      _ <- Either.cond(
+        checkpoint.certifiedTip.proposalQc.valueHash === expectedTip.proposalQc.valueHash,
+        (),
+        "certified_checkpoint_tip_hash_mismatch"
+      )
+      _ <- Either.cond(
+        checkpoint.nextRoundFacilitators === expectedNextRoundFacilitators,
+        (),
+        "certified_checkpoint_facilitators_mismatch"
+      )
+      _ <- Either.cond(
+        checkpoint.operationalState === expectedOperationalState,
+        (),
+        "certified_checkpoint_operational_state_mismatch"
+      )
+      _ <- Either.cond(
+        checkpoint.peerSelfHealth === expectedPeerSelfHealth,
+        (),
+        "certified_checkpoint_self_health_mismatch"
+      )
+      _ <- Either.cond(
+        checkpoint.expandedBeyondSingleton === expectedExpandedBeyondSingleton,
+        (),
+        "certified_checkpoint_singleton_fact_mismatch"
+      )
+      _ <- Either.cond(checkpoint.layerState === expectedLayerState, (), "certified_checkpoint_layer_state_mismatch")
+      _ <- (domain, checkpoint.layerState) match {
+        case (ConsensusDomain.DagL0, CertifiedCheckpointLayerStateV1.Dag)              => ().asRight[String]
+        case (ConsensusDomain.CurrencyL0, _: CertifiedCheckpointLayerStateV1.Currency) => ().asRight[String]
+        case _ => "certified_checkpoint_layer_domain_mismatch".asLeft[Unit]
+      }
+    } yield ()
+
+    structure match {
+      case Left(error) => error.asLeft[Unit].pure[F]
+      case Right(_)    => verifyOutcome(checkpoint.certifiedTip, frozenCommittee, frozenCore, configuredFraction)
+    }
+  }
+
+  /** Verify and replay a public child-carried certificate chain from an independently trusted root.
+    *
+    * Certificate placement is intentionally shifted by one round: public frame `N + 1` carries the transferable evidence for frame `N`. The
+    * terminal frame has no child yet, so its evidence comes from the authenticated peer outcome endpoint. The generic fold owns only this
+    * ordering/continuity rule and the shared certificate checks; each layer adapter remains responsible for re-deriving its public
+    * artifact, context, membership transition, and (for Currency) binary envelope.
+    *
+    * No partially replayed state is returned on failure. Callers may persist the returned states only after the complete fold succeeds;
+    * this keeps a malformed interior child from installing a prefix as local authority.
+    */
+  def verifySequentialLineage[F[_]: Async: Hasher: SecurityProvider, State, Frame](
+    trustedRoot: State,
+    trustedRootKey: Long,
+    frames: List[Frame],
+    terminalEvidence: Option[CertifiedLineageEvidenceV1],
+    domain: ConsensusDomain,
+    configuredFraction: Double,
+    keyOf: Frame => Long,
+    lineageOf: Frame => Option[CertifiedLineageEvidenceV1],
+    certifiedOutcomeOf: State => Option[CertifiedOutcome]
+  )(
+    advance: (State, Frame, CertifiedLineageEvidenceV1) => F[Either[String, State]]
+  ): F[Either[String, List[State]]] = {
+    def expectedSuccessor(key: Long): Either[String, Long] = {
+      val next = BigInt(key) + 1
+      Either.cond(next <= BigInt(Long.MaxValue), next.toLong, "certified_lineage_key_overflow")
+    }
+
+    def loop(
+      trusted: State,
+      trustedKey: Long,
+      remaining: List[Frame],
+      accepted: List[State]
+    ): F[Either[String, List[State]]] =
+      remaining match {
+        case Nil => accepted.reverse.asRight[String].pure[F]
+        case current :: tail =>
+          val currentKey = keyOf(current)
+          val structure = for {
+            expected <- expectedSuccessor(trustedKey)
+            _ <- Either.cond(currentKey === expected, (), s"certified_lineage_non_contiguous:$trustedKey:$currentKey")
+            authority <- tail match {
+              case next :: _ =>
+                lineageOf(next).toRight(s"certified_lineage_missing_child_certificate:$currentKey")
+              case Nil => terminalEvidence.toRight(s"certified_lineage_terminal_certificate_missing:$currentKey")
+            }
+            value = authority.parentOutcome.proposalQc.value
+            _ <- Either.cond(value.domain === domain, (), s"certified_lineage_authority_domain_mismatch:$currentKey")
+            _ <- Either.cond(value.key === currentKey, (), s"certified_lineage_authority_key_mismatch:$currentKey:${value.key}")
+          } yield authority
+
+          structure match {
+            case Left(error) => error.asLeft[List[State]].pure[F]
+            case Right(authority) =>
+              verifyCarriedParentOutcome[F](
+                lineageOf(current),
+                certifiedOutcomeOf(trusted),
+                domain,
+                configuredFraction
+              ).flatMap {
+                case Left(error) => s"certified_lineage_parent_invalid:$currentKey:$error".asLeft[List[State]].pure[F]
+                case Right(_) =>
+                  advance(trusted, current, authority).flatMap {
+                    case Left(error) => s"certified_lineage_round_invalid:$currentKey:$error".asLeft[List[State]].pure[F]
+                    case Right(next) => loop(next, currentKey, tail, next :: accepted)
+                  }
+              }
+          }
+      }
+
+    frames match {
+      case Nil =>
+        Either
+          .cond(terminalEvidence.isEmpty, List.empty[State], "certified_lineage_terminal_without_frames")
+          .pure[F]
+      case _ => loop(trustedRoot, trustedRootKey, frames, List.empty)
+    }
+  }
+
   /** Verify a certified value against the exact round identity reconstructed from a locally known parent. This is the common trust boundary
     * for DAG/Currency same-key recovery: layer adapters provide their typed context and frozen sets, while this helper reuses the ordinary
     * value/QC validation path.
@@ -685,6 +878,76 @@ object CertifiedConsensus {
       case Left(error) => error.asLeft[Unit].pure[F]
       case Right(_) =>
         signedArtifact.hasValidSignature[F].map(Either.cond(_, (), "invalid_artifact_signature"))
+    }
+  }
+
+  /** Project the bounded, non-reconstructible part of a finalized Currency binary.
+    *
+    * The binary content is deliberately absent. It is the canonical `JsonSerializer` encoding of the public signed Currency artifact and
+    * can therefore be reconstructed by every sequential verifier. Carrying it here would recursively embed parent snapshots once public
+    * artifacts gain certified-lineage fields.
+    */
+  def currencyLayerEvidence(
+    binary: Signed[StateChannelSnapshotBinary]
+  ): CertifiedLayerEvidenceV1.Currency =
+    CertifiedLayerEvidenceV1.Currency(
+      binary.value.lastSnapshotHash,
+      binary.value.fee,
+      binary.proofs
+    )
+
+  /** Rebuild and authenticate a Currency binary from bounded child-carried evidence.
+    *
+    * This is the same construction used by `StateChannelSnapshotService.createBinary`: serialize the complete public signed artifact,
+    * combine those bytes with the parent-binary link and fee, then verify the carried signatures over that exact value. No alternate
+    * canonicalization or hash scheme is introduced. The complete frozen-committee signer set is required because a proof subset would
+    * otherwise make the reconstructed private outcome ambiguous across honest replayers.
+    */
+  def reconstructAndVerifyCurrencyBinary[
+    F[_]: Async: JsonSerializer: Hasher: SecurityProvider,
+    Artifact: Encoder
+  ](
+    publicSignedParentArtifact: Signed[Artifact],
+    evidence: CertifiedLayerEvidenceV1.Currency,
+    expectedParentBinaryHash: Hash,
+    frozenCommittee: Set[PeerId]
+  ): F[Either[String, Hashed[StateChannelSnapshotBinary]]] = {
+    val signerIds = evidence.parentBinaryProofs.toSortedSet.toList.map(_.id.toPeerId)
+    val structure = for {
+      _ <- Either.cond(signerIds.distinct.size === signerIds.size, (), "currency_binary_duplicate_signer")
+      _ <- Either.cond(
+        signerIds.toSet === frozenCommittee,
+        (),
+        "currency_binary_signers_not_complete_frozen_committee"
+      )
+      _ <- Either.cond(
+        evidence.parentBinaryLastSnapshotHash === expectedParentBinaryHash,
+        (),
+        "currency_binary_parent_mismatch"
+      )
+    } yield ()
+
+    structure match {
+      case Left(error) => error.asLeft[Hashed[StateChannelSnapshotBinary]].pure[F]
+      case Right(_) =>
+        JsonSerializer[F]
+          .serialize(publicSignedParentArtifact)
+          .map(bytes =>
+            Signed(
+              StateChannelSnapshotBinary(
+                evidence.parentBinaryLastSnapshotHash,
+                bytes,
+                evidence.parentBinaryFee
+              ),
+              evidence.parentBinaryProofs
+            )
+          )
+          .flatMap { reconstructed =>
+            reconstructed.hasValidSignature[F].flatMap {
+              case false => "currency_binary_invalid_signature".asLeft[Hashed[StateChannelSnapshotBinary]].pure[F]
+              case true  => reconstructed.toHashed[F].map(_.asRight[String])
+            }
+          }
     }
   }
 
