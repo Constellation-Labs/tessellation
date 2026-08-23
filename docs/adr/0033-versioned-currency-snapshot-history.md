@@ -48,7 +48,11 @@ would require another workaround for the next semantics change.
    `unappliedGlobalChangeOrdinals` entry at or below the selected Global L0 sync view.
    Legacy process memory cannot prove which such entries were already applied. Entries
    above the selected view have not entered this Currency artifact yet and do not make
-   the transition ambiguous. Delaying preserves the legacy chain instead of guessing.
+   the transition ambiguous. Also delay while sync selection yields
+   `SnapshotOrdinal.MinValue`: that value is the no-dependency sentinel (including the
+   initial `target - syncOffset` underflow boundary), not a retained Global snapshot a
+   verifier can resolve. Delaying preserves the legacy chain instead of guessing or
+   falling back to a caller's moving Global tip.
 5. In live processing, resolve every historical Global L0 dependency exclusively from
    the inclusive retained window. `outside_retention` and `missing_recent` are typed,
    metered failures and never fall through to local disk or peer fetch.

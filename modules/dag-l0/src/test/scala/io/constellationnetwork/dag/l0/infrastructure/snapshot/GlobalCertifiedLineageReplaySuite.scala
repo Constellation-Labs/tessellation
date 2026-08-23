@@ -718,6 +718,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
           }
       }
       frames = built._2
+      publicArtifactRoundTrips <- frames.traverse { frame =>
+        for {
+          bytes <- serializer.serialize(frame.artifact)
+          decoded <- serializer.deserialize[Signed[GlobalIncrementalSnapshot]](bytes).flatMap(_.liftTo[IO])
+          verified <- decoded.toHashedWithSignatureCheck[IO]
+        } yield verified
+      }
       runs <- CertifiedLineageReplayHarness.execute(root, frames)(derive(_, _, stateAdvancer))
       finalOutcome = built._1
       laterSingletonBypass = CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
@@ -730,6 +737,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       expect.all(
         runs.warm == runs.restartEveryRound,
         runs.warm == runs.freshSequentialReplay,
+        publicArtifactRoundTrips.forall(_.isRight),
         runs.warm.size === scripts.size,
         runs.warm.last.expandedBeyondSingleton,
         !laterSingletonBypass,

@@ -185,8 +185,6 @@ object Services {
         sharedStorages.lastGlobalSnapshot
       )
 
-      currencyAddress <- storages.identifier.get
-
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedServices.gossip,
@@ -199,7 +197,10 @@ object Services {
           storages.lastSyncGlobalSnapshot,
           storages.snapshot,
           storages.snapshotInfoLocalFileSystemStorage,
-          currencyAddress,
+          // Services are allocated before run-genesis/run-validator/run-rollback installs
+          // the metagraph identifier. Keep the read suspended until certified download
+          // validation actually needs to reconstruct a Currency snapshot context.
+          storages.identifier.get,
           maybeRewards,
           cfg.snapshot,
           effectiveConsensusConfig,

@@ -2746,6 +2746,13 @@ object CurrencySnapshotConsensusStateAdvancer {
             case (Some(_), None) =>
               new IllegalStateException("certified_currency_parent_binary_missing")
                 .raiseError[F, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]
+            // A from-genesis activation root has no parent QC to carry, but Currency still
+            // finishes its ordinary binary-signature phase and retains that signed binary.
+            // The first child therefore has no lineage envelope; the following child carries
+            // the first complete (outcome, binary) pair. Keep the exception pinned to the
+            // canonical root key so a missing outcome anywhere else remains fail-closed.
+            case (None, Some(_)) if CertifiedConsensusGenesis.isRootKey(config.certifiedConsensusActivationKey, state.lastOutcome.key) =>
+              none[CertifiedConsensus.CertifiedLineageEvidenceV1].pure[F]
             case (None, Some(_)) =>
               new IllegalStateException("certified_currency_parent_outcome_missing")
                 .raiseError[F, Option[CertifiedConsensus.CertifiedLineageEvidenceV1]]

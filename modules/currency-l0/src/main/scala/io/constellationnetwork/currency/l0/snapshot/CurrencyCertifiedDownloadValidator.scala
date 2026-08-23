@@ -113,7 +113,7 @@ object CurrencyCertifiedDownloadValidator {
     config: ConsensusConfig,
     coreCommitteeSize: Int,
     seedlistPeerIds: Set[PeerId],
-    currencyAddress: Address,
+    getCurrencyAddress: F[Address],
     facilitatorSelector: FacilitatorSelector,
     isContextEligible: (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext, PeerId) => F[Boolean],
     getSnapshot: SnapshotOrdinal => F[Option[Signed[CurrencyIncrementalSnapshot]]],
@@ -260,6 +260,10 @@ object CurrencyCertifiedDownloadValidator {
             for {
               signatureValid <- snapshot.hasValidSignature[F]
               contextProof <- info.stateProof[F](proofOrdinal)
+              // IdentifierStorage is initialized by the selected startup program after
+              // Services are allocated. Resolve it only on this active validation path;
+              // constructing consensus (and all pre-activation validation) must not read it.
+              currencyAddress <- getCurrencyAddress
             } yield {
               val validation = for {
                 _ <- Either.cond(snapshot.ordinal === ordinal, (), "trusted_snapshot_ordinal_mismatch")

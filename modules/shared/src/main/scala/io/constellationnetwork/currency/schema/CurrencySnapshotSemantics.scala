@@ -22,13 +22,17 @@ object CurrencySnapshotSemantics {
     version == DeterministicHistoryVersion
 
   /** An absent public activation resolves to `SnapshotOrdinal.MaxValue` and must stay dormant even for a malformed or theoretical MaxValue
-    * reference.
+    * reference. `SnapshotOrdinal.MinValue` is the no-selected-dependency sentinel: during initial synchronization, subtracting the sync
+    * offset can also yield it before the first retained incremental Global snapshot exists. It cannot authorize deterministic history,
+    * because artifact recreation would then fall back to the caller's moving Global tip rather than a concrete retained dependency.
     */
   def isActivationAuthorized(
     activationReference: SnapshotOrdinal,
     activationOrdinal: SnapshotOrdinal
   ): Boolean =
-    activationOrdinal != SnapshotOrdinal.MaxValue && activationReference >= activationOrdinal
+    activationOrdinal != SnapshotOrdinal.MaxValue &&
+      activationReference != SnapshotOrdinal.MinValue &&
+      activationReference >= activationOrdinal
 
   /** Legacy processing history is proven through the selected Global L0 view when no still-unacknowledged ordinal at or below that view
     * exists. Ordinals above the selected view have not become inputs to this Currency artifact yet and do not make a historical transition

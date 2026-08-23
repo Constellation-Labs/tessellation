@@ -647,7 +647,7 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         config = config,
         coreCommitteeSize = 2,
         seedlistPeerIds = Set.empty,
-        currencyAddress = root.finished.context.address,
+        getCurrencyAddress = root.finished.context.address.pure[IO],
         facilitatorSelector = FacilitatorSelector.make(None),
         isContextEligible = (_, _, _) => IO.pure(true),
         getSnapshot = ordinal => IO.pure(artifacts.get(ordinal)),
@@ -656,12 +656,25 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         stateAdvancer = stateAdvancer
       )
       valid <- validator(candidate).attempt
+      preActivationValidator = CurrencyCertifiedDownloadValidator.make[IO](
+        config = config.copy(certifiedConsensusActivationKey = Long.MaxValue),
+        coreCommitteeSize = 2,
+        seedlistPeerIds = Set.empty,
+        getCurrencyAddress = IO.raiseError(new IllegalStateException("identifier must stay suspended before activation")),
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _, _) => IO.pure(true),
+        getSnapshot = _ => IO.raiseError(new IllegalStateException("snapshot lookup must stay suspended before activation")),
+        getSnapshotInfo = _ => IO.raiseError(new IllegalStateException("snapshot-info lookup must stay suspended before activation")),
+        certifiedOutcomeSidecar = emptySidecar,
+        stateAdvancer = stateAdvancer
+      )
+      preActivation <- preActivationValidator(candidate).attempt
       missingInterior = artifacts - frames.head.artifact.ordinal
       missingValidator = CurrencyCertifiedDownloadValidator.make[IO](
         config = config,
         coreCommitteeSize = 2,
         seedlistPeerIds = Set.empty,
-        currencyAddress = root.finished.context.address,
+        getCurrencyAddress = root.finished.context.address.pure[IO],
         facilitatorSelector = FacilitatorSelector.make(None),
         isContextEligible = (_, _, _) => IO.pure(true),
         getSnapshot = ordinal => IO.pure(missingInterior.get(ordinal)),
@@ -677,6 +690,7 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
       }
 
       validExpectation &&
+      expect(preActivation.isRight) &&
       expect(
         missing.left.exists(_.getMessage.contains(s"trusted_snapshot_missing:${frames.head.artifact.ordinal.value.value}"))
       )

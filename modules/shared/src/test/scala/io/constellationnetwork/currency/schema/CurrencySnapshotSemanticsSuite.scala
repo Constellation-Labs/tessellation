@@ -39,6 +39,20 @@ object CurrencySnapshotSemanticsSuite extends SimpleIOSuite {
     )
   }
 
+  test("the no-selected-dependency sentinel cannot activate deterministic history") {
+    IO.pure(
+      expect.same(
+        CurrencySnapshotSemantics.LegacyVersion,
+        CurrencySnapshotSemantics.nextVersion(
+          CurrencySnapshotSemantics.LegacyVersion,
+          SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
+          transitionHistoryProven = true
+        )
+      )
+    )
+  }
+
   test("an absent MaxValue activation stays dormant even at a MaxValue reference") {
     IO.pure(
       expect.same(
