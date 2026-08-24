@@ -1724,11 +1724,11 @@ class StateTransitions[
   def initFromDownload(key: Key, artifact: Signed[Artifact], context: Ctx, isRecovery: Boolean = false): F[Unit] =
     (for {
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.DownloadInitStart)
-      plannedCommittee <- ctx.plannedRecoveryCommittee
+      recoverySeedCommittee <- ctx.recoverySeedCommittee
       // isRecoveryEffective = true if either the caller flagged this as recovery, OR the cluster
       // has advanced past our downloaded ordinal (peer returned a newer outcome). In both cases
       // we skip the 43s TimeTrigger deferral so the node joins the cluster immediately.
-      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery, plannedCommittee)
+      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery, recoverySeedCommittee)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
         .flatMap { o =>
           // Explicit post-retry validation: retryingOnFailuresAndAllErrors returns the last value
@@ -1754,9 +1754,9 @@ class StateTransitions[
             // N+1 creates a torn handoff: consensus next emits N+2 while application storage
             // still requires N+1. Align the layer before installing the newer outcome.
             case StateTransitions.DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage =>
-              if (plannedCommittee.nonEmpty)
+              if (recoverySeedCommittee.nonEmpty)
                 new Throwable(
-                  s"[DownloadInit] Recovery-plan validator requires exact anchor outcome for key=$key; peer returned newer key=${outcomeKey.get(o)}"
+                  s"[DownloadInit] Recovery-seed validator requires exact anchor outcome for key=$key; peer returned newer key=${outcomeKey.get(o)}"
                 ).raiseError[F, (Outcome, Boolean)]
               else
                 StateTransitions.validateDownloadBeforeMutation(
@@ -1787,12 +1787,12 @@ class StateTransitions[
       // The layer preflight above has already authenticated the selected outcome before any
       // application-storage mutation. Arming here is therefore only a local scheduling hold;
       // it does not confer trust on the downloaded value.
-      normalCommittee = plannedCommittee.fold(
+      normalCommittee = recoverySeedCommittee.fold(
         ctx.normalFirstRoundAlignment
           .flatMap(_.committeeOf(outcome))
           .filter(_.contains(ctx.selfId))
       )(_ => none[SortedSet[PeerId]])
-      heldCommittee = plannedCommittee.orElse(normalCommittee)
+      heldCommittee = recoverySeedCommittee.orElse(normalCommittee)
       firstRoundPermit <- heldCommittee.traverse(_ => ctx.firstRoundStartGate.arm(outcomeKey.get(outcome)))
       // B2 readmission gate: refuse to facilitate while self is on probation per the carried
       // outcome. A peer that was B1-evicted during isolation comes back
@@ -1837,7 +1837,7 @@ class StateTransitions[
       // outcome was installed, a later init attempt observes the same exact outcome,
       // re-runs this hook, and still cannot promote/start until it succeeds.
       _ <- ctx.onOutcomeSafetyInitialized(outcome)
-      _ <- plannedCommittee.traverse_(committee =>
+      _ <- recoverySeedCommittee.traverse_(committee =>
         ctx.onOutcomeRollbackInitialized(outcome, RollbackStartPolicy.RequireAlignedCommittee(committee))
       )
       _ <- runOutcomeHook("download_initialized", outcome)(ctx.onOutcomeInitialized).whenA(initialized)
@@ -1853,23 +1853,23 @@ class StateTransitions[
       _ <- storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective)
       _ <- heldCommittee.fold(ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState)) { _ =>
         ctx.nodeStorage.getNodeState.flatMap { currentState =>
-          StateTransitions.plannedInitializationStateDisposition(currentState) match {
-            case StateTransitions.PlannedInitializationStateDisposition.EnterWaitingForReady =>
+          StateTransitions.recoveryInitializationStateDisposition(currentState) match {
+            case StateTransitions.RecoveryInitializationStateDisposition.EnterWaitingForReady =>
               ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForReady)
-            case StateTransitions.PlannedInitializationStateDisposition.ResumeAndRepublish =>
+            case StateTransitions.RecoveryInitializationStateDisposition.ResumeAndRepublish =>
               // A previous attempt may have updated the Ref before Topic publication failed. Publishing the accepted state again makes
               // peer lifecycle observation idempotent and lets the exact gate/barrier tail resume.
               ctx.nodeStorage.setNodeState(currentState)
-            case StateTransitions.PlannedInitializationStateDisposition.Reject =>
+            case StateTransitions.RecoveryInitializationStateDisposition.Reject =>
               new IllegalStateException(
-                s"[DownloadInit] Cannot resume planned initialization from node state=$currentState"
+                s"[DownloadInit] Cannot resume recovery/aligned initialization from node state=$currentState"
               ).raiseError[F, Unit]
           }
         }
       }
       installedState <- ctx.nodeStorage.getNodeState
       _ <- new IllegalStateException(
-        s"[DownloadInit] Failed to establish planned node state: expected=$targetState actual=$installedState"
+        s"[DownloadInit] Failed to establish recovery/aligned node state: expected=$targetState actual=$installedState"
       ).raiseError[F, Unit]
         .unlessA(
           heldCommittee.isEmpty || installedState === targetState ||
@@ -1892,9 +1892,9 @@ class StateTransitions[
             .void
         }
       )(_ => Async[F].unit)
-      _ <- (plannedCommittee, firstRoundPermit).tupled.traverse {
+      _ <- (recoverySeedCommittee, firstRoundPermit).tupled.traverse {
         case (committee, permit) =>
-          scheduleRecoveryPlanFirstRound(outcomeKey.get(outcome), outcome, committee, permit)
+          scheduleRecoverySeedFirstRound(outcomeKey.get(outcome), outcome, committee, permit)
       }
       _ <- (normalCommittee, firstRoundPermit).tupled.traverse {
         case (committee, permit) =>
@@ -1980,11 +1980,11 @@ class StateTransitions[
       _ <- ctx.onOutcomeRollbackInitialized(outcome, startPolicy)
       // Joining grace is a first-round prerequisite and must precede the barrier.
       _ <- ctx.nodeStorage.setJoiningGracePeriod
-      // Install the plan barrier before post-install observability. Once the exact anchor and
+      // Install the recovery/alignment barrier before post-install observability. Once the exact anchor and
       // joining grace exist, incidental logging/metrics failures cannot burn the generation.
       _ <- startPolicy match {
         case RollbackStartPolicy.RequireAlignedCommittee(committee) =>
-          scheduleRecoveryPlanFirstRound(key, outcome, committee, firstRoundPermit.get)
+          scheduleRecoverySeedFirstRound(key, outcome, committee, firstRoundPermit.get)
         case RollbackStartPolicy.RequireOutcomeAlignedQuorum(committee) =>
           val required = math.max(1, QuorumPolicy.fromFraction(committee.size, config.quorumThresholdFraction))
           scheduleAlignedFirstRound(
@@ -2100,19 +2100,19 @@ class StateTransitions[
     val perPeerTimeout = 3.seconds
     val normalRollback = mode === "normal_rollback"
 
-    def fetchAlignment(peer: Peer): F[(PeerId, StateTransitions.RecoveryPlanPeerOutcome)] =
+    def fetchAlignment(peer: Peer): F[(PeerId, StateTransitions.RecoverySeedPeerOutcome)] =
       Temporal[F]
         .timeoutTo(
           ctx.consensusClient
             .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
             .run(peer)
-            .map(outcome => StateTransitions.recoveryPlanPeerOutcome(expectedOutcome, outcome)),
+            .map(outcome => StateTransitions.recoverySeedPeerOutcome(expectedOutcome, outcome)),
           perPeerTimeout,
-          (StateTransitions.RecoveryPlanPeerOutcome.FetchFailed: StateTransitions.RecoveryPlanPeerOutcome).pure[F]
+          (StateTransitions.RecoverySeedPeerOutcome.FetchFailed: StateTransitions.RecoverySeedPeerOutcome).pure[F]
         )
         .handleErrorWith { err =>
           if (normalRollback)
-            (StateTransitions.RecoveryPlanPeerOutcome.FetchFailed: StateTransitions.RecoveryPlanPeerOutcome).pure[F]
+            (StateTransitions.RecoverySeedPeerOutcome.FetchFailed: StateTransitions.RecoverySeedPeerOutcome).pure[F]
           else
             ConsensusLog
               .warn(
@@ -2126,18 +2126,18 @@ class StateTransitions[
                 "reason" -> "outcome_fetch_failed",
                 "error" -> Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
               )
-              .as(StateTransitions.RecoveryPlanPeerOutcome.FetchFailed)
+              .as(StateTransitions.RecoverySeedPeerOutcome.FetchFailed)
         }
         .tupleLeft(peer.id)
 
-    def fetchUncached(peers: List[Peer]): F[List[(PeerId, StateTransitions.RecoveryPlanPeerOutcome)]] =
+    def fetchUncached(peers: List[Peer]): F[List[(PeerId, StateTransitions.RecoverySeedPeerOutcome)]] =
       if (normalRollback)
         peers.traverse(peer => Async[F].start(fetchAlignment(peer))).flatMap(_.traverse(_.joinWithNever))
       else peers.traverse(fetchAlignment)
 
     def inspect(
       alignedSessions: Ref[F, Map[PeerId, Peer]]
-    ): F[StateTransitions.RecoveryPlanBarrierStatus] =
+    ): F[StateTransitions.RecoverySeedBarrierStatus] =
       (ctx.nodeStorage.getNodeState, ctx.clusterStorage.getResponsivePeers).flatMapN { (nodeState, peers) =>
         val peerById = peers.iterator.map(peer => peer.id -> peer).toMap
         val expectedExternal = committee - ctx.selfId
@@ -2165,13 +2165,13 @@ class StateTransitions[
           case (cached, uncached) =>
             fetchUncached(uncached).flatMap { fetched =>
               val newlyAligned = fetched.collect {
-                case (peerId, StateTransitions.RecoveryPlanPeerOutcome.Aligned) => peerId
+                case (peerId, StateTransitions.RecoverySeedPeerOutcome.Aligned) => peerId
               }.toSet
               val fetchedPeerById = uncached.iterator.map(peer => peer.id -> peer).toMap
               val additions = newlyAligned.flatMap(peerId => fetchedPeerById.get(peerId).map(peerId -> _)).toMap
               val peerOutcomes = fetched.foldLeft(
                 cached.keySet.iterator
-                  .map(_ -> (StateTransitions.RecoveryPlanPeerOutcome.Aligned: StateTransitions.RecoveryPlanPeerOutcome))
+                  .map(_ -> (StateTransitions.RecoverySeedPeerOutcome.Aligned: StateTransitions.RecoverySeedPeerOutcome))
                   .toMap
               ) {
                 case (outcomes, (peerId, outcome)) => outcomes.updated(peerId, outcome)
@@ -2201,7 +2201,7 @@ class StateTransitions[
     def ids(peers: Iterable[PeerId]): String =
       peers.iterator.map(ConsensusLog.pid).toList.sorted.mkString(",")
 
-    def record(status: StateTransitions.RecoveryPlanBarrierStatus, attempt: Long): F[Unit] = {
+    def record(status: StateTransitions.RecoverySeedBarrierStatus, attempt: Long): F[Unit] = {
       val normalOutcome =
         if (status.aligned) "aligned"
         else if (status.invalidCommittee) "invalid_committee"
@@ -2221,7 +2221,7 @@ class StateTransitions[
             "n/a",
             LogEvent.RollbackQuorumFeasible,
             "mode" -> mode,
-            "reason" -> "exact_planned_committee_aligned",
+            "reason" -> "exact_recovery_seed_committee_aligned",
             "committee" -> ids(committee),
             "alignedPeers" -> ids(status.alignedPeers),
             "attempt" -> attempt.toString
@@ -2234,7 +2234,7 @@ class StateTransitions[
             "n/a",
             LogEvent.RollbackFirstRoundDeferred,
             "mode" -> mode,
-            "reason" -> "planned_committee_not_aligned",
+            "reason" -> "recovery_seed_committee_not_aligned",
             "attempt" -> attempt.toString,
             "selfReady" -> status.selfReady.toString,
             "invalidCommittee" -> status.invalidCommittee.toString,
@@ -2296,14 +2296,14 @@ class StateTransitions[
             Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_deficit", status.deficit.toLong)
         else
           Metrics[F].incrementCounter(
-            "dag_consensus_recovery_plan_alignment_poll_total",
+            "dag_consensus_recovery_seed_alignment_poll_total",
             Seq(unsafeLabelName("aligned") -> status.aligned.toString)
           ) >>
-            Metrics[F].updateGauge("dag_consensus_recovery_plan_alignment_missing_session", status.missingSession.size.toLong) >>
-            Metrics[F].updateGauge("dag_consensus_recovery_plan_alignment_invalid_state", status.invalidState.size.toLong) >>
-            Metrics[F].updateGauge("dag_consensus_recovery_plan_alignment_missing_outcome", status.missingOutcome.size.toLong) >>
-            Metrics[F].updateGauge("dag_consensus_recovery_plan_alignment_mismatched_outcome", status.mismatchedOutcome.size.toLong) >>
-            Metrics[F].updateGauge("dag_consensus_recovery_plan_alignment_fetch_failed", status.fetchFailed.size.toLong)
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_missing_session", status.missingSession.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_invalid_state", status.invalidState.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_missing_outcome", status.missingOutcome.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_mismatched_outcome", status.mismatchedOutcome.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_fetch_failed", status.fetchFailed.size.toLong)
 
       logStatus >> metrics
     }
@@ -2324,7 +2324,7 @@ class StateTransitions[
            )
          else
            Metrics[F].incrementCounter(
-             "dag_consensus_recovery_plan_alignment_error_total",
+             "dag_consensus_recovery_seed_alignment_error_total",
              Seq(unsafeLabelName("stage") -> stage)
            )).attempt.void
 
@@ -2360,7 +2360,7 @@ class StateTransitions[
     val initialMetrics =
       if (normalRollback)
         Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 1L)
-      else Metrics[F].incrementCounter("dag_consensus_recovery_plan_first_round_deferred_total")
+      else Metrics[F].incrementCounter("dag_consensus_recovery_seed_first_round_deferred_total")
 
     for {
       alignedSessions <- Ref.of[F, Map[PeerId, Peer]](Map.empty)
@@ -2373,7 +2373,7 @@ class StateTransitions[
           announce.handleErrorWith(err => reportFailure("initial_record", err)) >>
             StateTransitions.runFirstRoundAlignmentLoop(
               inspect(alignedSessions),
-              (status: StateTransitions.RecoveryPlanBarrierStatus) => status.aligned,
+              (status: StateTransitions.RecoverySeedBarrierStatus) => status.aligned,
               record,
               Temporal[F].sleep(pollInterval),
               queue.offer(ReleaseFirstRoundStart(permit, committee)),
@@ -2399,7 +2399,7 @@ class StateTransitions[
     } yield ()
   }
 
-  private def scheduleRecoveryPlanFirstRound(
+  private def scheduleRecoverySeedFirstRound(
     key: Key,
     expectedOutcome: Outcome,
     committee: SortedSet[PeerId],
@@ -2411,7 +2411,7 @@ class StateTransitions[
       committee,
       StateTransitions.FirstRoundAlignmentRequirement.AllMembers,
       permit,
-      mode = "operator_recovery_plan"
+      mode = "operator_recovery_seed"
     )
 
   /** Normal post-bootstrap validator release path.
@@ -2628,7 +2628,7 @@ class StateTransitions[
     artifact: Signed[Artifact],
     context: Ctx,
     isRecovery: Boolean,
-    plannedCommittee: Option[SortedSet[PeerId]]
+    recoverySeedCommittee: Option[SortedSet[PeerId]]
   ): F[Option[Outcome]] = {
     val retryPolicy = limitRetries(20).join(constantDelay(3.seconds))
 
@@ -2640,11 +2640,11 @@ class StateTransitions[
         // bottleneck where only the rollback-lead node is Ready while sibling source
         // nodes sit in WaitingForReady waiting on a round to close: joining peers
         // funnel through the lone Ready peer and stall.
-        val inPlan = (peer: Peer) => plannedCommittee.forall(_.contains(peer.id)) && peer.id =!= ctx.selfId
+        val inRecoverySeed = (peer: Peer) => recoverySeedCommittee.forall(_.contains(peer.id)) && peer.id =!= ctx.selfId
         val primaryCandidates = allPeers
-          .filter(p => inPlan(p) && (p.state == NodeState.Ready || p.state == NodeState.WaitingForReady))
+          .filter(p => inRecoverySeed(p) && (p.state == NodeState.Ready || p.state == NodeState.WaitingForReady))
           .toSeq
-        val observingPeers = allPeers.filter(p => inPlan(p) && p.state == NodeState.Observing).toSeq
+        val observingPeers = allPeers.filter(p => inRecoverySeed(p) && p.state == NodeState.Observing).toSeq
 
         val candidates = if (primaryCandidates.nonEmpty) primaryCandidates else observingPeers
 
@@ -2659,7 +2659,7 @@ class StateTransitions[
             "peerStates" -> s"[$peerStates]"
           ) >>
             new NoValidPeersException(
-              s"No ${plannedCommittee.fold("fleet")(c => s"planned(${c.size})")} peers in Ready, WaitingForReady, or Observing state. " +
+              s"No ${recoverySeedCommittee.fold("fleet")(c => s"recovery-seed(${c.size})")} peers in Ready, WaitingForReady, or Observing state. " +
                 s"Available: ${allPeers.size} peers"
             ).raiseError[F, Peer]
         } else {
@@ -2683,7 +2683,7 @@ class StateTransitions[
           .recoverWith {
             // 409 means the peer has already evicted this ordinal's outcome (cluster moved on).
             // Fall back to the latest available outcome so we can join at the current tip.
-            case _: org.http4s.client.UnexpectedStatus if plannedCommittee.isEmpty =>
+            case _: org.http4s.client.UnexpectedStatus if recoverySeedCommittee.isEmpty =>
               ctx.consensusClient.getLatestConsensusOutcome.run(peer)
             case _: org.http4s.client.UnexpectedStatus => none[Outcome].pure[F]
           }
@@ -2698,7 +2698,7 @@ class StateTransitions[
         // The post-retry validation in initFromDownload handles keyMismatch correctly
         // (accepts the newer outcome and skips 43s deferral). Without this early-out,
         // recovery wastes 60s (20 retries × 3s) on every cycle, falling further behind.
-        exactMatch || (isRecovery && plannedCommittee.isEmpty)
+        exactMatch || (isRecovery && recoverySeedCommittee.isEmpty)
       }.pure[F]
 
     def onFailure(maybeOutcome: Option[Outcome], retryDetails: RetryDetails): F[Unit] = {
@@ -2873,23 +2873,23 @@ object StateTransitions {
   ): F[A] =
     validate >> mutate
 
-  private[consensus] sealed trait PlannedInitializationStateDisposition
-  private[consensus] object PlannedInitializationStateDisposition {
-    case object EnterWaitingForReady extends PlannedInitializationStateDisposition
-    case object ResumeAndRepublish extends PlannedInitializationStateDisposition
-    case object Reject extends PlannedInitializationStateDisposition
+  private[consensus] sealed trait RecoveryInitializationStateDisposition
+  private[consensus] object RecoveryInitializationStateDisposition {
+    case object EnterWaitingForReady extends RecoveryInitializationStateDisposition
+    case object ResumeAndRepublish extends RecoveryInitializationStateDisposition
+    case object Reject extends RecoveryInitializationStateDisposition
   }
 
-  /** Planned initialization has a non-transactional lifecycle tail. Retrying its exact signed generation must therefore accept the states
+  /** Recovery/aligned initialization has a non-transactional lifecycle tail. Retrying its exact generation must therefore accept the states
     * that tail may already have installed, while every unrelated lifecycle state remains fail-closed.
     */
-  private[consensus] def plannedInitializationStateDisposition(
+  private[consensus] def recoveryInitializationStateDisposition(
     state: NodeState
-  ): PlannedInitializationStateDisposition =
+  ): RecoveryInitializationStateDisposition =
     state match {
-      case NodeState.Observing                         => PlannedInitializationStateDisposition.EnterWaitingForReady
-      case NodeState.WaitingForReady | NodeState.Ready => PlannedInitializationStateDisposition.ResumeAndRepublish
-      case _                                           => PlannedInitializationStateDisposition.Reject
+      case NodeState.Observing                         => RecoveryInitializationStateDisposition.EnterWaitingForReady
+      case NodeState.WaitingForReady | NodeState.Ready => RecoveryInitializationStateDisposition.ResumeAndRepublish
+      case _                                           => RecoveryInitializationStateDisposition.Reject
     }
 
   private[consensus] def completeCertifiedAdvance[F[_]: Async](
@@ -2978,13 +2978,13 @@ object StateTransitions {
     quorumFeasible: Boolean
   )
 
-  private[consensus] sealed trait RecoveryPlanPeerOutcome
+  private[consensus] sealed trait RecoverySeedPeerOutcome
 
-  private[consensus] object RecoveryPlanPeerOutcome {
-    case object Aligned extends RecoveryPlanPeerOutcome
-    case object Missing extends RecoveryPlanPeerOutcome
-    case object Mismatched extends RecoveryPlanPeerOutcome
-    case object FetchFailed extends RecoveryPlanPeerOutcome
+  private[consensus] object RecoverySeedPeerOutcome {
+    case object Aligned extends RecoverySeedPeerOutcome
+    case object Missing extends RecoverySeedPeerOutcome
+    case object Mismatched extends RecoverySeedPeerOutcome
+    case object FetchFailed extends RecoverySeedPeerOutcome
   }
 
   private[consensus] sealed trait NormalFirstRoundPulsePeerOutcome
@@ -3045,7 +3045,7 @@ object StateTransitions {
     }
   }
 
-  private[consensus] final case class RecoveryPlanBarrierStatus(
+  private[consensus] final case class RecoverySeedBarrierStatus(
     requirement: FirstRoundAlignmentRequirement,
     committeeSize: Int,
     selfReady: Boolean,
@@ -3067,14 +3067,14 @@ object StateTransitions {
         alignedCount >= required
   }
 
-  private[consensus] def recoveryPlanPeerOutcome[Outcome: Eq](
+  private[consensus] def recoverySeedPeerOutcome[Outcome: Eq](
     expected: Outcome,
     observed: Option[Outcome]
-  ): RecoveryPlanPeerOutcome =
+  ): RecoverySeedPeerOutcome =
     observed match {
-      case Some(outcome) if outcome === expected => RecoveryPlanPeerOutcome.Aligned
-      case Some(_)                               => RecoveryPlanPeerOutcome.Mismatched
-      case None                                  => RecoveryPlanPeerOutcome.Missing
+      case Some(outcome) if outcome === expected => RecoverySeedPeerOutcome.Aligned
+      case Some(_)                               => RecoverySeedPeerOutcome.Mismatched
+      case None                                  => RecoverySeedPeerOutcome.Missing
     }
 
   /** Run a fail-closed alignment barrier until the generation-bound gate acknowledges that the exact first round was established.
@@ -3131,7 +3131,7 @@ object StateTransitions {
     loop(1L)
   }
 
-  private[consensus] def runRecoveryPlanBarrierLoop[F[_]: Temporal, A](
+  private[consensus] def runRecoverySeedBarrierLoop[F[_]: Temporal, A](
     inspect: F[A],
     isAligned: A => Boolean,
     record: (A, Long) => F[Unit],
@@ -3143,13 +3143,13 @@ object StateTransitions {
     runFirstRoundAlignmentLoop(inspect, isAligned, record, pause, offerStart, startPending, reportFailure)
 
   /** Classify only the exact named recovery peers. Unrelated responsive/Ready peers are intentionally ignored. */
-  private[consensus] def recoveryPlanBarrierStatus(
+  private[consensus] def recoverySeedBarrierStatus(
     selfId: PeerId,
     committee: SortedSet[PeerId],
     selfReady: Boolean,
     responsivePeerStates: Map[PeerId, NodeState],
-    peerOutcomes: Map[PeerId, RecoveryPlanPeerOutcome]
-  ): RecoveryPlanBarrierStatus =
+    peerOutcomes: Map[PeerId, RecoverySeedPeerOutcome]
+  ): RecoverySeedBarrierStatus =
     firstRoundAlignmentBarrierStatus(
       selfId,
       committee,
@@ -3170,8 +3170,8 @@ object StateTransitions {
     requirement: FirstRoundAlignmentRequirement,
     selfReady: Boolean,
     responsivePeerStates: Map[PeerId, NodeState],
-    peerOutcomes: Map[PeerId, RecoveryPlanPeerOutcome]
-  ): RecoveryPlanBarrierStatus = {
+    peerOutcomes: Map[PeerId, RecoverySeedPeerOutcome]
+  ): RecoverySeedBarrierStatus = {
     val expectedExternal = committee - selfId
     val expectedPresent = expectedExternal.intersect(responsivePeerStates.keySet)
     val missingSession = expectedExternal -- responsivePeerStates.keySet
@@ -3181,14 +3181,14 @@ object StateTransitions {
       }
     })
     val fetchable = expectedPresent -- invalidState.keySet
-    val alignedPeers = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoveryPlanPeerOutcome.Aligned)))
-    val missingOutcome = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoveryPlanPeerOutcome.Missing)))
-    val mismatchedOutcome = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoveryPlanPeerOutcome.Mismatched)))
-    val explicitFetchFailures = fetchable.filter(peerOutcomes.get(_).contains(RecoveryPlanPeerOutcome.FetchFailed))
+    val alignedPeers = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.Aligned)))
+    val missingOutcome = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.Missing)))
+    val mismatchedOutcome = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.Mismatched)))
+    val explicitFetchFailures = fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.FetchFailed))
     val unobserved = fetchable -- peerOutcomes.keySet
     val fetchFailed = SortedSet.from(explicitFetchFailures ++ unobserved)
 
-    RecoveryPlanBarrierStatus(
+    RecoverySeedBarrierStatus(
       requirement,
       committee.size,
       selfReady,

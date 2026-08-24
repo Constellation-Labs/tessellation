@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.Duration
 
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.Gl0RecoverySeedCommittee
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.json.JsonSerializer
@@ -14,29 +15,36 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.schema.consensus.ProposalValue
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
+import eu.timepit.refined.auto._
+
 /** Fail-closed trust boundary for a peer-supplied v35 DAG outcome.
   *
-  * A QC cannot authenticate the committee declared inside that same QC. The fast path therefore accepts only an exact predecessor sidecar
-  * that this node previously produced or validated and binds it to the locally validated public predecessor. If that cache is absent or
-  * corrupt, the authority path begins at one independent public root:
+  * Outside the explicit permissioned-recovery policy, a QC cannot authenticate the committee declared inside that same QC. A local outcome
+  * sidecar also cannot authenticate all of its derived operational fields, so it is never download authority. Every acceptance path begins
+  * at one independently checkable public root:
   *
   *   - the locally downloaded/state-proof-validated A-1 snapshot at ordinal-gated activation; or
-  *   - the canonical signed first incremental snapshot when certification is active from genesis.
+  *   - the canonical signed first incremental snapshot when certification is active from genesis; or
+  *   - the latest explicit recovery epoch, reconstructed from its first successor's ordinary QC and independently validated public parent
+  *     under the permissioned seedlist/collateral policy.
   *
-  * It then replays the complete contiguous public artifact/context chain and each child-carried parent certificate through the ordinary
-  * production outcome transition. The terminal certificate comes from the authenticated peer outcome. No prefix is installed until the
-  * complete replay equals that terminal outcome.
+  * It then replays the relevant contiguous public artifact/context chain and each child-carried parent certificate through the ordinary
+  * production outcome transition. For a later recovery this is only the latest reset-to-tip segment; older recovery epochs are superseded.
+  * The terminal certificate comes from the authenticated peer outcome. No prefix is installed until the complete replay equals that
+  * terminal outcome.
   *
   * The resulting frozen state is passed to the ordinary `CertifiedConsensus` verifier. No alternate encoder, canonicalizer, hash, QC
-  * verifier, or committee rule is introduced. An operator-authorized recovery anchor remains governed by its existing exact-anchor
-  * preflight and is not inferred from a standalone peer QC.
+  * verifier, or committee rule is introduced. Selected recovery nodes still require the exact env-authorized anchor and all-member barrier;
+  * an unconfigured community node accepts only the first successor's quorum-certified, publicly reconstructible boundary—not a standalone
+  * synthetic outcome or a single peer assertion.
   */
 object GlobalCertifiedDownloadValidator {
 
@@ -62,24 +70,6 @@ object GlobalCertifiedDownloadValidator {
     context: GlobalSnapshotInfo
   )
 
-  private[snapshot] def trustedParentKind(outcome: GlobalConsensusOutcome): Either[String, TrustedParentKind] =
-    if (outcome.finished.certifiedOutcome.nonEmpty) TrustedParentKind.Certified.asRight
-    else if (GlobalRecoveryPlanOutcome.isCanonicalRoot(outcome)) TrustedParentKind.AuthorizedRoot.asRight
-    else "trusted_predecessor_not_certified_or_authorized_root".asLeft
-
-  private[snapshot] def validatePredecessorBindings(
-    keyMatches: Boolean,
-    artifactMatches: Boolean,
-    contextMatches: Boolean,
-    hashMatches: Boolean
-  ): Either[String, Unit] =
-    for {
-      _ <- Either.cond(keyMatches, (), "trusted_predecessor_key_mismatch")
-      _ <- Either.cond(artifactMatches, (), "trusted_predecessor_artifact_mismatch")
-      _ <- Either.cond(contextMatches, (), "trusted_predecessor_context_mismatch")
-      _ <- Either.cond(hashMatches, (), "trusted_predecessor_hash_mismatch")
-    } yield ()
-
   private[snapshot] def validateGenesisRoot[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider](
     candidate: GlobalConsensusOutcome,
     localArtifact: Signed[GlobalIncrementalSnapshot],
@@ -99,7 +89,7 @@ object GlobalCertifiedDownloadValidator {
         // certified-lineage authority. Using key 1 here would select the wrong proof era
         // when a format transition is configured immediately after genesis.
         contextStateProof <- candidate.finished.context.stateProof[F](SnapshotOrdinal.MinValue)
-        expected = GlobalRecoveryPlanOutcome.seed(
+        expected = GlobalRecoverySeedOutcome.seed(
           artifact,
           candidate.finished.context,
           snapshotHash,
@@ -166,16 +156,69 @@ object GlobalCertifiedDownloadValidator {
     else if (activation > terminal.value.value) "activation_after_downloaded_candidate".asLeft
     else SnapshotOrdinal.unsafeApply(activation - 1L).asRight
 
-  def make[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider](
+  /** Authenticate the public A-1 artifact before its signed controller evidence can seed v35 authority.
+    *
+    * Snapshot storage's validated read proves the artifact/context state-proof relation, but a state proof does not authenticate the
+    * artifact's signature envelope or permissioned signer set. Keep those checks at this authority boundary as well: a forged or locally
+    * corrupted A-1 file must not be able to name the first certified committee.
+    */
+  private[snapshot] def validateActivationRootArtifact[
+    F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider
+  ](
+    expectedOrdinal: SnapshotOrdinal,
+    snapshot: Signed[GlobalIncrementalSnapshot],
+    context: GlobalSnapshotInfo,
+    seedlistPeerIds: Set[PeerId]
+  )(implicit globalStateProofSelector: GlobalStateProofSelector): F[Either[String, Unit]] = {
+    val signerIds = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+    val signers = SortedSet.from(signerIds)
+    val proofOrdinal =
+      if (expectedOrdinal === SnapshotOrdinal.MinIncrementalValue) SnapshotOrdinal.MinValue else expectedOrdinal
+
+    if (snapshot.ordinal =!= expectedOrdinal) "activation_artifact_ordinal_mismatch".asLeft[Unit].pure[F]
+    else
+      HasherSelector[F].forOrdinal(expectedOrdinal) { implicit hasher =>
+        for {
+          signatureValid <- snapshot.hasValidSignature[F]
+          contextStateProof <- context.stateProof[F](proofOrdinal)
+        } yield
+          for {
+            _ <- Either.cond(signers.nonEmpty, (), "activation_artifact_proof_signers_empty")
+            _ <- Either.cond(signerIds.size === signers.size, (), "activation_artifact_duplicate_signer")
+            _ <- Either.cond(
+              seedlistPeerIds.isEmpty || signers.forall(seedlistPeerIds.contains),
+              (),
+              "activation_artifact_signer_not_seedlisted"
+            )
+            _ <- Either.cond(signatureValid, (), "activation_artifact_signature_invalid")
+            _ <- Either.cond(
+              contextStateProof === snapshot.value.stateProof,
+              (),
+              "activation_context_state_proof_mismatch"
+            )
+          } yield ()
+      }
+  }
+
+  def make[F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider: Metrics](
     config: ConsensusConfig,
     coreCommitteeSize: Int,
     seedlistPeerIds: Set[PeerId],
+    allowancePeerIds: Option[Set[PeerId]],
     facilitatorSelector: FacilitatorSelector,
     isContextEligible: (GlobalSnapshotContext, PeerId) => F[Boolean],
     snapshotDownloadStorage: SnapshotDownloadStorage[F],
-    certifiedOutcomeSidecar: OrdinalJsonSidecarStorage[F, GlobalConsensusOutcome],
     stateAdvancer: GlobalSnapshotConsensusStateAdvancer[F]
   )(implicit globalStateProofSelector: GlobalStateProofSelector): GlobalConsensusOutcome => F[Unit] = {
+
+    def recordPublicRecoveryBoundary(outcome: String): F[Unit] =
+      Metrics[F]
+        .incrementCounter(
+          "dag_consensus_certified_recovery_boundary_total",
+          Seq(Metrics.unsafeLabelName("outcome") -> outcome)
+        )
+        .attempt
+        .void
 
     def carried(outcome: GlobalConsensusOutcome): CertifiedRoundCommitteeProjector.CarriedControllerState =
       CertifiedRoundCommitteeProjector.CarriedControllerState(
@@ -344,25 +387,28 @@ object GlobalCertifiedDownloadValidator {
         case Right(parentOrdinal) =>
           val activationKey = SnapshotOrdinal.unsafeApply(activation)
 
-          locallyValidatedSnapshot(parentOrdinal).flatMap(_.traverse {
-            case (snapshot, context) =>
-              for {
-                finished <- reconstructActivationParentFinished[F](snapshot, context)
-                proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                legacy = GlobalConsensusOutcome(
-                  key = parentOrdinal,
-                  facilitators = Facilitators(proofSigners),
-                  removedFacilitators = RemovedFacilitators.empty,
-                  withdrawnFacilitators = WithdrawnFacilitators.empty,
-                  eligibleFacilitators = EligibleFacilitators(proofSigners),
-                  finished = finished
-                )
-                reset <- HasherSelector[F].withCurrent(implicit hasher =>
-                  GlobalSnapshotConsensusStateCreator
-                    .resetLegacyOutcome[F](activationKey, legacy, config.quorumThresholdFraction)
-                )
-              } yield TrustedParent(reset, TrustedParentKind.AuthorizedRoot)
-          })
+          locallyValidatedSnapshot(parentOrdinal).flatMap {
+            case Left(error) => error.asLeft[TrustedParent].pure[F]
+            case Right((snapshot, context)) =>
+              validateActivationRootArtifact(parentOrdinal, snapshot, context, seedlistPeerIds).flatMap(_.traverse { _ =>
+                for {
+                  finished <- reconstructActivationParentFinished[F](snapshot, context)
+                  proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                  legacy = GlobalConsensusOutcome(
+                    key = parentOrdinal,
+                    facilitators = Facilitators(proofSigners),
+                    removedFacilitators = RemovedFacilitators.empty,
+                    withdrawnFacilitators = WithdrawnFacilitators.empty,
+                    eligibleFacilitators = EligibleFacilitators(proofSigners),
+                    finished = finished
+                  )
+                  reset <- HasherSelector[F].withCurrent(implicit hasher =>
+                    GlobalSnapshotConsensusStateCreator
+                      .resetLegacyOutcome[F](activationKey, legacy, config.quorumThresholdFraction)
+                  )
+                } yield TrustedParent(reset, TrustedParentKind.AuthorizedRoot)
+              })
+          }
       }
     }
 
@@ -374,7 +420,7 @@ object GlobalCertifiedDownloadValidator {
             for {
               snapshotHash <- GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value)
               committee = SortedSet.from(snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId))
-              root = GlobalRecoveryPlanOutcome.seed(snapshot, context, snapshotHash, committee)
+              root = GlobalRecoverySeedOutcome.seed(snapshot, context, snapshotHash, committee)
               validation <- validateGenesisRoot(root, snapshot, context, seedlistPeerIds)
             } yield validation.as(TrustedParent(root, TrustedParentKind.AuthorizedRoot))
           }
@@ -383,6 +429,34 @@ object GlobalCertifiedDownloadValidator {
     def replayRoot(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] =
       if (CertifiedConsensusGenesis.isActiveFromGenesis(config.certifiedConsensusActivationKey)) canonicalGenesisRoot
       else exactActivationParent(candidate)
+
+    def loadPublicRound(
+      ordinal: SnapshotOrdinal,
+      candidate: GlobalConsensusOutcome
+    ): F[Either[String, PublicRound]] =
+      locallyValidatedSnapshot(ordinal).map(
+        _.leftMap(error => s"certified_public_round_missing:$error").flatMap {
+          case (locallyValidatedArtifact, context) =>
+            val isTerminal = ordinal === candidate.key
+            val artifact =
+              if (isTerminal) candidate.finished.signedMajorityArtifact
+              else locallyValidatedArtifact
+
+            for {
+              _ <- Either.cond(locallyValidatedArtifact.value.ordinal === ordinal, (), "artifact_ordinal_mismatch")
+              _ <- Either.cond(
+                !isTerminal || locallyValidatedArtifact.value === candidate.finished.signedMajorityArtifact.value,
+                (),
+                "terminal_artifact_value_not_locally_validated"
+              )
+              _ <- Either.cond(
+                !isTerminal || context === candidate.finished.context,
+                (),
+                "terminal_context_not_locally_validated"
+              )
+            } yield PublicRound(ordinal, artifact, context)
+        }
+      )
 
     def loadPublicRounds(
       startExclusive: GlobalSnapshotKey,
@@ -395,27 +469,9 @@ object GlobalCertifiedDownloadValidator {
         else if (next > BigInt(Long.MaxValue)) "certified_lineage_key_overflow".asLeft[List[PublicRound]].pure[F]
         else {
           val ordinal = SnapshotOrdinal.unsafeApply(next.toLong)
-          locallyValidatedSnapshot(ordinal).flatMap {
-            case Left(error) => s"certified_public_round_missing:$error".asLeft[List[PublicRound]].pure[F]
-            case Right((artifact, context)) =>
-              val bindings = for {
-                _ <- Either.cond(artifact.value.ordinal === ordinal, (), "artifact_ordinal_mismatch")
-                _ <- Either.cond(
-                  if (ordinal === candidate.key) Signed.sameValueAndProofs(artifact, candidate.finished.signedMajorityArtifact) else true,
-                  (),
-                  "terminal_artifact_not_locally_validated"
-                )
-                _ <- Either.cond(
-                  if (ordinal === candidate.key) context === candidate.finished.context else true,
-                  (),
-                  "terminal_context_not_locally_validated"
-                )
-              } yield ()
-
-              bindings match {
-                case Left(error) => error.asLeft[List[PublicRound]].pure[F]
-                case Right(_)    => loop(next + 1, PublicRound(ordinal, artifact, context) :: acc)
-              }
+          loadPublicRound(ordinal, candidate).flatMap {
+            case Left(error)  => error.asLeft[List[PublicRound]].pure[F]
+            case Right(round) => loop(next + 1, round :: acc)
           }
         }
 
@@ -423,112 +479,208 @@ object GlobalCertifiedDownloadValidator {
     }
 
     def advancePublicRound(
-      trusted: GlobalConsensusOutcome,
+      trusted: TrustedParent,
       round: PublicRound,
       authority: CertifiedConsensus.CertifiedLineageEvidenceV1
-    ): F[Either[String, GlobalConsensusOutcome]] =
+    ): F[Either[String, TrustedParent]] =
       (round.artifact.value.certifiedLineage.flatMap(_.parentLayerEvidence), authority.parentLayerEvidence) match {
-        case (Some(_), _)    => "dag_carried_parent_layer_evidence_present".asLeft[GlobalConsensusOutcome].pure[F]
-        case (None, Some(_)) => "dag_lineage_layer_evidence_present".asLeft[GlobalConsensusOutcome].pure[F]
+        case (Some(_), _)    => "dag_carried_parent_layer_evidence_present".asLeft[TrustedParent].pure[F]
+        case (None, Some(_)) => "dag_lineage_layer_evidence_present".asLeft[TrustedParent].pure[F]
         case (None, None) =>
-          trustedParentKind(trusted) match {
-            case Left(error) => error.asLeft[GlobalConsensusOutcome].pure[F]
-            case Right(kind) =>
-              stateFromTrustedParent(round.key, TrustedParent(trusted, kind)).flatMap {
-                case Left(error) => error.asLeft[GlobalConsensusOutcome].pure[F]
-                case Right(state) =>
-                  stateAdvancer
-                    .deriveCertifiedPublicRound(state, round.artifact, round.context, authority.parentOutcome)
-                    .map(_.map(_._2))
+          stateFromTrustedParent(round.key, trusted).flatMap {
+            case Left(error) => error.asLeft[TrustedParent].pure[F]
+            case Right(state) =>
+              stateAdvancer
+                .deriveCertifiedPublicRound(state, round.artifact, round.context, authority.parentOutcome)
+                .map(_.map { case (_, outcome) => TrustedParent(outcome, TrustedParentKind.Certified) })
+          }
+      }
+
+    /** Reconstruct one publicly provable recovery-reset root.
+      *
+      * `round` is the first certified child after an env-authorized synthetic root. It carries no parent certificate because the root is
+      * intentionally uncertified. Authority instead comes from the ordinary certificate for `round`, carried by its child or by the
+      * authenticated terminal outcome. That certificate binds the exact parent hash and frozen committee. The normal public transition then
+      * verifies the certificate signatures, artifact proofs, eligibility, committee projection, and every derived field.
+      *
+      * This is deliberately self-authenticating permissioned recovery authority, not a second operator artifact: an ordinary certificate
+      * quorum from a seedlisted, collateral-eligible committee of at least three members must certify the same reset child. For a
+      * three-member committee at the 2/3 policy this means two signatures, not all three. Misuse by a quorum of those allowlisted operators
+      * remains attributable under the network's permissioned trust model.
+      */
+    def publicRecoveryRoot(
+      round: PublicRound,
+      certified: CertifiedConsensus.CertifiedOutcome
+    ): F[Either[String, TrustedParent]] = {
+      val value = certified.proposalQc.value
+      val committee = value.roundStartFacilitators.toSortedSet
+      val structural = for {
+        _ <- ProposalValue.validate(value)
+        _ <- Either.cond(
+          value.key === round.key.value.value,
+          (),
+          s"recovery_seed_boundary_key_mismatch:${round.key.value.value}:${value.key}"
+        )
+        _ <- Either.cond(
+          committee.size >= Gl0RecoverySeedCommittee.MinimumRecoveryCommitteeSize,
+          (),
+          s"recovery_seed_boundary_committee_too_small:${committee.size}"
+        )
+        _ <- Either.cond(
+          CommitteeViability.canProveNextSeat(committee.size, config.quorumThresholdFraction),
+          (),
+          s"recovery_seed_boundary_no_next_seat_headroom:${committee.size}"
+        )
+        _ <- Either.cond(
+          config.facilitatorSelectionMax.forall(committee.size <= _),
+          (),
+          s"recovery_seed_boundary_committee_too_large:${committee.size}"
+        )
+        _ <- Either.cond(
+          seedlistPeerIds.nonEmpty,
+          (),
+          "recovery_seed_boundary_seedlist_unavailable"
+        )
+        _ <- Either.cond(
+          committee.forall(seedlistPeerIds.contains),
+          (),
+          "recovery_seed_boundary_member_not_seedlisted"
+        )
+        _ <- Either.cond(
+          allowancePeerIds.forall(allowance => committee.forall(allowance.contains)),
+          (),
+          "recovery_seed_boundary_member_not_allowed"
+        )
+        parentOrdinal <- Either.cond(
+          round.key.value.value > 0L,
+          SnapshotOrdinal.unsafeApply(round.key.value.value - 1L),
+          "recovery_seed_boundary_parent_underflow"
+        )
+      } yield parentOrdinal
+
+      structural match {
+        case Left(error) => error.asLeft[TrustedParent].pure[F]
+        case Right(parentOrdinal) =>
+          locallyValidatedSnapshot(parentOrdinal).flatMap {
+            case Left(error) => s"recovery_seed_boundary_parent_missing:$error".asLeft[TrustedParent].pure[F]
+            case Right((snapshot, context)) =>
+              HasherSelector[F].withCurrent { implicit hasher =>
+                GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value).map { snapshotHash =>
+                  for {
+                    _ <- Either.cond(
+                      snapshotHash === value.parentArtifactHash,
+                      (),
+                      "recovery_seed_boundary_parent_hash_mismatch"
+                    )
+                    root = GlobalRecoverySeedOutcome.seed(snapshot, context, snapshotHash, committee)
+                  } yield TrustedParent(root, TrustedParentKind.AuthorizedRoot)
+                }
               }
           }
       }
+    }
+
+    /** Walk backward from the authenticated terminal outcome to the latest reset boundary.
+      *
+      * A fresh community validator may not retain activation-to-reset history. Searching from the activation root would therefore make an
+      * otherwise public reset depend on private archive retention. Starting at the terminal finds the newest later `lineage=None` child,
+      * reconstructs its root, and requires only that root's public parent plus the contiguous reset-to-tip segment. Repeated coordinated
+      * recoveries consequently supersede older recovery epochs. If no later boundary exists, the ordinary activation/genesis replay path
+      * remains byte-for-byte unchanged.
+      */
+    def latestPublicRecoverySegment(
+      candidate: GlobalConsensusOutcome
+    ): F[Either[String, Option[(TrustedParent, List[PublicRound])]]] = {
+      val firstOrdinaryReplayKey =
+        if (CertifiedConsensusGenesis.isActiveFromGenesis(config.certifiedConsensusActivationKey))
+          CertifiedConsensusGenesis.FirstIncrementalOrdinal.value.value + 1L
+        else config.certifiedConsensusActivationKey
+
+      def loop(
+        current: Long,
+        child: Option[PublicRound],
+        ascending: List[PublicRound]
+      ): F[Either[String, Option[(TrustedParent, List[PublicRound])]]] =
+        if (current < firstOrdinaryReplayKey) none[(TrustedParent, List[PublicRound])].asRight[String].pure[F]
+        else {
+          val ordinal = SnapshotOrdinal.unsafeApply(current)
+          loadPublicRound(ordinal, candidate).flatMap {
+            case Left(error) => error.asLeft[Option[(TrustedParent, List[PublicRound])]].pure[F]
+            case Right(round) =>
+              val replayRounds = round :: ascending
+              val isLaterReset = current > firstOrdinaryReplayKey && round.artifact.value.certifiedLineage.isEmpty
+
+              if (isLaterReset) {
+                val authority = child
+                  .flatMap(_.artifact.value.certifiedLineage.map(_.parentOutcome))
+                  .orElse(Option.when(ordinal === candidate.key)(candidate.finished.certifiedOutcome).flatten)
+
+                recordPublicRecoveryBoundary("detected") >>
+                  (authority.toRight(s"recovery_seed_boundary_certificate_missing:$current") match {
+                    case Left(error) =>
+                      recordPublicRecoveryBoundary("rejected") >>
+                        error.asLeft[Option[(TrustedParent, List[PublicRound])]].pure[F]
+                    case Right(certified) =>
+                      publicRecoveryRoot(round, certified).flatMap {
+                        case Left(error) =>
+                          recordPublicRecoveryBoundary("rejected") >>
+                            error.asLeft[Option[(TrustedParent, List[PublicRound])]].pure[F]
+                        case Right(root) =>
+                          recordPublicRecoveryBoundary("root_reconstructed") >>
+                            (root -> replayRounds).some.asRight[String].pure[F]
+                      }
+                  })
+              } else if (current === firstOrdinaryReplayKey)
+                none[(TrustedParent, List[PublicRound])].asRight[String].pure[F]
+              else loop(current - 1L, round.some, replayRounds)
+          }
+        }
+
+      loop(candidate.key.value.value, none, List.empty)
+    }
 
     def replayFromPublicLineage(candidate: GlobalConsensusOutcome): F[Either[String, Unit]] =
       HasherSelector[F].withCurrent { implicit hasher =>
         candidate.finished.certifiedOutcome match {
           case None => "certified_outcome_missing".asLeft[Unit].pure[F]
           case Some(terminalOutcome) =>
-            replayRoot(candidate).flatMap {
+            val selectedSegment: F[Either[String, (TrustedParent, List[PublicRound])]] =
+              latestPublicRecoverySegment(candidate).flatMap {
+                case Left(error)          => error.asLeft[(TrustedParent, List[PublicRound])].pure[F]
+                case Right(Some(segment)) => segment.asRight[String].pure[F]
+                case Right(None) =>
+                  replayRoot(candidate).flatMap {
+                    case Left(error) => error.asLeft[(TrustedParent, List[PublicRound])].pure[F]
+                    case Right(root) => loadPublicRounds(root.outcome.key, candidate).map(_.map(root -> _))
+                  }
+              }
+
+            selectedSegment.flatMap {
               case Left(error) => error.asLeft[Unit].pure[F]
-              case Right(root) =>
-                loadPublicRounds(root.outcome.key, candidate).flatMap {
-                  case Left(error) => error.asLeft[Unit].pure[F]
-                  case Right(rounds) =>
-                    val terminalEvidence = CertifiedConsensus.CertifiedLineageEvidenceV1(terminalOutcome, None)
-                    CertifiedConsensus
-                      .verifySequentialLineage[F, GlobalConsensusOutcome, PublicRound](
-                        trustedRoot = root.outcome,
-                        trustedRootKey = root.outcome.key.value.value,
-                        frames = rounds,
-                        terminalEvidence = terminalEvidence.some,
-                        domain = CertifiedConsensus.ConsensusDomain.DagL0,
-                        configuredFraction = config.quorumThresholdFraction,
-                        keyOf = _.key.value.value,
-                        lineageOf = _.artifact.value.certifiedLineage,
-                        certifiedOutcomeOf = _.finished.certifiedOutcome
-                      )(advancePublicRound)
-                      .map(
-                        _.flatMap(
-                          _.lastOption
-                            .toRight("certified_lineage_replay_empty")
-                            .flatMap(derived => Either.cond(derived === candidate, (), "certified_outcome_derivation_mismatch"))
-                        )
-                      )
-                }
+              case Right((root, replayRounds)) =>
+                val terminalEvidence = CertifiedConsensus.CertifiedLineageEvidenceV1(terminalOutcome, None)
+                CertifiedConsensus
+                  .verifySequentialLineage[F, TrustedParent, PublicRound](
+                    trustedRoot = root,
+                    trustedRootKey = root.outcome.key.value.value,
+                    frames = replayRounds,
+                    terminalEvidence = terminalEvidence.some,
+                    domain = CertifiedConsensus.ConsensusDomain.DagL0,
+                    configuredFraction = config.quorumThresholdFraction,
+                    keyOf = _.key.value.value,
+                    lineageOf = _.artifact.value.certifiedLineage,
+                    certifiedOutcomeOf = _.outcome.finished.certifiedOutcome
+                  )(advancePublicRound)
+                  .map(
+                    _.flatMap(
+                      _.lastOption
+                        .toRight("certified_lineage_replay_empty")
+                        .flatMap(derived => Either.cond(derived.outcome === candidate, (), "certified_outcome_derivation_mismatch"))
+                    )
+                  )
             }
         }
       }
-
-    def trustedLocalParent(candidate: GlobalConsensusOutcome): F[Either[String, TrustedParent]] = {
-      val parentOrdinal = SnapshotOrdinal.unsafeApply(candidate.key.value.value - 1L)
-
-      certifiedOutcomeSidecar.read(parentOrdinal).flatMap {
-        case Some(parent) =>
-          trustedParentKind(parent) match {
-            case Left(error) => error.asLeft[TrustedParent].pure[F]
-            case Right(kind) =>
-              val isGenesisRoot = kind match {
-                case TrustedParentKind.AuthorizedRoot =>
-                  CertifiedConsensusGenesis.isRootKey(config.certifiedConsensusActivationKey, parentOrdinal)
-                case TrustedParentKind.Certified => false
-              }
-              locallyValidatedSnapshot(parentOrdinal).flatMap {
-                case Left(error) => error.asLeft[TrustedParent].pure[F]
-                case Right((snapshot, context)) =>
-                  val rootValidation =
-                    if (isGenesisRoot) validateGenesisRoot(parent, snapshot, context, seedlistPeerIds)
-                    else ().asRight[String].pure[F]
-
-                  rootValidation.flatMap {
-                    case Left(error) => s"trusted_predecessor_genesis_invalid:$error".asLeft[TrustedParent].pure[F]
-                    case Right(_) =>
-                      val snapshotHash = kind match {
-                        case TrustedParentKind.Certified =>
-                          HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
-                        case TrustedParentKind.AuthorizedRoot if isGenesisRoot =>
-                          HasherSelector[F].withCurrent(implicit hasher => GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value))
-                        case TrustedParentKind.AuthorizedRoot =>
-                          HasherSelector[F].forOrdinal(parentOrdinal)(implicit hasher =>
-                            GlobalSnapshotArtifactHasher.historicalHash[F](snapshot.value)
-                          )
-                      }
-
-                      snapshotHash.map { hash =>
-                        validatePredecessorBindings(
-                          parent.key === parentOrdinal,
-                          if (isGenesisRoot) Signed.sameValueAndProofs(parent.finished.signedMajorityArtifact, snapshot)
-                          else parent.finished.signedMajorityArtifact === snapshot,
-                          parent.finished.context === context,
-                          parent.finished.snapshotHash === hash
-                        ).as(TrustedParent(parent, kind))
-                      }
-                  }
-              }
-          }
-        case None => "trusted_predecessor_sidecar_missing".asLeft[TrustedParent].pure[F]
-      }
-    }
 
     candidate => {
       val active = config.certifiedConsensusActiveAt(candidate.key.value.value)
@@ -547,34 +699,7 @@ object GlobalCertifiedDownloadValidator {
             )
         }
       else {
-        def validateAgainst(parent: TrustedParent): F[Either[String, Unit]] =
-          HasherSelector[F].withCurrent { implicit hasher =>
-            CertifiedConsensus
-              .verifyCarriedParentOutcome[F](
-                candidate.finished.signedMajorityArtifact.value.certifiedLineage,
-                parent.outcome.finished.certifiedOutcome,
-                CertifiedConsensus.ConsensusDomain.DagL0,
-                config.quorumThresholdFraction
-              )
-              .flatMap {
-                case Left(error) => error.asLeft[Unit].pure[F]
-                case Right(Some(carried)) if carried.parentLayerEvidence.nonEmpty =>
-                  "dag_lineage_layer_evidence_present".asLeft[Unit].pure[F]
-                case Right(_) =>
-                  stateFromTrustedParent(candidate.key, parent).flatMap {
-                    case Left(error)  => error.asLeft[Unit].pure[F]
-                    case Right(state) => stateAdvancer.certifiedOutcomeAdoption(state, candidate).map(_.void)
-                  }
-              }
-          }
-
-        // Prefer the exact locally validated predecessor cache. If it is absent or corrupt,
-        // replay the canonical public child-carried chain instead of allowing a node-local
-        // sidecar availability failure to strand an otherwise valid downloader.
-        trustedLocalParent(candidate).flatMap {
-          case Right(parent) => validateAgainst(parent)
-          case Left(_)       => replayFromPublicLineage(candidate)
-        }.flatMap(
+        replayFromPublicLineage(candidate).flatMap(
           _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_invalid:$error")).liftTo[F]
         )
       }

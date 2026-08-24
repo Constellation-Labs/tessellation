@@ -13,5 +13,13 @@ class Consensus[F[_], Event, Key, Artifact, Context, Status, Outcome, Kind](
   val routes: ConsensusRoutes[F, Key, Artifact, Context, Status, Outcome, Kind],
   val consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
   val healthRef: Option[Ref[F, ConsensusHealthStatus]] = None,
-  val triggerEventConsensus: Option[F[Unit]] = None
+  val triggerEventConsensus: Option[F[Unit]] = None,
+  /** Locally persisted, already validated historical outcomes. Global L0 uses this to resume an exact certified outcome during a cold
+    * rollback start; other layers retain the inert default.
+    */
+  val historicalOutcome: Option[Key => F[Option[Outcome]]] = None,
+  /** Layer trust-boundary validation for a locally persisted outcome before it is installed as a rollback parent. Global L0 supplies the
+    * same certified-lineage validator used by downloads.
+    */
+  val validateOutcomeForInitialization: Option[Outcome => F[Unit]] = None
 )

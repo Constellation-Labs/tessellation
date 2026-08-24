@@ -15,7 +15,6 @@ import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{CurrencyStateProofSelector, SnapshotOrdinal}
@@ -25,9 +24,9 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 /** Fail-closed trust boundary for a peer-supplied v35 Currency outcome.
   *
-  * The fast path binds an exact locally retained predecessor sidecar to its public artifact/context. If that cache is absent, the validator
-  * replays the public child-carried certificate chain from the configured activation parent (or canonical genesis root) through the peer's
-  * terminal outcome. The complete fold must succeed before the candidate can initialize consensus; no interior private outcome is written.
+  * A local outcome sidecar does not authenticate every derived operational field and is never replay authority. The validator replays the
+  * public child-carried certificate chain from the configured activation parent (or canonical genesis root) through the peer's terminal
+  * outcome. The complete fold must succeed before the candidate can initialize consensus; no interior private outcome is written.
   *
   * Currency binary continuity uses the bounded proof envelope carried by each child. At the first certified round, the first binary's
   * complete frozen-committee signatures establish the otherwise-unavailable legacy/genesis binary parent hash. That scalar grants no
@@ -118,7 +117,6 @@ object CurrencyCertifiedDownloadValidator {
     isContextEligible: (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext, PeerId) => F[Boolean],
     getSnapshot: SnapshotOrdinal => F[Option[Signed[CurrencyIncrementalSnapshot]]],
     getSnapshotInfo: SnapshotOrdinal => F[Option[CurrencySnapshotInfo]],
-    certifiedOutcomeSidecar: OrdinalJsonSidecarStorage[F, CurrencyConsensusOutcome],
     stateAdvancer: CurrencySnapshotConsensusStateAdvancer[F]
   )(implicit currencyStateProofSelector: CurrencyStateProofSelector): CurrencyConsensusOutcome => F[Unit] = {
 
@@ -514,49 +512,6 @@ object CurrencyCertifiedDownloadValidator {
         }
       }
 
-    def trustedLocalParent(candidate: CurrencyConsensusOutcome): F[Either[String, TrustedParent]] =
-      if (candidate.key.value.value <= SnapshotOrdinal.MinValue.value.value)
-        "trusted_predecessor_key_underflow".asLeft[TrustedParent].pure[F]
-      else {
-        val parentOrdinal = SnapshotOrdinal.unsafeApply(candidate.key.value.value - 1L)
-
-        certifiedOutcomeSidecar.read(parentOrdinal).flatMap {
-          case None => "trusted_predecessor_sidecar_missing".asLeft[TrustedParent].pure[F]
-          case Some(parent) =>
-            trustedParentKind(parent, config.certifiedConsensusActivationKey) match {
-              case Left(error) => error.asLeft[TrustedParent].pure[F]
-              case Right(kind) =>
-                locallyValidatedSnapshot(parentOrdinal).flatMap {
-                  case Left(error) => error.asLeft[TrustedParent].pure[F]
-                  case Right((snapshot, context)) =>
-                    HasherSelector[F].withCurrent { implicit hasher =>
-                      snapshot.value.hash.flatMap { snapshotHash =>
-                        val bindings = for {
-                          _ <- Either.cond(parent.key === parentOrdinal, (), "trusted_predecessor_key_mismatch")
-                          _ <- Either.cond(
-                            Signed.sameValueAndProofs(parent.finished.signedMajorityArtifact, snapshot),
-                            (),
-                            "trusted_predecessor_artifact_mismatch"
-                          )
-                          _ <- Either.cond(parent.finished.context === context, (), "trusted_predecessor_context_mismatch")
-                          _ <- Either.cond(parent.finished.snapshotHash === snapshotHash, (), "trusted_predecessor_hash_mismatch")
-                        } yield ()
-
-                        val rootValidation = kind match {
-                          case TrustedParentKind.Certified => ().asRight[String].pure[F]
-                          case TrustedParentKind.AuthorizedRoot =>
-                            CurrencyCertifiedGenesisOutcome
-                              .validateAgainstLocalArtifact[F](parent, snapshot, seedlistPeerIds)
-                        }
-
-                        rootValidation.map(_.productR(bindings).as(TrustedParent(parent, kind)))
-                      }
-                    }
-                }
-            }
-        }
-      }
-
     candidate => {
       val active = config.certifiedConsensusActiveAt(candidate.key.value.value)
       val genesisCompatibility =
@@ -576,36 +531,7 @@ object CurrencyCertifiedDownloadValidator {
               )
         }
       else {
-        def validateAgainst(parent: TrustedParent): F[Either[String, Unit]] =
-          HasherSelector[F].withCurrent { implicit hasher =>
-            CertifiedConsensus
-              .verifyCarriedParentOutcome[F](
-                candidate.finished.signedMajorityArtifact.value.certifiedLineage,
-                parent.outcome.finished.certifiedOutcome,
-                CertifiedConsensus.ConsensusDomain.CurrencyL0,
-                config.quorumThresholdFraction
-              )
-              .flatMap {
-                case Left(error) => error.asLeft[Unit].pure[F]
-                case Right(_) =>
-                  validateCarriedParentBinary(
-                    parent.outcome,
-                    PublicRound(candidate.key, candidate.finished.signedMajorityArtifact, candidate.finished.context)
-                  ).flatMap {
-                    case Left(error) => error.asLeft[Unit].pure[F]
-                    case Right(_) =>
-                      stateFromTrustedParent(candidate.key, parent).flatMap {
-                        case Left(error)  => error.asLeft[Unit].pure[F]
-                        case Right(state) => stateAdvancer.certifiedOutcomeAdoption(state, candidate).map(_.void)
-                      }
-                  }
-              }
-          }
-
-        trustedLocalParent(candidate).flatMap {
-          case Right(parent) => validateAgainst(parent)
-          case Left(_)       => replayFromPublicLineage(candidate)
-        }.flatMap(
+        replayFromPublicLineage(candidate).flatMap(
           _.leftMap(error => new IllegalStateException(s"downloaded_certified_outcome_invalid:$error")).liftTo[F]
         )
       }

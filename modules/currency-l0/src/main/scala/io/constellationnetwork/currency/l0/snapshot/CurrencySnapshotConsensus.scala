@@ -184,7 +184,6 @@ object CurrencySnapshotConsensus {
         consensusFns.facilitatorFilter,
         snapshotStorage.get,
         snapshotInfoStorage.read,
-        certifiedOutcomeSidecar,
         consensusStateAdvancer
       )
 

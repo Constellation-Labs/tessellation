@@ -16,7 +16,7 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 
 import weaver.SimpleIOSuite
 
-object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
+object RecoverySeedBarrierLoopSuite extends SimpleIOSuite {
 
   private final case class Observation(aligned: Boolean)
   private final case class FollowerObservation(localAlignedCount: Int, facilityPulseAligned: Boolean)
@@ -30,7 +30,7 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
   private def proof(id: String): SignatureProof =
     SignatureProof(Id(Hex(id)), Signature(Hex("00")))
 
-  test("recovery-plan barrier retries inspect, record, sleep, and queue failures until start is accepted") {
+  test("recovery-seed barrier retries inspect, record, sleep, and queue failures until start is accepted") {
     val inspectFailure = new RuntimeException("inspect-failed")
     val recordFailure = new RuntimeException("record-failed")
     val sleepFailure = new RuntimeException("sleep-failed")
@@ -64,7 +64,7 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
       }.flatten
       report = (stage: String, _: Throwable) => reports.update(_ :+ stage)
 
-      _ <- StateTransitions.runRecoveryPlanBarrierLoop(
+      _ <- StateTransitions.runRecoverySeedBarrierLoop(
         inspect,
         (observation: Observation) => observation.aligned,
         record,
@@ -87,7 +87,7 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
         expect.same(List("inspect", "sleep", "record", "queue_offer"), observedReports)
   }
 
-  test("recovery-plan barrier survives a failed error reporter") {
+  test("recovery-seed barrier survives a failed error reporter") {
     val inspectFailure = new RuntimeException("inspect-failed")
     val reporterFailure = new RuntimeException("logger-and-metrics-failed")
 
@@ -99,7 +99,7 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
         case 0 => 1 -> inspectFailure.raiseError[IO, Observation]
         case n => (n + 1) -> Observation(aligned = true).pure[IO]
       }.flatten
-      _ <- StateTransitions.runRecoveryPlanBarrierLoop(
+      _ <- StateTransitions.runRecoverySeedBarrierLoop(
         inspect,
         (observation: Observation) => observation.aligned,
         (_: Observation, _: Long) => IO.unit,
@@ -113,12 +113,12 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
     } yield expect.same(2, observedInspections) && expect.same(1, observedQueueOffers)
   }
 
-  test("recovery-plan barrier keeps retrying until the gate acknowledges establishment") {
+  test("recovery-seed barrier keeps retrying until the gate acknowledges establishment") {
     for {
       inspections <- Ref.of[IO, Int](0)
       offers <- Ref.of[IO, Int](0)
       pending <- Ref.of[IO, Boolean](true)
-      _ <- StateTransitions.runRecoveryPlanBarrierLoop(
+      _ <- StateTransitions.runRecoverySeedBarrierLoop(
         inspections.update(_ + 1).as(Observation(aligned = true)),
         (observation: Observation) => observation.aligned,
         (_: Observation, _: Long) => IO.unit,
@@ -193,30 +193,30 @@ object RecoveryPlanBarrierLoopSuite extends SimpleIOSuite {
         expect.same(1, observedOffers)
   }
 
-  pureTest("recovery-plan alignment uses outcome value equality and ignores only Signed proof-subset differences") {
+  pureTest("recovery-seed alignment uses outcome value equality and ignores only Signed proof-subset differences") {
     val expected = BarrierOutcome(Signed(7, NonEmptySet.one(proof("01"))), operationalValue = 11)
     val differentProofs = BarrierOutcome(Signed(7, NonEmptySet.one(proof("02"))), operationalValue = 11)
     val differentOperationalValue = differentProofs.copy(operationalValue = 12)
 
     expect.same(
-      StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      StateTransitions.recoveryPlanPeerOutcome(expected, differentProofs.some)
+      StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      StateTransitions.recoverySeedPeerOutcome(expected, differentProofs.some)
     ) &&
     expect.same(
-      StateTransitions.RecoveryPlanPeerOutcome.Mismatched,
-      StateTransitions.recoveryPlanPeerOutcome(expected, differentOperationalValue.some)
+      StateTransitions.RecoverySeedPeerOutcome.Mismatched,
+      StateTransitions.recoverySeedPeerOutcome(expected, differentOperationalValue.some)
     )
   }
 
-  pureTest("a six-member plan requires every named external member and ignores unrelated Ready peers") {
+  pureTest("a six-member recovery seed requires every named external member and ignores unrelated Ready peers") {
     val planned = SortedSet.from((1 to 6).map(n => PeerId(Hex(f"$n%02x" * 64))))
     val self = planned.head
     val external = planned - self
     val unrelated = PeerId(Hex("ff" * 64))
     val responsive = external.toList.map(_ -> NodeState.Ready).toMap + (unrelated -> NodeState.Ready)
-    val aligned = external.toList.map(_ -> StateTransitions.RecoveryPlanPeerOutcome.Aligned).toMap
-    val complete = StateTransitions.recoveryPlanBarrierStatus(self, planned, selfReady = true, responsive, aligned)
-    val missingOne = StateTransitions.recoveryPlanBarrierStatus(
+    val aligned = external.toList.map(_ -> StateTransitions.RecoverySeedPeerOutcome.Aligned).toMap
+    val complete = StateTransitions.recoverySeedBarrierStatus(self, planned, selfReady = true, responsive, aligned)
+    val missingOne = StateTransitions.recoverySeedBarrierStatus(
       self,
       planned,
       selfReady = true,

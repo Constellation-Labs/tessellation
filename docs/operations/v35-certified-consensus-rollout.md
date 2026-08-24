@@ -79,8 +79,17 @@ and is therefore fenced independently as well.
    facilitate from their first incremental snapshot at ordinal 1 (the full genesis
    snapshot occupies ordinal 0), so the shipped dev activation `0` authenticates the
    exact canonical ordinal-1 outcome and persists it as the predecessor of the first
-   certified round. The proof set is bound to the locally state-proof-validated root;
-   Currency additionally binds the exact embedded artifact proof set in its binary.
+   certified round. The proof set is bound to the locally state-proof-validated root.
+   Currency additionally binds the embedded artifact proof envelope to its binary bytes,
+   but the current implementation is **not activation-ready**: collecting every signer
+   identity does not make randomized ECDSA proof bytes unique. A signer that restarts or
+   otherwise signs the same artifact twice can produce two valid proof bytes, and honest
+   recipients can retain different variants. The binary-preimage agreement design must be
+   closed before the schema is frozen or an activation ordinal is announced. The preferred
+   narrow candidate from the internal audit is an epoch-scoped deterministic ECDSA policy
+   for these artifact signatures only; do not change the global signer or activate it until
+   fixed-vector, repeat/concurrency/restart, existing-verifier, and binary-equality tests pin
+   the exact provider/algorithm behavior.
    Currency genesis defers its first child by one ordinary round interval, matching DAG
    L0, and a downloader that sees that root bypasses the legacy four-snapshot observation
    offset so it initializes consensus at ordinal 1. A data-application follower restores
@@ -178,12 +187,33 @@ and is therefore fenced independently as well.
     context range contiguously in addition to legacy logarithmic checkpoints. Do not
     prune an interior frame until an independently announced full checkpoint is both
     produced and supported by the download path.
+14. Close historical consensus-policy replay. The current implementation replays old
+    rounds with the joining binary's current `ConsensusConfig`, seedlist, allowance
+    list, and eligibility rules. The live join fences prevent a mixed current session,
+    but do not make those current inputs valid historical policy. Before activation,
+    either implement authenticated historical-policy selection, define and implement a
+    trusted checkpoint/policy-epoch boundary, or prove and formally adopt that every
+    committee-affecting policy input is immutable for the complete certified epoch.
+    Exercise at least one config-hash, seedlist, and allowance-list transition with a
+    fresh root-to-tip downloader. A current-policy rejection of previously certified
+    history is a failed gate, not permission to skip validation.
 
 Capacity-plan this retained epoch before activation. At the measured 73-seat committee,
 `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a sustained
 43-second cadence, before filesystem/JSON overhead and the additional contiguous snapshot-info
 history. Record actual disk-growth rate and free-space runway during the IntegrationNet soak;
-do not extrapolate only from legacy logarithmic snapshot-info retention.
+do not extrapolate only from legacy logarithmic snapshot-info retention. The current flat-directory
+cutoff path enumerates stored snapshot-info ordinals while the certified range is retained, making
+maintenance O(epoch) per round and O(epoch^2) cumulatively. Activation also requires an incremental
+deletion/index strategy (or partitioned storage that skips the retained epoch) and a multi-year
+cardinality load test; disk capacity alone is not sufficient.
+
+The current DAG and Currency download validators also materialize the complete trusted-root-to-tip
+`PublicRound` sequence, while the shared verifier returns every derived state. Because sidecars are
+deliberately excluded from authority, this O(epoch) CPU and O(epoch) live-heap cost applies to every
+post-v35 fresh download and ordinary cold restart, not merely a cache-miss fallback. Activation
+requires a constant-memory sequential fold with bounded boundary discovery, or adopted authenticated
+checkpoints that impose and test a hard maximum segment length.
 
 ## Deployment sequence
 
@@ -213,6 +243,7 @@ do not extrapolate only from legacy logarithmic snapshot-info retention.
    certified recovery. Include
    `dag_consensus_certified_recovery_total`,
    `dag_consensus_certified_recovery_candidate_total`, and
+   `dag_consensus_certified_recovery_boundary_total`,
    `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`, plus
    `dag_consensus_trigger_evidence_excluded_total` and
    `dag_currency_consensus_trigger_evidence_excluded_total`, and
@@ -230,16 +261,21 @@ Before activation, verify the ordinary-download lineage boundary on every source
   A-1 snapshot. State-proof/file validation uses the ordinal-selected historical
   rules, while the reconstructed legacy outcome identity and newly reset v35 committee
   hash use the current consensus hasher, matching live activation even across a
-  hash-transition boundary. The shared Global L0 artifact-hash helper preserves the V1
+  hash-transition boundary. Before signed controller evidence can seed authority, the
+  A-1 artifact's embedded ordinal must equal the requested index, its signature is verified
+  with that expected ordinal's hasher, proof signer IDs must be unique and seedlisted, and
+  the context-derived state proof must equal the artifact state proof. The shared Global L0 artifact-hash helper preserves the V1
   projection required by historical Kryo hashes;
 - predecessor validation is read-only: it reconstructs and checks the persisted state
   proof without synchronizing/rewinding the MPT and without deleting snapshot files;
-- the canonical first incremental genesis root at key 1 and an exact signed
-  recovery-plan anchor are the only locally persisted uncertified roots. Genesis
-  authority is bound exactly to the locally validated artifact's proof signers; the
-  recovery committee remains bound to its operator-signed plan. Their first certified
-  child is projected through the same typed committee projector and verified through
-  the ordinary bound-QC adoption path;
+- the canonical first incremental genesis root at key 1 and an exact
+  `CL_GL0_RECOVERY_SEED_COMMITTEE` anchor are the only locally persisted
+  uncertified roots. Genesis authority is bound exactly to the locally validated
+  artifact's proof signers. A recovery root is bound on selected nodes to the
+  validated public anchor, exact env committee, seedlist/allowance/collateral checks,
+  and the all-member barrier. Its first certified child is projected through the
+  same typed committee projector and verified through the ordinary bound-QC adoption
+  path;
 - each public child at N+1 carries N's complete `CertifiedOutcome`. A downloader starts
   from its independently validated A-1/genesis root, walks every public artifact and
   context in order, re-derives membership and layer state, and obtains only the terminal
@@ -249,14 +285,25 @@ Before activation, verify the ordinary-download lineage boundary on every source
 - the complete replay is atomic: a missing/corrupt interior frame fails before
   application storage, consensus storage, safety locks, or sidecars change. No verified
   prefix becomes authority on its own;
-- locally produced/previously validated outcome sidecars remain a bounded fast path,
-  not the long-range trust root. Deleting them may make recovery slower but cannot make
-  a peer-provided committee self-authenticating;
+- outcome sidecars are not download authority or a committee-projection fast path. A
+  certificate authenticates its ProposalValue, not every derived operational field in
+  the JSON outcome; therefore a parseable sidecar cannot safely replace public replay.
+  Checkpoint-backed provenance may permit an authenticated cache in a future version,
+  but this implementation always replays from an independently validated public root.
+  After an explicit env recovery,
+  the first successor's ordinary QC is public reset authority under the permissioned
+  seedlist/collateral policy: an unconfigured validator reconstructs the canonical root
+  from that QC and the independently validated public parent, then replays only the
+  latest contiguous reset-to-tip epoch;
 - Currency children carry only the parent binary's last-hash, fee, and proof envelope.
   The verifier reconstructs the exact binary content from the already validated public
   parent artifact with the pinned V1 JSON+Brotli encoder, hashes it, then verifies its
   frozen-committee proofs. Carrying the full parent binary is forbidden because it
-  would recursively embed the entire lineage; and
+  would recursively embed the entire lineage. This bounded representation does not by
+  itself solve live binary-preimage agreement: the exact embedded artifact proof bytes
+  must first be consensus-selected or removed from the preimage under a reviewed,
+  versioned Currency representation. Sorting proofs or requiring the complete signer-ID
+  set is insufficient because ECDSA signatures are randomized; and
 - full snapshots reserve an optional `CertifiedCheckpointV1` projection. Its containing
   full-snapshot hash must be independently announced; the certificate inside cannot
   authorize the committee that verifies itself. The current initial-activation path
@@ -264,12 +311,12 @@ Before activation, verify the ordinary-download lineage boundary on every source
   field as an operational recovery mechanism until checkpoint publication, authority
   distribution, and download adoption are separately implemented and exercised.
 
-The signed recovery-plan equality check applies only while installing its exact anchor.
-After that anchor is locally accepted, successor outcomes use the ordinary certified
-lineage validator. Remove the one-shot recovery-plan option and restart normally after
-the recovery barrier completes, as required by the recovery-plan runbook; leaving it
-configured deliberately keeps exact-anchor initialization policy armed for a later
-download attempt.
+The env recovery equality check applies only while selected nodes install its exact
+anchor. After that anchor is locally accepted, successor outcomes use the ordinary
+certified-lineage validator, and the first successor QC makes the boundary verifiable
+to unconfigured community validators. Comment/remove the env after the first successor
+without restarting the running cohort. Leaving it armed makes every later external
+source restart a new recovery attempt and is prohibited during normal operation.
 
 The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
 to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary
@@ -305,6 +352,13 @@ root-to-tip lineage and derive authority sequentially. Copying unverified privat
 outcome bytes would reintroduce the circular committee proof this boundary is designed
 to reject.
 
-For Currency L0 emergency solo rollback, `--allow-solo-consensus` remains a one-shot,
-exactly-one-node recovery operation. Never persist it in systemd or automatic restart
-configuration.
+The legacy Currency L0 `--allow-solo-consensus` flag remains one-shot and must never be
+persisted in systemd or automatic restart configuration. It is **not yet a valid
+post-v35 recovery mechanism**. Currency `run-rollback` currently reconstructs only the
+public signed artifact, snapshot info, and last binary hash; it does not reconstruct the
+certified outcome/binary lineage required by `CurrencyCertifiedDownloadValidator`.
+Moreover, the terminal Currency artifact carries its parent's QC while its own QC is
+normally child-carried, so a fully stopped lineage may have no public child from which to
+recover terminal authority. Before activation, implement and test an explicit certified
+Currency rollback/root path—including the terminal-with-no-child case—or remove the
+post-v35 solo-recovery promise. A legacy flag cannot bypass certified initialization.

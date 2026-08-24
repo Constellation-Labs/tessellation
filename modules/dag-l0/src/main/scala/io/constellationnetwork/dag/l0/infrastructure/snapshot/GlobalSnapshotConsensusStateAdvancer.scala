@@ -174,7 +174,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     facilitatorSelector: FacilitatorSelector,
     seedlistPeerIds: Set[PeerId],
     membershipPolicy: HealthDerivedMembershipPolicy,
-    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
+    onRecoverySeedSuccessor: Option[GlobalConsensusOutcome => F[Unit]],
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
     // an attempt-bound `RestartAfterSoftReset` on the owning serialized command loop so the reset is a total transition rather than an
     // inert state, without allowing a delayed retry to complete a newer round.
@@ -203,7 +203,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       override def afterConsensusOutcomeCommitted(outcome: GlobalConsensusOutcome): F[Unit] =
-        onUnsignedRecoverySuccessor.fold(
+        onRecoverySeedSuccessor.fold(
           Applicative[F].unit
         ) { onSuccessor =>
           // V35 owns both sidecars in the typed onOutcomeFinalized hook. This

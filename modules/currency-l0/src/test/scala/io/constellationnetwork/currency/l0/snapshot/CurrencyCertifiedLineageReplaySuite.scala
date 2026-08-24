@@ -30,7 +30,7 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastSentGlobalSnapshotSyncStorage, OrdinalJsonSidecarStorage}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -360,6 +360,44 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
       )
   }
 
+  /** Rotate only the two QC proof envelopes. Currency must share DAG's invariant that signer-subset choice changes certificate bytes but
+    * never derived consensus state.
+    */
+  private def withCertificateRotation(
+    frame: PublicFrame,
+    allPairs: List[KeyPair],
+    rotation: Int
+  )(
+    implicit hasher: Hasher[IO],
+    provider: SecurityProvider[IO]
+  ): IO[PublicFrame] = {
+    val byId = allPairs.map(pair => peer(pair) -> pair).toMap
+    val full = frame.roundStartFacilitators.toSortedSet.toList
+    val core = frame.roundStartCore.toSortedSet.toList
+    val value = frame.certifiedOutcome.proposalQc.value
+    val required = requiredCoreQuorum(core.size, config.quorumThresholdFraction)
+    val preparePairs = selectRotated(core.map(byId), required, rotation)
+    val commitPairs = selectRotated(core.map(byId), required, rotation + 1)
+
+    for {
+      prepareVotes <- preparePairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
+      proposalQc <- buildProposalQc[IO](
+        value,
+        SortedMap.from(preparePairs.map(peer).zip(prepareVotes)),
+        full.toSet,
+        core.toSet,
+        config.quorumThresholdFraction
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      commits <- commitPairs.traverse(signCoreCommit[IO](proposalQc, _))
+      commitQc <- buildCoreCommitQc[IO](
+        proposalQc,
+        SortedMap.from(commitPairs.map(peer).zip(commits)),
+        core.toSet,
+        config.quorumThresholdFraction
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+    } yield frame.copy(certifiedOutcome = CertifiedOutcome(proposalQc, commitQc))
+  }
+
   private def validateCurrencyTransition(
     roundStart: Set[PeerId],
     admitted: Set[PeerId],
@@ -601,6 +639,48 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
       )
   }
 
+  test("same-round valid Currency QC proof subsets change only certificate bytes, never derived state") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    val growth = List(
+      Script(responders = Set(0), admitted = Some(1)),
+      Script(responders = Set(0, 1)),
+      Script(responders = Set(0, 1), admitted = Some(2))
+    )
+
+    for {
+      root <- signedRoot(res.pairs)
+      stateAdvancer = advancer(res.pairs.head)
+      prior <- growth.foldM(root) { (state, script) =>
+        buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
+      }
+      base <- buildFrame(prior, Script(responders = Set(0, 1, 2)), res.pairs)
+      first <- withCertificateRotation(base, res.pairs, rotation = 0)
+      second <- withCertificateRotation(base, res.pairs, rotation = 1)
+      firstDerived <- derive(prior, first, stateAdvancer).map(_._1)
+      secondDerived <- derive(prior, second, stateAdvancer).map(_._1)
+      firstSemantic = firstDerived.copy(finished = firstDerived.finished.copy(certifiedOutcome = None))
+      secondSemantic = secondDerived.copy(finished = secondDerived.finished.copy(certifiedOutcome = None))
+      firstSemanticBytes <- serializer.serialize(firstSemantic)
+      secondSemanticBytes <- serializer.serialize(secondSemantic)
+      firstCertificateBytes <- serializer.serialize(first.certifiedOutcome)
+      secondCertificateBytes <- serializer.serialize(second.certifiedOutcome)
+      firstPrepareSigners = first.certifiedOutcome.proposalQc.signatures.toSortedSet.toList.map(_.id.toPeerId).toSet
+      secondPrepareSigners = second.certifiedOutcome.proposalQc.signatures.toSortedSet.toList.map(_.id.toPeerId).toSet
+    } yield
+      expect.all(
+        first.certifiedOutcome.proposalQc.value === second.certifiedOutcome.proposalQc.value,
+        first.certifiedOutcome.proposalQc.valueHash === second.certifiedOutcome.proposalQc.valueHash,
+        firstPrepareSigners =!= secondPrepareSigners,
+        firstCertificateBytes.toVector =!= secondCertificateBytes.toVector,
+        firstSemantic === secondSemantic,
+        firstSemanticBytes.toVector === secondSemanticBytes.toVector
+      )
+  }
+
   test("production download validator reconstructs public root-to-tip lineage and fails closed on a missing interior artifact") { res =>
     implicit val serializer: JsonSerializer[IO] = res.serializer
     implicit val hasher: Hasher[IO] = res.hasher
@@ -611,18 +691,6 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
       Script(responders = Set(0), admitted = Some(1)),
       Script(responders = Set(0, 1), admitted = Some(2), forceRoundStartCore = Some(List(0)), qcRotation = 1)
     )
-    val emptySidecar = new OrdinalJsonSidecarStorage[IO, CurrencyConsensusOutcome] {
-      def write(ordinal: SnapshotOrdinal, value: CurrencyConsensusOutcome): IO[Unit] = IO.unit
-      def read(ordinal: SnapshotOrdinal): IO[Option[CurrencyConsensusOutcome]] = IO.pure(None)
-      def delete(ordinal: SnapshotOrdinal): IO[Unit] = IO.unit
-      def deleteAbove(ordinal: SnapshotOrdinal): IO[Unit] = IO.unit
-      def retain(
-        cutoffOrdinal: SnapshotOrdinal,
-        currentOrdinal: SnapshotOrdinal,
-        pinnedOrdinals: Set[SnapshotOrdinal]
-      ): IO[Unit] = IO.unit
-    }
-
     for {
       seededRoot <- signedRoot(res.pairs)
       // The activation flush deliberately discards legacy process-local windows. Keep this
@@ -652,7 +720,6 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         isContextEligible = (_, _, _) => IO.pure(true),
         getSnapshot = ordinal => IO.pure(artifacts.get(ordinal)),
         getSnapshotInfo = ordinal => IO.pure(infos.get(ordinal)),
-        certifiedOutcomeSidecar = emptySidecar,
         stateAdvancer = stateAdvancer
       )
       valid <- validator(candidate).attempt
@@ -665,7 +732,6 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         isContextEligible = (_, _, _) => IO.pure(true),
         getSnapshot = _ => IO.raiseError(new IllegalStateException("snapshot lookup must stay suspended before activation")),
         getSnapshotInfo = _ => IO.raiseError(new IllegalStateException("snapshot-info lookup must stay suspended before activation")),
-        certifiedOutcomeSidecar = emptySidecar,
         stateAdvancer = stateAdvancer
       )
       preActivation <- preActivationValidator(candidate).attempt
@@ -679,7 +745,6 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         isContextEligible = (_, _, _) => IO.pure(true),
         getSnapshot = ordinal => IO.pure(missingInterior.get(ordinal)),
         getSnapshotInfo = ordinal => IO.pure(infos.get(ordinal)),
-        certifiedOutcomeSidecar = emptySidecar,
         stateAdvancer = stateAdvancer
       )
       missing <- missingValidator(candidate).attempt
@@ -688,7 +753,6 @@ object CurrencyCertifiedLineageReplaySuite extends MutableIOSuite {
         case Right(_)    => success
         case Left(error) => failure(s"public lineage validation unexpectedly failed: ${error.getMessage}")
       }
-
       validExpectation &&
       expect(preActivation.isRight) &&
       expect(

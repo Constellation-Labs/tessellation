@@ -303,41 +303,35 @@ procedure, and distribute the corresponding
 ### Global L0 anchor-bound committee recovery
 
 Global L0 can replace an unrecoverable rollback anchor's dead committee with a
-lead-signed, anchor-bound recovery plan during a coordinated full-fleet cold
-restart. Exactly one controlled node consumes the plan with
-`run-rollback --recovery-plan`; every other planned committee member consumes
-the same plan with `run-validator --recovery-plan`, while unplanned validators
-omit it. A generation-bound first-round gate on every planned node requires
-exact outcome alignment of the entire named committee, and a durable receipt
-makes the authorization one shot. The option is inert by default and changes no public
-snapshot, state-proof, or consensus-message schema. See the
-[Global L0 recovery-plan runbook](../operations/global-l0-recovery-plan.md) for
-the signed domain, fail-closed checks, first-round alignment gate, and removal
-of the one-shot option after recovery.
-
-The schema-compatible retry and legacy-view safety boundary shipped with that
-operator tool is documented in the
+trusted env-selected committee during a coordinated full-fleet cold restart.
+Exactly one controlled node runs `run-rollback`; every other node runs
+`run-validator`. Only the named controlled cohort receives the same
+`CL_GL0_RECOVERY_SEED_COMMITTEE` value. A generation-bound first-round gate on
+every selected node requires exact outcome alignment of the entire named
+committee. The option is inert when absent. See the schema-compatible retry and
+legacy-view safety boundary in the
 [v4.1.0-rc.8 IntegrationNet bridge release note](../release/v4.1.0-rc.8-integrationnet-bridge.md).
 
-Rc.9 adds an unsigned, trusted-operator alternative for the normal
-one-rollback-lead/all-other-validators cold-start topology. The exact committee
-comes from `CL_GL0_RECOVERY_SEED_COMMITTEE` on the named controlled nodes only;
-it reuses the same typed synthetic outcome and exact all-member barrier, then
-disarms for that JVM invocation on the first accepted successor while tracking
-selected-member next-seat proof headroom as a separate rollout gate. The
-external environment is intentionally repeatable: every fresh selected-source
-JVM launch re-arms it until the operator comments or removes the variable. It
-does not pin later ordinal committees inside one invocation. Each re-armed
-launch is a full operational reseed from which membership and reward breadth
-must regrow; no cleanup restart, symlink change, or jar swap is required for
-that recovery invocation. See the
+The exact committee comes only from the env on selected nodes. The running
+invocation disarms on the first accepted successor while tracking selected-
+member next-seat proof headroom separately. The operator must comment/remove
+the env after that successor; a fresh external JVM otherwise re-arms it. Each
+explicitly re-armed launch is a full operational reseed from which membership
+and reward breadth must regrow. No cleanup restart, symlink change, or jar swap
+is required. See the
 [trusted recovery seed runbook](../operations/global-l0-recovery-seed-committee.md).
+
+After v35 activation, the first successor's ordinary QC binds the public parent
+and selected committee. Unconfigured community validators reconstruct the
+canonical reset root from that certificate and the independently validated
+public parent, then replay the latest contiguous recovery epoch. No private
+plan or second signature ceremony is required.
 
 Rc.12 aligns an established GL0 anchor committee before the first ordinary
 post-rollback round. The rollback lead waits for an exact `Q(N)` of anchor
 proof signers with no timeout escape; members of that set wait for the first
 existing authenticated Facility pulse instead of starting independent timers.
-The explicit recovery plan/seed paths keep their stronger all-member barrier.
+The explicit recovery-seed path keeps its stronger all-member barrier.
 See the
 [Global L0 first-round alignment runbook](../operations/global-l0-first-round-alignment.md).
 

@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalCertifiedDownloadValidator.TrustedParentKind
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.{EligibleFacilitators, Facilitators}
@@ -51,7 +50,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       snapshotHash <- signedIncremental.toHashed.map(_.hash)
       committee = SortedSet.from(signedIncremental.proofs.toList.map(_.id.toPeerId))
     } yield
-      GlobalRecoveryPlanOutcome.seed(
+      GlobalRecoverySeedOutcome.seed(
         signedIncremental,
         signedGenesis.value.info.toGlobalSnapshotInfo,
         snapshotHash,
@@ -66,7 +65,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
     def prefixedHash[A: io.circe.Encoder](data: A, prefix: Array[Byte]): IO[Hash] = hash(data)
   }
 
-  test("only a canonical locally persisted uncertified root receives root authority") { implicit res =>
+  test("canonical root shape is not cache authority and genesis authority is explicitly validated") { implicit res =>
     implicit val (jsonSerializer, hasher, securityProvider) = res
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
 
@@ -126,10 +125,10 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         root.finished.context
       )
     } yield
-      expect.same(Right(TrustedParentKind.AuthorizedRoot), GlobalCertifiedDownloadValidator.trustedParentKind(root)) &&
-        expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongEligible).isLeft) &&
-        expect(GlobalCertifiedDownloadValidator.trustedParentKind(wrongHash).isLeft) &&
-        expect(GlobalCertifiedDownloadValidator.trustedParentKind(missingProofWindow).isLeft) &&
+      expect(GlobalRecoverySeedOutcome.isCanonicalRoot(root)) &&
+        expect(!GlobalRecoverySeedOutcome.isCanonicalRoot(wrongEligible)) &&
+        expect(!GlobalRecoverySeedOutcome.isCanonicalRoot(wrongHash)) &&
+        expect(!GlobalRecoverySeedOutcome.isCanonicalRoot(missingProofWindow)) &&
         expect.same(Right(()), validGenesis) &&
         expect.same(Right(()), authorizedGenesis) &&
         expect.same(Left("genesis_artifact_signer_not_seedlisted"), unauthorizedGenesis) &&
@@ -170,7 +169,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       )
       substitutedHash <- GlobalSnapshotArtifactHasher.currentHash[IO](substitutedArtifact.value)
       substitutedCommittee = SortedSet.from(substitutedArtifact.proofs.toList.map(_.id.toPeerId))
-      substituted = GlobalRecoveryPlanOutcome.seed(
+      substituted = GlobalRecoverySeedOutcome.seed(
         substitutedArtifact,
         trusted.finished.context,
         substitutedHash,
@@ -189,6 +188,73 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
     } yield
       expect.same(Right(()), selfConsistent) &&
         expect.same(Left("genesis_artifact_not_locally_validated"), locallyBound)
+  }
+
+  test("ordinal-gated activation authenticates the A-1 envelope, permissioned signers, and context") { implicit res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+    implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+
+    for {
+      root <- canonicalRoot
+      artifact = root.finished.signedMajorityArtifact
+      context = root.finished.context
+      signers = artifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
+      substituteKey <- KeyPairGenerator.makeKeyPair[IO]
+      substitute = PeerId.fromPublic(substituteKey.getPublic)
+      invalidArtifact = artifact.copy(
+        proofs = NonEmptySet.fromSetUnsafe(
+          SortedSet.from(artifact.proofs.toList.map(_.copy(id = substituteKey.getPublic.toId)))
+        )
+      )
+      firstReSigned <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](artifact.value, substituteKey)
+      secondReSigned <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](artifact.value, substituteKey)
+      duplicateArtifact = artifact.copy(
+        proofs = NonEmptySet.fromSetUnsafe(SortedSet.from(firstReSigned.proofs.toList ++ secondReSigned.proofs.toList))
+      )
+      differentContext = context.copy(
+        balances = SortedMap(Address.fromBytes("different-activation-context".getBytes("UTF-8")) -> Balance.empty)
+      )
+      wrongOrdinalArtifact = artifact.copy(
+        value = artifact.value.copy(ordinal = SnapshotOrdinal.unsafeApply(artifact.ordinal.value.value + 1L))
+      )
+      valid <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](artifact.ordinal, artifact, context, signers)
+      wrongOrdinal <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
+        artifact.ordinal,
+        wrongOrdinalArtifact,
+        context,
+        Set.empty
+      )
+      invalidSignature <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
+        artifact.ordinal,
+        invalidArtifact,
+        context,
+        Set.empty
+      )
+      duplicateSigner <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
+        artifact.ordinal,
+        duplicateArtifact,
+        context,
+        Set.empty
+      )
+      unseedlisted <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
+        artifact.ordinal,
+        artifact,
+        context,
+        Set(substitute)
+      )
+      contextMismatch <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
+        artifact.ordinal,
+        artifact,
+        differentContext,
+        Set.empty
+      )
+    } yield
+      expect.same(Right(()), valid) &&
+        expect.same(Left("activation_artifact_ordinal_mismatch"), wrongOrdinal) &&
+        expect.same(Left("activation_artifact_signature_invalid"), invalidSignature) &&
+        expect.same(Left("activation_artifact_duplicate_signer"), duplicateSigner) &&
+        expect.same(Left("activation_artifact_signer_not_seedlisted"), unseedlisted) &&
+        expect.same(Left("activation_context_state_proof_mismatch"), contextMismatch)
   }
 
   test("exact activation reconstructs Finished.snapshotHash with current hashing across a historical parent boundary") { implicit res =>
@@ -220,29 +286,4 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
     }
   }
 
-  pureTest("predecessor binding validation fails at the first mismatched independent binding") {
-    val valid = GlobalCertifiedDownloadValidator.validatePredecessorBindings(
-      keyMatches = true,
-      artifactMatches = true,
-      contextMatches = true,
-      hashMatches = true
-    )
-    val wrongKey = GlobalCertifiedDownloadValidator.validatePredecessorBindings(false, true, true, true)
-    val wrongArtifact = GlobalCertifiedDownloadValidator.validatePredecessorBindings(true, false, true, true)
-    val wrongContext = GlobalCertifiedDownloadValidator.validatePredecessorBindings(true, true, false, true)
-    val wrongHash = GlobalCertifiedDownloadValidator.validatePredecessorBindings(true, true, true, false)
-
-    expect.same(Right(()), valid) &&
-    expect.same(Left("trusted_predecessor_key_mismatch"), wrongKey) &&
-    expect.same(Left("trusted_predecessor_artifact_mismatch"), wrongArtifact) &&
-    expect.same(Left("trusted_predecessor_context_mismatch"), wrongContext) &&
-    expect.same(Left("trusted_predecessor_hash_mismatch"), wrongHash)
-  }
-
-  pureTest("a configured recovery plan validates only its authorized anchor, not later certified downloads") {
-    val anchor = SnapshotOrdinal.unsafeApply(100L)
-
-    expect(GlobalSnapshotConsensus.recoveryPlanPreflightRequired(anchor, anchor)) &&
-    expect(!GlobalSnapshotConsensus.recoveryPlanPreflightRequired(SnapshotOrdinal.unsafeApply(101L), anchor))
-  }
 }

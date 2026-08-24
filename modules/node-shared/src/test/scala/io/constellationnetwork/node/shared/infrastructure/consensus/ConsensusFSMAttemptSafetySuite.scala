@@ -201,7 +201,7 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         isRoundRunning = running,
         pending = pending,
         firstRoundStartGate = firstRoundGate,
-        plannedRecoveryCommittee = none.pure[IO],
+        recoverySeedCommittee = none.pure[IO],
         gossip = unused[Gossip[IO]],
         storage = storage,
         creator = unused[ConsensusStateCreator[IO, SnapshotOrdinal, String, String, String, TestOutcome, String]],

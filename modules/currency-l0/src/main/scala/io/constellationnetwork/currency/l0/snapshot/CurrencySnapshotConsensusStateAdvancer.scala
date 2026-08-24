@@ -565,8 +565,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                 "binary_parent_mismatch"
               )
               decodedArtifact <- embeddedArtifact.leftMap(error => s"binary_artifact_decode:${error.getMessage}")
-              // V35 requires the complete frozen-committee artifact proof set before constructing the binary, so unlike ordinary
-              // Signed equality the proof envelope is canonical here and must remain bound to the binary bytes.
+              // The binary binds the exact artifact proof bytes, not merely signer identities.
+              // Full signer coverage prevents subset drift but does not make randomized ECDSA
+              // proofs byte-unique after a same-artifact re-sign. Keep exact equality here so
+              // replay fails closed; the live preimage-agreement design remains an activation gate.
               _ <- Either.cond(Signed.sameValueAndProofs(decodedArtifact, artifact), (), "binary_artifact_mismatch")
             } yield ()
             result <- structure match {
@@ -2456,9 +2458,9 @@ object CurrencySnapshotConsensusStateAdvancer {
       }
 
       /** V35 requires one exact certified value, a frozen-Core commit QC, and a complete frozen-committee artifact proof set before
-        * Currency constructs StateChannelSnapshotBinary. The latter is necessary because that binary embeds
-        * Signed[CurrencySnapshotArtifact]; hashing different otherwise-valid proof subsets would create different binaries. No ad-hoc
-        * proof-subset canonicalizer is used.
+        * Currency constructs StateChannelSnapshotBinary. Full signer coverage closes ordinary proof-subset drift, but it does not make
+        * randomized ECDSA proof bytes unique if a signer signs the same artifact more than once. No ad-hoc local proof canonicalizer is
+        * used; live agreement on the exact embedded envelope remains a schema-freeze and activation gate.
         */
       private def toCertifiedBinarySignaturesPhase(
         state: CurrencySnapshotConsensusState,

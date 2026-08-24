@@ -4,7 +4,7 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.kernel.{Async, Fiber, Ref}
+import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
@@ -17,23 +17,20 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt, Gl0RecoverySeedCommittee}
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.Gl0RecoverySeedCommittee
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.rewards.RewardsService
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
-import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
-import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
@@ -43,14 +40,11 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, ConsensusEventLoop, _}
-import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient}
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelAcceptanceManager,
@@ -74,7 +68,6 @@ import io.constellationnetwork.security.key.ops._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
-import io.circe.Json
 import org.http4s.client.Client
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -87,9 +80,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *   ConsensusEventLoop for FSM and command processing
   */
 object GlobalSnapshotConsensus {
-
-  private[snapshot] def recoveryPlanPreflightRequired(outcomeKey: SnapshotOrdinal, anchorKey: SnapshotOrdinal): Boolean =
-    outcomeKey === anchorKey
 
   /** Extract the established anchor committee without duplicating bootstrap semantics in the shared engine. */
   private[snapshot] def normalFirstRoundCommittee(
@@ -152,10 +142,9 @@ object GlobalSnapshotConsensus {
     // Main.scala populates the real getter once the daemon is up; before that it returns
     // Map.empty and no admission votes fire (safe default).
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    configuredRecoveryPlan: F[Option[Gl0RecoveryPlanLoader.Verified]],
+    recoveryAllowancePeerIds: Option[Set[PeerId]],
     configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
-    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
-    recoveryPlanReceipt: Gl0RecoveryPlanReceipt[F],
+    onRecoverySeedSuccessor: Option[GlobalConsensusOutcome => F[Unit]],
     initiallyHoldConsensusFirstRound: Boolean,
     // Shared consensus-health Ref from SharedServices. When provided, the engine's
     // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
@@ -295,48 +284,13 @@ object GlobalSnapshotConsensus {
       )
       certifiedOutcomeCutoff = appConfig.incremental.lastFullGlobalSnapshotOrdinal
         .getOrElse(appConfig.environment, SnapshotOrdinal.MinValue)
-      recoveryPlanPreflight = (outcome: GlobalConsensusOutcome) =>
-        configuredRecoveryPlan.flatMap(_.traverse_ { verified =>
-          val plan = verified.plan
-          if (!recoveryPlanPreflightRequired(outcome.key, plan.anchor.ordinal)) Async[F].unit
-          else
-            for {
-              hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
-                outcome.finished.signedMajorityArtifact.toHashed[F]
-              }
-              expected = GlobalRecoveryPlanOutcome.seed(
-                outcome.finished.signedMajorityArtifact,
-                outcome.finished.context,
-                hashedSnapshot.hash,
-                plan.committee
-              )
-              _ <- new IllegalStateException(
-                s"Downloaded GL0 recovery outcome does not match signed plan=${plan.planId.value}: " +
-                  s"expectedAnchor=${plan.anchor.ordinal.value.value}/${plan.anchor.snapshotHash.value} " +
-                  s"got=${outcome.key.value.value}/${hashedSnapshot.hash.value}"
-              ).raiseError[F, Unit]
-                .unlessA(
-                  hashedSnapshot.hash === plan.anchor.snapshotHash &&
-                    outcome === expected
-                )
-              ineligible <- plan.committee.toList.filterA { peerId =>
-                peerId.toPublic[F].map(_.toAddress).map { address =>
-                  !outcome.finished.context.balances.get(address).getOrElse(Balance.empty).satisfiesCollateral(collateral)
-                }
-              }
-              _ <- new IllegalStateException(
-                s"Downloaded GL0 recovery outcome has uncollateralized planned members=${ineligible.map(_.value.value).mkString(",")}"
-              ).raiseError[F, Unit].whenA(ineligible.nonEmpty)
-              _ <- recoveryPlanReceipt.consume(verified.signed)
-            } yield ()
-        })
       recoverySeedPreflight = (outcome: GlobalConsensusOutcome) =>
         configuredRecoverySeed.flatMap(_.traverse_ { seed =>
           for {
             hashedSnapshot <- HasherSelector[F].forOrdinal(outcome.key) { implicit hasher =>
               outcome.finished.signedMajorityArtifact.toHashed[F]
             }
-            expected = GlobalRecoveryPlanOutcome.seed(
+            expected = GlobalRecoverySeedOutcome.seed(
               outcome.finished.signedMajorityArtifact,
               outcome.finished.context,
               hashedSnapshot.hash,
@@ -363,10 +317,7 @@ object GlobalSnapshotConsensus {
               .void
           } yield ()
         })
-      plannedRecoveryCommittee = configuredRecoveryPlan.flatMap {
-        case Some(verified) => verified.plan.committee.some.pure[F]
-        case None           => configuredRecoverySeed.map(_.map(_.committee))
-      }
+      recoverySeedCommittee = configuredRecoverySeed.map(_.map(_.committee))
       isGlobalBootstrap = (outcome: GlobalConsensusOutcome) =>
         !outcome.recentProofSizes.values.exists(_ >= effectiveConsensusConfig.bootstrapCompleteProofsThreshold)
       normalFirstRoundAlignment = NormalFirstRoundAlignment[GlobalSnapshotKey, GlobalConsensusOutcome](
@@ -409,7 +360,7 @@ object GlobalSnapshotConsensus {
           facilitatorSelector,
           seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
           HealthDerivedMembershipPolicy.RetainSigningLeases,
-          onUnsignedRecoverySuccessor,
+          onRecoverySeedSuccessor,
           (key: GlobalSnapshotKey) =>
             consensusStorage.getRoundAttemptId.flatMap { expectedAttemptId =>
               consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key, expectedAttemptId))
@@ -450,17 +401,17 @@ object GlobalSnapshotConsensus {
         effectiveConsensusConfig,
         resolvedCoreCommitteeSize,
         seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
+        recoveryAllowancePeerIds,
         facilitatorSelector,
         consensusFunctions.facilitatorEligible,
         snapshotDownloadStorage,
-        certifiedOutcomeSidecar,
         stateAdvancer
       )
 
       outcomePreInitialize = (outcome: GlobalConsensusOutcome) =>
-        configuredRecoveryPlan.flatMap {
-          case Some(verified) if outcome.key === verified.plan.anchor.ordinal => recoveryPlanPreflight(outcome)
-          case _ => certifiedDownloadPreflight(outcome) >> recoveryPlanPreflight(outcome) >> recoverySeedPreflight(outcome)
+        configuredRecoverySeed.flatMap {
+          case Some(_) => recoverySeedPreflight(outcome)
+          case None    => certifiedDownloadPreflight(outcome)
         }
 
       stateRemover =
@@ -615,12 +566,9 @@ object GlobalSnapshotConsensus {
           Some(consensusQueue),
           Some((outcome: GlobalConsensusOutcome) =>
             outcome.finished.certifiedOutcome.traverse_(_ =>
-              configuredRecoveryPlan.flatMap { recoveryPlan =>
-                val pinned = recoveryPlan.fold(Set.empty[SnapshotOrdinal])(verified => Set(verified.plan.anchor.ordinal))
-                certifiedOutcomeSidecar.write(outcome.key, outcome) >>
-                  certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key, pinned) >>
-                  consensusStorage.deleteCertifiedVoteLock(outcome.key)
-              }
+              certifiedOutcomeSidecar.write(outcome.key, outcome) >>
+                certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key, Set.empty) >>
+                consensusStorage.deleteCertifiedVoteLock(outcome.key)
             ) >>
               peerHistorySidecar.write(outcome.key, outcome.toOperationalState)
           ),
@@ -630,37 +578,45 @@ object GlobalSnapshotConsensus {
           ),
           onOutcomePreInitialize = Some(outcomePreInitialize),
           onOutcomeSafetyInitialized = Some((outcome: GlobalConsensusOutcome) =>
-            configuredRecoveryPlan.flatMap {
-              case Some(verified) if outcome.key === verified.plan.anchor.ordinal =>
-                // The signed-plan synthetic anchor is the all-member barrier's exact value. Keep
-                // serving it even after an early quorum advances, so an asymmetrically late member
-                // can still fetch N and release its locally-held first-round gate.
+            configuredRecoverySeed.flatMap {
+              case Some(_) =>
+                // The exact env-derived preflight already established local authority. Keep
+                // the root available to the named all-member barrier.
                 certifiedOutcomeSidecar.write(outcome.key, outcome)
-              case _
+              case None
                   if CertifiedConsensusGenesis.isRootKey(
                     effectiveConsensusConfig.certifiedConsensusActivationKey,
                     outcome.key
-                  ) && GlobalRecoveryPlanOutcome.isCanonicalRoot(outcome) =>
-                // Genesis is the independently authenticated chain root. Preserve its canonical
-                // local outcome long enough to validate the first certified child at key 2.
+                  ) && GlobalRecoverySeedOutcome.isCanonicalRoot(outcome) =>
+                // From-genesis authority is independently bound to the exact public first
+                // incremental and its proof signers by certifiedDownloadPreflight.
                 certifiedOutcomeSidecar.write(outcome.key, outcome)
-              case _ =>
+              case None =>
                 outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>
                   certifiedOutcomeSidecar.write(outcome.key, outcome)
                 )
             }
           ),
-          onOutcomeRollbackInitialized = Some((outcome: GlobalConsensusOutcome, policy: ConsensusCommand.RollbackStartPolicy) =>
-            policy match {
-              case ConsensusCommand.RollbackStartPolicy.RequireAlignedCommittee(_) =>
-                certifiedOutcomeSidecar.write(outcome.key, outcome) >>
-                  certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
-                  consensusStorage.deleteCertifiedVoteLocksAbove(outcome.key)
-              case _ => Async[F].unit
-            }
-          ),
+          onOutcomeRollbackInitialized = Some { (outcome: GlobalConsensusOutcome, policy: ConsensusCommand.RollbackStartPolicy) =>
+            val persistAnchor =
+              policy match {
+                case ConsensusCommand.RollbackStartPolicy.RequireAlignedCommittee(_) =>
+                  // Main assigns this strongest policy only to the explicit env seed.
+                  certifiedOutcomeSidecar.write(outcome.key, outcome)
+                case _ =>
+                  outcome.finished.certifiedOutcome.fold(certifiedOutcomeSidecar.delete(outcome.key))(_ =>
+                    certifiedOutcomeSidecar.write(outcome.key, outcome)
+                  )
+              }
+
+            // Every rollback invalidates locally persisted certified authority above the
+            // selected anchor, regardless of which first-round start policy is used.
+            persistAnchor >>
+              certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
+              consensusStorage.deleteCertifiedVoteLocksAbove(outcome.key)
+          },
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
-          plannedRecoveryCommittee = Some(plannedRecoveryCommittee),
+          recoverySeedCommittee = Some(recoverySeedCommittee),
           normalFirstRoundAlignment = normalFirstRoundAlignment.some
         )
 
@@ -694,7 +650,9 @@ object GlobalSnapshotConsensus {
         routes,
         consensusFunctions,
         Some(loop.healthRef),
-        Some(triggerEvent)
+        Some(triggerEvent),
+        historicalOutcome = Some(ordinal => certifiedOutcomeSidecar.read(ordinal)),
+        validateOutcomeForInitialization = Some(certifiedDownloadPreflight)
       )
     } yield consensus
 }

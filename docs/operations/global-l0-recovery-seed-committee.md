@@ -6,18 +6,20 @@ longer viable. It replaces only the initial operational committee at that real
 incremental anchor. It does not replace the signed snapshot, snapshot context,
 snapshot hash, state proof, or chain data.
 
-This is the unsigned alternative to the anchor-bound signed recovery plan. Use
-one or the other, never both. The environment value is intentionally not part
-of `versionHash`, `deterministicConfigHash`, a snapshot, or a consensus message.
-Authorization is therefore the operator's control of the source-node launch
-environment and the coordinated cold restart, not an on-chain signature.
+This environment value is the sole explicit operator committee override. It is
+intentionally not part of `versionHash`, `deterministicConfigHash`, a snapshot,
+or a consensus message. Authorization is the operator's control of the selected
+source-node launch environment and the coordinated cold restart.
 
-The feature is inert when the environment variable is absent. It changes no
-public schema and needs no ordinal activation. It does change initial consensus
-behavior when armed, so every node in the fleet must run the same distinctly
-tagged release and effective consensus configuration. The feature first shipped
-in rc.9; any later release carrying it must still be deployed fleet-wide under
-its own advertised version. Mixed consensus behavior is unsupported.
+The feature is inert when the environment variable is absent. Env-based seeding
+changes no public schema and needs no activation beyond the scheduled v35
+boundary. Post-v35 public verification uses the v35 certificate lineage and is
+therefore unavailable before that coordinated activation. The override does
+change initial consensus behavior when armed, so every node in the fleet must
+run the same distinctly tagged release and effective consensus configuration.
+The feature first shipped in rc.9; any later release carrying it must still be
+deployed fleet-wide under its own advertised version. Mixed consensus behavior
+is unsupported.
 
 ## Required topology
 
@@ -27,16 +29,33 @@ its own advertised version. Mixed consensus behavior is unsupported.
 - Set the same `CL_GL0_RECOVERY_SEED_COMMITTEE` value on every named recovery
   member, including the rollback lead.
 - Do not set it on community validators or any node absent from the list.
-- Do not also configure `--recovery-plan` or `CL_GL0_RECOVERY_PLAN_PATH`.
+
+> **DANGER:** This value is recovery authority, not durable configuration. A
+> fresh external JVM parses it again. Comment or remove it on every selected
+> source immediately after the first canonical successor commits, without
+> restarting that running process. Never expose an armed source to independent
+> auto-restart. The August 24 incident demonstrated that a stale seed on one
+> restarted source fails against the evolved live committee and can keep the
+> source unavailable until the variable is removed.
 
 The expected IntegrationNet recovery cohort is the three controlled source
 nodes. The parser accepts a comma-separated list in any order and canonicalizes
 it as a `SortedSet[PeerId]`; every entry must be a unique 128-character lowercase
-hex PeerId. Startup rejects an empty/malformed list, a singleton, a local node
-that is absent from the list, a member outside the seedlist or configured
+hex PeerId. Startup rejects an empty/malformed list, a committee smaller than
+three, a local node that is absent from the list, a member outside the seedlist or configured
 allowance list, a committee over the facilitator-selector cap, or a committee
 that cannot prove the next seat under the deployed quorum fraction. Every
 member must also satisfy collateral in the exact loaded anchor context.
+
+A certified-from-genesis chain cannot use the canonical first incremental
+snapshot (ordinal 1) as an env-recovery anchor. Its ordinary key-2 child and a
+recovery-reset key-2 child have the same public lineage shape, so community
+validators could not distinguish the authority safely. Startup rejects this
+case before rollback storage mutation. If no successor was ever produced,
+restart genesis normally; otherwise select a verified incremental anchor at
+ordinal 2 or later. A future ordinal-gated activation is not subject to this
+one genesis-boundary restriction, but still follows the activation-spacing
+preflight below.
 
 Example:
 
@@ -61,7 +80,12 @@ checkpoint must describe that same network, ordinal, and hash. These source,
 hash, checkpoint, public-key, and collateral checks run before rollback storage
 is mutated.
 
-The lead then uses the existing typed `GlobalRecoveryPlanOutcome.seed`
+`CL_RECOVERY_CHECKPOINT_PATH` is the pre-existing fork-anchor pin. It is not a
+committee recovery plan, does not name the recovery committee, and is not
+distributed to or signed by community validators. The sole committee override
+remains `CL_GL0_RECOVERY_SEED_COMMITTEE`.
+
+The lead then uses the existing typed `GlobalRecoverySeedOutcome.seed`
 constructor. The resulting outcome:
 
 - contains the real signed anchor artifact, context, and ordinal-selected hash;
@@ -109,8 +133,10 @@ ready. Foreign proofs do not count. A first successor with two selected proofs
 is valid and disarms the authority, but community release and restart
 automation remain blocked until all three prove headroom. This lets a selected
 validator that missed the first successor rejoin through the ordinary download
-path after its invocation-local authority is cleared, instead of keeping the
-synthetic-anchor validator armed indefinitely.
+path: remove the env from that validator's launch environment and restart it as
+`run-validator`. Its callback cannot clear authority for a successor it never
+committed. Never leave that missed validator armed while the source lineage
+advances.
 
 At disarm the running process only clears its process-local override. In-process
 leave/fork restart methods never carry the unsigned override, so an unexpected
@@ -122,15 +148,13 @@ persistent launch command, or filesystem symlink. The rollback lead's normal
 persistent role remains `run-rollback` even though its in-JVM recovery restart
 method is the ordinary validator path.
 
-Leaving the environment configured is supported and intentionally reapplies the
-same trusted committee on later coordinated cold restarts. The rollback lead's
-new `run-rollback` invocation must always receive the newly verified canonical
-incremental anchor; persisting an old anchor would deliberately replay an old
-lineage and can poison snapshot-streaming. Commenting or removing the variable
-before a later external start disables this override and restores ordinary
-proof-signer rollback seeding. Neither choice changes the normal launch
-topology: the controlled rollback lead remains the fleet's one `run-rollback`
-node and every other node remains a `run-validator`.
+Comment or remove the environment after the first successor. A future recovery
+may deliberately re-enable the same committee only after stopping the fleet and
+re-running every anchor, lineage, collateral, and Snapshot Streaming preflight.
+Its rollback lead must receive the newly verified canonical incremental anchor;
+reusing an old anchor can deliberately replace finalized lineage and poison
+Snapshot Streaming. The launch topology remains unchanged: one controlled
+`run-rollback` lead and every other node as `run-validator`.
 
 Each re-armed start is a complete synthetic operational reseed, not merely a
 preferred-leader hint. It replaces the anchor proof committee with the selected
@@ -178,23 +202,20 @@ coordinated external cold starts, not unobserved single-node cycling.
 7. Verify all three source JVMs report
    `dag_consensus_recovery_seed_armed == 1` and the same canonical committee.
    The barrier must name only the expected source PeerIds.
-8. Decide and record the future-start policy without changing a launch-role or
-   jar symlink:
-   - leave `CL_GL0_RECOVERY_SEED_COMMITTEE` configured on the three selected
-     sources to reapply this committee at the newly supplied canonical anchor
-     on every coordinated external cold restart; or
-   - comment/remove it to make future JVM launches use ordinary rollback
-     seeding.
-   Changing the persistent environment does not alter authority already parsed
-   by the running JVMs. Do not restart merely to apply either policy.
-9. Verify all three serve the same anchor and reconstructed outcome, the current
+8. Verify all three serve the same anchor and reconstructed outcome, the current
    alignment gauges are zero, and at least one `aligned=true` poll occurred.
    Temporary missing-session or `aligned=false` polls are expected while the
    sources start sequentially. Then wait for the first accepted successor and
-   verify the same successor ordinal and hash on all three sources,
-   `dag_consensus_recovery_seed_armed == 0` and
-   `dag_consensus_recovery_seed_disarmed_total` incremented on every running
-   source.
+   verify its ordinal, hash, and ordinary QC on every source that committed it.
+   Those processes must report `dag_consensus_recovery_seed_armed == 0` and an
+   incremented `dag_consensus_recovery_seed_disarmed_total`.
+9. Comment/remove `CL_GL0_RECOVERY_SEED_COMMITTEE` on all selected sources
+   immediately after that successor, without restarting a process that already
+   committed it. Changing the persistent environment does not alter authority
+   parsed by a running JVM. If a selected validator missed the successor and
+   remains armed, restart only that node as an ordinary `run-validator` after
+   removing the env; it must download the canonical successor before community
+   release.
 10. Keep community nodes and restart automation held while the source cohort
    establishes next-seat headroom. For a three-node IntegrationNet seed this
    means one accepted snapshot with proofs from all three sources. Inspect that
@@ -205,6 +226,11 @@ coordinated external cold starts, not unobserved single-node cycling.
    resource reset its invocation-scoped gauges to zero. A fresh process that
    never had the override may expose no recovery-seed gauges. Only continuously
    running recovery-origin processes expose authoritative headroom telemetry.
+   A community validator released before the first successor cannot authenticate
+   the bare synthetic root; it will fail closed in download/rejoin lifecycle and may
+   force-leave after repeated failures. Do not restart-loop it or diagnose that as a
+   broken source recovery. Hold it until the ordinary successor QC is public. Full-FSM
+   automatic rejoin after an early release remains a pre-activation test gate.
 11. Start or release all community nodes as ordinary `run-validator` processes
     with no recovery environment. Verify admission grows from the healthy base
     under rc.8's sustained-signing headroom gate.
@@ -213,13 +239,12 @@ coordinated external cold starts, not unobserved single-node cycling.
     current tip; process health alone is insufficient.
 13. Re-enable ordinary community-node restart automation only after the
     committee has positive finality margin, community nodes are draining
-    normally, and snapshot-streaming follows the same lineage. If the
-    environment remains configured, keep unattended automation that can
-    externally restart one selected source, the complete selected cohort, or
-    the fleet with that environment disabled. Automation may alert, stop
-    processes, and stage preflight evidence, but an operator must explicitly
-    authorize every environment-bearing coordinated start after reviewing the
-    canonical anchor and snapshot-streaming boundary. The normal
+   normally, Snapshot Streaming follows the same lineage, and the recovery
+   environment has been removed from every selected source launch file.
+   Automation may alert, stop processes, and stage preflight evidence, but an
+   operator must explicitly authorize every future environment-bearing
+   coordinated start after reviewing the canonical anchor and Snapshot
+   Streaming boundary. The normal
     one-rollback-lead, all-other-validators launch topology remains unchanged.
 
 No cleanup rollback/restart is required for this recovery invocation, and the
@@ -289,7 +314,7 @@ New rc.9 metrics:
   accepted snapshot proves next-seat headroom, then resets when that application
   resource is released;
 - `dag_consensus_recovery_seed_configured_total{role}` — startup count for
-  `rollback_lead` or `planned_validator`;
+  `rollback_lead` or `selected_validator`;
 - `dag_consensus_recovery_seed_disarmed_total` — successful invocation-local
   authority disarms;
 - `dag_consensus_recovery_seed_headroom_pending_total` — accepted outcomes
@@ -297,34 +322,63 @@ New rc.9 metrics:
 - `dag_consensus_recovery_seed_headroom_reached_total` — first accepted outcome
   that reaches next-seat headroom; and
 - `dag_consensus_recovery_outcome_validated_total{mode}` — exact downloaded or
-  rollback outcome validations; unsigned mode is `operator_recovery_seed`.
+  rollback outcome validations; unsigned mode is `operator_recovery_seed`; and
+- `dag_consensus_certified_recovery_boundary_total{outcome}` — public v35 reset
+  discovery (`detected`), structural rejection (`rejected`), and successful
+  canonical-root reconstruction (`root_reconstructed`). Read reconstruction
+  alongside `dag_consensus_init_download_outcome_total{outcome="success"}`;
+  reconstruction alone does not mean the reset-to-tip replay was accepted.
 
-The unsigned path deliberately reuses the signed plan's existing barrier and
-therefore its existing metric names:
+The recovery path uses these dedicated alignment metrics:
 
-- `dag_consensus_recovery_plan_first_round_deferred_total`;
-- `dag_consensus_recovery_plan_alignment_poll_total{aligned}`;
-- `dag_consensus_recovery_plan_alignment_missing_session`;
-- `dag_consensus_recovery_plan_alignment_invalid_state`;
-- `dag_consensus_recovery_plan_alignment_missing_outcome`;
-- `dag_consensus_recovery_plan_alignment_mismatched_outcome`;
-- `dag_consensus_recovery_plan_alignment_fetch_failed`; and
-- `dag_consensus_recovery_plan_alignment_error_total{stage}`.
+- `dag_consensus_recovery_seed_first_round_deferred_total`;
+- `dag_consensus_recovery_seed_alignment_poll_total{aligned}`;
+- `dag_consensus_recovery_seed_alignment_missing_session`;
+- `dag_consensus_recovery_seed_alignment_invalid_state`;
+- `dag_consensus_recovery_seed_alignment_missing_outcome`;
+- `dag_consensus_recovery_seed_alignment_mismatched_outcome`;
+- `dag_consensus_recovery_seed_alignment_fetch_failed`; and
+- `dag_consensus_recovery_seed_alignment_error_total{stage}`.
 
 Alert if a named node has `armed=1` after that process accepts a successor, if
 any alignment gauge remains non-zero, if headroom does not become ready, or if
 one selected source is externally restarted with the variable outside a
-declared coordinated recovery. The variable remaining configured for future
-coordinated cold restarts and the rollback lead remaining in its normal
-`run-rollback` role are expected, not alert conditions.
+declared coordinated recovery. The rollback lead remaining in its normal
+`run-rollback` role is expected; the variable remaining configured after a
+successful recovery is an alert condition.
 
 ## Compatibility with certified consensus
 
-This rc.9 bridge is authority for the pre-v35 protocol only. In a v35-capable
-binary, startup rejects an unsigned anchor at or after certified-consensus
-activation and enforces the same pre-activation history spacing (the unsigned
-anchor must be at most `activation - 3`). A signed recovery plan remains the
-only explicit fresh certified root at/after activation. Do not teach v35's
-canonical-root validator to trust an unsigned seed: that would violate the
-invariant behind `AuthorizedRoot`, `CertifiedRollbackRequiresRecoveryPlan`,
-and `RecoveryPlanTooCloseToCertifiedActivation`.
+Before v35 activation, a recovery anchor must be at most `activation - 3` so
+the signed controller-evidence window is rebuilt before the boundary. At or
+after activation, the same env flow starts a fresh certified epoch without a
+second operator artifact. The selected nodes still require exact env-derived
+outcome equality and the all-member barrier. The first successor's ordinary
+v35 QC then binds the public parent hash, network/domain, exact frozen
+committee, Core set, and proposal value.
+
+The live cluster's deterministic-config and allowance hashes remain mandatory
+join fences, but the current certified outcome does not by itself carry a
+complete historical consensus policy. Until historical policy selection or an
+authenticated policy/checkpoint epoch is implemented, do not change
+committee-affecting consensus config, seedlist, or allowance policy after v35
+activation and expect a fresh node to replay across that change. This is an
+activation blocker tracked in the v35 rollout, not authority granted to current
+config during historical replay.
+
+An unconfigured community validator walks backward from an authenticated tip
+to the latest later child whose `certifiedLineage` is empty, reconstructs the
+canonical root from that child's QC plus the independently validated public
+parent, and replays the contiguous reset-to-tip segment through the ordinary
+QC, artifact-proof, state-proof, seedlist, collateral, membership, and derived-
+state validators. It needs neither the env nor a private recovery artifact. A committee of
+fewer than three, a committee unable to prove its next seat, a non-seedlisted or
+non-allowlisted member, an unavailable local seedlist, an ineligible member, a
+mismatched parent, an invalid QC, or a non-identical derived outcome fails
+closed. Repeated recoveries supersede older epochs: only the latest publicly
+certified reset-to-tip segment is required.
+
+This is a permissioned trust boundary. A quorum of colluding allowlisted
+operators can certify a reset committee; they cannot do so anonymously and are
+subject to the network's out-of-band operator controls. The mechanism is not a
+permissionless committee-election proof.

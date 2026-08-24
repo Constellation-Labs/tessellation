@@ -38,7 +38,7 @@ class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder,
         outcomeRequest <- req.as[GetConsensusOutcomeRequest[Key]]
         live <- storage.getLastConsensusOutcome
         // The live outcome is authoritative at its exact key. During an operator
-        // recovery plan the lead installs a synthetic planned committee at anchor N,
+        // recovery seed the lead installs a synthetic selected committee at anchor N,
         // while an old certified sidecar for N may still exist on disk. Serving that
         // sidecar first would make validators install the superseded committee and the
         // exact first-round alignment barrier could never open.

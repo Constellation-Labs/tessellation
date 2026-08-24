@@ -2,6 +2,8 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot.programs
 
 import cats.effect.{IO, Ref}
 
+import io.constellationnetwork.schema.SnapshotOrdinal
+
 import weaver.SimpleIOSuite
 
 object RollbackLoaderSuite extends SimpleIOSuite {
@@ -29,7 +31,7 @@ object RollbackLoaderSuite extends SimpleIOSuite {
     } yield expect.same(List("preflight", "mutation"), observed)
   }
 
-  test("an unsupported full-snapshot recovery source fails before detailed validation, receipt burn, or rollback loading") {
+  test("an unsupported full-snapshot recovery source fails before detailed validation or rollback loading") {
     val rejected = new RuntimeException("unsupported-full-snapshot")
 
     for {
@@ -43,11 +45,24 @@ object RollbackLoaderSuite extends SimpleIOSuite {
           },
           effects.update(_ :+ "synthetic-load") >>
             effects.update(_ :+ "detailed-validation") >>
-            effects.update(_ :+ "receipt-burn") >>
             effects.update(_ :+ "rollback-mutation")
         )
         .attempt
       observed <- effects.get
     } yield expect.same(Left(rejected), result) && expect(observed.isEmpty)
+  }
+
+  test("ordinary certified rollback validation does not claim a legacy anchor") {
+    val activation = SnapshotOrdinal.unsafeApply(100L)
+
+    IO.pure(
+      expect(!RollbackLoader.preLoadValidationRequired(SnapshotOrdinal.unsafeApply(99L), Some(activation))) &&
+        expect(RollbackLoader.preLoadValidationRequired(activation, Some(activation))) &&
+        expect(RollbackLoader.preLoadValidationRequired(SnapshotOrdinal.unsafeApply(101L), Some(activation)))
+    )
+  }
+
+  test("explicit recovery validation claims every anchor") {
+    IO.pure(expect(RollbackLoader.preLoadValidationRequired(SnapshotOrdinal.MinIncrementalValue, None)))
   }
 }

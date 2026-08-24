@@ -2,16 +2,12 @@ package io.constellationnetwork.tools.cli
 
 import java.nio.file.Path
 
-import cats.data.NonEmptyList
 import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.env.env.{KeyAlias, Password, StorePath}
 import io.constellationnetwork.ext.decline.WithOpts
 import io.constellationnetwork.ext.decline.decline.{coercibleArgument, _}
-import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.hash.Hash
 
 import com.comcast.ip4s.{Host, Port}
 import com.monovore.decline.Opts
@@ -55,18 +51,6 @@ object method {
   ) extends CliMethod
 
   case class TxSenderCmd(configPath: String) extends CliMethod
-
-  case class GenerateGl0RecoveryPlanCmd(
-    keyStore: StorePath,
-    alias: KeyAlias,
-    password: Password,
-    network: String,
-    ordinal: NonNegLong,
-    snapshotHash: Hash,
-    planId: Hash,
-    committee: NonEmptyList[PeerId],
-    output: Path
-  ) extends CliMethod
 
   sealed trait WalletsOpts
   case class GeneratedWallets(count: IntGreaterEqual2, genesisPath: Path) extends WalletsOpts
@@ -136,29 +120,11 @@ object method {
       }
   }
 
-  object GenerateGl0RecoveryPlanCmd {
-    val opts: Opts[GenerateGl0RecoveryPlanCmd] =
-      Opts.subcommand("generate-gl0-recovery-plan", "Generate one lead-signed, anchor-bound Global L0 recovery plan") {
-        (
-          StorePath.opts,
-          KeyAlias.opts,
-          Password.opts,
-          Opts.option[String]("network", "Exact network name carried by the configured recovery checkpoint"),
-          Opts.option[NonNegLong]("ordinal", "Exact incremental-snapshot anchor ordinal"),
-          Opts.option[Hash]("snapshot-hash", "Exact incremental-snapshot anchor hash"),
-          Opts.option[Hash]("plan-id", "Operator-selected 64-character hexadecimal incident/plan identifier"),
-          Opts.options[PeerId]("committee-peer", "Planned committee PeerId; repeat once per peer (minimum two)"),
-          Opts.option[Path]("output", "New JSON output file; an existing file is never overwritten")
-        ).mapN(GenerateGl0RecoveryPlanCmd.apply)
-      }
-  }
-
   val opts: Opts[CliMethod] =
     SendTransactionsCmd.opts
       .orElse(SendStateChannelSnapshotCmd.opts)
       .orElse(GetLatestSnapshotInfoCmd.opts)
       .orElse(TxSenderCmd.opts)
-      .orElse(GenerateGl0RecoveryPlanCmd.opts)
 
   private val defaultProtocol = "http://"
 

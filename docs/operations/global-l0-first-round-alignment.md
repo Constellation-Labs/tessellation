@@ -10,8 +10,8 @@ proof, codec, hash, configuration field, or activation ordinal.
 
 It applies only to an established Global L0 chain after normal `run-rollback`.
 True bootstrap and Currency L0 retain their existing behavior. Explicit Global
-L0 recovery-plan and `CL_GL0_RECOVERY_SEED_COMMITTEE` starts retain their
-stronger all-member barrier and take precedence over this normal path.
+L0 `CL_GL0_RECOVERY_SEED_COMMITTEE` starts retain their stronger all-member
+barrier and take precedence over this normal path.
 
 ## The failure it closes
 
@@ -122,10 +122,7 @@ also hardens explicit recovery without changing its all-member release rule.
 Startup precedence is strict:
 
 ```text
-verified signed recovery plan
-  -> selected committee, exact all-member barrier
-
-else CL_GL0_RECOVERY_SEED_COMMITTEE
+CL_GL0_RECOVERY_SEED_COMMITTEE
   -> selected committee, exact all-member barrier
 
 else established normal GL0 rollback
@@ -186,8 +183,7 @@ operator involved. Byzantine hardening remains v35 work.
 2. **Before stopping the fleet**, read the anchor artifact proofs and verify the
    intended `run-rollback` source PeerId is one of those proof signers. If it is
    not, select another controlled signer or use the trusted recovery-seed path.
-3. Confirm the recovery-plan option and `CL_GL0_RECOVERY_SEED_COMMITTEE` are
-   absent for an ordinary restart.
+3. Confirm `CL_GL0_RECOVERY_SEED_COMMITTEE` is absent for an ordinary restart.
 4. Build/tag one immutable, distinctly advertised rc.12 release. The
    `versionHash` gate hashes the advertised version string (or common
    `CL_VERSION_HASH`), not jar bytes and not `deterministicConfigHash`. Confirm
@@ -245,7 +241,7 @@ snapshot or consensus decision:
 - `dag_consensus_first_round_start_gate_superseded_total{opened}` — a validated
   newer download did or did not supersede a stale older-key hold.
 
-Existing generic gate-held, dropped-trigger, stale-release, and recovery-plan
+Existing generic gate-held, dropped-trigger, stale-release, and recovery-seed
 metrics remain in force. Existing `dag_consensus_committee_core_size` and
 `dag_consensus_committee_tier_size` expose the derived Core/Tier-1 composition
 when the released state is materialized; the normal expected-committee gauge

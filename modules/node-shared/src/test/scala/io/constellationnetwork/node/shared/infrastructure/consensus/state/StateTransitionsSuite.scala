@@ -210,10 +210,10 @@ object StateTransitionsSuite extends SimpleIOSuite {
       unrelated -> NodeState.Ready
     )
     val outcomes = Map(
-      peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      peerB -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      peerC -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      unrelated -> StateTransitions.RecoveryPlanPeerOutcome.Aligned
+      peerA -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      peerB -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      peerC -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      unrelated -> StateTransitions.RecoverySeedPeerOutcome.Aligned
     )
     val status = StateTransitions.firstRoundAlignmentBarrierStatus(
       self,
@@ -245,9 +245,9 @@ object StateTransitionsSuite extends SimpleIOSuite {
       selfReady = true,
       responsivePeerStates = Map(peerA -> NodeState.Ready, peerB -> NodeState.WaitingForReady, peerC -> NodeState.Ready),
       peerOutcomes = Map(
-        peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-        peerB -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched,
-        peerC -> StateTransitions.RecoveryPlanPeerOutcome.FetchFailed
+        peerA -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+        peerB -> StateTransitions.RecoverySeedPeerOutcome.Mismatched,
+        peerC -> StateTransitions.RecoverySeedPeerOutcome.FetchFailed
       )
     )
 

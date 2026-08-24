@@ -86,7 +86,7 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
     expect(common(peerA, Set(peerA, peerB, peerC), None, Some(2)).isLeft)
   }
 
-  pureTest("static validation rejects singleton and next-seat-infeasible committees") {
+  pureTest("static validation rejects sub-three and next-seat-infeasible recovery committees") {
     val singleton = parse(peerA.value.value)
     val pair = parse(s"${peerA.value.value},${peerB.value.value}")
 
@@ -106,7 +106,15 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
       None,
       quorumThresholdFraction = 1.0
     )
+    val undersizedPair = Gl0RecoverySeedCommittee.validate(
+      pair,
+      peerA,
+      Set(peerA, peerB),
+      None,
+      None,
+      quorumThresholdFraction = 2.0 / 3.0
+    )
 
-    expect(singletonResult.isLeft) && expect(unanimousResult.isLeft)
+    expect(singletonResult.isLeft) && expect(undersizedPair.isLeft) && expect(unanimousResult.isLeft)
   }
 }

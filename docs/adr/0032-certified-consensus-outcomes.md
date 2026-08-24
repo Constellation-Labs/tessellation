@@ -87,8 +87,11 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    the last legacy membership delta by one round rather than reading a fresher but
    node-local sidecar.
 9. Persist the complete typed layer `ConsensusOutcome` beside the normal snapshot after
-   (and only after) the last-outcome compare-and-set succeeds. The sidecar is a bounded
-   local fast path and same-key recovery cache, never long-range authority. Serve exact
+   (and only after) the last-outcome compare-and-set succeeds. The sidecar supports
+   diagnostics and exact local rollback binding, but is never download or committee
+   authority: its certificate does not authenticate every derived operational field,
+   so download validation always replays from an independently authorized public root.
+   Serve exact
    terminal outcomes through the existing authenticated
    `/consensus/specific/outcome` route. Two valid semantic value hashes fail closed.
 
@@ -113,6 +116,20 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    encoder a permanent historical verification invariant; future encoder evolution must
    add a new `CertifiedLayerEvidence` variant while retaining V1.
 
+   This representation is bounded but is not yet sufficient for activation. The current
+   Currency live path embeds its locally collected `Signed[CurrencySnapshotArtifact]`.
+   Even when every frozen-committee signer ID is present, ECDSA proof bytes are not unique:
+   a same-artifact re-sign after a process restart can yield a different valid signature.
+   Honest nodes can therefore construct different binary hashes from semantically equal,
+   complete signer sets. Schema freeze requires a reviewed protocol rule that either
+   certifies one exact embedded proof envelope or makes the versioned Currency binary
+   preimage independent of incidental artifact-proof bytes. Signature-byte sorting and
+   deterministic selection from a node-local set are explicitly insufficient. A scoped
+   deterministic-ECDSA policy for v35 Currency artifact signatures is a narrower candidate
+   because it preserves the complete envelope's current meaning, but it is not implemented
+   by this decision: its provider, algorithm, and exact DER output would become historical
+   consensus policy and require golden/restart/concurrency coverage before adoption.
+
    Full DAG and Currency snapshots gain an optional `CertifiedCheckpointV1` projection
    containing the certified source tip and the minimal continuation state. It never
    self-authenticates: only a separately announced containing-full-snapshot hash can make
@@ -125,16 +142,18 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    exactly as live state creation does. One typed Global L0 artifact-hash helper preserves
    the V1 projection when a caller intentionally computes a historical Kryo identity.
 
-   Two explicit uncertified roots are also locally authoritative: certified-consensus
-   genesis and an exact operator-signed recovery-plan anchor. Production persists only
-   their canonical typed root shape. Genesis validation additionally derives the exact
-   committee from the locally accepted artifact's proof signers; recovery-plan validation
-   derives it from the verified signed plan. The first certified child is derived with
-   the same committee projector and verified with the same bound-outcome path; structural
-   shape by itself never authenticates peer-supplied bytes. Recovery-plan equality is
-   checked only at the anchor, not against later certified successors. A fresh post-activation
-   node without local lineage or an explicit signed recovery-plan/checkpoint fails
-   closed; one authenticated peer response is not membership authority.
+   Two explicit uncertified roots are locally authoritative: certified-consensus genesis
+   and an exact env-authorized recovery-seed anchor. Production persists only their
+   canonical typed root shape. Genesis validation derives the committee from the locally
+   accepted artifact's proof signers. Selected recovery nodes derive it from
+   `CL_GL0_RECOVERY_SEED_COMMITTEE` only after exact public-anchor,
+   seedlist/allowance/collateral, and all-member alignment checks. The first certified
+   child uses the same committee projector and bound-outcome path. Its ordinary QC binds
+   the reset parent hash and committee, allowing an unconfigured validator to reconstruct
+   that canonical root from the independently validated public parent and replay the
+   latest reset-to-tip epoch. Structural root shape or one authenticated peer response is
+   never authority. This is a permissioned recovery boundary: a quorum of allowlisted
+   operators can deliberately certify a reset and remain accountable out of band.
 
    When certification is active from genesis, Currency download initializes at the
    independently validated first incremental root rather than applying its legacy
@@ -232,19 +251,25 @@ Active Currency stacks must also upgrade before the ADR-0033 global boundary.
   progress. Pre-activation snapshot history remains replayable with legacy rules.
 - State-proof compatibility is preserved, but public snapshot artifacts, active consensus
   messages, and local outcome/sidecar schemas change at the coordinated boundary.
-- Missing or corrupt certified sidecars reduce recovery availability and must never be
-  treated as valid evidence; every adopted outcome is cryptographically re-verified
-  against the locally known parent committee.
+- Missing or corrupt certified sidecars can make an exact ordinary local rollback
+  unavailable, but sidecars are never download authority. Every downloaded outcome is
+  cryptographically re-derived through the retained public lineage from an independently
+  authorized root.
 - Initial download validates the entire retained public certificate chain before the
   newer-outcome application-storage shortcut, sidecar writes, vote-lock cleanup, or
   consensus CAS. A missing or invalid root/interior frame rejects the handoff atomically.
+- Ordinal-gated DAG activation authenticates the A-1 artifact envelope as well as its
+  state proof before using signed controller evidence: exact requested/embedded ordinal,
+  ordinal-selected signatures, unique seedlisted proof signers, and exact context/state-proof
+  binding are mandatory.
 - Ordinary rollback at or after activation still requires the explicit recovery authority
   defined by the rollback path. A standalone typed outcome cannot authenticate the
   committee used to verify its own QCs; the public chain must be walked from an authorized
   root, or a separately announced checkpoint must be adopted through its dedicated path.
-- Recovery-plan format v1 accepts JSON-era incremental anchors only. Its single anchor
-  hash cannot safely encode both a Kryo-era public parent identity and the local rollback
-  locator, so every planned node rejects that historical case before joining or mutation.
+- The env-only recovery seed accepts only exact incremental anchors. Pre-activation
+  recovery uses the ordinal-selected historical hash and must leave three legacy rounds
+  to rebuild controller evidence; at or after activation, the first ordinary QC makes the
+  reset boundary publicly reconstructible.
 - Missing and corrupt pre-finalization vote-lock records have deliberately different
   semantics: missing is no prior durable vote, while corrupt is a hard local safety
   failure. Operators must preserve the `certifiedVoteLocks` directory through ordinary
@@ -257,3 +282,15 @@ Active Currency stacks must also upgrade before the ADR-0033 global boundary.
   are verified and never feed the next deterministic state; byte-identical claims apply
   to the certified value and derived operational outcome, not necessarily the raw local
   sidecar file.
+- Currency binary construction is the remaining exception in the current implementation:
+  the binary still serializes incidental artifact-proof bytes. Requiring all signer IDs
+  closes proof-subset variation but not randomized same-signer proof variation. Until an
+  exact proof envelope is certified or a versioned proof-independent preimage is adopted,
+  Currency v35 activation and schema freeze are no-go.
+- Post-v35 Currency rollback is also incomplete. The current rollback program reconstructs
+  a legacy outcome from the public artifact rather than a certified public lineage, while
+  certified initialization rejects a non-genesis outcome without certified outcome/binary
+  evidence. The terminal artifact exposes only its parent's certificate unless a child
+  exists. Activation therefore requires an authenticated Currency reset/root mechanism
+  that covers an arbitrary incremental anchor and a terminal lineage with no child; the
+  legacy solo flag is not authority for this boundary.

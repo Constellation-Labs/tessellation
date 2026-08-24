@@ -56,7 +56,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
   firstRoundStartGate: FirstRoundStartGate[F, Key],
-  plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]],
+  recoverySeedCommittee: F[Option[SortedSet[PeerId]]],
   // Gossip handle for re-distributing locally-derived consensus artifacts that downstream
   // peers need but might miss via the per-peer assembly path. Currently used to broadcast
   // an assembled `ViewChangeCertificate` from `StateTransitions.checkViewChangeAssembly` so
@@ -131,8 +131,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // losing a sidecar must never lose a finalized snapshot or prevent recovery initialization.
   onOutcomeFinalized: Outcome => F[Unit],
   onOutcomeInitialized: Outcome => F[Unit],
-  // Fail-fast preflight before initialization mutates consensus/journal state. Recovery plans use
-  // this boundary to validate exact anchor content/collateral and durably consume one-shot authority.
+  // Fail-fast preflight before initialization mutates consensus/journal state. Recovery seeds use
+  // this boundary to validate exact anchor content/collateral before invocation-local authority is used.
   onOutcomePreInitialize: Outcome => F[Unit],
   // Safety-critical durable-state cleanup after either rollback or download installs
   // an authoritative outcome. Unlike the ordinary best-effort sidecar hook above,
@@ -203,7 +203,7 @@ object ConsensusEngineContext {
     onOutcomeSafetyInitialized: Outcome => F[Unit],
     onOutcomeRollbackInitialized: (Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit],
     initiallyHoldFirstRound: Boolean,
-    plannedRecoveryCommittee: F[Option[SortedSet[PeerId]]],
+    recoverySeedCommittee: F[Option[SortedSet[PeerId]]],
     normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
@@ -218,7 +218,7 @@ object ConsensusEngineContext {
         running,
         pending,
         firstRoundStartGate,
-        plannedRecoveryCommittee,
+        recoverySeedCommittee,
         gossip,
         storage,
         creator,

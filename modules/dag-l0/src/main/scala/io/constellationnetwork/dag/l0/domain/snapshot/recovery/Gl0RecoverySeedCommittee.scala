@@ -19,6 +19,14 @@ final case class Gl0RecoverySeedCommittee private (committee: SortedSet[PeerId])
 object Gl0RecoverySeedCommittee {
   val EnvironmentVariable: String = "CL_GL0_RECOVERY_SEED_COMMITTEE"
 
+  /** The trusted recovery path is deliberately stricter than generic committee viability.
+    *
+    * Two nodes can technically certify a third seat at a 2/3 threshold, but a two-member env also lets two accidentally identically
+    * truncated source configurations release without the intended third source. The production recovery topology has three controlled
+    * sources, so omission of any one must fail at startup rather than silently reduce recovery authority.
+    */
+  val MinimumRecoveryCommitteeSize: Int = 3
+
   private val CanonicalPeerId = "[0-9a-f]{128}".r
 
   sealed trait Error extends NoStackTrace {
@@ -85,10 +93,10 @@ object Gl0RecoverySeedCommittee {
 
     Either
       .cond(
-        committee.size >= CommitteeViability.MinimumCoordinatedCommitteeSize,
+        committee.size >= MinimumRecoveryCommitteeSize,
         (),
         Invalid(
-          s"size=${committee.size}, minimum=${CommitteeViability.MinimumCoordinatedCommitteeSize}"
+          s"size=${committee.size}, minimum=$MinimumRecoveryCommitteeSize"
         ): Error
       )
       .flatMap(_ =>

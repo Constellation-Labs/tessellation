@@ -103,27 +103,12 @@ object method {
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
     allowanceListPath: Option[AllowanceListPath],
-    recoveryPlanPath: Option[Path] = None,
     recoverySeedCommittee: Option[Gl0RecoverySeedCommittee] = None
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
 
     val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
-
-    val recoveryPlanPathOpts: Opts[Option[Path]] =
-      Opts
-        .option[Path](
-          "recovery-plan",
-          "DANGER: lead-signed, anchor-bound GL0 recovery plan; use on the one run-rollback lead and every named run-validator"
-        )
-        .orElse(
-          Opts.env[Path](
-            "CL_GL0_RECOVERY_PLAN_PATH",
-            help = "DANGER: lead-signed, anchor-bound GL0 recovery plan; planned recovery nodes only"
-          )
-        )
-        .orNone
 
     val recoverySeedCommitteeOpts: Opts[Option[Gl0RecoverySeedCommittee]] =
       Opts
@@ -149,7 +134,6 @@ object method {
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
         AllowanceListPath.opts,
-        recoveryPlanPathOpts,
         recoverySeedCommitteeOpts
       ).mapN(RunRollback.apply)
     }
@@ -167,8 +151,7 @@ object method {
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
     peerToJoinPool: NonEmptySet[PeerToJoin],
-    allowanceListPath: Option[AllowanceListPath],
-    recoveryPlanPath: Option[Path] = None
+    allowanceListPath: Option[AllowanceListPath]
   ) extends Run
 
   case class RunValidator(
@@ -183,7 +166,6 @@ object method {
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
     allowanceListPath: Option[AllowanceListPath],
-    recoveryPlanPath: Option[Path] = None,
     recoverySeedCommittee: Option[Gl0RecoverySeedCommittee] = None
   ) extends Run
 
@@ -202,7 +184,6 @@ object method {
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
         AllowanceListPath.opts,
-        RunRollback.recoveryPlanPathOpts,
         RunRollback.recoverySeedCommitteeOpts
       ).mapN(RunValidator.apply)
     }

@@ -243,7 +243,7 @@ object ConsensusEventLoop {
     * any lifecycle state reached by the non-transactional initialization tail, rather than bouncing through a fresh download and losing the
     * only barrier installer.
     */
-  private[consensus] def plannedInitializationRetryableState(state: NodeState): Boolean =
+  private[consensus] def recoveryInitializationRetryableState(state: NodeState): Boolean =
     ConsensusFSM.consensusParticipatingState(state)
 
   final case class BuiltConsensusLoop[F[_], Event, Key, Artifact, Ctx, Status, Outcome, Kind](
@@ -328,7 +328,7 @@ object ConsensusEventLoop {
     onOutcomeSafetyInitialized: Option[Outcome => F[Unit]] = None,
     onOutcomeRollbackInitialized: Option[(Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit]] = None,
     initiallyHoldFirstRound: Boolean = false,
-    plannedRecoveryCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
+    recoverySeedCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
     normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
@@ -377,7 +377,7 @@ object ConsensusEventLoop {
         onOutcomeSafetyInitialized.getOrElse((_: Outcome) => Async[F].unit),
         onOutcomeRollbackInitialized.getOrElse((_: Outcome, _: ConsensusCommand.RollbackStartPolicy) => Async[F].unit),
         initiallyHoldFirstRound,
-        plannedRecoveryCommittee.getOrElse(none[SortedSet[PeerId]].pure[F]),
+        recoverySeedCommittee.getOrElse(none[SortedSet[PeerId]].pure[F]),
         normalFirstRoundAlignment
       )
       _ <- Metrics[F].updateGauge("dag_consensus_first_round_start_gate_held", if (initiallyHoldFirstRound) 1L else 0L)
@@ -612,18 +612,18 @@ object ConsensusEventLoop {
                               case ConsensusCommand.RetryCheckUpdate(key, expectedAttemptId) =>
                                 scheduleCheckUpdateRetry(key, expectedAttemptId.some)
                               case init @ ConsensusCommand.InitializeFromDownload(_, _, _, _) =>
-                                (ctx.plannedRecoveryCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
-                                  case (planned, held) if planned.exists(_.nonEmpty) || held.contains(true) =>
-                                    val explicitRecovery = planned.exists(_.nonEmpty)
+                                (ctx.recoverySeedCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
+                                  case (recoverySeed, held) if recoverySeed.exists(_.nonEmpty) || held.contains(true) =>
+                                    val explicitRecovery = recoverySeed.exists(_.nonEmpty)
                                     val message =
                                       if (explicitRecovery)
-                                        "Signed recovery-plan initialization failed after a partial install; retrying the exact generation"
+                                        "Operator recovery-seed initialization failed after a partial install; retrying the exact generation"
                                       else
                                         "Normal first-round alignment initialization failed after a partial install; retrying the exact generation"
                                     val observeResume =
                                       ctx.logger.warn(message) >>
                                         (if (explicitRecovery)
-                                           Metrics[F].incrementCounter("dag_consensus_recovery_plan_init_resume_total")
+                                           Metrics[F].incrementCounter("dag_consensus_recovery_seed_init_resume_total")
                                          else
                                            Metrics[F].incrementCounter(
                                              "dag_consensus_normal_first_round_alignment_init_resume_total"
@@ -637,7 +637,7 @@ object ConsensusEventLoop {
                                       Async[F]
                                         .start(
                                           Async[F].sleep(1.second) >> nodeStorage.getNodeState.flatMap { state =>
-                                            queue.offer(init).whenA(plannedInitializationRetryableState(state))
+                                            queue.offer(init).whenA(recoveryInitializationRetryableState(state))
                                           }
                                         )
                                         .attempt

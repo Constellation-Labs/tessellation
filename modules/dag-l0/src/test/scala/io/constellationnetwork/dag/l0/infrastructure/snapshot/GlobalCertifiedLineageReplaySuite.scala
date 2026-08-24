@@ -9,6 +9,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration._
 
+import io.constellationnetwork.dag.l0.Main
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
@@ -30,7 +31,6 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.OrdinalJsonSidecarStorage
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -43,8 +43,10 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.Signature
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -218,19 +220,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       def cleanupAbove(ordinal: SnapshotOrdinal): IO[Unit] = unexpected("cleanupAbove")
     }
 
-  private val emptyOutcomeSidecar: OrdinalJsonSidecarStorage[IO, GlobalConsensusOutcome] =
-    new OrdinalJsonSidecarStorage[IO, GlobalConsensusOutcome] {
-      def write(ordinal: SnapshotOrdinal, value: GlobalConsensusOutcome): IO[Unit] = IO.unit
-      def read(ordinal: SnapshotOrdinal): IO[Option[GlobalConsensusOutcome]] = IO.pure(None)
-      def delete(ordinal: SnapshotOrdinal): IO[Unit] = IO.unit
-      def deleteAbove(ordinal: SnapshotOrdinal): IO[Unit] = IO.unit
-      def retain(
-        cutoffOrdinal: SnapshotOrdinal,
-        currentOrdinal: SnapshotOrdinal,
-        pinnedOrdinals: Set[SnapshotOrdinal]
-      ): IO[Unit] = IO.unit
-    }
-
   private def peer(pair: KeyPair): PeerId = PeerId.fromId(pair.getPublic.toId)
 
   private val emptyStateProof = GlobalSnapshotStateProof(
@@ -380,7 +369,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       facilitatorSelector = FacilitatorSelector.make(None),
       seedlistPeerIds = Set.empty,
       membershipPolicy = HealthDerivedMembershipPolicy.RetainSigningLeases,
-      onUnsignedRecoverySuccessor = None,
+      onRecoverySeedSuccessor = None,
       scheduleSoftResetRestart = _ => IO.unit
     )
 
@@ -812,7 +801,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     for {
       seededRoot <- signedRoot(res.pairs)
       rootCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
-      root = GlobalRecoveryPlanOutcome.seed(
+      root = GlobalRecoverySeedOutcome.seed(
         seededRoot.finished.signedMajorityArtifact,
         seededRoot.finished.context,
         seededRoot.finished.snapshotHash,
@@ -827,6 +816,35 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       }
       candidate = built._1
       frames = built._2
+      publicSnapshotHash <- GlobalSnapshotArtifactHasher.currentHash[IO](candidate.finished.signedMajorityArtifact.value)
+      substitutedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+        candidate.finished.signedMajorityArtifact.value,
+        res.pairs.last
+      )
+      validRollbackBinding = Main.validateCertifiedRollbackOutcomeBindings(
+        candidate,
+        candidate.finished.signedMajorityArtifact,
+        candidate.finished.context,
+        publicSnapshotHash
+      )
+      wrongKeyRollbackBinding = Main.validateCertifiedRollbackOutcomeBindings(
+        candidate.copy(key = SnapshotOrdinal.unsafeApply(candidate.key.value.value + 1L)),
+        candidate.finished.signedMajorityArtifact,
+        candidate.finished.context,
+        publicSnapshotHash
+      )
+      wrongArtifactRollbackBinding = Main.validateCertifiedRollbackOutcomeBindings(
+        candidate.copy(finished = candidate.finished.copy(signedMajorityArtifact = substitutedArtifact)),
+        candidate.finished.signedMajorityArtifact,
+        candidate.finished.context,
+        publicSnapshotHash
+      )
+      wrongHashRollbackBinding = Main.validateCertifiedRollbackOutcomeBindings(
+        candidate.copy(finished = candidate.finished.copy(snapshotHash = Hash.fromBytes(Array[Byte](9)))),
+        candidate.finished.signedMajorityArtifact,
+        candidate.finished.context,
+        publicSnapshotHash
+      )
       artifacts = Map.from(
         (root.key -> root.finished.signedMajorityArtifact) :: frames.map(frame => frame.artifact.ordinal -> frame.artifact)
       )
@@ -835,10 +853,10 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         config = config,
         coreCommitteeSize = 2,
         seedlistPeerIds = Set.empty,
+        allowancePeerIds = None,
         facilitatorSelector = FacilitatorSelector.make(None),
         isContextEligible = (_, _) => IO.pure(true),
         snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        certifiedOutcomeSidecar = emptyOutcomeSidecar,
         stateAdvancer = stateAdvancer
       )
       valid <- validator(candidate).attempt
@@ -847,10 +865,10 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         config = config,
         coreCommitteeSize = 2,
         seedlistPeerIds = Set.empty,
+        allowancePeerIds = None,
         facilitatorSelector = FacilitatorSelector.make(None),
         isContextEligible = (_, _) => IO.pure(true),
         snapshotDownloadStorage = publicDownloadStorage(missingInterior, contexts),
-        certifiedOutcomeSidecar = emptyOutcomeSidecar,
         stateAdvancer = stateAdvancer
       )
       missing <- missingValidator(candidate).attempt
@@ -859,14 +877,267 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         case Right(_)    => success
         case Left(error) => failure(s"public lineage validation unexpectedly failed: ${error.getMessage}")
       }
-
       validExpectation &&
+      expect(validRollbackBinding.isRight) &&
+      expect(wrongKeyRollbackBinding.isLeft) &&
+      expect(wrongArtifactRollbackBinding.isLeft) &&
+      expect(wrongHashRollbackBinding.isLeft) &&
       expect(
         missing.left.exists(
           _.getMessage.contains(s"trusted_snapshot_missing:${frames.head.artifact.ordinal.value.value}")
         )
       )
     }
+  }
+
+  test("an unconfigured community validator verifies the latest post-v35 env recovery epoch without older history") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    val growToThree = List(
+      Script(responders = Set(0), admitted = Some(1)),
+      Script(responders = Set(0, 1)),
+      Script(responders = Set(0, 1), admitted = Some(2))
+    )
+    val afterRecovery = List(
+      Script(responders = Set(0, 1, 2)),
+      Script(responders = Set(0, 1, 2), proofRotation = 1)
+    )
+
+    for {
+      seededRoot <- signedRoot(res.pairs)
+      genesisCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
+      root = GlobalRecoverySeedOutcome.seed(
+        seededRoot.finished.signedMajorityArtifact,
+        seededRoot.finished.context,
+        seededRoot.finished.snapshotHash,
+        genesisCommittee
+      )
+      stateAdvancer = advancer(res.pairs.head)
+      preRecovery <- growToThree.foldM((root, List.empty[PublicFrame])) {
+        case ((prior, frames), script) =>
+          buildFrame(prior, script, res.pairs).flatMap { frame =>
+            derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
+          }
+      }
+      publicParent = preRecovery._1
+      recoveryCommittee = SortedSet.from(res.pairs.take(3).map(peer))
+      recoveryRoot = GlobalRecoverySeedOutcome.seed(
+        publicParent.finished.signedMajorityArtifact,
+        publicParent.finished.context,
+        publicParent.finished.snapshotHash,
+        recoveryCommittee
+      )
+      postRecovery <- afterRecovery.foldM((recoveryRoot, List.empty[PublicFrame])) {
+        case ((prior, frames), script) =>
+          buildFrame(prior, script, res.pairs).flatMap { frame =>
+            derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
+          }
+      }
+      firstRecoveryTip = postRecovery._1
+      secondRecoveryRoot = GlobalRecoverySeedOutcome.seed(
+        firstRecoveryTip.finished.signedMajorityArtifact,
+        firstRecoveryTip.finished.context,
+        firstRecoveryTip.finished.snapshotHash,
+        recoveryCommittee
+      )
+      latestRecovery <- afterRecovery.foldM((secondRecoveryRoot, List.empty[PublicFrame])) {
+        case ((prior, frames), script) =>
+          buildFrame(prior, script, res.pairs).flatMap { frame =>
+            derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
+          }
+      }
+      candidate = latestRecovery._1
+      firstSuccessor <- derive(secondRecoveryRoot, latestRecovery._2.head, stateAdvancer).map(_._1)
+      alternateTerminalArtifact <- signWith(
+        candidate.finished.signedMajorityArtifact.value,
+        res.pairs.take(2)
+      )
+      alternateTerminalCandidate = candidate.copy(
+        finished = candidate.finished.copy(signedMajorityArtifact = alternateTerminalArtifact)
+      )
+      underQuorumTerminalArtifact <- signWith(
+        candidate.finished.signedMajorityArtifact.value,
+        res.pairs.take(1)
+      )
+      underQuorumTerminalCandidate = candidate.copy(
+        finished = candidate.finished.copy(signedMajorityArtifact = underQuorumTerminalArtifact)
+      )
+      invalidTerminalArtifact = Signed(
+        candidate.finished.signedMajorityArtifact.value,
+        NonEmptySet.fromSetUnsafe(
+          SortedSet.from(
+            alternateTerminalArtifact.proofs.toList.map(_.copy(signature = Signature(Hex("00"))))
+          )
+        )
+      )
+      invalidTerminalCandidate = candidate.copy(
+        finished = candidate.finished.copy(signedMajorityArtifact = invalidTerminalArtifact)
+      )
+      // A community validator is not required to retain the activation-to-recovery prefix.
+      // Nor is it required to retain a prior recovery epoch. The latest public reset certificate
+      // makes the validated recovery parent the new trust root, so retain only that parent and
+      // the contiguous latest segment.
+      frames = latestRecovery._2
+      artifacts = Map.from(
+        (firstRecoveryTip.key -> firstRecoveryTip.finished.signedMajorityArtifact) :: frames.map(frame =>
+          frame.artifact.ordinal -> frame.artifact
+        )
+      )
+      contexts = Map.from(
+        (firstRecoveryTip.key -> firstRecoveryTip.finished.context) :: frames.map(frame => frame.artifact.ordinal -> frame.context)
+      )
+      allSeedlisted = res.pairs.map(peer).toSet
+      validator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = allSeedlisted,
+        allowancePeerIds = None,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      accepted <- validator(candidate).attempt
+      alternateTerminalAccepted <- validator(alternateTerminalCandidate).attempt
+      underQuorumTerminalRejected <- validator(underQuorumTerminalCandidate).attempt
+      invalidTerminalRejected <- validator(invalidTerminalCandidate).attempt
+      firstSuccessorArtifacts = Map(
+        firstRecoveryTip.key -> firstRecoveryTip.finished.signedMajorityArtifact,
+        latestRecovery._2.head.artifact.ordinal -> latestRecovery._2.head.artifact
+      )
+      firstSuccessorContexts = Map(
+        firstRecoveryTip.key -> firstRecoveryTip.finished.context,
+        latestRecovery._2.head.artifact.ordinal -> latestRecovery._2.head.context
+      )
+      firstSuccessorValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = allSeedlisted,
+        allowancePeerIds = None,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(firstSuccessorArtifacts, firstSuccessorContexts),
+        stateAdvancer = stateAdvancer
+      )
+      firstSuccessorAccepted <- firstSuccessorValidator(firstSuccessor).attempt
+      missingRecoveryMember = recoveryCommittee.last
+      unseedlistedValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = allSeedlisted - missingRecoveryMember,
+        allowancePeerIds = None,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      rejected <- unseedlistedValidator(candidate).attempt
+      noSeedlistValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = Set.empty,
+        allowancePeerIds = None,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      noSeedlist <- noSeedlistValidator(candidate).attempt
+      disallowedValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = allSeedlisted,
+        allowancePeerIds = Some(allSeedlisted - missingRecoveryMember),
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      disallowed <- disallowedValidator(candidate).attempt
+      ineligibleValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = allSeedlisted,
+        allowancePeerIds = None,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, peerId) => IO.pure(peerId =!= missingRecoveryMember),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      ineligible <- ineligibleValidator(candidate).attempt
+    } yield {
+      val acceptedExpectation = accepted match {
+        case Right(_)    => success
+        case Left(error) => failure(s"public recovery-boundary validation unexpectedly failed: ${error.getMessage}")
+      }
+      val firstSuccessorExpectation = firstSuccessorAccepted match {
+        case Right(_)    => success
+        case Left(error) => failure(s"first recovery successor unexpectedly failed: ${error.getMessage}")
+      }
+      val alternateTerminalExpectation = alternateTerminalAccepted match {
+        case Right(_)    => success
+        case Left(error) => failure(s"valid alternate terminal proof envelope was rejected: ${error.getMessage}")
+      }
+
+      acceptedExpectation &&
+      firstSuccessorExpectation &&
+      alternateTerminalExpectation &&
+      expect(underQuorumTerminalRejected.left.exists(_.getMessage.contains("artifact_under_quorum"))) &&
+      expect(invalidTerminalRejected.left.exists(_.getMessage.contains("invalid_artifact_signature"))) &&
+      expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_member_not_seedlisted"))) &&
+      expect(noSeedlist.left.exists(_.getMessage.contains("recovery_seed_boundary_seedlist_unavailable"))) &&
+      expect(disallowed.left.exists(_.getMessage.contains("recovery_seed_boundary_member_not_allowed"))) &&
+      expect(ineligible.isLeft)
+    }
+  }
+
+  test("a peer-certified two-member subset cannot manufacture public recovery authority") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    for {
+      seededRoot <- signedRoot(res.pairs)
+      genesisCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
+      root = GlobalRecoverySeedOutcome.seed(
+        seededRoot.finished.signedMajorityArtifact,
+        seededRoot.finished.context,
+        seededRoot.finished.snapshotHash,
+        genesisCommittee
+      )
+      stateAdvancer = advancer(res.pairs.head)
+      parentFrame <- buildFrame(root, Script(responders = Set(0)), res.pairs)
+      publicParent <- derive(root, parentFrame, stateAdvancer).map(_._1)
+      undersized = SortedSet.from(res.pairs.take(2).map(peer))
+      invalidRecoveryRoot = GlobalRecoverySeedOutcome.seed(
+        publicParent.finished.signedMajorityArtifact,
+        publicParent.finished.context,
+        publicParent.finished.snapshotHash,
+        undersized
+      )
+      recoveryFrame <- buildFrame(invalidRecoveryRoot, Script(responders = Set(0, 1)), res.pairs)
+      candidate <- derive(invalidRecoveryRoot, recoveryFrame, stateAdvancer).map(_._1)
+      artifacts = Map(
+        publicParent.key -> publicParent.finished.signedMajorityArtifact,
+        recoveryFrame.artifact.ordinal -> recoveryFrame.artifact
+      )
+      contexts = Map(publicParent.key -> publicParent.finished.context, recoveryFrame.artifact.ordinal -> recoveryFrame.context)
+      validator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = res.pairs.map(peer).toSet,
+        allowancePeerIds = None,
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      rejected <- validator(candidate).attempt
+    } yield expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_committee_too_small:2")))
   }
 
   test("public replay roots at configured activation A-1 rather than downloaded terminal T-1") { _ =>
