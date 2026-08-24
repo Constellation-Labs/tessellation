@@ -14,7 +14,6 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.consensus.CertifiedCheckpointV1
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -51,10 +50,7 @@ case class GlobalSnapshot(
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
-  tips: SnapshotTips,
-  // v35: optional only for wire compatibility. A checkpoint has authority only
-  // when the containing full-snapshot hash is announced independently.
-  certifiedCheckpoint: Option[CertifiedCheckpointV1] = None
+  tips: SnapshotTips
 ) extends FullSnapshot[GlobalSnapshotStateProofV1, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {

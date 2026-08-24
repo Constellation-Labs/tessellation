@@ -797,6 +797,12 @@ object CurrencySnapshotConsensusStateAdvancer {
       )(implicit hasher: Hasher[F]): F[Either[String, Option[CertifiedProposalQC]]] =
         CertifiedConsensus.highestVerifiedProposalQc[F](
           CertifiedConsensus.proposalQcCandidates(vcc, timeoutCertificate),
+          CertifiedConsensus.CertifiedRoundIdentity(
+            CertifiedConsensus.ConsensusDomain.CurrencyL0,
+            networkId,
+            state.key.value.value,
+            state.lastOutcome.finished.snapshotHash
+          ),
           state.roundStartFacilitators.value.toSet,
           state.coreFacilitators.value.toSet,
           config.quorumThresholdFraction

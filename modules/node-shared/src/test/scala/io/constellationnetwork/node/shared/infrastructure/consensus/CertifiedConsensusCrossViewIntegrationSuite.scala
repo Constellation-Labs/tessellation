@@ -244,6 +244,7 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
       vcc <- assembleVcc(world.c, world, value0, List(world.l -> lVote, world.c -> cVote, world.b -> bVote))
       carried <- highestVerifiedProposalQc[IO](
         proposalQcCandidates(vcc.some, none),
+        CertifiedRoundIdentity.from(value0),
         world.committee,
         world.committee,
         configuredFraction

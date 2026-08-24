@@ -300,7 +300,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
         .and(expect(snapshotForward == snapshotReversed, "logical equality precondition failed"))
   }
 
-  test("trailing v35 public fields preserve legacy JSON and decode absent fields as None") { res =>
+  test("trailing v35 incremental fields preserve legacy JSON while frozen full snapshot shapes stay unchanged") { res =>
     implicit val (j, h) = res
     implicit val stateProofSelector: StateProofSelector = CurrencyStateProofSelector.instance
 
@@ -314,11 +314,39 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
     }
 
     CurrencyIncrementalSnapshot.fromCurrencySnapshot[IO](currencyFull).map { currencyIncremental =>
+      val globalFullFields = Set(
+        "ordinal",
+        "height",
+        "subHeight",
+        "lastSnapshotHash",
+        "blocks",
+        "stateChannelSnapshots",
+        "rewards",
+        "epochProgress",
+        "nextFacilitators",
+        "info",
+        "tips"
+      )
+      val currencyFullFields = Set(
+        "ordinal",
+        "height",
+        "subHeight",
+        "lastSnapshotHash",
+        "blocks",
+        "rewards",
+        "tips",
+        "info",
+        "epochProgress",
+        "dataApplication",
+        "globalSyncView",
+        "version"
+      )
+
       expect.all(
         compatible(snapshotForward, "certifiedLineage"),
-        compatible(globalFull, "certifiedCheckpoint"),
         compatible(currencyIncremental, "certifiedLineage"),
-        compatible(currencyFull, "certifiedCheckpoint")
+        globalFull.asJson.asObject.exists(_.keys.toSet == globalFullFields),
+        currencyFull.asJson.asObject.exists(_.keys.toSet == currencyFullFields)
       )
     }
   }

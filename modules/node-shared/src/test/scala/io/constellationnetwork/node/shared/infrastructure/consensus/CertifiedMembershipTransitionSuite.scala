@@ -47,6 +47,14 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect(overCap.isLeft)
   }
 
+  test("Currency certified membership permits singleton contraction but rejects an empty committee") {
+    val singleton = CertifiedMembershipTransition.applyCurrencyTo(committee, Set.empty, Set(b, c), maxChanges = 2)
+    val empty = CertifiedMembershipTransition.applyCurrencyTo(List(a), Set.empty, Set(a), maxChanges = 1)
+
+    expect.same(Right(List(a)), singleton) &&
+    expect.same(Left("currency_membership_empty_committee"), empty)
+  }
+
   test("one-for-one replacement preserves cardinality and inherited ordering") {
     val result = CertifiedMembershipTransition.applyTo(committee, Set(d), Set(b), maxChanges = 1)
 

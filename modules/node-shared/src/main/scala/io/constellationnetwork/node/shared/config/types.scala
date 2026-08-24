@@ -682,7 +682,8 @@ object types {
     //     and demotes Degraded peers to tier 1 / Critical peers to tier 2. v14 nodes do not
     //     populate `observedSelfHealth` (default empty), so a mixed v14/v15 cluster would compute
     //     different leaders on rounds following a v15-led proposal -- bumping anchors the
-    //     required cold-restart fence. Jar hash already refuses v14<->v15 peer connections.
+    //     required cold-restart fence. Distinct advertised versions (or `CL_VERSION_HASH`
+    //     values) refuse v14<->v15 peer connections; the advertised jar hash is metadata.
     //   v16: Hard quality-score floor on leader candidacy.
     //     Adds `peerViewChanges: SortedMap[PeerId, Long]` to GlobalConsensusOutcome and
     //     CurrencyConsensusOutcome (additive, defaulted to empty so pre-v16 outcomes decode
@@ -869,8 +870,12 @@ object types {
     //     the existing Signed/Hasher infrastructure; Proposal/VCC/TC gain optional
     //     certification fields. Activation is separately ordinal-gated so legacy
     //     controller/evidence windows can be flushed at one deterministic boundary.
-    //     No GlobalIncrementalSnapshot, GlobalSnapshotInfo, CurrencyIncrementalSnapshot,
-    //     or state-proof schema changes are part of this version.
+    //     DAG and Currency incremental snapshots gain a trailing optional `certifiedLineage`.
+    //     Full snapshot shapes remain frozen. A future compact checkpoint is a standalone,
+    //     independently authorized manifest paired with an immutable combined incremental
+    //     checkpoint. Below activation drop-null encoding preserves legacy incremental JSON
+    //     bytes. Snapshot-info and state-proof schemas/calculation remain unchanged. Public
+    //     activation never crosses the retired Kryo boundary.
     consensusSchemaVersion: Int = 35,
     // Per-L0 activation key for v35 certified outcomes. DAG L0 and every Currency L0
     // have independent snapshot-ordinal spaces, so this cannot live in the GL0-only

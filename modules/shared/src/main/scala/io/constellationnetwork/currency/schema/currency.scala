@@ -15,7 +15,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.consensus.{CertifiedCheckpointV1, CertifiedLineageEvidenceV1}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageType}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -216,9 +216,7 @@ object currency {
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPartV1] = None,
     globalSyncView: Option[GlobalSyncView] = None,
-    version: SnapshotVersion = SnapshotVersion("0.0.1"),
-    // v35: authority comes from the independently announced containing hash.
-    certifiedCheckpoint: Option[CertifiedCheckpointV1] = None
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencySnapshotStateProofV1, CurrencySnapshotInfoV1]
 
   @derive(eqv, show, encoder, decoder)

@@ -24,11 +24,20 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
   artifact version transition from `0.0.1` to `1.0.0` using Global L0 ordinal space.
 - DAG L0 and every Currency L0 use their own snapshot ordinal space.
 - The public DAG and Currency incremental snapshots gain a trailing optional
-  `certifiedLineage` field, and their full snapshots gain a trailing optional
-  `certifiedCheckpoint` field. Below activation those fields remain absent and the
-  drop-null encoder preserves legacy artifact bytes. At and after activation the
+  `certifiedLineage` field. Below activation it remains absent and the drop-null encoder
+  preserves legacy incremental JSON artifact bytes. At and after activation the
   incremental artifact hash intentionally commits to the child-carried parent
-  certificate. Snapshot-info and state-proof schemas/calculation do not change.
+  certificate. `GlobalSnapshot` and Currency full-snapshot shapes remain unchanged;
+  snapshot-info and state-proof schemas/calculation do not change.
+- IntegrationNet, Testnet, and Mainnet have permanently crossed the Kryo-to-JSON
+  serialization boundary. V35 is activated only on retained JSON history and does not
+  support rollback/replay of its new fields through Kryo. Do not add a Kryo registration,
+  fallback reader, frozen projection, or Kryo-boundary test for this new functionality.
+- Every layer is fenced by the hash of its advertised Tessellation version (or
+  `CL_VERSION_HASH`) and, for metagraph applications, its advertised metagraph
+  version. The advertised jar hash is metadata and is not compared. L0 additionally
+  requires its deterministic consensus-config hash; L1/data-L1 have no equivalent
+  config-hash fence, so their coordinated version identity is the compatibility gate.
 - The existing signed Currency `version` value and artifact bytes also intentionally
   change at the separate global protocol-v1 boundary.
 
@@ -80,16 +89,15 @@ and is therefore fenced independently as well.
    snapshot occupies ordinal 0), so the shipped dev activation `0` authenticates the
    exact canonical ordinal-1 outcome and persists it as the predecessor of the first
    certified round. The proof set is bound to the locally state-proof-validated root.
-   Currency additionally binds the embedded artifact proof envelope to its binary bytes,
-   but the current implementation is **not activation-ready**: collecting every signer
-   identity does not make randomized ECDSA proof bytes unique. A signer that restarts or
-   otherwise signs the same artifact twice can produce two valid proof bytes, and honest
-   recipients can retain different variants. The binary-preimage agreement design must be
-   closed before the schema is frozen or an activation ordinal is announced. The preferred
-   narrow candidate from the internal audit is an epoch-scoped deterministic ECDSA policy
-   for these artifact signatures only; do not change the global signer or activate it until
-   fixed-vector, repeat/concurrency/restart, existing-verifier, and binary-equality tests pin
-   the exact provider/algorithm behavior.
+   Currency additionally binds the embedded artifact proof envelope to its binary bytes.
+   The accepted child carries and pins the leader-selected **parent-binary** proof envelope,
+   but its reconstructed binary content still embeds the parent Currency artifact proofs
+   from each validator's locally finished outcome. Those inner proofs are collected after
+   proposal selection and are not selected by the child QC. Randomized ECDSA can therefore
+   make honest validators reconstruct different binary hashes: validation fails closed,
+   but the child cannot complete. Currency v35 activation remains blocked until the protocol
+   consensus-selects one exact inner artifact-proof envelope or introduces a versioned
+   binary preimage that excludes incidental signature bytes from its identity.
    Currency genesis defers its first child by one ordinary round interval, matching DAG
    L0, and a downloader that sees that root bypasses the legacy four-snapshot observation
    offset so it initializes consensus at ordinal 1. A data-application follower restores
@@ -99,9 +107,11 @@ and is therefore fenced independently as well.
    not substitute a peer's potentially newer calculated state. Together these let
    joining validators persist the authority root before ordinal 2 appears. A follower
    that first appears later must obtain the locally validated public root plus the complete
-   retained child-carried lineage through the tip. Once checkpoint adoption is implemented,
-   an independently announced full-snapshot hash may replace that history requirement. One
-   peer's terminal private outcome is never long-range membership authority.
+   retained child-carried lineage through the tip. A future independently announced,
+   content-addressed checkpoint manifest paired with a validated combined incremental
+   checkpoint may replace that history requirement only after its authority, policy
+   binding, storage, and atomic-adoption design is implemented and exercised. One peer's
+   terminal private outcome is never long-range membership authority.
 4. Prove that the signed activation seed is live: its observed parent signers must meet
    the frozen-committee finality floor, and any planned admission batch must satisfy
    `observed parent signers >= Q(seed size + batch size)`. V35 enforces this headroom
@@ -177,16 +187,20 @@ and is therefore fenced independently as well.
     reproducible `release/integrationnet` SS branch, before restarting/resuming Tessellation
     at any current checkpoint. Do not move the old proof gate forward: replay at and above
     `5880000` must continue using the proof shape already signed there. The external SS
-    restart path resets its configured next ordinal and clears its OpenSearch index; back
-    up the stores and explicitly approve/coordinate that rebuild rather than treating the
-    release-branch push as a harmless rolling restart.
+    restart path resets `nextOrdinal.json` to ordinal zero, clears the configured OpenSearch
+    indices with `clean_indices`, and restarts ingestion; replay then rebuilds its
+    S3/PostgreSQL export state. Back up and explicitly approve/coordinate all of those
+    mutations rather than treating the release-branch push as a harmless rolling restart.
+    Snapshot Streaming does not otherwise write OpenSearch during ordinary ingest. Reconcile
+    any separate Block Explorer/indexer state through that component's own runbook.
 13. Verify public certified-lineage retention. From A-1 (or the canonical first
     incremental root for certification-from-genesis) through the current tip, every
     incremental artifact and snapshot-info/context required for sequential validation
     must be readable after a process restart. The v35 storage policy retains this
     context range contiguously in addition to legacy logarithmic checkpoints. Do not
-    prune an interior frame until an independently announced full checkpoint is both
-    produced and supported by the download path.
+    prune an interior frame until an independently announced certified-checkpoint manifest
+    and its paired immutable combined incremental checkpoint are both produced and supported
+    by the download path.
 14. Close historical consensus-policy replay. The current implementation replays old
     rounds with the joining binary's current `ConsensusConfig`, seedlist, allowance
     list, and eligibility rules. The live join fences prevent a mixed current session,
@@ -207,6 +221,22 @@ cutoff path enumerates stored snapshot-info ordinals while the certified range i
 maintenance O(epoch) per round and O(epoch^2) cumulatively. Activation also requires an incremental
 deletion/index strategy (or partitioned storage that skips the retained epoch) and a multi-year
 cardinality load test; disk capacity alone is not sufficient.
+
+The reproducible `CertifiedConsensusSuite` production-JSON measurement at 73 seats is:
+
+```text
+TriggerStatement quorum evidence  34,938 bytes  (consensus message only)
+ProposalValue                     23,289 bytes
+ProposalQC                        26,203 bytes
+CoreCommitQC                       2,993 bytes
+CertifiedOutcome                  29,227 bytes  (persisted/child-carried)
+Currency proof envelope           20,655 bytes  (Currency lineage only)
+```
+
+The same suite measures sizes at 3, 31, 73, 100, 200, and the configured maximum 1,000
+facilitators and pins a 155,769-byte compressed large-history V1 encoder fixture. These are
+wire/preimage measurements rather than filesystem-capacity estimates; soak measurements remain
+mandatory.
 
 The current DAG and Currency download validators also materialize the complete trusted-root-to-tip
 `PublicRound` sequence, while the shared verifier returns every derived state. Because sidecars are
@@ -299,17 +329,22 @@ Before activation, verify the ordinary-download lineage boundary on every source
   The verifier reconstructs the exact binary content from the already validated public
   parent artifact with the pinned V1 JSON+Brotli encoder, hashes it, then verifies its
   frozen-committee proofs. Carrying the full parent binary is forbidden because it
-  would recursively embed the entire lineage. This bounded representation does not by
-  itself solve live binary-preimage agreement: the exact embedded artifact proof bytes
-  must first be consensus-selected or removed from the preimage under a reviewed,
-  versioned Currency representation. Sorting proofs or requiring the complete signer-ID
-  set is insufficient because ECDSA signatures are randomized; and
-- full snapshots reserve an optional `CertifiedCheckpointV1` projection. Its containing
-  full-snapshot hash must be independently announced; the certificate inside cannot
-  authorize the committee that verifies itself. The current initial-activation path
-  deliberately relies on contiguous root-to-tip retention. Do not treat the checkpoint
-  field as an operational recovery mechanism until checkpoint publication, authority
-  distribution, and download adoption are separately implemented and exercised.
+  would recursively embed the entire lineage. This carried **parent-binary** proof envelope
+  is leader-selected and validators preserve it byte-for-byte. The parent artifact proof
+  bytes embedded inside the reconstructed binary are still validator-local and are not
+  selected by the child QC. Randomized variants fail closed as different binary hashes and
+  can wedge the child; resolving that activation blocker requires consensus-selected inner
+  proof bytes or a versioned preimage that omits incidental signatures; and
+- full snapshot types remain frozen. A future long-range checkpoint must be a separate,
+  versioned, content-addressed manifest paired with an ordinary combined incremental
+  checkpoint, never a field on `GlobalSnapshot` or `CurrencySnapshot`. It must bind the
+  layer/network, ordinal, artifact and context hashes, historical consensus policy,
+  certified tip, and minimal continuation state. Authority must come from an independently
+  announced manifest hash; neither an embedded committee nor the existing best-effort
+  `.meta` sidecar can self-authorize it. The current initial-activation path deliberately
+  relies on contiguous root-to-tip retention. Checkpoint-manifest schema, crash-safe
+  storage, coupled retention, authority distribution, and atomic adoption are a separate
+  pre-activation gate for any deployment that cannot guarantee that retention.
 
 The env recovery equality check applies only while selected nodes install its exact
 anchor. After that anchor is locally accepted, successor outcomes use the ordinary
@@ -317,6 +352,14 @@ certified-lineage validator, and the first successor QC makes the boundary verif
 to unconfigured community validators. Comment/remove the env after the first successor
 without restarting the running cohort. Leaving it armed makes every later external
 source restart a new recovery attempt and is prohibited during normal operation.
+
+Below activation, Currency L0 deliberately retains the rc.7 `PreserveLegacy` policy:
+a view-0 soft reset may clear its memory-only, artifact-only vote lock and retry the
+same key. That is a pre-v35 compatibility residual, not certified safety. At and after
+activation both layers select `CertifiedFullValue`; the durable full-value lock remains
+authoritative across soft reset and prevents the same retry from authorizing a
+conflicting semantic value. Do not backport the GL0 legacy freeze to Currency as an
+unannounced behavior change.
 
 The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
 to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary
@@ -335,6 +378,16 @@ V35 does not shrink the current-round safety universe. Loss of the configured Co
 quorum prevents the prepare/commit certificate; loss of the configured full-committee
 quorum prevents artifact finality. Either condition may require a coordinated restart.
 
+The immediately active Global L0 bridge is deliberately halt-safe as well. Under
+`FreezeAfterVote`, a node that has signed at a key will not abandon into a conflicting
+same-key attempt and will not emit a VCC/TC that would authorize unsafe re-voting. Under
+`RetainSigningLeases`, a timeout certificate also does not delete its silent non-voters
+from the current-round denominator. Thus a cluster-wide 2-of-4 (or analogous subquorum)
+stall with no corroborated peer ahead has no automatic protocol escape: it remains visibly
+held until the missing members recover or the operator performs the documented coordinated
+restart/recovery. This is the accepted availability-for-safety trade, not a monitor signal
+to restart one node independently.
+
 Global L0 replacement is preventive, not subquorum recovery. It runs only while the
 original frozen Core can still certify the complete N-to-N transition. Operators must
 alert on any proposal where admitted and evicted counts differ; honest nodes reject it.
@@ -343,8 +396,13 @@ If activation fails:
 
 1. Stop the full cluster; do not let two partial histories race.
 2. Archive logs and sidecars before changing anything.
-3. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
-4. Move the activation key only through another announced, full-cluster rollout.
+3. Stop Snapshot Streaming before selecting or installing a rollback lineage. Record its
+   database tip and the ordinal/hash already exported to S3/PostgreSQL, plus the state of any
+   downstream Block Explorer/indexer. If any exported ordinal will be replaced, reconcile those
+   rows/objects, its seed marker, and downstream indexes to the chosen canonical lineage before
+   resuming ingest; source-majority validation does not make ordinal-unique storage reorg-aware.
+4. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
+5. Move the activation key only through another announced, full-cluster rollout.
 
 Do not work around a fast-path predecessor-sidecar error by copying a peer's JSON
 sidecar into the local directory. The validator must fall back to the retained public

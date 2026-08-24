@@ -7,7 +7,6 @@ import cats.syntax.eq._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
-import io.constellationnetwork.schema.ConsensusOperationalState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.signature.SignatureProof
@@ -229,42 +228,3 @@ final case class CertifiedLineageEvidenceV1(
   parentOutcome: CertifiedOutcome,
   parentLayerEvidence: Option[CertifiedLayerEvidenceV1]
 )
-
-/** Layer-specific continuation state installed from an independently authorized full checkpoint.
-  *
-  * Unlike [[CertifiedLayerEvidenceV1]], this is not a proof envelope for reconstructing an incremental artifact that the verifier already
-  * holds. A compacted full Currency snapshot does not contain the exact source incremental bytes, so its historical binary cannot be
-  * reconstructed from the full snapshot. The containing full-snapshot hash is the external authority; `lastBinaryHash` is the minimal state
-  * needed to validate the next Currency binary's parent link. When source incremental history is available, checkpoint construction must
-  * still verify this value against that history before publication.
-  */
-@derive(eqv, show, encoder, decoder)
-sealed trait CertifiedCheckpointLayerStateV1
-
-object CertifiedCheckpointLayerStateV1 {
-  case object Dag extends CertifiedCheckpointLayerStateV1
-
-  @derive(eqv, show, encoder, decoder)
-  final case class Currency(lastBinaryHash: Hash) extends CertifiedCheckpointLayerStateV1
-}
-
-/** Minimal derived state carried by an operator-authorized full-snapshot checkpoint.
-  *
-  * This object does not authenticate its containing full snapshot. Authority comes only from the separately announced containing-snapshot
-  * hash; `certifiedTip` proves continuity with the source incremental tip.
-  */
-@derive(eqv, encoder, decoder)
-final case class CertifiedCheckpointV1(
-  certifiedTip: CertifiedOutcome,
-  nextRoundFacilitators: NonEmptySet[PeerId],
-  operationalState: ConsensusOperationalState,
-  peerSelfHealth: SortedMap[PeerId, SelfHealthHint],
-  expandedBeyondSingleton: Boolean,
-  layerState: CertifiedCheckpointLayerStateV1
-)
-
-object CertifiedCheckpointV1 {
-  // Avoid the repository's two intentionally retained SortedMap Show orphans
-  // becoming ambiguous during Magnolia derivation.
-  implicit val showInstance: Show[CertifiedCheckpointV1] = Show.fromToString
-}

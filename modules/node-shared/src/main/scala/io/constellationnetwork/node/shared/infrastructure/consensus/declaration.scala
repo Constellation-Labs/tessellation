@@ -79,9 +79,9 @@ object declaration {
     //
     // Optional with default None: pre-v19 Facilities decode as `None`; the median
     // computation skips `None` values and treats < n/2+1 carrying clocks as
-    // bootstrap (falls back to phase 1 viewChangeVotes-driven view derivation). Jar hash
-    // already gates v18 <-> v19 peer connection so the partial-deploy window is
-    // controlled at handshake; the field is Option-wrapped purely for derevo
+    // bootstrap (falls back to phase 1 viewChangeVotes-driven view derivation). Distinct
+    // advertised versions (or `CL_VERSION_HASH` values) gate v18 <-> v19 peer connection;
+    // the advertised jar hash is metadata. The field is Option-wrapped purely for derevo
     // back-compat with snapshots / facilities written before this field existed.
     proposerClockMs: Option[Long] = None,
     // V35: gossip-envelope authentication is non-transferable because the rumor handler

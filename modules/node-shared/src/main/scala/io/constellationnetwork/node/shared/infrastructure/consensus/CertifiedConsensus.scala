@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.all._
-import cats.{Applicative, Show}
+import cats.{Applicative, Eq, Show}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
@@ -15,8 +15,8 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
+import io.constellationnetwork.schema.consensus
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{ConsensusOperationalState, consensus}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
@@ -57,10 +57,6 @@ object CertifiedConsensus {
   val CertifiedLayerEvidenceV1: consensus.CertifiedLayerEvidenceV1.type = consensus.CertifiedLayerEvidenceV1
   type CertifiedLineageEvidenceV1 = consensus.CertifiedLineageEvidenceV1
   val CertifiedLineageEvidenceV1: consensus.CertifiedLineageEvidenceV1.type = consensus.CertifiedLineageEvidenceV1
-  type CertifiedCheckpointV1 = consensus.CertifiedCheckpointV1
-  val CertifiedCheckpointV1: consensus.CertifiedCheckpointV1.type = consensus.CertifiedCheckpointV1
-  type CertifiedCheckpointLayerStateV1 = consensus.CertifiedCheckpointLayerStateV1
-  val CertifiedCheckpointLayerStateV1: consensus.CertifiedCheckpointLayerStateV1.type = consensus.CertifiedCheckpointLayerStateV1
 
   // Resolve the same orphan-instance ambiguity documented for Proposal in declaration.scala.
   implicit val showSortedSelfHealth: Show[SortedMap[PeerId, SelfHealthHint]] =
@@ -68,6 +64,26 @@ object CertifiedConsensus {
 
   type OutcomeVote = Signed[CertificationStatement]
   type CoreCommit = Signed[CertificationStatement]
+
+  /** Non-wire identity of the consensus round whose carried QC may influence the current attempt.
+    *
+    * A QC can remain cryptographically valid long after its round has finished. Pacemaker envelopes therefore must bind nested QCs to the
+    * current layer, network, key, and public parent before comparing views; otherwise a genuine high-view QC replayed from an older round
+    * can eclipse every current-round certificate and permanently deny liveness.
+    */
+  final case class CertifiedRoundIdentity(
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash
+  )
+
+  object CertifiedRoundIdentity {
+    implicit val eqCertifiedRoundIdentity: Eq[CertifiedRoundIdentity] = Eq.fromUniversalEquals
+
+    def from(value: ProposalValue): CertifiedRoundIdentity =
+      CertifiedRoundIdentity(value.domain, value.networkId, value.key, value.parentArtifactHash)
+  }
 
   def valueHash[F[_]: Hasher](value: ProposalValue): F[Hash] =
     Hasher[F].hash(value)
@@ -402,29 +418,34 @@ object CertifiedConsensus {
       keyPair
     )
 
-  private def candidateProofs(
+  private def candidateProofs[F[_]: Async: Hasher: SecurityProvider](
     expected: CertificationStatement,
     votes: SortedMap[PeerId, Signed[CertificationStatement]],
     frozenCore: Set[PeerId],
     requiredQuorum: Int
-  ): Either[String, NonEmptySet[SignatureProof]] = {
-    val proofs = votes.toList.collect {
+  ): F[Either[String, NonEmptySet[SignatureProof]]] =
+    votes.toList.traverse {
       case (peerId, signed)
           if frozenCore.contains(peerId) &&
             signed.value === expected &&
             signed.proofs.size === 1L &&
             signed.proofs.head.id.toPeerId === peerId =>
-        signed.proofs.head
+        // Storage is first-write-wins per origin. Verify each candidate independently so one
+        // malformed first arrival is ignored instead of poisoning an otherwise honest quorum.
+        signed.hasValidSignature[F].map(Option.when(_)(signed.proofs.head))
+      case _ => none[SignatureProof].pure[F]
     }
-    val signers = proofs.map(_.id.toPeerId)
+      .map(_.flatten)
+      .map { proofs =>
+        val signers = proofs.map(_.id.toPeerId)
 
-    for {
-      _ <- Either.cond(signers.distinct.size === signers.size, (), "duplicate_core_signer")
-      _ <- Either.cond(signers.toSet.subsetOf(frozenCore), (), "signer_outside_frozen_core")
-      _ <- Either.cond(signers.size >= requiredQuorum, (), s"core_under_quorum:${signers.size}/$requiredQuorum")
-      nonEmpty <- NonEmptySet.fromSet(SortedSet.from(proofs)).toRight("empty_core_proofs")
-    } yield nonEmpty
-  }
+        for {
+          _ <- Either.cond(signers.distinct.size === signers.size, (), "duplicate_core_signer")
+          _ <- Either.cond(signers.toSet.subsetOf(frozenCore), (), "signer_outside_frozen_core")
+          _ <- Either.cond(signers.size >= requiredQuorum, (), s"core_under_quorum:${signers.size}/$requiredQuorum")
+          nonEmpty <- NonEmptySet.fromSet(SortedSet.from(proofs)).toRight("empty_core_proofs")
+        } yield nonEmpty
+      }
 
   private def verifyProofs[F[_]: Async: Hasher: SecurityProvider](
     expected: CertificationStatement,
@@ -483,7 +504,7 @@ object CertifiedConsensus {
       validateCommitteeBindings(value, frozenCommittee, frozenCore).flatMap {
         case Left(error) => error.asLeft[CertifiedProposalQC].pure[F]
         case Right(_) =>
-          candidateProofs(expected, votes, frozenCore, required) match {
+          candidateProofs[F](expected, votes, frozenCore, required).flatMap {
             case Left(error) => error.asLeft[CertifiedProposalQC].pure[F]
             case Right(proofs) =>
               verifyProofs(expected, proofs, frozenCore, required)
@@ -501,7 +522,7 @@ object CertifiedConsensus {
     val expected = statement(CertificationPurpose.Commit, proposalQc.value, proposalQc.valueHash)
     val required = requiredCoreQuorum(frozenCore.size, configuredFraction)
 
-    candidateProofs(expected, commits, frozenCore, required) match {
+    candidateProofs[F](expected, commits, frozenCore, required).flatMap {
       case Left(error) => error.asLeft[CoreCommitQC].pure[F]
       case Right(proofs) =>
         verifyProofs(expected, proofs, frozenCore, required).flatMap { result =>
@@ -551,20 +572,24 @@ object CertifiedConsensus {
 
   /** Verify every advertised QC before choosing the highest valid one.
     *
-    * Invalid candidates are ignored, just as invalid pacemaker declarations are not consensus evidence. If two independently valid QCs
-    * disagree at the highest view, selection fails closed. This one helper is used by both DAG and Currency leader/follower paths so a
-    * buggy or stale peer cannot create layer-specific carry-forward behavior.
+    * Candidates outside `expectedRound` are ignored before view comparison. Remaining invalid candidates are ignored, just as invalid
+    * pacemaker declarations are not consensus evidence. If two independently valid QCs disagree at the highest view, selection fails
+    * closed. This one helper is used by both DAG and Currency leader/follower paths so a buggy or stale peer cannot create layer-specific
+    * carry-forward behavior.
     */
   def highestVerifiedProposalQc[F[_]: Async: Hasher: SecurityProvider](
     candidates: Iterable[CertifiedProposalQC],
+    expectedRound: CertifiedRoundIdentity,
     frozenCommittee: Set[PeerId],
     frozenCore: Set[PeerId],
     configuredFraction: Double
   ): F[Either[String, Option[CertifiedProposalQC]]] =
-    candidates.toList.traverse { qc =>
-      verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction)
-        .flatMap(result => result.toOption.as(qc).pure[F])
-    }
+    candidates.toList
+      .filter(qc => CertifiedRoundIdentity.from(qc.value) === expectedRound)
+      .traverse { qc =>
+        verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction)
+          .flatMap(result => result.toOption.as(qc).pure[F])
+      }
       .flatMap(valid => selectHighestProposalQc(valid.flatten).pure[F])
 
   /** Return the first fully verified QC for `value`.
@@ -664,71 +689,6 @@ object CertifiedConsensus {
               .flatMap(_.as(actual.some).pure[F])
         }
     }
-
-  /** Validate a full-checkpoint payload against state already derived from certified incremental history.
-    *
-    * This function never grants checkpoint authority. Callers must first bind the containing full snapshot to an independently announced
-    * hash. When root-to-tip history is available, this comparison is the publication/ingest audit that proves the compacted fields are an
-    * exact projection of the certified source tip. Equivalent valid QC proof subsets are accepted; all derived continuation fields remain
-    * exact.
-    */
-  def verifyCheckpointProjection[F[_]: Async: Hasher: SecurityProvider](
-    checkpoint: CertifiedCheckpointV1,
-    expectedTip: CertifiedOutcome,
-    expectedNextRoundFacilitators: NonEmptySet[PeerId],
-    expectedOperationalState: ConsensusOperationalState,
-    expectedPeerSelfHealth: SortedMap[PeerId, SelfHealthHint],
-    expectedExpandedBeyondSingleton: Boolean,
-    expectedLayerState: CertifiedCheckpointLayerStateV1,
-    domain: ConsensusDomain,
-    configuredFraction: Double
-  ): F[Either[String, Unit]] = {
-    val expectedValue = expectedTip.proposalQc.value
-    val actualValue = checkpoint.certifiedTip.proposalQc.value
-    val frozenCommittee = expectedValue.roundStartFacilitators.toSortedSet.toSet
-    val frozenCore = expectedValue.roundStartCore.toSortedSet.toSet
-
-    val structure = for {
-      _ <- Either.cond(actualValue.domain === domain, (), "certified_checkpoint_domain_mismatch")
-      _ <- Either.cond(actualValue === expectedValue, (), "certified_checkpoint_tip_value_mismatch")
-      _ <- Either.cond(
-        checkpoint.certifiedTip.proposalQc.valueHash === expectedTip.proposalQc.valueHash,
-        (),
-        "certified_checkpoint_tip_hash_mismatch"
-      )
-      _ <- Either.cond(
-        checkpoint.nextRoundFacilitators === expectedNextRoundFacilitators,
-        (),
-        "certified_checkpoint_facilitators_mismatch"
-      )
-      _ <- Either.cond(
-        checkpoint.operationalState === expectedOperationalState,
-        (),
-        "certified_checkpoint_operational_state_mismatch"
-      )
-      _ <- Either.cond(
-        checkpoint.peerSelfHealth === expectedPeerSelfHealth,
-        (),
-        "certified_checkpoint_self_health_mismatch"
-      )
-      _ <- Either.cond(
-        checkpoint.expandedBeyondSingleton === expectedExpandedBeyondSingleton,
-        (),
-        "certified_checkpoint_singleton_fact_mismatch"
-      )
-      _ <- Either.cond(checkpoint.layerState === expectedLayerState, (), "certified_checkpoint_layer_state_mismatch")
-      _ <- (domain, checkpoint.layerState) match {
-        case (ConsensusDomain.DagL0, CertifiedCheckpointLayerStateV1.Dag)              => ().asRight[String]
-        case (ConsensusDomain.CurrencyL0, _: CertifiedCheckpointLayerStateV1.Currency) => ().asRight[String]
-        case _ => "certified_checkpoint_layer_domain_mismatch".asLeft[Unit]
-      }
-    } yield ()
-
-    structure match {
-      case Left(error) => error.asLeft[Unit].pure[F]
-      case Right(_)    => verifyOutcome(checkpoint.certifiedTip, frozenCommittee, frozenCore, configuredFraction)
-    }
-  }
 
   /** Verify and replay a public child-carried certificate chain from an independently trusted root.
     *

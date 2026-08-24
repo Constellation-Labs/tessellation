@@ -275,6 +275,23 @@ decision.
 Snapshot-streaming must be stopped before rollback. Record both its database
 tip and the ordinal/hash in `seed-snapshot.json.gz`. After GL0 stabilizes:
 
+In the operated three-source topology, Snapshot Streaming's configured `l0Peers`
+set is the three controlled GL0 sources. `GlobalL0Service` queries that set in two
+steps: responsive sources choose the candidate ordinal by bare plurality, then the
+hash at that ordinal must be returned by at least `ceil((N + 1) / 2)` of the
+configured sources—two matching sources when `N = 3`. A single responsive source
+can steer which ordinal is attempted, but cannot satisfy the hash threshold. SS
+then downloads a chain terminating at that 2-of-3 hash and applies the normal
+signature, linkage, context, and state-proof validation before its
+S3/PostgreSQL export path makes the snapshot available to downstream consumers.
+That 2-of-3 **hash** agreement is the operated export/canonical-checkpoint boundary
+used when selecting rollback anchors; it is not a substitute for GL0's own
+snapshot proof quorum. Confirm the deployed SS config really names exactly the
+three controlled sources—changing the configured source count changes this
+threshold. Also alert if two sources are evicted after repeated pull failures:
+the threshold retains the configured denominator, so SS then stalls safely until
+its source pool is restored/restarted.
+
 1. Query the direct `/global-snapshots/<N>/hash` endpoint on a quorum of the
    controlled source nodes. Do not trust a load balancer or the first responding
    node.

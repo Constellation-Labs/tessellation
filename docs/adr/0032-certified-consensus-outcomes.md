@@ -116,26 +116,29 @@ meaning so existing metagraph snapshot/state-proof validation remains compatible
    encoder a permanent historical verification invariant; future encoder evolution must
    add a new `CertifiedLayerEvidence` variant while retaining V1.
 
-   This representation is bounded but is not yet sufficient for activation. The current
-   Currency live path embeds its locally collected `Signed[CurrencySnapshotArtifact]`.
-   Even when every frozen-committee signer ID is present, ECDSA proof bytes are not unique:
-   a same-artifact re-sign after a process restart can yield a different valid signature.
-   Honest nodes can therefore construct different binary hashes from semantically equal,
-   complete signer sets. Schema freeze requires a reviewed protocol rule that either
-   certifies one exact embedded proof envelope or makes the versioned Currency binary
-   preimage independent of incidental artifact-proof bytes. Signature-byte sorting and
-   deterministic selection from a node-local set are explicitly insufficient. A scoped
-   deterministic-ECDSA policy for v35 Currency artifact signatures is a narrower candidate
-   because it preserves the complete envelope's current meaning, but it is not implemented
-   by this decision: its provider, algorithm, and exact DER output would become historical
-   consensus policy and require golden/restart/concurrency coverage before adoption.
+   ECDSA proof bytes are not unique even when signer identities match. The child artifact
+   carries and pins the exact leader-selected **parent-binary** proof envelope; validators
+   must not replace that envelope with a semantically equivalent local copy. The parent
+   Currency artifact proof envelope embedded in the reconstructed binary content is
+   different: it is collected after proposal selection and is currently taken from each
+   validator's locally finished parent outcome. The child QC therefore does not select
+   those inner proof bytes. If honest nodes retain different valid randomized signatures
+   for the same parent artifact, they reconstruct different binary hashes and fail closed
+   rather than fork, but cannot complete the child. Sorting signatures or checking only
+   signer identities does not close this liveness gap. Currency v35 activation remains
+   blocked until one exact inner artifact-proof envelope is consensus-selected or a new
+   versioned binary preimage removes those incidental signature bytes from its identity.
 
-   Full DAG and Currency snapshots gain an optional `CertifiedCheckpointV1` projection
-   containing the certified source tip and the minimal continuation state. It never
-   self-authenticates: only a separately announced containing-full-snapshot hash can make
-   it a root. Initial activation uses contiguous public replay. Checkpoint publication,
-   authority distribution, and download adoption remain an explicit later operational
-   step; the schema is frozen now so that step does not require another snapshot shape.
+   Full DAG and Currency snapshot types remain unchanged. A future long-range compaction
+   mechanism must use a separate, versioned, content-addressed certified-checkpoint
+   manifest paired with the ordinary combined incremental checkpoint; it must not be
+   embedded in either full snapshot. The manifest must bind the layer/network, checkpoint
+   ordinal and artifact hash, context hash, historical consensus-policy identity,
+   certified tip, and minimal continuation state. It cannot self-authenticate: only an
+   independently announced manifest hash can make it a root. The existing best-effort
+   checkpoint `.meta` sidecar is not an authority channel. Initial v35 activation uses
+   contiguous public replay; manifest schema, crash-safe storage, authority distribution,
+   retention, and atomic adoption remain a separately reviewed implementation gate.
 
    Historical state-proof/file validation remains ordinal-selected. The reconstructed
    legacy outcome identity and newly reset activation value use the current hasher,
@@ -223,10 +226,12 @@ activation decisions. An absent environment entry resolves to disabled; local de
 activates at genesis. Public activation values must not be added until their rollout
 keys are announced.
 
-This decision changes the public artifact schema: DAG and Currency incremental snapshots
-gain an optional `certifiedLineage`, while their full snapshots gain an optional
-`certifiedCheckpoint`. Below activation the fields are absent and legacy drop-null bytes
-remain unchanged; at/after activation artifact hashes commit to the populated lineage.
+This decision changes the public incremental artifact schema: DAG and Currency incremental
+snapshots gain an optional `certifiedLineage`. Full snapshot types remain byte- and
+schema-identical. Below activation the incremental field is absent and legacy drop-null
+JSON bytes remain unchanged; at/after activation incremental artifact hashes commit to it.
+No public-network activation, rollback, or replay crosses the retired Kryo boundary, and
+new functionality carries no new Kryo registration, fallback, or compatibility contract.
 `GlobalSnapshotInfo`, `GlobalSnapshotStateProof`, `CurrencySnapshotInfo`, state-proof
 calculation, and the meaning of the existing artifact signatures do not change. The same
 release also carries the separately gated Currency snapshot version transition in
@@ -282,11 +287,13 @@ Active Currency stacks must also upgrade before the ADR-0033 global boundary.
   are verified and never feed the next deterministic state; byte-identical claims apply
   to the certified value and derived operational outcome, not necessarily the raw local
   sidecar file.
-- Currency binary construction is the remaining exception in the current implementation:
-  the binary still serializes incidental artifact-proof bytes. Requiring all signer IDs
-  closes proof-subset variation but not randomized same-signer proof variation. Until an
-  exact proof envelope is certified or a versioned proof-independent preimage is adopted,
-  Currency v35 activation and schema freeze are no-go.
+- Currency binary construction serializes the parent artifact's proof bytes, but those
+  inner bytes are not currently selected by the child QC. The separately carried
+  parent-binary proof envelope is leader-selected and pinned; the parent-artifact envelope
+  comes from each validator's local finished outcome. Different valid randomized ECDSA
+  bytes therefore fail closed as different reconstructed binary hashes and can wedge the
+  child round. This is an explicit Currency v35 activation blocker, not a claimed
+  canonicalization property.
 - Post-v35 Currency rollback is also incomplete. The current rollback program reconstructs
   a legacy outcome from the public artifact rather than a certified public lineage, while
   certified initialization rejects a non-genesis outcome without certified outcome/binary

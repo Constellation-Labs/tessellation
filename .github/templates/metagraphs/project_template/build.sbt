@@ -22,7 +22,20 @@ lazy val commonSettings = Seq(
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-  buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+  buildInfoKeys := Seq[BuildInfoKey](
+    name,
+    version,
+    scalaVersion,
+    sbtVersion,
+    // The SDK release identity is also the default CI metagraph identity. This keeps
+    // independently rebuilt old/new L0 and L1 jars from silently advertising the same
+    // hard-coded 1.0.0 join version. Real metagraph releases may override their own
+    // coordinated version with METAGRAPH_VERSION.
+    BuildInfoKey.action("tessellationVersion")(sys.env.getOrElse("TESSELLATION_VERSION", "99.99.99-SNAPSHOT")),
+    BuildInfoKey.action("metagraphVersion")(
+      sys.env.getOrElse("METAGRAPH_VERSION", sys.env.getOrElse("TESSELLATION_VERSION", "99.99.99-SNAPSHOT"))
+    )
+  ),
   resolvers ++= Seq(Resolver.mavenLocal),
   libraryDependencies ++= Seq(
     CompilerPlugin.kindProjector,

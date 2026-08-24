@@ -174,6 +174,7 @@ operator involved. Byzantine hardening remains v35 work.
 | Minority of `C` is absent after `Q(N)` aligns | Quorum starts; absent members download the successor |
 | Old release arrives after reinitialization | `(key,generation)` validation rejects it |
 | Explicit recovery input is configured | Normal barrier is not selected |
+| One node runs `run-rollback` while the existing fleet remains live | Unsupported: it intentionally remains held rather than unilaterally creating a competing lineage |
 
 ## Full-fleet restart runbook
 
@@ -191,6 +192,9 @@ operator involved. Byzantine hardening remains v35 work.
 5. Disable automated restart/rollback actions and stop the complete fleet.
 6. Start exactly one verified signer as `run-rollback <anchor-hash>`. Start
    every other process with the ordinary `run-validator` role.
+   A standalone `run-rollback` invocation against a still-live fleet is not a
+   recovery mode. It cannot satisfy the anchor-committee alignment gate and is
+   expected to park fail-closed.
 7. Watch the lead's expected committee, required, aligned, and deficit gauges.
    A flat tip while `dag_consensus_normal_first_round_alignment_held == 1` is
    intentional synchronization and is a **DO-NOT-RESTART** condition.

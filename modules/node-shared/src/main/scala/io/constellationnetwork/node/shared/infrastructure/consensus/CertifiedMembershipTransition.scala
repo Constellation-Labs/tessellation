@@ -145,7 +145,11 @@ object CertifiedMembershipTransition {
       _ <- Either.cond(evictedPeers.size <= limit, (), "currency_membership_evictions_over_cap")
       retained = roundStartCommittee.distinct.filterNot(evictedPeers.contains)
       retainedSet = retained.toSet
-    } yield retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
+      next = retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
+      // Currency legitimately supports singleton committees and solo recovery, but no consensus
+      // state can safely construct the downstream NonEmptySet from an empty transition result.
+      _ <- Either.cond(next.nonEmpty, (), "currency_membership_empty_committee")
+    } yield next
   }
 
   /** Local Core prepare-vote policy for a structurally valid certified membership value.

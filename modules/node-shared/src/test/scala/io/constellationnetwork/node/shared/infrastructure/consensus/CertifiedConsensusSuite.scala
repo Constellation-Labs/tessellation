@@ -15,8 +15,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state.Candid
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops._
@@ -51,6 +51,21 @@ object CertifiedConsensusSuite extends MutableIOSuite {
 
   private def sizedProof(index: Int): SignatureProof =
     SignatureProof(Id(sizedPeer(index).value), Signature(Hex("ab" * 64)))
+
+  private def entropyHex(domain: String, index: Int): Hex =
+    Hex(hash(s"$domain-$index-a").value + hash(s"$domain-$index-b").value)
+
+  private def entropyPeer(index: Int): PeerId = PeerId(entropyHex("peer", index))
+
+  private def entropyProof(index: Int): SignatureProof =
+    SignatureProof(Id(entropyPeer(index).value), Signature(entropyHex("signature", index)))
+
+  private def invalidateSignature[A](signed: Signed[A]): Signed[A] =
+    signed.copy(
+      proofs = NonEmptySet.fromSetUnsafe(
+        SortedSet.from(signed.proofs.toSortedSet.toList.map(_.copy(signature = Signature(Hex("00")))))
+      )
+    )
 
   private val pA = peer('a')
   private val pB = peer('b')
@@ -188,14 +203,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
     val outcome = CertifiedOutcome(proposalQc, commitQc)
     val currencyEvidence = CertifiedLayerEvidenceV1.Currency(hash("binary-parent"), SnapshotFee.MinValue, proof)
     val lineage = CertifiedLineageEvidenceV1(outcome, currencyEvidence.some)
-    val checkpoint = CertifiedCheckpointV1(
-      outcome,
-      nonEmptyPeers(List(pA, pB)),
-      ConsensusOperationalState.empty,
-      SortedMap(pA -> SelfHealthHint.Healthy),
-      expandedBeyondSingleton = true,
-      CertifiedCheckpointLayerStateV1.Currency(hash("binary-tip"))
-    )
     val values: List[(String, IO[Hash])] = List(
       "consensus-trigger-event" -> Hasher[IO].hash[ConsensusTrigger](EventTrigger),
       "consensus-trigger-time" -> Hasher[IO].hash[ConsensusTrigger](TimeTrigger),
@@ -214,10 +221,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "core-commit-qc" -> Hasher[IO].hash(commitQc),
       "certified-outcome" -> Hasher[IO].hash(outcome),
       "currency-layer-evidence" -> Hasher[IO].hash[CertifiedLayerEvidenceV1](currencyEvidence),
-      "currency-checkpoint-layer-state" ->
-        Hasher[IO].hash[CertifiedCheckpointLayerStateV1](CertifiedCheckpointLayerStateV1.Currency(hash("binary-tip"))),
-      "certified-lineage" -> Hasher[IO].hash(lineage),
-      "certified-checkpoint" -> Hasher[IO].hash(checkpoint)
+      "certified-lineage" -> Hasher[IO].hash(lineage)
     )
     val expected = List(
       "consensus-trigger-event" -> Hash("e417e39c7d5b55430dc1ed87ff8c93f2b1d2a6a3b8e47a75953e5878f53b35c0"),
@@ -239,9 +243,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "core-commit-qc" -> Hash("285024d39c2ac559b3964588f1b5ccc407316933e941dfe520e85f11ec7d6fad"),
       "certified-outcome" -> Hash("779bfcd200ac8b65e88d1a378f8b96ecfec220b9e4617207ff93bfd5a8a91635"),
       "currency-layer-evidence" -> Hash("4a6f454903df848f02d22a545a3641696de23e3f4cbe0da3c8b74a16879c99c5"),
-      "currency-checkpoint-layer-state" -> Hash("c6df578a3d61b3cf16232c843cd1585a830c2cb6ce512ec903f8e2f15818abb2"),
-      "certified-lineage" -> Hash("0e32d42b1b3412f5aa56812eb53ea73f3b1c627ae4325408b2588dabd459dda0"),
-      "certified-checkpoint" -> Hash("af4041d0acdc2c5e5c94126d93a00d0914ef79d94a1ab60b882f886a567487c5")
+      "certified-lineage" -> Hash("0e32d42b1b3412f5aa56812eb53ea73f3b1c627ae4325408b2588dabd459dda0")
     )
 
     values.traverse { case (label, encoded) => encoded.tupleLeft(label) }.map { actual =>
@@ -601,6 +603,36 @@ object CertifiedConsensusSuite extends MutableIOSuite {
     }
   }
 
+  test("large historical V1 encoder preimage pins size-dependent Brotli output") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+
+    JsonSerializer.forAsync[IO].flatMap { implicit serializer =>
+      val peers = List.tabulate(1000)(entropyPeer)
+      val largeArtifact = baseValue.copy(
+        roundStartFacilitators = nonEmptyPeers(peers),
+        roundStartCore = nonEmptyPeers(peers.take(15)),
+        observedResponders = SortedSet.from(peers),
+        timeoutVoters = SortedSet.from(peers.take(15))
+      )
+      val signedArtifact = Signed(
+        largeArtifact,
+        NonEmptySet.fromSetUnsafe(SortedSet.from(List.tabulate(1000)(entropyProof)))
+      )
+
+      for {
+        content <- JsonSerializer[IO].serialize(signedArtifact)
+        actual <- Hasher[IO].hash(
+          StateChannelSnapshotBinary(hash("binary-parent"), content, SnapshotFee.MinValue)
+        )
+      } yield
+        expect(
+          actual === Hash("1e688406a85edbdc62b1d3cc547b1593a2f8903b94b87af6767cfeb95ed95ff6") &&
+            content.length === 155769,
+          s"Large historical V1 encoder preimage changed: actual=${actual.value}, compressedBytes=${content.length}"
+        )
+    }
+  }
+
   test("Facility evidence selection ignores malformed statements but still requires a valid leader-bearing quorum") { res =>
     implicit val hasher: Hasher[IO] = res._1
     implicit val provider: SecurityProvider[IO] = res._2
@@ -954,6 +986,65 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       )
   }
 
+  test("an invalid first-arriving prepare vote cannot poison an honest Core quorum") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      votes <- pairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
+      poisoned = SortedMap.from(ids.zip(votes.updated(3, invalidateSignature(votes(3)))))
+      accepted <- buildProposalQc[IO](value, poisoned, ids.toSet, ids.toSet, 2.0 / 3.0)
+      underQuorum <- buildProposalQc[IO](
+        value,
+        SortedMap.from(ids.take(3).zip(votes.take(2) :+ invalidateSignature(votes(2)))),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      )
+    } yield
+      expect.all(
+        accepted.exists(_.signatures.size === 3L),
+        accepted.exists(!_.signatures.toSortedSet.exists(_.id.toPeerId === ids(3))),
+        underQuorum === Left("core_under_quorum:2/3")
+      )
+  }
+
+  test("an invalid first-arriving Core commit cannot poison final certification") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      votes <- pairs.take(3).traverse(signOutcomeVote[IO](value, _).map(_._2))
+      proposal <- buildProposalQc[IO](
+        value,
+        SortedMap.from(ids.take(3).zip(votes)),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      commits <- pairs.traverse(signCoreCommit[IO](proposal, _))
+      poisoned = SortedMap.from(ids.zip(commits.updated(3, invalidateSignature(commits(3)))))
+      accepted <- buildCoreCommitQc[IO](proposal, poisoned, ids.toSet, 2.0 / 3.0)
+      underQuorum <- buildCoreCommitQc[IO](
+        proposal,
+        SortedMap.from(ids.take(3).zip(commits.take(2) :+ invalidateSignature(commits(2)))),
+        ids.toSet,
+        2.0 / 3.0
+      )
+    } yield
+      expect.all(
+        accepted.exists(_.signatures.size === 3L),
+        accepted.exists(!_.signatures.toSortedSet.exists(_.id.toPeerId === ids(3))),
+        underQuorum === Left("core_under_quorum:2/3")
+      )
+  }
+
   test("child lineage accepts an equivalent parent QC subset but preserves the exact carried envelope") { res =>
     implicit val hasher: Hasher[IO] = res._1
     implicit val provider: SecurityProvider[IO] = res._2
@@ -1016,67 +1107,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
         missing === Left("certified_lineage_missing_after_root"),
         unexpected === Left("certified_lineage_unexpected_at_root"),
         wrongDomain === Left("certified_lineage_domain_mismatch")
-      )
-  }
-
-  test("a full checkpoint is an exact projection of derived history and cannot self-authorize changed state") { res =>
-    implicit val hasher: Hasher[IO] = res._1
-    implicit val provider: SecurityProvider[IO] = res._2
-
-    for {
-      pairs <- keyPairs(4)
-      ids = pairs.map(peerId)
-      value <- withCommittee(ids)
-      outcome <- certifyOutcome(value, pairs, ids)
-      next = nonEmptyPeers(ids)
-      operational = ConsensusOperationalState.empty
-      selfHealth = SortedMap(ids.head -> SelfHealthHint.Healthy)
-      checkpoint = CertifiedCheckpointV1(
-        outcome,
-        next,
-        operational,
-        selfHealth,
-        expandedBeyondSingleton = true,
-        CertifiedCheckpointLayerStateV1.Dag
-      )
-      valid <- verifyCheckpointProjection[IO](
-        checkpoint,
-        outcome,
-        next,
-        operational,
-        selfHealth,
-        expectedExpandedBeyondSingleton = true,
-        expectedLayerState = CertifiedCheckpointLayerStateV1.Dag,
-        domain = ConsensusDomain.DagL0,
-        configuredFraction = 2.0 / 3.0
-      )
-      changedCommittee <- verifyCheckpointProjection[IO](
-        checkpoint.copy(nextRoundFacilitators = nonEmptyPeers(ids.tail)),
-        outcome,
-        next,
-        operational,
-        selfHealth,
-        expectedExpandedBeyondSingleton = true,
-        expectedLayerState = CertifiedCheckpointLayerStateV1.Dag,
-        domain = ConsensusDomain.DagL0,
-        configuredFraction = 2.0 / 3.0
-      )
-      wrongLayer <- verifyCheckpointProjection[IO](
-        checkpoint.copy(layerState = CertifiedCheckpointLayerStateV1.Currency(hash("binary-tip"))),
-        outcome,
-        next,
-        operational,
-        selfHealth,
-        expectedExpandedBeyondSingleton = true,
-        expectedLayerState = CertifiedCheckpointLayerStateV1.Currency(hash("binary-tip")),
-        domain = ConsensusDomain.DagL0,
-        configuredFraction = 2.0 / 3.0
-      )
-    } yield
-      expect.all(
-        valid === Right(()),
-        changedCommittee === Left("certified_checkpoint_facilitators_mismatch"),
-        wrongLayer === Left("certified_checkpoint_layer_domain_mismatch")
       )
   }
 
@@ -1154,8 +1184,55 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       qc <- IO.fromEither(qcEither.leftMap(new IllegalStateException(_)))
       // Its embedded value claims a higher view, but its original signatures/valueHash do not certify that mutation.
       invalidHigher = qc.copy(value = qc.value.copy(committedView = qc.value.committedView + 100L))
-      selected <- highestVerifiedProposalQc[IO](List(invalidHigher, qc), ids.toSet, ids.toSet, 2.0 / 3.0)
+      selected <- highestVerifiedProposalQc[IO](
+        List(invalidHigher, qc),
+        CertifiedRoundIdentity.from(value),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      )
     } yield expect(selected === Right(qc.some), "an invalid high-view advertisement must not eclipse a lower valid QC")
+  }
+
+  test("highest-QC selection ignores genuine certificates from another round identity") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      currentValue <- withCommittee(ids)
+      staleValues = List(
+        currentValue.copy(key = currentValue.key - 1L, committedView = 100L),
+        currentValue.copy(parentArtifactHash = hash("stale-parent"), committedView = 101L),
+        currentValue.copy(domain = ConsensusDomain.CurrencyL0, committedView = 102L),
+        currentValue.copy(networkId = "other-network", committedView = 103L)
+      )
+      allValues = currentValue :: staleValues
+      qcs <- allValues.traverse { value =>
+        pairs
+          .take(3)
+          .traverse(signOutcomeVote[IO](value, _).map(_._2))
+          .flatMap { votes =>
+            buildProposalQc[IO](
+              value,
+              SortedMap.from(ids.take(3).zip(votes)),
+              ids.toSet,
+              ids.toSet,
+              2.0 / 3.0
+            ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+          }
+      }
+      current = qcs.head
+      stale = qcs.tail
+      expectedRound = CertifiedRoundIdentity.from(currentValue)
+      selected <- highestVerifiedProposalQc[IO](stale :+ current, expectedRound, ids.toSet, ids.toSet, 2.0 / 3.0)
+      staleOnly <- highestVerifiedProposalQc[IO](stale, expectedRound, ids.toSet, ids.toSet, 2.0 / 3.0)
+    } yield
+      expect.all(
+        selected === Right(current.some),
+        staleOnly === Right(none[CertifiedProposalQC])
+      )
   }
 
   test("highest-QC selection fails closed on two valid values at the same highest view") { res =>
@@ -1183,7 +1260,13 @@ object CertifiedConsensusSuite extends MutableIOSuite {
         ids.toSet,
         2.0 / 3.0
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      selected <- highestVerifiedProposalQc[IO](List(first, second), ids.toSet, ids.toSet, 2.0 / 3.0)
+      selected <- highestVerifiedProposalQc[IO](
+        List(first, second),
+        CertifiedRoundIdentity.from(firstValue),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      )
     } yield expect(selected === Left(s"divergent_certified_qc_at_view:${firstValue.committedView}"))
   }
 
