@@ -65,7 +65,9 @@ object Main
         state: DataState[UsageUpdateState, UsageUpdateCalculatedState],
         updates: List[Signed[UsageUpdate]]
       )(implicit context: L0NodeContext[IO]): IO[DataState[UsageUpdateState, UsageUpdateCalculatedState]] =
-        LifecycleSharedFunctions.combine[IO](state, updates)
+        context.getSnapshotFeeTransactions.flatMap { feeTransactions =>
+          LifecycleSharedFunctions.combine[IO](state, updates, feeTransactions, serializeUpdate(_))
+        }
 
       override def hashDataUpdate: Option[UsageUpdate => IO[Hash]] =
         Some((update: UsageUpdate) => serializeUpdate(update).map(Hash.fromBytes))

@@ -12,30 +12,30 @@ import com.my.project_template.shared_data.types.Types._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 object Combiners {
-  private def getUpdatedDeviceUsage(
-    usage: NonNegLong,
+  private def previousDeviceState(
     acc: DataState[UsageUpdateState, UsageUpdateCalculatedState],
     address: Address
-  ): UsageUpdateInfo = {
-    val deviceCalculatedState = acc.calculated.devices.getOrElse(
+  ): DeviceCalculatedState =
+    acc.calculated.devices.getOrElse(
       address,
-      DeviceCalculatedState(UsageUpdateInfo(address, NonNegLong.MinValue))
+      DeviceCalculatedState(UsageUpdateInfo(address, NonNegLong.MinValue), NonNegLong.MinValue)
     )
-    UsageUpdateInfo(
-      address,
-      NonNegLong.unsafeFrom(deviceCalculatedState.usages.deviceUsage.value + usage.value)
-    )
-  }
 
+  // `feePaid` is the amount of the fee transaction that accompanied this update in the snapshot,
+  // resolved by the caller via L0NodeContext.getSnapshotFeeTransactions (0 when none was found).
   def combineUpdateUsage(
     signedUpdate: Signed[UsageUpdate],
+    feePaid: Long,
     acc: DataState[UsageUpdateState, UsageUpdateCalculatedState]
   ): DataState[UsageUpdateState, UsageUpdateCalculatedState] = {
     val update = signedUpdate.value
     val address = update.address
 
-    val updatedDeviceUsage = getUpdatedDeviceUsage(update.usage, acc, address)
-    val device = DeviceCalculatedState(updatedDeviceUsage)
+    val previous = previousDeviceState(acc, address)
+    val updatedDeviceUsage =
+      UsageUpdateInfo(address, NonNegLong.unsafeFrom(previous.usages.deviceUsage.value + update.usage.value))
+    val updatedFeesPaid = NonNegLong.unsafeFrom(previous.feesPaid.value + feePaid)
+    val device = DeviceCalculatedState(updatedDeviceUsage, updatedFeesPaid)
     val devices = acc.calculated.devices.updated(address, device)
 
     val updates: List[UsageUpdate] = update :: acc.onChain.updates

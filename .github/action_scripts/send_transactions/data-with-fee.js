@@ -5,6 +5,11 @@ const { serializeBrotli } = require('@stardust-collective/dag4-keystore');
 const {parseSharedArgs, withRetry} = require('../shared');
 const { PRIVATE_KEYS } = require('../shared/constants');
 
+// Scenario: a UsageUpdateWithFee submitted together with an adequate fee.
+// The update is accepted, and the metagraph's combine looks the sibling fee transaction up via
+// L0NodeContext.getSnapshotFeeTransactions and records it as `feesPaid` on the device. A non-zero
+// feesPaid therefore proves the snapshot-scoped lookup works end to end.
+
 const createConfig = () => {
     const args = process.argv.slice(2);
 
@@ -151,7 +156,7 @@ const sendDataTransactionsUsingUrls = async (
     return [account.address, estimateFeeResponse, initialFeeWalletBalance];
 };
 
-const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
+const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address, expectedFee) => {
     const maxAttempts = 120
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
@@ -160,11 +165,30 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
 
             if (Object.keys(responseData).length > 0) {
                 console.log(`Transaction processed successfully. Response: ${JSON.stringify(responseData)}`);
+                // The device state must reflect the fee that combine looked up via
+                // getSnapshotFeeTransactions. This is the assertion that proves the feature works.
+                // Coerce both sides in case Amount/NonNegLong serialize as {value: N} rather than N.
+                const numOf = (x) => (x && typeof x === 'object' && 'value' in x) ? Number(x.value) : Number(x);
+                const expected = numOf(expectedFee);
+                const actual = numOf(responseData.feesPaid);
+                // feesPaid accumulates per combine; assert >= (not ==) so an at-least-once re-combine of
+                // the same update (feesPaid = 2*fee) doesn't flaky-fail. A non-zero value proves the fee
+                // was looked up via getSnapshotFeeTransactions (a sibling tx, never in the update body).
+                if (!(expected > 0) || !Number.isFinite(actual) || actual < expected) {
+                    throw new Error(
+                        `Fee lookup assertion failed: expected feesPaid>=${expected} (from getSnapshotFeeTransactions) ` +
+                        `but device state has feesPaid=${actual}. Full state: ${JSON.stringify(responseData)}`
+                    );
+                }
+                console.log(`Fee lookup verified: device feesPaid=${actual} >= submitted fee ${expected}`);
                 return;
             }
 
             console.log(`Data transaction not processed yet. Retrying in 1 seconds (${attempt}/${maxAttempts})`);
         } catch (error) {
+            if (error.message && error.message.startsWith('Fee lookup assertion failed')) {
+                throw error;
+            }
             console.error(`Attempt ${attempt} failed: ${error.message}`);
         }
 
@@ -214,7 +238,7 @@ const sendDataTransaction = async () => {
     const [address, estimateFeeResponse, initialFeeWalletBalance] =
         await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
 
-    await checkDataTransactionInMetagraphL0(metagraphL0Url, address);
+    await checkDataTransactionInMetagraphL0(metagraphL0Url, address, estimateFeeResponse.fee);
     await checkFeeTransactionInGlobalL0(globalL0Url, estimateFeeResponse.address, initialFeeWalletBalance);
 };
 

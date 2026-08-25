@@ -63,8 +63,10 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  token-locks              Token lock tests"
   echo "  allow-spends             Allow-spend tests"
   echo "  spend                    Spend transaction tests"
-  echo "  data-without-fee         Data transaction tests (without fee, requires CI_PRIVATE_KEY)"
-  echo "  data-with-fee            Data transaction tests (with fee)"
+  echo "  data-without-fee            Data transaction tests (UsageUpdateNoFee, no fee required)"
+  echo "  data-with-fee               Data transaction tests (adequate fee, verifies getSnapshotFeeTransactions lookup)"
+  echo "  data-with-insufficient-fee  Data transaction tests (fee below minimum, expect rejection)"
+  echo "  data-with-missing-fee       Data transaction tests (fee-required update sent with no fee, expect rejection)"
   echo ""
   echo "Usage: just test --test=dag-cluster --test=delegated-staking"
   echo "       just test --test=dag-cluster,rewards    (comma-separated)"
@@ -73,7 +75,7 @@ if [ "$LIST_TESTS" = "true" ]; then
 fi
 
 # If tests are selected, check if any require metagraph. If not, skip metagraph setup.
-METAGRAPH_TESTS="currency,rewards,token-locks,allow-spends,spend,data-without-fee,data-with-fee"
+METAGRAPH_TESTS="currency,rewards,token-locks,allow-spends,spend,data-without-fee,data-with-fee,data-with-insufficient-fee,data-with-missing-fee"
 if [ -n "$SELECTED_TESTS" ] && [ -n "$METAGRAPH" ]; then
   needs_metagraph=false
   for t in $(echo "$SELECTED_TESTS" | tr ',' ' '); do
@@ -730,27 +732,39 @@ if [ -n "$METAGRAPH" ]; then
   fi
 
   if should_run_test "data-without-fee"; then
-    if [ -n "$CI_PRIVATE_KEY" ]; then
-      echo "================================================"
-      echo "Running data transaction tests (without fee)"
-      echo "================================================"
-      cd $PROJECT_ROOT/.github/action_scripts
-      node send_transactions/data-without-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX $CI_PRIVATE_KEY
-      show_time "Data transaction tests (without fee) completed"
-    else
-      echo "================================================"
-      echo "Skipping data transaction tests without fee (CI_PRIVATE_KEY not set)"
-      echo "================================================"
-    fi
+    echo "================================================"
+    echo "Running data transaction tests (without fee)"
+    echo "================================================"
+    cd $PROJECT_ROOT/.github/action_scripts
+    node send_transactions/data-without-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX
+    show_time "Data transaction tests (without fee) completed"
   fi
 
   if should_run_test "data-with-fee"; then
     echo "================================================"
-    echo "Running data transaction tests (with fee)"
+    echo "Running data transaction tests (adequate fee, expect fee looked up in combine)"
     echo "================================================"
     cd $PROJECT_ROOT/.github/action_scripts
     node send_transactions/data-with-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX
-    show_time "Data transaction tests (with fee) completed"
+    show_time "Data transaction tests (adequate fee) completed"
+  fi
+
+  if should_run_test "data-with-insufficient-fee"; then
+    echo "================================================"
+    echo "Running data transaction tests (insufficient fee, expect rejection)"
+    echo "================================================"
+    cd $PROJECT_ROOT/.github/action_scripts
+    node send_transactions/data-invalid-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX insufficient
+    show_time "Data transaction tests (insufficient fee) completed"
+  fi
+
+  if should_run_test "data-with-missing-fee"; then
+    echo "================================================"
+    echo "Running data transaction tests (missing fee, expect rejection)"
+    echo "================================================"
+    cd $PROJECT_ROOT/.github/action_scripts
+    node send_transactions/data-invalid-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX missing
+    show_time "Data transaction tests (missing fee) completed"
   fi
 
 else
@@ -764,5 +778,4 @@ echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
-
 

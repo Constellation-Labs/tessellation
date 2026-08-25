@@ -18,6 +18,7 @@ import io.constellationnetwork.routes.internal.ExternalUrlPrefix
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.round.RoundId
@@ -61,6 +62,23 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
       DataApplicationBlock(
         RoundId(java.util.UUID.randomUUID()),
         cats.data.NonEmptyList.one(cats.data.NonEmptyList.one(update)),
+        cats.data.NonEmptyList.one(cats.data.NonEmptyList.one(Hash.empty))
+      ),
+      NonEmptySet.one(testSignatureProof)
+    )
+  }
+
+  def signedBlockWithUpdateAndFee(value: Int, dataUpdateRef: Hash): Signed[DataApplicationBlock] = {
+    val update: Signed[DataTransaction] = Signed(TestUpdate(value), NonEmptySet.one(testSignatureProof))
+    val fee: Signed[DataTransaction] = Signed(
+      FeeTransaction(testAddress, testAddress, Amount(NonNegLong.unsafeFrom(1L)), dataUpdateRef),
+      NonEmptySet.one(testSignatureProof)
+    )
+
+    Signed(
+      DataApplicationBlock(
+        RoundId(java.util.UUID.randomUUID()),
+        cats.data.NonEmptyList.one(cats.data.NonEmptyList.of(update, fee)),
         cats.data.NonEmptyList.one(cats.data.NonEmptyList.one(Hash.empty))
       ),
       NonEmptySet.one(testSignatureProof)
@@ -114,9 +132,14 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
     def securityProvider: SecurityProvider[IO] = throw new NotImplementedError
     def getCurrencyId: IO[CurrencyId] = IO.raiseError(new NotImplementedError)
     def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = None
+    def getSnapshotFeeTransactions: IO[Map[Hash, Signed[FeeTransaction]]] = IO.pure(Map.empty)
   }
 
-  def fakeDataApplication(observed: Ref[IO, List[Option[SnapshotOrdinal]]]): BaseDataApplicationL0Service[IO] =
+  def fakeDataApplication(
+    observed: Ref[IO, List[Option[SnapshotOrdinal]]],
+    deserializedBlock: Signed[DataApplicationBlock] = signedBlockWithUpdate(0),
+    observedFeeRefs: Option[Ref[IO, List[Set[Hash]]]] = None
+  ): BaseDataApplicationL0Service[IO] =
     new BaseDataApplicationL0Service[IO] {
       override def serializeState(state: DataOnChainState): IO[Array[Byte]] = ???
       override def deserializeState(bytes: Array[Byte]): IO[Either[Throwable, DataOnChainState]] = ???
@@ -124,7 +147,7 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
       override def deserializeUpdate(bytes: Array[Byte]): IO[Either[Throwable, DataUpdate]] = ???
       override def serializeBlock(block: Signed[DataApplicationBlock]): IO[Array[Byte]] = ???
       override def deserializeBlock(bytes: Array[Byte]): IO[Either[Throwable, Signed[DataApplicationBlock]]] =
-        IO.pure(Right(signedBlockWithUpdate(0)))
+        IO.pure(Right(deserializedBlock))
       override def serializeCalculatedState(state: DataCalculatedState): IO[Array[Byte]] = IO.pure(Array.emptyByteArray)
       override def deserializeCalculatedState(bytes: Array[Byte]): IO[Either[Throwable, DataCalculatedState]] = ???
       override def dataEncoder: io.circe.Encoder[DataUpdate] = ???
@@ -137,8 +160,10 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
       override def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[IO]
       ): IO[DataState.Base] =
-        context.getLastCurrencySnapshot.flatMap { maybePredecessor =>
-          observed.update(_ :+ maybePredecessor.map(_.ordinal)).as(state)
+        (context.getLastCurrencySnapshot, context.getSnapshotFeeTransactions).tupled.flatMap {
+          case (maybePredecessor, feeTransactions) =>
+            observed.update(_ :+ maybePredecessor.map(_.ordinal)) >>
+              observedFeeRefs.traverse_(_.update(_ :+ feeTransactions.keySet)).as(state)
         }
       override def getCalculatedState(implicit context: L0NodeContext[IO]): IO[(SnapshotOrdinal, DataCalculatedState)] = ???
       override def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(
@@ -227,5 +252,42 @@ object DataApplicationTraverseSuite extends MutableIOSuite {
             traverse.applyCache(storage, DataState(TestOnChain, TestCalculated, SortedSet.empty), startingSnapshot).attempt
         }
       } yield expect(outcome.left.exists(_.isInstanceOf[DataApplicationTraverse.NonContiguousReplayPredecessor]))
+  }
+
+  test("applyCache reconstructs the snapshot fee map from the stored accepted blocks") {
+    case (hasher, sp, hs, kryo, json) =>
+      implicit val h: Hasher[IO] = hasher
+      implicit val s: SecurityProvider[IO] = sp
+      implicit val hsi: HasherSelector[IO] = hs
+      implicit val k: KryoSerializer[IO] = kryo
+      implicit val jz: JsonSerializer[IO] = json
+      implicit val ctx: L0NodeContext[IO] = fakeTipContext
+
+      val feeRef = Hash.fromBytes(Array(1.toByte))
+      val storedBlock = signedBlockWithUpdateAndFee(1, feeRef)
+
+      for {
+        observedOrdinals <- Ref.of[IO, List[Option[SnapshotOrdinal]]](Nil)
+        observedFeeRefs <- Ref.of[IO, List[Set[Hash]]](Nil)
+        tempDir <- Files[IO].tempDirectory.allocated.map(_._1)
+        calculatedStateStorage <- CalculatedStateLocalFileSystemStorage.make[IO](tempDir)
+        traverse = DataApplicationTraverse.make[IO](
+          lastGlobalSnapshot = null,
+          fetchSnapshot = _ => IO.pure(None),
+          dataApplication = fakeDataApplication(observedOrdinals, storedBlock, observedFeeRefs.some),
+          calculatedStateStorage = calculatedStateStorage,
+          globalSnapshotsWithStateLocalFileSystemStorage = null,
+          globalSnapshotsWithStateDeltasLocalFileSystemStorage = null,
+          identifier = testAddress,
+          globalSnapshotContextFunctions = null,
+          globalL0Service = null
+        )
+        startingSnapshot = mkSnapshot(10L, withDataApplication = false)
+        _ <- TraverseLocalFileSystemTempStorage.forAsync[IO].use { storage =>
+          storage.write(ord(11L), mkSnapshot(11L, withDataApplication = true)) >>
+            traverse.applyCache(storage, DataState(TestOnChain, TestCalculated, SortedSet.empty), startingSnapshot)
+        }
+        seen <- observedFeeRefs.get
+      } yield expect.same(List(Set(feeRef)), seen)
   }
 }

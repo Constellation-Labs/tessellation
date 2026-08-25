@@ -136,6 +136,22 @@ object FeeTransaction {
     }
   }
 
+  // Build the snapshot-wide fee map keyed by dataUpdateRef. If two fee transactions reference the
+  // same update we keep the last (deterministic, preserving prior `toMap` behaviour) but log it, so
+  // a duplicate is no longer dropped silently.
+  def buildFeeMap[F[_]: Applicative](
+    feeTransactions: List[Signed[FeeTransaction]],
+    logger: Logger[F]
+  ): F[Map[Hash, Signed[FeeTransaction]]] = {
+    val collidingRefs = feeTransactions.groupBy(_.value.dataUpdateRef).collect {
+      case (ref, txns) if txns.sizeIs > 1 => ref
+    }
+    logger
+      .warn(s"Multiple fee transactions share a dataUpdateRef (keeping last-wins). Colliding refs: ${collidingRefs.mkString(", ")}")
+      .whenA(collidingRefs.nonEmpty)
+      .as(feeTransactions.map(ft => ft.value.dataUpdateRef -> ft).toMap)
+  }
+
 }
 
 trait DataOnChainState
@@ -862,4 +878,32 @@ trait L0NodeContext[F[_]] {
   def securityProvider: SecurityProvider[F]
   def getCurrencyId: F[CurrencyId]
   def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]]
+  def getSnapshotFeeTransactions: F[Map[Hash, Signed[FeeTransaction]]]
+}
+
+object L0NodeContextOps {
+  // Wrap a base context so `combine` observes the current snapshot's fee transactions through the
+  // context it already receives - no process-wide mutable Ref, and it composes over any base
+  // (e.g. the rollback-replay predecessor context). Everything else delegates to `base` unchanged.
+  def withSnapshotFeeTransactions[F[_]: Applicative](
+    base: L0NodeContext[F],
+    feeTransactions: Map[Hash, Signed[FeeTransaction]]
+  ): L0NodeContext[F] = new L0NodeContext[F] {
+    def getLastSynchronizedGlobalSnapshot: F[Option[GlobalIncrementalSnapshot]] = base.getLastSynchronizedGlobalSnapshot
+    def getLastSynchronizedGlobalSnapshotCombined: F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] =
+      base.getLastSynchronizedGlobalSnapshotCombined
+    def getLastSynchronizedAllowSpends: F[Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]] =
+      base.getLastSynchronizedAllowSpends
+    def getLastSynchronizedTokenLocks: F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
+      base.getLastSynchronizedTokenLocks
+    def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] = base.getLastCurrencySnapshot
+    def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
+      base.getCurrencySnapshot(ordinal)
+    def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]] =
+      base.getLastCurrencySnapshotCombined
+    def securityProvider: SecurityProvider[F] = base.securityProvider
+    def getCurrencyId: F[CurrencyId] = base.getCurrencyId
+    def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = base.getMetagraphL0Seedlist
+    def getSnapshotFeeTransactions: F[Map[Hash, Signed[FeeTransaction]]] = feeTransactions.pure[F]
+  }
 }

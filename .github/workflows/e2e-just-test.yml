@@ -116,7 +116,7 @@ jobs:
           - { name: token-locks,            tests: "token-locks" }
           - { name: allow-spends,           tests: "allow-spends", timeout: 45 }
           - { name: spend,                  tests: "spend", timeout: 45 }
-          - { name: data-with-fee,          tests: "data-with-fee", timeout: 45 }
+          - { name: data-transactions,      tests: "data-without-fee,data-with-fee,data-with-insufficient-fee,data-with-missing-fee", timeout: 45 }
           - { name: snapshot-streaming,    tests: "snapshot-streaming", runner: "ubuntu-22.04", timeout: 45 }
           # 5 gl0 nodes, 3 at genesis + 2 staggered. The stagger keeps the committee churning, which
           # is what supplies the chronic-Tier-1-plus-promote-qualified committee that is the only

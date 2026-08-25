@@ -96,7 +96,10 @@ object DataApplicationTraverse {
       // of the chain (e.g. the next snapshot's lastSnapshotHash) expects. alwaysCurrent is a
       // live-path shortcut valid only because the tip is always past any real hash-migration
       // cutover; it doesn't define the canonical hash of an arbitrary historical predecessor.
-      def replayScopedContext(predecessor: Signed[CurrencyIncrementalSnapshot]): F[L0NodeContext[F]] =
+      def replayScopedContext(
+        predecessor: Signed[CurrencyIncrementalSnapshot],
+        feeTransactions: Map[Hash, Signed[FeeTransaction]]
+      ): F[L0NodeContext[F]] =
         HasherSelector[F].forOrdinal(predecessor.value.ordinal) { implicit hasher =>
           predecessor.toHashed.map { hashedPredecessor =>
             new L0NodeContext[F] {
@@ -116,6 +119,7 @@ object DataApplicationTraverse {
               def securityProvider: SecurityProvider[F] = context.securityProvider
               def getCurrencyId: F[CurrencyId] = context.getCurrencyId
               def getMetagraphL0Seedlist: Option[Set[SeedlistEntry]] = context.getMetagraphL0Seedlist
+              def getSnapshotFeeTransactions: F[Map[Hash, Signed[FeeTransaction]]] = feeTransactions.pure[F]
             }
           }
         }
@@ -145,13 +149,17 @@ object DataApplicationTraverse {
                               dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])
                             }
                           }
-                          .map(_.toList.flatten)
-                          .map(_.flatMap(_.dataTransactions.toList))
-                          .map(getDataUpdates)
-                          .flatMap { dataUpdates =>
-                            replayScopedContext(predecessor).flatMap { replayContext =>
-                              dataApplication.combine(state, dataUpdates)(replayContext)
-                            }
+                          .map(_.toList.flatten.flatMap(_.dataTransactions.toList))
+                          .flatMap { dataTransactions =>
+                            // Reconstruct this snapshot's fee map from its own blocks so combine sees the
+                            // same fees it saw at consensus time - keeps getSnapshotFeeTransactions replay-safe.
+                            FeeTransaction
+                              .buildFeeMap[F](FeeTransaction.getFeeTransactions(dataTransactions), logger)
+                              .flatMap { feeMap =>
+                                replayScopedContext(predecessor, feeMap).flatMap { replayContext =>
+                                  dataApplication.combine(state, getDataUpdates(dataTransactions))(replayContext)
+                                }
+                              }
                           }
                           .flatTap {
                             case DataState(_, calculatedState, _) =>

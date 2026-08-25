@@ -29,7 +29,9 @@ object Types {
 
   @derive(decoder, encoder)
   case class DeviceCalculatedState(
-    usages: UsageUpdateInfo
+    usages: UsageUpdateInfo,
+    // Total fees looked up for this device via L0NodeContext.getSnapshotFeeTransactions during combine.
+    feesPaid: NonNegLong
   )
 
   @derive(decoder, encoder)
