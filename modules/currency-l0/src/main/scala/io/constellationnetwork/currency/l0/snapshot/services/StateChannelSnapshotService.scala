@@ -121,8 +121,16 @@ object StateChannelSnapshotService {
       )(implicit hasher: Hasher[F]): F[Unit] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
-            lastSnapshot.flatMap { case (value, _) => value.dataApplication }
-          }.flatMap(manager.consumeSignedMajorityArtifact(_, signedArtifact))
+            // Both come from the same previous snapshot the artifact was built on, so the activation gate
+            // resolves here exactly as it did when the artifact was created.
+            (
+              lastSnapshot.flatMap { case (value, _) => value.dataApplication },
+              lastSnapshot.flatMap { case (value, _) => value.globalSyncView }
+            )
+          }.flatMap {
+            case (lastDataApplication, lastGlobalSyncView) =>
+              manager.consumeSignedMajorityArtifact(lastDataApplication, signedArtifact, lastGlobalSyncView)
+          }
         }
         _ <- snapshotStorage
           .prepend(signedArtifact, context.snapshotInfo)

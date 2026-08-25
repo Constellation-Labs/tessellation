@@ -138,7 +138,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       context: AllowSpendBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
       shouldValidateCollateral: Boolean = true,
-      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+      creditDestination: Boolean = false
     )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] = ???
 
     override def acceptBlocksIteratively(
@@ -146,7 +147,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       context: AllowSpendBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
       shouldValidateCollateral: Boolean = true,
-      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+      creditDestination: Boolean = false
     )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
       AllowSpendBlockAcceptanceResult(
         AllowSpendBlockAcceptanceContextUpdate.empty,
@@ -324,7 +326,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty
+          ),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           bam,

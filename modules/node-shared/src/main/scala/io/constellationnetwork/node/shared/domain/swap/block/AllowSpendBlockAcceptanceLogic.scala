@@ -19,7 +19,8 @@ trait AllowSpendBlockAcceptanceLogic[F[_]] {
     txChains: Map[Address, AllowSpendNel],
     context: AllowSpendBlockAcceptanceContext[F],
     contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
-    shouldValidateCollateral: Boolean
+    shouldValidateCollateral: Boolean,
+    creditDestination: Boolean
   )(implicit hasher: Hasher[F]): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]
 
 }
@@ -34,12 +35,13 @@ object AllowSpendBlockAcceptanceLogic {
         txChains: Map[Address, AllowSpendNel],
         context: AllowSpendBlockAcceptanceContext[F],
         contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
-        shouldValidateCollateral: Boolean
+        shouldValidateCollateral: Boolean,
+        creditDestination: Boolean
       )(implicit hasher: Hasher[F]): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate] =
         for {
           _ <- processSignatures(signedBlock, context, shouldValidateCollateral)
           contextUpdate1 <- processLastTxRefs(txChains, context, contextUpdate)
-          contextUpdate2 <- processBalances(signedBlock, context, contextUpdate1)
+          contextUpdate2 <- processBalances(signedBlock, context, contextUpdate1, creditDestination)
         } yield contextUpdate2
 
       def processLastTxRefs(
@@ -106,10 +108,17 @@ object AllowSpendBlockAcceptanceLogic {
             contextUpdate.copy(lastTxRefs = lastTxRefsUpdate)
           }
 
+      // An allow spend escrows the amount at the source until a SpendAction consumes it; the destination is
+      // credited by updateGlobalBalancesBySpendTransactions at that point, not here. Crediting it here as
+      // well hands the destination a balance no snapshot ever recorded, which it can then spend into further
+      // allow spend blocks until recomputation disagrees and the snapshot fails to build.
+      // TokenLockBlockAcceptanceLogic.processBalances, the other escrow, only debits.
+      // creditDestination retains the old behaviour below the activation ordinal so replay stays byte-identical.
       private def processBalances(
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[F],
-        contextUpdate: AllowSpendBlockAcceptanceContextUpdate
+        contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
+        creditDestination: Boolean
       ): EitherT[F, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate] = {
         val minusFn: Amount => Balance => Either[BalanceArithmeticError, Balance] = a => _.minus(a)
         val plusFn: Amount => Balance => Either[BalanceArithmeticError, Balance] = a => _.plus(a)
@@ -117,9 +126,10 @@ object AllowSpendBlockAcceptanceLogic {
         val sortedTxs = block.transactions.toNonEmptyList
         val minusAmountOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.amount))
         val minusFeeOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.fee))
-        val plusAmountOps = sortedTxs.groupMap(_.destination)(tx => plusFn(tx.amount))
 
-        val allOps = minusAmountOps |+| minusFeeOps |+| plusAmountOps
+        val allOps =
+          if (creditDestination) minusAmountOps |+| minusFeeOps |+| sortedTxs.groupMap(_.destination)(tx => plusFn(tx.amount))
+          else minusAmountOps |+| minusFeeOps
 
         allOps
           .foldLeft(contextUpdate.balances.asRight[AddressBalanceOutOfRange].toEitherT[F]) { (acc, addressAndOps) =>

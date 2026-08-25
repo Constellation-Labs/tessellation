@@ -177,6 +177,12 @@ object Errors {
   case object SourceWalletNotSignTheTransaction extends DataApplicationValidationError {
     val message = "Source wallet should sign the transaction"
   }
+  case object FeeTransactionNotSignedExclusivelyBySource extends DataApplicationValidationError {
+    val message = "Fee transaction should be signed exclusively by the source wallet"
+  }
+  case object SameSourceAndDestinationAddress extends DataApplicationValidationError {
+    val message = "Fee transaction source and destination should differ"
+  }
   case object InvalidSignature extends DataApplicationValidationError {
     val message = "Invalid signature in data transactions"
   }

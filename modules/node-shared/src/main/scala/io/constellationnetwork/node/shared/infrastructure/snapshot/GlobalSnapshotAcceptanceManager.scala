@@ -175,6 +175,9 @@ object GlobalSnapshotAcceptanceManager {
       val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
+      val fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+
       val removingProcessedDelegatedStakeWithdrawalsOrdinal = fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawals
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
@@ -335,6 +338,7 @@ object GlobalSnapshotAcceptanceManager {
           lastSnapshotContext,
           ordinal,
           fixingAllowSpendAndTokenLockValidation,
+          fixingAllowSpendDestinationCredit,
           epochProgress
         )
 
@@ -1181,6 +1185,7 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       snapshotOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
       epochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
@@ -1189,13 +1194,15 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         AllowSpendReference.empty
       )
+      val creditDestination = snapshotOrdinal <= fixingAllowSpendDestinationCredit
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,
           context,
           snapshotOrdinal,
           shouldValidateCollateral = true,
-          epochProgress.some
+          epochProgress.some,
+          creditDestination
         )
       } else {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
@@ -1203,7 +1210,8 @@ object GlobalSnapshotAcceptanceManager {
           context,
           snapshotOrdinal,
           shouldValidateCollateral = true,
-          none
+          none,
+          creditDestination
         )
       }
     }

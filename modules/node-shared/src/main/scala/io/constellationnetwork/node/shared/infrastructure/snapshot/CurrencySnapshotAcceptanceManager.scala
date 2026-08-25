@@ -277,6 +277,8 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -304,11 +306,11 @@ object CurrencySnapshotAcceptanceManager {
         rewards
       )
 
-      _ <- validateFeeTxs(feeTransactionsForAcceptance)
+      validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance)
 
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
-        feeTransactionsForAcceptance
+        validatedFeeTxs
       )
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
@@ -415,7 +417,9 @@ object CurrencySnapshotAcceptanceManager {
         initialAllowSpendRef,
         shouldValidateCollateral,
         lastUnsyncGlobalSnapshot.ordinal,
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         fixingAllowSpendAndTokenLockValidation,
+        fixingAllowSpendDestinationCredit,
         lastGlobalSnapshotEpochProgress
       )
 
@@ -967,7 +971,9 @@ object CurrencySnapshotAcceptanceManager {
       initialTxRef: AllowSpendReference,
       shouldValidateCollateral: Boolean,
       lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      lastGlobalSyncViewOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
       lastSyncGlobalSnapshotEpochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
@@ -976,13 +982,19 @@ object CurrencySnapshotAcceptanceManager {
         collateral,
         initialTxRef
       )
+      // Deliberately not lastUnsyncGlobalSnapshotOrdinal, which the sibling gate on the line below uses: that
+      // is a live read of the node's own global head, so a node replaying an old snapshot today would evaluate
+      // the gate against today's head and apply the current rule to old history. lastGlobalSyncViewOrdinal is
+      // carried by the previous currency snapshot, so it is the same on every node and at every replay.
+      val creditDestination = lastGlobalSyncViewOrdinal <= fixingAllowSpendDestinationCredit
       if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,
           context,
           snapshotOrdinal,
           shouldValidateCollateral,
-          lastSyncGlobalSnapshotEpochProgress.some
+          lastSyncGlobalSnapshotEpochProgress.some,
+          creditDestination
         )
       } else {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
@@ -990,7 +1002,8 @@ object CurrencySnapshotAcceptanceManager {
           context,
           snapshotOrdinal,
           shouldValidateCollateral,
-          none
+          none,
+          creditDestination
         )
       }
     }
@@ -1026,17 +1039,27 @@ object CurrencySnapshotAcceptanceManager {
       (finalBalances, acceptedTxs).pure
     }
 
+    // Drops the transactions that fail validation rather than raising, for the same reason applyFeeTransactions
+    // drops unaffordable ones: fee transactions are user-supplied, and raising here fails the snapshot on a
+    // value an attacker chose. A self-addressed fee transaction, or one carrying a second signature, passes the
+    // data-application validators and is rejected only here.
     private def validateFeeTxs(
       maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
-    ): F[Unit] =
-      NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(().pure[F]) { nonEmptyTxs =>
-        feeTransactionValidator.validate(nonEmptyTxs).flatMap {
-          case Validated.Valid(_) =>
-            ().pure[F]
-          case Validated.Invalid(errors) =>
-            new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
-              .raiseError[F, Unit]
-        }
+    ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
+      maybeTxs.traverse { txs =>
+        txs.toList.traverseFilter { signedTx =>
+          feeTransactionValidator.validate(signedTx).flatMap {
+            case Validated.Valid(_) =>
+              signedTx.some.pure[F]
+            case Validated.Invalid(errors) =>
+              logger
+                .warn(
+                  s"Dropped fee transaction from ${signedTx.value.source.show} to ${signedTx.value.destination.show} of " +
+                    s"${signedTx.value.amount.value.value}: ${errors.toList.mkString(", ")}"
+                )
+                .as(none[Signed[FeeTransaction]])
+          }
+        }.map(SortedSet.from(_))
       }
 
     private def acceptFeeTxs(

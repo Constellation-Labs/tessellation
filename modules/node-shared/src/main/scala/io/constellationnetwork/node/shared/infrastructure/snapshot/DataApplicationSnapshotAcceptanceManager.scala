@@ -6,7 +6,7 @@ import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdates
@@ -15,12 +15,15 @@ import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.schema.currency.DataApplicationPart
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL0
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.node.shared.domain.block.processing.{BlockNotAcceptedReason, DataBlockNotAccepted}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -32,12 +35,14 @@ trait DataApplicationSnapshotAcceptanceManager[F[_]] {
     maybeLastDataApplication: Option[DataApplicationPart],
     dataBlocks: List[Signed[DataApplicationBlock]],
     lastOrdinal: SnapshotOrdinal,
-    currentOrdinal: SnapshotOrdinal
+    currentOrdinal: SnapshotOrdinal,
+    lastGlobalSyncView: Option[GlobalSyncView]
   ): F[Option[DataApplicationAcceptanceResult]]
 
   def consumeSignedMajorityArtifact(
     maybeLastDataApplication: Option[DataApplicationPart],
-    artifact: Signed[CurrencySnapshotArtifact]
+    artifact: Signed[CurrencySnapshotArtifact],
+    lastGlobalSyncView: Option[GlobalSyncView]
   ): F[Unit]
 }
 
@@ -65,9 +70,31 @@ object DataApplicationSnapshotAcceptanceManager {
   def make[F[_]: Async: Hasher: SecurityProvider](
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
-    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
+    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
+    fixingDataApplicationFeeValidation: SnapshotOrdinal
   ): DataApplicationSnapshotAcceptanceManager[F] = new DataApplicationSnapshotAcceptanceManager[F] {
     private val logger = Slf4jLogger.getLogger
+
+    // Same arithmetic and same iteration order as CurrencySnapshotAcceptanceManager.applyFeeTransactions, which
+    // folds over a SortedSet, so both layers reach the same verdict on the same transactions. The one difference
+    // is deliberate: acceptance drops the individual transaction it cannot apply, while here the whole block is
+    // rejected, because letting the block through would apply its data updates without charging for them.
+    private def applyFeeTransactions(
+      balances: SortedMap[Address, Balance],
+      feeTransactions: List[Signed[FeeTransaction]]
+    ): Either[Throwable, SortedMap[Address, Balance]] =
+      SortedSet.from(feeTransactions).foldLeft(balances.asRight[Throwable]) { (acc, tx) =>
+        acc.flatMap { current =>
+          (for {
+            debitedSource <- current.getOrElse(tx.source, Balance.empty).minus(tx.amount)
+            withSource = current.updated(tx.source, debitedSource)
+            creditedDestination <- withSource.getOrElse(tx.destination, Balance.empty).plus(tx.amount)
+          } yield withSource.updated(tx.destination, creditedDestination)).leftMap { e =>
+            val details = s"source: ${tx.source.show}, destination: ${tx.destination.show}, amount: ${tx.amount.value.value}"
+            new ArithmeticException(s"Cannot apply fee transaction: $e, $details")
+          }
+        }
+      }
 
     def expectCalculatedStateOrdinal(
       expectedOrdinal: SnapshotOrdinal
@@ -92,7 +119,8 @@ object DataApplicationSnapshotAcceptanceManager {
 
     def consumeSignedMajorityArtifact(
       maybeLastDataApplication: Option[DataApplicationPart],
-      artifact: Signed[CurrencySnapshotArtifact]
+      artifact: Signed[CurrencySnapshotArtifact],
+      lastGlobalSyncView: Option[GlobalSyncView]
     ): F[Unit] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
@@ -103,7 +131,7 @@ object DataApplicationSnapshotAcceptanceManager {
             .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
             .flatMapF { dataBlocks =>
               artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
-                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal)
+                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal, lastGlobalSyncView)
               )
             }
             .map(_.calculatedState)
@@ -119,9 +147,20 @@ object DataApplicationSnapshotAcceptanceManager {
       maybeLastDataApplication: Option[DataApplicationPart],
       dataBlocks: List[Signed[DataApplicationBlock]],
       lastOrdinal: SnapshotOrdinal,
-      currentOrdinal: SnapshotOrdinal
+      currentOrdinal: SnapshotOrdinal,
+      lastGlobalSyncView: Option[GlobalSyncView]
     ): F[Option[DataApplicationAcceptanceResult]] = {
       implicit val context: L0NodeContext[F] = nodeContext
+
+      // Snapshot acceptance is re-executed verbatim whenever a signed snapshot is replayed -- rejoin, download
+      // and consensus validation all recreate the artifact and compare it to the recorded one. The gate has to
+      // read a value carried by the history being replayed, not the node's live view of the global chain, or a
+      // node replaying an old ordinal today evaluates it against today's head and diverges. globalSyncView is a
+      // field of the previous currency snapshot, so it is identical on every node and at every replay. It is
+      // None on snapshots older than tessellation-3-migration, which are exactly the ones that must replay
+      // under the legacy rules.
+      val validateEveryFeeTransaction =
+        lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > fixingDataApplicationFeeValidation
 
       val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
         lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
@@ -153,6 +192,7 @@ object DataApplicationSnapshotAcceptanceManager {
         dataState = DataState(lastOnChainState, lastCalculatedState)
         initialResult = (
           dataState,
+          balances,
           List.empty[Signed[FeeTransaction]],
           List.empty[Signed[DataApplicationBlock]],
           List.empty[(Signed[DataApplicationBlock], DataBlockNotAccepted)]
@@ -165,19 +205,42 @@ object DataApplicationSnapshotAcceptanceManager {
             .getOrElse(Nil)
 
           if (blocksToProcess.isEmpty) {
-            val (oldState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks) = initialResult
+            val (oldState, oldBalances, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks) = initialResult
             // No blocks to process - call combine with empty updates
             service.combine(oldState, List.empty).map { newState =>
-              (newState, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks)
+              (newState, oldBalances, oldFeeTxns, oldAcceptedBlocks, oldRejectedBlocks)
             }
           } else {
             logger.info(s"Starting to process blocks: ${blocksToProcess.map(_.roundId)}") >>
               blocksToProcess.foldLeftM(initialResult) {
-                case ((currentState, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
+                case ((currentState, currentBalances, accFeeTransactions, accAcceptedBlocks, accNotAcceptedBlocks), dataBlock) =>
                   val dataTransactions = dataBlock.value.dataTransactions
 
+                  // At or above the activation ordinal the validator reads currentBalances rather than the
+                  // snapshot balances: fee transactions accepted by an earlier block in this same snapshot
+                  // have already been debited, so a later block cannot spend a balance that is no longer
+                  // there. Below it, currentBalances is never advanced and equals the snapshot balances, so
+                  // the validator sees exactly what it saw before.
+                  // The traverse validates each envelope on its own, so the per-source sum inside
+                  // validateAllFeeTransactions covers one envelope rather than the whole block: two envelopes
+                  // from the same source can each clear here while jointly exceeding its balance. The
+                  // applyFeeTransactions fold below runs over the block's fee transactions with checked
+                  // arithmetic and rejects the block in that case.
+                  val validationBalances = if (validateEveryFeeTransaction) currentBalances else balances
+
                   val dataTransactionsValidations =
-                    dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
+                    dataTransactions
+                      .traverse(
+                        validateDataTransactionsL0(
+                          _,
+                          service,
+                          validationBalances,
+                          currentOrdinal,
+                          dataState,
+                          validateEveryFeeTransaction
+                        )
+                      )
+                      .map(_.reduce)
 
                   dataTransactionsValidations.flatTap { validation =>
                     if (validation.isValid)
@@ -190,23 +253,47 @@ object DataApplicationSnapshotAcceptanceManager {
                       val dataUpdates = getDataUpdates(dataTransactionsAsList)
                       val feeTransactions = getFeeTransactions(dataTransactionsAsList)
 
-                      for {
-                        _ <- logger.info(s"Block ${dataBlock.value.roundId} is valid")
-                        result <- service.combine(currentState, dataUpdates).map { newState =>
-                          (
-                            newState,
-                            accFeeTransactions ++ feeTransactions,
-                            accAcceptedBlocks :+ dataBlock,
-                            accNotAcceptedBlocks
-                          )
-                        }
-                        _ <- logger.info(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
-                      } yield result
+                      // Below the activation ordinal the block is never rejected for arithmetic and the
+                      // running balance is left untouched, which is the pre-fix behaviour.
+                      val feeApplication =
+                        if (validateEveryFeeTransaction) applyFeeTransactions(currentBalances, feeTransactions)
+                        else currentBalances.asRight[Throwable]
+
+                      feeApplication match {
+                        case Left(err) =>
+                          logger
+                            .warn(s"Block ${dataBlock.value.roundId} not accepted: ${err.getMessage}")
+                            .as(
+                              (
+                                currentState,
+                                currentBalances,
+                                accFeeTransactions,
+                                accAcceptedBlocks,
+                                accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
+                              )
+                            )
+
+                        case Right(updatedBalances) =>
+                          for {
+                            _ <- logger.info(s"Block ${dataBlock.value.roundId} is valid")
+                            result <- service.combine(currentState, dataUpdates).map { newState =>
+                              (
+                                newState,
+                                updatedBalances,
+                                accFeeTransactions ++ feeTransactions,
+                                accAcceptedBlocks :+ dataBlock,
+                                accNotAcceptedBlocks
+                              )
+                            }
+                            _ <- logger.info(s"SharedArtifacts produced: ${result._1.sharedArtifacts}")
+                          } yield result
+                      }
 
                     case Invalid(err) =>
                       Async[F].pure(
                         (
                           currentState,
+                          currentBalances,
                           accFeeTransactions,
                           accAcceptedBlocks,
                           accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.toString))
@@ -217,6 +304,7 @@ object DataApplicationSnapshotAcceptanceManager {
                       Async[F].pure(
                         (
                           currentState,
+                          currentBalances,
                           accFeeTransactions,
                           accAcceptedBlocks,
                           accNotAcceptedBlocks :+ (dataBlock, DataBlockNotAccepted(err.getMessage))
@@ -227,7 +315,7 @@ object DataApplicationSnapshotAcceptanceManager {
           }
         }
 
-        (newDataState, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
+        (newDataState, _, validatedFeeTransactions, validatedBlocks, notAcceptedBlocks) = processingResult
 
         serializedOnChainState <- OptionT.liftF(
           service.serializeState(newDataState.onChain)
