@@ -1194,7 +1194,7 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         AllowSpendReference.empty
       )
-      val creditDestination = snapshotOrdinal <= fixingAllowSpendDestinationCredit
+      val creditDestination = snapshotOrdinal < fixingAllowSpendDestinationCredit
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,

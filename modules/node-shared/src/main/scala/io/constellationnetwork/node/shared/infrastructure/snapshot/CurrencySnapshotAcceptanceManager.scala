@@ -986,7 +986,7 @@ object CurrencySnapshotAcceptanceManager {
       // is a live read of the node's own global head, so a node replaying an old snapshot today would evaluate
       // the gate against today's head and apply the current rule to old history. lastGlobalSyncViewOrdinal is
       // carried by the previous currency snapshot, so it is the same on every node and at every replay.
-      val creditDestination = lastGlobalSyncViewOrdinal <= fixingAllowSpendDestinationCredit
+      val creditDestination = lastGlobalSyncViewOrdinal < fixingAllowSpendDestinationCredit
       if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,

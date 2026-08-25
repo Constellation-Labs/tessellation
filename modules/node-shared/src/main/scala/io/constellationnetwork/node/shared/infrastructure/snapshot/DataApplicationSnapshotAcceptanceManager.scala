@@ -160,7 +160,7 @@ object DataApplicationSnapshotAcceptanceManager {
       // None on snapshots older than tessellation-3-migration, which are exactly the ones that must replay
       // under the legacy rules.
       val validateEveryFeeTransaction =
-        lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > fixingDataApplicationFeeValidation
+        lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >= fixingDataApplicationFeeValidation
 
       val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
         lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
