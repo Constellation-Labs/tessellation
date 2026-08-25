@@ -279,6 +279,14 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      fixingDataApplicationFeeValidation = fieldsAddedOrdinals.fixingDataApplicationFeeValidation
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+      // Same gate, same deterministic ordinal, as the data application layer one level up. Below it that layer
+      // runs the legacy validator, which checks neither source != destination nor signature exclusivity, so a
+      // transaction failing only those still reaches acceptance. Dropping it here while an unpatched node
+      // raises would make the two produce different artifacts from the same events during the rollout window.
+      validateEveryFeeTransaction =
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >= fixingDataApplicationFeeValidation
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -306,7 +314,7 @@ object CurrencySnapshotAcceptanceManager {
         rewards
       )
 
-      validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance)
+      validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance, validateEveryFeeTransaction)
 
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
@@ -1039,28 +1047,45 @@ object CurrencySnapshotAcceptanceManager {
       (finalBalances, acceptedTxs).pure
     }
 
-    // Drops the transactions that fail validation rather than raising, for the same reason applyFeeTransactions
-    // drops unaffordable ones: fee transactions are user-supplied, and raising here fails the snapshot on a
-    // value an attacker chose. A self-addressed fee transaction, or one carrying a second signature, passes the
-    // data-application validators and is rejected only here.
+    // At or above the activation ordinal, drops the transactions that fail validation rather than raising, for
+    // the same reason applyFeeTransactions drops unaffordable ones: fee transactions are user-supplied, and
+    // raising fails the snapshot on a value an attacker chose. A self-addressed fee transaction, or one
+    // carrying a second signature, passes the data-application validators and is rejected only here.
+    //
+    // Below the activation ordinal it keeps raising. The drop changes which artifact this method produces from
+    // the same events, and the data application layer is on its legacy rules down there -- it checks neither
+    // source != destination nor signature exclusivity -- so such a transaction still reaches acceptance. A
+    // patched node dropping it while an unpatched node raises would split the rollout window.
     private def validateFeeTxs(
-      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
+      dropInvalid: Boolean
     ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
-      maybeTxs.traverse { txs =>
-        txs.toList.traverseFilter { signedTx =>
-          feeTransactionValidator.validate(signedTx).flatMap {
+      if (!dropInvalid)
+        NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(maybeTxs.pure[F]) { nonEmptyTxs =>
+          feeTransactionValidator.validate(nonEmptyTxs).flatMap {
             case Validated.Valid(_) =>
-              signedTx.some.pure[F]
+              maybeTxs.pure[F]
             case Validated.Invalid(errors) =>
-              logger
-                .warn(
-                  s"Dropped fee transaction from ${signedTx.value.source.show} to ${signedTx.value.destination.show} of " +
-                    s"${signedTx.value.amount.value.value}: ${errors.toList.mkString(", ")}"
-                )
-                .as(none[Signed[FeeTransaction]])
+              new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
+                .raiseError[F, Option[SortedSet[Signed[FeeTransaction]]]]
           }
-        }.map(SortedSet.from(_))
-      }
+        }
+      else
+        maybeTxs.traverse { txs =>
+          txs.toList.traverseFilter { signedTx =>
+            feeTransactionValidator.validate(signedTx).flatMap {
+              case Validated.Valid(_) =>
+                signedTx.some.pure[F]
+              case Validated.Invalid(errors) =>
+                logger
+                  .warn(
+                    s"Dropped fee transaction from ${signedTx.value.source.show} to ${signedTx.value.destination.show} of " +
+                      s"${signedTx.value.amount.value.value}: ${errors.toList.mkString(", ")}"
+                  )
+                  .as(none[Signed[FeeTransaction]])
+            }
+          }.map(SortedSet.from(_))
+        }
 
     private def acceptFeeTxs(
       balances: SortedMap[Address, Balance],
