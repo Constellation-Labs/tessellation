@@ -5,7 +5,10 @@ import cats.data.NonEmptySet
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
-import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotAcceptanceManager.applyFeeTransactions
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotAcceptanceManager.{
+  applyFeeTransactions,
+  applyFeeTransactionsUnchecked
+}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -173,5 +176,33 @@ object CurrencySnapshotAcceptanceManagerFeeTxsSuite extends SimpleIOSuite with C
 
         expect.eql(totalSupply(before), totalSupply(after))
     }
+  }
+
+  pureTest("the unchecked path still reproduces the mint, so gated replay matches the signed history") {
+    // Kept deliberately. The fix changes what a snapshot contains, so a node recomputing an ordinal from
+    // before the activation with checked arithmetic would reach different balances than the snapshot that
+    // was actually signed. This asserts the legacy path still wraps exactly as it did on 2026-08-24:
+    // 0 -> -2^62 -> Long.MinValue -> +2^62 -> 0, crediting four destinations 2^62 each from nothing.
+    val txs = SortedSet(
+      feeTx(payer, payeeA, twoPow62, 1),
+      feeTx(payer, payeeB, twoPow62, 2),
+      feeTx(payer, payeeC, twoPow62, 3),
+      feeTx(payer, payeeD, twoPow62, 4)
+    )
+    val before = balancesOf(payer -> 0L)
+
+    val (after, accepted, rejected) = applyFeeTransactionsUnchecked(before, txs)
+
+    expect.all(
+      accepted.size == 4,
+      rejected.isEmpty,
+      after(payer) == Balance.empty,
+      after(payeeA).value.value == twoPow62,
+      after(payeeB).value.value == twoPow62,
+      after(payeeC).value.value == twoPow62,
+      after(payeeD).value.value == twoPow62,
+      // supply created out of nothing -- the bug, preserved on purpose for pre-activation replay
+      totalSupply(after) == BigInt(4) * BigInt(twoPow62)
+    )
   }
 }
