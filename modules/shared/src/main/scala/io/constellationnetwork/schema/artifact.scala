@@ -62,6 +62,9 @@ object artifact {
   case object SpendTransactionSourceNotApplied extends BalanceAdjustmentReason
   case object SpendTransactionDestinationNotApplied extends BalanceAdjustmentReason
   case object TokenUnlockBugDeduction extends BalanceAdjustmentReason
+  // Appended last on purpose: the derived Order is subtype-position based, so inserting
+  // above an existing variant would reorder SortedSet[SharedArtifact] in past snapshots.
+  case object FeeTransactionBugDeduction extends BalanceAdjustmentReason
 
   @derive(decoder, encoder, order, ordering, show)
   case class BalanceAdjustment(
