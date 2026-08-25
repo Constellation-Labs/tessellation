@@ -98,7 +98,13 @@ object Services {
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
-          DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
+          DataApplicationSnapshotAcceptanceManager.make[F](
+            service,
+            l0NodeContext,
+            storage,
+            sharedCfg.fieldsAddedOrdinals.fixingDataApplicationFeeValidation
+              .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+          )
       }
 
       feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)

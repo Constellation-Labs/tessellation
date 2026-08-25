@@ -85,6 +85,8 @@ object CurrencySnapshotProcessorSuite extends SimpleIOSuite with TransactionGene
                 Map.empty,
                 Map.empty,
                 Map.empty,
+                Map.empty,
+                Map.empty,
                 Map.empty
               ),
               Dev,

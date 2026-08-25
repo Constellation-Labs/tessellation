@@ -164,7 +164,7 @@ object CurrencySnapshotCreator {
             }
 
           dataApplicationAcceptanceResult <- dataApplicationSnapshotAcceptanceManager.flatTraverse(
-            _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
+            _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal, lastArtifact.globalSyncView)
           )
 
           customArtifacts = maybeCustomArtifacts.map { customArtifactFn =>

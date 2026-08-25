@@ -277,6 +277,16 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+      fixingDataApplicationFeeValidation = fieldsAddedOrdinals.fixingDataApplicationFeeValidation
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
+      // Same gate, same deterministic ordinal, as the data application layer one level up. Below it that layer
+      // runs the legacy validator, which checks neither source != destination nor signature exclusivity, so a
+      // transaction failing only those still reaches acceptance. Dropping it here while an unpatched node
+      // raises would make the two produce different artifacts from the same events during the rollout window.
+      validateEveryFeeTransaction =
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >= fixingDataApplicationFeeValidation
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -304,11 +314,11 @@ object CurrencySnapshotAcceptanceManager {
         rewards
       )
 
-      _ <- validateFeeTxs(feeTransactionsForAcceptance)
+      validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance, validateEveryFeeTransaction)
 
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
-        feeTransactionsForAcceptance
+        validatedFeeTxs
       )
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
@@ -415,7 +425,9 @@ object CurrencySnapshotAcceptanceManager {
         initialAllowSpendRef,
         shouldValidateCollateral,
         lastUnsyncGlobalSnapshot.ordinal,
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         fixingAllowSpendAndTokenLockValidation,
+        fixingAllowSpendDestinationCredit,
         lastGlobalSnapshotEpochProgress
       )
 
@@ -967,7 +979,9 @@ object CurrencySnapshotAcceptanceManager {
       initialTxRef: AllowSpendReference,
       shouldValidateCollateral: Boolean,
       lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+      lastGlobalSyncViewOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
       lastSyncGlobalSnapshotEpochProgress: EpochProgress
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
@@ -976,13 +990,19 @@ object CurrencySnapshotAcceptanceManager {
         collateral,
         initialTxRef
       )
+      // Deliberately not lastUnsyncGlobalSnapshotOrdinal, which the sibling gate on the line below uses: that
+      // is a live read of the node's own global head, so a node replaying an old snapshot today would evaluate
+      // the gate against today's head and apply the current rule to old history. lastGlobalSyncViewOrdinal is
+      // carried by the previous currency snapshot, so it is the same on every node and at every replay.
+      val creditDestination = lastGlobalSyncViewOrdinal < fixingAllowSpendDestinationCredit
       if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,
           context,
           snapshotOrdinal,
           shouldValidateCollateral,
-          lastSyncGlobalSnapshotEpochProgress.some
+          lastSyncGlobalSnapshotEpochProgress.some,
+          creditDestination
         )
       } else {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
@@ -990,7 +1010,8 @@ object CurrencySnapshotAcceptanceManager {
           context,
           snapshotOrdinal,
           shouldValidateCollateral,
-          none
+          none,
+          creditDestination
         )
       }
     }
@@ -1026,18 +1047,45 @@ object CurrencySnapshotAcceptanceManager {
       (finalBalances, acceptedTxs).pure
     }
 
+    // At or above the activation ordinal, drops the transactions that fail validation rather than raising, for
+    // the same reason applyFeeTransactions drops unaffordable ones: fee transactions are user-supplied, and
+    // raising fails the snapshot on a value an attacker chose. A self-addressed fee transaction, or one
+    // carrying a second signature, passes the data-application validators and is rejected only here.
+    //
+    // Below the activation ordinal it keeps raising. The drop changes which artifact this method produces from
+    // the same events, and the data application layer is on its legacy rules down there -- it checks neither
+    // source != destination nor signature exclusivity -- so such a transaction still reaches acceptance. A
+    // patched node dropping it while an unpatched node raises would split the rollout window.
     private def validateFeeTxs(
-      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
-    ): F[Unit] =
-      NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(().pure[F]) { nonEmptyTxs =>
-        feeTransactionValidator.validate(nonEmptyTxs).flatMap {
-          case Validated.Valid(_) =>
-            ().pure[F]
-          case Validated.Invalid(errors) =>
-            new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
-              .raiseError[F, Unit]
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
+      dropInvalid: Boolean
+    ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
+      if (!dropInvalid)
+        NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(maybeTxs.pure[F]) { nonEmptyTxs =>
+          feeTransactionValidator.validate(nonEmptyTxs).flatMap {
+            case Validated.Valid(_) =>
+              maybeTxs.pure[F]
+            case Validated.Invalid(errors) =>
+              new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
+                .raiseError[F, Option[SortedSet[Signed[FeeTransaction]]]]
+          }
         }
-      }
+      else
+        maybeTxs.traverse { txs =>
+          txs.toList.traverseFilter { signedTx =>
+            feeTransactionValidator.validate(signedTx).flatMap {
+              case Validated.Valid(_) =>
+                signedTx.some.pure[F]
+              case Validated.Invalid(errors) =>
+                logger
+                  .warn(
+                    s"Dropped fee transaction from ${signedTx.value.source.show} to ${signedTx.value.destination.show} of " +
+                      s"${signedTx.value.amount.value.value}: ${errors.toList.mkString(", ")}"
+                  )
+                  .as(none[Signed[FeeTransaction]])
+            }
+          }.map(SortedSet.from(_))
+        }
 
     private def acceptFeeTxs(
       balances: SortedMap[Address, Balance],
