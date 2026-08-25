@@ -4984,6 +4984,7 @@
   {
     "currencyId": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
     "snapshotOrdinal": 731647,
+    "enforceExactMatch": true,
     "adjustments": [
       {
         "address": "DAG1kEmLAgnCVBURHrL4AMsfn9TZdk4QCYQ8tUu3",
