@@ -13,7 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalan
 }
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{BalanceAdjustment, FeeTransactionBugDeduction}
+import io.constellationnetwork.schema.artifact.{BalanceAdjustment, FeeTransactionBugDeduction, TokenUnlockBugDeduction}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.security.hash.Hash
 
@@ -57,29 +57,44 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   /** An address no adjustment names, which has to come out of the fix byte for byte. */
   private val bystander = Address("DAG62QdFnvW8xX3uGmo6F3yB2CT5i25hZoVmN6za") -> 4200000000L
 
-  /** Read straight out of the shipped resource rather than restated here, so this is the exact set the metagraph has to emit at 731650 for
-    * the snapshot to be accepted.
-    */
-  private val requiredAdjustments: Set[RequiredAdjustment] =
+  private val incidentAdjustmentBlock =
     (for {
       jsonString <- BalanceAdjustmentLoader.readResourceFile("/adjustments.json")
       parsed <- BalanceAdjustmentLoader.parseJsonToModel(jsonString)
-      byCurrency <- BalanceAdjustmentLoader.convertToBalanceAdjustments(parsed)
-    } yield byCurrency.getOrElse(pacaswap, Set.empty[RequiredAdjustment]))
+      block <- parsed
+        .find(block => block.currencyId == pacaswap && block.snapshotOrdinal == adjustmentOrdinal)
+        .toRight("PacaSwap incident adjustment block not found")
+    } yield block)
       .fold(error => throw new RuntimeException(error), identity)
 
-  private def asArtifact(required: RequiredAdjustment): BalanceAdjustment =
-    required.adjustment match {
-      case AdjustmentType.Decrease(amount) =>
-        BalanceAdjustment(required.address, FeeTransactionBugDeduction, SortedSet(Hash.empty), none, amount.some)
-      case AdjustmentType.Increase(amount) =>
-        BalanceAdjustment(required.address, FeeTransactionBugDeduction, SortedSet(Hash.empty), amount.some, none)
-    }
+  /** Read straight out of the shipped resource, including reason and reference, so this is the complete artifact set the metagraph must
+    * emit at 731650.
+    */
+  private val allDeductions: Set[BalanceAdjustment] =
+    incidentAdjustmentBlock.adjustments
+      .traverse(BalanceAdjustmentLoader.convertSingleBalanceAdjustment)
+      .map(_.toSet)
+      .fold(error => throw new RuntimeException(error), identity)
 
-  private val allDeductions: Set[BalanceAdjustment] = requiredAdjustments.map(asArtifact)
+  private val requiredAdjustments: Set[RequiredAdjustment] =
+    incidentAdjustmentBlock.adjustments
+      .traverse(BalanceAdjustmentLoader.convertSingleAdjustment)
+      .map(_.toSet)
+      .fold(error => throw new RuntimeException(error), identity)
 
   private def deduction(address: Address, amount: Long): BalanceAdjustment =
-    asArtifact(RequiredAdjustment(address, AdjustmentType.Decrease(Amount(NonNegLong.unsafeFrom(amount)))))
+    BalanceAdjustment(
+      address,
+      FeeTransactionBugDeduction,
+      SortedSet(Hash.empty),
+      none,
+      Amount(NonNegLong.unsafeFrom(amount)).some
+    )
+
+  private def authorizedDeduction(address: Address, amount: Long): BalanceAdjustment =
+    allDeductions
+      .find(adjustment => adjustment.address == address && adjustment.deduct.exists(_.value.value == amount))
+      .getOrElse(throw new RuntimeException(s"Authorized deduction not found for $address: $amount"))
 
   private lazy val entryAt731650 =
     metagraphsBalancesAdjustments(pacaswap).find(_.snapshotOrdinal == adjustmentOrdinal).get
@@ -91,15 +106,16 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
       }
     )
 
-  // metagraphsBalancesAdjustments is built with .toMap, so only the last block for a currency in
-  // adjustments.json is ever active. Appending a new Pacaswap block silently retires the previous one.
+  // The incident block must remain registered alongside every historical PacaSwap block, and only this
+  // newly scheduled block should opt into exact artifact authorization.
   pureTest("the active Pacaswap entry is the fee-transaction deduction at ordinal 731650") {
     val entry = metagraphsBalancesAdjustments.get(pacaswap)
 
     expect.all(
       entry.isDefined,
       entry.exists(_.exists(_.snapshotOrdinal == adjustmentOrdinal)),
-      entry.exists(_.exists(_.environment == Mainnet))
+      entry.exists(_.exists(_.environment == Mainnet)),
+      entry.exists(_.exists(entry => entry.snapshotOrdinal == adjustmentOrdinal && entry.exactMatchRequired))
     )
   }
 
@@ -155,7 +171,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   // If the metagraph fails to emit the full artifact set at 731650 the snapshot must not be produced,
   // rather than being accepted with a partial deduction.
   pureTest("the entry rejects an incomplete adjustment set") {
-    val partial = allDeductions - deduction(mintedWallets.head._1, minted)
+    val partial = allDeductions - authorizedDeduction(mintedWallets.head._1, minted)
     val result = entryAt731650.balanceAdjustFunction(balances, partial)
 
     expect(result.isLeft)
@@ -164,7 +180,10 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   // Amounts are matched exactly, so a rounded or rescaled figure on either side of the pair is
   // indistinguishable from a missing artifact.
   pureTest("the entry rejects an adjustment whose amount is off by one") {
-    val skewed = allDeductions - deduction(pacaswap, poolSurplus) + deduction(pacaswap, poolSurplus - 1L)
+    val authorizedPoolDeduction = authorizedDeduction(pacaswap, poolSurplus)
+    val skewed = allDeductions - authorizedPoolDeduction + authorizedPoolDeduction.copy(
+      deduct = Amount(NonNegLong.unsafeFrom(poolSurplus - 1L)).some
+    )
     val result = entryAt731650.balanceAdjustFunction(balances, skewed)
 
     expect(result.isLeft)
@@ -199,5 +218,34 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
 
     expect(result.isLeft) &&
     expect(result.left.exists(_.toLowerCase.contains("unauthorized")))
+  }
+
+  pureTest("the entry rejects a matching deduction with an unauthorized increase") {
+    val authorized = authorizedDeduction(pacaswap, poolSurplus)
+    val withIncrease = authorized.copy(increase = Amount(NonNegLong.unsafeFrom(1L)).some)
+
+    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions - authorized + withIncrease)
+
+    expect(result.isLeft)
+  }
+
+  pureTest("the entry rejects changed reason or reference metadata") {
+    val authorized = authorizedDeduction(pacaswap, poolSurplus)
+    val wrongReason = authorized.copy(reason = TokenUnlockBugDeduction)
+    val wrongReference = authorized.copy(reference = authorized.reference + Hash("unauthorized-reference"))
+
+    expect.all(
+      entryAt731650.balanceAdjustFunction(balances, allDeductions - authorized + wrongReason).isLeft,
+      entryAt731650.balanceAdjustFunction(balances, allDeductions - authorized + wrongReference).isLeft
+    )
+  }
+
+  pureTest("the entry rejects a duplicate deduction distinguished only by metadata") {
+    val authorized = authorizedDeduction(pacaswap, poolSurplus)
+    val duplicate = authorized.copy(reference = authorized.reference + Hash("unauthorized-reference"))
+
+    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions + duplicate)
+
+    expect(result.isLeft)
   }
 }

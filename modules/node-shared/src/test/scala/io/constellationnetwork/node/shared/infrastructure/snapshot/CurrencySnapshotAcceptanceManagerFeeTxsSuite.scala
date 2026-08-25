@@ -178,11 +178,7 @@ object CurrencySnapshotAcceptanceManagerFeeTxsSuite extends SimpleIOSuite with C
     }
   }
 
-  pureTest("the unchecked path still reproduces the mint, so gated replay matches the signed history") {
-    // Kept deliberately. The fix changes what a snapshot contains, so a node recomputing an ordinal from
-    // before the activation with checked arithmetic would reach different balances than the snapshot that
-    // was actually signed. This asserts the legacy path still wraps exactly as it did on 2026-08-24:
-    // 0 -> -2^62 -> Long.MinValue -> +2^62 -> 0, crediting four destinations 2^62 each from nothing.
+  pureTest("the pre-gate path reproduces the accepted incident balances") {
     val txs = SortedSet(
       feeTx(payer, payeeA, twoPow62, 1),
       feeTx(payer, payeeB, twoPow62, 2),
@@ -191,18 +187,38 @@ object CurrencySnapshotAcceptanceManagerFeeTxsSuite extends SimpleIOSuite with C
     )
     val before = balancesOf(payer -> 0L)
 
-    val (after, accepted, rejected) = applyFeeTransactionsUnchecked(before, txs)
+    val after = applyFeeTransactionsUnchecked(before, txs)
 
     expect.all(
-      accepted.size == 4,
-      rejected.isEmpty,
-      after(payer) == Balance.empty,
-      after(payeeA).value.value == twoPow62,
-      after(payeeB).value.value == twoPow62,
-      after(payeeC).value.value == twoPow62,
-      after(payeeD).value.value == twoPow62,
-      // supply created out of nothing -- the bug, preserved on purpose for pre-activation replay
-      totalSupply(after) == BigInt(4) * BigInt(twoPow62)
+      after.exists(_.getOrElse(payer, Balance.empty) == Balance.empty),
+      after.exists(_(payeeA).value.value == twoPow62),
+      after.exists(_(payeeB).value.value == twoPow62),
+      after.exists(_(payeeC).value.value == twoPow62),
+      after.exists(_(payeeD).value.value == twoPow62),
+      after.exists(b => totalSupply(b) == BigInt(twoPow62) * 4)
     )
+  }
+
+  pureTest("the pre-gate and checked paths agree on an affordable batch") {
+    val txs = SortedSet(
+      feeTx(payer, payeeA, 30L, 1),
+      feeTx(payer, payeeB, 40L, 2)
+    )
+    val before = balancesOf(payer -> 100L, payeeA -> 5L)
+
+    val (checked, accepted, rejected) = applyFeeTransactions(before, txs)
+
+    expect.all(
+      accepted.size == 2,
+      rejected.isEmpty,
+      applyFeeTransactionsUnchecked(before, txs).contains(checked)
+    )
+  }
+
+  pureTest("the pre-gate path preserves the legacy final non-negative check") {
+    val txs = SortedSet(feeTx(payer, payeeA, 101L, 1))
+    val before = balancesOf(payer -> 100L)
+
+    expect(applyFeeTransactionsUnchecked(before, txs).isLeft)
   }
 }

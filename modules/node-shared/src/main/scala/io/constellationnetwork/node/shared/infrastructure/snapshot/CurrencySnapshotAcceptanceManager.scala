@@ -124,31 +124,6 @@ object CurrencySnapshotAcceptanceManager {
     * @return
     *   the updated balances, the accepted transactions, and the rejected ones in iteration order
     */
-  /** The pre-fix wrapping implementation, kept so historical ordinals still replay to the state that was actually signed.
-    *
-    * The fix changes what a snapshot contains, so a node recomputing an ordinal from before the activation with checked arithmetic reaches
-    * different balances than the recorded snapshot and diverges. Gating on the activation ordinal means the corrected path applies only
-    * from the point the network agreed to it.
-    */
-  def applyFeeTransactionsUnchecked(
-    balances: SortedMap[Address, Balance],
-    txs: SortedSet[Signed[FeeTransaction]]
-  ): (SortedMap[Address, Balance], SortedSet[Signed[FeeTransaction]], List[Signed[FeeTransaction]]) = {
-    val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
-    val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
-      case (acc, address) => acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
-    }
-    val updated = txs.foldLeft(feeReferredBalances) {
-      case (acc, tx) =>
-        acc
-          .updatedWith(tx.value.source)(existing => (existing.getOrElse(0L) - tx.value.amount.value.value).some)
-          .updatedWith(tx.value.destination)(existing => (existing.getOrElse(0L) + tx.value.amount.value.value).some)
-    }
-    val asBalances = updated.map { case (a, v) => a -> Balance(NonNegLong.unsafeFrom(v)) }
-
-    (balances ++ asBalances, txs, List.empty)
-  }
-
   def applyFeeTransactions(
     balances: SortedMap[Address, Balance],
     txs: SortedSet[Signed[FeeTransaction]]
@@ -174,6 +149,39 @@ object CurrencySnapshotAcceptanceManager {
       }
 
     (balances ++ feeReferredBalances, txs -- rejected, rejected.reverse)
+  }
+
+  /** Legacy raw-Long accumulation retained only for deterministic replay below fixingDataApplicationFeeValidation.
+    *
+    * The incident snapshot was signed with this behavior. Re-executing it with checked arithmetic drops the four overflowing transactions
+    * and produces a different state proof, so historical snapshots must select this path from their signed globalSyncView.
+    */
+  def applyFeeTransactionsUnchecked(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[Signed[FeeTransaction]]
+  ): Either[Throwable, SortedMap[Address, Balance]] = {
+    val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
+    val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
+      case (acc, address) =>
+        acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
+    }
+    val updatedFeeReferredBalances = txs.foldLeft(feeReferredBalances) {
+      case (current, tx) =>
+        current
+          .updatedWith(tx.source)(existing => (existing.getOrElse(Balance.empty.value.value) - tx.amount.value).some)
+          .updatedWith(tx.destination)(existing => (existing.getOrElse(Balance.empty.value.value) + tx.amount.value).some)
+    }
+
+    updatedFeeReferredBalances.toList
+      .foldLeftM(SortedMap.empty[Address, Balance]) {
+        case (acc, (address, balance)) =>
+          NonNegLong
+            .from(balance)
+            .map(Balance(_))
+            .map(acc.updated(address, _))
+            .leftMap(e => new ArithmeticException(s"Unexpected state when applying fee transactions: $e"): Throwable)
+      }
+      .map(balances ++ _)
   }
 
   def make[F[_]: Async: Parallel](
@@ -296,8 +304,6 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatedLastSyncGlobalFromPeersInConsensus = fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus
         .getOrElse(environment, SnapshotOrdinal.MinValue)
-      fixingFeeTransactionBalanceOverflowOrdinal = fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow
-        .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatingCombineFunctionSpendActions = fieldsAddedOrdinals.updatingCombineFunctionSpendActions
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
@@ -343,16 +349,10 @@ object CurrencySnapshotAcceptanceManager {
 
       validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance, validateEveryFeeTransaction)
 
-      maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
-
-      (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
-        .fromOption(maybeUnsyncLastGlobalSnapshot)
-        .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
-
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
         validatedFeeTxs,
-        lastUnsyncGlobalSnapshot.ordinal > fixingFeeTransactionBalanceOverflowOrdinal
+        checkedArithmetic = validateEveryFeeTransaction
       )
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
@@ -363,6 +363,12 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext.address,
         facilitators
       )
+
+      maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
+
+      (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
+        .fromOption(maybeUnsyncLastGlobalSnapshot)
+        .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
 
       messagesAcceptanceResult <- acceptMessages(
         lastSnapshotContext.snapshotInfo.lastMessages,
@@ -1124,10 +1130,10 @@ object CurrencySnapshotAcceptanceManager {
     ): F[(SortedMap[Address, Balance], Option[SortedSet[Signed[FeeTransaction]]])] =
       maybeTxs match {
         case None => (balances, maybeTxs).pure[F]
+        case Some(txs) if !checkedArithmetic =>
+          applyFeeTransactionsUnchecked(balances, txs).liftTo[F].map((_, txs.some))
         case Some(txs) =>
-          val (updatedBalances, acceptedTxs, rejectedTxs) =
-            if (checkedArithmetic) applyFeeTransactions(balances, txs)
-            else applyFeeTransactionsUnchecked(balances, txs)
+          val (updatedBalances, acceptedTxs, rejectedTxs) = applyFeeTransactions(balances, txs)
 
           rejectedTxs.traverse_ { signedTx =>
             logger.warn(
