@@ -54,10 +54,15 @@ object BalanceAdjustmentLoader {
       )
   }
 
-  /** Load adjustments and create BalanceAdjustmentAtOrdinal entries for integration with metagraphsBalancesAdjustments */
+  /** Load adjustments and create BalanceAdjustmentAtOrdinal entries for integration with metagraphsBalancesAdjustments.
+    *
+    * A metagraph may hold several blocks, one per ordinal at which it adjusts balances, so entries are grouped rather than keyed uniquely.
+    * Keying uniquely meant the last block in the file silently retired every earlier block for the same currency, which both broke replay
+    * of those ordinals and made a follow-up adjustment impossible to schedule.
+    */
   def loadAndCreateAdjustmentEntries(
     resourcePath: String
-  ): Either[String, Map[Address, BalanceAdjustmentAtOrdinal]] =
+  ): Either[String, Map[Address, List[BalanceAdjustmentAtOrdinal]]] =
     for {
       jsonString <- readResourceFile(resourcePath)
       jsonAdjustments <- parseJsonToModel(jsonString)
@@ -66,7 +71,7 @@ object BalanceAdjustmentLoader {
 
   def convertToAdjustmentEntries(
     jsonAdjustments: List[JsonCurrencyAdjustments]
-  ): Either[String, Map[Address, BalanceAdjustmentAtOrdinal]] = {
+  ): Either[String, Map[Address, List[BalanceAdjustmentAtOrdinal]]] = {
 
     val convertedEntries = jsonAdjustments.map { currencyAdj =>
       val convertedAdjustments = currencyAdj.adjustments.map { adj =>
@@ -97,7 +102,7 @@ object BalanceAdjustmentLoader {
     if (currencyErrors.nonEmpty) {
       Left(currencyErrors.mkString("; "))
     } else {
-      Right(successfulEntries.toMap)
+      Right(successfulEntries.groupMap(_._1)(_._2))
     }
   }
 

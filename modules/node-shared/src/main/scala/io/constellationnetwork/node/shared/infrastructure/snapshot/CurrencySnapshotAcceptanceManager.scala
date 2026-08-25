@@ -591,8 +591,14 @@ object CurrencySnapshotAcceptanceManager {
       }
 
       updatedBalancesByInvalidAddressChecks <-
+        // A metagraph may be authorized at several ordinals, so select the block matching this one
+        // rather than assuming a single entry. Keying uniquely meant the last block in the resource
+        // silently retired every earlier block for the same currency: replaying one of those ordinals
+        // applied no adjustment and diverged without raising, and a follow-up adjustment could not be
+        // scheduled at all.
         metagraphsBalancesAdjustments
-          .get(lastSnapshotContext.address)
+          .getOrElse(lastSnapshotContext.address, List.empty)
+          .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
           .fold[F[SortedMap[Address, Balance]]] {
             if (balanceAdjustments.nonEmpty) {
               val unauthorizedError = new RuntimeException(
@@ -603,13 +609,9 @@ object CurrencySnapshotAcceptanceManager {
               updatedBalancesBySpendTransactions.pure[F]
             }
           } { info =>
-            if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment) {
-              info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
-                case Right(balances) => balances.pure[F]
-                case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
-              }
-            } else {
-              updatedBalancesBySpendTransactions.pure[F]
+            info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+              case Right(balances) => balances.pure[F]
+              case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
             }
           }
 

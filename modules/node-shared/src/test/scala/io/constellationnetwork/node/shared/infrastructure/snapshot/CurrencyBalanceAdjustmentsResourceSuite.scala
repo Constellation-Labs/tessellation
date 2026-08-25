@@ -81,6 +81,9 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   private def deduction(address: Address, amount: Long): BalanceAdjustment =
     asArtifact(RequiredAdjustment(address, AdjustmentType.Decrease(Amount(NonNegLong.unsafeFrom(amount)))))
 
+  private lazy val entryAt735000 =
+    metagraphsBalancesAdjustments(pacaswap).find(_.snapshotOrdinal == adjustmentOrdinal).get
+
   private val balances: SortedMap[Address, Balance] =
     SortedMap.from(
       (mintedWallets ++ buyers.map { case (a, held, _) => a -> held } :+ (pacaswap -> poolBalance) :+ bystander).map {
@@ -95,8 +98,8 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
 
     expect.all(
       entry.isDefined,
-      entry.exists(_.snapshotOrdinal == adjustmentOrdinal),
-      entry.exists(_.environment == Mainnet)
+      entry.exists(_.exists(_.snapshotOrdinal == adjustmentOrdinal)),
+      entry.exists(_.exists(_.environment == Mainnet))
     )
   }
 
@@ -123,7 +126,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   }
 
   pureTest("the entry zeroes the minted wallets and takes the surplus off the pool") {
-    val result = metagraphsBalancesAdjustments(pacaswap).balanceAdjustFunction(balances, allDeductions)
+    val result = entryAt735000.balanceAdjustFunction(balances, allDeductions)
 
     result match {
       case Left(error) => failure(s"expected the adjustment to apply, got: $error")
@@ -137,7 +140,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   }
 
   pureTest("buyers keep the PACA they held before the mint") {
-    val result = metagraphsBalancesAdjustments(pacaswap).balanceAdjustFunction(balances, allDeductions)
+    val result = entryAt735000.balanceAdjustFunction(balances, allDeductions)
 
     result match {
       case Left(error) => failure(s"expected the adjustment to apply, got: $error")
@@ -153,7 +156,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   // rather than being accepted with a partial deduction.
   pureTest("the entry rejects an incomplete adjustment set") {
     val partial = allDeductions - deduction(mintedWallets.head._1, minted)
-    val result = metagraphsBalancesAdjustments(pacaswap).balanceAdjustFunction(balances, partial)
+    val result = entryAt735000.balanceAdjustFunction(balances, partial)
 
     expect(result.isLeft)
   }
@@ -162,8 +165,25 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   // indistinguishable from a missing artifact.
   pureTest("the entry rejects an adjustment whose amount is off by one") {
     val skewed = allDeductions - deduction(pacaswap, poolSurplus) + deduction(pacaswap, poolSurplus - 1L)
-    val result = metagraphsBalancesAdjustments(pacaswap).balanceAdjustFunction(balances, skewed)
+    val result = entryAt735000.balanceAdjustFunction(balances, skewed)
 
     expect(result.isLeft)
+  }
+
+  pureTest("every historical adjustment block for a currency stays live, not just the last") {
+    // convertToAdjustmentEntries used to end in .toMap, so the last block in the resource silently
+    // retired every earlier block for the same currency. Replaying one of those ordinals then applied
+    // no adjustment and diverged without raising, and a follow-up block could not be scheduled.
+    val blocks = metagraphsBalancesAdjustments.getOrElse(pacaswap, List.empty)
+    val ordinals = blocks.map(_.snapshotOrdinal.value.value).toSet
+
+    expect.all(
+      blocks.size >= 4,
+      ordinals.contains(109991L),
+      ordinals.contains(145000L),
+      ordinals.contains(472325L),
+      ordinals.contains(adjustmentOrdinal.value.value),
+      ordinals.size == blocks.size
+    )
   }
 }

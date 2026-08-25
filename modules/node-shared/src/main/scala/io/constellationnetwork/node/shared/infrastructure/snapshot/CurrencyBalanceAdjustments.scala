@@ -40,7 +40,7 @@ object CurrencyBalanceAdjustments {
     balanceAdjustFunction: (SortedMap[Address, Balance], Set[BalanceAdjustment]) => Either[String, SortedMap[Address, Balance]]
   )
 
-  val metagraphsBalancesAdjustments: Map[Address, BalanceAdjustmentAtOrdinal] =
+  val metagraphsBalancesAdjustments: Map[Address, List[BalanceAdjustmentAtOrdinal]] =
     BalanceAdjustmentLoader.loadAndCreateAdjustmentEntries(
       "/adjustments.json"
     ) match {
