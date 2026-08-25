@@ -263,7 +263,7 @@ const verifyTokenLockExpiration = async (address, hash, initialBalance, urls, un
 
     await withRetry(
         async () => {
-            const currentEpochProgress = await getEpochProgress(l0Url, true);
+            const currentEpochProgress = await getEpochProgress(l0Url, true, { maxAttempts: 1 });
             if (currentEpochProgress <= unlockEpoch) {
                 throw new Error(
                     `Current epoch progress (${currentEpochProgress}) has not passed unlockEpoch (${unlockEpoch})`

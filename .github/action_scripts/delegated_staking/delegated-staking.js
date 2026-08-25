@@ -16,7 +16,6 @@ const RUN_ENV = process.env.RUN_ENV || 'ci'
 const {
   parseSharedArgs,
   PRIVATE_KEYS,
-  sleep,
   withRetry,
   createNetworkConfig,
   logWorkflow,
@@ -127,46 +126,73 @@ const verifyNodeParamsResponse = (
     throw new Error(`Node id is not correct`)
 }
 
+const getNodeParamsVerify = async (
+  urls,
+  nodeId,
+  expectedName,
+  expectedRewardFraction,
+) =>
+  withRetry(
+    async () => {
+      const nodeParams = await getNodeParams(urls)
+      verifyNodeParamsResponse(
+        nodeParams,
+        nodeId,
+        expectedName,
+        expectedRewardFraction,
+      )
+      return nodeParams
+    },
+    { name: `node parameters list for ${nodeId}` },
+  )
+
 const getNodeParamsNodeIdVerify = async (
   urls,
   nodeId,
   expectedName,
   expectedRewardFraction,
   expectedOrdinal,
-) => {
-  const response = await axios.get(
-    `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
-    {
-      headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        Pragma: 'no-cache',
-        Expires: '0',
-      },
+) =>
+  withRetry(
+    async () => {
+      const response = await axios.get(
+        `${urls.globalL0Url}/node-params/${nodeId}?t=${Date.now()}`,
+        {
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+            Expires: '0',
+          },
+        },
+      )
+      if (response.status !== 200)
+        throw new Error(
+          `NodeParamsNode returned ${response.status} instead of 200`,
+        )
+      const receivedRewardFraction =
+        response.data.latest.value.delegatedStakeRewardParameters.rewardFraction
+      if (receivedRewardFraction !== expectedRewardFraction)
+        throw new Error(
+          `Node parameters node rewardFraction expected ${expectedRewardFraction} but received ${receivedRewardFraction}`,
+        )
+
+      const receivedName =
+        response.data.latest.value.nodeMetadataParameters.name
+      if (receivedName !== expectedName) {
+        throw new Error(
+          `Node parameters node name expected ${expectedName} but received ${receivedName}`,
+        )
+      }
+
+      const receivedOrdinal = response.data.latest.value.parent.ordinal
+      if (receivedOrdinal !== expectedOrdinal) {
+        throw new Error(
+          `Node parameters node name expected expected 0 ordinal but received ${receivedOrdinal}`,
+        )
+      }
     },
+    { name: `node parameters for ${nodeId}` },
   )
-  if (response.status !== 200)
-    throw new Error(`NodeParamsNode returned ${response.status} instead of 200`)
-  const receivedRewardFraction =
-    response.data.latest.value.delegatedStakeRewardParameters.rewardFraction
-  if (receivedRewardFraction !== expectedRewardFraction)
-    throw new Error(
-      `Node parameters node rewardFraction expected ${expectedRewardFraction} but received ${receivedRewardFraction}`,
-    )
-
-  const receivedName = response.data.latest.value.nodeMetadataParameters.name
-  if (receivedName !== expectedName) {
-    throw new Error(
-      `Node parameters node name expected ${expectedName} but received ${receivedName}`,
-    )
-  }
-
-  const receivedOrdinal = response.data.latest.value.parent.ordinal
-  if (receivedOrdinal !== expectedOrdinal) {
-    throw new Error(
-      `Node parameters node name expected expected 0 ordinal but received ${receivedOrdinal}`,
-    )
-  }
-}
 
 const firstNodeParameterName1 = 'FirstNode1'
 const firstNodeFraction1 = 10000000
@@ -230,9 +256,8 @@ const testCreateNodeParameters = async (urls) => {
   checkOk(ur1)
   logWorkflow.info('create node params 1 is OK')
 
-  const nodeParamsAfterUpdate = await getNodeParams(urls)
-  verifyNodeParamsResponse(
-    nodeParamsAfterUpdate,
+  await getNodeParamsVerify(
+    urls,
     nodeId1,
     firstNodeParameterName1,
     firstNodeFraction1,
@@ -259,9 +284,8 @@ const testCreateNodeParameters = async (urls) => {
   checkOk(ur2)
   logWorkflow.info('Update node params second time is OK')
 
-  const nodeParamsAfterSecondUpdate = await getNodeParams(urls)
-  verifyNodeParamsResponse(
-    nodeParamsAfterSecondUpdate,
+  await getNodeParamsVerify(
+    urls,
     nodeId1,
     firstNodeParameterName2,
     firstNodeFraction2,
@@ -308,9 +332,6 @@ const testCreateNodeParameters = async (urls) => {
   )
   checkOk(ur4)
 
-  // tends to fail here in CI, wait a little longer
-  await sleep(5000)
-
   await getNodeParamsNodeIdVerify(
     urls,
     nodeId2,
@@ -331,13 +352,16 @@ const testCreateNodeParameters = async (urls) => {
   )
   checkOk(third)
 
-  // tends to fail here in CI, wait a little longer
-  await sleep(5000)
-
-  const allNodeParams = await getNodeParams(urls)
-  if (allNodeParams.length !== 3) {
-    throw new Error(`Expected 3 node params, got ${allNodeParams.length}`)
-  }
+  const allNodeParams = await withRetry(
+    async () => {
+      const nodeParams = await getNodeParams(urls)
+      if (nodeParams.length !== 3) {
+        throw new Error(`Expected 3 node params, got ${nodeParams.length}`)
+      }
+      return nodeParams
+    },
+    { name: 'all node parameters' },
+  )
 
   verifyNodeParamsResponse(
     allNodeParams,
