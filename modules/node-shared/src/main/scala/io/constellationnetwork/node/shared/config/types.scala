@@ -55,10 +55,23 @@ object types {
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
     // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
-    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
+    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
+    // At/after this global ordinal every fee transaction in a data envelope is validated, and a data block whose
+    // fees cannot be applied is rejected. Deliberately NOT feeTransactionSecurity: that gate is already open on
+    // integrationnet at 5880000, so widening what it controls would change how signed history there replays.
+    fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
+    // destination is credited only when a SpendAction consumes the allowance.
+    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
       feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
+    def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
+      fixingDataApplicationFeeValidation.getOrElse(environment, SnapshotOrdinal.MinValue)
+
+    def fixingAllowSpendDestinationCreditFor(environment: AppEnvironment): SnapshotOrdinal =
+      fixingAllowSpendDestinationCredit.getOrElse(environment, SnapshotOrdinal.MinValue)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
