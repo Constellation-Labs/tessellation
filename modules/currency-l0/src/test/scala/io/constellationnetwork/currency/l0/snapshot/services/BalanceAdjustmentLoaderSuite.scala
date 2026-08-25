@@ -194,9 +194,9 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
       result match {
         case Right(adjustmentEntries) =>
           adjustmentEntries.get(jsonCurrencyAdj.currencyId) match {
-            case Some(adjustmentAtOrdinal) =>
+            case Some(adjustmentsAtOrdinal) =>
               val expectedOrdinal = jsonCurrencyAdj.snapshotOrdinal
-              expect(adjustmentAtOrdinal.snapshotOrdinal == expectedOrdinal)
+              expect(adjustmentsAtOrdinal.exists(_.snapshotOrdinal == expectedOrdinal))
             case None =>
               failure(s"Should have entry for currency ${jsonCurrencyAdj.currencyId}")
           }

@@ -91,8 +91,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
       }
     )
 
-  // metagraphsBalancesAdjustments is built with .toMap, so only the last block for a currency in
-  // adjustments.json is ever active. Appending a new Pacaswap block silently retires the previous one.
+  // Every historical block remains active so replay can reproduce the balance transition at its ordinal.
   pureTest("the active Pacaswap entry is the fee-transaction deduction at ordinal 731650") {
     val entry = metagraphsBalancesAdjustments.get(pacaswap)
 

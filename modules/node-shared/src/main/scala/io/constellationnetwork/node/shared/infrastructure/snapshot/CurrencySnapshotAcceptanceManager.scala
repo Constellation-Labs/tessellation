@@ -352,7 +352,9 @@ object CurrencySnapshotAcceptanceManager {
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
         validatedFeeTxs,
-        lastUnsyncGlobalSnapshot.ordinal > fixingFeeTransactionBalanceOverflowOrdinal
+        // Use the ordinal committed to the previous currency snapshot. The live GL0 head is not
+        // replay-stable: recomputing old history today would otherwise select today's rule and diverge.
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > fixingFeeTransactionBalanceOverflowOrdinal
       )
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
@@ -624,10 +626,8 @@ object CurrencySnapshotAcceptanceManager {
         // silently retired every earlier block for the same currency: replaying one of those ordinals
         // applied no adjustment and diverged without raising, and a follow-up adjustment could not be
         // scheduled at all.
-        metagraphsBalancesAdjustments
-          .getOrElse(lastSnapshotContext.address, List.empty)
-          .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
-          .fold[F[SortedMap[Address, Balance]]] {
+        metagraphsBalancesAdjustments.get(lastSnapshotContext.address) match {
+          case None =>
             if (balanceAdjustments.nonEmpty) {
               val unauthorizedError = new RuntimeException(
                 s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
@@ -636,12 +636,16 @@ object CurrencySnapshotAcceptanceManager {
             } else {
               updatedBalancesBySpendTransactions.pure[F]
             }
-          } { info =>
-            info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
-              case Right(balances) => balances.pure[F]
-              case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
-            }
-          }
+          case Some(infos) =>
+            infos
+              .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+              .fold(updatedBalancesBySpendTransactions.pure[F]) { info =>
+                info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+                  case Right(balances) => balances.pure[F]
+                  case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+                }
+              }
+        }
 
       csi = CurrencySnapshotInfo(
         if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
