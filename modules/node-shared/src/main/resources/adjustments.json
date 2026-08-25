@@ -5024,7 +5024,7 @@
       {
         "address": "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -355236233753468500,
+        "deduct": -355312351884858115,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5032,7 +5032,7 @@
       {
         "address": "DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -68015979975787660,
+        "deduct": -67978819470437886,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5040,7 +5040,7 @@
       {
         "address": "DAG3sGFqKZ974eoCQeZN3jyhsVakPaEZ9usvvCw7",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -26331919536350375,
+        "deduct": -26323732835282059,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5048,7 +5048,7 @@
       {
         "address": "DAG7iLJFTAF1sESqM95TJ3W41ibFN29kMYEBiPzb",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -15989532485473099,
+        "deduct": -15984111479123286,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5056,7 +5056,7 @@
       {
         "address": "DAG6pvRsWjTzmPSGgNZUu6MGgsQDNQHdnzNGNhzf",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -14694744594311318,
+        "deduct": -14691064551766330,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5064,7 +5064,7 @@
       {
         "address": "DAG4jWvjPdpvUqbpUXUobcQG6Js7XGfzZzhvxFmS",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -9272302435058423,
+        "deduct": -9266944704388053,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5072,7 +5072,7 @@
       {
         "address": "DAG8Eyr6SGvLorNU4rQspeUXZLZi3wt84CwbV1Ep",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -2000000000366191,
+        "deduct": -1997061245659082,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5088,7 +5088,7 @@
       {
         "address": "DAG4kfRPpcPSh4cMn8ZgdMuTEfdu3yz4veZFrv3L",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -980712904995178,
+        "deduct": -979882653723803,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5104,7 +5104,7 @@
       {
         "address": "DAG5434oVLFRRTqVSsTv4Y1qvyoMBkb4Tey21YuZ",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -297057079411598,
+        "deduct": -292412009465784,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5112,7 +5112,7 @@
       {
         "address": "DAG7uHRz6stwzsEnSHB2w1VxVHsCq7PDuDhTbjNP",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -103959034616603,
+        "deduct": -99773645951861,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]
@@ -5120,7 +5120,7 @@
       {
         "address": "DAG1DD2bM1hpFyWwa8UNgh3wMLGAe5JDSwpoUS9M",
         "reason": "FeeTransactionBugDeduction",
-        "deduct": -76630509759390,
+        "deduct": -76610032383686,
         "reference": [
           "0200028940b285045a40b3f2176b3dcd33f2a94821d24ecfa12ab6db1103e358"
         ]

@@ -30,8 +30,8 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   /** 2^62, the amount each of the four fee transactions in metagraph snapshot 731261 credited. */
   private val minted = 4611686018427387904L
 
-  /** Balances observed when the metagraph was stopped. Two wallets still hold the full 2^62, two were
-    * partially spent, so the deduction has to zero the exact and the drained case alike.
+  /** Balances observed when the metagraph was stopped. Two wallets still hold the full 2^62, two were partially spent, so the deduction has
+    * to zero the exact and the drained case alike.
     */
   private val mintedWallets: List[(Address, Long)] = List(
     Address("DAG1kEmLAgnCVBURHrL4AMsfn9TZdk4QCYQ8tUu3") -> minted,
@@ -40,25 +40,25 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     Address("DAG8uqhyGtFABWSS5KeVB2ia1R4vXop5AeijXeoU") -> 4111686018427387904L
   )
 
-  /** The pool address. Phantom PACA the attacker swapped in piled up here on top of the reserve the
-    * pool held before the mint, and the deduction takes that pile back off.
+  /** The pool address. Phantom PACA the attacker swapped in piled up here on top of the reserve the pool held before the mint, and the
+    * deduction takes that pile back off.
     */
   private val poolBalance = 360351876219858115L
-  private val poolSurplus = 355236233753468500L
+  private val poolSurplus = 355312351884858115L
 
-  /** Two of the eleven addresses that bought phantom PACA out of the pool, as (held, deducted). Both
-    * had a small genuine balance beforehand, so the deduction lands short of zero and leaves it.
+  /** Two of the ten addresses that bought phantom PACA out of the pool with real DAG, as (held, deducted). The deduction lands short of
+    * zero on purpose: each keeps what their DAG would have bought at the pre-attack price, on top of any genuine pre-mint balance.
     */
   private val buyers: List[(Address, Long, Long)] = List(
-    (Address("DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu"), 68023006936021839L, 68015979975787660L),
-    (Address("DAG1DD2bM1hpFyWwa8UNgh3wMLGAe5JDSwpoUS9M"), 77579706235110L, 76630509759390L)
+    (Address("DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu"), 68023006936021839L, 67978819470437886L),
+    (Address("DAG1DD2bM1hpFyWwa8UNgh3wMLGAe5JDSwpoUS9M"), 77579706235110L, 76610032383686L)
   )
 
   /** An address no adjustment names, which has to come out of the fix byte for byte. */
   private val bystander = Address("DAG62QdFnvW8xX3uGmo6F3yB2CT5i25hZoVmN6za") -> 4200000000L
 
-  /** Read straight out of the shipped resource rather than restated here, so this is the exact set
-    * the metagraph has to emit at 735000 for the snapshot to be accepted.
+  /** Read straight out of the shipped resource rather than restated here, so this is the exact set the metagraph has to emit at 735000 for
+    * the snapshot to be accepted.
     */
   private val requiredAdjustments: Set[RequiredAdjustment] =
     (for {
