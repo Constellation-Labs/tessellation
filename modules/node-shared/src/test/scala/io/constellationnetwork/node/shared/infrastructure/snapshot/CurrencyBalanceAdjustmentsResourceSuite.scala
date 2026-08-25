@@ -186,4 +186,18 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
       ordinals.size == blocks.size
     )
   }
+
+  pureTest("the entry rejects an adjustment that is not in the authorized set") {
+    // validateRequiredAdjustments used to check only that the required set was a subset of what the
+    // metagraph emitted, so a metagraph could emit the authorized deductions plus arbitrary extras and
+    // every one of them would be applied. The resource is the authorization boundary, so the emitted
+    // set has to match it exactly.
+    // An address nowhere in the authorized set, with a deduction nobody approved.
+    val extra = deduction(Address("DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu"), 999999999L)
+
+    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions + extra)
+
+    expect(result.isLeft) &&
+    expect(result.left.exists(_.toLowerCase.contains("unauthorized")))
+  }
 }

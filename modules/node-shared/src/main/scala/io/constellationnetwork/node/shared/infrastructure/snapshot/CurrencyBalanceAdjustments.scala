@@ -61,7 +61,11 @@ object CurrencyBalanceAdjustments {
       updatedBalances <- applyBalanceAdjustments(currentBalances, balanceAdjustments)
     } yield updatedBalances
 
-  /** Validates that all required adjustments are present in the balance adjustments set
+  /** Validates that the emitted adjustments are exactly the authorized set.
+    *
+    * This used to check only that every required adjustment was present, so a metagraph could emit the authorized deductions plus any
+    * others and applyBalanceAdjustments would apply all of them. The resource is the authorization boundary for what a metagraph may do to
+    * balances at an ordinal, so anything outside it is rejected rather than tolerated.
     */
   def validateRequiredAdjustments(
     balanceAdjustments: Set[BalanceAdjustment],
@@ -73,9 +77,18 @@ object CurrencyBalanceAdjustments {
       }
     }
 
+    val unauthorizedAdjustments = balanceAdjustments.filterNot { adjustment =>
+      requiredAdjustments.exists { required =>
+        adjustment.address == required.address && matchesRequirement(adjustment, required.adjustment)
+      }
+    }
+
     if (missingAdjustments.nonEmpty) {
       val missingDescription = missingAdjustments.map(describeRequiredAdjustment).mkString(", ")
       Left(s"Missing required adjustments: $missingDescription")
+    } else if (unauthorizedAdjustments.nonEmpty) {
+      val unauthorizedDescription = unauthorizedAdjustments.map(a => s"${a.address}: $a").mkString(", ")
+      Left(s"Unauthorized balance adjustments not present in the authorized set: $unauthorizedDescription")
     } else {
       Right(())
     }
