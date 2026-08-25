@@ -25,7 +25,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
 
   private val pacaswap = Address("DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W")
 
-  private val adjustmentOrdinal = SnapshotOrdinal.unsafeApply(731650L)
+  private val adjustmentOrdinal = SnapshotOrdinal.unsafeApply(731647L)
 
   /** 2^62, the amount each of the four fee transactions in metagraph snapshot 731261 credited. */
   private val minted = 4611686018427387904L
@@ -57,7 +57,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   /** An address no adjustment names, which has to come out of the fix byte for byte. */
   private val bystander = Address("DAG62QdFnvW8xX3uGmo6F3yB2CT5i25hZoVmN6za") -> 4200000000L
 
-  /** Read straight out of the shipped resource rather than restated here, so this is the exact set the metagraph has to emit at 731650 for
+  /** Read straight out of the shipped resource rather than restated here, so this is the exact set the metagraph has to emit at 731647 for
     * the snapshot to be accepted.
     */
   private val requiredAdjustments: Set[RequiredAdjustment] =
@@ -81,7 +81,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   private def deduction(address: Address, amount: Long): BalanceAdjustment =
     asArtifact(RequiredAdjustment(address, AdjustmentType.Decrease(Amount(NonNegLong.unsafeFrom(amount)))))
 
-  private lazy val entryAt731650 =
+  private lazy val entryAt731647 =
     metagraphsBalancesAdjustments(pacaswap).find(_.snapshotOrdinal == adjustmentOrdinal).get
 
   private val balances: SortedMap[Address, Balance] =
@@ -92,7 +92,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     )
 
   // Every historical block remains active so replay can reproduce the balance transition at its ordinal.
-  pureTest("the active Pacaswap entry is the fee-transaction deduction at ordinal 731650") {
+  pureTest("the active Pacaswap entry is the fee-transaction deduction at ordinal 731647") {
     val entry = metagraphsBalancesAdjustments.get(pacaswap)
 
     expect.all(
@@ -125,7 +125,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   }
 
   pureTest("the entry zeroes the minted wallets and takes the surplus off the pool") {
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions)
+    val result = entryAt731647.balanceAdjustFunction(balances, allDeductions)
 
     result match {
       case Left(error) => failure(s"expected the adjustment to apply, got: $error")
@@ -139,7 +139,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   }
 
   pureTest("buyers keep the PACA they held before the mint") {
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions)
+    val result = entryAt731647.balanceAdjustFunction(balances, allDeductions)
 
     result match {
       case Left(error) => failure(s"expected the adjustment to apply, got: $error")
@@ -151,11 +151,11 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     }
   }
 
-  // If the metagraph fails to emit the full artifact set at 731650 the snapshot must not be produced,
+  // If the metagraph fails to emit the full artifact set at 731647 the snapshot must not be produced,
   // rather than being accepted with a partial deduction.
   pureTest("the entry rejects an incomplete adjustment set") {
     val partial = allDeductions - deduction(mintedWallets.head._1, minted)
-    val result = entryAt731650.balanceAdjustFunction(balances, partial)
+    val result = entryAt731647.balanceAdjustFunction(balances, partial)
 
     expect(result.isLeft)
   }
@@ -164,7 +164,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   // indistinguishable from a missing artifact.
   pureTest("the entry rejects an adjustment whose amount is off by one") {
     val skewed = allDeductions - deduction(pacaswap, poolSurplus) + deduction(pacaswap, poolSurplus - 1L)
-    val result = entryAt731650.balanceAdjustFunction(balances, skewed)
+    val result = entryAt731647.balanceAdjustFunction(balances, skewed)
 
     expect(result.isLeft)
   }
@@ -194,7 +194,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     // An address nowhere in the authorized set, with a deduction nobody approved.
     val extra = deduction(Address("DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu"), 999999999L)
 
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions + extra)
+    val result = entryAt731647.balanceAdjustFunction(balances, allDeductions + extra)
 
     expect(result.isLeft) &&
     expect(result.left.exists(_.toLowerCase.contains("unauthorized")))
