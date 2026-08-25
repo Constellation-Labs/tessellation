@@ -15,7 +15,7 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -96,5 +96,95 @@ object FeeTransactionValidator {
           hashMatchValidation <- validateFeeTransactionHashMatch(feeTransaction, dataTransactions, dataApplication)
         } yield sourceWalletValidation.productR(hashMatchValidation).productR(balanceValidation)
     }
+
+  private def validateFeeTransactionRefPresent(
+    feeTransaction: Signed[FeeTransaction],
+    dataUpdateHashes: Set[Hash]
+  ): ValidatedNec[DataApplicationValidationError, Unit] =
+    if (dataUpdateHashes.contains(feeTransaction.value.dataUpdateRef)) ().validNec[DataApplicationValidationError]
+    else
+      MissingDataUpdateOfFeeTransaction
+        .asInstanceOf[DataApplicationValidationError]
+        .invalidNec[Unit]
+
+  // Acceptance applies every fee transaction in the envelope, so every one of them has to be validated here.
+  // Walking the data updates instead reaches a fee transaction only through getByDataUpdate, which returns an
+  // Option -- a fee transaction referencing no data update present in the envelope is skipped entirely and
+  // reaches acceptance unchecked.
+  def validateAllFeeTransactions[F[_]: Async: JsonSerializer: SecurityProvider](
+    dataTransactions: DataTransactions,
+    balances: Map[Address, Balance],
+    dataApplication: BaseDataApplicationService[F]
+  ): F[ValidatedNec[DataApplicationValidationError, Unit]] = {
+    val feeTransactions = dataTransactions.collect {
+      case Signed(feeTransaction: FeeTransaction, proofs) => Signed(feeTransaction, proofs)
+    }
+
+    // Hashed once for the whole envelope. Checking each fee transaction against the data updates one at a
+    // time re-serializes them per fee transaction, which a sender controls: n fee transactions all pointing
+    // at a dataUpdateRef that is not there costs every validating node n * m serializations. Envelopes
+    // carrying no fee transactions still serialize nothing, which is the common case.
+    val dataUpdateHashes: F[Set[Hash]] =
+      if (feeTransactions.isEmpty) Set.empty[Hash].pure[F]
+      else
+        dataTransactions.collect { case Signed(dataUpdate: DataUpdate, _) => dataUpdate }
+          .traverse(dataUpdate => dataApplication.serializeUpdate(dataUpdate).flatMap(Hash.fromBytesForSync(_)))
+          .map(_.toSet)
+
+    dataUpdateHashes.flatMap { hashes =>
+      feeTransactions.traverse { feeTransaction =>
+        validateFeeTransactionSignatures(feeTransaction)
+          .map(_.errorMap[DataApplicationValidationError](_ => InvalidFeeTransactionSignature).void)
+          .map(
+            _.productR(validateDifferentAddresses(feeTransaction))
+              .productR(validateFeeTransactionRefPresent(feeTransaction, hashes))
+          )
+      }.map {
+        _.foldLeft(().validNec[DataApplicationValidationError])(_.productR(_))
+          .productR(validateSourcesHaveEnoughBalance(feeTransactions, balances))
+      }
+    }
+  }
+
+  // node-shared's FeeTransactionValidator runs on the same transactions immediately before acceptance and
+  // enforces source != destination. Anything it rejects but this layer accepts is a user-supplied value that
+  // reaches acceptance and is dropped there, after combine has already applied the data update it paid for.
+  private def validateDifferentAddresses(
+    feeTransaction: Signed[FeeTransaction]
+  ): ValidatedNec[DataApplicationValidationError, Unit] =
+    if (feeTransaction.value.source =!= feeTransaction.value.destination) ().validNec[DataApplicationValidationError]
+    else SameSourceAndDestinationAddress.asInstanceOf[DataApplicationValidationError].invalidNec[Unit]
+
+  // A single source may fund several fee transactions in one envelope. Checking each against the same
+  // starting balance lets the group overspend it, so the group is summed with the checked Amount.plus.
+  //
+  // This is deliberately stricter than the per-block fold in DataApplicationSnapshotAcceptanceManager, which
+  // can pay a fee transaction out of a credit an earlier one in the same block produced. The two do not need
+  // to agree: this runs per envelope and the fold there runs per block in amount-ascending order. Rejecting
+  // an envelope this layer cannot prove affordable costs the sender a resubmission; accepting one it cannot
+  // is the failure that matters.
+  private def validateSourcesHaveEnoughBalance(
+    feeTransactions: List[Signed[FeeTransaction]],
+    balances: Map[Address, Balance]
+  ): ValidatedNec[DataApplicationValidationError, Unit] =
+    feeTransactions
+      .groupBy(_.value.source)
+      .toList
+      .traverse {
+        case (source, txs) =>
+          val notEnoughBalance = SourceWalletNotEnoughBalance.asInstanceOf[DataApplicationValidationError]
+
+          val totalOrError = txs.foldLeft(Amount.empty.asRight[DataApplicationValidationError]) { (acc, tx) =>
+            acc.flatMap(_.plus(tx.value.amount).leftMap(_ => notEnoughBalance))
+          }
+
+          totalOrError.flatMap { total =>
+            val available = Balance.toAmount(balances.getOrElse(source, Balance.empty))
+
+            if (available < total) notEnoughBalance.asLeft[Unit]
+            else ().asRight[DataApplicationValidationError]
+          }.toValidatedNec
+      }
+      .void
 
 }
