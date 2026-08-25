@@ -7,7 +7,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 
 /** Selects the allow-spend balance semantics used while building or recreating a snapshot.
   *
-  * Live consensus must always use [[Escrow]]. [[LegacyCreditDestination]] exists only to reproduce signed historical snapshots created
+  * Live consensus must always use the Escrow mode. LegacyCreditDestination exists only to reproduce signed historical snapshots created
   * before allow-spends were correctly treated as escrows.
   */
 sealed abstract class AllowSpendBlockAcceptanceMode(val creditDestination: Boolean)
