@@ -104,7 +104,8 @@ object CurrencySnapshotConsensusFunctions {
           None,
           getGlobalSnapshotByOrdinal,
           shouldValidateCollateral = true,
-          maybeCustomArtifacts
+          maybeCustomArtifacts,
+          AllowSpendBlockAcceptanceMode.live
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

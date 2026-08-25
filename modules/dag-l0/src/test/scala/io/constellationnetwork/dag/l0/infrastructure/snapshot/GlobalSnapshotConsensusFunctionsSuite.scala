@@ -1,7 +1,9 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
+import java.util.UUID
+
 import cats.data.Validated.Valid
-import cats.data.{NonEmptyList, NonEmptySet}
+import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect._
 import cats.effect.std.Supervisor
 import cats.implicits.none
@@ -18,7 +20,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
   SnapshotBinaryFeeCalculator,
   UpdateNodeParametersCutter
 }
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{AllowSpendEvent, GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -42,6 +44,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendChainValidator.AllowSpendNel
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.domain.tokenlock.block._
@@ -50,24 +53,29 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Con
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.round.RoundId
+import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationErrorOr
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import io.circe.Encoder
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
@@ -261,6 +269,36 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val collateral: Amount = Amount.empty
 
+  private val exploitSource = Address("DAG011jH7FMDvKpdb7wewrMWwYtkwq56nHquAHdi")
+  private val exploitDestination = Address("DAG06z64ifT2HzXoHfMexRfrcnpYFEwMqjFiPKze")
+  private val exploitOnward = Address("DAG07tqNLYW8jHU9emXcRTT3CfgCUoumwcLghopd")
+
+  private def exploitProof(id: Id, seed: Int): NonEmptySet[SignatureProof] = {
+    val hex = (seed.toString * 128).take(128)
+    NonEmptySet.one(SignatureProof(id, Signature(Hex(hex))))
+  }
+
+  private def exploitBlock(from: Address, to: Address, amount: Long, fee: Long, signerId: Id, seed: Int): Signed[AllowSpendBlock] = {
+    val allowSpend = Signed(
+      AllowSpend(
+        from,
+        to,
+        None,
+        SwapAmount(PosLong.unsafeFrom(amount)),
+        AllowSpendFee(NonNegLong.unsafeFrom(fee)),
+        AllowSpendReference.empty,
+        EpochProgress(NonNegLong.unsafeFrom(100L)),
+        List.empty
+      ),
+      exploitProof(signerId, seed)
+    )
+
+    Signed(
+      AllowSpendBlock(RoundId(UUID.fromString(s"00000000-0000-0000-0000-00000000000$seed")), NonEmptySet.one(allowSpend)),
+      exploitProof(signerId, seed)
+    )
+  }
+
   val classicRewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
     (_, _, _, _, _, _) => IO(SortedSet.empty)
 
@@ -309,13 +347,13 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       )
   }
 
-  def mkGlobalSnapshotConsensusFunctions(
-    implicit ks: KryoSerializer[IO],
-    j: JsonSerializer[IO],
-    sp: SecurityProvider[IO],
+  def mkGlobalSnapshotAcceptanceManager(
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam
+  )(
+    implicit sp: SecurityProvider[IO],
     h: Hasher[IO],
     m: Metrics[IO]
-  ): GlobalSnapshotConsensusFunctions[IO] = {
+  ): GlobalSnapshotAcceptanceManager[IO] = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
 
     val spendActionValidator = SpendActionValidator.make[IO]
@@ -323,38 +361,49 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val pricingUpdateValidator = PricingUpdateValidator.make[IO](None, NonNegLong(0))
     val priceStateUpdater = PriceStateUpdater.make(Dev, delegatedRewardsConfigProvider)
 
-    val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager
-        .make[IO](
-          FieldsAddedOrdinals(
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty
-          ),
-          MetagraphsSyncConfig(PosInt(100)),
-          Dev,
-          bam,
-          asbam,
-          tlbam,
-          scProcessor,
-          updateNodeParametersAcceptanceManager,
-          updateDelegatedStakeAcceptanceManager,
-          updateNodeCollateralAcceptanceManager,
-          spendActionValidator,
-          pricingUpdateValidator,
-          priceStateUpdater,
-          collateral,
-          EpochProgress(NonNegLong(136080L))
-        )
+    GlobalSnapshotAcceptanceManager
+      .make[IO](
+        FieldsAddedOrdinals(
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty
+        ),
+        MetagraphsSyncConfig(PosInt(100)),
+        Dev,
+        bam,
+        allowSpendBlockAcceptanceManager,
+        tlbam,
+        scProcessor,
+        updateNodeParametersAcceptanceManager,
+        updateDelegatedStakeAcceptanceManager,
+        updateNodeCollateralAcceptanceManager,
+        spendActionValidator,
+        pricingUpdateValidator,
+        priceStateUpdater,
+        collateral,
+        EpochProgress(NonNegLong(136080L))
+      )
+  }
+
+  def mkGlobalSnapshotConsensusFunctions(
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam
+  )(
+    implicit ks: KryoSerializer[IO],
+    j: JsonSerializer[IO],
+    sp: SecurityProvider[IO],
+    h: Hasher[IO],
+    m: Metrics[IO]
+  ): GlobalSnapshotConsensusFunctions[IO] = {
+    val snapshotAcceptanceManager = mkGlobalSnapshotAcceptanceManager(allowSpendBlockAcceptanceManager)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -379,6 +428,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   def getTestData(
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam
+  )(
     implicit sp: SecurityProvider[F],
     kryo: KryoSerializer[F],
     j: JsonSerializer[F],
@@ -388,7 +439,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[F]
 
-      gscf = mkGlobalSnapshotConsensusFunctions
+      gscf = mkGlobalSnapshotConsensusFunctions(allowSpendBlockAcceptanceManager)
       facilitators = Set.empty[PeerId]
 
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
@@ -404,7 +455,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit val (_, ks, j, h, sp, m) = res
 
     for {
-      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
+      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData()
 
       (artifact, _, _) <- gscf.createProposalArtifact(
         SnapshotOrdinal.MinValue,
@@ -435,7 +486,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit val (_, ks, j, h, sp, m) = res
 
     for {
-      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
+      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData()
 
       (artifact, _, _) <- gscf.createProposalArtifact(
         SnapshotOrdinal.MinValue,
@@ -456,6 +507,193 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         _ => None.pure[IO]
       )
     } yield expect.same(true, result.isLeft)
+  }
+
+  test("createProposalArtifact - live global consensus always uses escrow allow-spend semantics") { res =>
+    implicit val (_, ks, j, h, sp, m) = res
+
+    for {
+      observedCreditDestination <- Ref.of[IO, List[Boolean]](List.empty)
+      recordingManager = new AllowSpendBlockAcceptanceManager[IO] {
+        def acceptBlock(
+          block: Signed[swap.AllowSpendBlock],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          snapshotOrdinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+          creditDestination: Boolean
+        )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
+          IO.raiseError(new IllegalStateException("acceptBlock should not be called directly"))
+
+        def acceptBlocksIteratively(
+          blocks: List[Signed[swap.AllowSpendBlock]],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          snapshotOrdinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+          creditDestination: Boolean
+        )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
+          observedCreditDestination.update(creditDestination :: _) >>
+            AllowSpendBlockAcceptanceResult(
+              AllowSpendBlockAcceptanceContextUpdate.empty,
+              List.empty,
+              List.empty
+            ).pure[IO]
+      }
+      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData(recordingManager)
+      _ <- gscf.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        signedGenesis.value.info,
+        h,
+        EventTrigger,
+        Set(scEvent),
+        facilitators,
+        _ => None.pure[IO]
+      )
+      observed <- observedCreditDestination.get
+    } yield expect.same(List(false), observed)
+  }
+
+  test("live global consensus rejects the two-block phantom-funding chain") { res =>
+    implicit val (_, ks, j, h, sp, m) = res
+
+    val blockValidator = new AllowSpendBlockValidator[IO] {
+      def validate(
+        signedBlock: Signed[AllowSpendBlock],
+        snapshotOrdinal: SnapshotOrdinal,
+        params: AllowSpendBlockValidationParams,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      )(implicit hasher: Hasher[IO]): IO[
+        ValidatedNec[AllowSpendBlockValidationError, (Signed[AllowSpendBlock], Map[Address, AllowSpendNel])]
+      ] = IO.pure(Valid((signedBlock, Map.empty)))
+    }
+    val iterativeManager = AllowSpendBlockAcceptanceManager.make[IO](AllowSpendBlockAcceptanceLogic.make[IO], blockValidator)
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      signerId = keyPair.getPublic.toId
+      first = exploitBlock(exploitSource, exploitDestination, 100L, 1L, signerId, 1)
+      phantomSecond = exploitBlock(exploitDestination, exploitOnward, 100L, 0L, signerId, 2)
+      genesis = GlobalSnapshot.mkGenesis(
+        Map(exploitSource -> Balance(NonNegLong.unsafeFrom(101L))),
+        EpochProgress.MinValue
+      )
+      signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+      consensusFunctions = mkGlobalSnapshotConsensusFunctions(iterativeManager)
+      (artifact, _, _) <- consensusFunctions.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        signedGenesis.value.info,
+        h,
+        EventTrigger,
+        Set(AllowSpendEvent(first), AllowSpendEvent(phantomSecond)),
+        Set.empty,
+        _ => None.pure[IO]
+      )
+      maliciousArtifact = artifact.copy(allowSpendBlocks = Some(SortedSet(first, phantomSecond)))
+      validation <- consensusFunctions.validateArtifact(
+        signedLastArtifact,
+        signedGenesis.value.info,
+        EventTrigger,
+        maliciousArtifact,
+        Set.empty,
+        _ => None.pure[IO]
+      )
+    } yield
+      expect.all(
+        artifact.allowSpendBlocks.contains(SortedSet(first)),
+        !artifact.allowSpendBlocks.exists(_.contains(phantomSecond)),
+        validation.isLeft
+      )
+  }
+
+  test("global historical recreation falls back from escrow to legacy below activation") { res =>
+    implicit val (_, ks, j, h, sp, m) = res
+    implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
+
+    for {
+      observedCreditDestination <- Ref.of[IO, List[Boolean]](List.empty)
+      recordingManager = new AllowSpendBlockAcceptanceManager[IO] {
+        def acceptBlock(
+          block: Signed[swap.AllowSpendBlock],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          snapshotOrdinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+          creditDestination: Boolean
+        )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
+          IO.raiseError(new IllegalStateException("acceptBlock should not be called directly"))
+
+        def acceptBlocksIteratively(
+          blocks: List[Signed[swap.AllowSpendBlock]],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          snapshotOrdinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean,
+          lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+          creditDestination: Boolean
+        )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
+          observedCreditDestination.update(creditDestination :: _) >>
+            (if (!creditDestination) IO.raiseError(new ArithmeticException("escrow recreation failed"))
+             else
+               asbam.acceptBlocksIteratively(
+                 blocks,
+                 context,
+                 snapshotOrdinal,
+                 shouldValidateCollateral,
+                 lastGlobalSnapshotEpochProgress,
+                 creditDestination
+               )(hasher))
+      }
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
+      signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+      consensusFunctions = mkGlobalSnapshotConsensusFunctions()
+      (artifact, _, _) <- consensusFunctions.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        signedGenesis.value.info,
+        h,
+        EventTrigger,
+        Set.empty,
+        Set.empty,
+        _ => None.pure[IO]
+      )
+      signedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](artifact, keyPair)
+      _ <- observedCreditDestination.set(List.empty)
+      acceptanceManager = mkGlobalSnapshotAcceptanceManager(recordingManager)
+      contextFunctions = GlobalSnapshotContextFunctions.make[IO](
+        acceptanceManager,
+        updateDelegatedStakeAcceptanceManager,
+        EpochProgress(NonNegLong.unsafeFrom(1L)),
+        SnapshotOrdinal.MinValue,
+        SnapshotOrdinal.unsafeApply(100L)
+      )
+      recreated <- contextFunctions.createContext(
+        signedGenesis.value.info,
+        signedLastArtifact,
+        signedArtifact,
+        _ => None.pure[IO]
+      )
+      observed <- observedCreditDestination.get
+      invalidArtifact = artifact.copy(stateProof = artifact.stateProof.copy(balancesProof = Hash("invalid")))
+      signedInvalidArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](invalidArtifact, keyPair)
+      invalidResult <- contextFunctions
+        .createContext(
+          signedGenesis.value.info,
+          signedLastArtifact,
+          signedInvalidArtifact,
+          _ => None.pure[IO]
+        )
+        .attempt
+    } yield
+      expect.same(List(false, true), observed.reverse) &&
+        expect(recreated.balances == signedGenesis.value.info.balances) &&
+        expect(invalidResult.isLeft)
   }
 
   test("gossip signed artifacts") { res =>

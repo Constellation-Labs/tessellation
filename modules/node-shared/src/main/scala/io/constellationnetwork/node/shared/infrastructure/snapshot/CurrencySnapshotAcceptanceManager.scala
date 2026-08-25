@@ -100,7 +100,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
     shouldValidateCollateral: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -279,7 +280,8 @@ object CurrencySnapshotAcceptanceManager {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       maybeLastGlobalSyncView: Option[GlobalSyncView],
       shouldValidateCollateral: Boolean,
-      lastArtifactProofs: NonEmptySet[SignatureProof]
+      lastArtifactProofs: NonEmptySet[SignatureProof],
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -303,8 +305,6 @@ object CurrencySnapshotAcceptanceManager {
       fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
-        .getOrElse(environment, SnapshotOrdinal.MinValue)
-      fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingDataApplicationFeeValidation = fieldsAddedOrdinals.fixingDataApplicationFeeValidation
         .getOrElse(environment, SnapshotOrdinal.MinValue)
@@ -455,10 +455,9 @@ object CurrencySnapshotAcceptanceManager {
         initialAllowSpendRef,
         shouldValidateCollateral,
         lastUnsyncGlobalSnapshot.ordinal,
-        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         fixingAllowSpendAndTokenLockValidation,
-        fixingAllowSpendDestinationCredit,
-        lastGlobalSnapshotEpochProgress
+        lastGlobalSnapshotEpochProgress,
+        allowSpendBlockAcceptanceMode
       )
 
       lastAllowSpendsRefs = lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(SortedMap.empty[Address, AllowSpendReference])
@@ -1013,10 +1012,9 @@ object CurrencySnapshotAcceptanceManager {
       initialTxRef: AllowSpendReference,
       shouldValidateCollateral: Boolean,
       lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
-      lastGlobalSyncViewOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
-      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
-      lastSyncGlobalSnapshotEpochProgress: EpochProgress
+      lastSyncGlobalSnapshotEpochProgress: EpochProgress,
+      acceptanceMode: AllowSpendBlockAcceptanceMode
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
@@ -1024,11 +1022,6 @@ object CurrencySnapshotAcceptanceManager {
         collateral,
         initialTxRef
       )
-      // Deliberately not lastUnsyncGlobalSnapshotOrdinal, which the sibling gate on the line below uses: that
-      // is a live read of the node's own global head, so a node replaying an old snapshot today would evaluate
-      // the gate against today's head and apply the current rule to old history. lastGlobalSyncViewOrdinal is
-      // carried by the previous currency snapshot, so it is the same on every node and at every replay.
-      val creditDestination = lastGlobalSyncViewOrdinal < fixingAllowSpendDestinationCredit
       if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,
@@ -1036,7 +1029,7 @@ object CurrencySnapshotAcceptanceManager {
           snapshotOrdinal,
           shouldValidateCollateral,
           lastSyncGlobalSnapshotEpochProgress.some,
-          creditDestination
+          acceptanceMode.creditDestination
         )
       } else {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
@@ -1045,7 +1038,7 @@ object CurrencySnapshotAcceptanceManager {
           snapshotOrdinal,
           shouldValidateCollateral,
           none,
-          creditDestination
+          acceptanceMode.creditDestination
         )
       }
     }

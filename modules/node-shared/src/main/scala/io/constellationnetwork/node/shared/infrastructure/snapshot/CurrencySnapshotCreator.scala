@@ -65,7 +65,8 @@ trait CurrencySnapshotCreator[F[_]] {
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     shouldValidateCollateral: Boolean,
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -100,7 +101,8 @@ object CurrencySnapshotCreator {
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       shouldValidateCollateral: Boolean,
-      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -213,7 +215,8 @@ object CurrencySnapshotCreator {
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
                 shouldValidateCollateral,
-                lastArtifact.proofs
+                lastArtifact.proofs,
+                allowSpendBlockAcceptanceMode
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
