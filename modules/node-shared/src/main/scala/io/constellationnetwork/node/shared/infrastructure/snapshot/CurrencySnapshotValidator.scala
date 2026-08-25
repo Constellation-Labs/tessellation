@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.data.Validated.Valid
-import cats.data.{NonEmptyChain, Validated, ValidatedNec}
+import cats.data.{Validated, ValidatedNec}
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
@@ -17,7 +17,6 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -51,6 +50,7 @@ object CurrencySnapshotValidator {
 
   def make[F[_]: Async: KryoSerializer: JsonSerializer](
     globalSyncViewStartingOrdinal: SnapshotOrdinal,
+    fixingDataApplicationFeeValidation: SnapshotOrdinal,
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
@@ -155,7 +155,15 @@ object CurrencySnapshotValidator {
         }
       })
 
-      def recreateFn(trigger: ConsensusTrigger) =
+      val recreationModes = FeeTransactionAcceptanceMode.historicalRecreationModes(
+        lastArtifact.globalSyncView,
+        fixingDataApplicationFeeValidation
+      )
+
+      def recreateFn(
+        trigger: ConsensusTrigger,
+        feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode
+      ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
         mkEvents.flatMap { events =>
           def usingHasher = (lastArtifactHasher: Hasher[F]) =>
             currencySnapshotCreator
@@ -172,10 +180,13 @@ object CurrencySnapshotValidator {
                 expected.artifacts.map(() => _),
                 getGlobalSnapshotByOrdinal,
                 shouldValidateCollateral = false,
-                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts)
+                Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
+                feeTransactionAcceptanceMode
               )
 
-          def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
+          def check(
+            result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
+          ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
             // Rewrite if implementation not provided
             result.map { creationResult =>
               maybeDataApplication match {
@@ -206,15 +217,35 @@ object CurrencySnapshotValidator {
 
           check(usingHasher(Hasher.forKryo[F])).flatMap {
             case Validated.Valid(a) =>
-              Async[F].pure[Validated[NonEmptyChain[SnapshotDifferentThanExpected], CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](
-                Valid(a)
-              )
+              Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](Valid(a))
             case Validated.Invalid(_) => check(usingHasher(Hasher.forJson[F]))
           }
         }
 
-      recreateFn(TimeTrigger).flatMap { tV =>
-        recreateFn(EventTrigger).map(_.orElse(tV))
+      def recreateWithModes(
+        trigger: ConsensusTrigger,
+        modes: List[FeeTransactionAcceptanceMode]
+      ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
+        modes match {
+          case Nil =>
+            new IllegalStateException("No fee-transaction acceptance mode available for snapshot recreation")
+              .raiseError[F, CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]]
+          case mode :: remaining =>
+            recreateFn(trigger, mode).flatMap {
+              case valid @ Validated.Valid(_) =>
+                Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](valid)
+              case invalid @ Validated.Invalid(_) =>
+                if (remaining.nonEmpty) recreateWithModes(trigger, remaining)
+                else
+                  Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](invalid)
+            }.handleErrorWith { error =>
+              if (remaining.nonEmpty) recreateWithModes(trigger, remaining)
+              else error.raiseError[F, CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]]
+            }
+        }
+
+      recreateWithModes(TimeTrigger, recreationModes).flatMap { tV =>
+        recreateWithModes(EventTrigger, recreationModes).map(_.orElse(tV))
       }
     }
 

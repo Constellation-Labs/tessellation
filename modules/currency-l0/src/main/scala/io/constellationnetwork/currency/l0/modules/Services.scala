@@ -124,6 +124,7 @@ object Services {
 
       creator = CurrencySnapshotCreator.make[F](
         sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+        sharedCfg.environment,
         sharedServices.currencySnapshotAcceptanceManager,
         dataApplicationAcceptanceManager,
         cfg.snapshotSize,
@@ -133,6 +134,8 @@ object Services {
 
       validator = CurrencySnapshotValidator.make[F](
         SnapshotOrdinal.MinValue,
+        sharedCfg.fieldsAddedOrdinals.fixingDataApplicationFeeValidation
+          .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         creator,
         signedValidator,
         maybeRewards,

@@ -192,6 +192,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               currencySnapshotCreator = CurrencySnapshotCreator
                 .make[IO](
                   SnapshotOrdinal.MinValue,
+                  Dev,
                   currencySnapshotAcceptanceManager,
                   None,
                   SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
@@ -199,7 +200,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validationErrorStorage
                 )
               currencySnapshotValidator = CurrencySnapshotValidator
-                .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+                .make[IO](
+                  SnapshotOrdinal.MinValue,
+                  SnapshotOrdinal.MinValue,
+                  currencySnapshotCreator,
+                  validators.signedValidator,
+                  None,
+                  None
+                )
 
               currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
               globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource

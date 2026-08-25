@@ -111,8 +111,10 @@ object SharedServices {
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
         cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals.fixingDataApplicationFeeValidation.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         CurrencySnapshotCreator.make[F](
           cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+          cfg.environment,
           currencySnapshotAcceptanceManager,
           None,
           cfg.snapshotSize,

@@ -142,6 +142,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       creator = CurrencySnapshotCreator
         .make[IO](
           SnapshotOrdinal.MinValue,
+          Dev,
           currencySnapshotAcceptanceManager,
           None,
           SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
@@ -149,7 +150,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           validationErrorStorage
         )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
+        .make[IO](SnapshotOrdinal.MinValue, SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
         def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(

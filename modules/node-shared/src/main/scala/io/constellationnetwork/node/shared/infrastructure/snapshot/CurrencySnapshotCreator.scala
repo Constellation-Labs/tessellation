@@ -21,6 +21,7 @@ import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
@@ -28,6 +29,8 @@ import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.metagraphsBalancesAdjustments
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotAcceptanceManager.applyExactBalanceAdjustmentBeforeEvents
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.artifact.SharedArtifact
@@ -65,7 +68,8 @@ trait CurrencySnapshotCreator[F[_]] {
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     shouldValidateCollateral: Boolean,
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+    feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode = FeeTransactionAcceptanceMode.live
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -73,6 +77,7 @@ object CurrencySnapshotCreator {
 
   def make[F[_]: Async: JsonSerializer](
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    environment: AppEnvironment,
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -100,7 +105,8 @@ object CurrencySnapshotCreator {
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       shouldValidateCollateral: Boolean,
-      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
+      maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
+      feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -120,6 +126,27 @@ object CurrencySnapshotCreator {
           lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
           lastDeprecatedTips = lastArtifact.tips.deprecated
           maybeLastDataApplication = lastArtifact.dataApplication
+
+          customArtifacts = maybeCustomArtifacts
+            .flatMap(customArtifactFn => customArtifactFn(lastArtifact))
+            .getOrElse(SortedSet.empty[SharedArtifact])
+          fallbackArtifacts = artifactsFn.map(_()).getOrElse(SortedSet.empty[SharedArtifact])
+          artifactsAvailableBeforeDataApplication = customArtifacts ++ fallbackArtifacts
+          balanceAdjustmentsAvailableBeforeDataApplication = artifactsAvailableBeforeDataApplication.collect {
+            case balanceAdjustment: io.constellationnetwork.schema.artifact.BalanceAdjustment => balanceAdjustment
+          }
+          exactBalanceAdjustmentInfo = metagraphsBalancesAdjustments
+            .getOrElse(lastContext.address, List.empty)
+            .find(info => info.snapshotOrdinal === currentOrdinal && info.environment === environment && info.exactMatchRequired)
+          initialBalancesOverride <- exactBalanceAdjustmentInfo.traverse { info =>
+            applyExactBalanceAdjustmentBeforeEvents(
+              lastContext.snapshotInfo.balances,
+              balanceAdjustmentsAvailableBeforeDataApplication,
+              info.some
+            )
+              .leftMap(error => new RuntimeException(s"Balance adjustment failed: $error"))
+              .liftTo[F]
+          }
 
           (
             blocks: List[Signed[Block]],
@@ -164,18 +191,19 @@ object CurrencySnapshotCreator {
             }
 
           dataApplicationAcceptanceResult <- dataApplicationSnapshotAcceptanceManager.flatTraverse(
-            _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal, lastArtifact.globalSyncView)
+            _.accept(
+              maybeLastDataApplication,
+              dataBlocks,
+              lastArtifact.ordinal,
+              currentOrdinal,
+              feeTransactionAcceptanceMode,
+              initialBalancesOverride
+            )
           )
-
-          customArtifacts = maybeCustomArtifacts.map { customArtifactFn =>
-            customArtifactFn(lastArtifact).getOrElse(SortedSet.empty[SharedArtifact])
-          }
-            .getOrElse(SortedSet.empty[SharedArtifact])
 
           sharedArtifactsForAcceptance = dataApplicationAcceptanceResult
             .map(_.sharedArtifacts)
-            .orElse(artifactsFn.map(f => f()))
-            .getOrElse(SortedSet.empty[SharedArtifact])
+            .getOrElse(fallbackArtifacts)
 
           feeTransactions = dataApplicationAcceptanceResult
             .map(result => SortedSet.from(result.feeTransactions))
@@ -201,7 +229,7 @@ object CurrencySnapshotCreator {
                     .map(
                       _.distribute(
                         lastArtifact,
-                        lastContext.snapshotInfo.balances,
+                        initialBalancesOverride.getOrElse(lastContext.snapshotInfo.balances),
                         transactions,
                         trigger,
                         events,
@@ -213,7 +241,8 @@ object CurrencySnapshotCreator {
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
                 shouldValidateCollateral,
-                lastArtifact.proofs
+                lastArtifact.proofs,
+                feeTransactionAcceptanceMode
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {

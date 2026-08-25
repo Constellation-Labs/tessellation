@@ -121,8 +121,8 @@ object StateChannelSnapshotService {
       )(implicit hasher: Hasher[F]): F[Unit] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
-            // Both come from the same previous snapshot the artifact was built on, so the activation gate
-            // resolves here exactly as it did when the artifact was created.
+            // Both come from the signed previous snapshot. Historical recreation tries only the fee modes
+            // applicable to that history and accepts the one matching the recorded calculated-state proof.
             (
               lastSnapshot.flatMap { case (value, _) => value.dataApplication },
               lastSnapshot.flatMap { case (value, _) => value.globalSyncView }

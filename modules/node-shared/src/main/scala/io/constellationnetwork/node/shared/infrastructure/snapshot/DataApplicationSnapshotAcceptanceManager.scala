@@ -36,7 +36,8 @@ trait DataApplicationSnapshotAcceptanceManager[F[_]] {
     dataBlocks: List[Signed[DataApplicationBlock]],
     lastOrdinal: SnapshotOrdinal,
     currentOrdinal: SnapshotOrdinal,
-    lastGlobalSyncView: Option[GlobalSyncView]
+    feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode = FeeTransactionAcceptanceMode.live,
+    initialBalancesOverride: Option[SortedMap[Address, Balance]] = None
   ): F[Option[DataApplicationAcceptanceResult]]
 
   def consumeSignedMajorityArtifact(
@@ -124,23 +125,41 @@ object DataApplicationSnapshotAcceptanceManager {
     ): F[Unit] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
-      OptionT
-        .fromOption(artifact.dataApplication)
-        .flatMap { da =>
-          OptionT
-            .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
-            .flatMapF { dataBlocks =>
-              artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
-                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal, lastGlobalSyncView)
+      def recreateCalculatedState(
+        dataBlocks: List[Signed[DataApplicationBlock]],
+        expectedHash: Hash,
+        modes: List[FeeTransactionAcceptanceMode]
+      ): F[DataCalculatedState] =
+        modes match {
+          case Nil =>
+            new IllegalStateException("No fee-transaction acceptance mode available for snapshot recreation")
+              .raiseError[F, DataCalculatedState]
+          case mode :: remaining =>
+            artifact.ordinal.partialPrevious
+              .flatTraverse(lastOrdinal => accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal, mode))
+              .flatMap(
+                _.map(_.calculatedState)
+                  .liftTo[F](new IllegalStateException(s"Could not recreate data application state at ordinal ${artifact.ordinal.show}"))
               )
-            }
-            .map(_.calculatedState)
-            .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
-            .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
-            .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
+              .flatMap(expectCalculatedStateHash(expectedHash))
+              .handleErrorWith { error =>
+                if (remaining.nonEmpty) recreateCalculatedState(dataBlocks, expectedHash, remaining)
+                else error.raiseError[F, DataCalculatedState]
+              }
         }
-        .value
-        .void
+
+      artifact.dataApplication.traverse_ { da =>
+        for {
+          dataBlocks <- da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption))
+          calculatedState <- recreateCalculatedState(
+            dataBlocks,
+            da.calculatedStateProof,
+            FeeTransactionAcceptanceMode.historicalRecreationModes(lastGlobalSyncView, fixingDataApplicationFeeValidation)
+          )
+          _ <- service.setCalculatedState(artifact.ordinal, calculatedState)
+          _ <- calculatedStateStorage.write(artifact.ordinal, calculatedState)(service.serializeCalculatedState)
+        } yield ()
+      }
     }
 
     def accept(
@@ -148,19 +167,12 @@ object DataApplicationSnapshotAcceptanceManager {
       dataBlocks: List[Signed[DataApplicationBlock]],
       lastOrdinal: SnapshotOrdinal,
       currentOrdinal: SnapshotOrdinal,
-      lastGlobalSyncView: Option[GlobalSyncView]
+      feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode,
+      initialBalancesOverride: Option[SortedMap[Address, Balance]]
     ): F[Option[DataApplicationAcceptanceResult]] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
-      // Snapshot acceptance is re-executed verbatim whenever a signed snapshot is replayed -- rejoin, download
-      // and consensus validation all recreate the artifact and compare it to the recorded one. The gate has to
-      // read a value carried by the history being replayed, not the node's live view of the global chain, or a
-      // node replaying an old ordinal today evaluates it against today's head and diverges. globalSyncView is a
-      // field of the previous currency snapshot, so it is identical on every node and at every replay. It is
-      // None on snapshots older than tessellation-3-migration, which are exactly the ones that must replay
-      // under the legacy rules.
-      val validateEveryFeeTransaction =
-        lastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >= fixingDataApplicationFeeValidation
+      val validateEveryFeeTransaction = feeTransactionAcceptanceMode.validateEveryFeeTransaction
 
       val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
         lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
@@ -175,14 +187,16 @@ object DataApplicationSnapshotAcceptanceManager {
               logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state").as(none)
             )
         }
-        balances <- OptionT.liftF {
-          context.getLastCurrencySnapshotCombined.flatMap { snapshot =>
-            OptionT
-              .fromOption(snapshot)
-              .map { case (_, snapshotInfo) => snapshotInfo.balances }
-              .getOrRaise(new IllegalStateException("Last currency snapshot unavailable"))
-          }
-        }
+        balances <- OptionT.liftF(
+          initialBalancesOverride.fold {
+            context.getLastCurrencySnapshotCombined.flatMap { snapshot =>
+              OptionT
+                .fromOption(snapshot)
+                .map { case (_, snapshotInfo) => snapshotInfo.balances }
+                .getOrRaise(new IllegalStateException("Last currency snapshot unavailable"))
+            }
+          }(_.pure[F])
+        )
 
         lastCalculatedState <- OptionT.liftF(
           service.getCalculatedState
@@ -253,10 +267,11 @@ object DataApplicationSnapshotAcceptanceManager {
                       val dataUpdates = getDataUpdates(dataTransactionsAsList)
                       val feeTransactions = getFeeTransactions(dataTransactionsAsList)
 
-                      // Below the activation ordinal the block is never rejected for arithmetic and the
-                      // running balance is left untouched, which is the pre-fix behaviour.
+                      // Legacy recreation leaves the running balance untouched and does not reject a block
+                      // for fee arithmetic. Live creation always selects the strict mode above.
                       val feeApplication =
-                        if (validateEveryFeeTransaction) applyFeeTransactions(currentBalances, feeTransactions)
+                        if (feeTransactionAcceptanceMode.applyFeeTransactionsInDataApplication)
+                          applyFeeTransactions(currentBalances, feeTransactions)
                         else currentBalances.asRight[Throwable]
 
                       feeApplication match {

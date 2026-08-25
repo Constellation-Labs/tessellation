@@ -5,6 +5,7 @@ import cats.data.NonEmptySet
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotAcceptanceManager.{
   applyFeeTransactions,
   applyFeeTransactionsUnchecked
@@ -12,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnaps
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
@@ -220,5 +222,42 @@ object CurrencySnapshotAcceptanceManagerFeeTxsSuite extends SimpleIOSuite with C
     val before = balancesOf(payer -> 100L)
 
     expect(applyFeeTransactionsUnchecked(before, txs).isLeft)
+  }
+
+  pureTest("historical recreation supports every fee behavior signed below strict activation") {
+    val activation = io.constellationnetwork.schema.SnapshotOrdinal.unsafeApply(6818000L)
+    val parentView =
+      GlobalSyncView(io.constellationnetwork.schema.SnapshotOrdinal.unsafeApply(6815490L), Hash.empty, EpochProgress.MinValue)
+    val legacyUnchecked = FeeTransactionAcceptanceMode.LegacyValidationAndUncheckedArithmetic
+    val legacyChecked = FeeTransactionAcceptanceMode.LegacyValidationAndCheckedArithmetic
+
+    expect.all(
+      FeeTransactionAcceptanceMode.historicalRecreationModes(Some(parentView), activation) == List(
+        legacyUnchecked,
+        legacyChecked,
+        FeeTransactionAcceptanceMode.Strict
+      ),
+      !legacyUnchecked.validateEveryFeeTransaction,
+      !legacyUnchecked.applyFeeTransactionsInDataApplication,
+      !legacyUnchecked.useCheckedCurrencyFeeArithmetic,
+      !legacyChecked.validateEveryFeeTransaction,
+      !legacyChecked.applyFeeTransactionsInDataApplication,
+      legacyChecked.useCheckedCurrencyFeeArithmetic
+    )
+  }
+
+  pureTest("historical recreation is strict once the signed parent crosses activation") {
+    val activation = io.constellationnetwork.schema.SnapshotOrdinal.unsafeApply(6818000L)
+    val parentView = GlobalSyncView(activation, Hash.empty, EpochProgress.MinValue)
+    val strict = FeeTransactionAcceptanceMode.Strict
+
+    expect.all(
+      FeeTransactionAcceptanceMode.historicalRecreationModes(Some(parentView), activation) == List(
+        strict
+      ),
+      strict.validateEveryFeeTransaction,
+      strict.applyFeeTransactionsInDataApplication,
+      strict.useCheckedCurrencyFeeArithmetic
+    )
   }
 }

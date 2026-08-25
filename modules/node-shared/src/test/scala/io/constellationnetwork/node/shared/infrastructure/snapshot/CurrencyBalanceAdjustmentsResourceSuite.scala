@@ -1,9 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
+import cats.data.NonEmptySet
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.env.AppEnvironment.Mainnet
 import io.constellationnetwork.node.shared.infrastructure.BalanceAdjustmentLoader
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.{
@@ -11,11 +13,20 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalan
   RequiredAdjustment,
   metagraphsBalancesAdjustments
 }
+import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotAcceptanceManager.{
+  applyExactBalanceAdjustmentBeforeEvents,
+  applyFeeTransactions,
+  hasUnauthorizedAdjustmentArtifacts
+}
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{BalanceAdjustment, FeeTransactionBugDeduction, TokenUnlockBugDeduction}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -25,7 +36,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
 
   private val pacaswap = Address("DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W")
 
-  private val adjustmentOrdinal = SnapshotOrdinal.unsafeApply(731650L)
+  private val adjustmentOrdinal = SnapshotOrdinal.unsafeApply(731647L)
 
   /** 2^62, the amount each of the four fee transactions in metagraph snapshot 731261 credited. */
   private val minted = 4611686018427387904L
@@ -68,7 +79,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
       .fold(error => throw new RuntimeException(error), identity)
 
   /** Read straight out of the shipped resource, including reason and reference, so this is the complete artifact set the metagraph must
-    * emit at 731650.
+    * emit at 731647.
     */
   private val allDeductions: Set[BalanceAdjustment] =
     incidentAdjustmentBlock.adjustments
@@ -96,7 +107,15 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
       .find(adjustment => adjustment.address == address && adjustment.deduct.exists(_.value.value == amount))
       .getOrElse(throw new RuntimeException(s"Authorized deduction not found for $address: $amount"))
 
-  private lazy val entryAt731650 =
+  private def signedFeeTransaction(source: Address, destination: Address, amount: Long): Signed[FeeTransaction] = {
+    val hex = "1" * 128
+    Signed(
+      FeeTransaction(source, destination, Amount(NonNegLong.unsafeFrom(amount)), Hash.empty),
+      NonEmptySet.one(SignatureProof(Id(Hex(hex)), Signature(Hex(hex))))
+    )
+  }
+
+  private lazy val recoveryEntry =
     metagraphsBalancesAdjustments(pacaswap).find(_.snapshotOrdinal == adjustmentOrdinal).get
 
   private val balances: SortedMap[Address, Balance] =
@@ -108,7 +127,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
 
   // The incident block must remain registered alongside every historical PacaSwap block, and only this
   // newly scheduled block should opt into exact artifact authorization.
-  pureTest("the active Pacaswap entry is the fee-transaction deduction at ordinal 731650") {
+  pureTest("the active Pacaswap entry is the fee-transaction deduction at the first restart ordinal") {
     val entry = metagraphsBalancesAdjustments.get(pacaswap)
 
     expect.all(
@@ -142,7 +161,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   }
 
   pureTest("the entry zeroes the minted wallets and takes the surplus off the pool") {
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions)
+    val result = recoveryEntry.balanceAdjustFunction(balances, allDeductions)
 
     result match {
       case Left(error) => failure(s"expected the adjustment to apply, got: $error")
@@ -156,7 +175,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
   }
 
   pureTest("buyers keep the PACA they held before the mint") {
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions)
+    val result = recoveryEntry.balanceAdjustFunction(balances, allDeductions)
 
     result match {
       case Left(error) => failure(s"expected the adjustment to apply, got: $error")
@@ -168,11 +187,30 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     }
   }
 
-  // If the metagraph fails to emit the full artifact set at 731650 the snapshot must not be produced,
+  pureTest("the exact correction runs before fee-bearing events can move a deducted balance") {
+    val source = mintedWallets.head._1
+    val result = applyExactBalanceAdjustmentBeforeEvents(balances, allDeductions, recoveryEntry.some)
+
+    result match {
+      case Left(error) => failure(s"expected the adjustment to apply, got: $error")
+      case Right(corrected) =>
+        val (afterAttempt, accepted, rejected) =
+          applyFeeTransactions(corrected, SortedSet(signedFeeTransaction(source, bystander._1, 1L)))
+
+        expect.all(
+          corrected.get(source).contains(Balance.empty),
+          accepted.isEmpty,
+          rejected.size == 1,
+          afterAttempt.get(bystander._1).contains(Balance(NonNegLong.unsafeFrom(bystander._2)))
+        )
+    }
+  }
+
+  // If the metagraph fails to emit the full artifact set at 731647 the snapshot must not be produced,
   // rather than being accepted with a partial deduction.
   pureTest("the entry rejects an incomplete adjustment set") {
     val partial = allDeductions - authorizedDeduction(mintedWallets.head._1, minted)
-    val result = entryAt731650.balanceAdjustFunction(balances, partial)
+    val result = recoveryEntry.balanceAdjustFunction(balances, partial)
 
     expect(result.isLeft)
   }
@@ -184,7 +222,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     val skewed = allDeductions - authorizedPoolDeduction + authorizedPoolDeduction.copy(
       deduct = Amount(NonNegLong.unsafeFrom(poolSurplus - 1L)).some
     )
-    val result = entryAt731650.balanceAdjustFunction(balances, skewed)
+    val result = recoveryEntry.balanceAdjustFunction(balances, skewed)
 
     expect(result.isLeft)
   }
@@ -206,6 +244,13 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     )
   }
 
+  pureTest("a registered metagraph keeps the historical no-op behavior at an unmatched ordinal") {
+    expect.all(
+      !hasUnauthorizedAdjustmentArtifacts(metagraphsBalancesAdjustments.get(pacaswap), allDeductions),
+      hasUnauthorizedAdjustmentArtifacts(None, allDeductions)
+    )
+  }
+
   pureTest("the entry rejects an adjustment that is not in the authorized set") {
     // validateRequiredAdjustments used to check only that the required set was a subset of what the
     // metagraph emitted, so a metagraph could emit the authorized deductions plus arbitrary extras and
@@ -214,7 +259,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     // An address nowhere in the authorized set, with a deduction nobody approved.
     val extra = deduction(Address("DAG6zZakMJrrf25FSvPZAi8QA9wVDdmvFkPvTbKu"), 999999999L)
 
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions + extra)
+    val result = recoveryEntry.balanceAdjustFunction(balances, allDeductions + extra)
 
     expect(result.isLeft) &&
     expect(result.left.exists(_.toLowerCase.contains("unauthorized")))
@@ -224,7 +269,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     val authorized = authorizedDeduction(pacaswap, poolSurplus)
     val withIncrease = authorized.copy(increase = Amount(NonNegLong.unsafeFrom(1L)).some)
 
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions - authorized + withIncrease)
+    val result = recoveryEntry.balanceAdjustFunction(balances, allDeductions - authorized + withIncrease)
 
     expect(result.isLeft)
   }
@@ -235,8 +280,8 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     val wrongReference = authorized.copy(reference = authorized.reference + Hash("unauthorized-reference"))
 
     expect.all(
-      entryAt731650.balanceAdjustFunction(balances, allDeductions - authorized + wrongReason).isLeft,
-      entryAt731650.balanceAdjustFunction(balances, allDeductions - authorized + wrongReference).isLeft
+      recoveryEntry.balanceAdjustFunction(balances, allDeductions - authorized + wrongReason).isLeft,
+      recoveryEntry.balanceAdjustFunction(balances, allDeductions - authorized + wrongReference).isLeft
     )
   }
 
@@ -244,7 +289,7 @@ object CurrencyBalanceAdjustmentsResourceSuite extends SimpleIOSuite {
     val authorized = authorizedDeduction(pacaswap, poolSurplus)
     val duplicate = authorized.copy(reference = authorized.reference + Hash("unauthorized-reference"))
 
-    val result = entryAt731650.balanceAdjustFunction(balances, allDeductions + duplicate)
+    val result = recoveryEntry.balanceAdjustFunction(balances, allDeductions + duplicate)
 
     expect(result.isLeft)
   }

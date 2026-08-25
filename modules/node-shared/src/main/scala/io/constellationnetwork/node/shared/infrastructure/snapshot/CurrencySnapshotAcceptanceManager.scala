@@ -100,7 +100,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
     shouldValidateCollateral: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode = FeeTransactionAcceptanceMode.live
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -111,6 +112,21 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 }
 
 object CurrencySnapshotAcceptanceManager {
+
+  private[snapshot] def applyExactBalanceAdjustmentBeforeEvents(
+    balances: SortedMap[Address, Balance],
+    balanceAdjustments: Set[BalanceAdjustment],
+    balanceAdjustmentInfo: Option[CurrencyBalanceAdjustments.BalanceAdjustmentAtOrdinal]
+  ): Either[String, SortedMap[Address, Balance]] =
+    balanceAdjustmentInfo
+      .filter(_.exactMatchRequired)
+      .fold(balances.asRight[String])(_.balanceAdjustFunction(balances, balanceAdjustments))
+
+  private[snapshot] def hasUnauthorizedAdjustmentArtifacts(
+    registeredAdjustments: Option[List[CurrencyBalanceAdjustments.BalanceAdjustmentAtOrdinal]],
+    balanceAdjustments: Set[BalanceAdjustment]
+  ): Boolean =
+    balanceAdjustments.nonEmpty && registeredAdjustments.isEmpty
 
   /** Applies fee transactions sequentially, dropping any transaction whose source cannot cover it.
     *
@@ -151,10 +167,11 @@ object CurrencySnapshotAcceptanceManager {
     (balances ++ feeReferredBalances, txs -- rejected, rejected.reverse)
   }
 
-  /** Legacy raw-Long accumulation retained only for deterministic replay below fixingDataApplicationFeeValidation.
+  /** Legacy raw-Long accumulation retained only for deterministic historical replay.
     *
     * The incident snapshot was signed with this behavior. Re-executing it with checked arithmetic drops the four overflowing transactions
-    * and produces a different state proof, so historical snapshots must select this path from their signed globalSyncView.
+    * and produces a different state proof, so the validator keeps this path as one historical recreation mode and accepts it only when it
+    * reproduces the signed artifact.
     */
   def applyFeeTransactionsUnchecked(
     balances: SortedMap[Address, Balance],
@@ -287,7 +304,8 @@ object CurrencySnapshotAcceptanceManager {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       maybeLastGlobalSyncView: Option[GlobalSyncView],
       shouldValidateCollateral: Boolean,
-      lastArtifactProofs: NonEmptySet[SignatureProof]
+      lastArtifactProofs: NonEmptySet[SignatureProof],
+      feeTransactionAcceptanceMode: FeeTransactionAcceptanceMode
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -312,18 +330,32 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
         .getOrElse(environment, SnapshotOrdinal.MinValue)
-      fixingDataApplicationFeeValidation = fieldsAddedOrdinals.fixingDataApplicationFeeValidation
-        .getOrElse(environment, SnapshotOrdinal.MinValue)
-      // Same gate, same deterministic ordinal, as the data application layer one level up. Below it that layer
-      // runs the legacy validator, which checks neither source != destination nor signature exclusivity, so a
-      // transaction failing only those still reaches acceptance. Dropping it here while an unpatched node
-      // raises would make the two produce different artifacts from the same events during the rollout window.
-      validateEveryFeeTransaction =
-        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >= fixingDataApplicationFeeValidation
+
+      acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
+      balanceAdjustments = acceptedSharedArtifacts.collect {
+        case balanceAdjustment: BalanceAdjustment => balanceAdjustment
+      }
+      balanceAdjustmentInfos = metagraphsBalancesAdjustments.get(lastSnapshotContext.address)
+      balanceAdjustmentInfo = balanceAdjustmentInfos
+        .getOrElse(List.empty)
+        .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+
+      // Newly scheduled exact-match corrections take effect at the start of their snapshot. Historical
+      // adjustment blocks retain their original end-of-snapshot ordering for replay compatibility. Applying
+      // a new deduction only after block, fee, token-lock, allow-spend and SpendAction processing lets the
+      // adjusted balance move to an unlisted address before the deduction clamps the old address to zero.
+      balancesBeforeEvents <- applyExactBalanceAdjustmentBeforeEvents(
+        lastSnapshotContext.snapshotInfo.balances,
+        balanceAdjustments,
+        balanceAdjustmentInfo
+      ).leftMap(error => new RuntimeException(s"Balance adjustment failed: $error"): Throwable).liftTo[F]
+      snapshotContextBeforeEvents = lastSnapshotContext.copy(
+        snapshotInfo = lastSnapshotContext.snapshotInfo.copy(balances = balancesBeforeEvents)
+      )
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
-        lastSnapshotContext,
+        snapshotContextBeforeEvents,
         snapshotOrdinal,
         lastActiveTips,
         lastDeprecatedTips,
@@ -342,20 +374,21 @@ object CurrencySnapshotAcceptanceManager {
       rewards <- calculateRewardsFn(acceptedTransactions)
 
       (updatedBalancesByRewards, acceptedRewardTxs) <- acceptRewardTxs(
-        lastSnapshotContext.snapshotInfo.balances,
+        balancesBeforeEvents,
         acceptanceBlocksResult.contextUpdate.balances,
         rewards
       )
 
-      validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance, validateEveryFeeTransaction)
+      validatedFeeTxs <- validateFeeTxs(
+        feeTransactionsForAcceptance,
+        feeTransactionAcceptanceMode.validateEveryFeeTransaction
+      )
 
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
         validatedFeeTxs,
-        checkedArithmetic = validateEveryFeeTransaction
+        checkedArithmetic = feeTransactionAcceptanceMode.useCheckedCurrencyFeeArithmetic
       )
-
-      acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
       globalSnapshotSyncAcceptanceResult <- acceptGlobalSnapshotSyncs(
         lastSnapshotContext.snapshotInfo.globalSnapshotSyncView,
@@ -454,7 +487,7 @@ object CurrencySnapshotAcceptanceManager {
 
       allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
         allowSpendBlocksForAcceptance,
-        lastSnapshotContext,
+        snapshotContextBeforeEvents,
         snapshotOrdinal,
         initialAllowSpendRef,
         shouldValidateCollateral,
@@ -474,7 +507,7 @@ object CurrencySnapshotAcceptanceManager {
 
       acceptanceTokenLockBlocksResult <- acceptTokenLockBlocks(
         tokenLockBlocksForAcceptance,
-        lastSnapshotContext,
+        snapshotContextBeforeEvents,
         snapshotOrdinal,
         tokenLockInitialTxRef,
         shouldValidateCollateral,
@@ -620,21 +653,17 @@ object CurrencySnapshotAcceptanceManager {
           else lastGlobalSnapshotOrdinal
         }
 
-      balanceAdjustments = acceptedSharedArtifacts.collect {
-        case balanceAdjustment: BalanceAdjustment => balanceAdjustment
-      }
-
       updatedBalancesByInvalidAddressChecks <-
         // A metagraph may be authorized at several ordinals, so select the block matching this one
         // rather than assuming a single entry. Keying uniquely meant the last block in the resource
         // silently retired every earlier block for the same currency: replaying one of those ordinals
         // applied no adjustment and diverged without raising, and a follow-up adjustment could not be
         // scheduled at all.
-        metagraphsBalancesAdjustments
-          .getOrElse(lastSnapshotContext.address, List.empty)
-          .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+        balanceAdjustmentInfo
           .fold[F[SortedMap[Address, Balance]]] {
-            if (balanceAdjustments.nonEmpty) {
+            // Preserve signed history: a known metagraph emitting an adjustment at a non-matching
+            // ordinal was previously a no-op. Only a metagraph absent from the registry is unauthorized.
+            if (hasUnauthorizedAdjustmentArtifacts(balanceAdjustmentInfos, balanceAdjustments)) {
               val unauthorizedError = new RuntimeException(
                 s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
               )
@@ -643,10 +672,12 @@ object CurrencySnapshotAcceptanceManager {
               updatedBalancesBySpendTransactions.pure[F]
             }
           } { info =>
-            info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
-              case Right(balances) => balances.pure[F]
-              case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
-            }
+            if (info.exactMatchRequired) updatedBalancesBySpendTransactions.pure[F]
+            else
+              info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+                case Right(balances) => balances.pure[F]
+                case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+              }
           }
 
       csi = CurrencySnapshotInfo(
