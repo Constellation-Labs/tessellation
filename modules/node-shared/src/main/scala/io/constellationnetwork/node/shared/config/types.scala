@@ -61,13 +61,26 @@ object types {
     // snapshot protocol 0.0.1 to 1.0.0. The signed CurrencySnapshot.version then keeps
     // historical replay self-describing. Public environments stay absent until the
     // coordinated v35 rollout; dev activates from genesis so CI exercises the new path.
-    currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal every fee transaction in a data envelope is validated, and a data block whose
+    // fees cannot be applied is rejected. Deliberately NOT feeTransactionSecurity: that gate is already open on
+    // integrationnet at 5880000, so widening what it controls would change how signed history there replays.
+    fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
+    // destination is credited only when a SpendAction consumes the allowance.
+    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
       feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
 
     def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
       currencySnapshotProtocolV1.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
+    def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
+      fixingDataApplicationFeeValidation.getOrElse(environment, SnapshotOrdinal.MinValue)
+
+    def fixingAllowSpendDestinationCreditFor(environment: AppEnvironment): SnapshotOrdinal =
+      fixingAllowSpendDestinationCredit.getOrElse(environment, SnapshotOrdinal.MinValue)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).

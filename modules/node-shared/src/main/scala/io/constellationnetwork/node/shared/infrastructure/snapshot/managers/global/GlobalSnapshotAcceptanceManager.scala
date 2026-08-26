@@ -363,7 +363,8 @@ object GlobalSnapshotAcceptanceManager {
         allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
         tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
         lastSnapshotContext: GlobalSnapshotInfo,
-        fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal
+        fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+        fixingAllowSpendDestinationCredit: SnapshotOrdinal
       )(implicit hasher: Hasher[F]): F[(AllowSpendBlockAcceptanceResult, TokenLockBlockAcceptanceResult)] =
         for {
           allowSpend <- blockAcceptanceCoordinatorManager.acceptAllowSpendBlocks(
@@ -371,6 +372,7 @@ object GlobalSnapshotAcceptanceManager {
             lastSnapshotContext,
             ordinal,
             fixingAllowSpendAndTokenLockValidation,
+            fixingAllowSpendDestinationCredit,
             epochProgress
           )
           tokenLock <- blockAcceptanceCoordinatorManager.acceptTokenLockBlocks(
@@ -631,6 +633,8 @@ object GlobalSnapshotAcceptanceManager {
         val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
           .getOrElse(environment, SnapshotOrdinal.MinValue)
 
+        val fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(environment)
+
         loggerBundle.app.withOrdinal(ordinal) {
           for {
             _ <- loggerBundle.app.debug(
@@ -651,7 +655,8 @@ object GlobalSnapshotAcceptanceManager {
                 allowSpendBlocksForAcceptance,
                 tokenLockBlocksForAcceptance,
                 lastSnapshotContext,
-                fixingAllowSpendAndTokenLockValidation
+                fixingAllowSpendAndTokenLockValidation,
+                fixingAllowSpendDestinationCredit
               )
 
             acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)

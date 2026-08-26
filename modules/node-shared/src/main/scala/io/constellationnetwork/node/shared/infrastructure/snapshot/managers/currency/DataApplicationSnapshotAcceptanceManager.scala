@@ -70,7 +70,8 @@ object DataApplicationSnapshotAcceptanceManager {
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
-    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal,
+    dataApplicationFeeValidationActivationOrdinal: SnapshotOrdinal
   ): DataApplicationSnapshotAcceptanceManager[F] = new DataApplicationSnapshotAcceptanceManager[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -206,7 +207,8 @@ object DataApplicationSnapshotAcceptanceManager {
                           currentOrdinal,
                           parentGlobalSnapshotOrdinal,
                           dataState,
-                          feeTransactionSecurityActivationOrdinal
+                          feeTransactionSecurityActivationOrdinal,
+                          validateEveryFeeTransaction = parentGlobalSnapshotOrdinal >= dataApplicationFeeValidationActivationOrdinal
                         )
                       )
                       .map(_.reduce)

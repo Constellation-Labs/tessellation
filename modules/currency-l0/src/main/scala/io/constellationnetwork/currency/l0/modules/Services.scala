@@ -132,7 +132,8 @@ object Services {
             service,
             l0NodeContext,
             storage,
-            sharedCfg.fieldsAddedOrdinals.feeTransactionSecurityFor(sharedCfg.environment)
+            sharedCfg.fieldsAddedOrdinals.feeTransactionSecurityFor(sharedCfg.environment),
+            sharedCfg.fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(sharedCfg.environment)
           )
       }
 

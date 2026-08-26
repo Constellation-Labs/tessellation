@@ -103,7 +103,9 @@ class BlockAcceptanceOpsManager[F[_]: Async: Parallel](
     initialTxRef: AllowSpendReference,
     shouldPerformMetagraphSpecificValidations: Boolean,
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastGlobalSyncViewOrdinal: SnapshotOrdinal,
     fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+    fixingAllowSpendDestinationCredit: SnapshotOrdinal,
     lastSyncGlobalSnapshotEpochProgress: EpochProgress
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
     val context = AllowSpendBlockAcceptanceContext.fromStaticData(
@@ -119,12 +121,18 @@ class BlockAcceptanceOpsManager[F[_]: Async: Parallel](
       else
         none
 
+    // The destination-credit gate must use the previous snapshot's signed GlobalSyncView.
+    // A node's live GL0 head is not replay-stable and would make old Currency history depend
+    // on when and where it is reconstructed.
+    val creditDestination = lastGlobalSyncViewOrdinal < fixingAllowSpendDestinationCredit
+
     allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
       blocksForAcceptance,
       context,
       snapshotOrdinal,
       shouldPerformMetagraphSpecificValidations,
-      maybeEpochProgress
+      maybeEpochProgress,
+      creditDestination
     )
   }
 

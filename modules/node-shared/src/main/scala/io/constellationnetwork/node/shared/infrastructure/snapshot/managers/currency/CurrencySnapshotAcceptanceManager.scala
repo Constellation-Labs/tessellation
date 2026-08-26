@@ -217,6 +217,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       .getOrElse(environment, SnapshotOrdinal.MinValue)
     fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
       .getOrElse(environment, SnapshotOrdinal.MinValue)
+    fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(environment)
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
       blocksForAcceptance,
@@ -444,7 +445,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         initialAllowSpendRef,
         shouldPerformMetagraphSpecificValidations,
         lastUnsyncGlobalSnapshot.ordinal,
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         fixingAllowSpendAndTokenLockValidation,
+        fixingAllowSpendDestinationCredit,
         lastGlobalSnapshotEpochProgress
       )
     ).parMapN((tokenLock, allowSpend) => (tokenLock, allowSpend))

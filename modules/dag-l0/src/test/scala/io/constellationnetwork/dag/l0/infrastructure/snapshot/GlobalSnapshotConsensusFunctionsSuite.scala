@@ -132,7 +132,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       context: AllowSpendBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
       shouldPerformMetagraphSpecificValidations: Boolean = true,
-      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+      creditDestination: Boolean = false
     )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] = ???
 
     override def acceptBlocksIteratively(
@@ -140,7 +141,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       context: AllowSpendBlockAcceptanceContext[IO],
       snapshotOrdinal: SnapshotOrdinal,
       shouldPerformMetagraphSpecificValidations: Boolean = true,
-      lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+      creditDestination: Boolean = false
     )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
       AllowSpendBlockAcceptanceResult(
         AllowSpendBlockAcceptanceContextUpdate.empty,

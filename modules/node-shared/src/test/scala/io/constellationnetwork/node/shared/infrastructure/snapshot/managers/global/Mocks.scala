@@ -113,7 +113,8 @@ object Mocks {
         context: AllowSpendBlockAcceptanceContext[IO],
         snapshotOrdinal: SnapshotOrdinal,
         shouldPerformMetagraphSpecificValidations: Boolean,
-        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+        creditDestination: Boolean
       )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] = AllowSpendBlockAcceptanceResult(
         contextUpdate = AllowSpendBlockAcceptanceContextUpdate.empty,
         accepted = List.empty[Signed[AllowSpendBlock]],
@@ -125,7 +126,8 @@ object Mocks {
         context: AllowSpendBlockAcceptanceContext[IO],
         snapshotOrdinal: SnapshotOrdinal,
         shouldPerformMetagraphSpecificValidations: Boolean,
-        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress],
+        creditDestination: Boolean
       )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
         AllowSpendBlockAcceptanceContextUpdate.empty.asRight.pure[IO]
     }
