@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensusStateAdvancer.retainedAfterProposal
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensusStateCreator._
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencyMessageEvent, CurrencySnapshotEvent}
@@ -106,6 +107,13 @@ object CurrencySynchronousStateCreatorSuite extends SimpleIOSuite {
     )
 
     expect.all(ownerInitial, !staking, !wrongMetagraph, !nonInitialOwner)
+  }
+
+  pureTest("events rejected against one parent remain eligible for a later round") {
+    val awaiting = messageEvent(MessageType.Staking)
+    val rejected = messageEvent(MessageType.Owner)
+
+    expect.same(Set(awaiting, rejected), retainedAfterProposal(Set(awaiting), Set(rejected)))
   }
 
   test("a Facility advertises only events confirmed on every round-start facilitator") {

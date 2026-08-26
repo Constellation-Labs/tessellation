@@ -62,6 +62,14 @@ object CurrencySnapshotConsensusStateAdvancer {
   private[snapshot] def boundedFacilityEventHashes(hashes: Iterable[Hash]): SortedSet[Hash] =
     SortedSet.from(hashes)(hashOrdering).take(EventMempool.DefaultSnapshotLimit)
 
+  /** Events not accepted against this parent remain eligible for a later round. `rejected` means rejected by this derivation, not
+    * permanently invalid: Currency/GL0 state can advance and make the same token-lock or spend event valid on the next parent.
+    */
+  private[snapshot] def retainedAfterProposal(
+    awaiting: Set[CurrencySnapshotEvent],
+    rejected: Set[CurrencySnapshotEvent]
+  ): Set[CurrencySnapshotEvent] = awaiting ++ rejected
+
   /** Newly admitted validators begin their first generation without a local timer and therefore advertise `None`. If every retained
     * Facility is `None` (for example after ACK-removing the bootstrap lead), use the repository's pinned empty-majority default. This is
     * derived only after the complete retained Facility set exists.
@@ -253,7 +261,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                                     )
                                     artifact = created.artifact
                                     context = created.context
-                                    returnedEvents = created.awaitingEvents ++ created.rejectedEvents
+                                    returnedEvents = retainedAfterProposal(created.awaitingEvents, created.rejectedEvents)
                                     acceptedEventHashes = SortedSet.from(hashToEvent.iterator.collect {
                                       case (hash, event) if !returnedEvents.contains(event) => hash
                                     })(hashOrdering)
@@ -263,11 +271,11 @@ object CurrencySnapshotConsensusStateAdvancer {
                                       hash,
                                       AttemptDomain(facilitatorsHash, parentHash, state.lastOutcome.finished.binaryArtifactHash)
                                     )
-                                    effect = removeMatchingEvents(
-                                      created.rejectedEvents,
-                                      s"deterministic rejection against Currency parent=${state.lastOutcome.key.show}"
-                                    ) >>
-                                      consensusStorage.addProposal(selfId, state.key, proposal, proposal.domain.some) >>
+                                    // Preserve both awaiting and rejected events for a later parent. Currency acceptance can reject an
+                                    // event against the current Currency/GL0 state even though it becomes valid after a subsequent
+                                    // snapshot (token-lock and spend workflows rely on this). Stable mainnet returns these events to the
+                                    // next round; only clearCommittedEvents removes events, after the winning artifact is persisted.
+                                    effect = consensusStorage.addProposal(selfId, state.key, proposal, proposal.domain.some) >>
                                       consensusStorage.addArtifact(state.key, artifact).void >>
                                       gossip.spread(ConsensusPeerDeclaration(state.key, proposal)) >>
                                       gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
