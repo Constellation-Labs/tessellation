@@ -15,7 +15,11 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcceptanceContext, AllowSpendBlockAcceptanceContextUpdate, AllowSpendBlockAcceptanceLogic}
+import io.constellationnetwork.node.shared.domain.swap.block.{
+  AllowSpendBlockAcceptanceContext,
+  AllowSpendBlockAcceptanceContextUpdate,
+  AllowSpendBlockAcceptanceLogic
+}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.snapshot.currency._

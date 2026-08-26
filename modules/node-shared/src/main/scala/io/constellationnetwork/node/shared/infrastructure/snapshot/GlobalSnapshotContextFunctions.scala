@@ -103,14 +103,22 @@ object GlobalSnapshotContextFunctions {
           fixingAllowSpendDestinationCredit
         )
 
+        // The allow-spend and state-proof checks in createContextWithMode are what tell a mode that reproduces
+        // this snapshot from one that does not, so they are armed only in the historical window where more than
+        // one mode is possible. At or above the activation ordinal a single mode applies and they stay dormant,
+        // exactly as before this fix: an incident hotfix should not switch on a whole-history check that has
+        // never run.
+        val enforceModeAgreement = modes.sizeIs > 1
+
         modes match {
           case firstMode :: remainingModes =>
-            remainingModes.foldLeft(createContextWithMode(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, firstMode)) {
-              (result, mode) =>
-                result.handleErrorWith { error =>
-                  logger.debug(error)(s"Retrying global snapshot recreation with allow-spend mode=$mode") >>
-                    createContextWithMode(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, mode)
-                }
+            remainingModes.foldLeft(
+              createContextWithMode(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, firstMode, enforceModeAgreement)
+            ) { (result, mode) =>
+              result.handleErrorWith { error =>
+                logger.debug(error)(s"Retrying global snapshot recreation with allow-spend mode=$mode") >>
+                  createContextWithMode(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, mode, enforceModeAgreement)
+              }
             }
           case Nil =>
             new IllegalStateException("No allow-spend acceptance mode available for global snapshot recreation")
@@ -123,7 +131,8 @@ object GlobalSnapshotContextFunctions {
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode,
+        enforceModeAgreement: Boolean
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
 
@@ -268,7 +277,7 @@ object GlobalSnapshotContextFunctions {
           .whenA(acceptanceResult.notAccepted.nonEmpty)
         _ <- CannotApplyAllowSpendBlocksError(allowSpendBlockAcceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]
-          .whenA(allowSpendBlockAcceptanceResult.notAccepted.nonEmpty)
+          .whenA(enforceModeAgreement && allowSpendBlockAcceptanceResult.notAccepted.nonEmpty)
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
@@ -282,8 +291,8 @@ object GlobalSnapshotContextFunctions {
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
         _ <- validation match {
-          case Validated.Valid(_)   => Async[F].unit
-          case Validated.Invalid(e) => e.raiseError[F, Unit]
+          case Validated.Invalid(e) if enforceModeAgreement => e.raiseError[F, Unit]
+          case _                                            => Async[F].unit
         }
 
       } yield snapshotInfo

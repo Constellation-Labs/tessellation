@@ -118,14 +118,16 @@ object CurrencySnapshotValidatorAllowSpendModeSuite extends MutableIOSuite {
         maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
         allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
       )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
-        calls.update(_ :+ allowSpendBlockAcceptanceMode).as(
-          CurrencySnapshotCreationResult(
-            resultFor(allowSpendBlockAcceptanceMode),
-            lastContext,
-            Set.empty,
-            Set.empty
+        calls
+          .update(_ :+ allowSpendBlockAcceptanceMode)
+          .as(
+            CurrencySnapshotCreationResult(
+              resultFor(allowSpendBlockAcceptanceMode),
+              lastContext,
+              Set.empty,
+              Set.empty
+            )
           )
-        )
     }
 
   private def validator(
@@ -163,10 +165,11 @@ object CurrencySnapshotValidatorAllowSpendModeSuite extends MutableIOSuite {
           _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO]
         )
       observed <- calls.get
-    } yield expect.all(
-      distinctCalls(observed) == List(AllowSpendBlockAcceptanceMode.Escrow),
-      result.isValid
-    )
+    } yield
+      expect.all(
+        distinctCalls(observed) == List(AllowSpendBlockAcceptanceMode.Escrow),
+        result.isValid
+      )
   }
 
   test("signed historical replay below activation can reproduce legacy semantics") { res =>
@@ -194,13 +197,14 @@ object CurrencySnapshotValidatorAllowSpendModeSuite extends MutableIOSuite {
           _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO]
         )
       observed <- calls.get
-    } yield expect.all(
-      distinctCalls(observed) == List(
-        AllowSpendBlockAcceptanceMode.Escrow,
-        AllowSpendBlockAcceptanceMode.LegacyCreditDestination
-      ),
-      result.isValid
-    )
+    } yield
+      expect.all(
+        distinctCalls(observed) == List(
+          AllowSpendBlockAcceptanceMode.Escrow,
+          AllowSpendBlockAcceptanceMode.LegacyCreditDestination
+        ),
+        result.isValid
+      )
   }
 
   test("signed replay below activation uses escrow first for a new artifact") { res =>
@@ -252,10 +256,11 @@ object CurrencySnapshotValidatorAllowSpendModeSuite extends MutableIOSuite {
         _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO]
       )
       observed <- calls.get
-    } yield expect.all(
-      distinctCalls(observed) == List(AllowSpendBlockAcceptanceMode.Escrow),
-      result.isInvalid
-    )
+    } yield
+      expect.all(
+        distinctCalls(observed) == List(AllowSpendBlockAcceptanceMode.Escrow),
+        result.isInvalid
+      )
   }
 
   test("invalid signed historical artifact is rejected before any replay mode is attempted") { res =>
