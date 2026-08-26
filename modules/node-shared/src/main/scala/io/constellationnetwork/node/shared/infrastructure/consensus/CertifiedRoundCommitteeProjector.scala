@@ -64,6 +64,54 @@ object CertifiedRoundCommitteeProjector {
     committee: Projection
   )
 
+  /** Construct a live round from the parent QC's exact continuation authority.
+    *
+    * Current controller policy still computes diagnostics, admission sizing, and candidate classification, but it is not allowed to replace
+    * the already-certified full/Core sets at state creation. This is what permits a coordinated policy upgrade: the old policy's final QC
+    * fixes the first authority seen by the new release; the new policy governs only the continuation proposed from that round.
+    */
+  def fromCertifiedAuthority(
+    key: SnapshotOrdinal,
+    authority: CertifiedConsensus.CertifiedRoundAuthorityV1,
+    parentRecentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    parentControllerEvidence: SortedMap[SnapshotOrdinal, ControllerEvidenceEntry],
+    parentCarried: CarriedControllerState,
+    config: ConsensusConfig,
+    coreCommitteeSize: Int
+  ): Projection = {
+    val full = authority.facilitators.toSortedSet.toList
+    val core = authority.core.toSortedSet.toList
+    val coreSet = core.toSet
+    val tier1 = full.filterNot(coreSet.contains)
+    val classified = project(
+      key = key,
+      selectedFacilitators = full,
+      recentSigners = parentRecentSigners,
+      controllerEvidence = parentControllerEvidence,
+      carried = parentCarried,
+      config = config,
+      coreCommitteeSize = coreCommitteeSize,
+      forcedTier1Peers = tier1.toSet
+    )
+    val authoritativeCommittees = CommitteeBuilder.Committees(
+      core = core,
+      tier1 = tier1,
+      witness = List.empty,
+      effectiveTiers = SortedMap.from(
+        core.iterator.map(_ -> TierTransitions.Core) ++ tier1.iterator.map(_ -> TierTransitions.Tier1)
+      ),
+      chronicExcluded = List.empty,
+      chronicReplacements = List.empty,
+      chronicReadmitted = List.empty
+    )
+
+    classified.copy(
+      signingMembership = ConsensusPeerController.SigningMembership(full, tier1.toSet),
+      committees = authoritativeCommittees,
+      signingFacilitators = full
+    )
+  }
+
   def fromCertifiedParent[F[_]: Monad](
     key: SnapshotOrdinal,
     parentValue: ProposalValue,

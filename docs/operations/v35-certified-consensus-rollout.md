@@ -5,10 +5,11 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
 
 ## Scheduled activations
 
-- No public activation is currently scheduled. The former IntegrationNet DAG L0 key at
-  `5,890,500` was withdrawn before activation after the rc.5/rc.6 incidents. A replacement
-  key must be selected and announced only after the rc.7-compatible dormant path has
-  soaked successfully.
+- No replacement public activation key is recorded in this document yet. The former
+  IntegrationNet DAG L0 key at `5,890,500` was withdrawn before activation. The release
+  intended for public deployment must not be approved until its future key, announcement
+  window, matching Snapshot Streaming release, and activation rehearsals are recorded;
+  dormant code is a staging property, not a plan for an unscheduled extra deployment.
 - V35 certification applies only to Global L0. Currency L0 uses its Currency-local flat
   synchronous protocol and has no certified-consensus activation key.
 - Currency snapshot protocol `1.0.0` is also unscheduled on every public network. Its
@@ -72,10 +73,10 @@ and is therefore fenced independently as well.
    exact canonical ordinal-1 outcome and persists it as the predecessor of the first
    certified round. The proof set is bound to the locally state-proof-validated root.
    A follower that first appears later must obtain that locally validated public root plus
-   the complete retained child-carried Global lineage through the tip. A future independently announced,
-   content-addressed checkpoint manifest paired with a validated combined incremental
-   checkpoint may replace that history requirement only after its authority, policy
-   binding, storage, and atomic-adoption design is implemented and exercised. One peer's
+   the complete retained child-carried Global incremental lineage through the tip. Interior
+   SnapshotInfo preimages are not required: each child's QC authenticates its parent's
+   context hash and next authority. A future independently announced, content-addressed
+   checkpoint may reduce long-range I/O, but is not required for activation. One peer's
    terminal private outcome is never long-range membership authority.
 4. Prove that the signed activation seed is live: its observed parent signers must meet
    the frozen-committee finality floor, and any planned admission batch must satisfy
@@ -159,29 +160,36 @@ and is therefore fenced independently as well.
     Snapshot Streaming does not otherwise write OpenSearch during ordinary ingest. Reconcile
     any separate Block Explorer/indexer state through that component's own runbook.
 13. Verify public certified-lineage retention. From A-1 (or the canonical first
-    incremental root for certification-from-genesis) through the current tip, every
-    incremental artifact and snapshot-info/context required for sequential validation
-    must be readable after a process restart. The v35 storage policy retains this
-    context range contiguously in addition to legacy logarithmic checkpoints. Do not
-    prune an interior frame until an independently announced certified-checkpoint manifest
-    and its paired immutable combined incremental checkpoint are both produced and supported
-    by the download path.
+    incremental root for certification-from-genesis) through the current tip, every signed
+    incremental artifact must be readable after a process restart. The independently
+    trusted root and downloaded terminal must also have their complete SnapshotInfo/context
+    so their state proofs can be validated. Interior SnapshotInfo follows the ordinary
+    logarithmic cutoff: replay hashes no missing preimage, because the QC already certifies
+    its context hash and the historical fold consumes only the authority transition.
+    Exercise a fresh root-to-tip replay after deliberately pruning all non-checkpoint
+    interior SnapshotInfo files.
     Live snapshot index directories must not have same-filesystem hardlink
     backups: recovery distinguishes canonical hash+ordinal pairs from torn
     hash-only content using the inode link count. Use byte-copy/object-storage
     archives or another filesystem, and time one complete hash-index recovery
     scan against an IntegrationNet source with production-scale retention before
     tagging the activating release.
-14. Close historical consensus-policy replay. The current implementation replays old
-    rounds with the joining binary's current `ConsensusConfig`, seedlist, allowance
-    list, and eligibility rules. The live join fences prevent a mixed current session,
-    but do not make those current inputs valid historical policy. Before activation,
-    either implement authenticated historical-policy selection, define and implement a
-    trusted checkpoint/policy-epoch boundary, or prove and formally adopt that every
-    committee-affecting policy input is immutable for the complete certified epoch.
-    Exercise at least one config-hash, seedlist, and allowance-list transition with a
-    fresh root-to-tip downloader. A current-policy rejection of previously certified
-    history is a failed gate, not permission to skip validation.
+14. Verify authenticated policy effects. Live nodes are still fenced to one advertised
+    version and deterministic config while they execute current committee policy. The QC
+    for round N must authenticate both N's exact full/Core authority and the exact
+    `nextRoundAuthority` for N+1, plus the post-round operational-state commitment.
+    Historical replay must use the fixed BFT floor and consume those certified effects;
+    it must not execute the joining binary's current quorum fraction, Core sizing,
+    selector, seedlist, allowance, or collateral policy against old rounds. Exercise a
+    fresh root-to-tip downloader after changing current quorum/Core policy and removing an
+    old member from the current seedlist/allowance inputs; canonical history must still
+    verify. Separately prove that the newly joined live cluster uses its current fenced
+    policy only when proposing a future `nextRoundAuthority`.
+
+    No SemVer, assembly hash, or self-declared `policyId` is historical authority. If the
+    meaning or safety rules of `ProposalValue`, `CertifiedRoundAuthorityV1`, or its QCs
+    change, introduce a new schema variant and coordinated activation rather than
+    reinterpreting v35 bytes.
 15. Exercise env-only recovery as a process-level public-durability test, not only a
     pure reconstruction test. Start exactly one controlled `run-rollback` source and
     the selected source validators with the same env committee while unrelated
@@ -196,15 +204,13 @@ and is therefore fenced independently as well.
     cross `A`, and reach `R+2` public durability. Complete a later full cold restart
     with the env absent before declaring recovery activation-ready.
 
-Capacity-plan this retained epoch before activation. At the measured 73-seat committee,
-`CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a sustained
-43-second cadence, before filesystem/JSON overhead and the additional contiguous snapshot-info
-history. Record actual disk-growth rate and free-space runway during the IntegrationNet soak;
-do not extrapolate only from legacy logarithmic snapshot-info retention. The current flat-directory
-cutoff path enumerates stored snapshot-info ordinals while the certified range is retained, making
-maintenance O(epoch) per round and O(epoch^2) cumulatively. Activation also requires an incremental
-deletion/index strategy (or partitioned storage that skips the retained epoch) and a multi-year
-cardinality load test; disk capacity alone is not sufficient.
+Capacity-plan the added certificate history before activation. At the measured 73-seat
+committee, `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a
+sustained 43-second cadence, before filesystem/JSON overhead. Signed incremental artifacts were
+already retained; SnapshotInfo remains logarithmically retained, so v35 does not add the rejected
+approximately 1.2-TB/year contiguous-context history or an O(epoch)-per-round cutoff scan. Record
+the actual certificate/artifact disk-growth rate and free-space runway during the IntegrationNet
+soak rather than treating the wire-size estimate as a filesystem-capacity measurement.
 
 The reproducible `CertifiedConsensusSuite` production-JSON measurement at 73 seats is:
 
@@ -220,12 +226,11 @@ The same suite measures sizes at 3, 31, 73, 100, 200, and the configured maximum
 facilitators. These are wire/preimage measurements rather than filesystem-capacity estimates;
 soak measurements remain mandatory.
 
-The current Global download validator also materializes the complete trusted-root-to-tip
-`PublicRound` sequence, while the shared verifier returns every derived state. Because sidecars are
-deliberately excluded from authority, this O(epoch) CPU and O(epoch) live-heap cost applies to every
-post-v35 fresh download and ordinary cold restart, not merely a cache-miss fallback. Activation
-requires a constant-memory sequential fold with bounded boundary discovery, or adopted authenticated
-checkpoints that impose and test a hard maximum segment length.
+The Global download validator performs O(epoch) sequential artifact I/O for a fresh root-to-tip
+download, but its `tailRecM` fold retains only the authenticated predecessor and at most two public
+frames. The heap/stack bound is O(1), independent of epoch length. Exercise the production fold over
+a multi-thousand-frame lineage and monitor wall-clock bootstrap time. A future independently
+authorized checkpoint may bound that I/O, but is not an activation blocker.
 
 ## Deployment sequence
 
@@ -275,8 +280,9 @@ Before activation, verify the ordinary-download lineage boundary on every source
   hash-transition boundary. Before signed controller evidence can seed authority, the
   A-1 artifact's embedded ordinal must equal the requested index, its signature is verified
   with that expected ordinal's hasher, proof signer IDs must be unique and seedlisted, and
-  the context-derived state proof must equal the artifact state proof. The shared Global L0 artifact-hash helper preserves the V1
-  projection required by historical Kryo hashes;
+  the context-derived state proof must equal the artifact state proof. Every public
+  network's activation root is already in the JSON-serde era; no v35 field has a Kryo
+  fallback or compatibility path;
 - predecessor validation is read-only: it reconstructs and checks the persisted state
   proof without synchronizing/rewinding the MPT and without deleting snapshot files;
 - the canonical first incremental genesis root at key 1 and an exact
@@ -284,16 +290,19 @@ Before activation, verify the ordinary-download lineage boundary on every source
   uncertified roots. Genesis authority is bound exactly to the locally validated
   artifact's proof signers. A recovery root is bound on selected nodes to the
   validated public anchor, exact env committee, seedlist/allowance/collateral checks,
-  and the all-member barrier. Its first certified child is projected through the
-  same typed committee projector and verified through the ordinary bound-QC adoption
-  path;
+  and the all-member barrier. Live nodes project its first certified child's next
+  authority through the same typed committee projector; historical adoption verifies
+  the fixed-floor QC and its certified authority effect without re-running current policy;
 - each public child at N+1 carries N's complete `CertifiedOutcome`. A downloader starts
-  from its independently validated A-1/genesis root, walks every public artifact and
-  context in order, re-derives membership and layer state, and obtains only the terminal
-  certificate from the authenticated outcome endpoint. Signatures, unique signers,
-  parent hashes, state proofs, seedlist eligibility, committee bindings, and every
-  layer-specific link are checked before anything is installed;
-- the complete replay is atomic: a missing/corrupt interior frame fails before
+  from its independently validated A-1/genesis root and walks every public signed
+  incremental artifact in order. The prior QC fixes the authority for N; N's QC fixes the
+  authority for N+1 and commits the terminal operational-state preimage. Historical
+  verification uses the fixed BFT floor rather than current policy. Artifact signatures,
+  unique signers, parent hashes, committee continuity, QC bindings, and every
+  layer-specific link are checked before anything is installed. Complete context/state-
+  proof validation is performed at the root and terminal; an interior context hash is
+  already certified and its pruned SnapshotInfo preimage is not loaded;
+- the complete replay is atomic and constant-memory: a missing/corrupt interior artifact fails before
   application storage, consensus storage, safety locks, or sidecars change. No verified
   prefix becomes authority on its own;
 - outcome sidecars are not download authority or a committee-projection fast path. A
@@ -305,17 +314,21 @@ Before activation, verify the ordinary-download lineage boundary on every source
   under the permissioned seedlist/collateral policy, but it is terminal/private on the
   recovery sources at `R+1`. The following child `R+2` must carry that complete QC before
   an env-free validator can reconstruct the canonical root from public data and replay
-  the latest contiguous reset-to-tip epoch;
+  the latest reset-to-tip epoch. This is an explicit permissioned trust boundary: the
+  independent authority is the controlled rollback lead, env-selected source cohort,
+  full-fleet cold restart, canonical source-chain selection, and Snapshot Streaming
+  reconciliation. Historical replay validates the resulting fixed-floor QC but never
+  re-applies today's mutable seedlist to that old reset;
 - full snapshot types remain frozen. A future long-range checkpoint must be a separate,
   versioned, content-addressed manifest paired with an ordinary combined incremental
   checkpoint, never a field on `GlobalSnapshot` or `CurrencySnapshot`. It must bind the
-  layer/network, ordinal, artifact and context hashes, historical consensus policy,
-  certified tip, and minimal continuation state. Authority must come from an independently
+  layer/network, ordinal, artifact and context hashes, certified full/Core authority,
+  certified tip, and minimal operational continuation state. Authority must come from an independently
   announced manifest hash; neither an embedded committee nor the existing best-effort
-  `.meta` sidecar can self-authorize it. The current initial-activation path deliberately
-  relies on contiguous root-to-tip retention. Checkpoint-manifest schema, crash-safe
-  storage, coupled retention, authority distribution, and atomic adoption are a separate
-  pre-activation gate for any deployment that cannot guarantee that retention.
+  `.meta` sidecar can self-authorize it. The v35 path deliberately relies on retained
+  root-to-tip incremental artifacts, not contiguous SnapshotInfo. Checkpoint-manifest
+  schema, crash-safe storage, authority distribution, and atomic adoption remain a future
+  optimization rather than a v35 activation dependency.
 
 The env recovery equality check applies only while selected nodes install its exact
 anchor. After that anchor is locally accepted, successor outcomes use the ordinary

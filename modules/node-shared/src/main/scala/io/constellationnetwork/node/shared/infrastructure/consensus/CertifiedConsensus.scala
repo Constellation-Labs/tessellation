@@ -43,6 +43,8 @@ object CertifiedConsensus {
   val TriggerStatement: consensus.TriggerStatement.type = consensus.TriggerStatement
   type ProposalValue = consensus.ProposalValue
   val ProposalValue: consensus.ProposalValue.type = consensus.ProposalValue
+  type CertifiedRoundAuthorityV1 = consensus.CertifiedRoundAuthorityV1
+  val CertifiedRoundAuthorityV1: consensus.CertifiedRoundAuthorityV1.type = consensus.CertifiedRoundAuthorityV1
   type CertificationStatement = consensus.CertificationStatement
   val CertificationStatement: consensus.CertificationStatement.type = consensus.CertificationStatement
   type CertifiedProposalQC = consensus.CertifiedProposalQC
@@ -83,6 +85,14 @@ object CertifiedConsensus {
 
   def valueHash[F[_]: Hasher](value: ProposalValue): F[Hash] =
     Hasher[F].hash(value)
+
+  def roundAuthority[F[_]: Applicative: Hasher](
+    facilitators: NonEmptySet[PeerId],
+    core: NonEmptySet[PeerId]
+  ): F[CertifiedRoundAuthorityV1] =
+    (Hasher[F].hash(facilitators), Hasher[F].hash(core)).mapN { (facilitatorsHash, coreHash) =>
+      CertifiedRoundAuthorityV1(facilitators, facilitatorsHash, core, coreHash)
+    }
 
   def triggerStatement(
     domain: ConsensusDomain,
@@ -243,6 +253,8 @@ object CertifiedConsensus {
     context: Context,
     roundStartFacilitators: NonEmptySet[PeerId],
     roundStartCore: NonEmptySet[PeerId],
+    nextRoundAuthority: CertifiedRoundAuthorityV1,
+    nextOperationalStateHash: Hash,
     committedView: Long,
     trigger: ConsensusTrigger,
     proposal: declaration.Proposal,
@@ -268,6 +280,8 @@ object CertifiedConsensus {
         roundStartFacilitatorsHash = fullHash,
         roundStartCore = roundStartCore,
         roundStartCoreHash = coreHash,
+        nextRoundAuthority = nextRoundAuthority,
+        nextOperationalStateHash = nextOperationalStateHash,
         committedView = committedView,
         trigger = trigger,
         admissionNominee = proposal.admissionNominee,
@@ -302,8 +316,10 @@ object CertifiedConsensus {
     (
       Hasher[F].hash(context),
       Hasher[F].hash(roundStartFacilitators),
-      Hasher[F].hash(roundStartCore)
-    ).mapN { (contextHash, fullHash, coreHash) =>
+      Hasher[F].hash(roundStartCore),
+      Hasher[F].hash(certified.nextRoundAuthority.facilitators),
+      Hasher[F].hash(certified.nextRoundAuthority.core)
+    ).mapN { (contextHash, fullHash, coreHash, nextFullHash, nextCoreHash) =>
       certified.copy(
         schemaVersion = SchemaVersion,
         domain = domain,
@@ -315,7 +331,11 @@ object CertifiedConsensus {
         roundStartFacilitators = roundStartFacilitators,
         roundStartFacilitatorsHash = fullHash,
         roundStartCore = roundStartCore,
-        roundStartCoreHash = coreHash
+        roundStartCoreHash = coreHash,
+        nextRoundAuthority = certified.nextRoundAuthority.copy(
+          facilitatorsHash = nextFullHash,
+          coreHash = nextCoreHash
+        )
       )
     }
 
@@ -468,8 +488,10 @@ object CertifiedConsensus {
   ): F[Either[String, Unit]] =
     (
       Hasher[F].hash(value.roundStartFacilitators),
-      Hasher[F].hash(value.roundStartCore)
-    ).mapN { (fullHash, coreHash) =>
+      Hasher[F].hash(value.roundStartCore),
+      Hasher[F].hash(value.nextRoundAuthority.facilitators),
+      Hasher[F].hash(value.nextRoundAuthority.core)
+    ).mapN { (fullHash, coreHash, nextFullHash, nextCoreHash) =>
       ProposalValue
         .validate(value)
         .productL(
@@ -482,6 +504,14 @@ object CertifiedConsensus {
         .productL(Either.cond(value.roundStartCore.toSortedSet === SortedSet.from(frozenCore), (), "frozen_core_mismatch"))
         .productL(Either.cond(fullHash === value.roundStartFacilitatorsHash, (), "full_committee_hash_mismatch"))
         .productL(Either.cond(coreHash === value.roundStartCoreHash, (), "core_committee_hash_mismatch"))
+        .productL(
+          Either.cond(
+            nextFullHash === value.nextRoundAuthority.facilitatorsHash,
+            (),
+            "next_full_committee_hash_mismatch"
+          )
+        )
+        .productL(Either.cond(nextCoreHash === value.nextRoundAuthority.coreHash, (), "next_core_committee_hash_mismatch"))
     }
 
   def buildProposalQc[F[_]: Async: Hasher: SecurityProvider](
@@ -527,11 +557,11 @@ object CertifiedConsensus {
     }
   }
 
-  def verifyProposalQc[F[_]: Async: Hasher: SecurityProvider](
+  private def verifyProposalQcWithRequiredQuorum[F[_]: Async: Hasher: SecurityProvider](
     qc: CertifiedProposalQC,
     frozenCommittee: Set[PeerId],
     frozenCore: Set[PeerId],
-    configuredFraction: Double
+    requiredQuorum: Int
   ): F[Either[String, Unit]] =
     (
       valueHash(qc.value),
@@ -545,9 +575,22 @@ object CertifiedConsensus {
           statement(CertificationPurpose.Prepare, qc.value, qc.valueHash),
           qc.signatures,
           frozenCore,
-          requiredCoreQuorum(frozenCore.size, configuredFraction)
+          requiredQuorum
         )
     }
+
+  def verifyProposalQc[F[_]: Async: Hasher: SecurityProvider](
+    qc: CertifiedProposalQC,
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Either[String, Unit]] =
+    verifyProposalQcWithRequiredQuorum(
+      qc,
+      frozenCommittee,
+      frozenCore,
+      requiredCoreQuorum(frozenCore.size, configuredFraction)
+    )
 
   /** Re-verify a QC restored from the node-local safety journal before it is honored as carry-forward evidence.
     *
@@ -602,11 +645,11 @@ object CertifiedConsensus {
       verifyProposalQc[F](qc, frozenCommittee, frozenCore, configuredFraction).flatMap(_.isRight.pure[F])
     }
 
-  def verifyCoreCommitQc[F[_]: Async: Hasher: SecurityProvider](
+  private def verifyCoreCommitQcWithRequiredQuorum[F[_]: Async: Hasher: SecurityProvider](
     proposalQc: CertifiedProposalQC,
     commitQc: CoreCommitQC,
     frozenCore: Set[PeerId],
-    configuredFraction: Double
+    requiredQuorum: Int
   ): F[Either[String, Unit]] = {
     val structure = for {
       _ <- Either.cond(commitQc.valueHash === proposalQc.valueHash, (), "commit_value_hash_mismatch")
@@ -624,10 +667,35 @@ object CertifiedConsensus {
           statement(CertificationPurpose.Commit, proposalQc.value, proposalQc.valueHash),
           commitQc.signatures,
           frozenCore,
-          requiredCoreQuorum(frozenCore.size, configuredFraction)
+          requiredQuorum
         )
     }
   }
+
+  def verifyCoreCommitQc[F[_]: Async: Hasher: SecurityProvider](
+    proposalQc: CertifiedProposalQC,
+    commitQc: CoreCommitQC,
+    frozenCore: Set[PeerId],
+    configuredFraction: Double
+  ): F[Either[String, Unit]] =
+    verifyCoreCommitQcWithRequiredQuorum(
+      proposalQc,
+      commitQc,
+      frozenCore,
+      requiredCoreQuorum(frozenCore.size, configuredFraction)
+    )
+
+  private def verifyOutcomeWithRequiredQuorum[F[_]: Async: Hasher: SecurityProvider](
+    outcome: CertifiedOutcome,
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId],
+    requiredQuorum: Int
+  ): F[Either[String, Unit]] =
+    verifyProposalQcWithRequiredQuorum(outcome.proposalQc, frozenCommittee, frozenCore, requiredQuorum).flatMap {
+      case Left(error) => error.asLeft[Unit].pure[F]
+      case Right(_) =>
+        verifyCoreCommitQcWithRequiredQuorum(outcome.proposalQc, outcome.coreCommitQc, frozenCore, requiredQuorum)
+    }
 
   def verifyOutcome[F[_]: Async: Hasher: SecurityProvider](
     outcome: CertifiedOutcome,
@@ -635,11 +703,27 @@ object CertifiedConsensus {
     frozenCore: Set[PeerId],
     configuredFraction: Double
   ): F[Either[String, Unit]] =
-    verifyProposalQc(outcome.proposalQc, frozenCommittee, frozenCore, configuredFraction).flatMap {
-      case Left(error) => error.asLeft[Unit].pure[F]
-      case Right(_) =>
-        verifyCoreCommitQc(outcome.proposalQc, outcome.coreCommitQc, frozenCore, configuredFraction)
-    }
+    verifyOutcomeWithRequiredQuorum(
+      outcome,
+      frozenCommittee,
+      frozenCore,
+      requiredCoreQuorum(frozenCore.size, configuredFraction)
+    )
+
+  /** Historical verification uses the protocol-fixed quorum intersection floor, not the downloader's current configured liveness policy.
+    * This deliberately bypasses `fromFraction`: historical safety is a named protocol rule, not a synthetic configuration value.
+    */
+  def verifyOutcomeAtSafetyFloor[F[_]: Async: Hasher: SecurityProvider](
+    outcome: CertifiedOutcome,
+    frozenCommittee: Set[PeerId],
+    frozenCore: Set[PeerId]
+  ): F[Either[String, Unit]] =
+    verifyOutcomeWithRequiredQuorum(
+      outcome,
+      frozenCommittee,
+      frozenCore,
+      QuorumPolicy.supermajority(frozenCore.size)
+    )
 
   /** Validate the exact child-carried certificate envelope against this node's already-trusted parent outcome.
     *
@@ -680,6 +764,41 @@ object CertifiedConsensus {
           case Left(error) => error.asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
           case Right(_) =>
             verifyOutcome(actual.parentOutcome, frozenCommittee, frozenCore, configuredFraction)
+              .flatMap(_.as(actual.some).pure[F])
+        }
+    }
+
+  /** Historical counterpart of [[verifyCarriedParentOutcome]]: certificate continuity is checked at the protocol-fixed safety floor and is
+    * therefore independent of the downloader's current liveness configuration.
+    */
+  def verifyHistoricalCarriedParentOutcome[F[_]: Async: Hasher: SecurityProvider](
+    carried: Option[CertifiedLineageEvidenceV1],
+    trustedParent: Option[CertifiedOutcome],
+    domain: ConsensusDomain
+  ): F[Either[String, Option[CertifiedLineageEvidenceV1]]] =
+    (trustedParent, carried) match {
+      case (None, None)    => none[CertifiedLineageEvidenceV1].asRight[String].pure[F]
+      case (None, Some(_)) => "certified_lineage_unexpected_at_root".asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
+      case (Some(_), None) => "certified_lineage_missing_after_root".asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
+      case (Some(expected), Some(actual)) =>
+        val expectedValue = expected.proposalQc.value
+        val actualValue = actual.parentOutcome.proposalQc.value
+        val frozenCommittee = expectedValue.roundStartFacilitators.toSortedSet.toSet
+        val frozenCore = expectedValue.roundStartCore.toSortedSet.toSet
+        val structure = for {
+          _ <- Either.cond(actualValue.domain === domain, (), "certified_lineage_domain_mismatch")
+          _ <- Either.cond(actualValue === expectedValue, (), "certified_lineage_parent_value_mismatch")
+          _ <- Either.cond(
+            actual.parentOutcome.proposalQc.valueHash === expected.proposalQc.valueHash,
+            (),
+            "certified_lineage_parent_value_hash_mismatch"
+          )
+        } yield ()
+
+        structure match {
+          case Left(error) => error.asLeft[Option[CertifiedLineageEvidenceV1]].pure[F]
+          case Right(_) =>
+            verifyOutcomeAtSafetyFloor(actual.parentOutcome, frozenCommittee, frozenCore)
               .flatMap(_.as(actual.some).pure[F])
         }
     }
@@ -813,6 +932,82 @@ object CertifiedConsensus {
       qcValidation <- verifyOutcome[F](outcome, fullSet, coreSet, configuredFraction)
     } yield valueValidation.void.productR(qcValidation)
   }
+
+  /** Authenticate an already-completed historical round from its certified identity fields.
+    *
+    * Interior lineage verification deliberately does not require the historical context preimage: the live Core quorum already certified
+    * `contextHash`, and historical authority consumes only the QC-certified committee transition. The independently trusted root and the
+    * downloaded terminal frame still validate their complete artifact/context state proofs. Supplying `expectedContextHash` tightens the
+    * same verifier at those boundaries without introducing a second certificate rule.
+    */
+  def verifyHistoricalOutcomeIdentity[F[_]: Async: Hasher: SecurityProvider](
+    outcome: CertifiedOutcome,
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    artifactHash: Hash,
+    expectedContextHash: Option[Hash],
+    roundStartFacilitators: NonEmptySet[PeerId],
+    roundStartCore: NonEmptySet[PeerId]
+  ): F[Either[String, Unit]] = {
+    val value = outcome.proposalQc.value
+    val fullSet = roundStartFacilitators.toSortedSet.toSet
+    val coreSet = roundStartCore.toSortedSet.toSet
+
+    verifyOutcomeAtSafetyFloor[F](outcome, fullSet, coreSet).flatMap { qcValidation =>
+      ProposalValue
+        .validate(value)
+        .productL(Either.cond(value.domain === domain, (), "historical_domain_mismatch"))
+        .productL(Either.cond(value.networkId === networkId, (), "historical_network_mismatch"))
+        .productL(Either.cond(value.key === key, (), "historical_key_mismatch"))
+        .productL(Either.cond(value.parentArtifactHash === parentArtifactHash, (), "historical_parent_hash_mismatch"))
+        .productL(Either.cond(value.artifactHash === artifactHash, (), "historical_artifact_hash_mismatch"))
+        .productL(
+          Either.cond(
+            expectedContextHash.forall(_ === value.contextHash),
+            (),
+            "historical_context_hash_mismatch"
+          )
+        )
+        .productL(
+          Either.cond(
+            value.roundStartFacilitators === roundStartFacilitators,
+            (),
+            "historical_full_committee_mismatch"
+          )
+        )
+        .productL(Either.cond(value.roundStartCore === roundStartCore, (), "historical_core_committee_mismatch"))
+        .productR(qcValidation)
+        .pure[F]
+    }
+  }
+
+  /** Boundary convenience wrapper that also authenticates the supplied context preimage. */
+  def verifyHistoricalBoundOutcome[F[_]: Async: Hasher: SecurityProvider, Context: Encoder](
+    outcome: CertifiedOutcome,
+    domain: ConsensusDomain,
+    networkId: String,
+    key: Long,
+    parentArtifactHash: Hash,
+    artifactHash: Hash,
+    context: Context,
+    roundStartFacilitators: NonEmptySet[PeerId],
+    roundStartCore: NonEmptySet[PeerId]
+  ): F[Either[String, Unit]] =
+    Hasher[F].hash(context).flatMap { contextHash =>
+      verifyHistoricalOutcomeIdentity(
+        outcome,
+        domain,
+        networkId,
+        key,
+        parentArtifactHash,
+        artifactHash,
+        contextHash.some,
+        roundStartFacilitators,
+        roundStartCore
+      )
+    }
 
   /** Verify legacy artifact proofs against the frozen v35 committee without changing their historical bare-artifact-hash meaning.
     */

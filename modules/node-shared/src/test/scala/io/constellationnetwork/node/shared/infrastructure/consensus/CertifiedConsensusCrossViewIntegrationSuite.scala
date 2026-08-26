@@ -124,6 +124,8 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         roundStartFacilitatorsHash = committeeHash,
         roundStartCore = committee,
         roundStartCoreHash = committeeHash,
+        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash, committee, committeeHash),
+        nextOperationalStateHash = Hash.fromBytes("next-operational-state".getBytes("UTF-8")),
         committedView = 0L,
         trigger = EventTrigger,
         admissionNominee = none,

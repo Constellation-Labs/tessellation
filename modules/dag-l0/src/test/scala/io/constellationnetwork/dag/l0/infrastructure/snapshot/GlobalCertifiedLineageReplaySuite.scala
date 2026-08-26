@@ -62,6 +62,16 @@ import weaver.MutableIOSuite
   */
 object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
 
+  test("constant-memory replay runner remains stack-safe across a multi-thousand-frame epoch") { _ =>
+    val frames = 20000
+
+    GlobalCertifiedDownloadValidator
+      .runConstantMemoryReplay[IO, Int, Int](0) { current =>
+        IO.pure(if (current === frames) Right(current) else Left(current + 1))
+      }
+      .map(result => expect.same(frames, result))
+  }
+
   @derive(encoder, decoder)
   final case class PublicFrame(
     artifact: Signed[GlobalIncrementalSnapshot],
@@ -378,12 +388,47 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     normalized.take(required)
   }
 
+  private def certifyValue(
+    value: ProposalValue,
+    roundStart: List[PeerId],
+    core: List[PeerId],
+    byId: Map[PeerId, KeyPair],
+    rotation: Int
+  )(
+    implicit hasher: Hasher[IO],
+    provider: SecurityProvider[IO]
+  ): IO[CertifiedOutcome] = {
+    val required = requiredCoreQuorum(core.size, config.quorumThresholdFraction)
+    val preparePairs = selectRotated(core.map(byId), required, rotation)
+    val commitPairs = selectRotated(core.map(byId), required, rotation + 1)
+
+    for {
+      prepareVotes <- preparePairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
+      proposalQc <- buildProposalQc[IO](
+        value,
+        SortedMap.from(preparePairs.map(peer).zip(prepareVotes)),
+        roundStart.toSet,
+        core.toSet,
+        config.quorumThresholdFraction
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      commits <- commitPairs.traverse(signCoreCommit[IO](proposalQc, _))
+      commitQc <- buildCoreCommitQc[IO](
+        proposalQc,
+        SortedMap.from(commitPairs.map(peer).zip(commits)),
+        core.toSet,
+        config.quorumThresholdFraction
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+    } yield CertifiedOutcome(proposalQc, commitQc)
+  }
+
   private def buildFrame(
     prior: GlobalConsensusOutcome,
     script: Script,
     allPairs: List[KeyPair]
   )(
-    implicit hasher: Hasher[IO],
+    implicit serializer: JsonSerializer[IO],
+    hasher: Hasher[IO],
+    hasherSelector: HasherSelector[IO],
     provider: SecurityProvider[IO]
   ): IO[PublicFrame] = {
     val ids = allPairs.map(peer)
@@ -391,7 +436,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     val inherited = prior.facilitators.value
     val roundStart = script.forceRoundStart.fold(inherited)(_.map(ids))
     val roundStartSet = roundStart.toSet
-    val core = script.forceCore.fold(roundStart)(_.map(ids))
+    val inheritedCore = prior.finished.certifiedOutcome
+      .map(_.proposalQc.value.nextRoundAuthority.core.toSortedSet.toList)
+      .getOrElse(roundStart)
+    val inheritedCoreAtRoundStart = inheritedCore.filter(roundStartSet.contains)
+    val defaultCore = if (inheritedCoreAtRoundStart.nonEmpty) inheritedCoreAtRoundStart else roundStart
+    val core = script.forceCore.fold(defaultCore)(_.map(ids))
     val admitted = script.admitted.map(ids).toSet
     val evicted = script.evicted.map(ids).toSet
     val ordinal = prior.key.next
@@ -405,6 +455,8 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     val artifactValue = artifact(ordinal, prior.finished.snapshotHash, prior, roundStart)
     val artifactQuorum = requiredArtifactQuorum(roundStart.size, core.size, config.quorumThresholdFraction)
     val artifactPairs = selectRotated(roundStart.map(byId), artifactQuorum, script.proofRotation)
+    val nextRound = SortedSet.from((roundStartSet -- evicted) ++ admitted)
+    val nextAuthority = NonEmptySet.fromSetUnsafe(nextRound)
 
     for {
       signedArtifact <- signWith(artifactValue, artifactPairs)
@@ -412,45 +464,32 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       contextHash <- Hasher[IO].hash(context)
       fullHash <- Hasher[IO].hash(nonEmpty(roundStart))
       coreHash <- Hasher[IO].hash(nonEmpty(core))
-      value = ProposalValue(
-        SchemaVersion,
-        ConsensusDomain.DagL0,
-        "integrationnet",
-        ordinal.value.value,
-        prior.finished.snapshotHash,
-        artifactHash,
-        contextHash,
-        nonEmpty(roundStart),
-        fullHash,
-        nonEmpty(core),
-        coreHash,
-        script.view,
-        trigger,
-        script.admitted.map(ids),
-        SortedSet.from(admitted),
-        SortedSet.from(evicted),
-        SortedSet.from(responders),
-        health,
-        SortedSet.from(timeoutVoters),
-        Some(1000000L + ordinal.value.value)
+      nextHash <- Hasher[IO].hash(nextAuthority)
+      provisionalValue = ProposalValue(
+        schemaVersion = SchemaVersion,
+        domain = ConsensusDomain.DagL0,
+        networkId = "integrationnet",
+        key = ordinal.value.value,
+        parentArtifactHash = prior.finished.snapshotHash,
+        artifactHash = artifactHash,
+        contextHash = contextHash,
+        roundStartFacilitators = nonEmpty(roundStart),
+        roundStartFacilitatorsHash = fullHash,
+        roundStartCore = nonEmpty(core),
+        roundStartCoreHash = coreHash,
+        nextRoundAuthority = CertifiedRoundAuthorityV1(nextAuthority, nextHash, nextAuthority, nextHash),
+        nextOperationalStateHash = Hash.empty,
+        committedView = script.view,
+        trigger = trigger,
+        admissionNominee = script.admitted.map(ids),
+        admittedPeers = SortedSet.from(admitted),
+        evictedPeers = SortedSet.from(evicted),
+        observedResponders = SortedSet.from(responders),
+        observedSelfHealth = health,
+        timeoutVoters = SortedSet.from(timeoutVoters),
+        consensusEndTime = Some(1000000L + ordinal.value.value)
       )
-      preparePairs = selectRotated(core.map(byId), requiredCoreQuorum(core.size, config.quorumThresholdFraction), script.proofRotation)
-      prepareVotes <- preparePairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
-      proposalQc <- buildProposalQc[IO](
-        value,
-        SortedMap.from(preparePairs.map(peer).zip(prepareVotes)),
-        roundStartSet,
-        core.toSet,
-        config.quorumThresholdFraction
-      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      commitPairs = selectRotated(core.map(byId), requiredCoreQuorum(core.size, config.quorumThresholdFraction), script.proofRotation + 1)
-      commits <- commitPairs.traverse(signCoreCommit[IO](proposalQc, _))
-      commitQc <- buildCoreCommitQc[IO](
-        proposalQc,
-        SortedMap.from(commitPairs.map(peer).zip(commits)),
-        core.toSet,
-        config.quorumThresholdFraction
-      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      provisionalOutcome <- certifyValue(provisionalValue, roundStart, core, byId, script.proofRotation)
       triggerStatements <- roundStart
         .map(byId)
         .traverse(pair =>
@@ -467,8 +506,46 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
             pair
           )
         )
-    } yield
-      PublicFrame(signedArtifact, context, CertifiedOutcome(proposalQc, commitQc), triggerStatements, nonEmpty(roundStart), nonEmpty(core))
+      provisionalFrame = PublicFrame(
+        signedArtifact,
+        context,
+        provisionalOutcome,
+        triggerStatements,
+        nonEmpty(roundStart),
+        nonEmpty(core)
+      )
+      provisionalDerived <- derive(prior, provisionalFrame, advancer(allPairs.head)).map(_._1)
+      projected <- CertifiedRoundCommitteeProjector
+        .fromCertifiedParent[IO](
+          key = ordinal.next,
+          parentValue = provisionalValue,
+          parentRecentSigners = provisionalDerived.recentSigners,
+          parentControllerEvidence = provisionalDerived.controllerEvidence.getOrElse(SortedMap.empty),
+          parentCarried = CertifiedRoundCommitteeProjector.CarriedControllerState(
+            activeScores = provisionalDerived.activeAdmissionScores.toMap,
+            peerQuality = provisionalDerived.peerQuality.toMap,
+            peerTiers = provisionalDerived.peerTiers,
+            viewChanges = provisionalDerived.peerViewChanges.toMap,
+            selfHealth = provisionalDerived.peerSelfHealth.toMap
+          ),
+          config = config,
+          coreCommitteeSize = 3,
+          seedlistPeerIds = Set.empty,
+          isContextEligible = _ => IO.pure(true),
+          facilitatorSelector = FacilitatorSelector.make(None),
+          parentArtifactHash = artifactHash
+        )
+        .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      finalFull = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.signingFacilitators))
+      finalCore = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.committees.core))
+      finalAuthority <- CertifiedConsensus.roundAuthority[IO](finalFull, finalCore)
+      operationalStateHash <- Hasher[IO].hash(provisionalDerived.toOperationalState)
+      value = provisionalValue.copy(
+        nextRoundAuthority = finalAuthority,
+        nextOperationalStateHash = operationalStateHash
+      )
+      outcome <- certifyValue(value, roundStart, core, byId, script.proofRotation)
+    } yield PublicFrame(signedArtifact, context, outcome, triggerStatements, nonEmpty(roundStart), nonEmpty(core))
   }
 
   /** Replace only the two QC proof envelopes while retaining the exact artifact, ProposalValue, trigger evidence and round authority. This
@@ -746,7 +823,11 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     val growth = List(
       Script(responders = Set(0), admitted = Some(1)),
       Script(responders = Set(0, 1)),
-      Script(responders = Set(0, 1), admitted = Some(2))
+      Script(responders = Set(0, 1), admitted = Some(2)),
+      // The admission round deliberately places the new seat in Tier 1. Complete
+      // one ordinary round so current policy can promote all three into Core;
+      // only then do two distinct 2-of-3 QC subsets exist.
+      Script(responders = Set(0, 1, 2))
     )
 
     for {
@@ -848,25 +929,52 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       contexts = Map.from((root.key -> root.finished.context) :: frames.map(frame => frame.artifact.ordinal -> frame.context))
       validator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
-        coreCommitteeSize = 2,
+        networkId = "integrationnet",
         seedlistPeerIds = Set.empty,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
       )
       valid <- validator(candidate).attempt
+      // Only the independently authenticated root and the downloaded terminal require
+      // full context preimages. Interior authority is reconstructed from the stored
+      // artifact plus its child-carried QC, so ordinary logarithmic context pruning is safe.
+      boundaryContexts = Map(
+        root.key -> root.finished.context,
+        candidate.key -> candidate.finished.context
+      )
+      prunedContextValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        networkId = "integrationnet",
+        seedlistPeerIds = Set.empty,
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, boundaryContexts)
+      )
+      prunedContextsAccepted <- prunedContextValidator(candidate).attempt
+      // Historical verification must consume the authority certified by each parent QC,
+      // not reinterpret old rounds through the downloader's current liveness policy.
+      // A unanimity quorum and a one-seat Core target would reject/reclassify this
+      // history if either current setting leaked into replay.
+      changedPolicyValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config.copy(quorumThresholdFraction = 1.0, coreCommitteeSize = Some(1)),
+        networkId = "integrationnet",
+        // Simulate a later permissioned-policy update that removes one activation
+        // signer. That current seedlist must govern future live proposals only; it
+        // cannot retroactively invalidate the signed activation root.
+        seedlistPeerIds = rootCommittee.toSet - rootCommittee.head,
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
+      )
+      changedPolicyAccepted <- changedPolicyValidator(candidate).attempt
+      // The peer outcome remains a terminal sidecar, but v35 authenticates its complete
+      // operational payload by hash in the terminal QC. A peer-local substitution must
+      // therefore fail even when every public artifact and certificate is unchanged.
+      substitutedOperationalState = candidate.copy(
+        removalPenalties = candidate.removalPenalties.updated(peer(res.pairs.last), 1)
+      )
+      substitutedOperationalStateRejected <- validator(substitutedOperationalState).attempt
       missingInterior = artifacts - frames.head.artifact.ordinal
       missingValidator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
-        coreCommitteeSize = 2,
+        networkId = "integrationnet",
         seedlistPeerIds = Set.empty,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(missingInterior, contexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(missingInterior, contexts)
       )
       missing <- missingValidator(candidate).attempt
     } yield {
@@ -879,6 +987,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       expect(wrongKeyRollbackBinding.isLeft) &&
       expect(wrongArtifactRollbackBinding.isLeft) &&
       expect(wrongHashRollbackBinding.isLeft) &&
+      expect(prunedContextsAccepted.isRight) &&
+      expect(changedPolicyAccepted.isRight) &&
+      expect(
+        substitutedOperationalStateRejected.left.exists(
+          _.getMessage.contains("terminal_operational_state_hash_mismatch")
+        )
+      ) &&
       expect(
         missing.left.exists(
           _.getMessage.contains(s"trusted_snapshot_missing:${frames.head.artifact.ordinal.value.value}")
@@ -983,19 +1098,15 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
           frame.artifact.ordinal -> frame.artifact
         )
       )
-      contexts = Map.from(
-        (firstRecoveryTip.key -> firstRecoveryTip.finished.context) :: frames.map(frame => frame.artifact.ordinal -> frame.context)
-      )
+      // Recovery replay likewise needs only the terminal context; the canonical
+      // recovery parent and interior reset segment are artifact/QC authenticated.
+      contexts = Map(candidate.key -> candidate.finished.context)
       allSeedlisted = res.pairs.map(peer).toSet
       validator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
-        coreCommitteeSize = 3,
+        networkId = "integrationnet",
         seedlistPeerIds = allSeedlisted,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
       )
       accepted <- validator(candidate).attempt
       alternateTerminalAccepted <- validator(alternateTerminalCandidate).attempt
@@ -1006,76 +1117,30 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         latestRecovery._2.head.artifact.ordinal -> latestRecovery._2.head.artifact
       )
       firstSuccessorContexts = Map(
-        firstRecoveryTip.key -> firstRecoveryTip.finished.context,
         latestRecovery._2.head.artifact.ordinal -> latestRecovery._2.head.context
       )
       firstSuccessorValidator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
-        coreCommitteeSize = 3,
+        networkId = "integrationnet",
         seedlistPeerIds = allSeedlisted,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(firstSuccessorArtifacts, firstSuccessorContexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(firstSuccessorArtifacts, firstSuccessorContexts)
       )
       firstSuccessorAccepted <- firstSuccessorValidator(firstSuccessor).attempt
       missingRecoveryMember = recoveryCommittee.last
       unseedlistedValidator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config,
-        coreCommitteeSize = 3,
+        config = config.copy(quorumThresholdFraction = 1.0, coreCommitteeSize = Some(1)),
+        networkId = "integrationnet",
         seedlistPeerIds = allSeedlisted - missingRecoveryMember,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
       )
       rejected <- unseedlistedValidator(candidate).attempt
-      allowanceOnlyValidator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config,
-        coreCommitteeSize = 3,
-        seedlistPeerIds = Set.empty,
-        allowancePeerIds = Some(allSeedlisted),
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
-      )
-      allowanceOnlyAccepted <- allowanceOnlyValidator(candidate).attempt
       noTrustRootValidator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
-        coreCommitteeSize = 3,
+        networkId = "integrationnet",
         seedlistPeerIds = Set.empty,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
       )
       noTrustRoot <- noTrustRootValidator(candidate).attempt
-      disallowedValidator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config,
-        coreCommitteeSize = 3,
-        seedlistPeerIds = allSeedlisted,
-        allowancePeerIds = Some(allSeedlisted - missingRecoveryMember),
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
-      )
-      disallowed <- disallowedValidator(candidate).attempt
-      ineligibleValidator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config,
-        coreCommitteeSize = 3,
-        seedlistPeerIds = allSeedlisted,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, peerId) => IO.pure(peerId =!= missingRecoveryMember),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
-      )
-      ineligible <- ineligibleValidator(candidate).attempt
     } yield {
       val acceptedExpectation = accepted match {
         case Right(_)    => success
@@ -1089,21 +1154,16 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         case Right(_)    => success
         case Left(error) => failure(s"valid alternate terminal proof envelope was rejected: ${error.getMessage}")
       }
-      val allowanceOnlyExpectation = allowanceOnlyAccepted match {
-        case Right(_)    => success
-        case Left(error) => failure(s"allowance-only public recovery validation unexpectedly failed: ${error.getMessage}")
-      }
-
       acceptedExpectation &&
       firstSuccessorExpectation &&
       alternateTerminalExpectation &&
-      allowanceOnlyExpectation &&
       expect(underQuorumTerminalRejected.left.exists(_.getMessage.contains("artifact_under_quorum"))) &&
       expect(invalidTerminalRejected.left.exists(_.getMessage.contains("invalid_artifact_signature"))) &&
-      expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_member_not_seedlisted"))) &&
-      expect(noTrustRoot.left.exists(_.getMessage.contains("recovery_seed_boundary_trust_root_unavailable"))) &&
-      expect(disallowed.left.exists(_.getMessage.contains("recovery_seed_boundary_member_not_allowed"))) &&
-      expect(ineligible.isLeft)
+      // Historical recovery authority is stable across later seedlist changes. The live
+      // env recovery path performs the mutable policy preflight; replay authenticates the
+      // resulting canonical parent/QC chain under the permissioned restart contract.
+      expect(rejected.isRight) &&
+      expect(noTrustRoot.isRight)
     }
   }
 
@@ -1141,16 +1201,58 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       contexts = Map(publicParent.key -> publicParent.finished.context, recoveryFrame.artifact.ordinal -> recoveryFrame.context)
       validator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
-        coreCommitteeSize = 3,
+        networkId = "integrationnet",
         seedlistPeerIds = res.pairs.map(peer).toSet,
-        allowancePeerIds = None,
-        facilitatorSelector = FacilitatorSelector.make(None),
-        isContextEligible = (_, _) => IO.pure(true),
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
-        stateAdvancer = stateAdvancer
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
       )
       rejected <- validator(candidate).attempt
     } yield expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_committee_too_small:2")))
+  }
+
+  test("public recovery authority requires the complete recovery committee to certify as Core") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    for {
+      seededRoot <- signedRoot(res.pairs)
+      genesisCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
+      root = GlobalRecoverySeedOutcome.seed(
+        seededRoot.finished.signedMajorityArtifact,
+        seededRoot.finished.context,
+        seededRoot.finished.snapshotHash,
+        genesisCommittee
+      )
+      stateAdvancer = advancer(res.pairs.head)
+      parentFrame <- buildFrame(root, Script(responders = Set(0)), res.pairs)
+      publicParent <- derive(root, parentFrame, stateAdvancer).map(_._1)
+      recoveryCommittee = SortedSet.from(res.pairs.take(3).map(peer))
+      invalidRecoveryRoot = GlobalRecoverySeedOutcome.seed(
+        publicParent.finished.signedMajorityArtifact,
+        publicParent.finished.context,
+        publicParent.finished.snapshotHash,
+        recoveryCommittee
+      )
+      recoveryFrame <- buildFrame(
+        invalidRecoveryRoot,
+        Script(responders = Set(0, 1, 2), forceCore = Some(List(0, 1))),
+        res.pairs
+      )
+      candidate <- derive(invalidRecoveryRoot, recoveryFrame, stateAdvancer).map(_._1)
+      artifacts = Map(
+        publicParent.key -> publicParent.finished.signedMajorityArtifact,
+        recoveryFrame.artifact.ordinal -> recoveryFrame.artifact
+      )
+      contexts = Map(recoveryFrame.artifact.ordinal -> recoveryFrame.context)
+      validator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        networkId = "integrationnet",
+        seedlistPeerIds = res.pairs.map(peer).toSet,
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
+      )
+      rejected <- validator(candidate).attempt
+    } yield expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_requires_full_committee_core")))
   }
 
   test("public replay roots at configured activation A-1 rather than downloaded terminal T-1") { _ =>

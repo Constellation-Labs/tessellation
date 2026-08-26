@@ -606,8 +606,7 @@ object Main
           cfg.incremental,
           trustRatings,
           sharedConfig.environment,
-          hashSelect,
-          loadedConsensusConfig.certifiedConsensusActivationKey
+          hashSelect
         )
         .asResource
       // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Isolates
@@ -634,7 +633,6 @@ object Main
           Hasher.forKryo[IO],
           nodeShared.loggerBundle,
           getPeerChainTips,
-          nodeShared.customAllowanceList.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet)),
           configuredRecoverySeedRef.get,
           validatedRecoverySeed.as(clearConfiguredRecoverySeed),
           initiallyHoldConsensusFirstRound,

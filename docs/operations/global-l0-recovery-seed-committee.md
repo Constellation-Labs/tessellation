@@ -440,29 +440,34 @@ successor.
 > fleet reaches it. Rehearse this path with Snapshot Streaming reconciliation
 > before announcing the key.
 
-The live cluster's deterministic-config and allowance hashes remain mandatory
-join fences, but the current certified outcome does not by itself carry a
-complete historical consensus policy. Until historical policy selection or an
-authenticated policy/checkpoint epoch is implemented, do not change
-committee-affecting consensus config, seedlist, or allowance policy after v35
-activation and expect a fresh node to replay across that change. This is an
-activation blocker tracked in the v35 rollout, not authority granted to current
-config during historical replay.
+The live cluster's version, deterministic-config, and allowance hashes remain
+mandatory join fences. They authenticate which implementation may participate
+in the current session; they are not historical policy identifiers. Each v35 QC
+instead authenticates its current full/Core authority, the exact
+`nextRoundAuthority`, and the post-round operational-state commitment. A fresh
+node verifies those effects with the fixed BFT floor and never applies today's
+quorum fraction, Core sizing, seedlist, allowance, or collateral rules to an old
+round. A future change to the meaning or safety rules of those signed fields
+requires a new schema/activation rather than a SemVer interpretation of v35.
 
 An unconfigured community validator walks backward from an authenticated tip
 to the latest later child whose `certifiedLineage` is empty, reconstructs the
 canonical root from that child's QC plus the independently validated public
 parent, and replays the contiguous reset-to-tip segment through the ordinary
-QC, artifact-proof, state-proof, seedlist, collateral, membership, and derived-
-state validators. It needs neither the env nor a private recovery artifact. A
-committee of fewer than three, a committee unable to prove its next seat, a
-member absent from any configured trust root, no configured seedlist or
-hash-fenced allowance root, an ineligible member, a mismatched parent, an
-invalid QC, or a non-identical derived outcome fails closed. Repeated recoveries
-supersede older epochs: only the latest publicly certified reset-to-tip segment
-is required.
+QC and artifact-proof validators. It needs neither the env, a signed recovery
+plan, a private recovery artifact, nor the seedlist that happened to be current
+when the reset occurred. A committee of fewer than three, a Core set different
+from the complete recovery committee, a mismatched parent, an invalid or
+under-floor QC, invalid artifact proofs, broken authority continuity, or a
+non-identical terminal operational-state commitment fails closed. Repeated
+recoveries supersede older epochs: only the latest publicly certified reset-to-
+tip segment is required.
 
-This is a permissioned trust boundary. A quorum of colluding allowlisted
-operators can certify a reset committee; they cannot do so anonymously and are
-subject to the network's out-of-band operator controls. The mechanism is not a
-permissionless committee-election proof.
+This is a permissioned trust boundary. Recovery deliberately breaks prior-QC
+authority continuity. Its independent authorization is the operated procedure:
+one controlled rollback lead, the env-selected source cohort, a coordinated
+full-fleet cold restart, canonical source-chain selection, and Snapshot Streaming
+reconciliation. Historical bytes alone cannot distinguish an operator-authorized
+reset from a colluding permissioned cohort's competing reset. That is accepted
+for this network topology and remains subject to source control and out-of-band
+operator accountability; this is not a permissionless committee-election proof.

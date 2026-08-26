@@ -325,6 +325,7 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         view = 0L,
         vcc = None
       )
+      authorityHealthy <- CertifiedConsensus.roundAuthority[IO](seed, seed)
       valueHealthy <- CertifiedConsensus.proposalValue[IO, GlobalSnapshotContext](
         domain = ConsensusDomain.DagL0,
         networkId = "integrationnet",
@@ -334,12 +335,15 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         context = finished.context,
         roundStartFacilitators = seed,
         roundStartCore = seed,
+        nextRoundAuthority = authorityHealthy,
+        nextOperationalStateHash = Hash.empty,
         committedView = 0L,
         trigger = EventTrigger,
         proposal = proposal,
         consensusEndTime = None
       )
       poisonedSeed = NonEmptySet.fromSetUnsafe(SortedSet.from(resetPoisoned.facilitators.value))
+      authorityPoisoned <- CertifiedConsensus.roundAuthority[IO](poisonedSeed, poisonedSeed)
       valuePoisoned <- CertifiedConsensus.proposalValue[IO, GlobalSnapshotContext](
         domain = ConsensusDomain.DagL0,
         networkId = "integrationnet",
@@ -349,6 +353,8 @@ object ControllerEvidencePeerHistorySuite extends MutableIOSuite {
         context = finished.context,
         roundStartFacilitators = poisonedSeed,
         roundStartCore = poisonedSeed,
+        nextRoundAuthority = authorityPoisoned,
+        nextOperationalStateHash = Hash.empty,
         committedView = 0L,
         trigger = EventTrigger,
         proposal = proposal,

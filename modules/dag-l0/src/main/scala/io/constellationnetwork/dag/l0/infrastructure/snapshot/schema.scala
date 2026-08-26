@@ -278,7 +278,68 @@ object schema {
     // PeerId so each id appears once. The union of keys across the peer-keyed
     // source maps becomes the per-peer map's key set;
     // absent peers contribute `PerPeerOperationalRecord.empty` semantics on the consumer side.
-    def toOperationalState: ConsensusOperationalState = {
+    def toOperationalState: ConsensusOperationalState =
+      GlobalConsensusOutcome.operationalState(
+        removalPenalties,
+        deferralCountdown,
+        peerQuality,
+        cumulativeMissCounts,
+        recentProofSizes,
+        readmissionCountdown,
+        peerViewChanges,
+        recentSigners,
+        peerTiers,
+        activeAdmissionScores,
+        recentRoundEndTimes,
+        controllerEvidence,
+        penaltyUntil
+      )
+
+    // Stage 4: the peerHistory payload packed into SIGNED artifact bytes at proposal build
+    // and validateArtifact re-execution. Evidence-only: `perPeer` and `recentRoundEndTimes`
+    // (the locally-divergent fields behind the alpha.92/129/147 wedges) are excluded;
+    // delegation to the shared helper keeps the dag-l0 / currency-l0 signed subsets from
+    // drifting apart.
+    def signedArtifactPeerHistory: ConsensusOperationalState =
+      ControllerEvidenceDerivation.signedArtifactOperationalState(
+        recentProofSizes = recentProofSizes,
+        recentSigners = recentSigners,
+        controllerEvidence = controllerEvidence,
+        penaltyUntil = penaltyUntil
+      )
+  }
+
+  @derive(encoder, decoder, eqv, show)
+  sealed trait GlobalConsensusKind
+
+  object GlobalConsensusKind {
+    case object Facility extends GlobalConsensusKind
+
+    case object Proposal extends GlobalConsensusKind
+
+    case object Signature extends GlobalConsensusKind
+  }
+
+  object GlobalConsensusOutcome {
+
+    /** Pack the post-round operational state once for both the persisted outcome and the v35 QC commitment. Keeping this as the single
+      * constructor prevents proposal-time certification from drifting away from `GlobalConsensusOutcome.toOperationalState`.
+      */
+    def operationalState(
+      removalPenalties: SortedMap[PeerId, Int],
+      deferralCountdown: SortedMap[PeerId, Int],
+      peerQuality: SortedMap[PeerId, (Int, Int)],
+      cumulativeMissCounts: SortedMap[PeerId, Long],
+      recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+      readmissionCountdown: SortedMap[PeerId, Int],
+      peerViewChanges: SortedMap[PeerId, Long],
+      recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+      peerTiers: SortedMap[PeerId, Int],
+      activeAdmissionScores: SortedMap[PeerId, Int],
+      recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
+      controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
+      penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]]
+    ): ConsensusOperationalState = {
       val keys: Set[PeerId] =
         peerQuality.keySet |
           removalPenalties.keySet |
@@ -332,33 +393,6 @@ object schema {
         penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
     }
-
-    // Stage 4: the peerHistory payload packed into SIGNED artifact bytes at proposal build
-    // and validateArtifact re-execution. Evidence-only: `perPeer` and `recentRoundEndTimes`
-    // (the locally-divergent fields behind the alpha.92/129/147 wedges) are excluded;
-    // delegation to the shared helper keeps the dag-l0 / currency-l0 signed subsets from
-    // drifting apart.
-    def signedArtifactPeerHistory: ConsensusOperationalState =
-      ControllerEvidenceDerivation.signedArtifactOperationalState(
-        recentProofSizes = recentProofSizes,
-        recentSigners = recentSigners,
-        controllerEvidence = controllerEvidence,
-        penaltyUntil = penaltyUntil
-      )
-  }
-
-  @derive(encoder, decoder, eqv, show)
-  sealed trait GlobalConsensusKind
-
-  object GlobalConsensusKind {
-    case object Facility extends GlobalConsensusKind
-
-    case object Proposal extends GlobalConsensusKind
-
-    case object Signature extends GlobalConsensusKind
-  }
-
-  object GlobalConsensusOutcome {
     implicit val _artifact: Lens[GlobalConsensusOutcome, Signed[GlobalSnapshotArtifact]] =
       GenLens[GlobalConsensusOutcome](_.finished.signedMajorityArtifact)
     implicit val _context: Lens[GlobalConsensusOutcome, GlobalSnapshotContext] =

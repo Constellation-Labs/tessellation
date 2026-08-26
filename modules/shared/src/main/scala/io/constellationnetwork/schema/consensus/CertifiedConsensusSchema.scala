@@ -85,6 +85,14 @@ final case class TriggerStatement(
 )
 
 @derive(eqv, encoder, decoder)
+final case class CertifiedRoundAuthorityV1(
+  facilitators: NonEmptySet[PeerId],
+  facilitatorsHash: Hash,
+  core: NonEmptySet[PeerId],
+  coreHash: Hash
+)
+
+@derive(eqv, encoder, decoder)
 final case class ProposalValue(
   schemaVersion: Int,
   domain: ConsensusDomain,
@@ -97,6 +105,16 @@ final case class ProposalValue(
   roundStartFacilitatorsHash: Hash,
   roundStartCore: NonEmptySet[PeerId],
   roundStartCoreHash: Hash,
+  // The current QC authenticates the exact full/Core authority allowed to
+  // certify the next round. Historical replay consumes this transition effect
+  // directly instead of re-running a joiner's current policy against old data.
+  nextRoundAuthority: CertifiedRoundAuthorityV1,
+  // Standard Hasher commitment to the existing post-round
+  // ConsensusOperationalState. The terminal sidecar supplies the preimage;
+  // binding it here prevents peer-local controller state from becoming
+  // unauthenticated initialization input without duplicating that state in the
+  // public lineage.
+  nextOperationalStateHash: Hash,
   committedView: Long,
   trigger: ConsensusTrigger,
   admissionNominee: Option[PeerId],
@@ -114,6 +132,8 @@ object ProposalValue {
   def validate(value: ProposalValue): Either[String, Unit] = {
     val fullCommittee = value.roundStartFacilitators.toSortedSet
     val core = value.roundStartCore.toSortedSet
+    val nextFullCommittee = value.nextRoundAuthority.facilitators.toSortedSet
+    val nextCore = value.nextRoundAuthority.core.toSortedSet
 
     for {
       _ <- Either.cond(
@@ -125,6 +145,7 @@ object ProposalValue {
       _ <- Either.cond(value.key >= 0L, (), "key_negative")
       _ <- Either.cond(value.committedView >= 0L, (), "committed_view_negative")
       _ <- Either.cond(core.subsetOf(fullCommittee), (), "round_start_core_not_subset")
+      _ <- Either.cond(nextCore.subsetOf(nextFullCommittee), (), "next_round_core_not_subset")
       _ <- Either.cond(value.admittedPeers.intersect(value.evictedPeers).isEmpty, (), "admit_evict_overlap")
       _ <- Either.cond(value.observedResponders.subsetOf(fullCommittee), (), "responders_not_subset")
       _ <- Either.cond(

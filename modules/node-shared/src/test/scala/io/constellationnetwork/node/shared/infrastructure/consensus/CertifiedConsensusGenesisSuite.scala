@@ -35,13 +35,6 @@ object CertifiedConsensusGenesisSuite extends SimpleIOSuite {
     expect(CertifiedConsensusGenesis.isRootKey(root.value.value, root)) &&
     expect(!CertifiedConsensusGenesis.isRootKey(root.value.value + 1L, root)) &&
     expect(!CertifiedConsensusGenesis.isRootKey(0L, SnapshotOrdinal.MinValue)) &&
-    expect(!CertifiedConsensusGenesis.isRootKey(0L, afterRoot)) &&
-    expect.same(Some(root), CertifiedConsensusGenesis.publicReplayRetentionRoot(0L)) &&
-    expect.same(Some(root), CertifiedConsensusGenesis.publicReplayRetentionRoot(root.value.value)) &&
-    expect.same(
-      Some(SnapshotOrdinal.unsafeApply(99L)),
-      CertifiedConsensusGenesis.publicReplayRetentionRoot(100L)
-    ) &&
-    expect.same(None, CertifiedConsensusGenesis.publicReplayRetentionRoot(Long.MaxValue))
+    expect(!CertifiedConsensusGenesis.isRootKey(0L, afterRoot))
   }
 }

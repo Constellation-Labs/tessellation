@@ -142,7 +142,6 @@ object GlobalSnapshotConsensus {
     // Main.scala populates the real getter once the daemon is up; before that it returns
     // Map.empty and no admission votes fire (safe default).
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    recoveryAllowancePeerIds: Option[Set[PeerId]],
     configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
     onRecoverySeedOutcomeCommitted: Option[GlobalConsensusOutcome => F[Unit]],
     initiallyHoldConsensusFirstRound: Boolean,
@@ -399,13 +398,9 @@ object GlobalSnapshotConsensus {
 
       certifiedDownloadPreflight = GlobalCertifiedDownloadValidator.make[F](
         effectiveConsensusConfig,
-        resolvedCoreCommitteeSize,
+        appConfig.environment.entryName,
         seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
-        recoveryAllowancePeerIds,
-        facilitatorSelector,
-        consensusFunctions.facilitatorEligible,
-        snapshotDownloadStorage,
-        stateAdvancer
+        snapshotDownloadStorage
       )
 
       outcomePreInitialize = (outcome: GlobalConsensusOutcome) =>

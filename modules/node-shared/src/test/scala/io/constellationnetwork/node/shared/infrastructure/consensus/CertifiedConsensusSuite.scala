@@ -79,6 +79,13 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       roundStartFacilitatorsHash = hash("full-committee"),
       roundStartCore = nonEmptyPeers(List(pC, pA, pD, pB)),
       roundStartCoreHash = hash("core-committee"),
+      nextRoundAuthority = CertifiedRoundAuthorityV1(
+        nonEmptyPeers(List(pD, pB, pA, pC)),
+        hash("next-full-committee"),
+        nonEmptyPeers(List(pC, pA, pD, pB)),
+        hash("next-core-committee")
+      ),
+      nextOperationalStateHash = hash("next-operational-state"),
       committedView = 2L,
       trigger = EventTrigger,
       admissionNominee = Some(pD),
@@ -130,6 +137,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
         roundStartFacilitatorsHash = fullHash,
         roundStartCore = committee,
         roundStartCoreHash = coreHash,
+        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, fullHash, committee, coreHash),
         admissionNominee = ids.lastOption,
         observedResponders = SortedSet.from(ids),
         observedSelfHealth = SortedMap.empty,
@@ -155,7 +163,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
 
   test("ProposalValue repository-Hasher encoding has a pinned golden hash") { res =>
     implicit val hasher: Hasher[IO] = res._1
-    val expected = Hash("0dc9b67d29af518c80acc77bfc967757cbaf28889d241c6fd09316e317d83145")
+    val expected = Hash("f6d84407259512b4ee94bfb9afde6a3c7ab4d9511017679f2450cbfaf973b8fe")
 
     valueHash[IO](baseValue).map { actual =>
       expect(actual === expected, s"ProposalValue golden hash changed: actual=${actual.value}")
@@ -202,6 +210,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "certification-purpose-commit" -> Hasher[IO].hash[CertificationPurpose](CertificationPurpose.Commit),
       "trigger-purpose-facility" -> Hasher[IO].hash[TriggerStatementPurpose](TriggerStatementPurpose.Facility),
       "trigger-statement" -> Hasher[IO].hash(trigger),
+      "round-authority-v1" -> Hasher[IO].hash(baseValue.nextRoundAuthority),
       "proposal-value" -> Hasher[IO].hash(baseValue),
       "certification-statement" -> Hasher[IO].hash(certification),
       "proposal-qc" -> Hasher[IO].hash(proposalQc),
@@ -222,14 +231,15 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "certification-purpose-commit" -> Hash("14fd9ea0aea122e9826239231e152fb961cd1048ad64509b170cee6136086beb"),
       "trigger-purpose-facility" -> Hash("1c12cb032ad8f7492bb8e21026c42b59f8cb0b78f0141375ae2d74d2da4030df"),
       "trigger-statement" -> Hash("d49b54eb323ced6686bc9220feee7d02914e43d275918f5a7e2e7536b87eb4f4"),
-      "proposal-value" -> Hash("0dc9b67d29af518c80acc77bfc967757cbaf28889d241c6fd09316e317d83145"),
+      "round-authority-v1" -> Hash("5f7e5aaf61ca3ce7609ccd9d1de0385de110df41246b178aeaeb05a3bf329866"),
+      "proposal-value" -> Hash("f6d84407259512b4ee94bfb9afde6a3c7ab4d9511017679f2450cbfaf973b8fe"),
       "certification-statement" -> Hash("3ba72cf59f5ee9ded1111e3068d2fbcb2cdedafc24235d977d65a8237a5ee549"),
-      "proposal-qc" -> Hash("f435125fcffc87a587c83503b258f194412fb1db5c87aa739b2ed4a4fcd1eace"),
+      "proposal-qc" -> Hash("c64c93283c353f309d89aba216d725df280462ddcfd2f70c2c2c259aca5f3b50"),
       "core-commit-qc" -> Hash("285024d39c2ac559b3964588f1b5ccc407316933e941dfe520e85f11ec7d6fad"),
-      "certified-outcome" -> Hash("779bfcd200ac8b65e88d1a378f8b96ecfec220b9e4617207ff93bfd5a8a91635"),
+      "certified-outcome" -> Hash("cfd304f02b243c0846d57c1b1919d4e561e324b3f6553f41d7a40393f26391a3"),
       // Currency L0 no longer participates in v35 certification, so the
       // pre-activation lineage schema is now the one-field GL0 evidence type.
-      "certified-lineage" -> Hash("f513387999a34dc3c554b67ceb6490cd21bcf1cdde94e3fb3184c4ebf25fca92")
+      "certified-lineage" -> Hash("4841c368a43e647f8e95bdb8d171bcc26b89087b890d7e36749e00fe72de10ee")
     )
 
     values.traverse { case (label, encoded) => encoded.tupleLeft(label) }.map { actual =>
@@ -626,6 +636,17 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       base.copy(roundStartFacilitatorsHash = hash("other-full")),
       base.copy(roundStartCore = nonEmptyPeers(base.roundStartCore.toSortedSet - pD)),
       base.copy(roundStartCoreHash = hash("other-core")),
+      base.copy(
+        nextRoundAuthority = base.nextRoundAuthority.copy(
+          facilitators = nonEmptyPeers(base.nextRoundAuthority.facilitators.toSortedSet - pD)
+        )
+      ),
+      base.copy(nextRoundAuthority = base.nextRoundAuthority.copy(facilitatorsHash = hash("other-next-full"))),
+      base.copy(
+        nextRoundAuthority = base.nextRoundAuthority.copy(core = nonEmptyPeers(base.nextRoundAuthority.core.toSortedSet - pD))
+      ),
+      base.copy(nextRoundAuthority = base.nextRoundAuthority.copy(coreHash = hash("other-next-core"))),
+      base.copy(nextOperationalStateHash = hash("other-next-operational-state")),
       base.copy(committedView = base.committedView + 1L),
       base.copy(trigger = TimeTrigger),
       base.copy(admissionNominee = None),
@@ -641,6 +662,50 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       expected <- valueHash[IO](base)
       changed <- mutations.traverse(valueHash[IO])
     } yield expect(changed.forall(_ =!= expected), "no committed-field mutation may retain the original valueHash")
+  }
+
+  test("next authority is structurally valid only when Core is a subset of the full committee") { _ =>
+    val invalid = baseValue.copy(
+      nextRoundAuthority = baseValue.nextRoundAuthority.copy(
+        facilitators = nonEmptyPeers(List(pA, pB, pC)),
+        core = nonEmptyPeers(List(pA, pB, pC, pD))
+      )
+    )
+
+    IO.pure(expect(ProposalValue.validate(invalid) === Left("next_round_core_not_subset")))
+  }
+
+  test("historical QC verification uses the fixed supermajority floor, not a downloader policy fraction") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      votes <- pairs.take(3).traverse(signOutcomeVote[IO](value, _).map(_._2))
+      proposal <- buildProposalQc[IO](
+        value,
+        SortedMap.from(ids.take(3).zip(votes)),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      commits <- pairs.take(3).traverse(signCoreCommit[IO](proposal, _))
+      commit <- buildCoreCommitQc[IO](
+        proposal,
+        SortedMap.from(ids.take(3).zip(commits)),
+        ids.toSet,
+        2.0 / 3.0
+      ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      outcome = CertifiedOutcome(proposal, commit)
+      historical <- verifyOutcomeAtSafetyFloor[IO](outcome, ids.toSet, ids.toSet)
+      currentUnanimity <- verifyOutcome[IO](outcome, ids.toSet, ids.toSet, configuredFraction = 1.0d)
+    } yield
+      expect.all(
+        historical === Right(()),
+        currentUnanimity === Left("core_under_quorum:3/4")
+      )
   }
 
   test("three distinct frozen-Core prepare votes build and verify a 3-of-4 QC") { res =>

@@ -96,8 +96,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
             inMemoryCapacity = 5L,
             SnapshotOrdinal.MinValue,
             hs,
-            checkpointStorage,
-            None
+            checkpointStorage
           )
       }
     } yield (storage, snapshotFileStorage, snapshotInfoFileStorage, checkpointStorage)
@@ -143,8 +142,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
             inMemoryCapacity = 5L,
             SnapshotOrdinal.MinValue,
             hs,
-            checkpointStorage,
-            None
+            checkpointStorage
           )
       }
     } yield (storage, snapshotFileStorage, snapshotInfoFileStorage)

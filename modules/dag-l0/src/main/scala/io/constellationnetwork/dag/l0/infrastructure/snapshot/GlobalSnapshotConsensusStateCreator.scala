@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import java.security.KeyPair
 
 import cats.MonadThrow
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.kernel.{Clock, Ref, Sync}
 import cats.effect.std.Queue
@@ -53,6 +54,55 @@ abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]
     ]
 
 object GlobalSnapshotConsensusStateCreator {
+
+  private def resetLegacyOutcomeToAuthenticatedSeed[F[_]: cats.Functor: Hasher](
+    outcome: GlobalConsensusOutcome,
+    seed: List[PeerId]
+  ): F[GlobalConsensusOutcome] =
+    seed.hash.map { seedHash =>
+      outcome.copy(
+        facilitators = Facilitators(seed),
+        removedFacilitators = RemovedFacilitators.empty,
+        withdrawnFacilitators = WithdrawnFacilitators.empty,
+        eligibleFacilitators = EligibleFacilitators.empty,
+        finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
+        removalPenalties = SortedMap.empty,
+        deferralCountdown = SortedMap.empty,
+        peerQuality = SortedMap.empty,
+        cumulativeMissCounts = SortedMap.empty,
+        recentProofSizes = SortedMap.empty,
+        readmissionCountdown = SortedMap.empty,
+        peerSelfHealth = SortedMap.empty,
+        peerViewChanges = SortedMap.empty,
+        recentSigners = SortedMap.empty,
+        peerTiers = SortedMap.empty,
+        activeAdmissionScores = SortedMap.empty,
+        lastTimeoutCertificateVoters = SortedSet.empty,
+        recentRoundEndTimes = SortedMap.empty,
+        controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
+        penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some,
+        // An ordinal-gated activation is a mature lineage. It must never inherit the
+        // from-genesis singleton exception, even if the activation committee later shrinks.
+        expandedBeyondSingleton = true.some
+      )
+    }
+
+  /** Reconstruct the public activation root without executing the downloader's current liveness policy. The seed is authenticated by the
+    * locally validated legacy artifact's signed controller evidence; live activation performs the additional current-policy viability and
+    * eligibility checks before any vote is emitted.
+    */
+  private[snapshot] def resetLegacyOutcomeForHistoricalReplay[F[_]: MonadThrow: Hasher](
+    key: GlobalSnapshotKey,
+    outcome: GlobalConsensusOutcome
+  ): F[GlobalConsensusOutcome] =
+    ControllerEvidenceDerivation
+      .certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
+      .liftTo[F](
+        new IllegalStateException(
+          s"Cannot replay certified consensus from DAG ordinal=${key.value.value}: signed controller evidence is absent"
+        )
+      )
+      .flatMap(resetLegacyOutcomeToAuthenticatedSeed[F](outcome, _))
 
   private[snapshot] final case class EvictionVoteRetransmission(
     target: PeerId,
@@ -113,33 +163,7 @@ object GlobalSnapshotConsensusStateCreator {
             s"minimum coordinated size=${CommitteeViability.MinimumCoordinatedCommitteeSize}, " +
             s"next-seat quorum=$nextSeatQuorum, quorumFraction=$quorumThresholdFraction"
         ).raiseError[F, Unit].unlessA(activationViable) >>
-          seed.hash.map { seedHash =>
-            outcome.copy(
-              facilitators = Facilitators(seed),
-              removedFacilitators = RemovedFacilitators.empty,
-              withdrawnFacilitators = WithdrawnFacilitators.empty,
-              eligibleFacilitators = EligibleFacilitators.empty,
-              finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
-              removalPenalties = SortedMap.empty,
-              deferralCountdown = SortedMap.empty,
-              peerQuality = SortedMap.empty,
-              cumulativeMissCounts = SortedMap.empty,
-              recentProofSizes = SortedMap.empty,
-              readmissionCountdown = SortedMap.empty,
-              peerSelfHealth = SortedMap.empty,
-              peerViewChanges = SortedMap.empty,
-              recentSigners = SortedMap.empty,
-              peerTiers = SortedMap.empty,
-              activeAdmissionScores = SortedMap.empty,
-              lastTimeoutCertificateVoters = scala.collection.immutable.SortedSet.empty,
-              recentRoundEndTimes = SortedMap.empty,
-              controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
-              penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some,
-              // An ordinal-gated activation is a mature lineage. It must never inherit the
-              // from-genesis singleton exception, even if the activation committee later shrinks.
-              expandedBeyondSingleton = true.some
-            )
-          }
+          resetLegacyOutcomeToAuthenticatedSeed[F](outcome, seed)
       }
 
   /** Preserve legacy self-fallback outside activation, but fail closed at the exact certified boundary. A singleton activation committee
@@ -486,32 +510,34 @@ object GlobalSnapshotConsensusStateCreator {
         previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
-        certifiedNextRoundValue = lastOutcome.finished.certifiedOutcome.map(_.proposalQc.value)
-        certifiedRoundProjection <- certifiedNextRoundValue.traverse { value =>
-          CertifiedRoundCommitteeProjector
-            .fromCertifiedParent[F](
-              key = key,
-              parentValue = value,
-              parentRecentSigners = lastOutcome.recentSigners,
-              parentControllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
-              parentCarried = CertifiedRoundCommitteeProjector.CarriedControllerState(
-                activeScores = lastOutcome.activeAdmissionScores.toMap,
-                peerQuality = lastOutcome.peerQuality.toMap,
-                peerTiers = lastOutcome.peerTiers,
-                viewChanges = lastOutcome.peerViewChanges.toMap,
-                selfHealth = lastOutcome.peerSelfHealth.toMap
-              ),
-              config = config,
-              coreCommitteeSize = coreCommitteeSize,
-              seedlistPeerIds = seedlistPeerIds.toSet,
-              isContextEligible = consensusFns.facilitatorEligible(lastOutcome.finished.context, _),
-              facilitatorSelector = facilitatorSelector,
-              parentArtifactHash = lastOutcome.finished.snapshotHash
-            )
-            .flatMap(
-              _.leftMap(error => new IllegalStateException(s"Certified round projection failed for key=$key: $error"))
-                .liftTo[F]
-            )
+        activatesCertifiedConsensus = config.certifiedConsensusActivatesAt(key.value.value)
+        activationRoundAuthority <-
+          if (!activatesCertifiedConsensus) none[CertifiedConsensus.CertifiedRoundAuthorityV1].pure[F]
+          else {
+            val seed = NonEmptySet.fromSetUnsafe(SortedSet.from(lastOutcome.facilitators.value))
+            HasherSelector[F].withCurrent(implicit hasher => CertifiedConsensus.roundAuthority[F](seed, seed).flatMap(_.some.pure[F]))
+          }
+        certifiedNextRoundAuthority = lastOutcome.finished.certifiedOutcome
+          .map(_.proposalQc.value.nextRoundAuthority)
+          .orElse(activationRoundAuthority)
+        certifiedRoundProjection = certifiedNextRoundAuthority.map { authority =>
+          val committee = CertifiedRoundCommitteeProjector.fromCertifiedAuthority(
+            key = key,
+            authority = authority,
+            parentRecentSigners = lastOutcome.recentSigners,
+            parentControllerEvidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
+            parentCarried = CertifiedRoundCommitteeProjector.CarriedControllerState(
+              activeScores = lastOutcome.activeAdmissionScores.toMap,
+              peerQuality = lastOutcome.peerQuality.toMap,
+              peerTiers = lastOutcome.peerTiers,
+              viewChanges = lastOutcome.peerViewChanges.toMap,
+              selfHealth = lastOutcome.peerSelfHealth.toMap
+            ),
+            config = config,
+            coreCommitteeSize = coreCommitteeSize
+          )
+
+          authority.facilitators.toSortedSet.toList -> committee
         }
 
         filteredPreviousEligible = previousEligible
@@ -524,10 +550,13 @@ object GlobalSnapshotConsensusStateCreator {
         // `finished.candidates` carries the accepted Proposal's open-admission nominee for vote
         // convergence; nomination alone is not membership authority. Only a quorum-certified
         // admission may change this base.
-        fullBase = ConsensusPeerController.canonicalFacilitatorBase(
-          parentFacilitators = lastOutcome.facilitators.value,
-          seedlistPeerIds = seedlistPeerIds
-        )
+        fullBase =
+          if (activatesCertifiedConsensus) lastOutcome.facilitators.value
+          else
+            ConsensusPeerController.canonicalFacilitatorBase(
+              parentFacilitators = lastOutcome.facilitators.value,
+              seedlistPeerIds = seedlistPeerIds
+            )
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
@@ -555,13 +584,16 @@ object GlobalSnapshotConsensusStateCreator {
         carriedFacilityRemovals = membershipPolicy.persistentFacilityRemovals(lastOutcome.removedFacilitators.value)
         lastSigners = lastFacilitators -- carriedFacilityRemovals
         tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
-        tcaFilteredBase = tcaDegraded match {
-          case Some(degraded) =>
-            val filtered = fullBase.filterNot(degraded.contains)
-            if (filtered.isEmpty) fullBase
-            else filtered
-          case None => fullBase
-        }
+        tcaFilteredBase =
+          if (activatesCertifiedConsensus) fullBase
+          else
+            tcaDegraded match {
+              case Some(degraded) =>
+                val filtered = fullBase.filterNot(degraded.contains)
+                if (filtered.isEmpty) fullBase
+                else filtered
+              case None => fullBase
+            }
 
         _ <- tcaDegraded.traverse_ { degraded =>
           ConsensusLog.debug(
@@ -578,14 +610,16 @@ object GlobalSnapshotConsensusStateCreator {
         }
 
         // All eligible after collateral filtering (includes previously removed peers so they can re-enter)
-        collateralEligible <- tcaFilteredBase
-          .filterA(
-            consensusFns.facilitatorFilter(
+        collateralEligible <- tcaFilteredBase.filterA { peerId =>
+          val seedlistAllows = seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId)
+          consensusFns
+            .facilitatorFilter(
               lastOutcome.finished.signedMajorityArtifact,
               lastOutcome.finished.context,
-              _
+              peerId
             )
-          )
+            .map(seedlistAllows && _)
+        }
         allEligible <- finalizeEligibleCommitteeAtActivation(
           key,
           config.certifiedConsensusActivatesAt(key.value.value),
@@ -593,6 +627,17 @@ object GlobalSnapshotConsensusStateCreator {
           selfId,
           config.quorumThresholdFraction
         ).liftTo[F]
+        _ <- Either
+          .cond(
+            !activatesCertifiedConsensus || allEligible.toSet === fullBase.toSet,
+            (),
+            new IllegalStateException(
+              s"Cannot activate certified consensus at DAG ordinal=${key.value.value}: " +
+                s"the authenticated root committee is not wholly seedlist/collateral eligible " +
+                s"(root=${fullBase.size},eligible=${allEligible.size})"
+            )
+          )
+          .liftTo[F]
 
         filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>
@@ -704,7 +749,7 @@ object GlobalSnapshotConsensusStateCreator {
         // Uses the previous round's snapshot hash as entropy for randomization
         entropy = lastOutcome.finished.snapshotHash
         selectedFacilitators = certifiedRoundProjection
-          .map(_.nextRound.selectedCommittee)
+          .map(_._1)
           .getOrElse(facilitatorSelector.select(eligibleThisRound, entropy))
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
         locallyBufferedWithdrawals = selectedFacilitators.iterator
@@ -732,7 +777,7 @@ object GlobalSnapshotConsensusStateCreator {
             forcedTier1Peers = Set.empty,
             withdrawnPeers = withdrawnPeers
           )
-        )(_.committee)
+        )(_._2)
         admissionSizing = membershipProjection.admissionSizing
         expansionAllowedThisRound = membershipProjection.expansionAllowed
         maxExpansionThisRound = membershipProjection.maxExpansionThisRound

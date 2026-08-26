@@ -36,8 +36,7 @@ object SnapshotDownloadStorage {
       GlobalSnapshotInfo
     ],
     hashSelect: HashSelect,
-    mptStore: MptStore[F, GlobalStateKey],
-    certifiedReplayRoot: Option[SnapshotOrdinal] = None
+    mptStore: MptStore[F, GlobalStateKey]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): SnapshotDownloadStorage[F] =
@@ -226,17 +225,11 @@ object SnapshotDownloadStorage {
 
       def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
         snapshotInfoStorage.write(ordinal, info) >> {
+          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
+
           snapshotInfoStorage.listStoredOrdinals.flatMap {
-            _.compile.toList.map { stored =>
-              val storedSet = stored.toSet
-              val toKeep = SnapshotStorage.retainedSnapshotInfoOrdinals(
-                storedSet,
-                cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal),
-                ordinal,
-                certifiedReplayRoot
-              )
-              storedSet.diff(toKeep).toList
-            }
+            _.compile.toList
+              .map(_.toSet.diff(toKeep).toList)
               .flatMap(_.traverse_(snapshotInfoStorage.delete))
           }
         }

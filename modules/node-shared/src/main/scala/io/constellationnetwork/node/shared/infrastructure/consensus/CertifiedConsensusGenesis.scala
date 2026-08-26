@@ -20,16 +20,6 @@ object CertifiedConsensusGenesis {
   def isActiveFromGenesis(certifiedConsensusActivationKey: Long): Boolean =
     certifiedConsensusActivationKey <= FirstIncrementalOrdinal.value.value
 
-  /** First public artifact/context pair required by a sidecar-free certified replay.
-    *
-    * Disabled consensus retains the legacy logarithmic policy. A from-genesis lineage starts at the canonical first incremental; an
-    * ordinal-gated lineage starts at A-1 because that independently validated legacy parent supplies the committee authority for A.
-    */
-  def publicReplayRetentionRoot(certifiedConsensusActivationKey: Long): Option[SnapshotOrdinal] =
-    if (certifiedConsensusActivationKey === Long.MaxValue) None
-    else if (isActiveFromGenesis(certifiedConsensusActivationKey)) Some(FirstIncrementalOrdinal)
-    else SnapshotOrdinal(certifiedConsensusActivationKey - 1L)
-
   /** The only certified expansion that may precede next-seat headroom.
     *
     * A from-genesis lineage starts with one canonical signer. Requiring two current-committee parent proofs before admitting its second

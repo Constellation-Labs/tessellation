@@ -32,22 +32,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotStorage {
 
-  /** Union the ordinary logarithmic retention set with the contiguous certified replay window.
-    *
-    * The window is bounded below by the configured v35 root and above by the current ordinal. It is intentionally derived from already
-    * fenced consensus configuration rather than a second retention knob. A future independently authorized checkpoint may move the lower
-    * bound, but silently pruning an interior context before then would make public lineage verification impossible after restart.
-    */
-  def retainedSnapshotInfoOrdinals(
-    stored: Set[SnapshotOrdinal],
-    logarithmic: Set[SnapshotOrdinal],
-    current: SnapshotOrdinal,
-    certifiedReplayRoot: Option[SnapshotOrdinal]
-  ): Set[SnapshotOrdinal] =
-    logarithmic ++ certifiedReplayRoot.fold(Set.empty[SnapshotOrdinal]) { root =>
-      stored.filter(ordinal => ordinal >= root && ordinal <= current)
-    }
-
   /** Scaffeine cache for negative ordinal lookups. Caches ordinals confirmed absent from filesystem to avoid repeated stat() calls from
     * community nodes requesting pruned snapshots. Short TTL (30s) ensures new snapshots become visible quickly.
     */
@@ -79,8 +63,7 @@ object SnapshotStorage {
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
     hasherSelector: HasherSelector[F],
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C],
-    certifiedReplayRoot: Option[SnapshotOrdinal] = None
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorageAlgebra[F, S, C] with LatestBalances[F]] =
     makeResources[F, S, C]().flatMap {
       case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, persistenceMutex, _) =>
@@ -97,8 +80,7 @@ object SnapshotStorage {
           inMemoryCapacity,
           snapshotInfoCutoffOrdinal,
           hasherSelector,
-          combinedSnapshotCheckpointFileSystemStorage,
-          certifiedReplayRoot
+          combinedSnapshotCheckpointFileSystemStorage
         )
     }
 
@@ -115,8 +97,7 @@ object SnapshotStorage {
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
     hasherSelector: HasherSelector[F],
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C],
-    certifiedReplayRoot: Option[SnapshotOrdinal]
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorageAlgebra[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -188,14 +169,7 @@ object SnapshotStorage {
               case Some((current, _, _)) =>
                 snapshotInfoLocalFileSystemStorage.listStoredOrdinals.flatMap {
                   _.compile.toList.map { stored =>
-                    val storedSet = stored.toSet
-                    val toKeep = retainedSnapshotInfoOrdinals(
-                      storedSet,
-                      cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, current.ordinal),
-                      current.ordinal,
-                      certifiedReplayRoot
-                    )
-                    storedSet.diff(toKeep).toList
+                    stored.toSet.diff(cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, current.ordinal)).toList
                   }
                     .flatMap(_.traverse_(snapshotInfoLocalFileSystemStorage.delete))
                 }

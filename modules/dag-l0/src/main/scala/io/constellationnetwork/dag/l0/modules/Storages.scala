@@ -19,7 +19,6 @@ import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.trust.storage.TrustStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensusGenesis
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
@@ -41,8 +40,7 @@ object Storages {
     incrementalConfig: IncrementalConfig,
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
     environment: AppEnvironment,
-    hashSelect: HashSelect,
-    certifiedConsensusActivationKey: Long
+    hashSelect: HashSelect
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Storages[F]] =
@@ -68,15 +66,13 @@ object Storages {
         .make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           snapshotConfig.combinedSnapshotCheckpointPath
         )
-      certifiedReplayRoot = CertifiedConsensusGenesis.publicReplayRetentionRoot(certifiedConsensusActivationKey)
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity,
         incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
         HasherSelector[F],
-        combinedGlobalSnapshotCheckpointStorage,
-        certifiedReplayRoot
+        combinedGlobalSnapshotCheckpointStorage
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](
@@ -87,8 +83,7 @@ object Storages {
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
           combinedGlobalSnapshotCheckpointStorage,
           hashSelect,
-          sharedStorages.mptStore,
-          certifiedReplayRoot
+          sharedStorages.mptStore
         )
     } yield
       new Storages[F](

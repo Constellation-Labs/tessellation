@@ -105,30 +105,44 @@ state-proof validation remain compatible.
    v35 incremental snapshot at N+1 carries N's `CertifiedOutcome`; the terminal N has no
    child yet, so its certificate comes from the authenticated terminal-outcome response.
    An ordinary downloader begins at the locally state-proof-validated A-1 artifact, or
-   the canonical first incremental genesis root, then validates the contiguous public
-   artifact/context sequence root-to-tip. Each step re-derives the complete Global outcome
-   and next committee, verifies signatures and unique signers against the previously
-   authorized frozen sets, checks parent/hash/state-proof adjacency, and installs nothing
-   until the complete fold succeeds. Snapshot artifacts were already durable; snapshot
-   info/context retention is extended contiguously from the configured public replay root
-   through the tip so restart cannot silently prune an interior proof input.
+   the canonical first incremental genesis root, then validates the contiguous signed
+   incremental-artifact sequence root-to-tip. Each QC authenticates the exact full/Core
+   authority that certified its round, the exact `nextRoundAuthority`, and a commitment to
+   the post-round operational state. Historical verification uses the fixed BFT
+   supermajority floor and consumes these certified transition effects directly; it never
+   re-runs a new binary's selector, Core sizing, quorum fraction, seedlist, allowance, or
+   collateral policy against an old round.
 
-   `GlobalSnapshot` and the unrelated genesis-era `CurrencySnapshot` remain unchanged. A
-   future long-range compaction
-   mechanism must use a separate, versioned, content-addressed certified-checkpoint
-   manifest paired with the ordinary combined incremental checkpoint; it must not be
-   embedded in either full snapshot. The manifest must bind the layer/network, checkpoint
-   ordinal and artifact hash, context hash, historical consensus-policy identity,
-   certified tip, and minimal continuation state. It cannot self-authenticate: only an
-   independently announced manifest hash can make it a root. The existing best-effort
-   checkpoint `.meta` sidecar is not an authority channel. Initial v35 activation uses
-   contiguous public replay; manifest schema, crash-safe storage, authority distribution,
-   retention, and atomic adoption remain a separately reviewed implementation gate.
+   The root and terminal still undergo complete artifact/context/state-proof validation.
+   For an interior round, the child-carried QC authenticates the context hash and the
+   retained signed incremental artifact supplies the artifact bytes and proof envelope;
+   the large `GlobalSnapshotInfo` preimage is not needed. The verifier folds one predecessor
+   and at most two public frames with `tailRecM`, installs nothing until the terminal
+   outcome and its operational-state commitment match, and therefore uses O(1) live heap
+   while ordinary logarithmic SnapshotInfo retention remains intact.
 
-   Historical state-proof/file validation remains ordinal-selected. The reconstructed
-   legacy outcome identity and newly reset activation value use the current hasher,
-   exactly as live state creation does. One typed Global L0 artifact-hash helper preserves
-   the V1 projection when a caller intentionally computes a historical Kryo identity.
+   Policy authentication is deliberately effect-based rather than release-name-based.
+   SemVer, an assembly checksum, and `CL_VERSION_HASH` are operational join fences, not
+   historical consensus authority. The current round's honest Core executes the one
+   join-fenced policy implementation and certifies its resulting next authority. A later
+   policy implementation can change that result without making old history depend on old
+   executable code. A change to the certificate's safety semantics or signed field meaning
+   still requires a new versioned schema and coordinated activation; it must not reinterpret
+   v35 bytes.
+
+   `GlobalSnapshot` and the unrelated genesis-era `CurrencySnapshot` remain unchanged.
+   The retained incremental/QC chain is sufficient for v35 activation. A future
+   independently announced, content-addressed certified checkpoint may bound long-range
+   O(epoch) I/O, but it is an optimization rather than an activation dependency. Such a
+   checkpoint must remain a separate versioned object paired with an ordinary combined
+   incremental checkpoint, must not be embedded in either full snapshot, and cannot
+   self-authenticate from a committee named only inside itself. The existing best-effort
+   checkpoint `.meta` sidecar is not an authority channel.
+
+   State-proof/file validation remains ordinal-selected. The reconstructed legacy outcome
+   identity and newly reset activation value use the current hasher, exactly as live state
+   creation does. Every public network is already in the JSON-serde era before this
+   activation; v35 adds no Kryo registration, fallback, or replay contract.
 
    Two explicit uncertified roots are locally authoritative: certified-consensus genesis
    and an exact env-authorized recovery-seed anchor. Production persists only their
@@ -136,12 +150,17 @@ state-proof validation remain compatible.
    accepted artifact's proof signers. Selected recovery nodes derive it from
    `CL_GL0_RECOVERY_SEED_COMMITTEE` only after exact public-anchor,
    seedlist/allowance/collateral, and all-member alignment checks. The first certified
-   child uses the same committee projector and bound-outcome path. Its ordinary QC binds
-   the reset parent hash and committee, allowing an unconfigured validator to reconstruct
-   that canonical root from the independently validated public parent and replay the
-   latest reset-to-tip epoch. Structural root shape or one authenticated peer response is
-   never authority. This is a permissioned recovery boundary: a quorum of allowlisted
-   operators can deliberately certify a reset and remain accountable out of band.
+   child uses the same bound-outcome path. Its ordinary fixed-floor QC binds the reset
+   parent hash and complete recovery committee; R+2 carries that R+1 QC publicly.
+
+   Recovery intentionally breaks prior-QC authority continuity. The independent authority
+   is therefore the operated permissioned procedure: one controlled rollback lead, the
+   env-selected source cohort, a full-fleet cold restart, canonical source-chain selection,
+   and Snapshot Streaming reconciliation. A later downloader verifies the canonical public
+   parent and complete recovery-committee QC, but does not re-apply today's mutable
+   seedlist/allowance policy to that historical reset. The bytes alone cannot distinguish an
+   operator-authorized reset from a colluding permissioned cohort's competing reset; source
+   selection and out-of-band accountability are part of this network's explicit trust model.
 
 10. Persist each local certified vote lock before emitting its `OutcomeVote`, and
     persist every verified QC advancement before it can influence gossip or commit
@@ -233,11 +252,12 @@ not because Currency carries a v35 certificate.
   messages, and local Global outcome/sidecar schemas change at the coordinated boundary.
 - Missing or corrupt certified sidecars can make an exact ordinary local rollback
   unavailable, but sidecars are never download authority. Every downloaded outcome is
-  cryptographically re-derived through the retained public lineage from an independently
-  authorized root.
-- Initial download validates the entire retained public certificate chain before the
+  authenticated through the retained public lineage from an independently authorized root,
+  and the terminal sidecar's operational-state preimage must match its QC commitment.
+- Initial download validates the entire retained public artifact/certificate chain before the
   newer-outcome application-storage shortcut, sidecar writes, vote-lock cleanup, or
-  consensus CAS. A missing or invalid root/interior frame rejects the handoff atomically.
+  consensus CAS. A missing or invalid root/interior artifact rejects the handoff atomically;
+  pruned interior SnapshotInfo files do not.
 - Ordinal-gated DAG activation authenticates the A-1 artifact envelope as well as its
   state proof before using signed controller evidence: exact requested/embedded ordinal,
   ordinal-selected signatures, unique seedlisted proof signers, and exact context/state-proof
@@ -273,7 +293,10 @@ not because Currency carries a v35 certificate.
   rollback/genesis lead starts self-only and validators join through public download,
   four-successor observation, exact outcome validation, and registration. No community
   validator signs a recovery plan.
-- Historical Global replay may not reinterpret old certified membership under a joiner's
-  current seedlist, allowance, collateral, or selection policy. Activation remains NO-GO
-  until policy is authenticated per epoch, exact next-committee authority is certified, or
-  those inputs are formally and operationally immutable for the complete certified epoch.
+- Historical Global replay does not reinterpret old certified membership under a joiner's
+  current seedlist, allowance, collateral, Core sizing, quorum fraction, or selection policy.
+  Each QC authenticates the exact full/Core authority for the following round and commits the
+  next operational state; historical verification consumes those signed effects at the fixed
+  BFT safety floor. This closes the historical-policy blocker without making SemVer or a
+  self-declared policy identifier into consensus authority. A future change to signed-field
+  meaning or QC safety rules requires a new schema variant and coordinated activation.
