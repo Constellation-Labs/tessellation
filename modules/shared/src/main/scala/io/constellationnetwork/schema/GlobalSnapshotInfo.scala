@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
 import io.constellationnetwork.schema.priceOracle.{PriceRecord, TokenPair}
@@ -60,6 +61,7 @@ object GlobalSnapshotInfoV1 {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 }
@@ -77,6 +79,7 @@ case class GlobalSnapshotStateProofV1(
       lastTxRefsProof,
       balancesProof,
       lastCurrencySnapshotsProof,
+      None,
       None,
       None,
       None,
@@ -123,7 +126,8 @@ case class GlobalSnapshotStateProof(
   activeNodeCollaterals: Option[Hash],
   nodeCollateralWithdrawals: Option[Hash],
   priceState: Option[Hash],
-  lastGlobalSnapshotsWithCurrency: Option[Hash]
+  lastGlobalSnapshotsWithCurrency: Option[Hash],
+  retiredAllowSpendRefs: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
@@ -144,11 +148,12 @@ object GlobalSnapshotStateProof {
       Option[Hash],
       Option[Hash],
       Option[Hash],
+      Option[Hash],
       Option[Hash]
     )
   ) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16) =>
-      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16)
+    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17) =>
+      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17)
   }
 }
 
@@ -171,6 +176,7 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
+      None,
       None,
       None,
       None,
@@ -230,7 +236,8 @@ case class GlobalSnapshotInfo(
   activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]],
   priceState: Option[SortedMap[TokenPair, PriceRecord]],
-  metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
+  metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]],
+  retiredAllowSpendRefs: Option[SortedMap[Option[Address], SortedMap[Address, SortedMap[Hash, EpochProgress]]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Parallel: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -253,8 +260,9 @@ case class GlobalSnapshotInfo(
       activeNodeCollaterals.traverse(_.hash),
       nodeCollateralWithdrawals.traverse(_.hash),
       priceState.traverse(_.hash),
-      metagraphSyncData.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _))
+      metagraphSyncData.traverse(_.hash),
+      retiredAllowSpendRefs.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _, _))
   }
 
   override def getActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = activeTokenLocks.getOrElse(SortedMap.empty)
@@ -281,8 +289,13 @@ object GlobalSnapshotInfo {
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
+    Some(SortedMap.empty),
     Some(SortedMap.empty)
   )
+
+  implicit val hashKeyEncoder: KeyEncoder[Hash] = KeyEncoder[String].contramap(_.value)
+
+  implicit val hashKeyDecoder: KeyDecoder[Hash] = KeyDecoder[String].map(Hash(_))
 
   implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = new KeyEncoder[Option[Address]] {
     def apply(key: Option[Address]): String = key match {

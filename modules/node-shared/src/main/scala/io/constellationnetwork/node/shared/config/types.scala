@@ -39,7 +39,8 @@ object types {
     removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal],
     fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal],
-    fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   )
 
   case class MetagraphsSyncConfig(

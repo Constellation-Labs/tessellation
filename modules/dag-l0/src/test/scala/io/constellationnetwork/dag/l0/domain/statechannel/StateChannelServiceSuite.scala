@@ -133,6 +133,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
             None,
             None,
             None,
+            None,
             None
           ),
           None,

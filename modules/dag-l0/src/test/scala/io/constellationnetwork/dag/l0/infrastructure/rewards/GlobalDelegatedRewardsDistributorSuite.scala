@@ -346,7 +346,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     // Mock acceptance results - removed withdrawals
@@ -495,7 +496,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     // Mock acceptance results - removed withdrawals
@@ -581,7 +583,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     // Empty acceptance results
@@ -694,7 +697,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     // Empty acceptance results
@@ -830,7 +834,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     // Empty acceptance results
@@ -1000,7 +1005,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     // Empty acceptance results
@@ -1036,7 +1042,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     for {
@@ -1301,7 +1308,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         activeNodeCollaterals = None,
         nodeCollateralWithdrawals = None,
         priceState = None,
-        metagraphSyncData = None
+        metagraphSyncData = None,
+        retiredAllowSpendRefs = None
       )
 
       // Empty acceptance results

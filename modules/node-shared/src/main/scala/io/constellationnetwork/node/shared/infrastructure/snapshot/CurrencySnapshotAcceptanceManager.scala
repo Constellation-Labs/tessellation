@@ -300,6 +300,8 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingFeeTransactionBalanceOverflowOrdinal = fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      preventingAllowSpendResurrectionOrdinal = fieldsAddedOrdinals.preventingAllowSpendResurrection
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatingCombineFunctionSpendActions = fieldsAddedOrdinals.updatingCombineFunctionSpendActions
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
@@ -594,7 +596,10 @@ object CurrencySnapshotAcceptanceManager {
       updatedBalancesBySpendTransactions = updateCurrencyBalancesBySpendTransactions(
         updatedBalancesByAllowSpends,
         allActiveCurrencyAllowSpends,
-        metagraphIdSpendTransactions
+        metagraphIdSpendTransactions,
+        // Same replay-stable gate as the fee-transaction arithmetic above: the previous currency snapshot's
+        // committed global sync view, never the live GL0 head.
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > preventingAllowSpendResurrectionOrdinal
       ) match {
         case Right(balances) => balances
         case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by spend transactions: $error")
@@ -1388,19 +1393,27 @@ object CurrencySnapshotAcceptanceManager {
           }
       } yield result
 
+    /** The `Some(allowSpend)` branch credits the destination and refunds the escrow remainder to the source without any matching debit -
+      * the debit happened once, when the allow-spend was created. That only conserves value if a given reference is honored exactly once,
+      * so once an allow-spend has been settled it is removed from the lookup table and a repeat of the same reference falls through to the
+      * plain debit-and-credit branch instead of minting.
+      */
     private def updateCurrencyBalancesBySpendTransactions(
       currentBalances: SortedMap[Address, Balance],
       allActiveCurrencyAllowSpends: SortedMap[Address, List[Hashed[AllowSpend]]],
-      metagraphIdSpendTransactions: List[SpendTransaction]
+      metagraphIdSpendTransactions: List[SpendTransaction],
+      consumeSettledAllowSpends: Boolean
     ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] =
-      metagraphIdSpendTransactions.foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](Right(currentBalances)) {
-        (txnAccEither, spendTransaction) =>
+      metagraphIdSpendTransactions
+        .foldLeft[Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, List[Hashed[AllowSpend]]])]](
+          Right((currentBalances, allActiveCurrencyAllowSpends))
+        ) { (txnAccEither, spendTransaction) =>
           for {
-            txnAcc <- txnAccEither
+            (txnAcc, availableAllowSpends) <- txnAccEither
             destinationAddress = spendTransaction.destination
             sourceAddress = spendTransaction.source
 
-            addressAllowSpends = allActiveCurrencyAllowSpends.getOrElse(sourceAddress, List.empty)
+            addressAllowSpends = availableAllowSpends.getOrElse(sourceAddress, List.empty)
             spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
             currentDestinationBalance = txnAcc.getOrElse(destinationAddress, Balance.empty)
 
@@ -1412,15 +1425,24 @@ object CurrencySnapshotAcceptanceManager {
                 val currentSourceBalance = txnAcc.getOrElse(sourceAllowSpendAddress, Balance.empty)
                 val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
 
+                val remainingAllowSpends =
+                  if (consumeSettledAllowSpends)
+                    availableAllowSpends.updated(sourceAddress, addressAllowSpends.filterNot(_.hash === allowSpend.hash))
+                  else
+                    availableAllowSpends
+
                 for {
                   updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
                   updatedSourceBalance <- currentSourceBalance.plus(
                     Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue))
                   )
                 } yield
-                  txnAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAllowSpendAddress, updatedSourceBalance)
+                  (
+                    txnAcc
+                      .updated(destinationAddress, updatedDestinationBalance)
+                      .updated(sourceAllowSpendAddress, updatedSourceBalance),
+                    remainingAllowSpends
+                  )
 
               case None =>
                 val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
@@ -1429,12 +1451,16 @@ object CurrencySnapshotAcceptanceManager {
                   updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
                   updatedSourceBalance <- currentSourceBalance.minus(spendTransactionAmount)
                 } yield
-                  txnAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAddress, updatedSourceBalance)
+                  (
+                    txnAcc
+                      .updated(destinationAddress, updatedDestinationBalance)
+                      .updated(sourceAddress, updatedSourceBalance),
+                    availableAllowSpends
+                  )
             }
           } yield updatedBalances
-      }
+        }
+        .map { case (balances, _) => balances }
 
     def emitAllowSpendsExpired(
       addressToSet: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
