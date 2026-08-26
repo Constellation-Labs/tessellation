@@ -763,8 +763,17 @@ object DataApplicationRoutesSuite extends HttpSuite {
             invalidSignedFeeTransaction.some
           )
 
+          // #1577 routed data-transaction signature checks through the same validator as the sibling cases above,
+          // so an invalid signature now surfaces as InvalidDataUpdate rather than the bespoke `error` payload.
           expectedResponse = JsonObject(
-            "error" -> Json.fromString("Invalid signature in data transactions")
+            "code" -> Json.fromLong(3L),
+            "message" -> Json.fromString("Invalid request body"),
+            "retriable" -> Json.fromBoolean(false),
+            "details" -> Json.fromJsonObject(
+              JsonObject(
+                "reason" -> Json.fromString("Invalid data update, reason: Chain(InvalidSignature)")
+              )
+            )
           )
 
           testResult <- expectHttpBodyAndStatus(
