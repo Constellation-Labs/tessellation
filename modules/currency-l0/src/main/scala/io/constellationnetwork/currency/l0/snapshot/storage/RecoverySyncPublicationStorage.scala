@@ -57,6 +57,11 @@ trait RecoverySyncPublicationStorage[F[_]] {
 
   /** Stop resending once the deterministic retained-window deadline has passed, while preserving the receipt for diagnosis/recovery. */
   def expireAt(globalParent: SnapshotOrdinal): F[Option[Publication]]
+
+  /** Explicit canonical-history replacement authority. A controlled rollback or validated download supersedes any prior recovery
+    * publication, which must not be reposted or block the adopted lineage. Ordinary process restart never calls this.
+    */
+  def discardForCanonicalReplacement: F[Option[Publication]]
 }
 
 object RecoverySyncPublicationStorage {
@@ -263,6 +268,23 @@ object RecoverySyncPublicationStorage {
                   val expired = publication.copy(expired = true)
                   persist(expired) >> expired.some.pure[F]
                 case _ => none[Publication].pure[F]
+              }
+            }
+          }
+
+        def discardForCanonicalReplacement: F[Option[Publication]] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case current @ Some(publication) =>
+                  writer.delete(FileName) >> state.set(none) >>
+                    logger
+                      .warn(
+                        s"RECOVERY_SYNC_PUBLICATION_DISCARDED_FOR_CANONICAL_REPLACEMENT mode=${publication.mode} " +
+                          s"currencyOrdinal=${publication.currencySnapshotOrdinal} binaryHash=${publication.binaryHash}"
+                      )
+                      .as(current)
+                case None => none[Publication].pure[F]
               }
             }
           }

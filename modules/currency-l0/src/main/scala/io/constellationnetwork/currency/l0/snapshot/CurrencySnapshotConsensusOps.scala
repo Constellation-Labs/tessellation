@@ -4,29 +4,44 @@ import cats.syntax.option._
 
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusKind._
 import io.constellationnetwork.currency.l0.snapshot.schema._
-import io.constellationnetwork.node.shared.infrastructure.consensus.state._
-import io.constellationnetwork.node.shared.infrastructure.consensus.{PeerDeclarations, declaration}
+import io.constellationnetwork.currency.l0.snapshot.synchronous.{ConsensusOps, PeerDeclarations, declaration}
 
 trait CurrencySnapshotConsensusOps extends ConsensusOps[CurrencySnapshotStatus, CurrencyConsensusKind]
 
 object CurrencySnapshotConsensusOps {
+
+  /** Immutable declaration-domain committee for the current attempt.
+    *
+    * Intermediate statuses carry the round-start hash even if a voluntary withdrawal or ACK subsequently narrows `state.facilitators`. This
+    * prevents asymmetric withdrawal delivery from making honest peers emit declarations in different domains. `Finished` carries the final
+    * retained-committee hash used by the next outcome.
+    */
+  def attemptFacilitatorsHash(status: CurrencySnapshotStatus): io.constellationnetwork.security.hash.Hash =
+    status match {
+      case CollectingFacilities(_, facilitatorsHash)                      => facilitatorsHash
+      case CollectingProposals(_, _, _, _, facilitatorsHash)              => facilitatorsHash
+      case CollectingSignatures(_, _, _, _, facilitatorsHash)             => facilitatorsHash
+      case CollectingBinarySignatures(_, _, _, _, _, _, facilitatorsHash) => facilitatorsHash
+      case Finished(_, _, _, _, _, facilitatorsHash, _)                   => facilitatorsHash
+    }
+
   def make: CurrencySnapshotConsensusOps = new CurrencySnapshotConsensusOps {
     override def collectedKinds(status: CurrencySnapshotStatus): Set[CurrencyConsensusKind] =
       status match {
-        case _: CollectingFacilities       => Set.empty
-        case _: CollectingProposals        => Set(Facility)
-        case _: CollectingSignatures       => Set(Facility, Proposal)
-        case _: CollectingBinarySignatures => Set(Facility, Proposal, Signature)
-        case _: Finished                   => Set(Facility, Proposal, Signature, BinarySignature)
+        case CollectingFacilities(_, _)                      => Set.empty
+        case CollectingProposals(_, _, _, _, _)              => Set(Facility)
+        case CollectingSignatures(_, _, _, _, _)             => Set(Facility, Proposal)
+        case CollectingBinarySignatures(_, _, _, _, _, _, _) => Set(Facility, Proposal, Signature)
+        case Finished(_, _, _, _, _, _, _)                   => Set(Facility, Proposal, Signature, BinarySignature)
       }
 
     override def maybeCollectingKind(status: CurrencySnapshotStatus): Option[CurrencyConsensusKind] =
       status match {
-        case _: CollectingFacilities       => Facility.some
-        case _: CollectingProposals        => Proposal.some
-        case _: CollectingSignatures       => Signature.some
-        case _: CollectingBinarySignatures => BinarySignature.some
-        case _: Finished                   => none
+        case CollectingFacilities(_, _)                      => Facility.some
+        case CollectingProposals(_, _, _, _, _)              => Proposal.some
+        case CollectingSignatures(_, _, _, _, _)             => Signature.some
+        case CollectingBinarySignatures(_, _, _, _, _, _, _) => BinarySignature.some
+        case Finished(_, _, _, _, _, _, _)                   => none
       }
 
     override def kindGetter: CurrencyConsensusKind => PeerDeclarations => Option[declaration.PeerDeclaration] = {
@@ -34,43 +49,6 @@ object CurrencySnapshotConsensusOps {
       case Proposal        => _.proposal
       case Signature       => _.signature
       case BinarySignature => _.binarySignature
-    }
-
-    override def isFinished(status: CurrencySnapshotStatus): Boolean = status match {
-      case _: Finished => true
-      case _           => false
-    }
-
-    override def isProposalPhase(status: CurrencySnapshotStatus): Boolean = status match {
-      case _: CollectingProposals => true
-      case _                      => false
-    }
-
-    // Currency-l0 has both MajoritySignature (CollectingSignatures) and BinarySignature
-    // (CollectingBinarySignatures) phases where the round waits on peer signatures before
-    // finalization. Both need StallDetector heartbeat pumping for the same reason as dag-l0
-    // (quorum-but-not-full grace paths return none without self-re-trigger).
-    override def isSignaturesPhase(status: CurrencySnapshotStatus): Boolean = status match {
-      case _: CollectingSignatures       => true
-      case _: CollectingBinarySignatures => true
-      case _                             => false
-    }
-
-    override def phaseIndex(status: CurrencySnapshotStatus): Int = status match {
-      case _: CollectingFacilities       => 0
-      case _: CollectingProposals        => 1
-      case _: CollectingSignatures       => 2
-      case _: CollectingBinarySignatures => 3
-      case _: Finished                   => 4
-    }
-
-    override def freshCollectingFacilities(status: CurrencySnapshotStatus): Option[CurrencySnapshotStatus] = status match {
-      case value: CollectingFacilities => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
-      case value: CollectingProposals  => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
-      case value: CollectingSignatures => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
-      case value: CollectingBinarySignatures =>
-        CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
-      case _: Finished => none
     }
   }
 }

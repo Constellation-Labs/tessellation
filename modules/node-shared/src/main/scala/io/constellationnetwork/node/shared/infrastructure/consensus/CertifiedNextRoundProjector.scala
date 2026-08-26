@@ -47,28 +47,6 @@ object CertifiedNextRoundProjector {
       nextRoundEntropy
     )
 
-  /** Currency counterpart to [[project]]. Only the certified membership-policy predicate differs; seedlist, context eligibility, entropy
-    * selection, and the admitted-seat survival check remain one shared implementation.
-    */
-  def projectCurrency[F[_]: Monad](
-    roundStartCommittee: List[PeerId],
-    admittedPeers: Set[PeerId],
-    evictedPeers: Set[PeerId],
-    maxChanges: Int,
-    seedlistPeerIds: Set[PeerId],
-    isContextEligible: PeerId => F[Boolean],
-    facilitatorSelector: FacilitatorSelector,
-    nextRoundEntropy: Hash
-  ): F[Either[String, Projection]] =
-    projectValidatedTransition(
-      CertifiedMembershipTransition.applyCurrencyTo(roundStartCommittee, admittedPeers, evictedPeers, maxChanges),
-      admittedPeers,
-      seedlistPeerIds,
-      isContextEligible,
-      facilitatorSelector,
-      nextRoundEntropy
-    )
-
   private def projectValidatedTransition[F[_]: Monad](
     transition: Either[String, List[PeerId]],
     admittedPeers: Set[PeerId],

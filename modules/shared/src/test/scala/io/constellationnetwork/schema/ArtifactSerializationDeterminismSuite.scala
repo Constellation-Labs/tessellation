@@ -344,7 +344,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
 
       expect.all(
         compatible(snapshotForward, "certifiedLineage"),
-        compatible(currencyIncremental, "certifiedLineage"),
+        !currencyIncremental.asJson.asObject.exists(_.contains("certifiedLineage")),
         globalFull.asJson.asObject.exists(_.keys.toSet == globalFullFields),
         currencyFull.asJson.asObject.exists(_.keys.toSet == currencyFullFields)
       )

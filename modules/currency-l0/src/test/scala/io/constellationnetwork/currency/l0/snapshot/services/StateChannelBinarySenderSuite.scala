@@ -6,9 +6,12 @@ import cats.data._
 import cats.effect._
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.concurrent.duration._
 
-import io.constellationnetwork.currency.schema.currency.SnapshotFee
+import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotStateProof, SnapshotFee}
+import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncOrdinal}
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Mainnet}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -21,27 +24,33 @@ import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValid
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.RecoveryGlobalSnapshotSync.ResetInheritedMultiPeerView
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage.RequiredRecoveryRefresh
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{IdentifierStorage, LastSentGlobalSnapshotSyncStorage}
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken}
+import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.generators.{chooseNumRefined, signedOf}
-import io.constellationnetwork.schema.height.Height
+import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
 import io.constellationnetwork.schema.{GlobalStateProofSelector, _}
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import fs2.Stream
+import fs2.io.file.Files
 import org.scalacheck.Gen
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import weaver.MutableIOSuite
@@ -49,6 +58,56 @@ import weaver.scalacheck.Checkers
 
 object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+
+  private val receiptProof = SignatureProof(Id(Hex("a" * 128)), Signature(Hex("b" * 128)))
+
+  private def currencyArtifact(ordinal: Long, hash: String): Hashed[CurrencyIncrementalSnapshot] =
+    Hashed(
+      Signed(
+        CurrencyIncrementalSnapshot(
+          ordinal = SnapshotOrdinal.unsafeApply(ordinal),
+          height = Height.MinValue,
+          subHeight = SubHeight.MinValue,
+          lastSnapshotHash = Hash.empty,
+          blocks = SortedSet.empty,
+          rewards = SortedSet.empty,
+          tips = SnapshotTips(SortedSet.empty, SortedSet.empty),
+          stateProof = CurrencySnapshotStateProof(Hash.empty, Hash.empty, None, None, None, None, None, None, None),
+          epochProgress = EpochProgress.MinValue,
+          dataApplication = None,
+          messages = None,
+          globalSnapshotSyncs = None,
+          feeTransactions = None,
+          artifacts = None,
+          allowSpendBlocks = None,
+          tokenLockBlocks = None,
+          globalSyncView = None
+        ),
+        NonEmptySet.one(receiptProof)
+      ),
+      Hash(hash),
+      ProofsHash(s"$hash-proofs")
+    )
+
+  private val requiredRecoveryRefresh = RequiredRecoveryRefresh(
+    Signed(
+      GlobalSnapshotSync(
+        GlobalSnapshotSyncOrdinal.MinValue,
+        SnapshotOrdinal.unsafeApply(100L),
+        Hash("global-100"),
+        SessionToken(Generation(PosLong.unsafeFrom(2L)))
+      ),
+      NonEmptySet.one(receiptProof)
+    ),
+    ResetInheritedMultiPeerView,
+    SnapshotOrdinal.unsafeApply(147L)
+  )
+
+  private def recoveryBinary(discriminator: Byte)(implicit hasher: Hasher[IO]): IO[Hashed[StateChannelSnapshotBinary]] =
+    Signed(
+      StateChannelSnapshotBinary(Hash.empty, Array[Byte](discriminator, 2, 3), SnapshotFee.MinValue),
+      NonEmptySet.one(receiptProof)
+    ).toHashed
 
   def mkSnapshot(ordinal: SnapshotOrdinal, keyPair: KeyPair, confirmedBinaries: List[Signed[StateChannelSnapshotBinary]])(
     implicit hs: Hasher[IO],
@@ -104,7 +163,14 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]] = None,
     selfId: PeerId = PeerId(Hex("0000000000000000")),
     environment: AppEnvironment = Dev,
-    maxTrackedBinaries: Int = 10000
+    maxTrackedBinaries: Int = 10000,
+    publishingEnabled: Boolean = true,
+    nodeMayPublish: Boolean = true,
+    recoveryStorage: Option[RecoverySyncPublicationStorage[IO]] = None,
+    outboxStorage: Option[StateChannelBinaryOutboxStorage[IO]] = None,
+    beforePost: IO[Unit] = IO.unit,
+    onRecoveryPublicationConfirmed: IO[Unit] = IO.unit,
+    onCanonicalMismatch: StateChannelBinaryOutboxStorage.CanonicalTipMismatch => IO[Unit] = _.raiseError[IO, Unit]
   )(
     implicit hs: Hasher[IO],
     metrics: Metrics[IO]
@@ -130,7 +196,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
         def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
         def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
-        def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+        def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = none.pure[IO]
         def getCombinedStream: fs2.Stream[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
         def getOrdinal: IO[Option[SnapshotOrdinal]] = enqueueAtOrdinal.some.pure[IO]
         def getHeight: IO[Option[Height]] = ???
@@ -146,7 +212,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
           data: Signed[StateChannelSnapshotBinary]
         ): PeerResponse[IO, Either[NonEmptyList[StateChannelValidationError], Unit]] =
           Kleisli[IO, P2PContext, Either[NonEmptyList[StateChannelValidationError], Unit]] { _ =>
-            data.toHashed.flatMap { hashed =>
+            beforePost >> data.toHashed.flatMap { hashed =>
               postedRef.update(_ :+ hashed).map(_.asRight[NonEmptyList[StateChannelValidationError]])
             }
           }
@@ -154,6 +220,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
 
       tracker <- Resource.eval(BinaryTracker.make[IO](maxTrackedBinaries))
       _ <- Resource.eval(tracker.updateState(_ => state))
+      publicationEnabled <- Resource.eval(Ref.of[IO, Boolean](publishingEnabled))
 
       poster = new BinaryPoster[IO](
         identifierStorage,
@@ -178,7 +245,13 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         maxTrackedBinaries,
         // Run posting synchronously so the test can observe send ordering / re-sends deterministically.
         identity,
-        logger
+        logger,
+        recoverySyncPublicationStorage = recoveryStorage,
+        stateChannelBinaryOutboxStorage = outboxStorage,
+        publicationEnabled = publicationEnabled,
+        nodeMayPublish = nodeMayPublish.pure[IO],
+        onRecoveryPublicationConfirmed = onRecoveryPublicationConfirmed,
+        onCanonicalMismatch = onCanonicalMismatch
       )
     } yield (sender, tracker, postedRef)
 
@@ -222,6 +295,192 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
             posted <- postedRef.get
           } yield expect.eql(posted.map(_.hash), hashed.map(_.hash))
         )
+      } yield result).use(IO.pure)
+    }
+  }
+
+  test("run-rollback publication gate prevents stale posts until cleanup explicitly enables it") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(binaryGen) { binary =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, _, postedRef) <- mkSender(
+          kp.getPublic.toAddress,
+          SnapshotOrdinal(1L),
+          TrackerState.empty,
+          publishingEnabled = false
+        )
+        result <- Resource.eval(for {
+          hashed <- binary.toHashed
+          _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none)
+          _ <- sender.processQueueWithoutSnapshot
+          before <- postedRef.get
+          _ <- sender.enablePublishing
+          _ <- sender.processQueueWithoutSnapshot
+          after <- postedRef.get
+        } yield expect.all(before.isEmpty, after.map(_.hash) === List(hashed.hash)))
+      } yield result).use(IO.pure)
+    }
+  }
+
+  test("canonical replacement waits for an in-flight publication before the gate closes") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(binaryGen) { binary =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        sendStarted <- Resource.eval(Deferred[IO, Unit])
+        releaseSend <- Resource.eval(Deferred[IO, Unit])
+        disableFinished <- Resource.eval(Ref.of[IO, Boolean](false))
+        (sender, _, postedRef) <- mkSender(
+          kp.getPublic.toAddress,
+          SnapshotOrdinal(1L),
+          TrackerState.empty,
+          beforePost = sendStarted.complete(()).void >> releaseSend.get
+        )
+        result <- Resource.eval(for {
+          hashed <- binary.toHashed
+          _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none)
+          sendFiber <- sender.processQueueWithoutSnapshot.start
+          _ <- sendStarted.get
+          disableFiber <- sender.disablePublishing.guarantee(disableFinished.set(true)).start
+          _ <- IO.sleep(100.millis)
+          finishedWhileSendBlocked <- disableFinished.get
+          _ <- releaseSend.complete(())
+          _ <- sendFiber.joinWithNever
+          _ <- disableFiber.joinWithNever
+          finishedAfterDrain <- disableFinished.get
+          _ <- sender.processQueueWithoutSnapshot
+          posted <- postedRef.get
+        } yield expect.all(!finishedWhileSendBlocked, finishedAfterDrain, posted.map(_.hash) === List(hashed.hash)))
+      } yield result).use(IO.pure)
+    }
+  }
+
+  test("exact GL0 recovery confirmation clears both the receipt and construction guard exactly once") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    Files[IO].tempDirectory.use { directory =>
+      for {
+        storage <- RecoverySyncPublicationStorage.make[IO](directory)
+        guard <- LastSentGlobalSnapshotSyncStorage.make[IO]()
+        callbackCount <- Ref.of[IO, Int](0)
+        binary <- recoveryBinary(21)
+        _ <- storage.prepare(requiredRecoveryRefresh, binary, currencyArtifact(21L, "currency-21"))
+        _ <- storage.markLocallyCommitted(binary.hash)
+        _ <- guard.armRecoveryRefresh(requiredRecoveryRefresh)
+        result <- (for {
+          kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+          (sender, _, _) <- mkSender(
+            kp.getPublic.toAddress,
+            SnapshotOrdinal(1L),
+            TrackerState.empty,
+            publishingEnabled = false,
+            recoveryStorage = storage.some,
+            onRecoveryPublicationConfirmed = guard.clearRequiredRecoveryRefresh >> callbackCount.update(_ + 1)
+          )
+          assertions <- Resource.eval(
+            for {
+              _ <- sender.confirmRecoveryPublication(Set(Hash("other")), SnapshotOrdinal.unsafeApply(200L))
+              beforeReceipt <- storage.get
+              beforeGuard <- guard.getRequiredRecoveryRefresh
+              beforeCount <- callbackCount.get
+              _ <- sender.confirmRecoveryPublication(Set(binary.hash), SnapshotOrdinal.unsafeApply(201L))
+              afterReceipt <- storage.get
+              afterGuard <- guard.getRequiredRecoveryRefresh
+              afterCount <- callbackCount.get
+              _ <- sender.confirmRecoveryPublication(Set(binary.hash), SnapshotOrdinal.unsafeApply(202L))
+              finalCount <- callbackCount.get
+            } yield
+              expect.all(
+                beforeReceipt.nonEmpty,
+                beforeGuard.nonEmpty,
+                beforeCount === 0,
+                afterReceipt.isEmpty,
+                afterGuard.isEmpty,
+                afterCount === 1,
+                finalCount === 1
+              )
+          )
+        } yield assertions).use(IO.pure)
+      } yield result
+    }
+  }
+
+  test("an expired recovery binary cannot be rearmed through the ordinary durable outbox") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    Files[IO].tempDirectory.use { directory =>
+      val recoveryDirectory = directory / "recovery"
+      val outboxDirectory = directory / "outbox"
+
+      for {
+        _ <- Files[IO].createDirectories(recoveryDirectory)
+        _ <- Files[IO].createDirectories(outboxDirectory)
+        recovery <- RecoverySyncPublicationStorage.make[IO](recoveryDirectory)
+        outbox <- StateChannelBinaryOutboxStorage.make[IO](outboxDirectory)
+        binary <- recoveryBinary(22)
+        artifact = currencyArtifact(22L, "currency-22")
+        _ <- recovery.prepare(requiredRecoveryRefresh, binary, artifact)
+        _ <- recovery.markLocallyCommitted(binary.hash)
+        _ <- outbox.prepare(binary, artifact)
+        _ <- outbox.markLocallyCommitted(binary.hash)
+        _ <- recovery.expireAt(SnapshotOrdinal.unsafeApply(requiredRecoveryRefresh.validThroughGlobalParent.value.value + 1L))
+        kp <- KeyPairGenerator.makeKeyPair
+        first <- mkSender(
+          kp.getPublic.toAddress,
+          SnapshotOrdinal(1L),
+          TrackerState.empty,
+          publishingEnabled = false,
+          recoveryStorage = recovery.some,
+          outboxStorage = outbox.some
+        ).use {
+          case (sender, tracker, _) =>
+            sender.clearPending >> tracker.getState
+        }
+        second <- mkSender(
+          kp.getPublic.toAddress,
+          SnapshotOrdinal(1L),
+          TrackerState.empty,
+          publishingEnabled = false,
+          recoveryStorage = recovery.some,
+          outboxStorage = outbox.some
+        ).use {
+          case (sender, tracker, _) =>
+            sender.refillFromOutbox >> tracker.getState
+        }
+        receipt <- recovery.get
+        stats <- outbox.stats
+      } yield
+        expect.all(
+          first.tracked.isEmpty,
+          second.tracked.isEmpty,
+          receipt.exists(_.expired),
+          stats.pendingCount === 1
+        )
+    }
+  }
+
+  test("an enabled queue still cannot post while the node is outside Ready") { res =>
+    implicit val (_, hs, sp, metrics, j) = res
+
+    forall(binaryGen) { binary =>
+      (for {
+        kp <- Resource.eval(KeyPairGenerator.makeKeyPair)
+        (sender, _, postedRef) <- mkSender(
+          kp.getPublic.toAddress,
+          SnapshotOrdinal(1L),
+          TrackerState.empty,
+          publishingEnabled = true,
+          nodeMayPublish = false
+        )
+        result <- Resource.eval(for {
+          hashed <- binary.toHashed
+          _ <- sender.enqueue(hashed, SnapshotOrdinal(1L), none)
+          _ <- sender.processQueueWithoutSnapshot
+          posted <- postedRef.get
+        } yield expect(posted.isEmpty))
       } yield result).use(IO.pure)
     }
   }

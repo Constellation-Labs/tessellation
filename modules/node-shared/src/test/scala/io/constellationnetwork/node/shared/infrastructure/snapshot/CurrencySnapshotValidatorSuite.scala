@@ -19,6 +19,7 @@ import io.constellationnetwork.schema.{SnapshotOrdinal, SnapshotTips}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 
+import eu.timepit.refined.auto._
 import weaver.SimpleIOSuite
 
 object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
@@ -29,7 +30,7 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
   private def snapshot(
     ordinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
     globalSyncView: Option[GlobalSyncView],
-    version: SnapshotVersion = CurrencySnapshotSemantics.LegacyVersion
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ): CurrencyIncrementalSnapshot =
     CurrencyIncrementalSnapshot(
       ordinal = ordinal,
@@ -62,6 +63,19 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
     expect(CurrencySnapshotValidator.matchesExpected(recreatedLaterView, expected))
   }
 
+  pureTest("deterministic-history snapshots require globalSyncView to rederive exactly") {
+    val expected = snapshot(
+      globalSyncView = Some(gsv(2)),
+      version = CurrencySnapshotSemantics.DeterministicHistoryVersion
+    )
+    val recreatedLaterView = snapshot(
+      globalSyncView = Some(gsv(3)),
+      version = CurrencySnapshotSemantics.DeterministicHistoryVersion
+    )
+
+    expect(!CurrencySnapshotValidator.matchesExpected(recreatedLaterView, expected))
+  }
+
   pureTest("matchesExpected still fails on a real content difference") {
     val expected = snapshot(ordinal = SnapshotOrdinal.MinValue, globalSyncView = Some(gsv(2)))
     val realDiff = snapshot(ordinal = SnapshotOrdinal.unsafeApply(1L), globalSyncView = Some(gsv(2)))
@@ -74,21 +88,11 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
     expect(!CurrencySnapshotValidator.matchesExpected(both, expected))
   }
 
-  pureTest("deterministic-history snapshots require an exactly rederived globalSyncView") {
-    val expected = snapshot(
-      globalSyncView = Some(gsv(2)),
-      version = CurrencySnapshotSemantics.DeterministicHistoryVersion
-    )
-    val differentView = expected.copy(globalSyncView = Some(gsv(3)))
-
-    expect(!CurrencySnapshotValidator.matchesExpected(differentView, expected))
-  }
-
   pureTest("matchesExpected treats the signed snapshot protocol version as consensus content") {
     val expected = snapshot(globalSyncView = Some(gsv(2)))
     val wrongProtocol = snapshot(
       globalSyncView = Some(gsv(2)),
-      version = CurrencySnapshotSemantics.DeterministicHistoryVersion
+      version = SnapshotVersion("1.0.0")
     )
 
     expect(!CurrencySnapshotValidator.matchesExpected(wrongProtocol, expected))
@@ -99,7 +103,8 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
       implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
 
       val legacy = snapshot(globalSyncView = Some(gsv(2)))
-      val deterministic = legacy.copy(version = CurrencySnapshotSemantics.DeterministicHistoryVersion)
+      val differentVersion = SnapshotVersion("1.0.0")
+      val deterministic = legacy.copy(version = differentVersion)
 
       for {
         legacyHash <- hasher.hash(legacy)
@@ -107,7 +112,7 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
       } yield
         expect(legacyHash != deterministicHash) &&
           expect.same(
-            CurrencySnapshotSemantics.DeterministicHistoryVersion,
+            differentVersion,
             CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(deterministic).version
           )
     }

@@ -256,7 +256,7 @@ object AdmissionCandidateTipProbe {
 /** Exact interpretation of a fresh, direct candidate response.
   *
   * Global L0 open admission and probation recovery require both ordinal and hash to name the expected parent. The bounded-lag cached-tip
-  * rule remains only for layers without the direct probe (currently Currency L0).
+  * rule remains available for callers that do not require the direct probe.
   */
 object AdmissionTipReadiness {
 
@@ -267,8 +267,8 @@ object AdmissionTipReadiness {
       tip.ordinal === ordinal && tip.snapshotHash === expectedHash
     }
 
-  /** Interpret asynchronously sampled gossip without leaking Global L0's certified policy into Currency L0. Certified atomic membership
-    * requires the exact parent; legacy layers retain the existing bounded-lag behavior byte-for-behavior.
+  /** Interpret asynchronously sampled gossip without leaking certified policy into generic callers. Certified atomic membership requires
+    * the exact parent; legacy callers retain the existing bounded-lag behavior byte-for-byte.
     */
   def isCachedReady(
     tip: ChainTip,

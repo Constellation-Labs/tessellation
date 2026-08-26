@@ -174,7 +174,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     facilitatorSelector: FacilitatorSelector,
     seedlistPeerIds: Set[PeerId],
     membershipPolicy: HealthDerivedMembershipPolicy,
-    onRecoverySeedSuccessor: Option[GlobalConsensusOutcome => F[Unit]],
+    onRecoverySeedOutcomeCommitted: Option[GlobalConsensusOutcome => F[Unit]],
     // A fired same-key soft reset clears the volatile round while the FSM is still BUSY. This callback must enqueue
     // an attempt-bound `RestartAfterSoftReset` on the owning serialized command loop so the reset is a total transition rather than an
     // inert state, without allowing a delayed retry to complete a newer round.
@@ -203,13 +203,13 @@ object GlobalSnapshotConsensusStateAdvancer {
         }
 
       override def afterConsensusOutcomeCommitted(outcome: GlobalConsensusOutcome): F[Unit] =
-        onRecoverySeedSuccessor.fold(
+        onRecoverySeedOutcomeCommitted.fold(
           Applicative[F].unit
-        ) { onSuccessor =>
+        ) { onCommitted =>
           // V35 owns both sidecars in the typed onOutcomeFinalized hook. This
-          // post-CAS hook has one owner only: disarming invocation-local unsigned
-          // recovery authority after the first real successor commits.
-          onSuccessor(outcome)
+          // post-CAS hook owns invocation-local recovery telemetry: first-successor
+          // disarm, selected-signer headroom, and the R+2 public-durability latch.
+          onCommitted(outcome)
         }
 
       /** Savepoint taken before `createArtifact()` mutations. On round abandonment + retry at the same ordinal, this is restored before
@@ -3426,15 +3426,6 @@ object GlobalSnapshotConsensusStateAdvancer {
               CertifiedConsensus.ConsensusDomain.DagL0,
               config.quorumThresholdFraction
             )
-            .map(
-              _.flatMap { lineage =>
-                Either.cond(
-                  lineage.forall(_.parentLayerEvidence.isEmpty),
-                  lineage,
-                  "dag_lineage_layer_evidence_present"
-                )
-              }
-            )
 
       /** Produces a human-readable description of why the leader's artifact failed validation. */
       private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
@@ -4603,7 +4594,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           val certifiedLineage = Option
             .when(state.certifiedConsensusActive)(state.lastOutcome.finished.certifiedOutcome)
             .flatten
-            .map(CertifiedConsensus.CertifiedLineageEvidenceV1(_, none))
+            .map(CertifiedConsensus.CertifiedLineageEvidenceV1(_))
           lastArtifact.toHashed.flatMap { hashed =>
             consensusFns.createProposalArtifact(
               state.key,

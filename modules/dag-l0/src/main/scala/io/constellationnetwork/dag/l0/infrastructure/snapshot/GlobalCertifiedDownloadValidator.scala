@@ -33,8 +33,8 @@ import eu.timepit.refined.auto._
   *
   *   - the locally downloaded/state-proof-validated A-1 snapshot at ordinal-gated activation; or
   *   - the canonical signed first incremental snapshot when certification is active from genesis; or
-  *   - the latest explicit recovery epoch, reconstructed from its first successor's ordinary QC and independently validated public parent
-  *     under the permissioned seedlist/collateral policy.
+  *   - the latest explicit recovery epoch, reconstructed from its first successor's ordinary QC after the second successor carries that QC
+  *     publicly, plus the independently validated public parent under the permissioned seedlist/collateral policy.
   *
   * It then replays the relevant contiguous public artifact/context chain and each child-carried parent certificate through the ordinary
   * production outcome transition. For a later recovery this is only the latest reset-to-tip segment; older recovery epochs are superseded.
@@ -43,8 +43,8 @@ import eu.timepit.refined.auto._
   *
   * The resulting frozen state is passed to the ordinary `CertifiedConsensus` verifier. No alternate encoder, canonicalizer, hash, QC
   * verifier, or committee rule is introduced. Selected recovery nodes still require the exact env-authorized anchor and all-member barrier;
-  * an unconfigured community node accepts only the first successor's quorum-certified, publicly reconstructible boundary—not a standalone
-  * synthetic outcome or a single peer assertion.
+  * an unconfigured community node accepts only the first successor's quorum-certified boundary once carried by the second successor—not a
+  * standalone synthetic outcome, a source-private terminal QC, or a single peer assertion.
   */
 object GlobalCertifiedDownloadValidator {
 
@@ -483,17 +483,12 @@ object GlobalCertifiedDownloadValidator {
       round: PublicRound,
       authority: CertifiedConsensus.CertifiedLineageEvidenceV1
     ): F[Either[String, TrustedParent]] =
-      (round.artifact.value.certifiedLineage.flatMap(_.parentLayerEvidence), authority.parentLayerEvidence) match {
-        case (Some(_), _)    => "dag_carried_parent_layer_evidence_present".asLeft[TrustedParent].pure[F]
-        case (None, Some(_)) => "dag_lineage_layer_evidence_present".asLeft[TrustedParent].pure[F]
-        case (None, None) =>
-          stateFromTrustedParent(round.key, trusted).flatMap {
-            case Left(error) => error.asLeft[TrustedParent].pure[F]
-            case Right(state) =>
-              stateAdvancer
-                .deriveCertifiedPublicRound(state, round.artifact, round.context, authority.parentOutcome)
-                .map(_.map { case (_, outcome) => TrustedParent(outcome, TrustedParentKind.Certified) })
-          }
+      stateFromTrustedParent(round.key, trusted).flatMap {
+        case Left(error) => error.asLeft[TrustedParent].pure[F]
+        case Right(state) =>
+          stateAdvancer
+            .deriveCertifiedPublicRound(state, round.artifact, round.context, authority.parentOutcome)
+            .map(_.map { case (_, outcome) => TrustedParent(outcome, TrustedParentKind.Certified) })
       }
 
     /** Reconstruct one publicly provable recovery-reset root.
@@ -503,10 +498,11 @@ object GlobalCertifiedDownloadValidator {
       * authenticated terminal outcome. That certificate binds the exact parent hash and frozen committee. The normal public transition then
       * verifies the certificate signatures, artifact proofs, eligibility, committee projection, and every derived field.
       *
-      * This is deliberately self-authenticating permissioned recovery authority, not a second operator artifact: an ordinary certificate
-      * quorum from a seedlisted, collateral-eligible committee of at least three members must certify the same reset child. For a
-      * three-member committee at the 2/3 policy this means two signatures, not all three. Misuse by a quorum of those allowlisted operators
-      * remains attributable under the network's permissioned trust model.
+      * This is permissioned recovery authority without a second signed operator artifact: the env-selected committee must be contained in
+      * every independently hash-fenced trust source configured for the fleet (seedlist and/or custom allowance list), and an ordinary
+      * certificate quorum from that collateral-eligible committee must certify the same reset child. For a three-member committee at the
+      * 2/3 policy this means two signatures, not all three. Misuse by a quorum of those allowlisted operators remains attributable under
+      * the network's permissioned trust model.
       */
     def publicRecoveryRoot(
       round: PublicRound,
@@ -537,12 +533,12 @@ object GlobalCertifiedDownloadValidator {
           s"recovery_seed_boundary_committee_too_large:${committee.size}"
         )
         _ <- Either.cond(
-          seedlistPeerIds.nonEmpty,
+          seedlistPeerIds.nonEmpty || allowancePeerIds.exists(_.nonEmpty),
           (),
-          "recovery_seed_boundary_seedlist_unavailable"
+          "recovery_seed_boundary_trust_root_unavailable"
         )
         _ <- Either.cond(
-          committee.forall(seedlistPeerIds.contains),
+          seedlistPeerIds.isEmpty || committee.forall(seedlistPeerIds.contains),
           (),
           "recovery_seed_boundary_member_not_seedlisted"
         )
@@ -658,7 +654,7 @@ object GlobalCertifiedDownloadValidator {
             selectedSegment.flatMap {
               case Left(error) => error.asLeft[Unit].pure[F]
               case Right((root, replayRounds)) =>
-                val terminalEvidence = CertifiedConsensus.CertifiedLineageEvidenceV1(terminalOutcome, None)
+                val terminalEvidence = CertifiedConsensus.CertifiedLineageEvidenceV1(terminalOutcome)
                 CertifiedConsensus
                   .verifySequentialLineage[F, TrustedParent, PublicRound](
                     trustedRoot = root,

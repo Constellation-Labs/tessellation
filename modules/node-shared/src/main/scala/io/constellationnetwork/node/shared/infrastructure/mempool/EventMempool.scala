@@ -101,11 +101,11 @@ trait EventMempool[F[_], Event, Key] {
     * @return
     *   Current mempool state bounded by limit
     */
-  def snapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]]
+  def snapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]]
 
   /** Get a snapshot of entries temporarily held out of proposal selection.
     */
-  def suspendedSnapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]]
+  def suspendedSnapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]]
 
   /** Clear events that were included in a finalized snapshot.
     *
@@ -190,6 +190,9 @@ private[mempool] object MempoolState {
 
 object EventMempool {
 
+  /** Protocol work bound reused by event gossip and Currency Facility construction. */
+  val DefaultSnapshotLimit: Int = 10000
+
   /** Create a new event mempool.
     */
   def make[F[_]: Async: Hasher, Event: Encoder, Key](
@@ -273,7 +276,7 @@ object EventMempool {
       def contains(hash: Hash): F[Boolean] =
         storage.get.map(_.entries.contains(hash))
 
-      def snapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]] =
+      def snapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]] =
         storage.get.map { state =>
           MempoolSnapshot(
             state.insertionOrder
@@ -284,7 +287,7 @@ object EventMempool {
           )
         }
 
-      def suspendedSnapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]] =
+      def suspendedSnapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]] =
         storage.get.map { state =>
           MempoolSnapshot(
             state.insertionOrder

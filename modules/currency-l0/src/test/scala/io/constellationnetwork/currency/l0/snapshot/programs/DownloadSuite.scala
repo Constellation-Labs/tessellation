@@ -3,34 +3,36 @@ package io.constellationnetwork.currency.l0.snapshot.programs
 import cats.effect.IO
 import cats.syntax.all._
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensusGenesis
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.node.NodeState
 
-import eu.timepit.refined.auto._
 import weaver.SimpleIOSuite
 
 object DownloadSuite extends SimpleIOSuite {
 
-  test("certified genesis initializes download at the independently authenticated root") {
-    val root = CertifiedConsensusGenesis.FirstIncrementalOrdinal
+  test("downloads retain the release/mainnet four-snapshot observation window") {
+    val current = SnapshotOrdinal.unsafeApply(10L)
 
-    (expect.same(root, Download.observationLimit(root, 4L, certifiedConsensusActivationKey = 0L)) &&
-      expect(Download.isCertifiedGenesisRoot(root, certifiedConsensusActivationKey = 0L))).pure[IO]
+    expect
+      .same(
+        SnapshotOrdinal.unsafeApply(14L),
+        Download.observationLimit(current, 4L)
+      )
+      .pure[IO]
   }
 
-  test("legacy and non-root downloads retain the ordinary observation window") {
-    val root = CertifiedConsensusGenesis.FirstIncrementalOrdinal
-    val ordinary = SnapshotOrdinal.unsafeApply(10L)
-
-    (expect.same(
-      SnapshotOrdinal.unsafeApply(root.value.value + 4L),
-      Download.observationLimit(root, 4L, certifiedConsensusActivationKey = Long.MaxValue)
-    ) &&
-      expect.same(
-        SnapshotOrdinal.unsafeApply(ordinary.value.value + 4L),
-        Download.observationLimit(ordinary, 4L, certifiedConsensusActivationKey = 0L)
-      ) &&
-      expect(!Download.isCertifiedGenesisRoot(root, certifiedConsensusActivationKey = Long.MaxValue)) &&
-      expect(!Download.isCertifiedGenesisRoot(ordinary, certifiedConsensusActivationKey = 0L))).pure[IO]
+  test("successor retries are bounded and only active download states re-anchor") {
+    expect
+      .all(
+        Download.fetchNextRetryCap === 6,
+        Download.shouldReanchorAfterFailure(NodeState.DownloadInProgress),
+        Download.shouldReanchorAfterFailure(NodeState.WaitingForObserving),
+        Download.shouldReanchorAfterFailure(NodeState.Observing),
+        Download.shouldReanchorAfterFailure(NodeState.WaitingForReady),
+        !Download.shouldReanchorAfterFailure(NodeState.WaitingForDownload),
+        !Download.shouldReanchorAfterFailure(NodeState.Ready),
+        !Download.shouldReanchorAfterFailure(NodeState.Leaving)
+      )
+      .pure[IO]
   }
 }

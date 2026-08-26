@@ -188,4 +188,22 @@ object RecoverySyncPublicationStorageSuite extends SimpleIOSuite {
           expect(cleared.isEmpty)
     }
   }
+
+  test("a newly authorized rollback discards a stale recovery receipt regardless of commit state") {
+    List(false, true).traverse { committed =>
+      Files[IO].tempDirectory.use { directory =>
+        for {
+          implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+          implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+          storage <- RecoverySyncPublicationStorage.make[IO](directory)
+          recoveryBinary <- binary(if (committed) 17 else 18)
+          _ <- storage.prepare(required, recoveryBinary, artifact(17L, "superseded-currency"))
+          _ <- storage.markLocallyCommitted(recoveryBinary.hash).whenA(committed)
+          discarded <- storage.discardForCanonicalReplacement
+          current <- storage.get
+          persisted <- RecoverySyncPublicationStorage.make[IO](directory).flatMap(_.get)
+        } yield expect.all(discarded.exists(_.binaryHash === recoveryBinary.hash), current.isEmpty, persisted.isEmpty)
+      }
+    }.map(_.combineAll)
+  }
 }

@@ -126,9 +126,14 @@ object Main
         s"checkpoint=(${configured.network},${configured.ordinal.value.value},${configured.snapshotHash.value})"
   }
 
-  private[dag] case object RecoverySeedConfiguredWithoutSeedlist extends NoStackTrace {
+  private[dag] case object RecoverySeedConfiguredWithoutTrustRoot extends NoStackTrace {
     override def getMessage: String =
-      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} is configured but no GL0 seedlist is present"
+      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} is configured but neither a GL0 seedlist nor a hash-fenced custom allowance list is present"
+  }
+
+  private[dag] case object RecoverySeedConfiguredForGenesis extends NoStackTrace {
+    override def getMessage: String =
+      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} is rollback-recovery authority and cannot be used with run-genesis"
   }
 
   private[dag] final case class RecoverySeedRollbackHashMismatch(expected: Hash, got: Hash) extends NoStackTrace {
@@ -187,6 +192,18 @@ object Main
       seed.committee.diff(completedSigners)
     )
   }
+
+  /** A legacy successor is publicly usable under the legacy artifact-proof rules. Once v35 is active, the first successor of an uncertified
+    * recovery root is not yet durable public reset authority: its QC is terminal/private until the following child carries it. Require that
+    * child to bind the immediately preceding key before release automation treats the recovery boundary as reconstructible without source
+    * sidecars.
+    */
+  private[dag] def recoverySeedBoundaryPubliclyDurable(
+    activation: SnapshotOrdinal,
+    committedKey: SnapshotOrdinal,
+    carriedParentKey: Option[Long]
+  ): Boolean =
+    committedKey < activation || carriedParentKey.contains(committedKey.value.value - 1L)
 
   private[dag] final case class CertifiedRollbackOutcomeUnavailable(
     anchor: SnapshotOrdinal,
@@ -262,7 +279,7 @@ object Main
 
   /** The environment seed is the sole explicit operator recovery authority. It flushes controller-evidence windows. A legacy anchor must
     * precede activation by three ordinals to rebuild those inputs before v35; an anchor at/after activation starts a new canonical
-    * certified epoch whose first QC makes the reset boundary publicly reconstructible.
+    * certified epoch. Its first-successor QC becomes publicly reconstructible only when the second successor carries it.
     */
   private[dag] def validateRecoverySeedActivationSpacing(
     anchor: SnapshotOrdinal,
@@ -277,8 +294,9 @@ object Main
   }
 
   /** A certified-from-genesis root and an env-reset root at ordinal 1 produce indistinguishable public key-2 lineage shapes. Refuse that
-    * one ambiguous boundary before rollback storage can be mutated. Later certified anchors are publicly discoverable through their
-    * first-successor QC; a future ordinal-gated activation is not a genesis root and retains the ordinary spacing rule.
+    * one ambiguous boundary before rollback storage can be mutated. Later certified anchors become publicly discoverable when the second
+    * successor carries the first-successor QC; a future ordinal-gated activation is not a genesis root and retains the ordinary spacing
+    * rule.
     */
   private[dag] def validateRecoverySeedPublicDiscoverability(
     anchor: SnapshotOrdinal,
@@ -355,6 +373,10 @@ object Main
       loadedConsensusConfig <- IO
         .fromOption(effectiveConsensusConfig)(new IllegalStateException("DAG L0 effective consensus config was not loaded"))
         .asResource
+      _ <- (method match {
+        case m: RunGenesis if m.recoverySeedCommittee.nonEmpty => RecoverySeedConfiguredForGenesis.raiseError[IO, Unit]
+        case _                                                 => IO.unit
+      }).asResource
       certifiedConsensusActivationOrdinal = SnapshotOrdinal.unsafeApply(loadedConsensusConfig.certifiedConsensusActivationKey)
       recoveryMaxFacilitatorCount = loadedConsensusConfig.facilitatorSelectionMax
       recoverySeedCommittee = method match {
@@ -364,24 +386,46 @@ object Main
         case _: RunGenesis                  => none[Gl0RecoverySeedCommittee]
       }
       validatedRecoverySeed <- recoverySeedCommittee.traverse { seed =>
-        nodeShared.seedlist
-          .fold[Either[Throwable, Set[PeerId]]](Left(RecoverySeedConfiguredWithoutSeedlist)) { entries =>
-            Right(entries.iterator.map(_.peerId).toSet)
-          }
-          .flatMap { seedlist =>
+        val seedlist = nodeShared.seedlist.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet))
+        val allowance =
+          nodeShared.customAllowanceList.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet))
+
+        Either
+          .cond(
+            seedlist.exists(_.nonEmpty) || allowance.exists(_.nonEmpty),
+            (),
+            RecoverySeedConfiguredWithoutTrustRoot: Throwable
+          )
+          .flatMap(_ =>
             Gl0RecoverySeedCommittee
               .validate(
                 seed,
                 nodeId,
                 seedlist,
-                nodeShared.customAllowanceList.fold(Option.empty[Set[PeerId]])(entries => Some(entries.iterator.map(_.peerId).toSet)),
+                allowance,
                 recoveryMaxFacilitatorCount,
                 loadedConsensusConfig.quorumThresholdFraction
               )
               .leftWiden[Throwable]
-          }
+          )
           .liftTo[IO]
       }.asResource
+      recoveryTrustRootSource = (
+        nodeShared.seedlist.exists(_.nonEmpty),
+        nodeShared.customAllowanceList.exists(_.nonEmpty)
+      ) match {
+        case (true, true)   => "seedlist_and_allowance"
+        case (true, false)  => "seedlist"
+        case (false, true)  => "allowance"
+        case (false, false) => "none"
+      }
+      _ <- Metrics[IO]
+        .updateGauge(
+          "dag_consensus_recovery_trust_root_available",
+          if (recoveryTrustRootSource === "none") 0L else 1L,
+          Seq(Metrics.unsafeLabelName("source") -> recoveryTrustRootSource)
+        )
+        .asResource
       recoveryRole = method match {
         case _: RunRollback                                   => "rollback_lead"
         case _: RunValidator | _: RunValidatorWithJoinAttempt => "selected_validator"
@@ -392,6 +436,7 @@ object Main
           Metrics[IO].updateGauge("dag_consensus_recovery_seed_committee_size", 0L) >>
           Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_deficit", 0L) >>
           Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 0L) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_boundary_publicly_durable", 0L) >>
           Metrics[IO].updateGauge("dag_consensus_recovery_seed_alignment_missing_session", 0L) >>
           Metrics[IO].updateGauge("dag_consensus_recovery_seed_alignment_invalid_state", 0L) >>
           Metrics[IO].updateGauge("dag_consensus_recovery_seed_alignment_missing_outcome", 0L) >>
@@ -421,7 +466,8 @@ object Main
             "dag_consensus_recovery_seed_headroom_deficit",
             recoverySeedHeadroom(seed, Set.empty, loadedConsensusConfig.quorumThresholdFraction).deficit.toLong
           ) >>
-          Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 0L)
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_headroom_ready", 0L) >>
+          Metrics[IO].updateGauge("dag_consensus_recovery_seed_boundary_publicly_durable", 0L)
       // The metrics registry outlives an in-process application restart. An
       // armed invocation therefore resets its gauges when its resource is
       // released; counters remain historical. Keep env-absent startup exactly
@@ -432,6 +478,7 @@ object Main
       initiallyHoldConsensusFirstRound = validatedRecoverySeed.isDefined
       configuredRecoverySeedRef <- Ref.of[IO, Option[Gl0RecoverySeedCommittee]](validatedRecoverySeed).asResource
       recoverySeedHeadroomReachedRef <- Ref.of[IO, Boolean](false).asResource
+      recoverySeedBoundaryDurableRef <- Ref.of[IO, Boolean](false).asResource
       clearConfiguredRecoverySeed = (outcome: GlobalConsensusOutcome) => {
         val completedSigners = outcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
 
@@ -497,7 +544,42 @@ object Main
           }
         }
 
-        disarmAuthority >> recordHeadroom
+        val recordPublicDurability = validatedRecoverySeed.traverse_ { _ =>
+          recoverySeedBoundaryDurableRef.get.flatMap {
+            case true => IO.unit
+            case false =>
+              val carriedParentKey = outcome.finished.signedMajorityArtifact.value.certifiedLineage
+                .map(_.parentOutcome.proposalQc.value.key)
+              if (
+                recoverySeedBoundaryPubliclyDurable(
+                  certifiedConsensusActivationOrdinal,
+                  outcome.key,
+                  carriedParentKey
+                )
+              )
+                recoverySeedBoundaryDurableRef.set(true) >>
+                  (ConsensusLog.info(
+                    logger,
+                    ConsensusLog.Category.Recovery,
+                    outcome.key.toString,
+                    "n/a",
+                    ConsensusLog.Event.RollbackQuorumFeasible,
+                    "reason" -> "unsigned_recovery_seed_boundary_publicly_durable",
+                    "carriedParentKey" -> carriedParentKey.fold("legacy")(_.toString)
+                  ) >>
+                    Metrics[IO].updateGauge("dag_consensus_recovery_seed_boundary_publicly_durable", 1L) >>
+                    Metrics[IO].incrementCounter(
+                      "dag_consensus_recovery_seed_boundary_publicly_durable_total"
+                    )).attempt.void
+              else
+                Metrics[IO]
+                  .incrementCounter("dag_consensus_recovery_seed_boundary_not_yet_public_total")
+                  .attempt
+                  .void
+          }
+        }
+
+        disarmAuthority >> recordHeadroom >> recordPublicDurability
       }
       queues <- Queues.make[IO](sharedQueues).asResource
 

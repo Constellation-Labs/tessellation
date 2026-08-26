@@ -1,5 +1,11 @@
 # Currency L0 deterministic history and dormant-lineage resurrection
 
+> **Storage preflight:** do not keep same-filesystem hardlink backups of the
+> live Currency snapshot `hash/` index. Rollback/download cleanup uses the
+> canonical hash+ordinal link count to avoid decoding all retained history and
+> to identify hash-only torn writes. Copy archives or place them on a different
+> filesystem.
+
 ## Scope and activation boundary
 
 This feature makes Currency L0 historical dependency resolution reproducible after a
@@ -152,18 +158,23 @@ checks bound this residual under the network's allowlisted-operator model.
 ## Durable publication protocol
 
 Local Currency finality is not recovery success: Global L0 must include the exact
-signed state-channel binary. The rollback lead therefore uses a durable outbox at
+signed state-channel binary. The rollback lead therefore uses the ordinary exact-binary
+outbox plus a stricter recovery receipt at
 `<incremental-snapshot-path>/.recovery-sync-publication/pending.json`:
 
-1. Before Currency persistence, write a non-publishable intent containing the exact
-   binary, hashes, signed Currency artifact identity, mode, and Global L0 deadline.
+1. Before Currency persistence, prepare the non-publishable ordinary outbox entry and
+   the recovery intent containing the exact binary, hashes, signed Currency artifact
+   identity, mode, and Global L0 deadline.
 2. Persist and read back the Currency artifact/context. Content-addressed and ordinal
    indexes must identify the exact proof-bearing artifact and matching context.
-3. Mark the intent locally committed and enqueue that exact binary.
-4. Clear only the in-process construction guard after Currency outcome commit; keep
+3. Mark the deadline-bearing recovery receipt locally committed.
+4. Mark the ordinary publishable outbox entry committed **last**. A crash cannot publish
+   through the ordinary queue while bypassing the recovery deadline.
+5. Enqueue that exact binary, clear only the in-process construction guard after Currency
+   outcome commit, and keep
    the durable outbox armed.
-5. Repost across queue clears and JVM restarts.
-6. Delete the outbox only after the exact unsigned binary hash appears in canonical
+6. Repost across queue clears and JVM restarts.
+7. Delete both receipts only after the exact unsigned binary hash appears in canonical
    Global L0.
 
 Startup searches the complete retained canonical window for confirmation. An
@@ -212,19 +223,24 @@ it.
 ### C. Recover a dormant lineage
 
 1. Stop every Currency node and select exactly one rollback lead.
-2. Verify the stale sync view, dormancy, empty unapplied set, canonical recent Global L0
+2. Before authorizing a replacement, let already-submitted state-channel work drain for at
+   least two Global L0 ordinals and verify this metagraph's canonical
+   `lastStateChannelSnapshotHashes` value is stable. A previously signed old Currency binary
+   that wins Global L0 acceptance after rollback can supersede the replacement lineage.
+3. Verify the stale sync view, dormancy, empty unapplied set, canonical recent Global L0
    anchor, seedlist/allowance-list eligibility, and fee balance.
-3. Start the lead with its normal rollback command plus
+4. Start the lead with its normal rollback command plus
    `--allow-solo-consensus` on the upgraded release.
-4. Verify `RECOVERY_SYNC_REFRESH_ENQUEUED`, then require both
+5. Verify `RECOVERY_SYNC_REFRESH_ENQUEUED`, then require both
    `construction_guard_armed = 1` and `refresh_pending = 1`.
-5. After the first local successor, require `construction_guard_armed = 0` while
+6. After the first local successor, require `construction_guard_armed = 0` while
    `refresh_pending` remains one, and verify the successor is protocol `1.0.0`.
-6. Wait for `RECOVERY_SYNC_PUBLICATION_CONFIRMED` and `refresh_pending = 0` before the
+7. Wait for `RECOVERY_SYNC_PUBLICATION_CONFIRMED` and `refresh_pending = 0` before the
    deadline.
-7. Start remaining nodes one at a time with `run-validator`; require download, Ready,
-   certified admission, and an actual Currency proof before starting the next.
-8. Remove the solo flag from the lead's next startup command and restore automation
+8. Start remaining nodes one at a time with `run-validator`; require public download,
+   four-successor observation, corroborated exact-outcome handoff, synchronous registration,
+   and an actual Currency proof before starting the next.
+9. Remove the solo flag from the lead's next startup command and restore automation
    only after the multi-signer committee has positive finality margin.
 
 This advances Currency and Global L0 forward. It does not roll back Global L0 and does

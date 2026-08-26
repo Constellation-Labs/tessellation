@@ -15,7 +15,7 @@ import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnap
 import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
-import io.constellationnetwork.currency.l0.snapshot.storage.RecoverySyncPublicationStorage
+import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, CurrencySnapshotStateProof}
 import io.constellationnetwork.json.JsonSerializer
@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.{CertifiedConsensusGenesis, ValidationErrorStorage}
+import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
@@ -48,8 +48,7 @@ object Storages {
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,
     dataApplication: Option[BaseDataApplicationL0Service[F]],
-    hasherSelector: HasherSelector[F],
-    certifiedConsensusActivationKey: Long
+    hasherSelector: HasherSelector[F]
   ): F[Storages[F]] =
     for {
       snapshotLocalFileSystemStorage <- CurrencyIncrementalSnapshotLocalFileSystemStorage.make[F](
@@ -60,16 +59,14 @@ object Storages {
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotConfig.combinedSnapshotCheckpointPath
         )
-      certifiedReplayRoot = CertifiedConsensusGenesis.publicReplayRetentionRoot(certifiedConsensusActivationKey)
-      snapshotStorage <- SnapshotStorage
+      snapshotStorage <- io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage,
           snapshotConfig.inMemoryCapacity,
           SnapshotOrdinal.MinValue,
           hasherSelector,
-          combinedCurrencySnapshotCheckpointStorage,
-          certifiedReplayRoot
+          combinedCurrencySnapshotCheckpointStorage
         )
       globalSnapshotsWithStateFileStorage <- GlobalSnapshotsWithStateLocalFileSystemStorage
         .make[F](snapshotConfig.globalSnapshotsWithStatePath, snapshotConfig.maxGlobalSnapshotsWithStateStored)
@@ -91,6 +88,11 @@ object Storages {
       lastGlobalSnapshotSyncStorage <- hasherSelector.withCurrent(implicit hs => LastSentGlobalSnapshotSyncStorage.make())
       recoverySyncPublicationStorage <- hasherSelector.withCurrent { implicit hs =>
         RecoverySyncPublicationStorage.make[F](snapshotConfig.incrementalPersistedSnapshotPath / ".recovery-sync-publication")
+      }
+      stateChannelBinaryOutboxStorage <- hasherSelector.withCurrent { implicit hs =>
+        StateChannelBinaryOutboxStorage.make[F](
+          snapshotConfig.incrementalPersistedSnapshotPath / ".state-channel-binary-outbox"
+        )
       }
       currencySnapshotCleanupStorage = CurrencySnapshotCleanupStorage
         .make[F](
@@ -120,6 +122,7 @@ object Storages {
         globalSnapshotsWithStateDeltasFileStorage = globalSnapshotsWithStateDeltasFileStorage,
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
         recoverySyncPublication = recoverySyncPublicationStorage,
+        stateChannelBinaryOutbox = stateChannelBinaryOutboxStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
         currencySnapshotCleanup = currencySnapshotCleanupStorage,
         combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage,
@@ -145,6 +148,7 @@ sealed abstract class Storages[F[_]] private (
   val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
   val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F],
   val recoverySyncPublication: RecoverySyncPublicationStorage[F],
+  val stateChannelBinaryOutbox: StateChannelBinaryOutboxStorage[F],
   val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
   val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F],
   val globalSnapshotsWithStateFileStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],

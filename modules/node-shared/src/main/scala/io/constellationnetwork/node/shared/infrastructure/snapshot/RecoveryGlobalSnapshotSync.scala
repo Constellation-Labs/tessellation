@@ -23,6 +23,12 @@ import io.constellationnetwork.security.hash.Hash
   */
 object RecoveryGlobalSnapshotSync {
 
+  /** Public-ordinal authorization for the reusable signed reset. An absent setting resolves to MaxValue and stays dormant. MinValue cannot
+    * authorize a reset because it does not name a concrete retained GL0 dependency.
+    */
+  def isActivationAuthorized(reference: SnapshotOrdinal, activationOrdinal: SnapshotOrdinal): Boolean =
+    CurrencySnapshotSemantics.isActivationAuthorized(reference, activationOrdinal)
+
   sealed trait RefreshMode extends Product with Serializable {
     def metricLabel: String
   }
@@ -113,9 +119,7 @@ object RecoveryGlobalSnapshotSync {
       .flatMap(_ => Either.cond(reset.globalSnapshotOrdinal <= context.currentGlobalParent, (), ResetAnchorAfterCurrentGlobalParent))
       .flatMap(_ =>
         Either.cond(
-          selectedTarget.exists(
-            CurrencySnapshotSemantics.isActivationAuthorized(_, context.snapshotProtocolV1ActivationOrdinal)
-          ),
+          selectedTarget.exists(isActivationAuthorized(_, context.snapshotProtocolV1ActivationOrdinal)),
           (),
           ResetBeforeSnapshotProtocolV1Activation
         )

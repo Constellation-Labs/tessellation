@@ -1,17 +1,13 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
-import scala.collection.immutable.{SortedMap, SortedSet}
-
-import io.constellationnetwork.node.shared.infrastructure.consensus.ActiveFacilitatorAdmission
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 
 /** Layer policy for membership changes derived from transient health observations.
   *
   * Global L0's conservative bridge creates no new health-derived removal debt. It retains leases not already excluded by carried debt or
   * administrative policy. Local Facility arrival, eviction votes, and timeout voters may still drive progress within a round, but they
-  * cannot create a new reason to delete a peer from the next round's signing committee. Currency L0 retains the legacy automatic removal
-  * behavior.
+  * cannot create a new reason to delete a peer from the next round's signing committee. Currency L0 has its own flat synchronous engine and
+  * does not use this policy.
   *
   * This policy changes behavior only. It is not serialized, hashed, or copied into consensus state.
   */
@@ -31,9 +27,8 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
 
   /** Membership policy for a certified VCC/timeout transition.
     *
-    * Before v35, each layer retains its configured behavior. Once certified consensus is active, both layers freeze the current round's
-    * membership: Currency may still certify an eviction for N+1, but it must not shrink N while advancing a view. Keeping this distinction
-    * here prevents the shared VCC and timeout paths from drifting while preserving Currency's separate next-round eviction authority.
+    * The pre-activation and certified GL0 paths both retain the frozen signing leases. Keeping the choice explicit at the shared transition
+    * boundary prevents VCC and timeout paths from drifting if another GL0 policy is introduced later.
     */
   final def forCertifiedView(certifiedConsensusActive: Boolean): HealthDerivedMembershipPolicy =
     if (certifiedConsensusActive) HealthDerivedMembershipPolicy.RetainSigningLeases else this
@@ -136,49 +131,6 @@ object HealthDerivedMembershipPolicy {
         shrinkEvaluated = false,
         exclusionCount = 0,
         recentSignerPoolSize = 0
-      )
-    }
-  }
-
-  /** Exact rc.6 behavior retained for Currency L0. */
-  case object LegacyAutomaticRemoval extends HealthDerivedMembershipPolicy {
-    val allowsAutomaticRemoval: Boolean = true
-    val acceptsCertifiedNextRoundEvictions: Boolean = true
-    val supportsCertifiedAtomicReplacement: Boolean = false
-
-    def certifiedViewChangeLeaderPool(
-      coreFacilitators: List[PeerId],
-      activeFacilitators: List[PeerId],
-      roundStartFacilitators: List[PeerId]
-    ): List[PeerId] = leaderPool(coreFacilitators, activeFacilitators)
-
-    def timeoutMembership(
-      facilitators: List[PeerId],
-      coreFacilitators: List[PeerId],
-      roundStartFacilitators: List[PeerId],
-      timeoutVoters: Set[PeerId],
-      shrinkFloor: Int
-    ): TimeoutMembership = {
-      val certifiedShrink = ActiveFacilitatorAdmission.fromCertifiedTimeout(
-        selected = facilitators,
-        recentSigners = SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]],
-        timeoutVoters = timeoutVoters,
-        minActiveSize = shrinkFloor
-      )
-      val shrunk = certifiedShrink.recentFilterApplied
-      val effective = certifiedShrink.active
-
-      TimeoutMembership(
-        facilitators = if (shrunk) effective else facilitators,
-        coreFacilitators = if (shrunk) effective else coreFacilitators,
-        // Preserve the legacy TC behavior exactly: leader selection used the certified active
-        // result even when it did not persist a shrink.
-        leaderPool = leaderPool(effective, effective),
-        evaluatedActive = effective,
-        shrinkApplied = shrunk,
-        shrinkEvaluated = true,
-        exclusionCount = certifiedShrink.exclusions.size,
-        recentSignerPoolSize = certifiedShrink.recentSignerPoolSize
       )
     }
   }

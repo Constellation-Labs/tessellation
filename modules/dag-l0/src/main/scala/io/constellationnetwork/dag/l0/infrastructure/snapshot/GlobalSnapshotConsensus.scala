@@ -144,7 +144,7 @@ object GlobalSnapshotConsensus {
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     recoveryAllowancePeerIds: Option[Set[PeerId]],
     configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
-    onRecoverySeedSuccessor: Option[GlobalConsensusOutcome => F[Unit]],
+    onRecoverySeedOutcomeCommitted: Option[GlobalConsensusOutcome => F[Unit]],
     initiallyHoldConsensusFirstRound: Boolean,
     // Shared consensus-health Ref from SharedServices. When provided, the engine's
     // AbandonmentTracker writes wedge signals into the same Ref that Cluster.leave()'s guard
@@ -360,7 +360,7 @@ object GlobalSnapshotConsensus {
           facilitatorSelector,
           seedlist.fold(Set.empty[PeerId])(_.iterator.map(_.peerId).toSet),
           HealthDerivedMembershipPolicy.RetainSigningLeases,
-          onRecoverySeedSuccessor,
+          onRecoverySeedOutcomeCommitted,
           (key: GlobalSnapshotKey) =>
             consensusStorage.getRoundAttemptId.flatMap { expectedAttemptId =>
               consensusQueue.offer(ConsensusCommand.RestartAfterSoftReset(key, expectedAttemptId))
@@ -630,7 +630,7 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotStatus,
         GlobalConsensusOutcome,
         GlobalConsensusKind
-      ](consensusStorage, rumorQueue, Some(certifiedOutcomeSidecar.read))
+      ](consensusStorage, rumorQueue)
 
       triggerEvent = loop.queue.offer(ConsensusCommand.FacilitateByEvent)
 

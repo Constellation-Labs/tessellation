@@ -1214,10 +1214,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                             phaseIndex == 3 &&
                             storage.viewSafetyMode(state.certifiedConsensusActive) == ViewSafetyMode.LegacyFreezeAfterVote
                           )
-                            // Currency BinarySignature has no view/proposal hash on the
-                            // legacy wire. Advancing it across a view would let stale
-                            // binary declarations satisfy a different attempt, so rc.8
-                            // remains deliberately fail-closed here.
+                            // The shared engine retains a legacy phase-index-3 fail-closed
+                            // hook for compatibility. Production Currency L0 uses its own
+                            // flat synchronous engine and never reaches this branch.
                             Metrics[F].incrementCounter(
                               "dag_consensus_binary_finality_view_change_suppressed_total"
                             ) >>
@@ -1599,8 +1598,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val selfIsCore = core.contains(selfId)
     val admissionVoteAuthority =
       AdmissionVoterPool.allowsVoteEmission(selfId, requireCoreCertification, core)
-    // Preserve the cached gossip-tip policy for layers without a direct probe (currently
-    // Currency L0). Global L0 open and probation lanes use fresh exact observations below.
+    // Preserve the cached gossip-tip policy for callers without a direct probe. Global L0
+    // open and probation lanes use fresh exact observations below.
     // Certified atomic replacement deliberately tightens the legacy cache predicate without
     // allowing a failed direct response to fall back to cached evidence.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
@@ -1777,8 +1776,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         // local one-second maximum-poll interval until its stability streak is satisfied; the open target remains one-shot
         // per monitor attempt. Run the two bounded lane probes independently so an unavailable
         // probation peer cannot starve a healthy open nominee. Neither lane walks to a second
-        // target after failure. Currency supplies no probe and keeps its cached-mesh behavior
-        // byte-for-behavior.
+        // target after failure. A caller that supplies no probe retains the cached-mesh
+        // compatibility behavior.
         val fixedProbationTarget =
           admissionCandidateTipProbe.flatMap(_ => AdmissionCandidateTipProbe.probationTargetForRound(probation, expectedTip))
         val probationProbeTarget = for {
@@ -1887,8 +1886,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
               )
 
             // Global L0 advances the fixed probation streak only from this tick's fresh exact
-            // direct response. Currency has no direct probe and retains the legacy cached-mesh
-            // streak behavior for every probation peer.
+            // direct response. A no-probe compatibility caller retains cached-mesh streaks.
             val updateStreaks =
               if (probation.isEmpty) Map.empty[PeerId, Int].pure[F]
               else if (admissionCandidateTipProbe.nonEmpty)
@@ -2114,8 +2112,8 @@ object StallDetector {
 
   /** Advance the bounded, node-local parent-proof history at a real monitor/round boundary.
     *
-    * Global L0 supplies both proof signers and a snapshot ordinal. A layer that supplies proof signers without an ordinal fails closed by
-    * clearing history. Currency L0 supplies no proof view, so this path is inert and its cadence-only admission policy remains unchanged.
+    * Global L0 supplies both proof signers and a snapshot ordinal. A caller that supplies proof signers without an ordinal fails closed by
+    * clearing history. A caller with no proof view leaves this path inert.
     */
   private[consensus] def observeAdmissionProofHistory[F[_]: Sync](
     admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History],
@@ -2149,8 +2147,7 @@ object StallDetector {
     abandonRequested && (isLagging || !sameKeyRestartUnsafe) && !newPacemakerRequestEnqueued
 
   /** Under the Global L0 fail-closed bridge, a same-key abandon/recreate is safe only before proposal acceptance and before this node has
-    * voted or entered a certified later view. Currency explicitly keeps rc.7's legacy retry policy until it receives a coordinated
-    * full-value-QC rollout of its own.
+    * voted or entered a certified later view. Production Currency L0 has a separate flat synchronous engine and does not use this policy.
     */
   private[consensus] def sameKeyRestartUnsafe(
     viewNumber: Int,
@@ -2216,9 +2213,9 @@ object StallDetector {
 
   /** Keep probation recovery and open expansion as independent vote-emission lanes.
     *
-    * Global L0's direct probes produce at most one fixed probation target plus the configured number of fixed open targets. Currency's
-    * no-probe path retains rc.6 behavior exactly: every locally ready probation/open target may emit, while proposal construction remains
-    * the shared certificate cap.
+    * Global L0's direct probes produce at most one fixed probation target plus the configured number of fixed open targets. The generic
+    * no-probe compatibility path lets every locally ready probation/open target emit while proposal construction retains the certificate
+    * cap.
     */
   private[consensus] def admissionVoteTargets(
     probationReady: List[PeerId],

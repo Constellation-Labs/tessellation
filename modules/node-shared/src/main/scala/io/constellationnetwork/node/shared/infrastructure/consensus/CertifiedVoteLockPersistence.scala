@@ -16,8 +16,8 @@ import io.circe.{Decoder, Encoder}
 
 /** Durable, node-local safety storage for a certified consensus vote lock.
   *
-  * The interface is key-generic so the consensus engine is not coupled to either L0 layer. DAG L0 and Currency L0 both use the
-  * SnapshotOrdinal filesystem implementation below. This is not consensus state and is never hashed, signed, or sent on the wire.
+  * The interface remains key-generic even though v35 currently uses the SnapshotOrdinal filesystem implementation only for Global L0. This
+  * is not consensus state and is never hashed, signed, or sent on the wire.
   */
 trait CertifiedVoteLockPersistence[F[_], Key] {
   def read(key: Key): F[Option[CertifiedVoteLock]]

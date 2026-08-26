@@ -75,7 +75,7 @@ object Services {
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     recoveryAllowancePeerIds: Option[Set[PeerId]],
     configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
-    onRecoverySeedSuccessor: Option[GlobalConsensusOutcome => F[Unit]],
+    onRecoverySeedOutcomeCommitted: Option[GlobalConsensusOutcome => F[Unit]],
     initiallyHoldConsensusFirstRound: Boolean,
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
@@ -155,7 +155,7 @@ object Services {
             getPeerChainTips,
             recoveryAllowancePeerIds,
             configuredRecoverySeed,
-            onRecoverySeedSuccessor,
+            onRecoverySeedOutcomeCommitted,
             initiallyHoldConsensusFirstRound,
             // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
             // into the SharedServices-owned Ref; Cluster reads from the same Ref via the

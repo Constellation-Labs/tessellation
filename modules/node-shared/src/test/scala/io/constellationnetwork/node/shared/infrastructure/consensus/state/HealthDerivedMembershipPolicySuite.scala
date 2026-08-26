@@ -2,11 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats.effect.IO
 
-import scala.collection.immutable.{SortedMap, SortedSet}
-
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.infrastructure.consensus.ActiveFacilitatorAdmission
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hex.Hex
@@ -125,83 +121,6 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     expect.same(Set.empty, policy.persistentFacilityRemovals(carriedRemovedFacilitators))
   }
 
-  test("Currency legacy policy reproduces certified timeout shrink and selected ordering") {
-    val voters = Set(peer(1), peer(2), peer(3))
-    val expected = facilitators.filter(voters.contains)
-    val result = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval.timeoutMembership(
-      facilitators,
-      core,
-      roundStartFacilitators = facilitators,
-      timeoutVoters = voters,
-      shrinkFloor = 3
-    )
-
-    expect(result.shrinkApplied) &&
-    expect(result.shrinkEvaluated) &&
-    expect.same(expected, result.facilitators) &&
-    expect.same(expected, result.coreFacilitators) &&
-    expect.same(expected, result.leaderPool) &&
-    expect.same(2, result.exclusionCount)
-  }
-
-  test("Currency legacy no-shrink keeps membership but selects the leader from full active") {
-    val result = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval.timeoutMembership(
-      facilitators,
-      core,
-      roundStartFacilitators = facilitators,
-      timeoutVoters = Set(peer(1), peer(2)),
-      shrinkFloor = 3
-    )
-
-    expect(!result.shrinkApplied) &&
-    expect(result.shrinkEvaluated) &&
-    expect.same(facilitators, result.facilitators) &&
-    expect.same(core, result.coreFacilitators) &&
-    expect.same(facilitators, result.leaderPool)
-  }
-
-  test("Currency legacy policy retains automatic-removal authority") {
-    val removals = Set(peer(1), peer(2))
-    val policy = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval
-
-    expect.same(removals, policy.persistentFacilityRemovals(removals)) &&
-    expect.same(removals, policy.acceptedEvictionTargets(removals)) &&
-    expect.same(facilitators.tail, policy.canonicalFacilitators(facilitators.tail, facilitators)) &&
-    expect(policy.acceptsEvictionCertificates) &&
-    expect(policy.acceptsCertifiedNextRoundEvictions) &&
-    expect(policy.acceptsEvictionVotesAt(certifiedConsensusActive = false)) &&
-    expect(policy.acceptsEvictionVotesAt(certifiedConsensusActive = true)) &&
-    expect(policy.certifiedEvictionTargetsAllowed(removals)) &&
-    expect(policy.allowsAutomaticRemoval)
-  }
-
-  test("v35 freezes certified view membership without removing Currency next-round eviction authority") {
-    val layerPolicy = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval
-    val legacyViewPolicy = layerPolicy.forCertifiedView(certifiedConsensusActive = false)
-    val certifiedViewPolicy = layerPolicy.forCertifiedView(certifiedConsensusActive = true)
-    val locallyWithdrawn = facilitators.tail
-    val timeout = certifiedViewPolicy.timeoutMembership(
-      facilitators = locallyWithdrawn,
-      coreFacilitators = core,
-      roundStartFacilitators = facilitators,
-      timeoutVoters = Set(peer(1), peer(2), peer(3)),
-      shrinkFloor = 3
-    )
-    val vccRoster = certifiedViewPolicy.canonicalFacilitators(locallyWithdrawn, facilitators)
-    val vccLeaderPool = certifiedViewPolicy.certifiedViewChangeLeaderPool(core, locallyWithdrawn, facilitators)
-
-    expect.same(layerPolicy, legacyViewPolicy) &&
-    expect.same(HealthDerivedMembershipPolicy.RetainSigningLeases, certifiedViewPolicy) &&
-    expect.same(facilitators, timeout.facilitators) &&
-    expect.same(core, timeout.coreFacilitators) &&
-    expect.same(core, timeout.leaderPool) &&
-    expect(!timeout.shrinkApplied) &&
-    expect.same(facilitators, vccRoster) &&
-    expect.same(core, vccLeaderPool) &&
-    expect(layerPolicy.acceptsEvictionCertificates) &&
-    expect(!certifiedViewPolicy.acceptsEvictionCertificates)
-  }
-
   test("GL0 retain policy is stable across the v35 activation boundary") {
     val policy = HealthDerivedMembershipPolicy.RetainSigningLeases
 
@@ -209,46 +128,6 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     expect.same(policy, policy.forCertifiedView(certifiedConsensusActive = true))
   }
 
-  test("Currency legacy certified view-change leader pool matches rc6") {
-    val policy = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval
-
-    expect.same(core, policy.certifiedViewChangeLeaderPool(core, facilitators, facilitators)) &&
-    expect.same(facilitators, policy.certifiedViewChangeLeaderPool(List.empty, facilitators, facilitators))
-  }
-
-  test("Currency legacy timeout policy matches the rc6 formula across voter sets and floors") {
-    val cases = for {
-      voterMask <- 0 until (1 << facilitators.size)
-      floor <- 1 to (facilitators.size + 1)
-    } yield {
-      val voters = facilitators.zipWithIndex.collect {
-        case (pid, index) if (voterMask & (1 << index)) != 0 => pid
-      }.toSet
-      val legacy = ActiveFacilitatorAdmission.fromCertifiedTimeout(
-        selected = facilitators,
-        recentSigners = SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]],
-        timeoutVoters = voters,
-        minActiveSize = floor
-      )
-      val actual = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval.timeoutMembership(
-        facilitators,
-        core,
-        roundStartFacilitators = facilitators,
-        timeoutVoters = voters,
-        shrinkFloor = floor
-      )
-      val expectedFacilitators = if (legacy.recentFilterApplied) legacy.active else facilitators
-      val expectedCore = if (legacy.recentFilterApplied) legacy.active else core
-
-      expect.same(expectedFacilitators, actual.facilitators) &&
-      expect.same(expectedCore, actual.coreFacilitators) &&
-      expect.same(legacy.active, actual.leaderPool) &&
-      expect.same(legacy.recentFilterApplied, actual.shrinkApplied) &&
-      expect.same(legacy.exclusions.size, actual.exclusionCount)
-    }
-
-    cases.reduce(_ && _)
-  }
 }
 
 object HealthDerivedMembershipConvergenceSuite extends SimpleIOSuite {
@@ -289,22 +168,4 @@ object HealthDerivedMembershipConvergenceSuite extends SimpleIOSuite {
     }
   }
 
-  pureTest("Currency legacy policy preserves mutable active membership at VCC and no-shrink TC boundaries") {
-    val policy = HealthDerivedMembershipPolicy.LegacyAutomaticRemoval
-    val vccRoster = policy.canonicalFacilitators(locallyWithdrawn, roundStart)
-    val vccLeaderPool = policy.certifiedViewChangeLeaderPool(core, locallyWithdrawn, roundStart)
-    val tc = policy.timeoutMembership(
-      locallyWithdrawn,
-      core,
-      roundStart,
-      timeoutVoters = Set(peer(1), peer(2)),
-      shrinkFloor = 3
-    )
-
-    expect.same(locallyWithdrawn, vccRoster) &&
-    expect.same(core, vccLeaderPool) &&
-    expect.same(locallyWithdrawn, tc.facilitators) &&
-    expect.same(core, tc.coreFacilitators) &&
-    expect(!tc.shrinkApplied)
-  }
 }

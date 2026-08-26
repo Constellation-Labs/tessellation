@@ -81,7 +81,8 @@ package object shared {
       CertificationPurpose.Prepare.getClass -> 553,
       CertificationPurpose.Commit.getClass -> 554,
       ConsensusDomain.DagL0.getClass -> 555,
-      ConsensusDomain.CurrencyL0.getClass -> 556,
+      // 556 retired before v35 activation with the abandoned Currency L0
+      // certified-consensus domain. Never reuse a historical registration ID.
       classOf[CertifiedOutcome] -> 557,
       classOf[TriggerStatement] -> 558,
       TriggerStatementPurpose.Facility.getClass -> 559

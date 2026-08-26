@@ -82,13 +82,13 @@ object Gl0RecoverySeedCommittee {
   def validate(
     seed: Gl0RecoverySeedCommittee,
     requiredMember: PeerId,
-    seedlist: Set[PeerId],
+    seedlist: Option[Set[PeerId]],
     allowanceList: Option[Set[PeerId]],
     maxFacilitatorCount: Option[Int],
     quorumThresholdFraction: Double
   ): Either[Error, Gl0RecoverySeedCommittee] = {
     val committee = seed.committee
-    val outsideSeedlist = committee.diff(seedlist)
+    val outsideSeedlist = seedlist.fold(SortedSet.empty[PeerId])(committee.diff)
     val outsideAllowance = allowanceList.fold(SortedSet.empty[PeerId])(committee.diff)
 
     Either
@@ -120,6 +120,13 @@ object Gl0RecoverySeedCommittee {
           maxFacilitatorCount.forall(committee.size <= _),
           (),
           Invalid(s"size=${committee.size} exceeds max-facilitator-count=${maxFacilitatorCount.getOrElse(0)}"): Error
+        )
+      )
+      .flatMap(_ =>
+        Either.cond(
+          seedlist.exists(_.nonEmpty) || allowanceList.exists(_.nonEmpty),
+          (),
+          Invalid("neither seedlist nor hash-fenced custom allowance list is configured"): Error
         )
       )
       .flatMap(_ =>

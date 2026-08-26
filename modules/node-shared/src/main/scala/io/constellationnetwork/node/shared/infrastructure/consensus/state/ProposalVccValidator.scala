@@ -15,9 +15,7 @@ import io.circe.Encoder
 
 /** Pure helper for the view-change-certificate (VCC) invariants that gate acceptance of a Proposal.
   *
-  * Shared between dag-l0's `GlobalSnapshotConsensusStateAdvancer` and currency-l0's `CurrencySnapshotConsensusStateAdvancer` to avoid drift
-  * between the two validate paths (see `feedback_share_logic_no_drift` -- consensus-adjacent logic must not be replicated). Both modules
-  * call `ProposalVccValidator.validate` from their `validateProposalVcc` closures.
+  * Centralized so the Global L0 proposal paths and their tests cannot drift onto different VCC/TC rules.
   *
   * Inputs are the deconstructed slice of `ConsensusState` + `Proposal` + `ConsensusConfig` needed for the check -- no IO, no closure
   * dependencies -- so unit tests can drive every branch directly. See `ProposalVccValidatorSuite` for the canonical positive/negative
@@ -268,9 +266,9 @@ object ProposalVccValidator {
 
   /** Shared cryptographic verification for VCC/TC vote collections.
     *
-    * The layer advancers own proposal-state transitions, but signature semantics are identical. Keeping them here prevents DAG and Currency
-    * from drifting. Certified rounds require one proof per vote because the frozen-Core quorum counts identities; the legacy VCC path keeps
-    * its historical multi-proof acceptance until activation. Timeout certificates already required one proof in legacy rounds.
+    * Global L0 owns proposal-state transitions, while this helper owns certificate signature semantics. Certified rounds require one proof
+    * per vote because the frozen-Core quorum counts identities; the legacy VCC path keeps its historical multi-proof acceptance until
+    * activation. Timeout certificates already required one proof in legacy rounds.
     */
   private def verifySignedVotes[F[_]: Async: Hasher: SecurityProvider, A: Encoder](
     certificate: String,

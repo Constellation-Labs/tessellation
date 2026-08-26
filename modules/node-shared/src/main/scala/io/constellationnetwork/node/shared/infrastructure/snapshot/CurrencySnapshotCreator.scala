@@ -37,7 +37,6 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastS
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.artifact.SharedArtifact
-import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
@@ -76,8 +75,7 @@ trait CurrencySnapshotCreator[F[_]] {
     // v20: see ConsensusFunctions for full rationale -- packed by caller from
     // the consensus-agreed previous round outcome.
     peerHistory: Option[ConsensusOperationalState] = None,
-    historicalDependencyResolution: Boolean = false,
-    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
+    historicalDependencyResolution: Boolean = false
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -115,8 +113,7 @@ object CurrencySnapshotCreator {
       shouldPerformMetagraphSpecificValidations: Boolean,
       maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
       peerHistory: Option[ConsensusOperationalState] = None,
-      historicalDependencyResolution: Boolean = false,
-      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
+      historicalDependencyResolution: Boolean = false
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -324,8 +321,7 @@ object CurrencySnapshotCreator {
             if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.globalSyncView.some,
             peerHistory,
-            currencySnapshotAcceptanceResult.snapshotVersion,
-            certifiedLineage
+            currencySnapshotAcceptanceResult.snapshotVersion
           )
 
           _ <- maybeRequiredRecoveryRefresh.traverse_ {

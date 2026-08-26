@@ -9,9 +9,8 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
   `5,890,500` was withdrawn before activation after the rc.5/rc.6 incidents. A replacement
   key must be selected and announced only after the rc.7-compatible dormant path has
   soaked successfully.
-- Every Currency L0 remains disabled here. Each metagraph has an independent ordinal
-  space and must select and coordinate its own activation key. Mainnet, IntegrationNet,
-  and testnet remain disabled for both layers.
+- V35 certification applies only to Global L0. Currency L0 uses its Currency-local flat
+  synchronous protocol and has no certified-consensus activation key.
 - Currency snapshot protocol `1.0.0` is also unscheduled on every public network. Its
   gate is a GLOBAL L0 ordinal shared by all metagraph lineages, not a Currency-local v35
   key. It may be announced in the same release window, but it remains a distinct gate.
@@ -22,13 +21,14 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
 - `certified-consensus-activation-ordinal` is the deterministic behavior boundary.
 - `fields-added-ordinals.currency-snapshot-protocol-v1` authorizes the signed Currency
   artifact version transition from `0.0.1` to `1.0.0` using Global L0 ordinal space.
-- DAG L0 and every Currency L0 use their own snapshot ordinal space.
-- The public DAG and Currency incremental snapshots gain a trailing optional
-  `certifiedLineage` field. Below activation it remains absent and the drop-null encoder
-  preserves legacy incremental JSON artifact bytes. At and after activation the
-  incremental artifact hash intentionally commits to the child-carried parent
-  certificate. `GlobalSnapshot` and Currency full-snapshot shapes remain unchanged;
-  snapshot-info and state-proof schemas/calculation do not change.
+- The v35 key is in Global snapshot ordinal space. The separate Currency protocol-v1
+  gate is also expressed in Global ordinal space because Global L0 accepts the binaries.
+- Only the public DAG/Global incremental snapshot gains a trailing optional
+  `certifiedLineage` field. Currency incremental snapshots, `GlobalSnapshot`, and
+  `CurrencySnapshot` remain unchanged. Below activation the Global field is absent and
+  the drop-null encoder preserves legacy Global incremental JSON bytes; at and after
+  activation the Global incremental artifact hash commits to the child-carried parent
+  certificate. Snapshot-info and state-proof schemas/calculation do not change.
 - IntegrationNet, Testnet, and Mainnet have permanently crossed the Kryo-to-JSON
   serialization boundary. V35 is activated only on retained JSON history and does not
   support rollback/replay of its new fields through Kryo. Do not add a Kryo registration,
@@ -38,31 +38,14 @@ This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md)
   version. The advertised jar hash is metadata and is not compared. L0 additionally
   requires its deterministic consensus-config hash; L1/data-L1 have no equivalent
   config-hash fence, so their coordinated version identity is the compatibility gate.
-- The existing signed Currency `version` value and artifact bytes also intentionally
-  change at the separate global protocol-v1 boundary.
-
-### Historical Currency binary encoder contract
-
-Certified Currency lineage V1 carries only the parent binary's last-hash, fee, and complete
-proof envelope. A verifier reconstructs the omitted content by serializing the public signed
-Currency artifact with the same `JsonSerializer` pipeline used by
-`StateChannelSnapshotService.createBinary`: sorted/drop-null JSON, UTF-8, then brotli4j 1.12.0
-at quality 2. It then rebuilds and hashes `StateChannelSnapshotBinary` and verifies the carried
-proofs.
-
-That reconstruction makes the exact V1 output historical protocol code. The brotli4j version
-is pinned in `project/Dependencies.scala`, and `CertifiedConsensusSuite` pins a complete
-reconstruction preimage. A dependency, printer, outer `Signed` encoder, Currency artifact
-encoder, compression parameter, or native output change that alters those bytes must fail the
-golden test. Do not update the expected hash to make such a change pass.
-
-Future encoding evolution must introduce a new `CertifiedLayerEvidence` variant/version and
-retain the V1 verifier for historical lineage. The versioned sealed-trait alternative is the
-wire discriminator; application semver is not used to reinterpret historical bytes.
+- The existing signed Currency `version` value and artifact bytes intentionally change at
+  the separate global protocol-v1 boundary. Currency binary construction continues to use
+  the existing JSON/Brotli state-channel serializer and the configured 512,000-byte binary
+  limit; v35 never reconstructs historical Currency binaries.
 
 Do not confuse the two gates. Nodes started with different schema/config hashes cannot
 form a healthy active consensus cluster even below the activation key. Conversely,
-deploying the aligned v35 jar with no public activation entry leaves the v35 behavior
+deploying the aligned v35 jar with no public activation entry leaves Global v35 behavior
 dormant. The Currency protocol gate is copied into each L0's effective consensus config
 and is therefore fenced independently as well.
 
@@ -72,10 +55,9 @@ and is therefore fenced independently as well.
    `consensusSchemaVersion`, deterministic config hash, and environment-specific
    activation key.
 2. Confirm that the target network has enough lead time to announce the activation.
-3. For DAG L0 and each Currency L0, confirm that the last legacy artifact contains
-   signed controller evidence from which its activation committee can be seeded. Both
-   layers intentionally fail closed when this evidence is absent; DAG
-   `nextFacilitators` is not a valid substitute.
+3. For Global L0, confirm that the last legacy artifact contains signed controller
+   evidence from which its activation committee can be seeded. Activation fails closed
+   when this evidence is absent; DAG `nextFacilitators` is not a valid substitute.
    For a non-genesis DAG activation, the canonical signed seed and the final roster
    after seedlist, collateral, selector, and projector processing must each contain at
    least two members, and all current members together must be able to satisfy the
@@ -84,30 +66,13 @@ and is therefore fenced independently as well.
    non-genesis certified activation in unanimity mode fails closed. The exact activation
    never falls back to local `self`. An activation configured at or before the first
    facilitated key is genesis mode: there is no legacy-to-certified exact-key transition,
-   and intentional single-node development genesis remains supported. Both L0 layers
-   facilitate from their first incremental snapshot at ordinal 1 (the full genesis
+   and intentional single-node development genesis remains supported. Global L0
+   facilitates from its first incremental snapshot at ordinal 1 (the full genesis
    snapshot occupies ordinal 0), so the shipped dev activation `0` authenticates the
    exact canonical ordinal-1 outcome and persists it as the predecessor of the first
    certified round. The proof set is bound to the locally state-proof-validated root.
-   Currency additionally binds the embedded artifact proof envelope to its binary bytes.
-   The accepted child carries and pins the leader-selected **parent-binary** proof envelope,
-   but its reconstructed binary content still embeds the parent Currency artifact proofs
-   from each validator's locally finished outcome. Those inner proofs are collected after
-   proposal selection and are not selected by the child QC. Randomized ECDSA can therefore
-   make honest validators reconstruct different binary hashes: validation fails closed,
-   but the child cannot complete. Currency v35 activation remains blocked until the protocol
-   consensus-selects one exact inner artifact-proof envelope or introduces a versioned
-   binary preimage that excludes incidental signature bytes from its identity.
-   Currency genesis defers its first child by one ordinary round interval, matching DAG
-   L0, and a downloader that sees that root bypasses the legacy four-snapshot observation
-   offset so it initializes consensus at ordinal 1. A data-application follower restores
-   its locally compiled genesis calculated state at that boundary and verifies its
-   application-defined hash against the signed root proof. The genesis producer must
-   commit that real hash, not the legacy `Hash.empty` placeholder, and the follower must
-   not substitute a peer's potentially newer calculated state. Together these let
-   joining validators persist the authority root before ordinal 2 appears. A follower
-   that first appears later must obtain the locally validated public root plus the complete
-   retained child-carried lineage through the tip. A future independently announced,
+   A follower that first appears later must obtain that locally validated public root plus
+   the complete retained child-carried Global lineage through the tip. A future independently announced,
    content-addressed checkpoint manifest paired with a validated combined incremental
    checkpoint may replace that history requirement only after its authority, policy
    binding, storage, and atomic-adoption design is implemented and exercised. One peer's
@@ -201,6 +166,12 @@ and is therefore fenced independently as well.
     prune an interior frame until an independently announced certified-checkpoint manifest
     and its paired immutable combined incremental checkpoint are both produced and supported
     by the download path.
+    Live snapshot index directories must not have same-filesystem hardlink
+    backups: recovery distinguishes canonical hash+ordinal pairs from torn
+    hash-only content using the inode link count. Use byte-copy/object-storage
+    archives or another filesystem, and time one complete hash-index recovery
+    scan against an IntegrationNet source with production-scale retention before
+    tagging the activating release.
 14. Close historical consensus-policy replay. The current implementation replays old
     rounds with the joining binary's current `ConsensusConfig`, seedlist, allowance
     list, and eligibility rules. The live join fences prevent a mixed current session,
@@ -211,6 +182,19 @@ and is therefore fenced independently as well.
     Exercise at least one config-hash, seedlist, and allowance-list transition with a
     fresh root-to-tip downloader. A current-policy rejection of previously certified
     history is a failed gate, not permission to skip validation.
+15. Exercise env-only recovery as a process-level public-durability test, not only a
+    pure reconstruction test. Start exactly one controlled `run-rollback` source and
+    the selected source validators with the same env committee while unrelated
+    community validators have no recovery env. Prove `R+1` commits and disarms the
+    sources but is not yet publicly durable; then prove `R+2` carries the complete
+    `R+1` QC. Stop every source, remove every private outcome/sidecar, and require a
+    fresh env-free validator to reconstruct and adopt from public `R/R+1/R+2` data.
+    The negative `R+1`-only/all-source-loss case must fail closed. Repeat across the
+    exact activation boundary. In particular, prevent the first certified round `A`
+    from finalizing, assert that recovery seeds at `A-1` and `A-2` are rejected, then
+    perform the reconciled `<= A-3` recovery, rebuild the legacy evidence window,
+    cross `A`, and reach `R+2` public durability. Complete a later full cold restart
+    with the env absent before declaring recovery activation-ready.
 
 Capacity-plan this retained epoch before activation. At the measured 73-seat committee,
 `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a sustained
@@ -230,15 +214,13 @@ ProposalValue                     23,289 bytes
 ProposalQC                        26,203 bytes
 CoreCommitQC                       2,993 bytes
 CertifiedOutcome                  29,227 bytes  (persisted/child-carried)
-Currency proof envelope           20,655 bytes  (Currency lineage only)
 ```
 
 The same suite measures sizes at 3, 31, 73, 100, 200, and the configured maximum 1,000
-facilitators and pins a 155,769-byte compressed large-history V1 encoder fixture. These are
-wire/preimage measurements rather than filesystem-capacity estimates; soak measurements remain
-mandatory.
+facilitators. These are wire/preimage measurements rather than filesystem-capacity estimates;
+soak measurements remain mandatory.
 
-The current DAG and Currency download validators also materialize the complete trusted-root-to-tip
+The current Global download validator also materializes the complete trusted-root-to-tip
 `PublicRound` sequence, while the shared verifier returns every derived state. Because sidecars are
 deliberately excluded from authority, this O(epoch) CPU and O(epoch) live-heap cost applies to every
 post-v35 fresh download and ordinary cold restart, not merely a cache-miss fallback. Activation
@@ -247,9 +229,9 @@ checkpoints that impose and test a hard maximum segment length.
 
 ## Deployment sequence
 
-1. Choose a future activation key independently for each L0 cluster. If Currency
-   protocol v1 is included, separately choose and announce one future Global L0 ordinal
-   for all metagraph lineages.
+1. Choose and announce one future Global v35 activation key. If Currency protocol v1 is
+   included, separately choose and announce one future Global L0 ordinal for all metagraph
+   lineages; it need not equal the v35 key.
 2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
    certified-vote-lock journals, configuration, and logs; verify a coherent
    pre-activation checkpoint.
@@ -275,8 +257,7 @@ checkpoints that impose and test a hard maximum segment length.
    `dag_consensus_certified_recovery_candidate_total`, and
    `dag_consensus_certified_recovery_boundary_total`,
    `dag_consensus_outcome_sidecar_total`/`dag_consensus_outcome_hook_duration_seconds`, plus
-   `dag_consensus_trigger_evidence_excluded_total` and
-   `dag_currency_consensus_trigger_evidence_excluded_total`, and
+   `dag_consensus_trigger_evidence_excluded_total`, and
    `dag_consensus_admission_pre_proposal_grace_ms` in the activation dashboard. At the shipped
    one-second probe bounds, an open cadence round with a nominee may report 3500 ms while its
    current-key Facility/probe/vote pipeline completes; a valid certificate closes the wait early.
@@ -320,21 +301,11 @@ Before activation, verify the ordinary-download lineage boundary on every source
   the JSON outcome; therefore a parseable sidecar cannot safely replace public replay.
   Checkpoint-backed provenance may permit an authenticated cache in a future version,
   but this implementation always replays from an independently validated public root.
-  After an explicit env recovery,
-  the first successor's ordinary QC is public reset authority under the permissioned
-  seedlist/collateral policy: an unconfigured validator reconstructs the canonical root
-  from that QC and the independently validated public parent, then replays only the
-  latest contiguous reset-to-tip epoch;
-- Currency children carry only the parent binary's last-hash, fee, and proof envelope.
-  The verifier reconstructs the exact binary content from the already validated public
-  parent artifact with the pinned V1 JSON+Brotli encoder, hashes it, then verifies its
-  frozen-committee proofs. Carrying the full parent binary is forbidden because it
-  would recursively embed the entire lineage. This carried **parent-binary** proof envelope
-  is leader-selected and validators preserve it byte-for-byte. The parent artifact proof
-  bytes embedded inside the reconstructed binary are still validator-local and are not
-  selected by the child QC. Randomized variants fail closed as different binary hashes and
-  can wedge the child; resolving that activation blocker requires consensus-selected inner
-  proof bytes or a versioned preimage that omits incidental signatures; and
+  After an explicit env recovery, the first successor's ordinary QC is reset authority
+  under the permissioned seedlist/collateral policy, but it is terminal/private on the
+  recovery sources at `R+1`. The following child `R+2` must carry that complete QC before
+  an env-free validator can reconstruct the canonical root from public data and replay
+  the latest contiguous reset-to-tip epoch;
 - full snapshot types remain frozen. A future long-range checkpoint must be a separate,
   versioned, content-addressed manifest paired with an ordinary combined incremental
   checkpoint, never a field on `GlobalSnapshot` or `CurrencySnapshot`. It must bind the
@@ -348,18 +319,18 @@ Before activation, verify the ordinary-download lineage boundary on every source
 
 The env recovery equality check applies only while selected nodes install its exact
 anchor. After that anchor is locally accepted, successor outcomes use the ordinary
-certified-lineage validator, and the first successor QC makes the boundary verifiable
-to unconfigured community validators. Comment/remove the env after the first successor
-without restarting the running cohort. Leaving it armed makes every later external
-source restart a new recovery attempt and is prohibited during normal operation.
+certified-lineage validator. Comment/remove the env after the first successor without
+restarting the running cohort, but keep community nodes and restart automation held:
+the first successor's QC becomes verifiable to env-free community validators only when
+the second successor carries it publicly. Require
+`dag_consensus_recovery_seed_boundary_publicly_durable == 1` plus the documented
+headroom gate before release. Leaving the env armed makes every later external source
+restart a new recovery attempt and is prohibited during normal operation.
 
-Below activation, Currency L0 deliberately retains the rc.7 `PreserveLegacy` policy:
-a view-0 soft reset may clear its memory-only, artifact-only vote lock and retry the
-same key. That is a pre-v35 compatibility residual, not certified safety. At and after
-activation both layers select `CertifiedFullValue`; the durable full-value lock remains
-authoritative across soft reset and prevents the same retry from authorizing a
-conflicting semantic value. Do not backport the GL0 legacy freeze to Currency as an
-unannounced behavior change.
+Currency L0 does not switch into certified consensus at this key. It uses its local
+synchronous all-member phases and fixed-universe ACK removal on both sides of the Global
+activation. Currency protocol-v1 changes signed history semantics only at its separate
+Global-ordinal gate.
 
 The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
 to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary
@@ -410,13 +381,10 @@ root-to-tip lineage and derive authority sequentially. Copying unverified privat
 outcome bytes would reintroduce the circular committee proof this boundary is designed
 to reject.
 
-The legacy Currency L0 `--allow-solo-consensus` flag remains one-shot and must never be
-persisted in systemd or automatic restart configuration. It is **not yet a valid
-post-v35 recovery mechanism**. Currency `run-rollback` currently reconstructs only the
-public signed artifact, snapshot info, and last binary hash; it does not reconstruct the
-certified outcome/binary lineage required by `CurrencyCertifiedDownloadValidator`.
-Moreover, the terminal Currency artifact carries its parent's QC while its own QC is
-normally child-carried, so a fully stopped lineage may have no public child from which to
-recover terminal authority. Before activation, implement and test an explicit certified
-Currency rollback/root path—including the terminal-with-no-child case—or remove the
-post-v35 solo-recovery promise. A legacy flag cannot bypass certified initialization.
+Currency recovery remains the stable permissioned topology: one controlled
+`run-rollback`/`run-genesis` lead starts a self-only synchronous committee and every other
+Currency node runs `run-validator`, downloads public history, observes successors, and
+registers. There is no signed Currency recovery plan and no post-v35 certified Currency
+root. The `--allow-solo-consensus` flag separately arms dormant-lineage publication refresh;
+it is one-shot operational authority and must not be persisted in unattended restart
+automation.

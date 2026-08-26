@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
@@ -23,9 +22,7 @@ import io.constellationnetwork.security.key.ops._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
-import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
-import eu.timepit.refined.auto._
 import io.circe.Printer
 import io.circe.parser.decode
 import io.circe.syntax._
@@ -51,14 +48,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
 
   private def sizedProof(index: Int): SignatureProof =
     SignatureProof(Id(sizedPeer(index).value), Signature(Hex("ab" * 64)))
-
-  private def entropyHex(domain: String, index: Int): Hex =
-    Hex(hash(s"$domain-$index-a").value + hash(s"$domain-$index-b").value)
-
-  private def entropyPeer(index: Int): PeerId = PeerId(entropyHex("peer", index))
-
-  private def entropyProof(index: Int): SignatureProof =
-    SignatureProof(Id(entropyPeer(index).value), Signature(entropyHex("signature", index)))
 
   private def invalidateSignature[A](signed: Signed[A]): Signed[A] =
     signed.copy(
@@ -201,8 +190,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
     val proposalQc = CertifiedProposalQC(baseValue, hash("value"), proof)
     val commitQc = CoreCommitQC(hash("value"), hash("core"), proof)
     val outcome = CertifiedOutcome(proposalQc, commitQc)
-    val currencyEvidence = CertifiedLayerEvidenceV1.Currency(hash("binary-parent"), SnapshotFee.MinValue, proof)
-    val lineage = CertifiedLineageEvidenceV1(outcome, currencyEvidence.some)
+    val lineage = CertifiedLineageEvidenceV1(outcome)
     val values: List[(String, IO[Hash])] = List(
       "consensus-trigger-event" -> Hasher[IO].hash[ConsensusTrigger](EventTrigger),
       "consensus-trigger-time" -> Hasher[IO].hash[ConsensusTrigger](TimeTrigger),
@@ -210,7 +198,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "self-health-degraded" -> Hasher[IO].hash[SelfHealthHint](SelfHealthHint.Degraded),
       "self-health-critical" -> Hasher[IO].hash[SelfHealthHint](SelfHealthHint.Critical),
       "consensus-domain-dag" -> Hasher[IO].hash[ConsensusDomain](ConsensusDomain.DagL0),
-      "consensus-domain-currency" -> Hasher[IO].hash[ConsensusDomain](ConsensusDomain.CurrencyL0),
       "certification-purpose-prepare" -> Hasher[IO].hash[CertificationPurpose](CertificationPurpose.Prepare),
       "certification-purpose-commit" -> Hasher[IO].hash[CertificationPurpose](CertificationPurpose.Commit),
       "trigger-purpose-facility" -> Hasher[IO].hash[TriggerStatementPurpose](TriggerStatementPurpose.Facility),
@@ -220,7 +207,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "proposal-qc" -> Hasher[IO].hash(proposalQc),
       "core-commit-qc" -> Hasher[IO].hash(commitQc),
       "certified-outcome" -> Hasher[IO].hash(outcome),
-      "currency-layer-evidence" -> Hasher[IO].hash[CertifiedLayerEvidenceV1](currencyEvidence),
       "certified-lineage" -> Hasher[IO].hash(lineage)
     )
     val expected = List(
@@ -230,7 +216,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "self-health-degraded" -> Hash("ede5604c3ee33ea06a51b9fe76ed080cea2996351466262ff9786747609eaa80"),
       "self-health-critical" -> Hash("38082a4c8fff902ce9abafdfc9054f8e108362169bbb6f70030a524c33c8dd43"),
       "consensus-domain-dag" -> Hash("e14e8e622ab2062bdb8e38ad791f5b9504543e0e3998be2976622aeac552fd02"),
-      "consensus-domain-currency" -> Hash("78bb25861be3d2007e92d1fe573ccff3028cecd05bb4385d1628e5ae0dadb70d"),
       "certification-purpose-prepare" -> Hash(
         "552ea109444b1f3355ecceb21ef352bc5ca514b665cd504a369e091d101f4a37"
       ),
@@ -242,8 +227,9 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       "proposal-qc" -> Hash("f435125fcffc87a587c83503b258f194412fb1db5c87aa739b2ed4a4fcd1eace"),
       "core-commit-qc" -> Hash("285024d39c2ac559b3964588f1b5ccc407316933e941dfe520e85f11ec7d6fad"),
       "certified-outcome" -> Hash("779bfcd200ac8b65e88d1a378f8b96ecfec220b9e4617207ff93bfd5a8a91635"),
-      "currency-layer-evidence" -> Hash("4a6f454903df848f02d22a545a3641696de23e3f4cbe0da3c8b74a16879c99c5"),
-      "certified-lineage" -> Hash("0e32d42b1b3412f5aa56812eb53ea73f3b1c627ae4325408b2588dabd459dda0")
+      // Currency L0 no longer participates in v35 certification, so the
+      // pre-activation lineage schema is now the one-field GL0 evidence type.
+      "certified-lineage" -> Hash("f513387999a34dc3c554b67ceb6490cd21bcf1cdde94e3fb3184c4ebf25fca92")
     )
 
     values.traverse { case (label, encoded) => encoded.tupleLeft(label) }.map { actual =>
@@ -439,8 +425,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       proposalValue: Int,
       proposalQc: Int,
       coreCommitQc: Int,
-      certifiedOutcome: Int,
-      currencyProofEnvelope: Int
+      certifiedOutcome: Int
     )
 
     val productionPrinter = Printer.noSpaces.copy(dropNullValues = true)
@@ -452,13 +437,12 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       val peers = List.tabulate(committeeSize)(sizedPeer)
       val full = nonEmptyPeers(peers)
       // Mainnet's configured Core floor is the largest public-network floor. The broad
-      // committee and Currency proof envelope still scale to the configured facilitator maximum.
+      // DAG committee still scales to the configured facilitator maximum.
       val coreSize = math.min(committeeSize, 15)
       val corePeers = peers.take(coreSize)
       val core = nonEmptyPeers(corePeers)
       val fullQuorum = requiredArtifactQuorum(committeeSize, coreSize, 2.0 / 3.0)
       val coreQuorum = requiredCoreQuorum(coreSize, 2.0 / 3.0)
-      val fullProofs = NonEmptySet.fromSetUnsafe(SortedSet.from(List.tabulate(committeeSize)(sizedProof)))
       val coreProofs = NonEmptySet.fromSetUnsafe(SortedSet.from(List.tabulate(coreQuorum)(sizedProof)))
       val triggerEvidence: List[Signed[TriggerStatement]] = List.tabulate(fullQuorum) { index =>
         Signed(
@@ -488,29 +472,20 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       val proposalQc = CertifiedProposalQC(value, valueHash, coreProofs)
       val coreCommitQc = CoreCommitQC(valueHash, value.roundStartCoreHash, coreProofs)
       val certified = CertifiedOutcome(proposalQc, coreCommitQc)
-      val currencyEvidence = CertifiedLayerEvidenceV1.Currency(
-        hash("binary-parent"),
-        SnapshotFee.MinValue,
-        fullProofs
-      )
-
       (
         bytes(triggerEvidence),
         bytes(value),
         bytes(proposalQc),
         bytes(coreCommitQc),
-        bytes(certified),
-        bytes(currencyEvidence)
-      ).mapN(Row(committeeSize, _, _, _, _, _, _))
+        bytes(certified)
+      ).mapN(Row(committeeSize, _, _, _, _, _))
     }
 
     List(3, 31, 73, 100, 200, 1000).traverse(row).flatMap { rows =>
       val rendered = rows
-        .map(r =>
-          s"${r.committee},${r.triggerEvidence},${r.proposalValue},${r.proposalQc},${r.coreCommitQc},${r.certifiedOutcome},${r.currencyProofEnvelope}"
-        )
+        .map(r => s"${r.committee},${r.triggerEvidence},${r.proposalValue},${r.proposalQc},${r.coreCommitQc},${r.certifiedOutcome}")
         .mkString(
-          "committee,triggerEvidence,proposalValue,proposalQc,coreCommitQc,certifiedOutcome,currencyProofEnvelope\n",
+          "committee,triggerEvidence,proposalValue,proposalQc,coreCommitQc,certifiedOutcome\n",
           "\n",
           ""
         )
@@ -522,113 +497,12 @@ object CertifiedConsensusSuite extends MutableIOSuite {
             rows.sliding(2).forall {
               case List(a, b) =>
                 b.triggerEvidence > a.triggerEvidence &&
-                b.proposalValue > a.proposalValue &&
-                b.currencyProofEnvelope > a.currencyProofEnvelope
+                b.proposalValue > a.proposalValue
               case _ => true
             },
             rows.forall(row => row.proposalQc > row.proposalValue),
             rows.forall(row => row.certifiedOutcome > row.proposalQc)
           )
-        )
-    }
-  }
-
-  test("Currency proof envelope reconstructs the exact signed binary without carrying recursive content") { res =>
-    implicit val hasher: Hasher[IO] = res._1
-    implicit val provider: SecurityProvider[IO] = res._2
-
-    JsonSerializer.forAsync[IO].flatMap { implicit serializer =>
-      for {
-        pairs <- keyPairs(4)
-        ids = pairs.map(peerId)
-        parentArtifact <- Signed.forAsyncHasher[IO, ProposalValue](baseValue, pairs.head)
-        content <- JsonSerializer[IO].serialize(parentArtifact)
-        binaryValue = StateChannelSnapshotBinary(hash("binary-parent"), content, SnapshotFee.MinValue)
-        individuallySigned <- pairs.traverse(Signed.forAsyncHasher[IO, StateChannelSnapshotBinary](binaryValue, _))
-        binaryProofs = NonEmptySet.fromSetUnsafe(SortedSet.from(individuallySigned.map(_.proofs.head)))
-        signedBinary = Signed(binaryValue, binaryProofs)
-        expected <- signedBinary.toHashed[IO]
-        evidence = currencyLayerEvidence(signedBinary)
-        reconstructed <- reconstructAndVerifyCurrencyBinary[IO, ProposalValue](
-          parentArtifact,
-          evidence,
-          hash("binary-parent"),
-          ids.toSet
-        )
-        wrongParent <- reconstructAndVerifyCurrencyBinary[IO, ProposalValue](
-          parentArtifact,
-          evidence,
-          hash("other-binary-parent"),
-          ids.toSet
-        )
-        incomplete <- reconstructAndVerifyCurrencyBinary[IO, ProposalValue](
-          parentArtifact,
-          evidence.copy(parentBinaryProofs = NonEmptySet.one(binaryProofs.head)),
-          hash("binary-parent"),
-          ids.toSet
-        )
-        mutatedFee <- reconstructAndVerifyCurrencyBinary[IO, ProposalValue](
-          parentArtifact,
-          evidence.copy(parentBinaryFee = SnapshotFee(1L)),
-          hash("binary-parent"),
-          ids.toSet
-        )
-      } yield
-        expect.all(
-          evidence.parentBinaryProofs === signedBinary.proofs,
-          reconstructed === Right(expected),
-          wrongParent === Left("currency_binary_parent_mismatch"),
-          incomplete === Left("currency_binary_signers_not_complete_frozen_committee"),
-          mutatedFee === Left("currency_binary_invalid_signature")
-        )
-    }
-  }
-
-  test("Currency binary reconstruction preimage has a pinned repository encoding") { res =>
-    implicit val hasher: Hasher[IO] = res._1
-
-    JsonSerializer.forAsync[IO].flatMap { implicit serializer =>
-      val signedArtifact = Signed(baseValue, NonEmptySet.one(sizedProof(1)))
-
-      for {
-        content <- JsonSerializer[IO].serialize(signedArtifact)
-        actual <- Hasher[IO].hash(
-          StateChannelSnapshotBinary(hash("binary-parent"), content, SnapshotFee.MinValue)
-        )
-      } yield
-        expect(
-          actual === Hash("c12d6a15f5ecece3d35b01f31f47d1e0efa35d56cb977c17f53fa6c20d5f4157"),
-          s"Currency binary reconstruction preimage changed: actual=${actual.value}"
-        )
-    }
-  }
-
-  test("large historical V1 encoder preimage pins size-dependent Brotli output") { res =>
-    implicit val hasher: Hasher[IO] = res._1
-
-    JsonSerializer.forAsync[IO].flatMap { implicit serializer =>
-      val peers = List.tabulate(1000)(entropyPeer)
-      val largeArtifact = baseValue.copy(
-        roundStartFacilitators = nonEmptyPeers(peers),
-        roundStartCore = nonEmptyPeers(peers.take(15)),
-        observedResponders = SortedSet.from(peers),
-        timeoutVoters = SortedSet.from(peers.take(15))
-      )
-      val signedArtifact = Signed(
-        largeArtifact,
-        NonEmptySet.fromSetUnsafe(SortedSet.from(List.tabulate(1000)(entropyProof)))
-      )
-
-      for {
-        content <- JsonSerializer[IO].serialize(signedArtifact)
-        actual <- Hasher[IO].hash(
-          StateChannelSnapshotBinary(hash("binary-parent"), content, SnapshotFee.MinValue)
-        )
-      } yield
-        expect(
-          actual === Hash("1e688406a85edbdc62b1d3cc547b1593a2f8903b94b87af6767cfeb95ed95ff6") &&
-            content.length === 155769,
-          s"Large historical V1 encoder preimage changed: actual=${actual.value}, compressedBytes=${content.length}"
         )
     }
   }
@@ -743,7 +617,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
     implicit val hasher: Hasher[IO] = res._1
     val base = baseValue
     val mutations = List(
-      base.copy(domain = ConsensusDomain.CurrencyL0),
       base.copy(networkId = "testnet"),
       base.copy(key = base.key + 1L),
       base.copy(parentArtifactHash = hash("other-parent")),
@@ -1084,7 +957,7 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
       trusted = CertifiedOutcome(firstProposal, firstCommit)
       carriedOutcome = CertifiedOutcome(secondProposal, secondCommit)
-      carried = CertifiedLineageEvidenceV1(carriedOutcome, None)
+      carried = CertifiedLineageEvidenceV1(carriedOutcome)
       verified <- verifyCarriedParentOutcome[IO](
         carried.some,
         trusted.some,
@@ -1093,20 +966,13 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       )
       missing <- verifyCarriedParentOutcome[IO](None, trusted.some, ConsensusDomain.DagL0, 2.0 / 3.0)
       unexpected <- verifyCarriedParentOutcome[IO](carried.some, None, ConsensusDomain.DagL0, 2.0 / 3.0)
-      wrongDomain <- verifyCarriedParentOutcome[IO](
-        carried.some,
-        trusted.some,
-        ConsensusDomain.CurrencyL0,
-        2.0 / 3.0
-      )
     } yield
       expect.all(
         trusted.proposalQc.signatures =!= carriedOutcome.proposalQc.signatures,
         trusted.coreCommitQc.signatures =!= carriedOutcome.coreCommitQc.signatures,
         verified === Right(carried.some),
         missing === Left("certified_lineage_missing_after_root"),
-        unexpected === Left("certified_lineage_unexpected_at_root"),
-        wrongDomain === Left("certified_lineage_domain_mismatch")
+        unexpected === Left("certified_lineage_unexpected_at_root")
       )
   }
 
@@ -1127,9 +993,9 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       second <- certifyOutcome(secondValue, pairs, ids)
       frames = List(
         LineageFrame(firstValue.key, None),
-        LineageFrame(secondValue.key, CertifiedLineageEvidenceV1(first, None).some)
+        LineageFrame(secondValue.key, CertifiedLineageEvidenceV1(first).some)
       )
-      terminal = CertifiedLineageEvidenceV1(second, None)
+      terminal = CertifiedLineageEvidenceV1(second)
       replayed <- verifySequentialLineage[IO, Option[CertifiedOutcome], LineageFrame](
         trustedRoot = None,
         trustedRootKey = firstValue.key - 1L,
@@ -1205,7 +1071,6 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       staleValues = List(
         currentValue.copy(key = currentValue.key - 1L, committedView = 100L),
         currentValue.copy(parentArtifactHash = hash("stale-parent"), committedView = 101L),
-        currentValue.copy(domain = ConsensusDomain.CurrencyL0, committedView = 102L),
         currentValue.copy(networkId = "other-network", committedView = 103L)
       )
       allValues = currentValue :: staleValues

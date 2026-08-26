@@ -16,7 +16,6 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -45,19 +44,17 @@ trait CurrencySnapshotValidator[F[_]] {
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     peerHistory: Option[ConsensusOperationalState] = None,
-    historicalDependencyResolution: Boolean = false,
-    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
+    historicalDependencyResolution: Boolean = false
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
 object CurrencySnapshotValidator {
 
-  /** Whether a re-created currency artifact matches the expected (signed) one.
+  /** Whether a re-created currency artifact matches the expected signed value.
     *
-    * Legacy `0.0.1` keeps its compatibility exception: `globalSyncView` came from live, time-varying GL0 sync state, so historical
-    * re-validation pins that one signed field before comparing the rest. Protocol `1.0.0` closes recreation over the consensus-retained
-    * window; carrying the exception forward would preserve an unverified input in the deterministic epoch. Consequently every field,
-    * including `globalSyncView`, must rederive exactly for `1.0.0`.
+    * Legacy `0.0.1` preserves release/mainnet compatibility: `globalSyncView` came from live, time-varying GL0 sync state, so historical
+    * validation pins that one signed field before comparing the rest. Version `1.0.0` closes recreation over consensus-carried inputs and
+    * therefore requires every field, including `globalSyncView`, to rederive exactly.
     */
   def matchesExpected(recreated: CurrencyIncrementalSnapshot, expected: CurrencyIncrementalSnapshot): Boolean =
     if (CurrencySnapshotSemantics.usesDeterministicHistory(expected.version)) recreated === expected
@@ -90,8 +87,7 @@ object CurrencySnapshotValidator {
           // above already binds the value to the signing facilitators -- if it
           // were tampered with, this would have failed first.
           artifact.value.peerHistory,
-          historicalDependencyResolution,
-          artifact.value.certifiedLineage
+          historicalDependencyResolution
         ).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
@@ -104,8 +100,7 @@ object CurrencySnapshotValidator {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       peerHistory: Option[ConsensusOperationalState] = None,
-      historicalDependencyResolution: Boolean = false,
-      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
+      historicalDependencyResolution: Boolean = false
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
         lastArtifact,
@@ -114,8 +109,7 @@ object CurrencySnapshotValidator {
         facilitators,
         getGlobalSnapshotByOrdinal,
         peerHistory,
-        historicalDependencyResolution,
-        certifiedLineage
+        historicalDependencyResolution
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -139,6 +133,9 @@ object CurrencySnapshotValidator {
           case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
         })
 
+      // All current public-network production is JSON. This fallback remains
+      // solely for replaying pre-JSON historical snapshots; no new Currency
+      // functionality adds another Kryo encoding path.
       validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
     }
 
@@ -149,8 +146,7 @@ object CurrencySnapshotValidator {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       peerHistory: Option[ConsensusOperationalState],
-      historicalDependencyResolution: Boolean,
-      certifiedLineage: Option[CertifiedLineageEvidenceV1]
+      historicalDependencyResolution: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -204,8 +200,7 @@ object CurrencySnapshotValidator {
                 shouldPerformMetagraphSpecificValidations = false,
                 Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
                 peerHistory,
-                historicalDependencyResolution,
-                certifiedLineage
+                historicalDependencyResolution
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
@@ -226,8 +221,8 @@ object CurrencySnapshotValidator {
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
               else creationResult
             }.map { creationResult =>
-              // Compare ignoring globalSyncView (pinned to the signed value) -- see matchesExpected. The error
-              // reports the un-pinned recreated artifact so a real divergence is still fully visible downstream.
+              // Legacy replay pins globalSyncView; deterministic-history replay compares it exactly. The error reports the unmodified
+              // recreated artifact so any divergence remains fully visible downstream.
               if (matchesExpected(creationResult.artifact, expected))
                 creationResult.validNec
               else

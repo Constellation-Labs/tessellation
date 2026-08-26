@@ -148,6 +148,23 @@ object MainSuite extends SimpleIOSuite {
     expect(ready.isReady)
   }
 
+  pureTest("post-v35 recovery is publicly durable only when a child carries the first successor QC") {
+    val activation = SnapshotOrdinal.unsafeApply(2000L)
+    val firstSuccessor = SnapshotOrdinal.unsafeApply(2001L)
+    val secondSuccessor = SnapshotOrdinal.unsafeApply(2002L)
+
+    expect.all(
+      Main.recoverySeedBoundaryPubliclyDurable(
+        activation,
+        SnapshotOrdinal.unsafeApply(1999L),
+        None
+      ),
+      !Main.recoverySeedBoundaryPubliclyDurable(activation, firstSuccessor, None),
+      !Main.recoverySeedBoundaryPubliclyDurable(activation, secondSuccessor, Some(1999L)),
+      Main.recoverySeedBoundaryPubliclyDurable(activation, secondSuccessor, Some(2001L))
+    )
+  }
+
   pureTest("headroom deficit is quorum deficit rather than all absent selected members") {
     val peerD = PeerId(Hex("dd" * 64))
     val peerE = PeerId(Hex("ee" * 64))

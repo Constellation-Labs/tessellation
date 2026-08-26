@@ -155,8 +155,7 @@ object OpenAdmissionPolicy {
     * Cadence is deliberately applied only to open expansion. Probation recovery evaluates on every round, but shares both denominator
     * safety gates: exempting a floor-raising probation seat would recreate the same grow-then-wedge failure through the recovery lane.
     *
-    * `None` also leaves the local headroom gate inactive. Currency L0 uses that path because its unanimity policy could never prove an
-    * unseated `(n + 1)`th signer; post-bootstrap Global L0 supplies its locally observed parent proof set.
+    * `None` leaves the optional local headroom gate inactive. Post-bootstrap Global L0 supplies its locally observed parent proof set.
     */
   def evaluate(
     cadenceAllowed: Boolean,
@@ -165,8 +164,8 @@ object OpenAdmissionPolicy {
     quorumThresholdFraction: Double,
     headroomGateActive: Boolean,
     maxAdmissionSeats: Int = 1,
-    // `None` means this layer has no node-local proof-history gate (Currency L0). Global L0
-    // supplies `Some(History.empty)` after restart so an incomplete history fails closed only for
+    // `None` means the caller has no node-local proof-history gate. Global L0 supplies `Some(History.empty)` after restart so incomplete
+    // history fails closed only for
     // a batch that raises the finality floor.
     locallyObservedParentProofHistory: Option[AdmissionProofHistory.History] = None
   ): Decision = {

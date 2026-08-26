@@ -61,7 +61,8 @@ object method {
     startingEpochProgress: EpochProgress,
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath],
-    allowanceListPath: Option[AllowanceListPath]
+    allowanceListPath: Option[AllowanceListPath],
+    recoverySeedCommittee: Option[Gl0RecoverySeedCommittee] = None
   ) extends Run {}
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -85,7 +86,8 @@ object method {
         startingEpochProgressOpts,
         trustRatingsPathOpts,
         SeedListPath.priorityOpts,
-        AllowanceListPath.opts
+        AllowanceListPath.opts,
+        RunRollback.recoverySeedCommitteeOpts
       ).mapN(RunGenesis.apply)
     }
   }

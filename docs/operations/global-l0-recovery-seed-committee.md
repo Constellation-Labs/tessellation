@@ -29,6 +29,13 @@ is unsupported.
 - Set the same `CL_GL0_RECOVERY_SEED_COMMITTEE` value on every named recovery
   member, including the rollback lead.
 - Do not set it on community validators or any node absent from the list.
+- Do not set it on `run-genesis`; startup rejects that combination. Genesis is
+  either restarted normally or recovered from a later incremental anchor with
+  the one-rollback-lead topology.
+- Do not create same-filesystem hardlink backups of the live `hash/` snapshot
+  index (`cp -al`, `rsync --link-dest`, or equivalent). Recovery uses the normal
+  hash+ordinal hardlink count to skip canonical history while inspecting torn
+  hash-only files. Archive by copying bytes or onto another filesystem.
 
 > **DANGER:** This value is recovery authority, not durable configuration. A
 > fresh external JVM parses it again. Comment or remove it on every selected
@@ -42,10 +49,12 @@ The expected IntegrationNet recovery cohort is the three controlled source
 nodes. The parser accepts a comma-separated list in any order and canonicalizes
 it as a `SortedSet[PeerId]`; every entry must be a unique 128-character lowercase
 hex PeerId. Startup rejects an empty/malformed list, a committee smaller than
-three, a local node that is absent from the list, a member outside the seedlist or configured
-allowance list, a committee over the facilitator-selector cap, or a committee
-that cannot prove the next seat under the deployed quorum fraction. Every
-member must also satisfy collateral in the exact loaded anchor context.
+three, a local node that is absent from the list, a member outside any configured
+recovery trust root, a committee over the facilitator-selector cap, or a
+committee that cannot prove the next seat under the deployed quorum fraction.
+At least one non-empty seedlist or hash-fenced custom allowance list must be
+configured; when both are configured, every selected member must occur in both.
+Every member must also satisfy collateral in the exact loaded anchor context.
 
 A certified-from-genesis chain cannot use the canonical first incremental
 snapshot (ordinal 1) as an env-recovery anchor. Its ordinary key-2 child and a
@@ -119,9 +128,10 @@ selected-source JVM launch reads it again and re-arms, until the operator
 comments or removes the variable. There is no consumed receipt or tombstone for
 the unsigned path.
 
-Disarm and rollout health are deliberately separate. After disarm the node
-continues to track whether an accepted snapshot contains enough actual proofs
-from the selected committee to prove the next seat:
+Disarm, public durability, and rollout health are deliberately separate. After
+disarm the node continues to track both whether the recovery boundary is
+reconstructible from public chain data and whether an accepted snapshot contains
+enough actual proofs from the selected committee to prove the next seat:
 
 ```text
 selected proof signers >= Q(selected committee size + 1)
@@ -137,6 +147,19 @@ path: remove the env from that validator's launch environment and restart it as
 `run-validator`. Its callback cannot clear authority for a successor it never
 committed. Never leave that missed validator armed while the source lineage
 advances.
+
+Before v35 activation, an accepted successor is immediately usable under the
+legacy artifact-proof rules. At or after v35 activation, the synthetic recovery
+root `R` is deliberately uncertified. Its first successor `R+1` forms the
+ordinary QC for `R+1`, but that QC remains terminal/private on the source cohort.
+Only `R+2` carries the complete `R+1` QC in its public `certifiedLineage`, making
+the reset boundary reconstructible by an env-free validator after every source
+sidecar is removed. Therefore public release requires both
+`dag_consensus_recovery_seed_headroom_ready == 1` and
+`dag_consensus_recovery_seed_boundary_publicly_durable == 1`. The first
+successor still disarms the running processes and is still the point at which
+the persistent environment must be commented out; it is not the public
+durability point in the certified epoch.
 
 At disarm the running process only clears its process-local override. In-process
 leave/fork restart methods never carry the unsigned override, so an unexpected
@@ -209,6 +232,11 @@ coordinated external cold starts, not unobserved single-node cycling.
    verify its ordinal, hash, and ordinary QC on every source that committed it.
    Those processes must report `dag_consensus_recovery_seed_armed == 0` and an
    incremented `dag_consensus_recovery_seed_disarmed_total`.
+   Initial validator join is not tip-corroboration gated. If a named validator
+   instead enters abandonment recovery while only the lead is visible, it may
+   report `rollback_uncorroborated` until a second selected source is
+   `Ready`/`WaitingForReady`; do not misdiagnose that bounded wait as a lineage
+   mismatch.
 9. Comment/remove `CL_GL0_RECOVERY_SEED_COMMITTEE` on all selected sources
    immediately after that successor, without restarting a process that already
    committed it. Changing the persistent environment does not alter authority
@@ -217,20 +245,33 @@ coordinated external cold starts, not unobserved single-node cycling.
    removing the env; it must download the canonical successor before community
    release.
 10. Keep community nodes and restart automation held while the source cohort
-   establishes next-seat headroom. For a three-node IntegrationNet seed this
-   means one accepted snapshot with proofs from all three sources. Inspect that
-   canonical accepted proof set directly. On every continuously running
-   recovery-origin process, also verify
-   `dag_consensus_recovery_seed_headroom_ready == 1` and headroom deficit `== 0`.
+   establishes next-seat headroom **and**, in the v35 epoch, public recovery
+   durability. For a three-node IntegrationNet seed, headroom means one accepted
+   snapshot with proofs from all three sources. Inspect that canonical accepted
+   proof set directly. On every continuously running recovery-origin process,
+   verify `dag_consensus_recovery_seed_headroom_ready == 1`, headroom deficit
+   `== 0`, and `dag_consensus_recovery_seed_boundary_publicly_durable == 1`.
+   Before v35 activation the durability gauge becomes ready with the first
+   successor. At/after activation it must remain `0` for `R+1` and become `1`
+   only after `R+2` publicly carries the `R+1` QC. Do not infer public durability
+   from a source-private terminal outcome or sidecar.
+   A live recovery source can serve the terminal `R+1` QC directly, so an
+   env-free validator may authenticate `R+1` while that source remains
+   reachable. That is not source-loss durability: at bare `R` the validator
+   fails closed, and if every source disappears at `R+1`, the certificate is
+   lost. `R+2` is the first snapshot whose public lineage carries the `R+1` QC.
+   As an independent check, fetch canonical `R+2` and verify its certified
+   lineage's parent outcome key is exactly `R+1`.
    An in-process straggler restart without the override sees the prior recovery
    resource reset its invocation-scoped gauges to zero. A fresh process that
    never had the override may expose no recovery-seed gauges. Only continuously
    running recovery-origin processes expose authoritative headroom telemetry.
-   A community validator released before the first successor cannot authenticate
-   the bare synthetic root; it will fail closed in download/rejoin lifecycle and may
-   force-leave after repeated failures. Do not restart-loop it or diagnose that as a
-   broken source recovery. Hold it until the ordinary successor QC is public. Full-FSM
-   automatic rejoin after an early release remains a pre-activation test gate.
+   A community validator released at bare `R` cannot authenticate the synthetic
+   root and fails closed. At `R+1` it remains dependent on a live source serving
+   the terminal QC; repeated source loss/download failures may force-leave it.
+   Do not restart-loop it or diagnose that as a broken source recovery. Hold it
+   until `R+2` carries the successor QC publicly. Full-FSM automatic rejoin after
+   an early release remains a pre-activation test gate.
 11. Start or release all community nodes as ordinary `run-validator` processes
     with no recovery environment. Verify admission grows from the healthy base
     under rc.8's sustained-signing headroom gate.
@@ -330,6 +371,11 @@ New rc.9 metrics:
 - `dag_consensus_recovery_seed_headroom_ready` — latches to `1` after an
   accepted snapshot proves next-seat headroom, then resets when that application
   resource is released;
+- `dag_consensus_recovery_seed_boundary_publicly_durable` — latches to `1`
+  when an env-free validator can reconstruct the recovery boundary using public
+  chain data alone. This is immediate on the first legacy successor, but at/after
+  v35 activation it stays `0` at `R+1` and becomes `1` only after `R+2` carries
+  the complete `R+1` QC;
 - `dag_consensus_recovery_seed_configured_total{role}` — startup count for
   `rollback_lead` or `selected_validator`;
 - `dag_consensus_recovery_seed_disarmed_total` — successful invocation-local
@@ -337,7 +383,12 @@ New rc.9 metrics:
 - `dag_consensus_recovery_seed_headroom_pending_total` — accepted outcomes
   observed before the selected proof set reaches next-seat headroom;
 - `dag_consensus_recovery_seed_headroom_reached_total` — first accepted outcome
-  that reaches next-seat headroom; and
+  that reaches next-seat headroom;
+- `dag_consensus_recovery_seed_boundary_not_yet_public_total` — accepted
+  post-v35 successors observed before the child-carried QC makes the boundary
+  reconstructible;
+- `dag_consensus_recovery_seed_boundary_publicly_durable_total` — first accepted
+  outcome that makes the boundary publicly reconstructible; and
 - `dag_consensus_recovery_outcome_validated_total{mode}` — exact downloaded or
   rollback outcome validations; unsigned mode is `operator_recovery_seed`; and
 - `dag_consensus_certified_recovery_boundary_total{outcome}` — public v35 reset
@@ -358,11 +409,13 @@ The recovery path uses these dedicated alignment metrics:
 - `dag_consensus_recovery_seed_alignment_error_total{stage}`.
 
 Alert if a named node has `armed=1` after that process accepts a successor, if
-any alignment gauge remains non-zero, if headroom does not become ready, or if
-one selected source is externally restarted with the variable outside a
-declared coordinated recovery. The rollback lead remaining in its normal
-`run-rollback` role is expected; the variable remaining configured after a
-successful recovery is an alert condition.
+any alignment gauge remains non-zero, if headroom or public durability does not
+become ready, or if one selected source is externally restarted with the
+variable outside a declared coordinated recovery. A flat tip while the source
+cohort deliberately produces `R+1` and `R+2` is not permission to restart it.
+The rollback lead remaining in its normal `run-rollback` role is expected; the
+variable remaining configured after a successful recovery is an alert
+condition.
 
 ## Compatibility with certified consensus
 
@@ -372,7 +425,20 @@ after activation, the same env flow starts a fresh certified epoch without a
 second operator artifact. The selected nodes still require exact env-derived
 outcome equality and the all-member barrier. The first successor's ordinary
 v35 QC then binds the public parent hash, network/domain, exact frozen
-committee, Core set, and proposal value.
+committee, Core set, and proposal value. That QC is terminal/private at `R+1`;
+the public chain carries it at `R+2`. Do not release community validators or
+restart automation until the public-durability gauge confirms that second
+successor.
+
+> **ACTIVATION-BOUNDARY TRAP:** If the first certified round at key `A` never
+> finalizes, the public tip remains `A-1`, but an env recovery from `A-1` or
+> `A-2` is deliberately rejected. The activation bridge at `A` must derive its
+> authority from the signed legacy controller-evidence window; a synthetic root
+> inside that window would be ambiguous and then overwritten by the bridge.
+> Recover from an explicitly reconciled anchor at or before `A-3`, rebuild the
+> legacy window, and cross `A` again—or withdraw/defer the activation before the
+> fleet reaches it. Rehearse this path with Snapshot Streaming reconciliation
+> before announcing the key.
 
 The live cluster's deterministic-config and allowance hashes remain mandatory
 join fences, but the current certified outcome does not by itself carry a
@@ -388,12 +454,13 @@ to the latest later child whose `certifiedLineage` is empty, reconstructs the
 canonical root from that child's QC plus the independently validated public
 parent, and replays the contiguous reset-to-tip segment through the ordinary
 QC, artifact-proof, state-proof, seedlist, collateral, membership, and derived-
-state validators. It needs neither the env nor a private recovery artifact. A committee of
-fewer than three, a committee unable to prove its next seat, a non-seedlisted or
-non-allowlisted member, an unavailable local seedlist, an ineligible member, a
-mismatched parent, an invalid QC, or a non-identical derived outcome fails
-closed. Repeated recoveries supersede older epochs: only the latest publicly
-certified reset-to-tip segment is required.
+state validators. It needs neither the env nor a private recovery artifact. A
+committee of fewer than three, a committee unable to prove its next seat, a
+member absent from any configured trust root, no configured seedlist or
+hash-fenced allowance root, an ineligible member, a mismatched parent, an
+invalid QC, or a non-identical derived outcome fails closed. Repeated recoveries
+supersede older epochs: only the latest publicly certified reset-to-tip segment
+is required.
 
 This is a permissioned trust boundary. A quorum of colluding allowlisted
 operators can certify a reset committee; they cannot do so anonymously and are

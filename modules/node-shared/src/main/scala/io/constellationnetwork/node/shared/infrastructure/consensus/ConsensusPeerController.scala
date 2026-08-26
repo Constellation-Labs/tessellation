@@ -229,7 +229,7 @@ object ConsensusPeerController {
     *
     * Legacy `removedFacilitators` is operational evidence carried beside the roster; rc.7 deliberately does not consume it as a new
     * membership deletion. Only an eviction inside a certified v35 ProposalValue has N+1 authority. Encoding that distinction as `None`
-    * versus `Some` keeps the mirrored DAG and Currency advancers on one rule.
+    * versus `Some` keeps pre-activation and certified Global L0 on one rule.
     */
   def applyNextRoundCertifiedMembership(
     roundStartFacilitators: List[PeerId],

@@ -39,8 +39,8 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
     *
     * The effect remains registered when it fails or is cancelled and is replayed by the next `resumePendingStateEffect`/state update. This
     * closes the otherwise terminal gap where `Finished` (or any other next phase) is visible but persistence/gossip failed after the state
-    * write. The closure is deliberately local-only: consensus state is volatile across process restart, and Currency L0's Finished status
-    * does not retain enough data to reconstruct its signed binary effect without changing the public schema.
+    * write. The closure is deliberately local-only because consensus state is volatile across process restart. Durable v35 vote safety is
+    * handled separately by [[CertifiedVoteLockPersistence]].
     */
   def condModifyStateWithSideEffect[B](key: Key)(
     modifyStateFn: ModifyStateFn[F, Key, Status, Outcome, Kind, (B, F[Unit])]

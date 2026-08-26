@@ -6,6 +6,7 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.schema.currency.{CurrencySnapshotInfo, CurrencySnapshotInfoV1, CurrencySnapshotStateProof}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.infrastructure.storage.CrashSafeAtomicFileWriter
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
 import io.constellationnetwork.storage.SerializableLocalFileSystemStorage
@@ -25,6 +26,24 @@ abstract class SnapshotInfoLocalFileSystemStorage[
     val ordinalName = toOrdinalName(ordinal)
 
     write(ordinalName, snapshotInfo)
+  }
+
+  /** Atomic context replacement used only after the caller has validated an exact recovery authority.
+    */
+  def replaceForRecovery(ordinal: SnapshotOrdinal, snapshotInfo: S): F[Unit] = {
+    val fileName = toOrdinalName(ordinal)
+
+    for {
+      bytes <- JsonSerializer[F].serialize(snapshotInfo)
+      writer <- CrashSafeAtomicFileWriter.make[F](path)
+      _ <- writer.write(fileName, bytes)
+      stored <- readBytes(fileName).flatMap(
+        _.liftTo[F](new IllegalStateException(s"Recovery snapshot-info missing after replace ordinal=$ordinal"))
+      )
+      _ <- Async[F].raiseUnless(java.util.Arrays.equals(bytes, stored))(
+        new IllegalStateException(s"Recovery snapshot-info exact disk readback failed ordinal=$ordinal")
+      )
+    } yield ()
   }
 
   def read(ordinal: SnapshotOrdinal): F[Option[S]] =

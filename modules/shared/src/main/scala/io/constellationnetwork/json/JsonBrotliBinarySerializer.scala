@@ -19,10 +19,9 @@ trait JsonBrotliBinarySerializer[F[_]] {
 }
 
 object JsonBrotliBinarySerializer {
-  // Historical protocol encoder: v35 Currency certified-lineage V1 reconstructs binary
-  // content with this exact sorted/drop-null JSON + Brotli quality-2 pipeline. Its dependency,
-  // parameters and output must remain available for V1 replay. Encoder evolution belongs in a
-  // versioned implementation; it must not silently alter this one.
+  // State-channel binary encoder. The sorted/drop-null JSON printer and Brotli quality remain
+  // explicit so all members of one release construct identical binary values. Historical binary
+  // verification consumes received bytes; certified Global L0 lineage does not re-compress Currency ancestry.
   private val compressionLevel = 2
   private val parser = JawnParser(allowDuplicateKeys = false)
   private val UTF8 = StandardCharsets.UTF_8

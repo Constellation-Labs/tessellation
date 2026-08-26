@@ -18,8 +18,8 @@ import io.circe.Encoder
 
 /** Generic round orchestration for the v35 prepare/QC phase.
   *
-  * Layer advancers retain responsibility for artifact validation and their different state transitions. This shared coordinator owns the
-  * identical storage, lock, signature, quorum-assembly, verification, and direct-gossip sequence so DAG and Currency cannot drift.
+  * The Global L0 advancer retains responsibility for artifact validation and state transitions. This coordinator owns storage, locking,
+  * signature, quorum-assembly, verification, and direct-gossip sequencing for the certified prepare/QC phase.
   */
 object CertifiedConsensusRound {
 

@@ -57,8 +57,8 @@ case class Previous[A](a: A)
 
 /** A fully verified same-key outcome ready to enter the ordinary finalization path.
   *
-  * `valueHash` lets the shared coordinator fail closed if peers somehow present two different valid certified values. The layer owns
-  * outcome re-derivation and persistence because DAG and Currency have genuinely different artifact/context side effects.
+  * `valueHash` lets the shared coordinator fail closed if peers somehow present two different valid certified values. Global L0 owns
+  * outcome re-derivation and persistence because those artifact/context effects do not belong in the generic coordinator.
   */
 final case class CertifiedOutcomeAdoption[F[_], State](
   valueHash: Hash,

@@ -7,13 +7,14 @@ import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.l0.snapshot.storage.RecoverySyncPublicationStorage
+import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.{JsonSerializer, SizeCalculator}
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{ExactSnapshotStorage, LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
+import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.DataApplicationSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.{
   OrdinalLinkStatus,
@@ -50,21 +51,23 @@ trait StateChannelSnapshotService[F[_]] {
     parentGlobalSnapshotOrdinal: SnapshotOrdinal
   )(implicit hasher: Hasher[F]): F[Boolean]
 
-  /** Write a non-publishable recovery outbox intent before local snapshot persistence. */
-  def prepareRecoveryBinary(
+  /** Write a non-publishable ordinary outbox intent before local snapshot persistence. A recovery refresh also prepares its stricter
+    * deadline-bearing receipt.
+    */
+  def prepareBinaryPublication(
     signedArtifact: Signed[CurrencySnapshotArtifact],
     binaryHashed: Hashed[StateChannelSnapshotBinary]
   )(implicit hasher: Hasher[F]): F[Unit]
 
-  /** Make the prepared recovery binary publishable immediately after the exact Currency artifact is durable. */
-  def commitRecoveryBinary(
+  /** Make the prepared binary publishable immediately after the exact Currency artifact is durable. */
+  def commitBinaryPublication(
     binaryHash: Hash,
     signedArtifact: Signed[CurrencySnapshotArtifact],
     context: CurrencySnapshotInfo
   )(implicit hasher: Hasher[F]): F[Unit]
 
   /** Remove only a non-committed intent when local persistence definitively rejects the artifact. */
-  def abortPreparedRecoveryBinary(binaryHash: Hash): F[Unit]
+  def abortPreparedBinaryPublication(binaryHash: Hash): F[Unit]
 
   /** Last critical finalization step: enqueue the exact persisted snapshot binary.
     *
@@ -81,6 +84,17 @@ trait StateChannelSnapshotService[F[_]] {
   )(
     implicit hasher: Hasher[F]
   ): F[Signed[StateChannelSnapshotBinary]]
+
+  /** Construct the common unsigned binary value used by flat synchronous Currency consensus. Fee inputs come only from the exact
+    * `globalSyncView` already signed into the Currency artifact. The historical GL0 value and state are hash-checked before their fee epoch
+    * and staking balance are used, so a moving node-local GL0 tip cannot change the binary hash.
+    */
+  def createSynchronousBinaryValue(
+    snapshot: Signed[CurrencySnapshotArtifact],
+    lastSnapshotBinaryHash: Hash,
+    stakingAddress: Option[Address]
+  )(implicit hasher: Hasher[F]): F[StateChannelSnapshotBinary]
+
 }
 
 object StateChannelSnapshotService {
@@ -97,7 +111,23 @@ object StateChannelSnapshotService {
   ): F[Boolean] =
     if (persisted) onPersisted.as(true) else onRejected.as(false)
 
-  def make[F[_]: Async: JsonSerializer: SecurityProvider](
+  /** Commit publication receipts in the only order that preserves the recovery deadline guard.
+    *
+    * The ordinary outbox must become publishable last. Otherwise a crash after ordinary commit but before recovery read-back/commit can
+    * publish the same binary without the recovery receipt's retained-window deadline. When no recovery refresh is armed, the ordinary
+    * receipt is the sole publication authority.
+    */
+  private[services] def commitPreparedPublications[F[_]: Monad](
+    recoveryRequired: Boolean,
+    ensureRecoveryArtifactDurable: F[Unit],
+    markRecoveryLocallyCommitted: F[Unit],
+    markOrdinaryLocallyCommitted: F[Unit]
+  ): F[Unit] =
+    if (recoveryRequired)
+      ensureRecoveryArtifactDurable >> markRecoveryLocallyCommitted >> markOrdinaryLocallyCommitted
+    else markOrdinaryLocallyCommitted
+
+  def make[F[_]: Async: JsonSerializer: SecurityProvider: Metrics](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
@@ -111,6 +141,7 @@ object StateChannelSnapshotService {
     stateChannelBinarySender: StateChannelBinarySender[F],
     lastSentGlobalSnapshotSyncStorage: LastSentGlobalSnapshotSyncStorage[F],
     recoverySyncPublicationStorage: RecoverySyncPublicationStorage[F],
+    stateChannelBinaryOutboxStorage: StateChannelBinaryOutboxStorage[F],
     feeCalculator: FeeCalculator[F],
     snapshotSizeConfig: SnapshotSizeConfig
   ): StateChannelSnapshotService[F] =
@@ -128,21 +159,28 @@ object StateChannelSnapshotService {
       ): F[SnapshotFee] =
         lastGlobalSnapshotStorage.getCombined
           .map(_.flatMap { case (_, state) => maybeStakingAddress.flatMap(state.balances.get) }.getOrElse(Balance.empty))
-          .flatMap { staked =>
-            JsonSerializer[F]
-              .serialize(
-                Signed(
-                  StateChannelSnapshotBinary(lastHash, bytes, SnapshotFee(NonNegLong.MaxValue)),
-                  NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
-                )
-              )
-              .map(_.length)
-              .flatMap { noSigsBytesSize =>
-                val bytesSize = noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes
-                val sizeKb = SizeCalculator.toKilobytes(bytesSize)
+          .flatMap(calculateFeeFromBalance(lastHash, bytes, signatureCount, maybeGlobalSnapshotOrdinal, _))
 
-                feeCalculator.calculateRecommendedFee(maybeGlobalSnapshotOrdinal, feeCalculationDelay)(staked, sizeKb)
-              }
+      private def calculateFeeFromBalance(
+        lastHash: Hash,
+        bytes: Array[Byte],
+        signatureCount: Int,
+        maybeGlobalSnapshotOrdinal: Option[SnapshotOrdinal],
+        staked: Balance
+      ): F[SnapshotFee] =
+        JsonSerializer[F]
+          .serialize(
+            Signed(
+              StateChannelSnapshotBinary(lastHash, bytes, SnapshotFee(NonNegLong.MaxValue)),
+              NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
+            )
+          )
+          .map(_.length)
+          .flatMap { noSigsBytesSize =>
+            val bytesSize = noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes
+            val sizeKb = SizeCalculator.toKilobytes(bytesSize)
+
+            feeCalculator.calculateRecommendedFee(maybeGlobalSnapshotOrdinal, feeCalculationDelay)(staked, sizeKb)
           }
 
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]] =
@@ -166,13 +204,50 @@ object StateChannelSnapshotService {
           binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee).sign(keyPair)
         } yield binary
 
+      def createSynchronousBinaryValue(
+        snapshot: Signed[CurrencySnapshotArtifact],
+        lastSnapshotBinaryHash: Hash,
+        stakingAddress: Option[Address]
+      )(implicit hasher: Hasher[F]): F[StateChannelSnapshotBinary] =
+        for {
+          globalSyncView <- snapshot.value.globalSyncView.liftTo[F](
+            new IllegalStateException(
+              s"Synchronous Currency artifact ordinal=${snapshot.ordinal} has no signed globalSyncView"
+            )
+          )
+          combined <- lastGlobalSnapshotStorage
+            .getCombined(globalSyncView.ordinal)
+            .flatMap(
+              _.liftTo[F](
+                new IllegalStateException(
+                  s"Exact GL0 fee context is unavailable ordinal=${globalSyncView.ordinal} currencyOrdinal=${snapshot.ordinal}"
+                )
+              )
+            )
+          (globalSnapshot, globalInfo) = combined
+          globalHash <- globalSnapshot.hash
+          _ <- Async[F].raiseUnless(globalHash === globalSyncView.hash)(
+            new IllegalStateException(
+              s"Exact GL0 fee context hash mismatch ordinal=${globalSyncView.ordinal} expected=${globalSyncView.hash} actual=$globalHash"
+            )
+          )
+          bytes <- JsonSerializer[F].serialize(snapshot)
+          fee <- calculateFeeFromBalance(
+            lastSnapshotBinaryHash,
+            bytes,
+            snapshot.proofs.length,
+            globalSyncView.ordinal.some,
+            stakingAddress.flatMap(globalInfo.balances.get).getOrElse(Balance.empty)
+          )
+        } yield StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee)
+
       def persist(
         signedArtifact: Signed[CurrencySnapshotArtifact],
         context: CurrencySnapshotContext,
         maybeParentDataApplication: Option[DataApplicationPart],
         parentGlobalSnapshotOrdinal: SnapshotOrdinal
       )(implicit hasher: Hasher[F]): F[Boolean] = for {
-        persisted <- snapshotStorage.prepend(signedArtifact, context.snapshotInfo)
+        persisted <- ExactSnapshotStorage.prependExact(snapshotStorage, signedArtifact, context.snapshotInfo)
         // Parent inputs are captured from the transition's immutable lastOutcome by the caller.
         // Retained replay after N is already current must still consume N against parent N-1.
         accepted = dataApplicationSnapshotAcceptanceManager.traverse_(
@@ -182,22 +257,41 @@ object StateChannelSnapshotService {
             parentGlobalSnapshotOrdinal
           )
         )
-        rejected = logger.error(
-          s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
-        )
+        rejected =
+          logger.error(
+            s"CurrencySnapshot exact artifact/context install failed ordinal=${signedArtifact.ordinal} metagraph=${context.address}; " +
+              "binary publication is blocked and coordinated rollback is required."
+          )
         result <- StateChannelSnapshotService.continueAfterPersist(persisted, accepted, rejected)
       } yield result
 
-      def prepareRecoveryBinary(
+      def prepareBinaryPublication(
         signedArtifact: Signed[CurrencySnapshotArtifact],
         binaryHashed: Hashed[StateChannelSnapshotBinary]
       )(implicit hasher: Hasher[F]): F[Unit] =
-        lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap {
-          case Some(required) =>
-            signedArtifact.toHashed.flatMap { currencyArtifact =>
-              recoverySyncPublicationStorage.prepare(required, binaryHashed, currencyArtifact).void
+        signedArtifact.toHashed.flatMap { currencyArtifact =>
+          stateChannelBinaryOutboxStorage
+            .prepare(binaryHashed, currencyArtifact)
+            .void
+            .handleErrorWith {
+              case error: StateChannelBinaryOutboxStorage.CapacityExceeded =>
+                Metrics[F]
+                  .incrementCounter(
+                    "dag_currency_l0_binary_outbox_backpressure_total",
+                    Seq(
+                      Metrics.unsafeLabelName("reason") ->
+                        (if (error.pendingCount > error.maxEntries) "count" else "bytes")
+                    )
+                  )
+                  .attempt
+                  .void >> error.raiseError[F, Unit]
+              case error => error.raiseError[F, Unit]
+            } >>
+            lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap {
+              case Some(required) =>
+                recoverySyncPublicationStorage.prepare(required, binaryHashed, currencyArtifact).void
+              case None => Async[F].unit
             }
-          case None => Async[F].unit
         }
 
       private def ensureRecoveryArtifactDurable(
@@ -251,20 +345,23 @@ object StateChannelSnapshotService {
           }
         }
 
-      def commitRecoveryBinary(
+      def commitBinaryPublication(
         binaryHash: Hash,
         signedArtifact: Signed[CurrencySnapshotArtifact],
         context: CurrencySnapshotInfo
       )(implicit hasher: Hasher[F]): F[Unit] =
-        lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap {
-          case Some(_) =>
-            ensureRecoveryArtifactDurable(signedArtifact, context) >>
-              recoverySyncPublicationStorage.markLocallyCommitted(binaryHash).void
-          case None => Async[F].unit
+        lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap { requiredRecovery =>
+          StateChannelSnapshotService.commitPreparedPublications(
+            recoveryRequired = requiredRecovery.nonEmpty,
+            ensureRecoveryArtifactDurable = ensureRecoveryArtifactDurable(signedArtifact, context),
+            markRecoveryLocallyCommitted = recoverySyncPublicationStorage.markLocallyCommitted(binaryHash).void,
+            markOrdinaryLocallyCommitted = stateChannelBinaryOutboxStorage.markLocallyCommitted(binaryHash).void
+          )
         }
 
-      def abortPreparedRecoveryBinary(binaryHash: Hash): F[Unit] =
-        recoverySyncPublicationStorage.abortPrepared(binaryHash)
+      def abortPreparedBinaryPublication(binaryHash: Hash): F[Unit] =
+        stateChannelBinaryOutboxStorage.abortPrepared(binaryHash) >>
+          recoverySyncPublicationStorage.abortPrepared(binaryHash)
 
       def enqueueBinary(binaryHashed: Hashed[StateChannelSnapshotBinary], currencySnapshotOrdinal: SnapshotOrdinal): F[Unit] =
         for {

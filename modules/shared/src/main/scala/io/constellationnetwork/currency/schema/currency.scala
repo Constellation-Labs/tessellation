@@ -15,7 +15,6 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
-import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageType}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -241,10 +240,7 @@ object currency {
     // v20: snapshot of the prev round's consensus-derived peer-behavior counters.
     // See the GlobalIncrementalSnapshot mirror for the full determinism rationale.
     peerHistory: Option[ConsensusOperationalState] = None,
-    version: SnapshotVersion = SnapshotVersion("0.0.1"),
-    // v35 child-carried parent certificate and bounded Currency binary proof
-    // envelope. Mandatory-after-root is a semantic validation rule.
-    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {

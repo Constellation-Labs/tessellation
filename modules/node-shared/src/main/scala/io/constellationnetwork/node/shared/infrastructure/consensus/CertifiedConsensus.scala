@@ -11,7 +11,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
-import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
@@ -20,12 +19,11 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
-import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
-import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
+import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import io.circe.Encoder
 
-/** V35 certification primitives shared by DAG L0 and Currency L0.
+/** V35 certification primitives for Global L0.
   *
   * Snapshot artifact signatures deliberately keep their existing bare-artifact-hash meaning. These types add a separate Core certificate
   * over every semantic input that can affect the persisted consensus outcome. All signing and verification goes through the repository's
@@ -53,8 +51,6 @@ object CertifiedConsensus {
   val CoreCommitQC: consensus.CoreCommitQC.type = consensus.CoreCommitQC
   type CertifiedOutcome = consensus.CertifiedOutcome
   val CertifiedOutcome: consensus.CertifiedOutcome.type = consensus.CertifiedOutcome
-  type CertifiedLayerEvidenceV1 = consensus.CertifiedLayerEvidenceV1
-  val CertifiedLayerEvidenceV1: consensus.CertifiedLayerEvidenceV1.type = consensus.CertifiedLayerEvidenceV1
   type CertifiedLineageEvidenceV1 = consensus.CertifiedLineageEvidenceV1
   val CertifiedLineageEvidenceV1: consensus.CertifiedLineageEvidenceV1.type = consensus.CertifiedLineageEvidenceV1
 
@@ -235,10 +231,8 @@ object CertifiedConsensus {
     }
   }
 
-  /** Construct the common semantic value for either L0 layer.
-    *
-    * Layer code supplies its typed context and domain; extraction of shared Proposal evidence and canonical collection handling live in one
-    * place so DAG and Currency cannot drift.
+  /** Construct the canonical Global L0 semantic value. The domain remains explicit in the signed statement so a future version can add a
+    * new domain without silently reinterpreting v35 bytes.
     */
   def proposalValue[F[_]: Applicative: Hasher, Context: Encoder](
     domain: ConsensusDomain,
@@ -356,7 +350,7 @@ object CertifiedConsensus {
   /** Extract every advertised v35 QC from either pacemaker certificate family.
     *
     * Extraction is intentionally dumb; [[highestVerifiedProposalQc]] is the only production selector. Keeping this traversal here avoids
-    * duplicating the nested VCC/TC walk in DAG and Currency.
+    * duplicating the nested VCC/TC walk across Global L0 call sites.
     */
   def proposalQcCandidates(
     vcc: Option[declaration.ViewChangeCertificate],
@@ -574,7 +568,7 @@ object CertifiedConsensus {
     *
     * Candidates outside `expectedRound` are ignored before view comparison. Remaining invalid candidates are ignored, just as invalid
     * pacemaker declarations are not consensus evidence. If two independently valid QCs disagree at the highest view, selection fails
-    * closed. This one helper is used by both DAG and Currency leader/follower paths so a buggy or stale peer cannot create layer-specific
+    * closed. Using one helper for Global L0 leader and follower paths prevents a buggy or stale peer from creating path-specific
     * carry-forward behavior.
     */
   def highestVerifiedProposalQc[F[_]: Async: Hasher: SecurityProvider](
@@ -595,7 +589,7 @@ object CertifiedConsensus {
   /** Return the first fully verified QC for `value`.
     *
     * Transport layers may learn the same certificate through a proposal, local assembly, or a relayed signature. Keeping candidate
-    * filtering and cryptographic verification here prevents DAG and Currency from growing subtly different acceptance rules.
+    * filtering and cryptographic verification here prevents Global L0 call sites from growing subtly different acceptance rules.
     */
   def firstVerifiedProposalQc[F[_]: Async: Hasher: SecurityProvider](
     value: ProposalValue,
@@ -694,8 +688,8 @@ object CertifiedConsensus {
     *
     * Certificate placement is intentionally shifted by one round: public frame `N + 1` carries the transferable evidence for frame `N`. The
     * terminal frame has no child yet, so its evidence comes from the authenticated peer outcome endpoint. The generic fold owns only this
-    * ordering/continuity rule and the shared certificate checks; each layer adapter remains responsible for re-deriving its public
-    * artifact, context, membership transition, and (for Currency) binary envelope.
+    * ordering/continuity rule and the shared certificate checks; the Global L0 adapter remains responsible for re-deriving its public
+    * artifact, context, and membership transition.
     *
     * No partially replayed state is returned on failure. Callers may persist the returned states only after the complete fold succeeds;
     * this keeps a malformed interior child from installing a prefix as local authority.
@@ -769,9 +763,9 @@ object CertifiedConsensus {
     }
   }
 
-  /** Verify a certified value against the exact round identity reconstructed from a locally known parent. This is the common trust boundary
-    * for DAG/Currency same-key recovery: layer adapters provide their typed context and frozen sets, while this helper reuses the ordinary
-    * value/QC validation path.
+  /** Verify a certified value against the exact round identity reconstructed from a locally known parent. This is Global L0's same-key
+    * recovery trust boundary: the adapter provides typed context and frozen sets while this helper reuses the ordinary value/QC validation
+    * path.
     */
   def verifyBoundOutcome[F[_]: Async: Hasher: SecurityProvider, Context: Encoder](
     outcome: CertifiedOutcome,
@@ -841,77 +835,8 @@ object CertifiedConsensus {
     }
   }
 
-  /** Project the bounded, non-reconstructible part of a finalized Currency binary.
-    *
-    * The binary content is deliberately absent. It is the canonical `JsonSerializer` encoding of the public signed Currency artifact and
-    * can therefore be reconstructed by every sequential verifier. Carrying it here would recursively embed parent snapshots once public
-    * artifacts gain certified-lineage fields.
+  /** Global-L0 semantic-value validation. Layer adapters construct `expected` from the signed Global artifact and context.
     */
-  def currencyLayerEvidence(
-    binary: Signed[StateChannelSnapshotBinary]
-  ): CertifiedLayerEvidenceV1.Currency =
-    CertifiedLayerEvidenceV1.Currency(
-      binary.value.lastSnapshotHash,
-      binary.value.fee,
-      binary.proofs
-    )
-
-  /** Rebuild and authenticate a Currency binary from bounded child-carried evidence.
-    *
-    * This is the same construction used by `StateChannelSnapshotService.createBinary`: serialize the complete public signed artifact,
-    * combine those bytes with the parent-binary link and fee, then verify the carried signatures over that exact value. No alternate
-    * canonicalization or hash scheme is introduced. The complete frozen-committee signer set is required because a proof subset would
-    * otherwise make the reconstructed private outcome ambiguous across honest replayers.
-    */
-  def reconstructAndVerifyCurrencyBinary[
-    F[_]: Async: JsonSerializer: Hasher: SecurityProvider,
-    Artifact: Encoder
-  ](
-    publicSignedParentArtifact: Signed[Artifact],
-    evidence: CertifiedLayerEvidenceV1.Currency,
-    expectedParentBinaryHash: Hash,
-    frozenCommittee: Set[PeerId]
-  ): F[Either[String, Hashed[StateChannelSnapshotBinary]]] = {
-    val signerIds = evidence.parentBinaryProofs.toSortedSet.toList.map(_.id.toPeerId)
-    val structure = for {
-      _ <- Either.cond(signerIds.distinct.size === signerIds.size, (), "currency_binary_duplicate_signer")
-      _ <- Either.cond(
-        signerIds.toSet === frozenCommittee,
-        (),
-        "currency_binary_signers_not_complete_frozen_committee"
-      )
-      _ <- Either.cond(
-        evidence.parentBinaryLastSnapshotHash === expectedParentBinaryHash,
-        (),
-        "currency_binary_parent_mismatch"
-      )
-    } yield ()
-
-    structure match {
-      case Left(error) => error.asLeft[Hashed[StateChannelSnapshotBinary]].pure[F]
-      case Right(_) =>
-        JsonSerializer[F]
-          .serialize(publicSignedParentArtifact)
-          .map(bytes =>
-            Signed(
-              StateChannelSnapshotBinary(
-                evidence.parentBinaryLastSnapshotHash,
-                bytes,
-                evidence.parentBinaryFee
-              ),
-              evidence.parentBinaryProofs
-            )
-          )
-          .flatMap { reconstructed =>
-            reconstructed.hasValidSignature[F].flatMap {
-              case false => "currency_binary_invalid_signature".asLeft[Hashed[StateChannelSnapshotBinary]].pure[F]
-              case true  => reconstructed.toHashed[F].map(_.asRight[String])
-            }
-          }
-    }
-  }
-
-  /** Shared DAG/Currency semantic-value validation. Layer adapters only construct `expected` from their artifact/context types. */
   def validateValue[F[_]: Async: Hasher: SecurityProvider](
     actual: ProposalValue,
     expected: ProposalValue,

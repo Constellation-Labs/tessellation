@@ -273,15 +273,11 @@ object SnapshotDownloadStorage {
 
         val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)
 
-        // Fallback direct-deletion when the standard cleanupAboveOrdinal path leaves files behind.
-        // Triggered when persistedStorage.cleanupAboveOrdinal's movePersistedToTmp fails (e.g. tmp
-        // destination directories don't exist for orphaned hashes -- the failure is swallowed by
-        // processFileChunk as NoSuchFileException, so the ordinal hardlinks survive on disk).
-        // findAbove enumerates only the ordinal/ subtree, so deleting each ordinal hardlink is
-        // sufficient to satisfy the verify check. Any orphaned hash/ files are left in place; they
-        // are unreachable from normal lookup paths since the ordinal hardlink is gone, and an
-        // operator can collect them later. Bounded: a max-iteration cap prevents infinite loops if
-        // the deletion itself fails permission-wise.
+        // Bounded last-resort deletion if a concurrently recreated or malformed ordinal index
+        // survives the normal cleanup. The normal path already unlinks unreadable future ordinals,
+        // lazily removes valid future hashes, and quarantines unreadable hash-only content. This
+        // loop is therefore defense in depth for the ordinal namespace, not the primary orphan
+        // cleanup mechanism. A max-iteration cap prevents an infinite loop on permission errors.
         val maxFallbackIterations = 3
 
         def fallbackDirectDelete: F[Long] =
@@ -334,9 +330,13 @@ object SnapshotDownloadStorage {
                     if (stillRemaining > 0L)
                       Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(stillRemaining, ordinal))
                     else
-                      logger.info(
-                        s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"
-                      )
+                      // Deleting an ordinal hardlink can expose its content path as nlink=1.
+                      // Run the lazy orphan pass once more so that valid future content moves
+                      // to tmp and unreadable content is quarantined before recovery continues.
+                      persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp) >>
+                        logger.info(
+                          s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"
+                        )
                   }
                 }
             } else {

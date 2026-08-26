@@ -6,7 +6,6 @@ import cats.syntax.eq._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.signature.SignatureProof
@@ -21,8 +20,9 @@ object CertifiedConsensusSchema {
   val Version: Int = 35
 }
 
-/** Wire-only v35 types shared by DAG L0, Currency L0, public snapshot schemas and Snapshot Streaming. Construction and verification remain
-  * in node-shared `CertifiedConsensus`.
+/** Wire-only v35 types used by DAG L0, the Global incremental snapshot schema, and Snapshot Streaming. Construction and verification remain
+  * in node-shared `CertifiedConsensus`. Currency L0 deliberately uses its Currency-local flat synchronous protocol and does not construct
+  * or consume these certificates.
   */
 @derive(eqv, show)
 sealed trait ConsensusDomain extends Product with Serializable {
@@ -31,13 +31,11 @@ sealed trait ConsensusDomain extends Product with Serializable {
 
 object ConsensusDomain {
   case object DagL0 extends ConsensusDomain { val entryName: String = "dag-l0" }
-  case object CurrencyL0 extends ConsensusDomain { val entryName: String = "currency-l0" }
 
   implicit val encoder: Encoder[ConsensusDomain] = Encoder.encodeString.contramap(_.entryName)
   implicit val decoder: Decoder[ConsensusDomain] = Decoder.decodeString.emap {
-    case DagL0.entryName      => Right(DagL0)
-    case CurrencyL0.entryName => Right(CurrencyL0)
-    case other                => Left(s"Unknown consensus certification domain: $other")
+    case DagL0.entryName => Right(DagL0)
+    case other           => Left(s"Unknown consensus certification domain: $other")
   }
 }
 
@@ -207,24 +205,7 @@ object CertifiedOutcome {
   implicit val showInstance: Show[CertifiedOutcome] = Show.fromToString
 }
 
-/** Layer evidence for a child-carried parent certificate. Currency carries only the fields that cannot be reconstructed from the
-  * already-held public signed parent artifact. Carrying the entire StateChannelSnapshotBinary is forbidden: its content embeds that
-  * artifact and would recursively embed the full lineage.
-  */
-@derive(eqv, show, encoder, decoder)
-sealed trait CertifiedLayerEvidenceV1
-
-object CertifiedLayerEvidenceV1 {
-  @derive(eqv, show, encoder, decoder)
-  final case class Currency(
-    parentBinaryLastSnapshotHash: Hash,
-    parentBinaryFee: SnapshotFee,
-    parentBinaryProofs: NonEmptySet[SignatureProof]
-  ) extends CertifiedLayerEvidenceV1
-}
-
 @derive(eqv, show, encoder, decoder)
 final case class CertifiedLineageEvidenceV1(
-  parentOutcome: CertifiedOutcome,
-  parentLayerEvidence: Option[CertifiedLayerEvidenceV1]
+  parentOutcome: CertifiedOutcome
 )

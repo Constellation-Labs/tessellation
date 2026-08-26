@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.node.shared.infrastructure.storage.CrashSafeAtomicFileWriter
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
@@ -55,12 +56,10 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
   // including slow consumer drain. Lowering this is the primary lever for capping disk
   // contention from concurrent heavy-route serves.
   concurrentStreams: Semaphore[F],
-  // Parallel cache populated at write time so per-ordinal requests can emit a strong-validator
-  // ETag of `<ordinal>-<snapshotHash>` rather than ordinal-only. The ordinal-only form would be
-  // a lying validator: ord-N can map to different bytes on different forks, and a peer holding
-  // stale (N, H1) querying with `If-None-Match: "N"` would falsely 304 against the canonical
-  // (N, H2). Snapshots loaded from disk after a restart that aren't in this cache fall back to
-  // emitting no ETag -- strictly correct (always 200), just no optimization for that ordinal.
+  // Parallel cache populated at write time so per-ordinal requests can emit the
+  // existing semantic `(ordinal, snapshotValueHash)` validator. Currency exact
+  // recovery is unconditional and does not use this optimization; changing the
+  // HTTP validator contract belongs in a separately reviewed route/client RFC.
   hashCache: Cache[SnapshotOrdinal, Hash]
 )(
   implicit encSigned: Encoder[Signed[S]],
@@ -243,9 +242,8 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
     }
   }
 
-  /** ETag value for the immutable identity `(ordinal, snapshotHash)`. The HTTP strong-validator semantics demand that distinct bytes
-    * produce distinct ETag values; ordinal alone is insufficient because the same ordinal can carry different bytes across forks. Encoding
-    * both halves ensures a stale (ord, H1) cache cannot 304 against the canonical (ord, H2).
+  /** Existing semantic HTTP validator `(ordinal, snapshotValueHash)`. This is intentionally unchanged by Currency exact recovery so
+    * SnapshotClient's conditional request and server tags continue to agree.
     */
   def etagFor(ordinal: SnapshotOrdinal, snapshotHash: Hash): EntityTag =
     EntityTag(s"${ordinal.value.value}-${snapshotHash.value}", EntityTag.Strong)
@@ -301,9 +299,6 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
           // order would risk a sidecar pointing at a partially-written body.
           Files[F].size(path / ordinal.value.value.toString).flatMap(size => writeSidecar(ordinal, snapshotHash, size)) >>
           cleanupOldCombinedSnapshots() >>
-          // Populate hashCache so per-ordinal HTTP responses can emit the (ord, hash) ETag.
-          // Cleanup may evict entries older than `maxCheckpointsStored`; the cache's own
-          // capacity bound mirrors that retention so memory stays bounded.
           Async[F].delay(hashCache.put(ordinal, snapshotHash)) >>
           lastSnapshotInfo.set(LastCheckpointInfo(ordinal, snapshot.epochProgress, snapshotHash))
       } else {
@@ -311,8 +306,38 @@ final class CombinedSnapshotCheckpointFileSystemStorage[
       }
     }
 
+  /** Unconditionally and atomically replace a validated recovery checkpoint. This path is intentionally separate from epoch-based ordinary
+    * checkpoint retention: rollback/download authority must survive the next process restart even when its ordinal is not a periodic
+    * checkpoint boundary.
+    */
+  def replaceForRecovery(ordinal: SnapshotOrdinal, snapshot: Signed[S], state: SI, snapshotHash: Hash): F[Unit] = {
+    val printer = Printer.noSpaces.copy(dropNullValues = true)
+    val bytes = printer
+      .print(io.circe.Json.arr(snapshot.asJson, state.asJson))
+      .getBytes("UTF-8")
+
+    for {
+      // Recovery replaces the canonical suffix. Remove stale future
+      // checkpoints first so ordinary retention cannot select them as the two
+      // newest entries and evict the lower recovery anchor we are installing.
+      _ <- deleteAbove(ordinal)
+      writer <- CrashSafeAtomicFileWriter.make[F](path)
+      _ <- writer.write(toOrdinalName(ordinal), bytes)
+      _ <- writeSidecar(ordinal, snapshotHash, bytes.length.toLong)
+      _ <- cleanupOldCombinedSnapshots()
+      stored <- readBytes(toOrdinalName(ordinal)).flatMap(
+        _.liftTo[F](new IllegalStateException(s"Recovery combined checkpoint missing after replace ordinal=$ordinal"))
+      )
+      _ <- Async[F].raiseUnless(java.util.Arrays.equals(bytes, stored))(
+        new IllegalStateException(s"Recovery combined checkpoint exact disk readback failed ordinal=$ordinal")
+      )
+      _ <- Async[F].delay(hashCache.put(ordinal, snapshotHash))
+      _ <- lastSnapshotInfo.set(LastCheckpointInfo(ordinal, snapshot.epochProgress, snapshotHash))
+    } yield ()
+  }
+
   def delete(ordinal: SnapshotOrdinal): F[Unit] =
-    delete(toOrdinalName(ordinal)) >> deleteSidecar(ordinal)
+    delete(toOrdinalName(ordinal)) >> deleteSidecar(ordinal) >> Async[F].delay(hashCache.invalidate(ordinal))
 
   def listStoredOrdinals: F[Stream[F, SnapshotOrdinal]] =
     listFiles.map {

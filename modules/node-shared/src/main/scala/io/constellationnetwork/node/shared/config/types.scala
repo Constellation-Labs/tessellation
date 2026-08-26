@@ -234,8 +234,8 @@ object types {
     eventCutter: EventCutterConfig,
     maxFacilitatorCount: Option[PosInt] = None,
     // Environment-resolved cap consumed by FacilitatorSelector. This is deliberately distinct
-    // from maxFacilitatorCount above, whose scalar value also serves the legacy controller sizing
-    // fallback (notably on Currency L0). Populated only by SnapshotConfig.resolveEffectiveConsensusConfig
+    // from maxFacilitatorCount above, whose scalar value also serves legacy controller sizing.
+    // Populated only by SnapshotConfig.resolveEffectiveConsensusConfig
     // so the join/Facility fingerprint binds the cap actually used by the selector.
     facilitatorSelectionMax: Option[Int] = None,
     reStallTimeout: Option[FiniteDuration] = None,
@@ -346,18 +346,20 @@ object types {
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
-    // Deterministic controller target. Recent signers are preferred; additional selected peers
-    // are ranked by consensus-agreed peerQuality and stable peer id. On Global L0 this classifies
-    // Core eligibility and does not cap retained Tier-1 signing membership. Currency L0 retains
-    // the bounded active-set interpretation. Consensus-critical in both layers.
+    // Deterministic GL0 controller target. Recent signers are preferred; additional selected peers
+    // are ranked by consensus-agreed peerQuality and stable peer id. It classifies Core eligibility
+    // and does not cap retained Tier-1 signing membership. Currency L0's local synchronous engine
+    // does not consume the controller policy; the field remains in its join fingerprint only for
+    // release/config compatibility.
     activeFacilitatorTarget: Option[Int] = None,
-    // Hard cap for the deterministic controller cohort. On Global L0 this caps Core
-    // classification, not the broad signing/reward committee; on Currency L0 it retains the
-    // existing active-membership meaning. None preserves the selected-pool size.
+    // Hard cap for the deterministic GL0 controller cohort. It caps Core classification, not the
+    // broad signing/reward committee. Currency L0's local synchronous engine does not consume it.
+    // None preserves the selected-pool size.
     activeFacilitatorMax: Option[Int] = None,
     // v27 consensus peer controller: bounded integral score used for role classification.
-    // All fields below are consensus-critical because they change Core/tier derivation on
-    // Global L0 and active membership on Currency L0 from the same parent state.
+    // All fields below are consensus-critical for GL0 because they change Core/tier derivation
+    // from the same parent state. Currency L0 retains them only in the configuration fingerprint;
+    // its flat synchronous committee does not use this controller.
     activeAdmissionPromoteThreshold: Int = 100,
     activeAdmissionRetainThreshold: Int = 70,
     activeAdmissionDemoteThreshold: Int = 40,
@@ -870,17 +872,16 @@ object types {
     //     the existing Signed/Hasher infrastructure; Proposal/VCC/TC gain optional
     //     certification fields. Activation is separately ordinal-gated so legacy
     //     controller/evidence windows can be flushed at one deterministic boundary.
-    //     DAG and Currency incremental snapshots gain a trailing optional `certifiedLineage`.
+    //     DAG incremental snapshots gain a trailing optional `certifiedLineage`.
     //     Full snapshot shapes remain frozen. A future compact checkpoint is a standalone,
     //     independently authorized manifest paired with an immutable combined incremental
     //     checkpoint. Below activation drop-null encoding preserves legacy incremental JSON
     //     bytes. Snapshot-info and state-proof schemas/calculation remain unchanged. Public
     //     activation never crosses the retired Kryo boundary.
     consensusSchemaVersion: Int = 35,
-    // Per-L0 activation key for v35 certified outcomes. DAG L0 and every Currency L0
-    // have independent snapshot-ordinal spaces, so this cannot live in the GL0-only
-    // FieldsAddedOrdinals bundle. SnapshotConfig resolves the current environment's
-    // value once at each consensus construction site and threads it here.
+    // DAG/Global-L0 activation key for v35 certified outcomes. Currency L0 deliberately
+    // remains on its flat synchronous protocol and never consults this key. SnapshotConfig
+    // resolves the current environment's value once at the GL0 consensus construction site.
     //
     // Long.MaxValue keeps the feature dormant when an environment has no configured
     // activation. This value is consensus-critical and included in
@@ -902,8 +903,7 @@ object types {
     // loop is single-threaded by construction; the pool size matters only for the fanned-out
     // round handlers that elect to shift back via `evalOn`.
     consensusDispatcherThreads: Int = 2,
-    // v20: env-resolved Core committee size, populated by the consensus construction site
-    // (GlobalSnapshotConsensus / CurrencySnapshotConsensus) from
+    // v20: env-resolved GL0 Core committee size, populated by GlobalSnapshotConsensus from
     // `SnapshotConfig.coreCommitteeSize.get(env).map(_.value).getOrElse(3)` BEFORE
     // `deterministicConfigHash` is read. Threading the env-resolved value through here lets
     // the hash include it without restructuring the HOCON layer or duplicating env resolution.
@@ -971,8 +971,8 @@ object types {
       *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
       *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
       *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
-      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: Core-controller expansion and cap on GL0; Currency retains its bounded
-      *     active-set interpretation
+      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: GL0 Core-controller expansion and cap; retained but behaviorally inert in
+      *     Currency L0's flat synchronous engine
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `maxRoundDuration`: v35 bounds the committed leader-proposed consensus end time; before v35 it was only a local watchdog
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
@@ -1197,10 +1197,9 @@ object types {
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     maxFacilitatorCount: Map[AppEnvironment, PosInt] = Map.empty,
-    // V35 certified-outcome activation, keyed by environment but interpreted in this
-    // L0 application's own snapshot-ordinal space. Keeping the map on SnapshotConfig
-    // lets DAG L0 and each Currency L0 configure their own boundary while reusing the
-    // same generic ConsensusConfig/advancer machinery. Absent means disabled.
+    // V35 DAG/Global-L0 certified-outcome activation, keyed by environment and interpreted
+    // in the Global snapshot-ordinal space. Currency L0 does not use certified outcomes.
+    // Absent means disabled.
     certifiedConsensusActivationOrdinal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // v19 multi-committee minimum Core size, keyed by AppEnvironment. Targets observed
     // committee sizes: testnet ~14 peers -> Core 5, mainnet ~150 peers -> Core 15,
@@ -1215,8 +1214,7 @@ object types {
     // so the strict L0 config-hash join fence rejects divergent operator values. Facility
     // comparison remains a post-join diagnostic. The advertised-version `versionHash` is a separate software fence.
     // The `Map[AppEnvironment, PosInt]` shape is
-    // preserved -- env resolution still happens at the construction site
-    // (GlobalSnapshotConsensus / CurrencySnapshotConsensus); only the resolved scalar is
+    // preserved -- env resolution still happens at the GL0 construction site; only the resolved scalar is
     // additionally threaded into the hash.
     coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
     // v33 quorum-denominator shrink activation threshold, keyed by AppEnvironment (the
@@ -1242,22 +1240,22 @@ object types {
     // controller classification before churning through expansion/reserve. An absent env entry resolves to the
     // DemotionConsecutiveMisses floor (3 = the pre-change lookback). Testnet widens to the full
     // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
-    // purpose. On Global L0 this setting does not cap a retained Tier-1 signing lease;
-    // Currency L0 retains its bounded active-set interpretation.
+    // purpose. This does not cap a retained Tier-1 signing lease. Currency L0's synchronous
+    // engine does not consume the controller setting.
     activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
     // Core-controller target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved value is threaded
     // into `ConsensusConfig.activeFacilitatorTarget`, which folds into `deterministicConfigHash`).
     // On Global L0 it sizes the score/recent-signer Core classification, not the broad
-    // signing/reward committee or certified open-admission lane. Currency L0 retains it as the
-    // active-set/open-admission deficit target. INVARIANT: must EXCEED `coreCommitteeSize` so the
+    // signing/reward committee or certified open-admission lane. Currency L0's synchronous
+    // engine does not consume it. INVARIANT: must EXCEED `coreCommitteeSize` so the
     // controller has classification headroom. Scaled 2c+1 in the conf files.
     // Absent env entries preserve the ConsensusConfig scalar resolution.
     activeFacilitatorTarget: Map[AppEnvironment, Int] = Map.empty,
     // Core-controller cap, keyed by AppEnvironment (same pattern; folds into the hash via
     // `ConsensusConfig.activeFacilitatorMax`). Bounds the sticky recent-signer classification and
     // probation headroom. It does not cap retained Core + Tier-1 membership on Global L0;
-    // Currency L0 retains the bounded active-set policy. INVARIANT: must be >= the environment's
+    // Currency L0's synchronous engine does not consume it. INVARIANT: must be >= the environment's
     // `coreCommitteeSize`. Scaled 4c+1 from Core size.
     activeFacilitatorMax: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,

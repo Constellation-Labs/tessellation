@@ -54,7 +54,7 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
     val result = Gl0RecoverySeedCommittee.validate(
       seed,
       requiredMember = peerA,
-      seedlist = Set(peerA, peerB, peerC),
+      seedlist = Some(Set(peerA, peerB, peerC)),
       allowanceList = Some(Set(peerA, peerB, peerC)),
       maxFacilitatorCount = Some(3),
       quorumThresholdFraction = 2.0 / 3.0
@@ -63,11 +63,35 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
     expect.same(Right(seed), result)
   }
 
+  pureTest("a hash-fenced custom allowance list is sufficient when the fleet has no seedlist") {
+    val seed = parse(s"${peerA.value.value},${peerB.value.value},${peerC.value.value}")
+
+    val allowanceOnly = Gl0RecoverySeedCommittee.validate(
+      seed,
+      requiredMember = peerA,
+      seedlist = None,
+      allowanceList = Some(Set(peerA, peerB, peerC)),
+      maxFacilitatorCount = None,
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+    val noTrustRoot = Gl0RecoverySeedCommittee.validate(
+      seed,
+      requiredMember = peerA,
+      seedlist = None,
+      allowanceList = None,
+      maxFacilitatorCount = None,
+      quorumThresholdFraction = 2.0 / 3.0
+    )
+
+    expect.same(Right(seed), allowanceOnly) &&
+    expect(noTrustRoot.left.exists(_.reason.contains("neither seedlist nor hash-fenced custom allowance list")))
+  }
+
   pureTest("static validation rejects missing self, membership-boundary violations, and selector truncation") {
     val seed = parse(s"${peerA.value.value},${peerB.value.value},${peerC.value.value}")
     val common = (
       requiredMember: PeerId,
-      seedlist: Set[PeerId],
+      seedlist: Option[Set[PeerId]],
       allowance: Option[Set[PeerId]],
       max: Option[Int]
     ) =>
@@ -80,10 +104,10 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
         quorumThresholdFraction = 2.0 / 3.0
       )
 
-    expect(common(peer('d'), Set(peerA, peerB, peerC), None, None).isLeft) &&
-    expect(common(peerA, Set(peerA, peerB), None, None).isLeft) &&
-    expect(common(peerA, Set(peerA, peerB, peerC), Some(Set(peerA, peerB)), None).isLeft) &&
-    expect(common(peerA, Set(peerA, peerB, peerC), None, Some(2)).isLeft)
+    expect(common(peer('d'), Some(Set(peerA, peerB, peerC)), None, None).isLeft) &&
+    expect(common(peerA, Some(Set(peerA, peerB)), None, None).isLeft) &&
+    expect(common(peerA, Some(Set(peerA, peerB, peerC)), Some(Set(peerA, peerB)), None).isLeft) &&
+    expect(common(peerA, Some(Set(peerA, peerB, peerC)), None, Some(2)).isLeft)
   }
 
   pureTest("static validation rejects sub-three and next-seat-infeasible recovery committees") {
@@ -93,7 +117,7 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
     val singletonResult = Gl0RecoverySeedCommittee.validate(
       singleton,
       peerA,
-      Set(peerA),
+      Some(Set(peerA)),
       None,
       None,
       quorumThresholdFraction = 2.0 / 3.0
@@ -101,7 +125,7 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
     val unanimousResult = Gl0RecoverySeedCommittee.validate(
       pair,
       peerA,
-      Set(peerA, peerB),
+      Some(Set(peerA, peerB)),
       None,
       None,
       quorumThresholdFraction = 1.0
@@ -109,7 +133,7 @@ object Gl0RecoverySeedCommitteeSuite extends SimpleIOSuite {
     val undersizedPair = Gl0RecoverySeedCommittee.validate(
       pair,
       peerA,
-      Set(peerA, peerB),
+      Some(Set(peerA, peerB)),
       None,
       None,
       quorumThresholdFraction = 2.0 / 3.0

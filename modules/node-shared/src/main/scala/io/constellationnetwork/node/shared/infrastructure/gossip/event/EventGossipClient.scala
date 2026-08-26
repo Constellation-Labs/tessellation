@@ -41,6 +41,11 @@ trait EventGossipClient[F[_], Event] {
     */
   def getIHave: PeerResponse[F, IHave]
 
+  /** Check exactly the requested hashes, independent of the peer's bounded periodic IHAVE snapshot. Used by consensus availability
+    * barriers.
+    */
+  def getIHaveFor(request: IWantRequest): PeerResponse[F, IHave]
+
   /** Get only the peer's current chain tip.
     *
     * This reuses the chain-tip payload already carried by [[IHave]] without serializing the potentially large event-hash set. It is
@@ -73,6 +78,11 @@ object EventGossipClient {
 
       override def getIHave: PeerResponse[F, IHave] =
         PeerResponse[F, IHave]("events/ihave")(client, session)
+
+      override def getIHaveFor(request: IWantRequest): PeerResponse[F, IHave] =
+        PeerResponse[F, F, IHave]("events/ihave", POST)(client, session) { (req, c) =>
+          c.expect[IHave](req.withEntity(request))
+        }
 
       override def getChainTip: PeerResponse[F, Option[ChainTip]] =
         PeerResponse[F, Option[ChainTip]]("events/chain-tip")(client, session)

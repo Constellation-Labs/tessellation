@@ -5,11 +5,10 @@ object Dependencies {
   object V {
     val bouncyCastle = "1.83"
     val betterFiles = "3.9.2"
-    // Protocol pin. V35 CertifiedLayerEvidenceV1 reconstructs the exact Brotli-compressed
-    // Signed[CurrencySnapshotArtifact] bytes before verifying the historical binary proofs.
-    // Keep 1.12.0 for the V1 verifier permanently (the golden preimage is pinned in
-    // CertifiedConsensusSuite). A future encoder must be a new layer-evidence version while
-    // retaining this implementation. Independently, >= 1.13.0 breaks existing compatibility.
+    // State-channel binary encoder compatibility. All facilitators in one Currency release must
+    // construct the same bytes, and >= 1.13.0 has changed the encoded output in repository tests.
+    // Historical binaries are consumed as received bytes; Global v35 lineage does not reconstruct
+    // or re-compress Currency ancestry, so this is not a permanent v35 verifier dependency.
     val brotli4j = "1.12.0"
     val cats = "2.13.0"
     val catsEffect = "3.6.3"

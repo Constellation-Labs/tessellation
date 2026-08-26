@@ -290,9 +290,7 @@ object ConsensusEventLoop {
     // auditor's deterministic target when authorizing a paired atomic admission vote.
     parentRoundCommitteeOf: Outcome => Set[PeerId],
     openAdmissionCadenceOf: Key => Boolean,
-    // Optional local proof view for the exact next-seat finality-headroom gate. Global L0
-    // supplies parent snapshot proof signers; Currency L0 deliberately leaves this absent
-    // because unanimity cannot prove an unseated (n + 1)th signer.
+    // Optional local proof view for the exact next-seat finality-headroom gate. Global L0 supplies parent snapshot proof signers.
     locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
     // Monotonic certified-lineage fact. False only for the exact canonical from-genesis
     // singleton before its first 1 -> 2 expansion.
@@ -301,9 +299,8 @@ object ConsensusEventLoop {
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission
-    // Ready-only while allowing carried probation peers to prove an exact tip before Ready;
-    // Currency L0 leaves direct probing disabled.
+    // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission Ready-only while allowing carried probation peers to
+    // prove an exact tip before Ready.
     admissionCandidateTipProbe: Option[AdmissionCandidateTipProbe.Probes[F]],
     // Layer-supplied HTTP preflight for AbandonmentTracker's rumor-stale escalation shape (issue
     // #1533): does a corroborated group of Ready peers report the same committed snapshot at or
@@ -320,8 +317,7 @@ object ConsensusEventLoop {
     // CheckEvictionAssembly command from its round-creation finality audit before the first
     // Facility is sent. Other layers retain the internal-queue behavior.
     injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None,
-    // Typed, layer-owned persistence hooks. Defaults preserve every existing caller; DAG/Currency
-    // use these for recovery sidecars without coupling the generic engine to either outcome schema.
+    // Typed persistence hooks keep Global L0 recovery sidecars out of the generic event loop.
     onOutcomeFinalized: Option[Outcome => F[Unit]] = None,
     onOutcomeInitialized: Option[Outcome => F[Unit]] = None,
     onOutcomePreInitialize: Option[Outcome => F[Unit]] = None,

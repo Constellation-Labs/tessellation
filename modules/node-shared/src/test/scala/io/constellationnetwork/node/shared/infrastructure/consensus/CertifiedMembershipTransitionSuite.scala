@@ -25,36 +25,6 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect.same(Right(List(a, b, c, d)), expansion)
   }
 
-  test("Currency certified membership retains bounded contraction, expansion, and replacement semantics") {
-    val contraction = CertifiedMembershipTransition.applyCurrencyTo(committee, Set.empty, Set(b), maxChanges = 1)
-    val expansion = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(d), Set.empty, maxChanges = 1)
-    val replacement = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(d), Set(b), maxChanges = 1)
-
-    expect.same(Right(List(a, c)), contraction) &&
-    expect.same(Right(List(a, b, c, d)), expansion) &&
-    expect.same(Right(List(a, c, d)), replacement)
-  }
-
-  test("Currency certified membership rejects ambiguous or out-of-bounds transitions") {
-    val overlap = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(b), Set(b), maxChanges = 1)
-    val seatedAdmission = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(a), Set.empty, maxChanges = 1)
-    val unknownEviction = CertifiedMembershipTransition.applyCurrencyTo(committee, Set.empty, Set(peer(9)), maxChanges = 1)
-    val overCap = CertifiedMembershipTransition.applyCurrencyTo(committee, Set(d, peer(5)), Set.empty, maxChanges = 1)
-
-    expect(overlap.isLeft) &&
-    expect(seatedAdmission.isLeft) &&
-    expect(unknownEviction.isLeft) &&
-    expect(overCap.isLeft)
-  }
-
-  test("Currency certified membership permits singleton contraction but rejects an empty committee") {
-    val singleton = CertifiedMembershipTransition.applyCurrencyTo(committee, Set.empty, Set(b, c), maxChanges = 2)
-    val empty = CertifiedMembershipTransition.applyCurrencyTo(List(a), Set.empty, Set(a), maxChanges = 1)
-
-    expect.same(Right(List(a)), singleton) &&
-    expect.same(Left("currency_membership_empty_committee"), empty)
-  }
-
   test("one-for-one replacement preserves cardinality and inherited ordering") {
     val result = CertifiedMembershipTransition.applyTo(committee, Set(d), Set(b), maxChanges = 1)
 

@@ -171,7 +171,7 @@ class StateTransitions[
     *
     * Legacy rounds retain the wider witness pool and optional shrink rung. V35 VCC/TC certificates are instead made only from uniquely
     * identified frozen-Core voters and require the same BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in
-    * the shared state machine prevents DAG and Currency -- and the VCC and TC paths -- from drifting onto different safety universes.
+    * the shared state machine prevents the VCC and TC paths from drifting onto different safety universes.
     */
   private def certificateQuorum[A](
     state: ConsensusState[Key, Status, Outcome, Kind],
@@ -1056,8 +1056,8 @@ class StateTransitions[
             case Right(_) =>
               val shrinkFloor = q
               val currentActive = state.facilitators.value
-              // Layer policy remains the authority for N+1 health-derived membership changes. V35 additionally freezes the current
-              // round in both layers, so a Currency eviction certificate may affect N+1 without shrinking N during this view change.
+              // The policy remains the authority for health-derived membership changes. V35 freezes the current GL0 round while advancing
+              // this view.
               val viewMembershipPolicy = ctx.membershipPolicy.forCertifiedView(state.certifiedConsensusActive)
               val timeoutMembership = viewMembershipPolicy.timeoutMembership(
                 facilitators = currentActive,
@@ -1078,9 +1078,7 @@ class StateTransitions[
                   ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                     maybeState match {
                       case Some(s) if s.viewNumber.toLong === fromView =>
-                        // Use the live CAS state for legacy no-shrink. GL0 retain mode
-                        // canonicalizes that live active view back to the frozen round-start
-                        // committee; a certified Currency shrink keeps its certified result.
+                        // GL0 retain mode canonicalizes the live active view back to the frozen round-start committee.
                         val activeAfterCertifiedShrink =
                           if (timeoutMembership.shrinkApplied) timeoutMembership.facilitators else s.facilitators.value
                         val canonicalFacilitators = viewMembershipPolicy.canonicalFacilitators(

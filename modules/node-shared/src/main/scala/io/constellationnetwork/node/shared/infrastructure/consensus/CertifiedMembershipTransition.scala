@@ -117,41 +117,6 @@ object CertifiedMembershipTransition {
       retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
     }
 
-  /** Validate Currency L0's deliberately distinct certified membership policy.
-    *
-    * Currency retains its existing authority to contract, expand, or replace within the configured per-round bounds. The common structural
-    * checks remain identical to DAG (no overlap, no duplicate seat, no eviction outside the frozen roster); only DAG's equal-sized
-    * replacement requirement is omitted. Keeping this validator beside [[validate]] makes the policy difference explicit without copying
-    * ordering/application logic into the Currency download verifier.
-    */
-  def applyCurrencyTo(
-    roundStartCommittee: List[PeerId],
-    admittedPeers: Set[PeerId],
-    evictedPeers: Set[PeerId],
-    maxChanges: Int
-  ): Either[String, List[PeerId]] = {
-    val limit = math.max(0, maxChanges)
-    val roundStartSet = roundStartCommittee.toSet
-
-    for {
-      _ <- Either.cond(admittedPeers.intersect(evictedPeers).isEmpty, (), "currency_membership_admit_evict_overlap")
-      _ <- Either.cond(
-        admittedPeers.intersect(roundStartSet).isEmpty,
-        (),
-        "currency_membership_admitted_already_seated"
-      )
-      _ <- Either.cond(evictedPeers.subsetOf(roundStartSet), (), "currency_membership_evicted_not_seated")
-      _ <- Either.cond(admittedPeers.size <= limit, (), "currency_membership_admissions_over_cap")
-      _ <- Either.cond(evictedPeers.size <= limit, (), "currency_membership_evictions_over_cap")
-      retained = roundStartCommittee.distinct.filterNot(evictedPeers.contains)
-      retainedSet = retained.toSet
-      next = retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
-      // Currency legitimately supports singleton committees and solo recovery, but no consensus
-      // state can safely construct the downstream NonEmptySet from an empty transition result.
-      _ <- Either.cond(next.nonEmpty, (), "currency_membership_empty_committee")
-    } yield next
-  }
-
   /** Local Core prepare-vote policy for a structurally valid certified membership value.
     *
     * Proof subsets are intentionally local and therefore can only make this voter abstain from an admission-only expansion. They never

@@ -29,11 +29,17 @@ object CurrencySnapshotCleanupStorage {
       case object CurrencyCleanupError extends NoStackTrace
 
       def deletePersisted(hash: Hash, ordinal: SnapshotOrdinal): F[Unit] =
-        persistedStorage.delete(ordinal) >>
-          persistedStorage.delete(hash)
+        // Remove the content-addressed path first. Both indexes are hardlinks,
+        // so the ordinal still owns readable bytes if the process dies between
+        // deletes and a retry can rediscover/recompute the same hash. Deleting
+        // the ordinal first can strand a remotely servable future hash with no
+        // ordinal index by which recovery can identify it.
+        persistedStorage.delete(hash) >>
+          persistedStorage.delete(ordinal)
 
-      def cleanupAbove(
-        ordinal: SnapshotOrdinal
+      private def cleanup(
+        ordinal: SnapshotOrdinal,
+        anchorHash: Option[Hash]
       )(implicit hs: HasherSelector[F]): F[Unit] = {
         val deleteSnapshotInfo = for {
           _ <- logger.info(s"Starting cleanup above ordinal ${ordinal.show}")
@@ -46,8 +52,10 @@ object CurrencySnapshotCleanupStorage {
           _ <- logger.info(s"Successfully deleted snapshot_info files above ordinal ${ordinal.show}")
         } yield ()
 
-        val cleanupAboveOrdinal = persistedStorage
-          .cleanupAboveOrdinal(ordinal, deletePersisted)
+        val cleanupAboveOrdinal = anchorHash
+          .fold(persistedStorage.cleanupAboveOrdinal(ordinal, deletePersisted))(
+            persistedStorage.cleanupCanonicalSuffix(ordinal, _, deletePersisted)
+          )
           .handleErrorWith {
             case _: java.nio.file.NoSuchFileException =>
               // Files already cleaned up - not an error
@@ -75,5 +83,11 @@ object CurrencySnapshotCleanupStorage {
           cleanupAboveOrdinal >>
           verify
       }
+
+      def cleanupAbove(ordinal: SnapshotOrdinal)(implicit hs: HasherSelector[F]): F[Unit] =
+        cleanup(ordinal, none)
+
+      def cleanupCanonicalSuffix(ordinal: SnapshotOrdinal, anchorHash: Hash)(implicit hs: HasherSelector[F]): F[Unit] =
+        cleanup(ordinal, anchorHash.some)
     }
 }

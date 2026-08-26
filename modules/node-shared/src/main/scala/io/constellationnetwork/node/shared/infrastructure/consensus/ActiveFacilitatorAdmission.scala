@@ -14,15 +14,14 @@ object ActiveFacilitatorAdmission {
   /** Whether the controller may expand its classified active cohort on `ordinalValue`.
     *
     * On Global L0 this cadence applies both to `fromRecentSigners` Core classification and to certified open Ready-at-tip admission.
-    * Penalty/probation readmission remains a separate recovery lane and is not cadence-gated. Currency L0 retains its bounded active-set
-    * policy. The interval is floored to 1 so a non-positive value degrades to "every round".
+    * Penalty/probation readmission remains a separate recovery lane and is not cadence-gated. The interval is floored to 1 so a
+    * non-positive value degrades to "every round".
     */
   def expansionAllowedAtOrdinal(ordinalValue: Long, expansionIntervalRounds: Int): Boolean =
     ordinalValue % math.max(1, expansionIntervalRounds).toLong == 0L
 
-  /** The target size for the controller's classified cohort. On Global L0 it is retained for deterministic sizing, compatibility checks,
-    * and observability but is not a cap or deficit gate for broad Core + Tier-1 signing/reward membership. Currency L0 deliberately retains
-    * the target as its open-admission deficit gate because that layer's configured finality threshold is unanimity.
+  /** The target size for Global L0's classified controller cohort. It is retained for deterministic sizing, compatibility checks, and
+    * observability but is not a cap or deficit gate for broad Core + Tier-1 signing/reward membership.
     */
   def activeAdmissionTarget(
     activeFacilitatorTarget: Option[Int],

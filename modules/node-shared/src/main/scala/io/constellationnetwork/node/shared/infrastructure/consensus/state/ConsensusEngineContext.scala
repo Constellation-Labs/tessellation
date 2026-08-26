@@ -77,8 +77,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   consensusClient: ConsensusClient[F, Key, Outcome],
   facilitatorSelector: FacilitatorSelector,
   peerQualityTracker: PeerQualityTracker[F],
-  // Layer boundary for health-derived membership removal. Global L0 retains signing
-  // leases; Currency L0 preserves the legacy automatic-removal behavior.
+  // Boundary for Global L0 health-derived membership removal. The deployed policy retains signing leases.
   membershipPolicy: HealthDerivedMembershipPolicy,
   // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
   // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
@@ -102,10 +101,9 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // forever (gl0-4 in fork-recovery E2E). Same wiring source as `StallDetector`'s B2
   // admission emission — see the ConsensusEventLoop construction site.
   probationPeersOf: Outcome => Set[PeerId],
-  // Layer-specific extraction of consensus-agreed peerQuality from the carried outcome.
+  // Extraction of consensus-agreed peerQuality from the carried outcome.
   // Used to widen the witness pool for B1/B2/VCC cert assembly beyond the round-start
-  // committee. peerQuality lives in the concrete outcome type (GlobalConsensusOutcome /
-  // CurrencyConsensusOutcome) and is signed as part of the snapshot, so every honest node
+  // committee. peerQuality lives in the concrete GlobalConsensusOutcome and is signed as part of the snapshot, so every honest node
   // computes byte-identical maps and therefore the same wider witness pool. See
   // `StateTransitions.witnessPoolFor` for the deterministic derivation.
   //

@@ -12,8 +12,7 @@ import io.constellationnetwork.security.hash.Hash
   * than that cap. Post-stall, several candidates can assemble certificates for the same round; without this cap every leader proposal
   * carries the full set and every validator rejects it -- a permanent proposal-rejection loop (live wedge at ordinal 3150066, alpha.149).
   *
-  * Shared between dag-l0's `GlobalSnapshotConsensusStateAdvancer` and currency-l0's `CurrencySnapshotConsensusStateAdvancer` (see
-  * `feedback_share_logic_no_drift` -- consensus-adjacent logic must not be replicated).
+  * Kept as a pure helper so Global L0 proposal construction and validation tests share one ordering rule.
   *
   * Selection is deterministic under input-ordering permutations: candidates are sorted by `AdmissionCertificate.ordering` (lexicographic on
   * the target `PeerId` value first, then reason / facilitatorsHash / lastSnapshotHash as tie-breakers) and the first `cap` are kept. Two

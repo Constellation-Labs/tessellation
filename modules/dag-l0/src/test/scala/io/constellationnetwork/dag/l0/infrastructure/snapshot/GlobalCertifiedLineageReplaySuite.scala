@@ -284,7 +284,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       activeNodeCollaterals = Some(SortedMap.empty),
       nodeCollateralWithdrawals = Some(SortedMap.empty),
       peerHistory = Some(prior.signedArtifactPeerHistory),
-      certifiedLineage = prior.finished.certifiedOutcome.map(CertifiedLineageEvidenceV1(_, None))
+      certifiedLineage = prior.finished.certifiedOutcome.map(CertifiedLineageEvidenceV1(_))
     )
 
   private def signedRoot(pairs: List[KeyPair])(
@@ -369,7 +369,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       facilitatorSelector = FacilitatorSelector.make(None),
       seedlistPeerIds = Set.empty,
       membershipPolicy = HealthDerivedMembershipPolicy.RetainSigningLeases,
-      onRecoverySeedSuccessor = None,
+      onRecoverySeedOutcomeCommitted = None,
       scheduleSoftResetRestart = _ => IO.unit
     )
 
@@ -580,10 +580,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       _ <- IO.fromEither(bound.leftMap(new IllegalStateException(_)))
       _ <- IO.fromEither(triggerAuthorization.leftMap(new IllegalStateException(_)))
       _ <- IO.fromEither(artifactProofs.leftMap(new IllegalStateException(_)))
-      parentLineage <- IO.fromEither(parentLineageValidation.leftMap(new IllegalStateException(_)))
-      _ <- IO.raiseUnless(parentLineage.forall(_.parentLayerEvidence.isEmpty))(
-        new IllegalStateException("DAG lineage carried layer evidence")
-      )
+      _ <- IO.fromEither(parentLineageValidation.leftMap(new IllegalStateException(_)))
       _ <- IO.raiseUnless(frame.artifact.value.peerHistory.contains(prior.signedArtifactPeerHistory))(
         new IllegalStateException("public artifact peerHistory was not derived from the trusted parent")
       )
@@ -1035,7 +1032,18 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         stateAdvancer = stateAdvancer
       )
       rejected <- unseedlistedValidator(candidate).attempt
-      noSeedlistValidator = GlobalCertifiedDownloadValidator.make[IO](
+      allowanceOnlyValidator = GlobalCertifiedDownloadValidator.make[IO](
+        config = config,
+        coreCommitteeSize = 3,
+        seedlistPeerIds = Set.empty,
+        allowancePeerIds = Some(allSeedlisted),
+        facilitatorSelector = FacilitatorSelector.make(None),
+        isContextEligible = (_, _) => IO.pure(true),
+        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
+        stateAdvancer = stateAdvancer
+      )
+      allowanceOnlyAccepted <- allowanceOnlyValidator(candidate).attempt
+      noTrustRootValidator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
         coreCommitteeSize = 3,
         seedlistPeerIds = Set.empty,
@@ -1045,7 +1053,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts),
         stateAdvancer = stateAdvancer
       )
-      noSeedlist <- noSeedlistValidator(candidate).attempt
+      noTrustRoot <- noTrustRootValidator(candidate).attempt
       disallowedValidator = GlobalCertifiedDownloadValidator.make[IO](
         config = config,
         coreCommitteeSize = 3,
@@ -1081,14 +1089,19 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         case Right(_)    => success
         case Left(error) => failure(s"valid alternate terminal proof envelope was rejected: ${error.getMessage}")
       }
+      val allowanceOnlyExpectation = allowanceOnlyAccepted match {
+        case Right(_)    => success
+        case Left(error) => failure(s"allowance-only public recovery validation unexpectedly failed: ${error.getMessage}")
+      }
 
       acceptedExpectation &&
       firstSuccessorExpectation &&
       alternateTerminalExpectation &&
+      allowanceOnlyExpectation &&
       expect(underQuorumTerminalRejected.left.exists(_.getMessage.contains("artifact_under_quorum"))) &&
       expect(invalidTerminalRejected.left.exists(_.getMessage.contains("invalid_artifact_signature"))) &&
       expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_member_not_seedlisted"))) &&
-      expect(noSeedlist.left.exists(_.getMessage.contains("recovery_seed_boundary_seedlist_unavailable"))) &&
+      expect(noTrustRoot.left.exists(_.getMessage.contains("recovery_seed_boundary_trust_root_unavailable"))) &&
       expect(disallowed.left.exists(_.getMessage.contains("recovery_seed_boundary_member_not_allowed"))) &&
       expect(ineligible.isLeft)
     }
