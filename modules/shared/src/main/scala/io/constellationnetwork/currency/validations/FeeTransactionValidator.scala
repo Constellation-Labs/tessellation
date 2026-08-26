@@ -1,5 +1,6 @@
 package io.constellationnetwork.currency.validations
 
+import cats.data.Validated.{Invalid, Valid}
 import cats.data.ValidatedNec
 import cats.effect.Async
 import cats.syntax.all._
@@ -7,6 +8,7 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.currency.dataApplication.Errors._
 import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.security.SecurityProvider
@@ -126,11 +128,21 @@ object FeeTransactionValidator {
       }
   }
 
+  // Checks the proofs against the transaction bytes. validateFeeTransactionAddresses covers which wallet each
+  // proof names; this covers whether the proof was produced by that wallet's key.
+  private def validateFeeTransactionSignatures[F[_]: Async: JsonSerializer: SecurityProvider](
+    feeTransaction: Signed[FeeTransaction]
+  ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
+    FeeTransactionSignatureValidator.validate(feeTransaction).map {
+      case Valid(_)   => ().validNec[DataApplicationValidationError]
+      case Invalid(_) => InvalidSignature.asInstanceOf[DataApplicationValidationError].invalidNec[Unit]
+    }
+
   // Acceptance applies every fee transaction in the envelope, so every one of them has to be validated
   // here. Walking the data updates instead reaches a fee transaction only through getByDataUpdate, which
   // returns an Option -- a fee transaction referencing no data update present in the envelope is skipped
   // entirely and reaches acceptance unchecked.
-  def validateAllFeeTransactions[F[_]: Async: SecurityProvider](
+  def validateAllFeeTransactions[F[_]: Async: JsonSerializer: SecurityProvider](
     dataTransactions: DataTransactions,
     balances: Map[Address, Balance],
     dataApplication: BaseDataApplicationService[F]
@@ -152,7 +164,14 @@ object FeeTransactionValidator {
 
     dataUpdateHashes.flatMap { hashes =>
       feeTransactions.traverse { feeTransaction =>
-        validateFeeTransactionAddresses(feeTransaction).map(_.productR(validateFeeTransactionRefPresent(feeTransaction, hashes)))
+        // One EC verify per proof, with the proof count coming from the sender, so this runs only after the
+        // cheaper checks pass. A transaction failing those is rejected either way.
+        validateFeeTransactionAddresses(feeTransaction)
+          .map(_.productR(validateFeeTransactionRefPresent(feeTransaction, hashes)))
+          .flatMap { cheapChecks =>
+            if (cheapChecks.isValid) validateFeeTransactionSignatures(feeTransaction)
+            else cheapChecks.pure[F]
+          }
       }.map {
         _.foldLeft(().validNec[DataApplicationValidationError])(_.productR(_))
           .productR(validateSourcesHaveEnoughBalance(feeTransactions, balances))

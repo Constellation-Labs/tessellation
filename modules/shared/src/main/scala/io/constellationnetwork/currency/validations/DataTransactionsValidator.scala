@@ -10,6 +10,7 @@ import io.constellationnetwork.currency.dataApplication.Errors.MissingDataUpdate
 import io.constellationnetwork.currency.dataApplication.FeeTransaction.getByDataUpdate
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.validations.FeeTransactionValidator.{validateAllFeeTransactions, validateFeeTransaction}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -17,7 +18,7 @@ import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.signature.Signed
 
 object DataTransactionsValidator {
-  private def validateDataTransactions[F[_]: Async: SecurityProvider](
+  private def validateDataTransactions[F[_]: Async: JsonSerializer: SecurityProvider](
     dataTransactions: DataTransactions,
     balances: Map[Address, Balance],
     dataApplication: BaseDataApplicationService[F],
@@ -67,7 +68,7 @@ object DataTransactionsValidator {
   }
 
   // L1 is an admission check and never replays signed history, so it always runs the current rules.
-  def validateDataTransactionsL1[F[_]: Async: L1NodeContext: SecurityProvider](
+  def validateDataTransactionsL1[F[_]: Async: JsonSerializer: L1NodeContext: SecurityProvider](
     dataTransactions: DataTransactions,
     dataApplication: BaseDataApplicationL1Service[F],
     balances: Map[Address, Balance],
@@ -90,7 +91,7 @@ object DataTransactionsValidator {
 
   // L0 runs inside snapshot acceptance, which is re-executed verbatim when a signed snapshot is replayed,
   // so the caller decides which rules apply from an ordinal recorded in the history being replayed.
-  def validateDataTransactionsL0[F[_]: Async: L0NodeContext: SecurityProvider](
+  def validateDataTransactionsL0[F[_]: Async: JsonSerializer: L0NodeContext: SecurityProvider](
     dataTransactions: DataTransactions,
     dataApplication: BaseDataApplicationL0Service[F],
     balances: Map[Address, Balance],

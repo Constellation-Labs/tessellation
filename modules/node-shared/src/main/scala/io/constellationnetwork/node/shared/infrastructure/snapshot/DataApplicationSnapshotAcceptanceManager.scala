@@ -18,6 +18,7 @@ import io.constellationnetwork.currency.schema.currency.DataApplicationPart
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL0
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.block.processing.{BlockNotAcceptedReason, DataBlockNotAccepted}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -67,7 +68,7 @@ object DataApplicationSnapshotAcceptanceManager {
       s"Calculated state hash=${current.show} does not match expected hash=${expected.show} from majority"
   }
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: Hasher: JsonSerializer: SecurityProvider](
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
