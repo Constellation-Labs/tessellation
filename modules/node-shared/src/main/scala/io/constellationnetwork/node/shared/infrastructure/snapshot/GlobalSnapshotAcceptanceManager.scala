@@ -108,6 +108,63 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
+  private[snapshot] def filterExpiredGlobalAllowSpends[F[_]: Async](
+    allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+    epochProgress: EpochProgress,
+    globalSpendTransactions: List[SpendTransaction],
+    suppressSpent: Boolean
+  )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = {
+    val expiredAllowSpends = allowSpends.view.mapValues(_.filter(_.lastValidEpochProgress < epochProgress)).to(SortedMap)
+
+    if (!suppressSpent) expiredAllowSpends.pure[F]
+    else {
+      val spentAllowSpendHashes = globalSpendTransactions.flatMap(_.allowSpendRef).toSet
+
+      expiredAllowSpends.toList.traverse {
+        case (address, signedAllowSpends) =>
+          signedAllowSpends.toList
+            .traverse(_.toHashed)
+            .map(_.filterNot(hashed => spentAllowSpendHashes.contains(hashed.hash)).map(_.signed).toSortedSet)
+            .map(address -> _)
+      }
+        .map(_.to(SortedMap))
+    }
+  }
+
+  private[snapshot] def updateGlobalBalancesByAllowSpends(
+    epochProgress: EpochProgress,
+    currentBalances: SortedMap[Address, Balance],
+    globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+    refundableExpiredGlobalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
+  ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] =
+    (globalAllowSpends |+| refundableExpiredGlobalAllowSpends)
+      .foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](Right(currentBalances)) {
+        case (accEither, (address, allowSpends)) =>
+          for {
+            acc <- accEither
+            initialBalance = acc.getOrElse(address, Balance.empty)
+
+            unexpiredBalance <- allowSpends
+              .filter(_.lastValidEpochProgress >= epochProgress)
+              .foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, allowSpend) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterAmount <- currentBalance.minus(SwapAmount.toAmount(allowSpend.amount))
+                  balanceAfterFee <- balanceAfterAmount.minus(AllowSpendFee.toAmount(allowSpend.fee))
+                } yield balanceAfterFee
+              }
+
+            expiredBalance <- allowSpends
+              .filter(_.lastValidEpochProgress < epochProgress)
+              .foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, allowSpend) =>
+                for {
+                  currentBalance <- currentBalanceEither
+                  balanceAfterExpiredAmount <- currentBalance.plus(SwapAmount.toAmount(allowSpend.amount))
+                } yield balanceAfterExpiredAmount
+              }
+          } yield acc.updated(address, expiredBalance)
+      }
+
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSyncConfig: MetagraphsSyncConfig,
@@ -186,6 +243,9 @@ object GlobalSnapshotAcceptanceManager {
       // Below the activation ordinal the retired-reference ledger is neither read nor written, so signed history
       // replays byte-identically: the new GlobalSnapshotInfo field stays None and JsonSerializer drops nulls.
       val preventAllowSpendResurrection = ordinal > preventingAllowSpendResurrectionOrdinal
+
+      val fixingGlobalAllowSpendExpiration = fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration
+        .getOrElse(environment, SnapshotOrdinal.unsafeApply(Long.MaxValue))
 
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
@@ -379,8 +439,14 @@ object GlobalSnapshotAcceptanceManager {
             .flatMap(spendAction => spendAction.spendTransactions.toList)
             .toList
 
+        globalSpendTransactions = allAcceptedSpendTxns.filter(_.currencyId.isEmpty)
+
         globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+        )
+        lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(
+          None,
+          SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
         )
         globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
           SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
@@ -415,12 +481,19 @@ object GlobalSnapshotAcceptanceManager {
           allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
         )
 
+        refundableExpiredGlobalAllowSpends <- filterExpiredGlobalAllowSpends(
+          lastActiveGlobalAllowSpends,
+          epochProgress,
+          globalSpendTransactions,
+          ordinal >= fixingGlobalAllowSpendExpiration
+        )
+
         updatedBalancesByAllowSpends <- Async[F].fromEither(
           updateGlobalBalancesByAllowSpends(
             epochProgress,
             updatedBalancesByRewards,
             globalAllowSpends,
-            globalActiveAllowSpends
+            refundableExpiredGlobalAllowSpends
           ).leftMap(ex => new RuntimeException(s"Balance arithmetic error updating balances by allow spends: $ex"))
         )
 
@@ -511,18 +584,10 @@ object GlobalSnapshotAcceptanceManager {
           case Left(error)     => throw new RuntimeException(s"Balance arithmetic error updating balances by token locks: $error")
         }
 
-        lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
         allGlobalAllowSpends <- (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList.traverse {
           case (address, allowSpends) =>
             allowSpends.toList.traverse(_.toHashed).map(address -> _)
         }.map(_.toSortedMap)
-
-        globalSpendTransactions = acceptedSpendActions.flatMap {
-          case (_, spendActions) =>
-            spendActions
-              .flatMap(_.spendTransactions.toList)
-              .filter(_.currencyId.isEmpty)
-        }.toList
 
         updatedBalancesBySpendTransactions = updateGlobalBalancesBySpendTransactions(
           updatedBalancesByTokenLocks,
@@ -672,10 +737,7 @@ object GlobalSnapshotAcceptanceManager {
         stateProof <- gsi.stateProof(maybeMerkleTree)
 
         allowSpendsExpiredEvents <- emitAllowSpendsExpired(
-          filterExpiredAllowSpends(
-            lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]),
-            epochProgress
-          )
+          refundableExpiredGlobalAllowSpends
         )
 
         tokenUnlocksEvents <- emitTokenUnlocks(
@@ -914,62 +976,11 @@ object GlobalSnapshotAcceptanceManager {
       }
     }
 
-    private def filterExpiredAllowSpends(
-      allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      epochProgress: EpochProgress
-    ): SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
-      AllowSpendAcceptance.filterExpiredAllowSpends(allowSpends, epochProgress)
-
     private def filterExpiredTokenLocks(
       tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       epochProgress: EpochProgress
     ): SortedMap[Address, SortedSet[Signed[TokenLock]]] =
       tokenLocks.view.mapValues(_.filter(_.unlockEpoch.exists(_ < epochProgress))).to(SortedMap)
-
-    private def updateGlobalBalancesByAllowSpends(
-      epochProgress: EpochProgress,
-      currentBalances: SortedMap[Address, Balance],
-      globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
-    ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] = {
-      val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-      val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)
-
-      (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](
-        Right(currentBalances)
-      ) {
-        case (accEither, (address, allowSpends)) =>
-          for {
-            acc <- accEither
-            initialBalance = acc.getOrElse(address, Balance.empty)
-
-            unexpiredBalance <- {
-              val unexpired = allowSpends.filter(_.lastValidEpochProgress >= epochProgress)
-
-              unexpired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(initialBalance)) { (currentBalanceEither, allowSpend) =>
-                for {
-                  currentBalance <- currentBalanceEither
-                  balanceAfterAmount <- currentBalance.minus(SwapAmount.toAmount(allowSpend.amount))
-                  balanceAfterFee <- balanceAfterAmount.minus(AllowSpendFee.toAmount(allowSpend.fee))
-                } yield balanceAfterFee
-              }
-            }
-
-            expiredBalance <- {
-              val expired = allowSpends.filter(_.lastValidEpochProgress < epochProgress)
-
-              expired.foldLeft[Either[BalanceArithmeticError, Balance]](Right(unexpiredBalance)) { (currentBalanceEither, allowSpend) =>
-                for {
-                  currentBalance <- currentBalanceEither
-                  balanceAfterExpiredAmount <- currentBalance.plus(SwapAmount.toAmount(allowSpend.amount))
-                } yield balanceAfterExpiredAmount
-              }
-            }
-
-            updatedAcc = acc.updated(address, expiredBalance)
-          } yield updatedAcc
-      }
-    }
 
     /** The `Some(allowSpend)` branch credits the destination and refunds the escrow remainder to the source without any matching debit -
       * the debit happened once, when the allow-spend was created. That only conserves value if a given reference is honored exactly once,
