@@ -1,5 +1,6 @@
 const { dag4 } = require('@stardust-collective/dag4');
 const axios = require('axios');
+const { CONSTANTS } = require('./constants');
 const { withRetry } = require("./operations");
 
 const createNetworkConfig = (args) => {
@@ -26,10 +27,16 @@ const createAndConnectAccount = (privateKey, networkConfig) => {
     return account;
 };
 
-const checkIfEpochProgressCanBeFetched = async (snapshotUrl, isCurrency) => {
-    await withRetry(
+const getEpochProgress = async (l0Url, isCurrency = false, { maxAttempts } = {}) => {
+    const snapshotUrl = isCurrency
+        ? `${l0Url}/snapshots/latest`
+        : `${l0Url}/global-snapshots/latest`;
+
+    return withRetry(
         async () => {
-            const { data: snapshot } = await axios.get(snapshotUrl);
+            const { data: snapshot } = await axios.get(snapshotUrl, {
+                timeout: CONSTANTS.HTTP_REQUEST_TIMEOUT_MS
+            });
             const epochProgress = isCurrency ?
                 snapshot.value.globalSyncView.epochProgress :
                 snapshot.value.epochProgress;
@@ -37,23 +44,12 @@ const checkIfEpochProgressCanBeFetched = async (snapshotUrl, isCurrency) => {
             if (!epochProgress) {
                 throw new Error("EpochProgress still in sync process")
             }
+
+            return epochProgress;
         },
-        { name: `Get epoch progress` }
+        { name: `Get epoch progress`, maxAttempts }
     );
-}
-
-const getEpochProgress = async (l0Url, isCurrency = false) => {
-    const snapshotUrl = isCurrency
-        ? `${l0Url}/snapshots/latest`
-        : `${l0Url}/global-snapshots/latest`;
-
-    await checkIfEpochProgressCanBeFetched(snapshotUrl, isCurrency)
-
-    const { data: snapshot } = await axios.get(snapshotUrl);
-    return isCurrency ?
-        snapshot.value.globalSyncView.epochProgress :
-        snapshot.value.epochProgress;
-}
+};
 
 module.exports = {
     createNetworkConfig,

@@ -100,7 +100,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
     shouldValidateCollateral: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -124,6 +125,31 @@ object CurrencySnapshotAcceptanceManager {
     * @return
     *   the updated balances, the accepted transactions, and the rejected ones in iteration order
     */
+  /** The pre-fix wrapping implementation, kept so historical ordinals still replay to the state that was actually signed.
+    *
+    * The fix changes what a snapshot contains, so a node recomputing an ordinal from before the activation with checked arithmetic reaches
+    * different balances than the recorded snapshot and diverges. Gating on the activation ordinal means the corrected path applies only
+    * from the point the network agreed to it.
+    */
+  def applyFeeTransactionsUnchecked(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[Signed[FeeTransaction]]
+  ): (SortedMap[Address, Balance], SortedSet[Signed[FeeTransaction]], List[Signed[FeeTransaction]]) = {
+    val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
+    val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
+      case (acc, address) => acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
+    }
+    val updated = txs.foldLeft(feeReferredBalances) {
+      case (acc, tx) =>
+        acc
+          .updatedWith(tx.value.source)(existing => (existing.getOrElse(0L) - tx.value.amount.value.value).some)
+          .updatedWith(tx.value.destination)(existing => (existing.getOrElse(0L) + tx.value.amount.value.value).some)
+    }
+    val asBalances = updated.map { case (a, v) => a -> Balance(NonNegLong.unsafeFrom(v)) }
+
+    (balances ++ asBalances, txs, List.empty)
+  }
+
   def applyFeeTransactions(
     balances: SortedMap[Address, Balance],
     txs: SortedSet[Signed[FeeTransaction]]
@@ -254,7 +280,8 @@ object CurrencySnapshotAcceptanceManager {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       maybeLastGlobalSyncView: Option[GlobalSyncView],
       shouldValidateCollateral: Boolean,
-      lastArtifactProofs: NonEmptySet[SignatureProof]
+      lastArtifactProofs: NonEmptySet[SignatureProof],
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -271,13 +298,13 @@ object CurrencySnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatedLastSyncGlobalFromPeersInConsensus = fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus
         .getOrElse(environment, SnapshotOrdinal.MinValue)
+      fixingFeeTransactionBalanceOverflowOrdinal = fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow
+        .getOrElse(environment, SnapshotOrdinal.MinValue)
       updatingCombineFunctionSpendActions = fieldsAddedOrdinals.updatingCombineFunctionSpendActions
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
-        .getOrElse(environment, SnapshotOrdinal.MinValue)
-      fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
         .getOrElse(environment, SnapshotOrdinal.MinValue)
       fixingDataApplicationFeeValidation = fieldsAddedOrdinals.fixingDataApplicationFeeValidation
         .getOrElse(environment, SnapshotOrdinal.MinValue)
@@ -316,9 +343,18 @@ object CurrencySnapshotAcceptanceManager {
 
       validatedFeeTxs <- validateFeeTxs(feeTransactionsForAcceptance, validateEveryFeeTransaction)
 
+      maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
+
+      (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
+        .fromOption(maybeUnsyncLastGlobalSnapshot)
+        .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
+
       (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
         updatedBalancesByRewards,
-        validatedFeeTxs
+        validatedFeeTxs,
+        // Use the ordinal committed to the previous currency snapshot. The live GL0 head is not
+        // replay-stable: recomputing old history today would otherwise select today's rule and diverge.
+        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > fixingFeeTransactionBalanceOverflowOrdinal
       )
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
@@ -329,12 +365,6 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext.address,
         facilitators
       )
-
-      maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
-
-      (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
-        .fromOption(maybeUnsyncLastGlobalSnapshot)
-        .getOrRaise(new IllegalStateException("Could not get the last global snapshot info"))
 
       messagesAcceptanceResult <- acceptMessages(
         lastSnapshotContext.snapshotInfo.lastMessages,
@@ -425,10 +455,9 @@ object CurrencySnapshotAcceptanceManager {
         initialAllowSpendRef,
         shouldValidateCollateral,
         lastUnsyncGlobalSnapshot.ordinal,
-        maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         fixingAllowSpendAndTokenLockValidation,
-        fixingAllowSpendDestinationCredit,
-        lastGlobalSnapshotEpochProgress
+        lastGlobalSnapshotEpochProgress,
+        allowSpendBlockAcceptanceMode
       )
 
       lastAllowSpendsRefs = lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(SortedMap.empty[Address, AllowSpendReference])
@@ -591,9 +620,13 @@ object CurrencySnapshotAcceptanceManager {
       }
 
       updatedBalancesByInvalidAddressChecks <-
-        metagraphsBalancesAdjustments
-          .get(lastSnapshotContext.address)
-          .fold[F[SortedMap[Address, Balance]]] {
+        // A metagraph may be authorized at several ordinals, so select the block matching this one
+        // rather than assuming a single entry. Keying uniquely meant the last block in the resource
+        // silently retired every earlier block for the same currency: replaying one of those ordinals
+        // applied no adjustment and diverged without raising, and a follow-up adjustment could not be
+        // scheduled at all.
+        metagraphsBalancesAdjustments.get(lastSnapshotContext.address) match {
+          case None =>
             if (balanceAdjustments.nonEmpty) {
               val unauthorizedError = new RuntimeException(
                 s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
@@ -602,16 +635,16 @@ object CurrencySnapshotAcceptanceManager {
             } else {
               updatedBalancesBySpendTransactions.pure[F]
             }
-          } { info =>
-            if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment) {
-              info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
-                case Right(balances) => balances.pure[F]
-                case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+          case Some(infos) =>
+            infos
+              .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+              .fold(updatedBalancesBySpendTransactions.pure[F]) { info =>
+                info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+                  case Right(balances) => balances.pure[F]
+                  case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+                }
               }
-            } else {
-              updatedBalancesBySpendTransactions.pure[F]
-            }
-          }
+        }
 
       csi = CurrencySnapshotInfo(
         if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
@@ -979,10 +1012,9 @@ object CurrencySnapshotAcceptanceManager {
       initialTxRef: AllowSpendReference,
       shouldValidateCollateral: Boolean,
       lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
-      lastGlobalSyncViewOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
-      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
-      lastSyncGlobalSnapshotEpochProgress: EpochProgress
+      lastSyncGlobalSnapshotEpochProgress: EpochProgress,
+      acceptanceMode: AllowSpendBlockAcceptanceMode
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
@@ -990,11 +1022,6 @@ object CurrencySnapshotAcceptanceManager {
         collateral,
         initialTxRef
       )
-      // Deliberately not lastUnsyncGlobalSnapshotOrdinal, which the sibling gate on the line below uses: that
-      // is a live read of the node's own global head, so a node replaying an old snapshot today would evaluate
-      // the gate against today's head and apply the current rule to old history. lastGlobalSyncViewOrdinal is
-      // carried by the previous currency snapshot, so it is the same on every node and at every replay.
-      val creditDestination = lastGlobalSyncViewOrdinal < fixingAllowSpendDestinationCredit
       if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,
@@ -1002,7 +1029,7 @@ object CurrencySnapshotAcceptanceManager {
           snapshotOrdinal,
           shouldValidateCollateral,
           lastSyncGlobalSnapshotEpochProgress.some,
-          creditDestination
+          acceptanceMode.creditDestination
         )
       } else {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
@@ -1011,7 +1038,7 @@ object CurrencySnapshotAcceptanceManager {
           snapshotOrdinal,
           shouldValidateCollateral,
           none,
-          creditDestination
+          acceptanceMode.creditDestination
         )
       }
     }
@@ -1089,12 +1116,15 @@ object CurrencySnapshotAcceptanceManager {
 
     private def acceptFeeTxs(
       balances: SortedMap[Address, Balance],
-      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
+      checkedArithmetic: Boolean
     ): F[(SortedMap[Address, Balance], Option[SortedSet[Signed[FeeTransaction]]])] =
       maybeTxs match {
         case None => (balances, maybeTxs).pure[F]
         case Some(txs) =>
-          val (updatedBalances, acceptedTxs, rejectedTxs) = applyFeeTransactions(balances, txs)
+          val (updatedBalances, acceptedTxs, rejectedTxs) =
+            if (checkedArithmetic) applyFeeTransactions(balances, txs)
+            else applyFeeTransactionsUnchecked(balances, txs)
 
           rejectedTxs.traverse_ { signedTx =>
             logger.warn(

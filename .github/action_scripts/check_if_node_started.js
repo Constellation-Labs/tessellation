@@ -1,4 +1,5 @@
 const axios = require( 'axios' );
+const { CONSTANTS } = require( './shared/constants' );
 
 const sleep = ( ms ) => {
     return new Promise( ( resolve ) => setTimeout( resolve, ms ) );
@@ -23,7 +24,8 @@ const main = async () => {
             const response = await axios.get(url, {
                 headers: {
                     Accept: 'application/json'
-                }
+                },
+                timeout: CONSTANTS.HTTP_REQUEST_TIMEOUT_MS
             });
 
             if( response.status === 200 ) {

@@ -12,6 +12,7 @@ import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockNotAcceptedReason
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -31,6 +32,7 @@ import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelVal
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.types.all.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
@@ -40,9 +42,12 @@ object GlobalSnapshotContextFunctions {
     snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     withdrawalTimeLimit: EpochProgress,
-    tessellation3MigrationStartingOrdinal: SnapshotOrdinal
+    tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
+    fixingAllowSpendDestinationCredit: SnapshotOrdinal
   ) =
     new GlobalSnapshotContextFunctions[F] {
+
+      private val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
       // todo - avoid duplication of this function here and in GlobalSnapshotConsensusFunctions
       private def acceptDelegatedStakes(
@@ -92,6 +97,42 @@ object GlobalSnapshotContextFunctions {
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = {
+        val modes = AllowSpendBlockAcceptanceMode.globalHistoricalRecreationModes(
+          signedArtifact.ordinal,
+          fixingAllowSpendDestinationCredit
+        )
+
+        // The allow-spend and state-proof checks in createContextWithMode are what tell a mode that reproduces
+        // this snapshot from one that does not, so they are armed only in the historical window where more than
+        // one mode is possible. At or above the activation ordinal a single mode applies and they stay dormant,
+        // exactly as before this fix: an incident hotfix should not switch on a whole-history check that has
+        // never run.
+        val enforceModeAgreement = modes.sizeIs > 1
+
+        modes match {
+          case firstMode :: remainingModes =>
+            remainingModes.foldLeft(
+              createContextWithMode(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, firstMode, enforceModeAgreement)
+            ) { (result, mode) =>
+              result.handleErrorWith { error =>
+                logger.debug(error)(s"Retrying global snapshot recreation with allow-spend mode=$mode") >>
+                  createContextWithMode(context, lastArtifact, signedArtifact, getGlobalSnapshotByOrdinal, mode, enforceModeAgreement)
+              }
+            }
+          case Nil =>
+            new IllegalStateException("No allow-spend acceptance mode available for global snapshot recreation")
+              .raiseError[F, GlobalSnapshotInfo]
+        }
+      }
+
+      private def createContextWithMode(
+        context: GlobalSnapshotInfo,
+        lastArtifact: Signed[GlobalIncrementalSnapshot],
+        signedArtifact: Signed[GlobalIncrementalSnapshot],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode,
+        enforceModeAgreement: Boolean
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
 
@@ -170,7 +211,7 @@ object GlobalSnapshotContextFunctions {
 
         (
           acceptanceResult,
-          _,
+          allowSpendBlockAcceptanceResult,
           _,
           _,
           _,
@@ -227,12 +268,16 @@ object GlobalSnapshotContextFunctions {
                   }
                 },
             StateChannelValidationType.Historical,
-            getGlobalSnapshotByOrdinal
+            getGlobalSnapshotByOrdinal,
+            allowSpendBlockAcceptanceMode
           )
 
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]
           .whenA(acceptanceResult.notAccepted.nonEmpty)
+        _ <- CannotApplyAllowSpendBlocksError(allowSpendBlockAcceptanceResult.notAccepted.map { case (_, reason) => reason })
+          .raiseError[F, Unit]
+          .whenA(enforceModeAgreement && allowSpendBlockAcceptanceResult.notAccepted.nonEmpty)
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
@@ -245,9 +290,9 @@ object GlobalSnapshotContextFunctions {
           }
         }
         validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
-        _ = validation match {
-          case Validated.Valid(_)   => Async[F].unit
-          case Validated.Invalid(e) => e.raiseError[F, Unit]
+        _ <- validation match {
+          case Validated.Invalid(e) if enforceModeAgreement => e.raiseError[F, Unit]
+          case _                                            => Async[F].unit
         }
 
       } yield snapshotInfo
@@ -255,6 +300,13 @@ object GlobalSnapshotContextFunctions {
 
   @derive(eqv, show)
   case class CannotApplyBlocksError(reasons: List[BlockNotAcceptedReason]) extends NoStackTrace {
+
+    override def getMessage: String =
+      s"Cannot build global snapshot ${reasons.show}"
+  }
+
+  @derive(eqv, show)
+  case class CannotApplyAllowSpendBlocksError(reasons: List[AllowSpendBlockNotAcceptedReason]) extends NoStackTrace {
 
     override def getMessage: String =
       s"Cannot build global snapshot ${reasons.show}"

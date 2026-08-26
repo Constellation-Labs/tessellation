@@ -23,6 +23,8 @@ const CONSTANTS = {
     EPOCH_PROGRESS_BUFFER: 5,
 };
 
+axios.defaults.timeout = CONSTANTS.HTTP_REQUEST_TIMEOUT_MS;
+
 const getRandomInt = (min, max) => {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 };
@@ -529,7 +531,7 @@ const createInvalidSignatureTransaction = async (sourcePrivateKey, l0Url, l1Url,
 
 const createDoubleSpendTransaction = async (sourcePrivateKey, dagL1Url, extendedDagL1Url, l0Url) => {
     const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url: dagL1Url }, false);
-    const ammAddress = CONSTANTS.CURRENCY_TOKEN_ID;
+    const ammAddress = CONSTANTS.CURRENCY_TOKEN_ID ?? dag4.createAccount(PRIVATE_KEYS.key4).address;
 
     const allowSpend = await createAllowSpendTransaction(sourceAccount, ammAddress, dagL1Url, l0Url, false);
 
@@ -925,7 +927,7 @@ const verifyAllowSpendExpiration = async (address, hash, initialBalance, urls, l
 
     await withRetry(
         async () => {
-            const currentEpochProgress = await getEpochProgress(l0Url, isCurrency);
+            const currentEpochProgress = await getEpochProgress(l0Url, isCurrency, { maxAttempts: 1 });
             if (currentEpochProgress <= lastValidEpochProgress) {
                 throw new Error(
                     `Current epoch progress (${currentEpochProgress}) has not passed lastValidEpochProgress (${lastValidEpochProgress})`

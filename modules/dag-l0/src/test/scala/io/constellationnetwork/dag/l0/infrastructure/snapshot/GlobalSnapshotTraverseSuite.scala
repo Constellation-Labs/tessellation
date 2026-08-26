@@ -359,7 +359,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             validationErrorStorage
           )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+        .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None, SnapshotOrdinal.MinValue)
 
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
@@ -417,6 +417,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         snapshotAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,
         EpochProgress(NonNegLong.unsafeFrom(1L)),
+        SnapshotOrdinal.MinValue,
         SnapshotOrdinal.MinValue
       )
       lastNSnapshotStorage =

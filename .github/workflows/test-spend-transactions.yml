@@ -58,7 +58,6 @@ jobs:
         uses: "./.github/templates/actions/hypergraph/start"
         with:
           INCLUDE_DAG_L1: true
-          EXTENDED_DAG_L1: true
           DAG_L0_PORT_PREFIX: 90
           DAG_L1_PORT_PREFIX: 91
 
@@ -66,7 +65,6 @@ jobs:
         uses: "./.github/templates/actions/metagraph/start"
         with:
           INCLUDE_DATA_L1: true
-          EXTENDED_DATA_L1: true
           METAGRAPH_NAME: project-template-metagraph
           DL0_PORT_PREFIX: 90
           ML0_PORT_PREFIX: 80

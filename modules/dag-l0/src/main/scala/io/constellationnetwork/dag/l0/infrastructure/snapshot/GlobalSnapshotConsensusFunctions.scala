@@ -276,7 +276,8 @@ object GlobalSnapshotConsensusFunctions {
               lastDeprecatedTips,
               rewardsWithFacilitators(lastFacilitators),
               StateChannelValidationType.Full,
-              getGlobalSnapshotByOrdinal
+              getGlobalSnapshotByOrdinal,
+              AllowSpendBlockAcceptanceMode.live
             )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,

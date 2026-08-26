@@ -82,7 +82,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
     validationType: StateChannelValidationType,
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   ): F[
     (
       BlockAcceptanceResult,
@@ -143,7 +144,8 @@ object GlobalSnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
       validationType: StateChannelValidationType,
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
     ): F[
       (
         BlockAcceptanceResult,
@@ -173,9 +175,6 @@ object GlobalSnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
-        .getOrElse(environment, SnapshotOrdinal.MinValue)
-
-      val fixingAllowSpendDestinationCredit = fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
         .getOrElse(environment, SnapshotOrdinal.MinValue)
 
       val removingProcessedDelegatedStakeWithdrawalsOrdinal = fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawals
@@ -338,8 +337,8 @@ object GlobalSnapshotAcceptanceManager {
           lastSnapshotContext,
           ordinal,
           fixingAllowSpendAndTokenLockValidation,
-          fixingAllowSpendDestinationCredit,
-          epochProgress
+          epochProgress,
+          allowSpendBlockAcceptanceMode
         )
 
         tokenLockBlockAcceptanceResult <- acceptTokenLockBlocks(
@@ -1185,8 +1184,8 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       snapshotOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
-      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
-      epochProgress: EpochProgress
+      epochProgress: EpochProgress,
+      acceptanceMode: AllowSpendBlockAcceptanceMode
     )(implicit hasher: Hasher[F]) = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
@@ -1194,7 +1193,6 @@ object GlobalSnapshotAcceptanceManager {
         collateral,
         AllowSpendReference.empty
       )
-      val creditDestination = snapshotOrdinal < fixingAllowSpendDestinationCredit
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,
@@ -1202,7 +1200,7 @@ object GlobalSnapshotAcceptanceManager {
           snapshotOrdinal,
           shouldValidateCollateral = true,
           epochProgress.some,
-          creditDestination
+          acceptanceMode.creditDestination
         )
       } else {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
@@ -1211,7 +1209,7 @@ object GlobalSnapshotAcceptanceManager {
           snapshotOrdinal,
           shouldValidateCollateral = true,
           none,
-          creditDestination
+          acceptanceMode.creditDestination
         )
       }
     }

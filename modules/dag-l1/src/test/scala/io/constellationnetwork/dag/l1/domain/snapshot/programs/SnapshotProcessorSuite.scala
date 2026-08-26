@@ -199,7 +199,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validationErrorStorage
                 )
               currencySnapshotValidator = CurrencySnapshotValidator
-                .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+                .make[IO](
+                  SnapshotOrdinal.MinValue,
+                  currencySnapshotCreator,
+                  validators.signedValidator,
+                  None,
+                  None,
+                  SnapshotOrdinal.MinValue
+                )
 
               currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
               globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
@@ -253,6 +260,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 globalSnapshotAcceptanceManager,
                 updateDelegatedStakeAcceptanceManager,
                 EpochProgress(NonNegLong.unsafeFrom(1L)),
+                SnapshotOrdinal.MinValue,
                 SnapshotOrdinal.MinValue
               )
               snapshotProcessor = {
