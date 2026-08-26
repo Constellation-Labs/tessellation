@@ -62,7 +62,11 @@ object types {
     fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
     // destination is credited only when a SpendAction consumes the allowance.
-    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal the global layer keeps a record of every allow-spend reference it has retired and
+    // refuses to re-add those references to activeAllowSpends, even when a metagraph's own lagging
+    // info.activeAllowSpends still reports them (PROT-1691).
+    preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
       feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
