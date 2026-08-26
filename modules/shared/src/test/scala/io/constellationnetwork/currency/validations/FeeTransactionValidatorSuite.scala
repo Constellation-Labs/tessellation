@@ -1,6 +1,6 @@
 package io.constellationnetwork.currency.validations
 
-import cats.data.{NonEmptyList, ValidatedNec}
+import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
@@ -17,6 +17,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.SignatureProof
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -65,11 +66,15 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
   // One data update plus `amounts.size` fee transactions, all signed by the same source. When
   // refMatchesDataUpdate is false the fee transactions point at a hash no data update in the envelope
   // serializes to, which is what getByDataUpdate silently skips.
+  //
+  // mismatchedProof pairs the source wallet's proof id with signature bytes produced by a different key. The
+  // address checks see the source, so only proof verification separates it from a genuine transaction.
   def mkEnvelope(
     amounts: List[Amount],
     refMatchesDataUpdate: Boolean = true,
     selfAddressed: Boolean = false,
-    coSigned: Boolean = false
+    coSigned: Boolean = false,
+    mismatchedProof: Boolean = false
   )(implicit j: JsonSerializer[IO], h: Hasher[IO], sp: SecurityProvider[IO]): IO[(Address, DataTransactions)] =
     for {
       sourceKeyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -81,9 +86,18 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
       serializedUpdate <- j.serialize(update)
       dataUpdateRef = if (refMatchesDataUpdate) Hash.fromBytes(serializedUpdate) else Hash.empty
       feeTransactions <- amounts.traverse { amount =>
-        Signed
-          .forAsyncHasher(FeeTransaction(source, destination, amount, dataUpdateRef), sourceKeyPair)
-          .flatMap(signed => if (coSigned) signed.signAlsoWith(otherKeyPair) else signed.pure[IO])
+        val feeTransaction = FeeTransaction(source, destination, amount, dataUpdateRef)
+
+        if (mismatchedProof)
+          for {
+            hash <- FeeTransaction.serialize[IO](feeTransaction).map(Hash.fromBytes)
+            sourceProof <- SignatureProof.fromHash[IO](sourceKeyPair, hash)
+            otherProof <- SignatureProof.fromHash[IO](otherKeyPair, hash)
+          } yield Signed(feeTransaction, NonEmptySet.one(otherProof.copy(id = sourceProof.id)))
+        else
+          Signed
+            .forAsyncHasher(feeTransaction, sourceKeyPair)
+            .flatMap(signed => if (coSigned) signed.signAlsoWith(otherKeyPair) else signed.pure[IO])
       }
     } yield (source, NonEmptyList[Signed[DataTransaction]](signedUpdate, feeTransactions))
 
@@ -156,5 +170,16 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
       balances = Map(source -> Balance(NonNegLong(100L)))
       result <- validateAllFeeTransactions[IO](dataTransactions, balances, mkDataApplication)
     } yield expect(errorsOf(result).contains(FeeTransactionNotSignedExclusivelyBySource))
+  }
+
+  // The address checks alone accept this envelope, so the proof check is what decides it.
+  test("a fee transaction whose proof does not verify against the transaction is rejected") { res =>
+    implicit val (j, h, sp) = res
+
+    for {
+      (source, dataTransactions) <- mkEnvelope(List(Amount(NonNegLong(60L))), mismatchedProof = true)
+      balances = Map(source -> Balance(NonNegLong(100L)))
+      result <- validateAllFeeTransactions[IO](dataTransactions, balances, mkDataApplication)
+    } yield expect(errorsOf(result).contains(InvalidSignature))
   }
 }

@@ -1052,17 +1052,20 @@ object CurrencySnapshotAcceptanceManager {
     // raising fails the snapshot on a value an attacker chose. A self-addressed fee transaction, or one
     // carrying a second signature, passes the data-application validators and is rejected only here.
     //
+    // The same ordinal selects which proof rule the validator applies. Below it the earlier rule is what signed
+    // history was produced under, so replay has to keep running that one.
+    //
     // Below the activation ordinal it keeps raising. The drop changes which artifact this method produces from
     // the same events, and the data application layer is on its legacy rules down there -- it checks neither
     // source != destination nor signature exclusivity -- so such a transaction still reaches acceptance. A
     // patched node dropping it while an unpatched node raises would split the rollout window.
     private def validateFeeTxs(
       maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
-      dropInvalid: Boolean
+      atOrAboveActivationOrdinal: Boolean
     ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
-      if (!dropInvalid)
+      if (!atOrAboveActivationOrdinal)
         NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(maybeTxs.pure[F]) { nonEmptyTxs =>
-          feeTransactionValidator.validate(nonEmptyTxs).flatMap {
+          feeTransactionValidator.validate(nonEmptyTxs, verifySignatures = false).flatMap {
             case Validated.Valid(_) =>
               maybeTxs.pure[F]
             case Validated.Invalid(errors) =>
@@ -1073,7 +1076,7 @@ object CurrencySnapshotAcceptanceManager {
       else
         maybeTxs.traverse { txs =>
           txs.toList.traverseFilter { signedTx =>
-            feeTransactionValidator.validate(signedTx).flatMap {
+            feeTransactionValidator.validate(signedTx, verifySignatures = true).flatMap {
               case Validated.Valid(_) =>
                 signedTx.some.pure[F]
               case Validated.Invalid(errors) =>
