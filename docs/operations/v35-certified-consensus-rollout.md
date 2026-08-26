@@ -343,7 +343,12 @@ restart a new recovery attempt and is prohibited during normal operation.
 Currency L0 does not switch into certified consensus at this key. It uses its local
 synchronous all-member phases and fixed-universe ACK removal on both sides of the Global
 activation. Currency protocol-v1 changes signed history semantics only at its separate
-Global-ordinal gate.
+Global-ordinal gate. Its Facility availability barrier actively replicates an origin's
+exact signed event envelope to every round-start facilitator before advertising the hash.
+Monitor `dag_currency_consensus_event_replication_total{outcome}` together with
+`dag_currency_consensus_facility_event_deferred`: sustained `request_failed`/`rejected`
+growth or a non-zero deferred gauge means event transport is preventing inclusion, not
+that synchronous consensus should be weakened.
 
 The `certifiedVoteLocks` directory is pre-finalization safety state. Do not remove it
 to clear a stalled round, and do not treat a decode error as a missing cache. Ordinary

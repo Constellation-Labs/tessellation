@@ -33,6 +33,7 @@ import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -68,6 +69,38 @@ object CurrencySnapshotConsensusStateCreator {
     * fails. A failed confirmation merely defers that event to a later snapshot; it never prevents an otherwise-empty round from starting.
     */
   private[snapshot] val availabilityProbeParallelism: Int = 8
+
+  /** Actively closes the gap between hash advertisement and event transport.
+    *
+    * The ordinary event-gossip mesh is deliberately sparse, so a valid event submitted to one facilitator is not guaranteed to have reached
+    * every other facilitator before the next Currency round. A synchronous round cannot advertise that event safely until every member can
+    * reconstruct the same proposal. Probe first to avoid redundant traffic, then push the exact signed envelope to each peer that is
+    * missing it. A successful push response is emitted only after the receiver has hash-checked and stored the envelope.
+    */
+  private[snapshot] def ensurePeerEventAvailability[F[_]: Async, Event](
+    events: Map[Hash, Signed[Event]],
+    probe: Set[Hash] => F[Set[Hash]],
+    push: (Hash, Signed[Event]) => F[Boolean],
+    maxParallelism: Int = availabilityProbeParallelism
+  ): F[Set[Hash]] =
+    if (events.isEmpty) Set.empty[Hash].pure[F]
+    else
+      for {
+        reportedPresent <- probe(events.keySet)
+        alreadyPresent = reportedPresent.intersect(events.keySet)
+        missing = events.toList.filterNot { case (hash, _) => alreadyPresent.contains(hash) }
+          .sortBy(_._1)(hashOrdering)
+        replicated <- fs2.Stream
+          .emits(missing)
+          .covary[F]
+          .parEvalMap(math.max(1, maxParallelism)) {
+            case (hash, event) =>
+              push(hash, event).map(success => Option.when(success)(hash))
+          }
+          .unNone
+          .compile
+          .toList
+      } yield alreadyPresent ++ replicated
 
   private[snapshot] def retainUniversallyAvailableHashes[F[_]: Async](
     localHashes: Set[Hash],
@@ -162,24 +195,46 @@ object CurrencySnapshotConsensusStateCreator {
 
     private def confirmPeerHasEvents(
       peerId: PeerId,
-      requested: Set[Hash]
+      requested: Map[Hash, Signed[CurrencySnapshotEvent]]
     ): F[Set[Hash]] =
       clusterStorage.getPeer(peerId).flatMap {
         case None =>
           recordAvailability(peerId, "peer_unavailable") >>
             logger.warn(s"Deferring Currency events because round-start facilitator ${peerId.show} is unavailable").as(Set.empty)
         case Some(peer) =>
-          eventGossipClient
-            .getIHaveFor(IWantRequest(requested))
-            .run(Peer.toP2PContext(peer))
+          val context = Peer.toP2PContext(peer)
+
+          ensurePeerEventAvailability(
+            requested,
+            hashes => eventGossipClient.getIHaveFor(IWantRequest(hashes)).run(context).map(_.hashes),
+            (hash: Hash, event: Signed[CurrencySnapshotEvent]) =>
+              eventGossipClient
+                .pushEvent(EventPush(hash, event))
+                .run(context)
+                .flatTap { success =>
+                  Metrics[F].incrementCounter(
+                    "dag_currency_consensus_event_replication_total",
+                    Seq(Metrics.unsafeLabelName("outcome") -> (if (success) "stored" else "rejected"))
+                  )
+                }
+                .handleErrorWith { error =>
+                  Metrics[F].incrementCounter(
+                    "dag_currency_consensus_event_replication_total",
+                    Seq(Metrics.unsafeLabelName("outcome") -> "request_failed")
+                  ) >> logger
+                    .warn(error)(s"Failed to replicate Currency event ${hash.show} to facilitator ${peerId.show}")
+                    .as(false)
+                }
+          )
             .timeout(availabilityRequestTimeout)
-            .flatMap { ihave =>
-              val confirmed = requested.intersect(ihave.hashes)
+            .flatMap { confirmed =>
               recordAvailability(peerId, if (confirmed.size === requested.size) "confirmed" else "partial").as(confirmed)
             }
             .handleErrorWith { error =>
               recordAvailability(peerId, "request_failed") >>
-                logger.warn(error)(s"Deferring Currency events that could not be confirmed on facilitator ${peerId.show}").as(Set.empty)
+                logger
+                  .warn(error)(s"Deferring Currency events that could not be replicated to facilitator ${peerId.show}")
+                  .as(Set.empty)
             }
       }
 
@@ -187,9 +242,10 @@ object CurrencySnapshotConsensusStateCreator {
       for {
         localSnapshot <- eventMempool.snapshot(facilityEventLimit(roundStartFacilitators.size))
         localHashes = localSnapshot.hashes
+        localEvents = localSnapshot.entries.view.mapValues(_.hashed.signed).toMap
         peers = roundStartFacilitators.filterNot(_ === selfId)
         confirmed <- retainUniversallyAvailableHashes(localHashes, peers) { (peerId, requested) =>
-          confirmPeerHasEvents(peerId, requested)
+          confirmPeerHasEvents(peerId, requested.flatMap(hash => localEvents.get(hash).map(hash -> _)).toMap)
         }
         _ <- logger
           .info(

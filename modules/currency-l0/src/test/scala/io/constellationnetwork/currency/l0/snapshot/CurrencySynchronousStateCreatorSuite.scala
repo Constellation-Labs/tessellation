@@ -2,6 +2,7 @@ package io.constellationnetwork.currency.l0.snapshot
 
 import cats.data.NonEmptySet
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -139,6 +140,40 @@ object CurrencySynchronousStateCreatorSuite extends SimpleIOSuite {
     retainUniversallyAvailableHashes[IO](Set(hash), List(availablePeer, unavailablePeer)) { (peerId, requested) =>
       IO.pure(if (peerId === availablePeer) requested else Set.empty)
     }.flatMap(result => IO.pure(expect(result.isEmpty)))
+  }
+
+  test("missing events are actively replicated before a peer confirms availability") {
+    val firstHash = Hash.fromBytes(Array[Byte](1))
+    val secondHash = Hash.fromBytes(Array[Byte](2))
+    val events = Map(
+      firstHash -> Signed(messageEvent(MessageType.Owner), dummyProofs),
+      secondHash -> Signed(messageEvent(MessageType.Staking), dummyProofs)
+    )
+
+    for {
+      pushed <- Ref.of[IO, List[Hash]](List.empty)
+      confirmed <- ensurePeerEventAvailability[IO, CurrencySnapshotEvent](
+        events,
+        _ => Set(firstHash).pure[IO],
+        (hash, _) => pushed.update(_ :+ hash).as(true)
+      )
+      pushedHashes <- pushed.get
+    } yield
+      expect.all(
+        confirmed === Set(firstHash, secondHash),
+        pushedHashes === List(secondHash)
+      )
+  }
+
+  test("a rejected direct replication is not advertised as available") {
+    val hash = Hash.fromBytes(Array[Byte](1))
+    val events = Map(hash -> Signed(messageEvent(MessageType.Owner), dummyProofs))
+
+    ensurePeerEventAvailability[IO, CurrencySnapshotEvent](
+      events,
+      _ => Set.empty[Hash].pure[IO],
+      (_, _) => false.pure[IO]
+    ).flatMap(confirmed => IO.pure(expect(confirmed.isEmpty)))
   }
 
   pureTest("per-facilitator event advertisement keeps the complete union within the fixed work bound") {
