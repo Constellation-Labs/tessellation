@@ -59,6 +59,27 @@ object GlobalCertifiedDownloadValidator {
   )(step: Cursor => F[Either[Cursor, Result]]): F[Result] =
     Monad[F].tailRecM(initial)(step)
 
+  /** A historical QC may advance authority only from the exact full/Core sets certified by its already-authenticated predecessor. This is
+    * deliberately independent of the joining node's current membership policy.
+    */
+  private[snapshot] def validateAuthorityContinuity(
+    value: ProposalValue,
+    inherited: CertifiedConsensus.CertifiedRoundAuthorityV1
+  ): Either[String, Unit] =
+    Either
+      .cond(
+        value.roundStartFacilitators === inherited.facilitators,
+        (),
+        "certified_authority_full_continuity_mismatch"
+      )
+      .productL(
+        Either.cond(
+          value.roundStartCore === inherited.core,
+          (),
+          "certified_authority_core_continuity_mismatch"
+        )
+      )
+
   /** Independently authenticated replay root. It is intentionally compact: historical authority needs the parent identity, carried
     * committee, and prior certificate only; it never needs a retained historical state-context preimage.
     */
@@ -177,16 +198,17 @@ object GlobalCertifiedDownloadValidator {
   /** Authenticate the public A-1 artifact before its signed controller evidence can seed v35 authority.
     *
     * Snapshot storage's validated read proves the artifact/context state-proof relation, but a state proof does not authenticate the
-    * artifact's signature envelope or permissioned signer set. Keep those checks at this authority boundary as well: a forged or locally
-    * corrupted A-1 file must not be able to name the first certified committee.
+    * artifact's signature envelope. Keep signature and unique-signer checks at this authority boundary as well: a forged or locally
+    * corrupted A-1 file must not be able to name the first certified committee. The current mutable seedlist is deliberately not historical
+    * authority: live activation already ran the then-current join-fenced membership policy, and a later seedlist change must not invalidate
+    * the canonical signed root.
     */
   private[snapshot] def validateActivationRootArtifact[
     F[_]: Async: Parallel: JsonSerializer: HasherSelector: SecurityProvider
   ](
     expectedOrdinal: SnapshotOrdinal,
     snapshot: Signed[GlobalIncrementalSnapshot],
-    context: GlobalSnapshotInfo,
-    seedlistPeerIds: Set[PeerId]
+    context: GlobalSnapshotInfo
   )(implicit globalStateProofSelector: GlobalStateProofSelector): F[Either[String, Unit]] = {
     val signerIds = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
     val signers = SortedSet.from(signerIds)
@@ -203,11 +225,6 @@ object GlobalCertifiedDownloadValidator {
           for {
             _ <- Either.cond(signers.nonEmpty, (), "activation_artifact_proof_signers_empty")
             _ <- Either.cond(signerIds.size === signers.size, (), "activation_artifact_duplicate_signer")
-            _ <- Either.cond(
-              seedlistPeerIds.isEmpty || signers.forall(seedlistPeerIds.contains),
-              (),
-              "activation_artifact_signer_not_seedlisted"
-            )
             _ <- Either.cond(signatureValid, (), "activation_artifact_signature_invalid")
             _ <- Either.cond(
               contextStateProof === snapshot.value.stateProof,
@@ -305,7 +322,7 @@ object GlobalCertifiedDownloadValidator {
           locallyValidatedSnapshot(parentOrdinal).flatMap {
             case Left(error) => error.asLeft[TrustedParent].pure[F]
             case Right((snapshot, context)) =>
-              validateActivationRootArtifact(parentOrdinal, snapshot, context, Set.empty).flatMap(_.traverse { _ =>
+              validateActivationRootArtifact(parentOrdinal, snapshot, context).flatMap(_.traverse { _ =>
                 for {
                   finished <- reconstructActivationParentFinished[F](snapshot, context)
                   proofSigners = snapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
@@ -394,12 +411,7 @@ object GlobalCertifiedDownloadValidator {
       val inheritedCore = trusted.authorityForNextRound.core
       val fullSet = inheritedFull.toSortedSet.toSet
       val structural = for {
-        _ <- Either.cond(
-          value.roundStartFacilitators === inheritedFull,
-          (),
-          "certified_authority_full_continuity_mismatch"
-        )
-        _ <- Either.cond(value.roundStartCore === inheritedCore, (), "certified_authority_core_continuity_mismatch")
+        _ <- validateAuthorityContinuity(value, trusted.authorityForNextRound)
         _ <- Either.cond(round.artifact.value.ordinal === round.key, (), "artifact_ordinal_mismatch")
         _ <- Either.cond(
           round.artifact.value.lastSnapshotHash === trusted.artifactHash,
@@ -625,8 +637,14 @@ object GlobalCertifiedDownloadValidator {
           else {
             val ordinal = SnapshotOrdinal.unsafeApply(current)
             loadPublicRound(ordinal, candidate).flatMap {
-              case Left(error) => finish(error.asLeft[Option[TrustedParent]])
+              case Left(error)  => finish(error.asLeft[Option[TrustedParent]])
               case Right(round) =>
+                // An empty child lineage is the public reset-epoch marker, not a
+                // self-authenticating permissionless root. The canonical public parent,
+                // complete recovery-Core QC, artifact proofs, and the permissioned
+                // one-lead/full-fleet recovery procedure jointly authorize this boundary.
+                // Reapplying today's mutable seedlist here would invalidate canonical
+                // history after an ordinary operator policy change.
                 val isLaterReset = current > firstOrdinaryReplayKey && round.artifact.value.certifiedLineage.isEmpty
 
                 if (isLaterReset) {

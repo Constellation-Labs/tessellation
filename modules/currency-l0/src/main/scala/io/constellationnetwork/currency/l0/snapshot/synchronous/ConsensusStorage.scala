@@ -136,6 +136,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
 object ConsensusStorage {
 
+  private[snapshot] def retainedEffectRetryDelay(failures: Long): FiniteDuration = {
+    val exponent = math.min(5L, math.max(0L, failures)).toInt
+    math.min(30L, 1L << exponent).toInt.seconds
+  }
+
   trait ModifyStateFn[F[_], Key, Status, Outcome, Kind, B]
       extends (
         Option[ConsensusState[Key, Status, Outcome, Kind]] => F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], B)]]
@@ -251,7 +256,7 @@ object ConsensusStorage {
                         _ <- retainedEffectsR.update(_.updated(key, retained))
                         // Exactly one owner is started for this retained transition. Other callers await
                         // the same Deferred through runRetainedEffect; they never create retry fibers.
-                        _ <- Async[F].start(retryRetainedEffect(key, retained)).void
+                        _ <- Async[F].start(retryRetainedEffect(key, retained, failures = 0L)).void
                       } yield b
                   }
                 } yield maybeB
@@ -262,15 +267,24 @@ object ConsensusStorage {
         def runRetainedEffect(key: Key): F[Unit] =
           retainedEffectsR.get.flatMap(_.get(key).traverse_(_.completion.get))
 
-        private def retryRetainedEffect(key: Key, retained: RetainedEffect): F[Unit] =
+        private def retryRetainedEffect(key: Key, retained: RetainedEffect, failures: Long): F[Unit] =
           retainedEffectSemaphore.permit.use(_ => retained.effect.attempt).flatMap {
             case Right(_) =>
               // Remove before releasing waiters so a subsequent transition can retain its own
               // effect without racing the completed generation.
               retainedEffectsR.update(_ - key) >> retained.completion.complete(()).void
             case Left(error) =>
-              logger.warn(error)(s"Retrying retained synchronous Currency phase effect for key=$key") >>
-                Temporal[F].sleep(1.second) >> retryRetainedEffect(key, retained)
+              val delay = retainedEffectRetryDelay(failures)
+              // Attempts are deliberately unbounded while their cadence is bounded.
+              // Releasing completion after a failed causal effect would allow the next
+              // phase/outcome to overtake persistence. Known exact-install rejection
+              // moves the node to WaitingForDownload, whose storage repair can make a
+              // later retry succeed without weakening this ordering boundary.
+              logger.warn(error)(
+                s"Retrying retained synchronous Currency phase effect for key=$key failures=${failures + 1L} delay=$delay"
+              ) >>
+                Temporal[F].sleep(delay) >>
+                retryRetainedEffect(key, retained, if (failures === Long.MaxValue) failures else failures + 1L)
           }
 
         def trySetInitialConsensusOutcome(initialOutcome: Outcome): F[Boolean] =

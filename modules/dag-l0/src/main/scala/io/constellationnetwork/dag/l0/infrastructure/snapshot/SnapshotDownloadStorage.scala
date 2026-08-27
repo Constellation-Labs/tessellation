@@ -36,7 +36,8 @@ object SnapshotDownloadStorage {
       GlobalSnapshotInfo
     ],
     hashSelect: HashSelect,
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): SnapshotDownloadStorage[F] =
@@ -225,7 +226,9 @@ object SnapshotDownloadStorage {
 
       def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
         snapshotInfoStorage.write(ordinal, info) >> {
-          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
+          // A later restart must still be able to authenticate the v35 activation parent.
+          // Download replay and live snapshot persistence therefore share the same explicit pin.
+          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal) ++ protectedSnapshotInfoOrdinals
 
           snapshotInfoStorage.listStoredOrdinals.flatMap {
             _.compile.toList

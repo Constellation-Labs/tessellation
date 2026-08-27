@@ -43,6 +43,16 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
     )
   }
 
+  pureTest("availability fan-out budgets every bounded-concurrency wave") {
+    expect.all(
+      CurrencySnapshotConsensusStateCreator.availabilityFanoutDeadline(0, 8) === 6.seconds,
+      CurrencySnapshotConsensusStateCreator.availabilityFanoutDeadline(7, 8) === 6.seconds,
+      CurrencySnapshotConsensusStateCreator.availabilityFanoutDeadline(8, 8) === 6.seconds,
+      CurrencySnapshotConsensusStateCreator.availabilityFanoutDeadline(9, 8) === 11.seconds,
+      CurrencySnapshotConsensusStateCreator.availabilityFanoutDeadline(20, 8) === 16.seconds
+    )
+  }
+
   test("availability confirmations for a 73-member committee use bounded concurrency") {
     val peers = (2 to 73).toList.map(peer)
     val hashes = Set(Hash("event-a"), Hash("event-b"))
@@ -109,7 +119,7 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
     val hashes = Set(Hash("event-a"))
 
     CurrencySnapshotConsensusStateCreator
-      .retainUniversallyAvailableHashes[IO](hashes, peers, deadline = 100.millis) {
+      .retainUniversallyAvailableHashes[IO](hashes, peers, deadline = 100.millis.some) {
         case (id, _) if id === peer(3) => IO.never
         case (_, requested)            => requested.pure[IO]
       }

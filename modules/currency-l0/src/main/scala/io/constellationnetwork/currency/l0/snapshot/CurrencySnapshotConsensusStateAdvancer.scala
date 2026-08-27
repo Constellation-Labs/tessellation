@@ -31,6 +31,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
@@ -262,9 +263,10 @@ object CurrencySnapshotConsensusStateAdvancer {
                                     artifact = created.artifact
                                     context = created.context
                                     returnedEvents = retainedAfterProposal(created.awaitingEvents, created.rejectedEvents)
-                                    acceptedEventHashes = SortedSet.from(hashToEvent.iterator.collect {
-                                      case (hash, event) if !returnedEvents.contains(event) => hash
+                                    returnedEventHashes = SortedSet.from(hashToEvent.iterator.collect {
+                                      case (hash, event) if returnedEvents.contains(event) => hash
                                     })(hashOrdering)
+                                    acceptedEventHashes = SortedSet.from(hashToEvent.keySet -- returnedEventHashes)(hashOrdering)
                                     hash <- artifact.hash
                                     parentHash <- parentArtifactHash(state)
                                     proposal = Proposal(
@@ -273,9 +275,11 @@ object CurrencySnapshotConsensusStateAdvancer {
                                     )
                                     // Preserve both awaiting and rejected events for a later parent. Currency acceptance can reject an
                                     // event against the current Currency/GL0 state even though it becomes valid after a subsequent
-                                    // snapshot (token-lock and spend workflows rely on this). Stable mainnet returns these events to the
-                                    // next round; only clearCommittedEvents removes events, after the winning artifact is persisted.
-                                    effect = consensusStorage.addProposal(selfId, state.key, proposal, proposal.domain.some) >>
+                                    // snapshot (token-lock and spend workflows rely on this). Move returned work to the FIFO tail so one
+                                    // permanently invalid entry cannot consume the bounded proposal head forever. Only
+                                    // clearCommittedEvents removes events, after the winning artifact is persisted.
+                                    effect = eventMempool.deferToBack(returnedEventHashes.toSet) >>
+                                      consensusStorage.addProposal(selfId, state.key, proposal, proposal.domain.some) >>
                                       consensusStorage.addArtifact(state.key, artifact).void >>
                                       gossip.spread(ConsensusPeerDeclaration(state.key, proposal)) >>
                                       gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
@@ -517,9 +521,22 @@ object CurrencySnapshotConsensusStateAdvancer {
                                 clearCommittedEvents(signedMajorityArtifact.value) >>
                                 stateChannelSnapshotService.enqueueBinary(hashedBinary, state.key)
                             else
+                              // The retained effect starts above at prepareBinaryPublication, so
+                              // its next attempt creates a fresh prepared receipt before retrying
+                              // the exact install. Move the node into ordinary download repair but
+                              // do not complete the effect: doing so would let Finished advance
+                              // without the artifact/context and binary being durable.
                               stateChannelSnapshotService.abortPreparedBinaryPublication(hashedBinary.hash) >>
+                                Metrics[F].incrementCounter("dag_currency_consensus_persistence_reanchor_total").attempt.void >>
+                                nodeStorage
+                                  .tryModifyStateGetResult(
+                                    Set[NodeState](NodeState.Ready, NodeState.WaitingForReady),
+                                    NodeState.WaitingForDownload
+                                  )
+                                  .void >>
                                 new IllegalStateException(
-                                  s"Currency consensus artifact persistence rejected ordinal=${state.key.show}; binary was not published"
+                                  s"Currency consensus artifact persistence rejected ordinal=${state.key.show}; " +
+                                    "binary was not published and local download reconciliation is required"
                                 ).raiseError[F, Unit]
                           }
 

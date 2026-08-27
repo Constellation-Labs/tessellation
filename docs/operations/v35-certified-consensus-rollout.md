@@ -200,6 +200,13 @@ and is therefore fenced independently as well.
     verify. Separately prove that the newly joined live cluster uses its current fenced
     policy only when proposing a future `nextRoundAuthority`.
 
+    In certified derivation, peer-local `removedFacilitators` observations are not an
+    input to the committed operational state. The derivation reads the QC-bound
+    `ProposalValue.evictedPeers`, and Finished writes that exact set back into the
+    outcome. A late Facility or view-local removal observation therefore cannot change
+    `nextOperationalStateHash`; terminal replay verifies both the evicted set and the
+    complete operational-state commitment.
+
     No SemVer, assembly hash, or self-declared `policyId` is historical authority. If the
     meaning or safety rules of `ProposalValue`, `CertifiedRoundAuthorityV1`, or its QCs
     change, introduce a new schema variant and coordinated activation rather than
@@ -221,7 +228,9 @@ and is therefore fenced independently as well.
 Capacity-plan the added certificate history before activation. At the measured 73-seat
 committee, `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a
 sustained 43-second cadence, before filesystem/JSON overhead. Signed incremental artifacts were
-already retained; SnapshotInfo remains logarithmically retained, so v35 does not add the rejected
+already retained; interior SnapshotInfo remains logarithmically retained, while the exact A-1
+activation-parent SnapshotInfo is explicitly pinned for the lifetime of that configured activation,
+so v35 does not add the rejected
 approximately 1.2-TB/year contiguous-context history or an O(epoch)-per-round cutoff scan. Record
 the actual certificate/artifact disk-growth rate and free-space runway during the IntegrationNet
 soak rather than treating the wire-size estimate as a filesystem-capacity measurement.
@@ -240,11 +249,15 @@ The same suite measures sizes at 3, 31, 73, 100, 200, and the configured maximum
 facilitators. These are wire/preimage measurements rather than filesystem-capacity estimates;
 soak measurements remain mandatory.
 
-The Global download validator performs O(epoch) sequential artifact I/O for a fresh root-to-tip
-download, but its `tailRecM` fold retains only the authenticated predecessor and at most two public
-frames. The heap/stack bound is O(1), independent of epoch length. Exercise the production fold over
-a multi-thousand-frame lineage and monitor wall-clock bootstrap time. A future independently
-authorized checkpoint may bound that I/O, but is not an activation blocker.
+The Global download validator performs two O(epoch) sequential artifact passes for a fresh
+activation-root-to-tip download with no later recovery boundary: one backward scan locates the
+latest public recovery reset, then one forward fold authenticates the selected segment. Its
+`tailRecM` cursors retain only the authenticated predecessor and at most two public frames, so the
+heap/stack bound is O(1), independent of epoch length. A missing artifact in either pass fails closed;
+an unauthenticated local reset-index hint or a capped scan must not silently skip a real recovery
+boundary. Exercise both passes over a multi-thousand-frame lineage and monitor wall-clock bootstrap
+time. A future independently authorized checkpoint may bound that I/O, but is not an activation
+blocker.
 
 ## Deployment sequence
 
@@ -253,7 +266,10 @@ authorized checkpoint may bound that I/O, but is not an activation blocker.
    lineages; it need not equal the v35 key.
 2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
    certified-vote-lock journals, configuration, and logs; verify a coherent
-   pre-activation checkpoint.
+   pre-activation checkpoint. Version 35 has not been publicly activated on any operated
+   network. Any private/dev environment that ran an earlier experimental v35 shape must
+   discard that experimental certified history and restart from a verified pre-v35 anchor;
+   the final required `ProposalValue` fields intentionally do not decode the abandoned shape.
 3. Install the same v35 assembly and the same resolved activation configuration on
    every active facilitator. Rebuild every active metagraph stack before the global
    Currency-protocol boundary. Deploy the separately built and verified matching
@@ -295,8 +311,11 @@ Before activation, verify the ordinary-download lineage boundary on every source
   hash use the current consensus hasher, matching live activation even across a
   hash-transition boundary. Before signed controller evidence can seed authority, the
   A-1 artifact's embedded ordinal must equal the requested index, its signature is verified
-  with that expected ordinal's hasher, proof signer IDs must be unique and seedlisted, and
-  the context-derived state proof must equal the artifact state proof. Every public
+  with that expected ordinal's hasher, proof signer IDs must be unique, and the
+  context-derived state proof must equal the artifact state proof. Live activation has already
+  applied the then-current join-fenced seedlist/collateral policy. A later historical replay
+  deliberately does not apply today's mutable seedlist to that old canonical root. The exact
+  A-1 SnapshotInfo is permanently protected from ordinary logarithmic pruning. Every public
   network's activation root is already in the JSON-serde era; no v35 field has a Kryo
   fallback or compatibility path;
 - predecessor validation is read-only: it reconstructs and checks the persisted state
@@ -372,7 +391,10 @@ same-key retries retain the record. A certified finalization removes it only aft
 matching complete-outcome sidecar write succeeds; rollback/download initialization
 have deliberately different semantics. Download/restart removes finalized or stale
 records at or below its accepted ordinal and retains a possible next-key lock. Only an
-explicit coordinated rollback prunes records above its accepted ordinal.
+accepted rollback policy prunes records above its accepted ordinal; an aborted solo
+`run-rollback` can therefore discard locks before it parks. This is one reason the
+operated procedure always stops the fleet, starts exactly one controlled rollback lead,
+and starts every other node as a validator.
 
 No restart is required merely because the ordinal crosses; the aligned nodes switch
 deterministically at the configured key.

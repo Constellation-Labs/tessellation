@@ -71,9 +71,14 @@ pinned `EventTrigger` default.
 
 Before advertising an event, a member confirms through request-specific
 `POST /events/ihave` that every other round-start facilitator already holds it. At most eight
-probes run concurrently under one five-second deadline. Missing confirmation defers the
-event; it does not prevent an empty round. Existing event gossip transports the signed event
-body through `/events/push` and `/events/iwant`.
+probes run concurrently. Each peer has a five-second deadline; the aggregate deadline covers
+every bounded-concurrency wave plus scheduling margin (16 seconds at the configured maximum
+20-member committee), rather than racing all waves against one peer's budget. Missing/error
+confirmation contributes an empty set and defers the event. It cannot be omitted safely:
+different nodes can observe different responder subsets under asymmetric connectivity. The
+ordinary all-member Facility/ACK protocol handles the unavailable member, and an otherwise-empty
+round can still start. Existing event gossip transports the signed event body through
+`/events/push` and `/events/iwant`.
 
 The IWANT protocol is bounded to 128 requested hashes, 16 returned events, and 4 MiB of
 encoded response. A single event that cannot fit that response is rejected at local and
@@ -145,7 +150,10 @@ This yields:
 No timeout guesses a smaller committee. Partial declaration delivery may give different
 surviving majorities immutable, incompatible ACK observations. That is a deliberate
 safe-halt requiring controlled recovery, not a condition the protocol resolves by changing
-the authority set.
+the authority set. In particular, an exact split at even `N` is intentionally terminal for
+that attempt: ACK evidence is immutable, so re-arming the same cycle would only recompute the
+same inconclusive result. The shared GL0 `re-stall-timeout`, `max-stall-cycles`, and
+`max-round-duration` fields are hash-fenced compatibility fields, not Currency escape hatches.
 
 The first declaration from one origin in the exact attempt domain is immutable. A malformed
 same-domain declaration can therefore count as that origin having responded for ACK observation
@@ -175,6 +183,11 @@ of its two candidates to participate; if both fail, operator recovery is require
 
 ## Finished and publication durability
 
+Proposal derivation keeps both awaiting and rejected events because later Currency/GL0
+state may make them valid, but moves their hashes to the active FIFO tail. This preserves
+retry semantics without allowing one permanently invalid oldest entry to monopolize every
+bounded Facility batch. It does not evict the entry or create consensus authority.
+
 The finalization effect is ordered:
 
 1. prepare a non-publishable exact-binary outbox receipt;
@@ -184,7 +197,7 @@ The finalization effect is ordered:
 4. verify recovery artifact/context read-back and commit the recovery receipt;
 5. commit the ordinary publishable receipt last;
 6. run the post-consensus data-application callback;
-7. remove only committed and deterministically rejected events; and
+7. remove only events present in the committed artifact; and
 8. enqueue the exact signed binary as the final fallible action.
 
 If persistence or data-application acceptance fails, both prepared receipts are aborted and
@@ -240,7 +253,7 @@ to at least three trusted signers before treating the cohort as fault-tolerant.
 | missing event bytes | proposal waits; event may be deferred next attempt |
 | invalid artifact or binary signature | signature does not count; no finalization |
 | exact GL0 fee context missing/mismatched | affected node fails closed |
-| artifact/context persistence rejected | no publication or mempool clearing |
+| artifact/context persistence rejected | no publication or mempool clearing; node enters download reconciliation while the causally ordered effect retries with capped backoff |
 | both singleton candidates fail | safe halt |
 | restart after an N-signer artifact contracted to exactly `ceil(N/2)` binary signers | exact private handoff may lack enough remote corroborators; re-anchor and, if no public successor can authorize re-entry, use controlled rollback recovery |
 | malicious allowlisted member equivocates at N >= 3 without controlling the handoff cohort | may halt; cannot create two honest all-member finalizations |
@@ -267,6 +280,7 @@ supports the retired Kryo era.
 - missing declarations and ACK keep/remove/inconclusive results;
 - selected and final re-capped candidates;
 - event availability confirmed/deferred outcomes;
+- `dag_currency_consensus_persistence_reanchor_total` plus retained-effect warning attempts/delay;
 - exact-outcome corroboration outcome (`success`, `no_responsive`, `different_key`,
   `invalid`, `under_threshold`, or `ambiguous`) together with proof-signer,
   responsive-Ready, served, valid, threshold, maximum-matching, and

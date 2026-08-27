@@ -57,6 +57,16 @@ object CurrencySynchronousStorageSuite extends SimpleIOSuite {
       spreadAckKinds = Set.empty
     )
 
+  pureTest("retained effect retries back off exponentially and remain capped") {
+    expect.all(
+      ConsensusStorage.retainedEffectRetryDelay(0L) === 1.second,
+      ConsensusStorage.retainedEffectRetryDelay(1L) === 2.seconds,
+      ConsensusStorage.retainedEffectRetryDelay(2L) === 4.seconds,
+      ConsensusStorage.retainedEffectRetryDelay(5L) === 30.seconds,
+      ConsensusStorage.retainedEffectRetryDelay(500L) === 30.seconds
+    )
+  }
+
   test("a later phase cannot commit until the prior retained effect completes") {
     for {
       storage <- ConsensusStorage.make[IO, Unit, SnapshotOrdinal, String, Unit, Int, TestOutcome, Unit](config)
@@ -94,6 +104,30 @@ object CurrencySynchronousStorageSuite extends SimpleIOSuite {
         afterRelease.exists(_.status === 2),
         emitted === Vector("E1", "E2")
       )
+  }
+
+  test("a retained effect can heal on retry and release the next transition") {
+    for {
+      storage <- ConsensusStorage.make[IO, Unit, SnapshotOrdinal, String, Unit, Int, TestOutcome, Unit](config)
+      attempts <- Ref.of[IO, Int](0)
+      effect = attempts.modify(current => (current + 1, current)).flatMap {
+        case 0 => new IllegalStateException("first attempt fails").raiseError[IO, Unit]
+        case _ => IO.unit
+      }
+      _ <- storage.condModifyStateWithEffect(key) {
+        case None    => (state(1).some, ().some, effect).some.pure[IO]
+        case Some(_) => new IllegalStateException("unexpected state").raiseError[IO, Option[(Option[State], Option[Unit], IO[Unit])]]
+      }
+      _ <- storage.runRetainedEffect(key).timeout(3.seconds)
+      _ <- storage.condModifyStateWithEffect(key) {
+        case Some(current) if current.status === 1 => (state(2).some, ().some, IO.unit).some.pure[IO]
+        case other =>
+          new IllegalStateException(s"unexpected state $other").raiseError[IO, Option[(Option[State], Option[Unit], IO[Unit])]]
+      }
+      _ <- storage.runRetainedEffect(key)
+      finalState <- storage.getState(key)
+      attemptCount <- attempts.get
+    } yield expect.all(attemptCount === 2, finalState.exists(_.status === 2))
   }
 
   test("a stale same-key declaration cannot occupy the live parent-domain slot") {

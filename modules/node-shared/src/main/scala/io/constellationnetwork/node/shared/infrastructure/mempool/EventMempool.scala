@@ -124,6 +124,13 @@ trait EventMempool[F[_], Event, Key] {
     */
   def reactivate(hashes: Set[Hash]): F[Unit]
 
+  /** Move active entries to the back of FIFO proposal order without dropping them.
+    *
+    * This is the fair-retry primitive for state-dependent validation: an event that is not valid against the current parent remains
+    * available for a later parent, but it cannot permanently occupy the bounded proposal head ahead of newer work.
+    */
+  def deferToBack(hashes: Set[Hash]): F[Unit]
+
   /** Get the current proposal-eligible size of the mempool.
     *
     * @return
@@ -309,6 +316,12 @@ object EventMempool {
       def reactivate(hashes: Set[Hash]): F[Unit] =
         storage.update { state =>
           state.copy(suspended = state.suspended -- hashes)
+        }
+
+      def deferToBack(hashes: Set[Hash]): F[Unit] =
+        storage.update { state =>
+          val present = state.insertionOrder.filter(hashes.contains)
+          state.copy(insertionOrder = state.insertionOrder.filterNot(hashes.contains) ++ present)
         }
 
       def size: F[Int] =

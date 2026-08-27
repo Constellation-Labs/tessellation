@@ -55,6 +55,15 @@ object CurrencySnapshotConsensusStateCreator {
 
   private val availabilityRequestTimeout = 5.seconds
 
+  /** The fan-out is processed in bounded parallel waves. Reusing one peer's timeout for the aggregate made a 20-member committee race three
+    * waves against a one-wave budget. Keep one small scheduling margin after the worst-case per-peer timeouts have fired.
+    */
+  private[snapshot] def availabilityFanoutDeadline(peerCount: Int, maxParallelism: Int): FiniteDuration = {
+    val parallelism = math.max(1, maxParallelism)
+    val waves = math.max(1, (math.max(0, peerCount) + parallelism - 1) / parallelism)
+    availabilityRequestTimeout * waves.toLong + 1.second
+  }
+
   /** Each member advertises only its deterministic share of the fixed proposal work budget. The complete Facility union is defensively
     * capped to the same bound by the advancer, so declarations and availability work remain bounded as N grows.
     */
@@ -66,7 +75,9 @@ object CurrencySnapshotConsensusStateCreator {
     * Currency event data is transported independently from Facility declarations. Without this barrier, a node can advertise a hash and
     * crash after only part of the committee received the corresponding event: some nodes advance while others wait forever, and ordinary
     * Facility ACKs incorrectly classify the crashed advertiser as responsive. A confirmed hash remains retrievable after any one member
-    * fails. A failed confirmation merely defers that event to a later snapshot; it never prevents an otherwise-empty round from starting.
+    * fails. A failed confirmation must contribute the empty set, not be omitted: each node can observe a different responder subset, so
+    * intersecting responders only would let honest nodes advertise different event sets under asymmetric connectivity. Deferral never
+    * prevents an otherwise-empty round from starting; the ordinary all-member Facility/ACK protocol handles the unavailable member.
     */
   private[snapshot] val availabilityProbeParallelism: Int = 8
 
@@ -106,7 +117,7 @@ object CurrencySnapshotConsensusStateCreator {
     localHashes: Set[Hash],
     peers: List[PeerId],
     maxParallelism: Int = availabilityProbeParallelism,
-    deadline: FiniteDuration = availabilityRequestTimeout
+    deadline: Option[FiniteDuration] = None
   )(
     confirm: (PeerId, Set[Hash]) => F[Set[Hash]]
   ): F[SortedSet[Hash]] =
@@ -118,7 +129,10 @@ object CurrencySnapshotConsensusStateCreator {
         .parEvalMap(math.max(1, maxParallelism))(peerId => confirm(peerId, localHashes))
         .compile
         .toList
-        .timeoutTo(deadline, List(Set.empty[Hash]).pure[F])
+        .timeoutTo(
+          deadline.getOrElse(availabilityFanoutDeadline(peers.size, maxParallelism)),
+          List(Set.empty[Hash]).pure[F]
+        )
         .map(_.foldLeft(localHashes)(_ intersect _))
         .map(hashes => SortedSet.from(hashes)(hashOrdering))
 

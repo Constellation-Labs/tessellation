@@ -955,31 +955,36 @@ object CertifiedConsensus {
     val fullSet = roundStartFacilitators.toSortedSet.toSet
     val coreSet = roundStartCore.toSortedSet.toSet
 
-    verifyOutcomeAtSafetyFloor[F](outcome, fullSet, coreSet).flatMap { qcValidation =>
-      ProposalValue
-        .validate(value)
-        .productL(Either.cond(value.domain === domain, (), "historical_domain_mismatch"))
-        .productL(Either.cond(value.networkId === networkId, (), "historical_network_mismatch"))
-        .productL(Either.cond(value.key === key, (), "historical_key_mismatch"))
-        .productL(Either.cond(value.parentArtifactHash === parentArtifactHash, (), "historical_parent_hash_mismatch"))
-        .productL(Either.cond(value.artifactHash === artifactHash, (), "historical_artifact_hash_mismatch"))
-        .productL(
-          Either.cond(
-            expectedContextHash.forall(_ === value.contextHash),
-            (),
-            "historical_context_hash_mismatch"
-          )
+    // Reject a certificate whose signed identity does not match the locally walked
+    // chain before spending cryptographic work on it. These are independent checks:
+    // a genuinely re-signed QC over attacker-selected hashes must still fail against
+    // the downloaded parent/artifact/context and inherited authority.
+    val structural = ProposalValue
+      .validate(value)
+      .productL(Either.cond(value.domain === domain, (), "historical_domain_mismatch"))
+      .productL(Either.cond(value.networkId === networkId, (), "historical_network_mismatch"))
+      .productL(Either.cond(value.key === key, (), "historical_key_mismatch"))
+      .productL(Either.cond(value.parentArtifactHash === parentArtifactHash, (), "historical_parent_hash_mismatch"))
+      .productL(Either.cond(value.artifactHash === artifactHash, (), "historical_artifact_hash_mismatch"))
+      .productL(
+        Either.cond(
+          expectedContextHash.forall(_ === value.contextHash),
+          (),
+          "historical_context_hash_mismatch"
         )
-        .productL(
-          Either.cond(
-            value.roundStartFacilitators === roundStartFacilitators,
-            (),
-            "historical_full_committee_mismatch"
-          )
+      )
+      .productL(
+        Either.cond(
+          value.roundStartFacilitators === roundStartFacilitators,
+          (),
+          "historical_full_committee_mismatch"
         )
-        .productL(Either.cond(value.roundStartCore === roundStartCore, (), "historical_core_committee_mismatch"))
-        .productR(qcValidation)
-        .pure[F]
+      )
+      .productL(Either.cond(value.roundStartCore === roundStartCore, (), "historical_core_committee_mismatch"))
+
+    structural match {
+      case Left(error) => error.asLeft[Unit].pure[F]
+      case Right(_)    => verifyOutcomeAtSafetyFloor[F](outcome, fullSet, coreSet)
     }
   }
 

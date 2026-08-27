@@ -708,6 +708,132 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       )
   }
 
+  test("historical identity rejects validly re-certified hashes and locally mismatched inherited committees") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(5)
+      ids = pairs.take(4).map(peerId)
+      value <- withCommittee(ids)
+      valid <- certifyOutcome(value, pairs, ids)
+      wrongParent <- certifyOutcome(value.copy(parentArtifactHash = hash("wrong-parent")), pairs, ids)
+      wrongArtifact <- certifyOutcome(value.copy(artifactHash = hash("wrong-artifact")), pairs, ids)
+      wrongContext <- certifyOutcome(value.copy(contextHash = hash("wrong-context")), pairs, ids)
+      expectedFull = value.roundStartFacilitators
+      expectedCore = value.roundStartCore
+      differentFull = nonEmptyPeers(ids.dropRight(1))
+      differentCore = nonEmptyPeers(ids.tail)
+      validResult <- verifyHistoricalOutcomeIdentity[IO](
+        valid,
+        value.domain,
+        value.networkId,
+        value.key,
+        value.parentArtifactHash,
+        value.artifactHash,
+        value.contextHash.some,
+        expectedFull,
+        expectedCore
+      )
+      parentResult <- verifyHistoricalOutcomeIdentity[IO](
+        wrongParent,
+        value.domain,
+        value.networkId,
+        value.key,
+        value.parentArtifactHash,
+        value.artifactHash,
+        value.contextHash.some,
+        expectedFull,
+        expectedCore
+      )
+      artifactResult <- verifyHistoricalOutcomeIdentity[IO](
+        wrongArtifact,
+        value.domain,
+        value.networkId,
+        value.key,
+        value.parentArtifactHash,
+        value.artifactHash,
+        value.contextHash.some,
+        expectedFull,
+        expectedCore
+      )
+      contextResult <- verifyHistoricalOutcomeIdentity[IO](
+        wrongContext,
+        value.domain,
+        value.networkId,
+        value.key,
+        value.parentArtifactHash,
+        value.artifactHash,
+        value.contextHash.some,
+        expectedFull,
+        expectedCore
+      )
+      fullResult <- verifyHistoricalOutcomeIdentity[IO](
+        valid,
+        value.domain,
+        value.networkId,
+        value.key,
+        value.parentArtifactHash,
+        value.artifactHash,
+        value.contextHash.some,
+        differentFull,
+        expectedCore
+      )
+      coreResult <- verifyHistoricalOutcomeIdentity[IO](
+        valid,
+        value.domain,
+        value.networkId,
+        value.key,
+        value.parentArtifactHash,
+        value.artifactHash,
+        value.contextHash.some,
+        expectedFull,
+        differentCore
+      )
+    } yield
+      expect.all(
+        validResult === Right(()),
+        parentResult === Left("historical_parent_hash_mismatch"),
+        artifactResult === Left("historical_artifact_hash_mismatch"),
+        contextResult === Left("historical_context_hash_mismatch"),
+        fullResult === Left("historical_full_committee_mismatch"),
+        coreResult === Left("historical_core_committee_mismatch")
+      )
+  }
+
+  test("proposal QC rejects inconsistent hashes on both next-round authority sets") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      badFull = value.copy(nextRoundAuthority = value.nextRoundAuthority.copy(facilitatorsHash = hash("bad-next-full")))
+      badCore = value.copy(nextRoundAuthority = value.nextRoundAuthority.copy(coreHash = hash("bad-next-core")))
+      fullVotes <- pairs.take(3).traverse(signOutcomeVote[IO](badFull, _).map(_._2))
+      coreVotes <- pairs.take(3).traverse(signOutcomeVote[IO](badCore, _).map(_._2))
+      fullResult <- buildProposalQc[IO](
+        badFull,
+        SortedMap.from(ids.take(3).zip(fullVotes)),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      )
+      coreResult <- buildProposalQc[IO](
+        badCore,
+        SortedMap.from(ids.take(3).zip(coreVotes)),
+        ids.toSet,
+        ids.toSet,
+        2.0 / 3.0
+      )
+    } yield
+      expect.all(
+        fullResult === Left("next_full_committee_hash_mismatch"),
+        coreResult === Left("next_core_committee_hash_mismatch")
+      )
+  }
+
   test("three distinct frozen-Core prepare votes build and verify a 3-of-4 QC") { res =>
     implicit val hasher: Hasher[IO] = res._1
     implicit val provider: SecurityProvider[IO] = res._2

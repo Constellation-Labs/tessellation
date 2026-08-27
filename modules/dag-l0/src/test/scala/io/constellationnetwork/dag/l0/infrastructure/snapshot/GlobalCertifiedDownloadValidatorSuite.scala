@@ -8,7 +8,10 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.{EligibleFacilitators, Facilitators}
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -190,7 +193,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         expect.same(Left("genesis_artifact_not_locally_validated"), locallyBound)
   }
 
-  test("ordinal-gated activation authenticates the A-1 envelope, permissioned signers, and context") { implicit res =>
+  test("ordinal-gated activation authenticates the A-1 envelope, unique signers, and context") { implicit res =>
     implicit val (jsonSerializer, hasher, securityProvider) = res
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
 
@@ -198,9 +201,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       root <- canonicalRoot
       artifact = root.finished.signedMajorityArtifact
       context = root.finished.context
-      signers = artifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
       substituteKey <- KeyPairGenerator.makeKeyPair[IO]
-      substitute = PeerId.fromPublic(substituteKey.getPublic)
       invalidArtifact = artifact.copy(
         proofs = NonEmptySet.fromSetUnsafe(
           SortedSet.from(artifact.proofs.toList.map(_.copy(id = substituteKey.getPublic.toId)))
@@ -217,43 +218,32 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       wrongOrdinalArtifact = artifact.copy(
         value = artifact.value.copy(ordinal = SnapshotOrdinal.unsafeApply(artifact.ordinal.value.value + 1L))
       )
-      valid <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](artifact.ordinal, artifact, context, signers)
+      valid <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](artifact.ordinal, artifact, context)
       wrongOrdinal <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
         artifact.ordinal,
         wrongOrdinalArtifact,
-        context,
-        Set.empty
+        context
       )
       invalidSignature <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
         artifact.ordinal,
         invalidArtifact,
-        context,
-        Set.empty
+        context
       )
       duplicateSigner <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
         artifact.ordinal,
         duplicateArtifact,
-        context,
-        Set.empty
-      )
-      unseedlisted <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
-        artifact.ordinal,
-        artifact,
-        context,
-        Set(substitute)
+        context
       )
       contextMismatch <- GlobalCertifiedDownloadValidator.validateActivationRootArtifact[IO](
         artifact.ordinal,
         artifact,
-        differentContext,
-        Set.empty
+        differentContext
       )
     } yield
       expect.same(Right(()), valid) &&
         expect.same(Left("activation_artifact_ordinal_mismatch"), wrongOrdinal) &&
         expect.same(Left("activation_artifact_signature_invalid"), invalidSignature) &&
         expect.same(Left("activation_artifact_duplicate_signer"), duplicateSigner) &&
-        expect.same(Left("activation_artifact_signer_not_seedlisted"), unseedlisted) &&
         expect.same(Left("activation_context_state_proof_mismatch"), contextMismatch)
   }
 
@@ -284,6 +274,58 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         expect.same(historicalHash, parentLinkHash)
       }
     }
+  }
+
+  test("historical authority continuity rejects independently valid full and Core substitutions") { implicit res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+
+    for {
+      pairs <- List.fill(4)(KeyPairGenerator.makeKeyPair[IO]).sequence
+      ids = pairs.map(keyPair => PeerId.fromPublic(keyPair.getPublic))
+      full = NonEmptySet.fromSetUnsafe(SortedSet.from(ids))
+      core = NonEmptySet.fromSetUnsafe(SortedSet.from(ids.take(3)))
+      authority <- CertifiedConsensus.roundAuthority[IO](full, core)
+      value = ProposalValue(
+        SchemaVersion,
+        ConsensusDomain.DagL0,
+        "integrationnet",
+        1L,
+        Hash.empty,
+        Hash.empty,
+        Hash.empty,
+        full,
+        authority.facilitatorsHash,
+        core,
+        authority.coreHash,
+        authority,
+        Hash.empty,
+        0L,
+        EventTrigger,
+        None,
+        SortedSet.empty,
+        SortedSet.empty,
+        SortedSet.from(ids),
+        SortedMap.empty,
+        SortedSet.empty,
+        None
+      )
+      substitutedFull = NonEmptySet.fromSetUnsafe(SortedSet.from(ids.dropRight(1)))
+      substitutedCore = NonEmptySet.fromSetUnsafe(SortedSet.from(ids.drop(1)))
+      valid = GlobalCertifiedDownloadValidator.validateAuthorityContinuity(value, authority)
+      wrongFull = GlobalCertifiedDownloadValidator.validateAuthorityContinuity(
+        value.copy(roundStartFacilitators = substitutedFull),
+        authority
+      )
+      wrongCore = GlobalCertifiedDownloadValidator.validateAuthorityContinuity(
+        value.copy(roundStartCore = substitutedCore),
+        authority
+      )
+    } yield
+      expect.all(
+        valid === Right(()),
+        wrongFull === Left("certified_authority_full_continuity_mismatch"),
+        wrongCore === Left("certified_authority_core_continuity_mismatch")
+      )
   }
 
 }

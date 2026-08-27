@@ -5,6 +5,7 @@ import cats.effect.std.{Mutex, Queue, Supervisor}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
+import scala.concurrent.duration._
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
@@ -63,7 +64,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   def mkSeparatedStorage(
     tmpDir: File,
-    persistenceMutex: Mutex[IO]
+    persistenceMutex: Mutex[IO],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
   )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) = {
     val snapshotsPath = Path((tmpDir / "snapshots").pathAsString)
     val snapshotInfoPath = Path((tmpDir / "snapshot-info").pathAsString)
@@ -96,7 +98,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
             inMemoryCapacity = 5L,
             SnapshotOrdinal.MinValue,
             hs,
-            checkpointStorage
+            checkpointStorage,
+            protectedSnapshotInfoOrdinals
           )
       }
     } yield (storage, snapshotFileStorage, snapshotInfoFileStorage, checkpointStorage)
@@ -142,7 +145,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
             inMemoryCapacity = 5L,
             SnapshotOrdinal.MinValue,
             hs,
-            checkpointStorage
+            checkpointStorage,
+            Set.empty[SnapshotOrdinal]
           )
       }
     } yield (storage, snapshotFileStorage, snapshotInfoFileStorage)
@@ -213,6 +217,43 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
           expect.eql(none, _)
         }
       }
+    }
+  }
+
+  test("live snapshot cutoff retains an explicitly protected certified activation parent") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    def awaitDeleted(
+      storage: SnapshotInfoLocalFileSystemStorage[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+      ordinal: SnapshotOrdinal
+    ): IO[Unit] =
+      storage.exists(ordinal).flatMap {
+        case false => IO.unit
+        case true  => IO.sleep(20.millis) >> awaitDeleted(storage, ordinal)
+      }
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        persistenceMutex <- Mutex[IO]
+        protectedOrdinal = SnapshotOrdinal.unsafeApply(123L)
+        ordinaryOldOrdinal = SnapshotOrdinal.unsafeApply(124L)
+        currentOrdinal = SnapshotOrdinal.unsafeApply(1000L)
+        built <- mkSeparatedStorage(tmpDir, persistenceMutex, Set(protectedOrdinal))
+        (storage, _, snapshotInfoStorage, _) = built
+        pair <- KeyPairGenerator.makeKeyPair[IO]
+        (_, base) <- mkSnapshots
+        current <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          base.value.copy(ordinal = currentOrdinal),
+          pair
+        )
+        info = GlobalSnapshotInfo.empty
+        _ <- snapshotInfoStorage.write(protectedOrdinal, info)
+        _ <- snapshotInfoStorage.write(ordinaryOldOrdinal, info)
+        accepted <- storage.prepend(current, info)
+        _ <- awaitDeleted(snapshotInfoStorage, ordinaryOldOrdinal).timeout(5.seconds)
+        protectedExists <- snapshotInfoStorage.exists(protectedOrdinal)
+        currentExists <- snapshotInfoStorage.exists(currentOrdinal)
+      } yield expect.all(accepted, protectedExists, currentExists)
     }
   }
 

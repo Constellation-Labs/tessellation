@@ -171,6 +171,53 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
     }
   }
 
+  test("snapshot info cutoff retains an explicitly protected certified activation parent") { implicit res =>
+    implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
+    implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+
+    val hashSelect = new HashSelect {
+      def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+    }
+
+    File.temporaryDirectory() { root =>
+      def path(name: String): Path = Path((root / name).pathAsString)
+
+      val protectedOrdinal = SnapshotOrdinal.unsafeApply(123L)
+      val ordinaryOldOrdinal = SnapshotOrdinal.unsafeApply(124L)
+      val currentOrdinal = SnapshotOrdinal.unsafeApply(1000L)
+      val info = GlobalSnapshotInfo.empty
+
+      for {
+        tmpStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+        persistedStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+        fullSnapshotStorage <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+        snapshotInfoStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info-json"))
+        snapshotInfoKryoStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+        checkpointStorage <-
+          CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](path("checkpoint"))
+        producer <- InMemoryMerklePatriciaProducer.make[IO]()
+        mptStore <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+        storage = SnapshotDownloadStorage.make[IO](
+          tmpStorage,
+          persistedStorage,
+          fullSnapshotStorage,
+          snapshotInfoStorage,
+          snapshotInfoKryoStorage,
+          checkpointStorage,
+          hashSelect,
+          mptStore,
+          protectedSnapshotInfoOrdinals = Set(protectedOrdinal)
+        )
+        _ <- snapshotInfoStorage.write(protectedOrdinal, info)
+        _ <- snapshotInfoStorage.write(ordinaryOldOrdinal, info)
+        _ <- storage.persistSnapshotInfoWithCutoff(currentOrdinal, info)
+        protectedExists <- snapshotInfoStorage.exists(protectedOrdinal)
+        ordinaryOldExists <- snapshotInfoStorage.exists(ordinaryOldOrdinal)
+        currentExists <- snapshotInfoStorage.exists(currentOrdinal)
+      } yield expect(protectedExists) && expect(!ordinaryOldExists) && expect(currentExists)
+    }
+  }
+
   test("first incremental after a nonzero historical checkpoint validates at the checkpoint proof ordinal") { res =>
     val (sharedKryoSerializer, sharedJsonSerializer, currentHasher, sharedSecurityProvider, sharedMetrics) = res
     implicit val kryoSerializer: KryoSerializer[IO] = sharedKryoSerializer

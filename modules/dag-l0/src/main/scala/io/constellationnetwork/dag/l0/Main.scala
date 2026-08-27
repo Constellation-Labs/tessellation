@@ -378,6 +378,12 @@ object Main
         case _                                                 => IO.unit
       }).asResource
       certifiedConsensusActivationOrdinal = SnapshotOrdinal.unsafeApply(loadedConsensusConfig.certifiedConsensusActivationKey)
+      protectedCertifiedSnapshotInfoOrdinals =
+        if (
+          loadedConsensusConfig.certifiedConsensusActivationKey === Long.MaxValue ||
+          CertifiedConsensusGenesis.isActiveFromGenesis(loadedConsensusConfig.certifiedConsensusActivationKey)
+        ) Set.empty[SnapshotOrdinal]
+        else Set(SnapshotOrdinal.unsafeApply(loadedConsensusConfig.certifiedConsensusActivationKey - 1L))
       recoveryMaxFacilitatorCount = loadedConsensusConfig.facilitatorSelectionMax
       recoverySeedCommittee = method match {
         case m: RunRollback                 => m.recoverySeedCommittee
@@ -606,7 +612,8 @@ object Main
           cfg.incremental,
           trustRatings,
           sharedConfig.environment,
-          hashSelect
+          hashSelect,
+          protectedCertifiedSnapshotInfoOrdinals
         )
         .asResource
       // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Isolates

@@ -1254,6 +1254,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         value: ProposalValue
       ): Either[String, GlobalSnapshotConsensusState] =
+        // Do not copy the mutable in-round removedFacilitators observation here.
+        // deriveGlobalOutcomeState receives Some(value) below and therefore derives
+        // evictions exclusively from the QC-bound value.evictedPeers; the recovered
+        // Finished outcome writes that same set back to removedFacilitators. Late
+        // Facility observations cannot change nextOperationalStateHash.
         Either
           .cond(value.committedView <= Int.MaxValue.toLong, (), "committed_view_overflow")
           .map { _ =>

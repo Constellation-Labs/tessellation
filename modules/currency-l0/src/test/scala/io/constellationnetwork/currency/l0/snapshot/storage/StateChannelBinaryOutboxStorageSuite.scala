@@ -150,6 +150,28 @@ object StateChannelBinaryOutboxStorageSuite extends SimpleIOSuite {
     }
   }
 
+  test("an aborted uncommitted intent can be prepared again with the exact bytes") {
+    Files[IO].tempDirectory.use { directory =>
+      for {
+        implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+        implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+        storage <- StateChannelBinaryOutboxStorage.make[IO](directory)
+        currencyArtifact = artifact(13L, "artifact-13")
+        value <- binary(13L)
+        _ <- storage.prepare(value, currencyArtifact)
+        _ <- storage.abortPrepared(value.hash)
+        preparedAgain <- storage.prepare(value, currencyArtifact)
+        _ <- storage.markLocallyCommitted(value.hash)
+        pending <- storage.getCommitted(Set.empty, 100)
+      } yield
+        expect.all(
+          preparedAgain.binaryHash === value.hash,
+          preparedAgain.currencyArtifactHash === currencyArtifact.hash,
+          pending.map(_.binaryHash) === List(value.hash)
+        )
+    }
+  }
+
   test("a committed receipt conflicting with a still-present durable artifact fails closed") {
     Files[IO].tempDirectory.use { directory =>
       for {

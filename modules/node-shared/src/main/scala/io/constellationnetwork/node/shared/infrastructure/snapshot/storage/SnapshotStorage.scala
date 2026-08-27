@@ -63,7 +63,8 @@ object SnapshotStorage {
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
     hasherSelector: HasherSelector[F],
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorageAlgebra[F, S, C] with LatestBalances[F]] =
     makeResources[F, S, C]().flatMap {
       case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, persistenceMutex, _) =>
@@ -80,7 +81,8 @@ object SnapshotStorage {
           inMemoryCapacity,
           snapshotInfoCutoffOrdinal,
           hasherSelector,
-          combinedSnapshotCheckpointFileSystemStorage
+          combinedSnapshotCheckpointFileSystemStorage,
+          protectedSnapshotInfoOrdinals
         )
     }
 
@@ -97,7 +99,8 @@ object SnapshotStorage {
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
     hasherSelector: HasherSelector[F],
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorageAlgebra[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -169,7 +172,13 @@ object SnapshotStorage {
               case Some((current, _, _)) =>
                 snapshotInfoLocalFileSystemStorage.listStoredOrdinals.flatMap {
                   _.compile.toList.map { stored =>
-                    stored.toSet.diff(cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, current.ordinal)).toList
+                    // Certified replay authenticates the activation transition from the exact
+                    // A-1 artifact/context pair. Keep that one configured trust-root preimage in
+                    // addition to the ordinary logarithmic operational history.
+                    val retained =
+                      cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, current.ordinal) ++ protectedSnapshotInfoOrdinals
+
+                    stored.toSet.diff(retained).toList
                   }
                     .flatMap(_.traverse_(snapshotInfoLocalFileSystemStorage.delete))
                 }

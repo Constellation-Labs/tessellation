@@ -87,6 +87,8 @@ final case class TriggerStatement(
 @derive(eqv, encoder, decoder)
 final case class CertifiedRoundAuthorityV1(
   facilitators: NonEmptySet[PeerId],
+  // These are signed redundant bindings, not advisory caches. Every ProposalQC
+  // construction and verification recomputes them from the carried sets.
   facilitatorsHash: Hash,
   core: NonEmptySet[PeerId],
   coreHash: Hash
