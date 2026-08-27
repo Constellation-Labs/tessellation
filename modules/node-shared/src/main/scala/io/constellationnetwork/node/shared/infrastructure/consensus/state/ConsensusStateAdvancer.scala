@@ -119,6 +119,12 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     */
   protected def clusterFloorActive(state: ConsensusState[Key, Status, Outcome, Kind]): Boolean = false
 
+  /** Deterministic committee size used by the finality floor. The default is the frozen round committee. Layers that persist a certified
+    * high-water mark may return the larger value so a between-round outage cannot shrink an already-established denominator.
+    */
+  protected def clusterFloorCommitteeSize(state: ConsensusState[Key, Status, Outcome, Kind]): Int =
+    state.roundStartFacilitators.value.size
+
   /** Shared derivation for both quorum decisions (see `quorumShrinkDecision` and `quorumFinalityDecision`). The ONLY difference between the
     * two is `applyClusterFloor`; every other input is identical so the rung anchors cannot drift between them. Pure except for the
     * wall-clock read.
@@ -137,7 +143,8 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
         parentEndTimeMs = lastOutcomeEndTimeMs(state.lastOutcome),
         nowMs = now.toMillis,
         viewIntervalMs = config.viewInterval.toMillis,
-        activationViews = config.quorumShrinkActivationViews
+        activationViews = config.quorumShrinkActivationViews,
+        clusterFloorCommitteeSize = Some(clusterFloorCommitteeSize(state))
       )
     }
 
@@ -215,13 +222,6 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     val receivedCount = declarationsMap.size
     val gateReceivedCount = declarationsMap.keys.count(gateSet.contains)
 
-    // Quorum threshold from config. Default: unanimity (1.0 = all must respond).
-    // Testnet/mainnet use 0.6666666666666666 (exact 2/3) so community peers don't block rounds.
-    // Dev uses 1.0 (unanimity) for clean E2E convergence. Integer arithmetic via
-    // `QuorumPolicy.fromFraction` removes the `Double` from consensus math. The threshold here
-    // mirrors `decision.baseQuorum` for the active gate set (Core in bootstrap, committee otherwise).
-    val quorumFraction = config.quorumThresholdFraction
-    val quorumThreshold = math.max(1, QuorumPolicy.fromFraction(gateSize, quorumFraction))
     val gateDeclared: Set[PeerId] = declarationsMap.keySet.filter(gateSet.contains)
 
     for {
@@ -236,7 +236,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
       result <-
         if (met) {
           logger.debug(
-            s"Quorum reached: ${gateReceivedCount}/${gateSize} committee declared (total received ${receivedCount}/${collectionUniverse.size}, need ${quorumThreshold}) for key=${state.key}"
+            s"Quorum reached: ${gateReceivedCount}/${gateSize} committee declared (total received ${receivedCount}/${collectionUniverse.size}, need ${decision.baseQuorum}) for key=${state.key}"
           ) >>
             logger
               .info(

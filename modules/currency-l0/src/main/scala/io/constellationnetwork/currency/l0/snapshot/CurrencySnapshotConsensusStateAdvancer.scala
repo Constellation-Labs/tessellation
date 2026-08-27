@@ -155,6 +155,14 @@ object CurrencySnapshotConsensusStateAdvancer {
       override protected def clusterFloorActive(state: CurrencySnapshotConsensusState): Boolean =
         !isInBootstrap(state)
 
+      override protected def clusterFloorCommitteeSize(state: CurrencySnapshotConsensusState): Int = {
+        val established = CurrencyConsensusOutcome.establishedFinalityCommitteeSize(
+          state.lastOutcome.recentProofSizes,
+          config.coreCommitteeSize
+        )
+        math.max(state.roundStartFacilitators.value.size, established)
+      }
+
       def getConsensusOutcome(
         state: CurrencySnapshotConsensusState
       ): Option[(Previous[CurrencySnapshotKey], CurrencyConsensusOutcome)] =
@@ -263,20 +271,20 @@ object CurrencySnapshotConsensusStateAdvancer {
                 acceptedObservedResponders = state.observedResponders.value,
                 certifiedEvictions = state.certifiedEvictionTargets
               )
-
             // Roll the proofs-size window forward using the canonical committee size for
-            // the completed round. Mirror of dag-l0 (committee-size semantics kept so the
-            // bootstrap classification keyed on bootstrapCompleteProofsThreshold still
-            // measures committee size).
+            // the completed round. Currency retains one high-water entry outside the
+            // rolling window so a later outage cannot shrink the established finality
+            // denominator; see CurrencyConsensusOutcome.advanceRecentProofSizes.
             val bootstrapLookbackOrdinals = 10L
             val currentOrdValue = state.key.value.value
-            val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
             val currentProofsSize: Int = canonicalCommitteeForRound.size
-            val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] = {
-              val withCurrent =
-                state.lastOutcome.recentProofSizes.updated(state.key, currentProofsSize)
-              withCurrent.filter { case (ord, _) => ord.value.value >= minOrdinalValue }
-            }
+            val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] =
+              CurrencyConsensusOutcome.advanceRecentProofSizes(
+                previous = state.lastOutcome.recentProofSizes,
+                currentOrdinal = state.key,
+                completedCommitteeSize = currentProofsSize,
+                lookbackOrdinals = bootstrapLookbackOrdinals
+              )
 
             // v22: recentSigners repopulated as the rolling K-round CANONICAL signer-set window;
             // drives the tier-demotion hysteresis. Fully sorted -> deterministic. Mirror of dag-l0.

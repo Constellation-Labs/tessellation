@@ -128,8 +128,10 @@ object schema {
     // Lifetime count of times this peer was evicted. Scales removalPenaltyRounds
     // exponentially so repeat offenders get progressively longer bans.
     cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
-    // Sliding window of (ordinal -> proofs.size) for the last ~10 ordinals, used for
-    // bootstrap warmup classification. See dag-l0 mirror for full rationale.
+    // Recent (ordinal -> canonical committee size) window used for bootstrap warmup
+    // classification. Currency L0 additionally retains one deterministic historical
+    // high-water entry so a temporary outage cannot erase an established finality
+    // denominator. This uses the existing rc.12 wire field; no snapshot schema changes.
     recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty,
     // B2 re-admission gate: peers whose `removalPenalty` expired enter this map
     // at `readmissionProbationRounds` and count down one per finished round. See
@@ -229,6 +231,36 @@ object schema {
   }
 
   object CurrencyConsensusOutcome {
+
+    /** Roll the bootstrap window while retaining one certified committee-size high-water entry.
+      *
+      * `recentProofSizes` already exists in the rc.12 signed snapshot schema and survives rollback. Reusing it keeps stock Global L0
+      * signature verification compatible while preserving the highest committee size that has completed a round. Ties select the latest
+      * ordinal, so a recovered full committee naturally moves the marker back into the bounded window.
+      */
+    def advanceRecentProofSizes(
+      previous: SortedMap[SnapshotOrdinal, Int],
+      currentOrdinal: SnapshotOrdinal,
+      completedCommitteeSize: Int,
+      lookbackOrdinals: Long
+    ): SortedMap[SnapshotOrdinal, Int] = {
+      val withCurrent = previous.updated(currentOrdinal, math.max(0, completedCommitteeSize))
+      val minOrdinalValue = math.max(0L, currentOrdinal.value.value - math.max(0L, lookbackOrdinals))
+      val recent = withCurrent.filter { case (ordinal, _) => ordinal.value.value >= minOrdinalValue }
+      val highWater = withCurrent.maxBy { case (ordinal, size) => (size, ordinal.value.value) }
+
+      recent.updated(highWater._1, highWater._2)
+    }
+
+    /** Config-capped high-water mark used as the retained finality denominator. */
+    def establishedFinalityCommitteeSize(
+      recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+      configuredCoreCommitteeSize: Option[Int]
+    ): Int =
+      configuredCoreCommitteeSize
+        .filter(_ > 0)
+        .fold(0)(configured => math.min(recentProofSizes.valuesIterator.maxOption.getOrElse(0), configured))
+
     implicit val _artifact: Lens[CurrencyConsensusOutcome, Signed[CurrencySnapshotArtifact]] =
       GenLens[CurrencyConsensusOutcome](_.finished.signedMajorityArtifact)
     implicit val _context: Lens[CurrencyConsensusOutcome, CurrencySnapshotContext] =

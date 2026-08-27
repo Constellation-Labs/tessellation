@@ -98,7 +98,8 @@ object QuorumDenominatorShrink {
     *   elapsed escalation steps past the activation threshold (0 when inert).
     * @param baseQuorum
     *   the unshrunken requirement, `max(coreQuorum, clusterFloor)` where `coreQuorum = max(1, fromFraction(coreSize, fraction))` and
-    *   `clusterFloor = fromFraction(roundStartFacilitators.size, fraction)` outside bootstrap (0 in bootstrap). See `decide`.
+    *   `clusterFloor = fromFraction(clusterFloorCommitteeSize, fraction)` outside bootstrap (0 in bootstrap). The floor size defaults to
+    *   the frozen round committee but a layer may supply a larger, consensus-persisted high-water mark. See `decide`.
     * @param requiredQuorum
     *   the effective requirement after escalation; `baseQuorum` when inert, never below the cluster floor outside bootstrap (never below
     *   [[MinQuorumFloor]] in bootstrap).
@@ -179,15 +180,16 @@ object QuorumDenominatorShrink {
     * ==v4.1.0 cluster-majority floor (safety-first)==
     *
     * `applyClusterFloor` (true outside bootstrap) raises the finality quorum to at least a super/unanimity-majority of the FROZEN ROUND
-    * COMMITTEE (`roundStartFacilitators`), not merely the Core sub-committee: `base = max(coreQuorum, clusterFloor)` with `clusterFloor =
-    * fromFraction(roundStartFacilitators.size, fraction)`. Because `coreFacilitators` is a subset of `roundStartFacilitators`,
-    * `clusterFloor >= coreQuorum` always, so outside bootstrap `base == clusterFloor` and a Core that has shrunk to a cluster-minority can
-    * no longer assemble any certificate or finalize -- the proven 2-of-5 self-finalization fork is fenced. The floor also binds the SHRUNK
-    * path: `requiredQuorum` is clamped up to `clusterFloor`, so `meets` (which accepts `active && anchorVoters >= requiredQuorum`) can
-    * never accept below the committee floor. Net effect outside bootstrap: the shrink rung may relax the requirement DOWN TO the committee
-    * floor but never below it, so under > f genuine outage the round HALTS (the caller announces it) rather than letting a minority
-    * finalize. Inside bootstrap (`applyClusterFloor = false`) `clusterFloor = 0` and every value is byte-identical to pre-floor behavior,
-    * so cold start is unaffected.
+    * COMMITTEE, not merely the Core sub-committee: `base = max(coreQuorum, clusterFloor)` with `clusterFloor =
+    * fromFraction(clusterFloorCommitteeSize, fraction)`. The floor size defaults to the frozen `roundStartFacilitators.size`; a layer may
+    * provide a larger consensus-persisted high-water mark so an outage between rounds cannot erase an already-established denominator.
+    * Because `coreFacilitators` is a subset of `roundStartFacilitators`, `clusterFloor >= coreQuorum` always, so outside bootstrap `base ==
+    * clusterFloor` and a Core that has shrunk to a cluster-minority can no longer assemble any certificate or finalize -- the proven 2-of-5
+    * self-finalization fork is fenced. The floor also binds the SHRUNK path: `requiredQuorum` is clamped up to `clusterFloor`, so `meets`
+    * (which accepts `active && anchorVoters >= requiredQuorum`) can never accept below the committee floor. Net effect outside bootstrap:
+    * the shrink rung may relax the requirement DOWN TO the committee floor but never below it, so under > f genuine outage the round HALTS
+    * (the caller announces it) rather than letting a minority finalize. Inside bootstrap (`applyClusterFloor = false`) `clusterFloor = 0`
+    * and every value is byte-identical to pre-floor behavior, so cold start is unaffected.
     */
   def decide(
     coreSize: Int,
@@ -198,11 +200,13 @@ object QuorumDenominatorShrink {
     parentEndTimeMs: Option[Long],
     nowMs: Long,
     viewIntervalMs: Long,
-    activationViews: Int
+    activationViews: Int,
+    clusterFloorCommitteeSize: Option[Int] = None
   ): Decision = {
     val coreQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    val effectiveClusterFloorSize = math.max(roundStartFacilitators.size, clusterFloorCommitteeSize.getOrElse(0))
     val clusterFloor =
-      if (applyClusterFloor) math.max(1, QuorumPolicy.fromFraction(roundStartFacilitators.size, quorumThresholdFraction)) else 0
+      if (applyClusterFloor) math.max(1, QuorumPolicy.fromFraction(effectiveClusterFloorSize, quorumThresholdFraction)) else 0
     val base = math.max(coreQuorum, clusterFloor)
     val anchorSet = anchor(latestEvidenceSigners, roundStartFacilitators)
     val steps = escalationSteps(nowMs, parentEndTimeMs, viewIntervalMs, activationViews)

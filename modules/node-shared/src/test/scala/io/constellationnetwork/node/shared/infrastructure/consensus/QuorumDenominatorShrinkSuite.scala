@@ -306,6 +306,26 @@ object QuorumDenominatorShrinkSuite extends FunSuite {
     expect(d.meets(majority4), "a committee super-majority (4 of 5) must finalize")
   }
 
+  test("cluster floor retains a certified five-seat denominator when the next round contains four peers") {
+    val currentFour = Set(n1, n2, n3, n4)
+    val d = QuorumDenominatorShrink.decide(
+      coreSize = 3,
+      applyClusterFloor = true,
+      quorumThresholdFraction = testnetFraction,
+      latestEvidenceSigners = Some(SortedSet.empty[PeerId] ++ currentFour),
+      roundStartFacilitators = currentFour,
+      parentEndTimeMs = Some(parentEndMs),
+      nowMs = nowAtSteps(0),
+      viewIntervalMs = viewIntervalMs,
+      activationViews = activationViews,
+      clusterFloorCommitteeSize = Some(5)
+    )
+
+    expect.same(4, d.baseQuorum) &&
+    expect(!d.meets(Set(n1, n2, n3)), "three signatures must not satisfy the retained five-seat floor") &&
+    expect(d.meets(currentFour), "all four reachable validators satisfy the retained five-seat floor")
+  }
+
   test("cluster floor: the shrink rung cannot relax below the committee floor (2-of-5 still rejected after deep silence)") {
     // Full anchor + maximum escalation: pre-floor this walked requiredQuorum down to MinQuorumFloor=2.
     // With the floor active, requiredQuorum is clamped UP to the committee floor, so the rung is neutralized
