@@ -16,7 +16,7 @@
     "@stardust-collective/dag4-ledger": "file:../dag4.js/packages/dag4-ledger",
     "@stardust-collective/dag4-network": "file:../dag4.js/packages/dag4-network",
     "@stardust-collective/dag4-wallet": "file:../dag4.js/packages/dag4-wallet",
-    "axios": "^1.17.0",
+    "axios": "^1.18.0",
     "brotli": "^1.3.3",
     "conventional-changelog-conventionalcommits": "^5.0.0",
     "elliptic": "^6.6.1",
