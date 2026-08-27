@@ -53,18 +53,18 @@ These resolve once per environment at the construction site (the coreCommitteeSi
 | `quorum-shrink-activation-views` | `Map[Env, PosInt]` | testnet `10` (`dag-l0.conf:177-179`) | **disabled** (resolved `0`) | v33 `QuorumDenominatorShrink`: number of `view-interval` units of wall silence since the parent outcome closed before the escalating quorum-denominator shrink begins. Trades partition safety for liveness in its deep stage. Mainnet and dev are absent on purpose (`config/types.scala:861-872, 1168-1175`). |
 | `active-admission-min-probation-reentry-slots` | `Map[Env, Int]` | testnet `3`, mainnet `15`, integrationnet `9`, dev `3` | disabled (resolved `0`) | Minimum bounded probation cohort classified outside Core even when the controller's per-round expansion budget is exhausted. A peer that signs the latest round retains classifier priority until it reaches the retain band; missing ends that priority, not its signing lease. Current public GL0 environments configure one Core-sized cohort. |
 | `active-admission-recent-signer-window` | `Map[Env, Int]` (override `CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW`) | testnet `10` (`dag-l0.conf:216-219`) | floored to `3` (`DemotionConsecutiveMisses`) | Recent-signer controller lookback depth (in ordinals): how far back a peer may have last participated and still hold sticky Core-classification priority. It does not cap retained Tier-1 signing/reward membership (`config/types.scala:1185-1193`). |
-| `certified-consensus-activation-ordinal` | `Map[Env, SnapshotOrdinal]` | dev `0`; all public DAG and Currency entries absent | **disabled** (`SnapshotOrdinal.MaxValue`) | Per-L0 v35 behavior boundary. DAG L0 and every Currency L0 interpret this in their own ordinal space. The resolved key is hash-folded and must be installed cluster-wide before the announced activation. |
+| `certified-consensus-activation-ordinal` | `Map[Env, SnapshotOrdinal]` | Global L0 dev `0`; all public Global entries absent until scheduled | **disabled** (`SnapshotOrdinal.MaxValue`) | **Global L0-only** v35 behavior boundary, interpreted in Global snapshot ordinal space. The resolved key is hash-folded and must be installed cluster-wide before the announced activation. Currency L0 has no configured v35 key and never switches its flat synchronous engine on this value; its shared `ConsensusConfig` projection retains only the disabled `Long.MaxValue` sentinel. |
 
 ### Other hashed knobs without their own table row
 
-`readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `35`), the resolved certified-consensus activation key, and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=35` is the immediate fence against mixed active-consensus wire versions; the ordinal key separately controls when v35 behavior starts.
+`readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `35`), the resolved Global certified-consensus activation key, and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=35` is the immediate fence against mixed active-consensus wire versions; the Global ordinal key separately controls when Global v35 behavior starts. Currency's shared projection carries the disabled activation sentinel only; it has no Currency-local v35 transition.
 
 The cross-layer `lastGlobalSnapshotSyncOffset`, `lastGlobalSnapshotsInMemory`, and
 resolved `currencySnapshotProtocolV1ActivationOrdinal` are copied from shared config
 into both DAG and Currency L0 effective `ConsensusConfig` values and hash-folded. The
 last value authorizes the existing signed Currency snapshot `version` to advance from
-`0.0.1` to `1.0.0` in GLOBAL L0 ordinal space; it is separate from each cluster's
-Currency-local certified-consensus key. See
+`0.0.1` to `1.0.0` in GLOBAL L0 ordinal space. It is separate from the Global-only v35
+certified-consensus key; there is no Currency-local certified-consensus key. See
 [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
 
 ---

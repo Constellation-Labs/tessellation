@@ -126,7 +126,9 @@ snapshot. It does not continue forcing the selected committee on every later
 ordinal. The external environment is intentionally repeatable: every fresh
 selected-source JVM launch reads it again and re-arms, until the operator
 comments or removes the variable. There is no consumed receipt or tombstone for
-the unsigned path.
+the unsigned path. This describes parser behavior, not a safe steady-state
+configuration: leaving the variable in a launch environment after successful
+recovery is failed cleanup and blocks monitoring release.
 
 Disarm, public durability, and rollout health are deliberately separate. After
 disarm the node continues to track both whether the recovery boundary is
@@ -207,25 +209,37 @@ coordinated external cold starts, not unobserved single-node cycling.
 
 1. Disable all automatic restart/rollback automation. A monitor must not kill a
    named member while the exact all-member barrier is pending.
-2. Pause snapshot-streaming before any rollback that can replace already
+2. Before stopping any process, preserve the evidence bundle required by
+   [Release Policy](../release/RELEASE_POLICY.md#mandatory-pre-stop-evidence-and-monitoring-gate):
+   active and rotated application/HTTP logs; the system journal, service and
+   exit status; any existing heap/core/JVM crash artifact; redacted environment,
+   effective configuration, launch/unit/deployment definitions; jar, version,
+   `versionHash`, `deterministicConfigHash`, and schema-version identifiers; the
+   selected/current anchor and Snapshot Streaming observations; and manifests
+   of snapshot indexes, locks/journals, and sidecars. Source log retention can
+   be less than 24 hours under load. Store the timestamped bundle outside live
+   rotation directories and retain it as durable incident evidence.
+3. Pause snapshot-streaming before any rollback that can replace already
    indexed ordinals. Determine the last common `(ordinal, hash)` and the first
    replaced ordinal. Snapshot-streaming treats source-node history as final and
    its ordinal uniqueness cannot reconcile an abandoned fork automatically.
-3. Stop the full IntegrationNet fleet. Confirm every node will start the same
+4. Stop the full IntegrationNet fleet. Prefer an orderly stop. Escalate an
+   unresponsive JVM only after evidence capture, recording its timeout, signal,
+   and exit status. Confirm every node will start the same
    immutable release/version and effective `deterministicConfigHash`.
-4. Select a canonical **incremental** anchor by exact ordinal, hash, snapshot
+5. Select a canonical **incremental** anchor by exact ordinal, hash, snapshot
    content, state proof, and snapshot info—not by recency alone. If a signed
    recovery checkpoint is configured, confirm it is the same anchor.
-5. Select a viable, collateralized recovery cohort. For the normal source-node
+6. Select a viable, collateralized recovery cohort. For the normal source-node
    procedure, use all three controlled source PeerIds. Independently compare the
    exact environment value on all three machines.
-6. Start exactly one source node with `run-rollback <exact-anchor-hash>` and the
+7. Start exactly one source node with `run-rollback <exact-anchor-hash>` and the
    environment value. Start the other two source nodes with ordinary
    `run-validator` and the same value. Do not start a second rollback node.
-7. Verify all three source JVMs report
+8. Verify all three source JVMs report
    `dag_consensus_recovery_seed_armed == 1` and the same canonical committee.
    The barrier must name only the expected source PeerIds.
-8. Verify all three serve the same anchor and reconstructed outcome, the current
+9. Verify all three serve the same anchor and reconstructed outcome, the current
    alignment gauges are zero, and at least one `aligned=true` poll occurred.
    Temporary missing-session or `aligned=false` polls are expected while the
    sources start sequentially. Then wait for the first accepted successor and
@@ -237,14 +251,14 @@ coordinated external cold starts, not unobserved single-node cycling.
    report `rollback_uncorroborated` until a second selected source is
    `Ready`/`WaitingForReady`; do not misdiagnose that bounded wait as a lineage
    mismatch.
-9. Comment/remove `CL_GL0_RECOVERY_SEED_COMMITTEE` on all selected sources
+10. Comment/remove `CL_GL0_RECOVERY_SEED_COMMITTEE` on all selected sources
    immediately after that successor, without restarting a process that already
    committed it. Changing the persistent environment does not alter authority
    parsed by a running JVM. If a selected validator missed the successor and
    remains armed, restart only that node as an ordinary `run-validator` after
    removing the env; it must download the canonical successor before community
    release.
-10. Keep community nodes and restart automation held while the source cohort
+11. Keep community nodes and restart automation held while the source cohort
    establishes next-seat headroom **and**, in the v35 epoch, public recovery
    durability. For a three-node IntegrationNet seed, headroom means one accepted
    snapshot with proofs from all three sources. Inspect that canonical accepted
@@ -272,20 +286,25 @@ coordinated external cold starts, not unobserved single-node cycling.
    Do not restart-loop it or diagnose that as a broken source recovery. Hold it
    until `R+2` carries the successor QC publicly. Full-FSM automatic rejoin after
    an early release remains a pre-activation test gate.
-11. Start or release all community nodes as ordinary `run-validator` processes
+12. Start or release all community nodes as ordinary `run-validator` processes
     with no recovery environment. Verify admission grows from the healthy base
     under rc.8's sustained-signing headroom gate.
-12. Reconcile snapshot-streaming to the chosen lineage before resuming ingest.
+13. Reconcile snapshot-streaming to the chosen lineage before resuming ingest.
     Verify exact source snapshot hashes at the first replaced ordinal and the
     current tip; process health alone is insufficient.
-13. Re-enable ordinary community-node restart automation only after the
-    committee has positive finality margin, community nodes are draining
-   normally, Snapshot Streaming follows the same lineage, and the recovery
-   environment has been removed from every selected source launch file.
-   Automation may alert, stop processes, and stage preflight evidence, but an
-   operator must explicitly authorize every future environment-bearing
-   coordinated start after reviewing the canonical anchor and Snapshot
-   Streaming boundary. The normal
+14. Re-enable ordinary community-node restart automation only after **all** of
+    the following are true: the canonical first successor was accepted;
+    `dag_consensus_signing_finality_audit_current_finality_margin > 0`;
+    community nodes are draining normally; Snapshot Streaming follows the exact
+    source-agreed lineage; and `CL_GL0_RECOVERY_SEED_COMMITTEE` has been removed
+    from every selected source launch environment. At/after v35, canonical
+    `R+2` must also be accepted and
+    `dag_consensus_recovery_seed_boundary_publicly_durable == 1`. Source
+    `Ready` state or process uptime is not a substitute for any of these gates.
+    Automation may alert, stop processes, and stage preflight evidence, but an
+    operator must explicitly authorize every future environment-bearing
+    coordinated start after reviewing the canonical anchor and Snapshot
+    Streaming boundary. The normal
     one-rollback-lead, all-other-validators launch topology remains unchanged.
 
 No cleanup rollback/restart is required for this recovery invocation, and the
@@ -300,8 +319,9 @@ runbook again.
 If a named process exits before the first successor, keep automation off and
 treat the attempt as interrupted. Its in-process restart is deliberately
 seed-free; a fresh external restart rereads the environment and can re-arm. Stop
-the selected cohort and determine whether any successor was accepted. If none
-was, repeat the coordinated source start only after re-verifying the same
+the selected cohort only after preserving an updated evidence bundle, and
+determine whether any successor was accepted. If none was, repeat the
+coordinated source start only after re-verifying the same
 anchor, committee, and snapshot-streaming boundary. If a successor was
 accepted, do not blindly replay its old anchor. A missing non-lead can rejoin
 through an ordinary validator invocation with the override omitted for that
@@ -314,7 +334,13 @@ decision.
 ## Snapshot-streaming reconciliation
 
 Snapshot-streaming must be stopped before rollback. Record both its database
-tip and the ordinal/hash in `seed-snapshot.json.gz`. After GL0 stabilizes:
+tip and the ordinal/hash in `seed-snapshot.json.gz`. Select and approve the
+`canonical rollback and divergent-suffix repair` mode in the
+[Snapshot Streaming and Block Explorer reconciliation runbook](snapshot-streaming-block-explorer-reconciliation.md);
+that runbook is authoritative for owner approval, backups, Block Explorer,
+object-store/index cleanup, and the STOP/DELETE/SEED/REPLAY/RECONCILE gates.
+The steps below summarize the Snapshot Streaming boundary specific to this
+recovery. After GL0 stabilizes:
 
 In the operated three-source topology, Snapshot Streaming's configured `l0Peers`
 set is the three controlled GL0 sources. `GlobalL0Service` queries that set in two
@@ -346,7 +372,8 @@ its source pool is restored/restarted.
 4. Reset `seed-snapshot.json.gz` to the last shared canonical combined snapshot
    at `D - 1`, not the new head. Head-seeding leaves a history gap.
 5. Resume only after verifying contiguous database ordinals, exact hashes at
-   `D` and the current tip, and zero uniqueness-violation (`23505`) errors.
+   `D` and the current tip, zero uniqueness-violation (`23505`) errors, and
+   exact Block Explorer/SS/source agreement at the approved watermark.
 
 This manual boundary is necessary because snapshot-streaming upserts by hash
 while the database also enforces ordinal uniqueness. It cannot automatically
@@ -413,6 +440,7 @@ any alignment gauge remains non-zero, if headroom or public durability does not
 become ready, or if one selected source is externally restarted with the
 variable outside a declared coordinated recovery. A flat tip while the source
 cohort deliberately produces `R+1` and `R+2` is not permission to restart it.
+Any held first-round alignment state is a **DO-NOT-RESTART** condition.
 The rollback lead remaining in its normal `run-rollback` role is expected; the
 variable remaining configured after a successful recovery is an alert
 condition.

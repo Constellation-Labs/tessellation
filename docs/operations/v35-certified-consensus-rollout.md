@@ -3,6 +3,12 @@
 This runbook accompanies [ADR-0032](../adr/0032-certified-consensus-outcomes.md) and
 [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
 
+The public rollout also requires the independently released Snapshot Streaming artifact,
+the complete metagraph application rebuild described in the
+[metagraph upgrade guide](../release/metagraph-upgrade-guide.md), and an approved
+[Snapshot Streaming and Block Explorer reconciliation mode](snapshot-streaming-block-explorer-reconciliation.md).
+Passing this repository's tests does not satisfy those independent release gates.
+
 ## Scheduled activations
 
 - No replacement public activation key is recorded in this document yet. The former
@@ -112,6 +118,10 @@ and is therefore fenced independently as well.
     `unappliedGlobalChangeOrdinals` set is empty, or explicitly monitor the lineage's
     deterministic `blocked_unproven` delay until all entries at or below its selected
     Global L0 view are acknowledged. Keep dormant legacy metagraphs offline until upgraded.
+    Complete and retain the release-wide active/dormant/retired/unknown lineage census from
+    the [metagraph upgrade guide](../release/metagraph-upgrade-guide.md). This is an
+    independent go/no-go gate: a green Global L0 build does not prove that an external
+    metagraph stack was rebuilt or that its signed unapplied history is ready.
 11. Replay pre-boundary Currency `0.0.1` fixtures and cross the boundary in the generated
     dev/CI metagraph. Assert the first eligible child is `1.0.0`, descendants cannot
     downgrade, and Global L0 accepts the state-channel binary.
@@ -157,8 +167,12 @@ and is therefore fenced independently as well.
     indices with `clean_indices`, and restarts ingestion; replay then rebuilds its
     S3/PostgreSQL export state. Back up and explicitly approve/coordinate all of those
     mutations rather than treating the release-branch push as a harmless rolling restart.
-    Snapshot Streaming does not otherwise write OpenSearch during ordinary ingest. Reconcile
-    any separate Block Explorer/indexer state through that component's own runbook.
+    Snapshot Streaming does not otherwise write OpenSearch during ordinary ingest. Select and
+    approve one of the three modes in the
+    [Snapshot Streaming and Block Explorer reconciliation runbook](snapshot-streaming-block-explorer-reconciliation.md):
+    ordinary no-reorg upgrade, deliberate full replay/rebuild, or canonical rollback
+    divergent-suffix repair. Do not let a deployment script's default full rebuild stand in
+    for an explicit mode/owner decision.
 13. Verify public certified-lineage retention. From A-1 (or the canonical first
     incremental root for certification-from-genesis) through the current tip, every signed
     incremental artifact must be readable after a process restart. The independently
@@ -246,7 +260,9 @@ authorized checkpoint may bound that I/O, but is not an activation blocker.
    Snapshot Streaming artifact from its own environment release branch before crossing
    either activated state-application boundary. A green Tessellation PR
    `snapshot-streaming` E2E is necessary compatibility evidence, not proof that this
-   production artifact was released. Do not canary a mixed active consensus fleet.
+   production artifact was released. Snapshot Streaming/Block Explorer release approval
+   and complete metagraph-stack release approval are separate recorded go/no-go gates.
+   Do not canary a mixed active consensus fleet.
 4. Cold-start the cluster and verify identical deterministic config hashes and normal
    legacy progress below the key.
 5. Before crossing, verify every expected active node is on the recorded jar/config.
@@ -387,9 +403,12 @@ If activation fails:
 2. Archive logs and sidecars before changing anything.
 3. Stop Snapshot Streaming before selecting or installing a rollback lineage. Record its
    database tip and the ordinal/hash already exported to S3/PostgreSQL, plus the state of any
-   downstream Block Explorer/indexer. If any exported ordinal will be replaced, reconcile those
-   rows/objects, its seed marker, and downstream indexes to the chosen canonical lineage before
-   resuming ingest; source-majority validation does not make ordinal-unique storage reorg-aware.
+   downstream Block Explorer/indexer. If any exported ordinal will be replaced, execute the
+   canonical rollback divergent-suffix mode in the
+   [SS/BE reconciliation runbook](snapshot-streaming-block-explorer-reconciliation.md).
+   Reconcile those rows/objects, its seed marker, and downstream indexes to the chosen canonical
+   lineage before resuming ingest; source-majority validation does not make ordinal-unique
+   storage reorg-aware.
 4. Restore the verified pre-activation checkpoint and the prior coherent jar/config.
 5. Move the activation key only through another announced, full-cluster rollout.
 

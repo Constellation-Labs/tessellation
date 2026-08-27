@@ -241,7 +241,9 @@ it.
    four-successor observation, corroborated exact-outcome handoff, synchronous registration,
    and an actual Currency proof before starting the next.
 9. Remove the solo flag from the lead's next startup command and restore automation
-   only after the multi-signer committee has positive finality margin.
+   only after the intended multi-member facilitator list completes ordinary artifact and
+   binary proof phases on consecutive successors. Currency's synchronous engine does not
+   expose the Global L0 finality-margin gate.
 
 This advances Currency and Global L0 forward. It does not roll back Global L0 and does
 not require Snapshot Streaming surgery.

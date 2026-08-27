@@ -303,7 +303,7 @@ the public lineage, observes successors, and registers for admission. The
 `--allow-solo-consensus` flag does not select the committee; it separately arms the
 operator-authorized dormant-lineage publication refresh. Two isolated rollback leads can
 still create conflicting histories. See the
-[Currency L0 single-node rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
+[Currency L0 controlled rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
 for the compatibility boundary, committee-regrowth trace, metrics, and rollout
 procedure, and distribute the corresponding
 [operator release note](../release/currency-l0-solo-rollback.md) before use.

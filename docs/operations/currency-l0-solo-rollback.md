@@ -1,226 +1,196 @@
-# Currency L0 single-node rollback recovery
+# Currency L0 controlled rollback recovery
 
-`currency-l0 run-rollback --allow-solo-consensus` is an opt-in recovery escape
-hatch for a fully stopped metagraph. It lets exactly one rollback node seed the
-next Currency L0 consensus outcome with itself instead of inheriting every proof
-signer from the checkpoint.
+Currency L0 uses the flat synchronous protocol described in
+[Currency L0 synchronous consensus](../consensus/currency-l0-synchronous.md). Its
+recovery topology is the stable permissioned-metagraph topology:
 
-This is an operational override, not a normal startup mode. Running it on two
-isolated nodes can produce two valid but conflicting histories.
+- exactly one operator-controlled node starts `run-rollback`;
+- every other node starts `run-validator`; and
+- the rollback lead starts the new live committee with `{self}` while validators
+  register and join through completed synchronous outcomes.
 
-> **DANGER — never persist this flag.** Do not add
-> `--allow-solo-consensus` to a systemd unit, container entrypoint, deployment
-> manifest, environment variable, or monitoring/automatic-restart command. It
-> is authorized for one manually coordinated rollback invocation only. An
-> automatic restart that repeats the override while nodes are isolated can
-> create a competing history. Disable automatic restarts before recovery and
-> restore the normal command, without the flag, before re-enabling them.
+The rollback checkpoint's proof signers authenticate the historical artifact. They do
+not become the post-rollback live committee merely because they signed that artifact.
+The same self-only bootstrap rule applies with or without `--allow-solo-consensus`.
 
-## Why it is needed
+`--allow-solo-consensus` is retained as a compatibility-named, opt-in control for one
+additional operation: it arms the deterministic-history publication refresh used to
+resurrect a dormant Currency lineage. It does **not** select the facilitator set, lower
+a quorum, enable a Core/Tier bypass, or switch Currency L0 into certified consensus.
 
-Normal Currency L0 rollback derives `Facilitators` and `EligibleFacilitators`
-from the rolled-back snapshot's proof signers. That is the safe default while a
-quorum of those signers is available. When the entire metagraph stops, however,
-a single restarted signer inherits a multi-peer committee and cannot finalize
-the next ordinal.
+> **DANGER — exactly one rollback lead.** Never run independent rollback leads, with
+> or without this flag. Two isolated leads can create two internally valid Currency
+> histories. Stop the complete Currency cohort, disable automatic restart/rollback,
+> select one canonical checkpoint, and start exactly one controlled rollback lead.
 
-A normal validator cannot break that cycle on a stopped chain. Currency L0's
-download program observes through `tip + 4` before it starts facilitating
-(`snapshot/programs/Download.scala`, `observationOffset` and `observe`). Those
-four snapshots do not exist until the inherited committee makes progress, while
-the inherited committee is waiting for the joining validator.
+> **DANGER — never persist `--allow-solo-consensus`.** Do not add the flag to a
+> systemd unit, container entrypoint, deployment manifest, environment variable, or
+> monitoring command. It authorizes a new deterministic-history refresh on every
+> external invocation. Use it for one manually coordinated dormant-lineage recovery,
+> then verify that all persistent launch commands are flag-free before restoring
+> automation.
 
-The override breaks only that cycle:
+## When to use the flag
 
-1. The selected node completes the ordinary rollback and initializes its
-   consensus outcome with `{self}`.
-2. A singleton Currency L0 committee has a unanimity quorum of one. The stall
-   infeasibility gate also deliberately applies only when Core has at least two
-   members (`StallDetector.readyParticipationStatus`).
-3. The node produces the snapshots required by a joining validator's four-
-   ordinal observation window.
-4. Returning validators join normally and re-enter through the existing
-   quorum-certified admission path.
+Omit `--allow-solo-consensus` for an ordinary rollback that does not need to replace or
+refresh dormant `GlobalSnapshotSync` history. The ordinary lead is already self-only and
+can produce the public successors needed by validators.
 
-At and after the announced Currency snapshot protocol-v1 activation, the same
-one-shot invocation also publishes and requires a current `GlobalSnapshotSync`
-in the first successor. If the inherited signed sync view contains other peers,
-Global L0 can validate an atomic dormant-lineage reset from signed state instead
-of voting forever for an obsolete sync target.
-See [Currency L0 dormant-lineage resurrection](currency-l0-dormant-resurrection.md).
+Use the flag only when the operator has established that a dormant Currency lineage needs
+the signed protocol-v1 recovery publication described in
+[Currency L0 deterministic history and dormant-lineage resurrection](currency-l0-dormant-resurrection.md).
+The flag tells the controlled lead to:
+
+1. refresh its canonical Global L0 anchor and retained window after rollback;
+2. construct one signed `GlobalSnapshotSync` refresh;
+3. require that exact event in the first Currency successor;
+4. retain and republish the exact signed Currency binary until canonical Global L0
+   confirms it; and
+5. fail closed if the activation, retained-window, unapplied-history, signer, or
+   canonical-anchor checks do not hold.
+
+If the inherited signed sync view contains only the lead, the refresh chains normally.
+If it contains other peers, the MinValue-parent dormant-lineage reset is permitted only
+at or after the announced Currency snapshot protocol-v1 boundary. The operational flag
+authorizes emission; Currency and Global L0 validators independently validate the reset
+from signed and consensus-carried inputs.
+
+## Why validators can rejoin
+
+The rollback/genesis lead starts with a flat one-member facilitator list by design. It
+does not depend on Global L0's Core/Tier-1 committee, ProposalQC, admission certificate,
+view-change, or timeout-certificate machinery.
+
+Returning validators recover as follows:
+
+1. The lead produces the public successors needed by the Currency download observation
+   window.
+2. A validator downloads and validates public Currency history, observes four sequential
+   successors, and requests the exact private outcome from the artifact-proof signers.
+3. The validator verifies the public artifact, exact proof envelope, context, flat
+   committee, and registration authorization before installing the outcome.
+4. Registrations are advertised in the complete Facility phase. The finished synchronous
+   outcome carries a bounded candidate set, and the candidate enters the next round's
+   flat facilitator list.
+5. Every retained facilitator must complete the artifact- and binary-signature phases for
+   the new outcome. There is no quorum-certified Currency admission path.
+
+A singleton can carry at most two candidates so the normal three-member metagraph shape
+can form. For `R >= 2` retained incumbents, one outcome carries at most `R - 1`
+candidates. The configured flat `max-facilitator-count` (shipped value `20`) supplies an
+admission cap and never ejects an incumbent. A deterministic cursor rotates the eligible
+registration set.
+
+If both singleton candidates fail before their first Facility, the synchronous ACK rules
+cannot safely invent a replacement authority set; controlled recovery is required. Do
+not interpret cluster `Ready` state alone as consensus membership. Verify the Currency
+outcome facilitator list and actual snapshot proofs.
 
 ## Safety and compatibility contract
 
-- The flag defaults to false. Without it, proof-signer ordering and the
-  pre-existing non-signer self-only fallback are unchanged.
-- It adds no snapshot field, state-proof field, or hash construction. The
-  companion v35 rollout uses an announced Global L0 activation ordinal to move
-  the existing signed `CurrencyIncrementalSnapshot.version` from `0.0.1` to
-  `1.0.0`. All Currency L0 validators must run the compatible release before
-  that boundary; jar SemVer is not written into the chain.
-- It does intentionally choose a different initial facilitator set for the
-  first post-rollback outcome. Consequently the new history's facilitator set,
-  `facilitatorsHash`, proof population, and later consensus history differ from
-  the history that normal multi-signer rollback would have produced. This is
-  the purpose of the recovery operation, not config-hash neutrality between two
-  simultaneously running rollback nodes.
-- Runtime flags are not part of the jar/config handshake. The software cannot
-  reliably detect a second isolated recovery node: before session creation and
-  peer discovery, local cluster storage can legitimately be empty. Operational
-  coordination is therefore the safety boundary.
-- Deploy the same jar to every metagraph node, but pass the flag to exactly one
-  process and exactly one rollback invocation.
+- Rollback and genesis seed `{self}` regardless of `--allow-solo-consensus`.
+- The flag changes only recovery-publication behavior and defaults to false.
+- The flag itself adds no snapshot field, state-proof field, hash construction, or
+  Currency-local v35 activation key.
+- Currency L0 remains on the flat synchronous protocol. It has no Core/Tier roles,
+  ProposalQC, certified admission, certified Currency lineage, or v35 pacemaker.
+- Currency snapshot protocol `1.0.0` is a separate deterministic-history transition. Its
+  existing signed `CurrencyIncrementalSnapshot.version` changes at the announced **Global
+  L0 ordinal** from ADR-0033; the jar's SemVer is not stamped into the chain.
+- Runtime flags are not connection-handshake inputs. Operational control of the one
+  rollback lead is therefore a load-bearing safety boundary.
+- Deploy one immutable compatible version to the complete metagraph cohort before
+  recovery. Mixed Currency consensus versions are unsupported.
+- All public networks are in the JSON era. New recovery functionality has no Kryo
+  fallback.
 
-Currency L0 validator startup now sets the existing `validatorMode` marker,
-matching DAG L0. `ConsensusRoundRunner` uses that marker to prevent a joining
-validator whose temporary local view contains only itself from producing a
-competing solo history. Rollback startup does not set validator mode, because
-the designated recovery node must be able to produce the bootstrap rounds.
-
-## Why the committee grows back
-
-The recovery node does not remain permanently solo when returning peers are
-healthy:
-
-- A joining validator can finish `Download.observe` once the solo node is
-  advancing. `startFacilitatingAfterDownload` initializes it from the observed
-  outcome.
-- `ConsensusEventLoop` collects registration keys from responsive peers in
-  `Observing`, `WaitingForReady`, and `Ready`. `ConsensusStorage.registerPeer`
-  records both the reported key and its successor, and registrations remain
-  candidates on later keys until the peer leaves.
-- Open Ready-at-tip admission votes use the current Core quorum. For a singleton
-  Currency L0 committee with `quorum-threshold-fraction = 1.0`, that quorum is
-  one. Membership still changes only after an `AdmissionCertificate` is carried
-  in an accepted proposal.
-- `ConsensusPeerController.applyCertifiedAdmissions` appends the certified
-  peer to the canonical parent committee. Below the emergency active floor
-  (default `activeFacilitatorFloor = 4`), active admission retains all available
-  selected peers. `CommitteeBuilder` then promotes as many available healthy
-  peers as it can toward IntegrationNet's Core floor of nine; the floor does not
-  invent unavailable seats.
-
-Admission certificates attached to one proposal are bounded by the existing
-`activeAdmissionMaxExpansionPerRound` setting (default one). Normal active-set
-expansion is additionally cadenced by
-`activeAdmissionExpansionIntervalRounds` in the Currency state creator (default
-one). The below-floor emergency path deliberately retains all available
-selected peers, so cadence cannot strand a recovered one-to-three-node
-metagraph below its safety floor. If the release bundle also gates open vote and
-certificate emission on a wider cadence, a returning peer waits for the next
-eligible cadence ordinal; penalty/probation readmission remains its separate
-recovery lane. In a three-node metagraph, two accepted admission certificates
-therefore restore all three peers, and the available supply causes all three to
-be classified Core. Network delay and proposal timing can add rounds, so this
-is a protocol bound on admission rate rather than a wall-clock SLA.
-
-## Rollback and metagraph sync-data interaction
-
-The flag is consumed only after `programs.rollback.rollback` returns the chosen
-Currency snapshot and context. The `metagraphSyncData` fast-path lookup,
-fallback snapshot walk, state reconstruction, cleanup, and storage
-initialization all run before the recovery publication. At or after protocol-v1
-activation the node then completes the normal `RollbackDone` session lifecycle,
-publishes the required sync event, arms the first-successor guard, and starts
-solo consensus. The operational flag authorizes emission only; every validator
-recognizes and validates any reset from signed/consensus-carried inputs.
-
-## DAG L0 parity
-
-DAG L0 rollback also derives its committee from checkpoint proof signers, but a
-Global L0 singleton override has different network-wide safety and operational
-requirements. This change deliberately does not add a DAG L0 flag and does not
-move the small Currency-specific policy helper into `node-shared`. Sharing the
-helper would expose an operation whose safety contract is not shared.
+Currency `run-validator` startup sets validator mode. A validator whose temporary local
+view contains only itself must follow public history and cannot act as an independent
+rollback/genesis authority. Rollback/genesis startup remains the only controlled lead
+path.
 
 ## Coordinated recovery runbook
 
 ### Preconditions
 
-1. Confirm the metagraph is fully stopped and record its last accepted Currency
-   snapshot ordinal and hash from Global L0.
-2. Disable systemd/container/monitoring automatic restarts and stop every
-   Currency L0 process. Verify that no other node is advancing or running
-   rollback from the same checkpoint.
-3. Deploy the same recovery-capable jar to all nodes.
-4. Select one stable node as the sole recovery producer. Do not start rollback
-   on the other nodes.
-5. Pass `--allow-solo-consensus` only on the operator's one-shot command line.
-   Do not edit any persistent service or monitoring configuration to add it.
+1. Confirm the complete Currency cohort is stopped. Disable systemd, container, and
+   monitoring restart/rollback automation.
+2. Record the canonical Currency checkpoint ordinal, artifact hash, binary hash, proof
+   population, and corresponding Global L0 state-channel hash. Do not choose an anchor by
+   recency alone.
+3. Confirm no other node is running rollback or producing Currency history from that
+   checkpoint.
+4. Deploy the same release, advertised version, and effective configuration to every
+   Currency node.
+5. Select one stable node as the rollback lead. Every other node remains stopped until
+   the lead produces the required public observation window.
+6. For a dormant-lineage refresh, additionally verify the activation ordinal, inherited
+   sync view, canonical recent Global L0 anchor, empty applicable
+   `unappliedGlobalChangeOrdinals`, seedlist/allowance-list eligibility, and available
+   retained-window headroom. Drain previously submitted state-channel work before
+   authorizing replacement.
 
-### Bootstrap the producer
+### Bootstrap the lead
 
-1. Start the selected node with its normal rollback arguments plus
-   `--allow-solo-consensus`.
-2. Confirm the startup warning contains `DANGER` and "Exactly one coordinated
-   recovery node".
-3. Confirm:
-   - `dag_consensus_rollback_bootstrap_total{mode="forced_self_only"}` increments;
-   - `dag_consensus_rollback_proof_signer_count` reports the checkpoint signer
-     count;
+1. Start the selected node with ordinary `run-rollback` arguments. Add
+   `--allow-solo-consensus` only for the verified dormant-lineage refresh case.
+2. Confirm:
+   - `dag_consensus_rollback_bootstrap_total{mode="controlled_rollback_lead"}`
+     increments;
+   - `dag_consensus_rollback_proof_signer_count` reports the checkpoint proof count; and
    - `dag_consensus_rollback_bootstrap_facilitator_count` is `1`.
-4. For dormant-lineage recovery at or after the announced protocol-v1 boundary,
-   first require the exact recovery binary to appear in canonical GL0: the
-   construction guard falls to zero at local Currency commit, while the
-   publication-pending gauge remains one until GL0 confirmation. Then let the
-   lead reach at least five new Currency ordinals; this proves solo progress and
-   supplies the first validator's `tip + 4` observation window.
-5. Before any automated restart action is re-enabled, confirm its configured
-   command is the ordinary startup command and contains no
-   `--allow-solo-consensus` flag.
+3. Verify the Currency outcome facilitator list and produced proof set name only the lead.
+4. For an armed refresh, require
+   `RECOVERY_SYNC_REFRESH_ENQUEUED`,
+   `dag_currency_l0_recovery_sync_construction_guard_armed == 1`, and
+   `dag_currency_l0_recovery_sync_refresh_pending == 1` before the first successor.
+5. After the first local successor, the construction guard must become zero while the
+   publication remains pending. Require the exact recovery binary to appear in canonical
+   Global L0 and `refresh_pending` to become zero before the retained-window deadline.
+6. Let the lead produce at least four additional public Currency successors so the first
+   validator can complete its observation window.
 
-Stop and investigate if a second node reports `forced_self_only`, if Global L0
-shows competing Currency snapshot hashes, or if the producer cannot advance.
+Stop and investigate if a second node reports rollback bootstrap, Global L0 shows a
+competing Currency binary, the lead cannot advance, the first successor omits the armed
+refresh, or retained-window headroom approaches expiry. Do not edit the outbox receipt or
+restart Global L0 to extend the deadline.
 
-### Rejoin validators one at a time
+### Rejoin validators
 
-1. Start node 2 with normal `run-validator` and join it to the producer.
-2. Wait for node 2 to become `Ready`, then confirm the consensus committee and
-   snapshot proofs contain both peers. Do not infer success from cluster
-   membership alone.
-3. Start node 3 with normal `run-validator` and repeat the checks until committee
-   membership and proofs contain all three peers.
-4. Confirm ordinals continue advancing at the expected cadence, then re-enable
-   monitoring and automatic restarts.
+1. Start node 2 with ordinary `run-validator` and no solo flag.
+2. Require public download, four-successor observation, a successful exact-outcome
+   corroboration, and an actual Currency proof from node 2. Do not infer success from
+   cluster `Ready` alone.
+3. Start each additional validator one at a time and repeat the same checks.
+4. Confirm the facilitator list, artifact proofs, and binary proofs contain the intended
+   cohort and ordinals continue advancing at the expected cadence.
+5. Verify every persistent launch command is free of `--allow-solo-consensus`, preserve
+   the recovery evidence, and only then restore monitoring and restart automation.
 
-The rollback flag is not used by either joining validator. A
-`dag_consensus_validator_solo_blocked` increment during a transient one-peer
-local view is a safety action; it should cease once the node follows the
-producer's outcome and is admitted.
+## Primary recovery signals
+
+| Signal | Required interpretation |
+|---|---|
+| `dag_consensus_rollback_bootstrap_total{mode="controlled_rollback_lead"}` | one controlled rollback bootstrap; more than one lead is an incident |
+| `dag_consensus_rollback_bootstrap_facilitator_count` | `1` for Currency rollback/genesis bootstrap |
+| `dag_currency_consensus_outcome_corroboration_total{outcome}` | validator handoff result; require `success` before counting re-entry |
+| `dag_currency_consensus_self_excluded_total` | node committed a common result that excludes it and re-entered download |
+| `dag_currency_consensus_peer_ahead_reanchor_total` | stale local attempt abandoned only after frozen-authority evidence of a newer public outcome |
+| `dag_currency_l0_recovery_sync_construction_guard_armed{mode}` | armed event still required in the first successor; do not restart or add validators |
+| `dag_currency_l0_recovery_sync_refresh_pending{mode}` | exact recovery binary is not yet canonically confirmed |
+| `dag_currency_l0_recovery_sync_selected_target_remaining_ordinals` | retained-window deadline; alert at `<= 5` while pending |
 
 ## Source anchors
 
-These line references describe the branch at the time this runbook was written:
-
-- CLI default and explicit flag:
-  [`method.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/cli/method.scala#L243-L283).
-- Default-vs-forced bootstrap selection, warning, and metrics:
-  [`CurrencyL0App.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/CurrencyL0App.scala#L73-L79)
-  and the [rollback call site](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/CurrencyL0App.scala#L432-L466).
-- Currency validator-mode initialization:
-  [`CurrencyL0App.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/CurrencyL0App.scala#L321-L359)
-  and the shared solo-production guard in
-  [`ConsensusRoundRunner.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/engine/ConsensusRoundRunner.scala#L102-L129).
-- Rollback fast-path and `metagraphSyncData` resolution:
-  [`Rollback.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/programs/Rollback.scala#L75-L160).
-- Four-ordinal observation and facilitation handoff:
-  [`Download.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/programs/Download.scala#L75-L173).
-- Peer registration lifecycle and persistence:
-  [`ConsensusEventLoop.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/engine/ConsensusEventLoop.scala#L316-L330)
+- Rollback/genesis self-only topology and rollback flag handling:
+  [`CurrencyL0App.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/CurrencyL0App.scala).
+- CLI compatibility flag:
+  [`method.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/cli/method.scala).
+- Flat synchronous phases and bounded candidate selection:
+  [`CurrencySnapshotConsensusStateAdvancer.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/CurrencySnapshotConsensusStateAdvancer.scala).
+- Download observation and exact-outcome handoff:
+  [`Download.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/programs/Download.scala)
   and
-  [`ConsensusStorage.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/ConsensusStorage.scala#L925-L957).
-- Singleton admission quorum and stall feasibility:
-  [`StallDetector.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/engine/StallDetector.scala#L1330-L1365)
-  and the [feasibility check](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/engine/StallDetector.scala#L1596-L1619).
-- Certified committee append:
-  [`ConsensusPeerController.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/ConsensusPeerController.scala#L185-L193)
-  and
-  [`CurrencySnapshotConsensusStateAdvancer.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/CurrencySnapshotConsensusStateAdvancer.scala#L398-L403).
-- Emergency floor, expansion budget, and cadence defaults:
-  [`types.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/config/types.scala#L327-L365);
-  cadence application:
-  [`CurrencySnapshotConsensusStateCreator.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/CurrencySnapshotConsensusStateCreator.scala#L267-L274).
-- IntegrationNet Core floor:
-  [`currency-l0.conf`](../../modules/currency-l0/src/main/resources/currency-l0.conf#L25-L34);
-  deterministic tier construction:
-  [`CommitteeBuilder.scala`](../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/consensus/CommitteeBuilder.scala#L147-L230).
+  [`ConsensusManager.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/synchronous/ConsensusManager.scala).
+- Fixed-universe ACK removal:
+  [`UnlockConsensusUpdate.scala`](../../modules/currency-l0/src/main/scala/io/constellationnetwork/currency/l0/snapshot/synchronous/update/UnlockConsensusUpdate.scala).
