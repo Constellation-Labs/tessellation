@@ -78,4 +78,41 @@ object SigningMembershipSuite extends SimpleIOSuite {
 
     expect(membership.retained.contains(c)) && expect(membership.nonCore.contains(c))
   }
+
+  pureTest("a four-Core classification retains the fifth validator in the signing committee as Tier 1") {
+    val selected = List(a, b, c, d, e)
+    val recentFour = SortedMap(
+      ordinal(1L) -> SortedSet(a, b, c, d),
+      ordinal(2L) -> SortedSet(a, b, c, d),
+      ordinal(3L) -> SortedSet(a, b, c, d)
+    )
+    val classification = ActiveFacilitatorAdmission.fromRecentSigners(
+      selected = selected,
+      recentSigners = recentFour,
+      peerQuality = List(a, b, c, d).map(_ -> (3, 3)).toMap,
+      activeScores = List(a, b, c, d).map(_ -> 150).toMap,
+      minActiveSize = 4,
+      targetActiveSize = 4,
+      maxActiveSize = 5,
+      minParticipationObservations = 3,
+      minParticipationRatio = 0.5,
+      maxExpansionPerRound = 0
+    )
+    val membership = ConsensusPeerController.retainSelectedForSigning(selected, classification)
+    val committees = CommitteeBuilder.build(
+      candidates = membership.retained,
+      priorTiers = SortedMap.from(selected.map(_ -> TierTransitions.Core)),
+      peerQuality = Map.empty,
+      coreFloor = 5,
+      minObservations = 3,
+      minRatio = 0.5,
+      nonCorePeers = membership.nonCore
+    )
+    val signingSet = committees.core.toSet ++ committees.tier1.toSet
+    val signingCommittee = membership.retained.filter(signingSet.contains)
+
+    expect.same(List(a, b, c, d), committees.core) &&
+    expect.same(List(e), committees.tier1) &&
+    expect.same(selected, signingCommittee)
+  }
 }

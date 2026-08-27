@@ -335,7 +335,15 @@ object CurrencySnapshotConsensusStateCreator {
             )
           )
         )
-        activeFacilitators = activeAdmission.active
+        // Match the Global L0 tiered-membership policy: the integral controller
+        // classifies Core eligibility, but it does not delete an otherwise eligible
+        // signing/reward seat. A selected peer outside the active cohort remains seated
+        // as Tier 1 while CommitteeBuilder keeps it out of the Core quorum and leader pool.
+        signingMembership = ConsensusPeerController.retainSelectedForSigning(
+          selectedFacilitators,
+          activeAdmission
+        )
+        activeFacilitators = signingMembership.retained
 
         _ <- ConsensusLog
           .info(
@@ -348,6 +356,8 @@ object CurrencySnapshotConsensusStateCreator {
             "eligibleThisRound" -> eligibleThisRound.size.toString,
             "selected" -> selectedFacilitators.size.toString,
             "active" -> activeFacilitators.size.toString,
+            "coreEligible" -> activeAdmission.active.size.toString,
+            "retainedAsTier1" -> signingMembership.nonCore.size.toString,
             "activeTarget" -> activeAdmission.targetSize.toString,
             "activeCandidates" -> activeAdmission.candidateSize.toString,
             "promotedCandidates" -> activeAdmission.promotedCandidateSize.toString,
@@ -431,6 +441,8 @@ object CurrencySnapshotConsensusStateCreator {
           activeAdmission.promotedCandidateSize.toLong
         )
         _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_core_eligible_size", activeAdmission.active.size.toLong)
+        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_tier1_retained_size", signingMembership.nonCore.size.toLong)
         _ <- Metrics[F]
           .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
         _ <- Metrics[F].updateGauge(
@@ -482,10 +494,12 @@ object CurrencySnapshotConsensusStateCreator {
           coreFloor = coreCommitteeSize,
           minObservations = config.minParticipationObservations,
           minRatio = config.minParticipationRatio,
-          nonCorePeers = activeAdmission.probationAdmitted.toSet,
+          nonCorePeers = signingMembership.nonCore.intersect(active.toSet),
           chronicMisses = controllerInputs.chronicMisses,
           activeScores = controllerInputs.activeScores
         )
+        signingSet = committees.core.toSet ++ committees.tier1.toSet
+        signingFacilitators = active.filter(signingSet.contains)
 
         _ <- logger
           .info(
@@ -580,7 +594,7 @@ object CurrencySnapshotConsensusStateCreator {
           if (leader === selfId) "Leader" else "Validator",
           Event.FacilitatorsFinalized,
           "eligible" -> allEligible.size.toString,
-          "active" -> active.size.toString,
+          "active" -> signingFacilitators.size.toString,
           "core" -> coreList.size.toString,
           "leaderPool" -> leaderPool.size.toString,
           "recentSignerActivePool" -> activeAdmission.recentSignerPoolSize.toString,
@@ -599,9 +613,9 @@ object CurrencySnapshotConsensusStateCreator {
         state = ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
           key,
           lastOutcome,
-          Facilitators(active),
+          Facilitators(signingFacilitators),
           // Canonical round-start committee -- frozen at creation, never mutated by withdrawals.
-          Facilitators(active),
+          Facilitators(signingFacilitators),
           CollectingFacilities(
             maybeTrigger,
             lastOutcome.finished.facilitatorsHash,
@@ -628,7 +642,7 @@ object CurrencySnapshotConsensusStateCreator {
         _ <- {
           val basePairs = Seq(
             "trigger" -> maybeTrigger.map(_.toString).getOrElse("none"),
-            "facilitators" -> active.size.toString,
+            "facilitators" -> signingFacilitators.size.toString,
             "eligible" -> allEligible.size.toString,
             "candidates" -> filteredCandidates.size.toString,
             "leader" -> ConsensusLog.pid(leader),
@@ -668,7 +682,7 @@ object CurrencySnapshotConsensusStateCreator {
         effect = ConsensusStateCreator.exactFacilityEffect[F, CurrencySnapshotKey](
           facility,
           declaration,
-          active.toSet
+          signingFacilitators.toSet
         )(
           captured => consensusStorage.addFacility(selfId, key, captured).void,
           (captured, targets) => gossip.spreadDirect(captured, targets)
