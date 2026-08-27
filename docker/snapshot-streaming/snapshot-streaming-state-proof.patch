@@ -95,3 +95,31 @@ index 17fb788..2dc2f06 100644
                } else {
                  validator.validate(snapshot, snapshotInfo)
                }
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+index 2e0472c..80bee59 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+@@ -51,6 +51,8 @@ object TessellationServices {
+       _ <- Async[F].unit
+       nodeConfig = Configuration.nodeSharedConfig(env, configuration)
+       tessellation3Migration = configuration.fieldsAddedOrdinals.tessellation3Migration.getOrElse(env, SnapshotOrdinal.MinValue)
++      fixingAllowSpendDestinationCredit =
++        configuration.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit.getOrElse(env, SnapshotOrdinal.MinValue)
+       txHasher = Hasher.forKryo
+       validators = hasherSelector.withCurrent { implicit hasher =>
+         SharedValidators.make[F](
+@@ -107,7 +109,7 @@ object TessellationServices {
+                 validationErrorStorage
+               )
+             val currencySnapshotValidator = CurrencySnapshotValidator
+-              .make[F](currencySnapshotCreator, SignedValidator.make[F], None, None)
++              .make[F](currencySnapshotCreator, SignedValidator.make[F], None, None, fixingAllowSpendDestinationCredit)
+             CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+           }
+         }
+@@ -157,4 +159,5 @@ object TessellationServices {
+           configuration.fieldsAddedOrdinals.setSumFix.getOrElse(env, SnapshotOrdinal.MinValue),
+           mptStore,
+           configuration.incrementalDelegatedStakingStartingOrdinal.getOrElse(env, SnapshotOrdinal.MinValue),
++          fixingAllowSpendDestinationCredit
+         )

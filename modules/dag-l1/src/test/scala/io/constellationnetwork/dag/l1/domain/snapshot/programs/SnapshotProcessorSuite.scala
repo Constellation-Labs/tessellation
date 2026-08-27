@@ -215,7 +215,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validationErrorStorage
                 )
               currencySnapshotValidator = CurrencySnapshotValidator
-                .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
+                .make[IO](currencySnapshotCreator, validators.signedValidator, None, None, SnapshotOrdinal.MinValue)
 
               mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
               mptStore <- MptStore
@@ -312,6 +312,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   SnapshotOrdinal.MinValue,
                   SnapshotOrdinal.MinValue,
                   mptStore,
+                  SnapshotOrdinal.MinValue,
                   SnapshotOrdinal.MinValue
                 )
               }

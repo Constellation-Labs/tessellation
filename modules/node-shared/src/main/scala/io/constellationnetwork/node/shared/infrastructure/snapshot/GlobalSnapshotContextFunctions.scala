@@ -12,6 +12,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockNotAcceptedReason
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotAcceptanceManager
 import io.constellationnetwork.schema.ID.Id
@@ -50,7 +51,8 @@ object GlobalSnapshotContextFunctions {
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal,
     mptStore: MptStore[F, GlobalStateKey],
-    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal
+    incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
+    fixingAllowSpendDestinationCredit: SnapshotOrdinal
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ) =
@@ -146,6 +148,59 @@ object GlobalSnapshotContextFunctions {
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
         getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = {
+        val modes = AllowSpendBlockAcceptanceMode.globalHistoricalRecreationModes(
+          signedArtifact.ordinal,
+          fixingAllowSpendDestinationCredit
+        )
+
+        // Only the attempts that still have a mode to fall back to treat a divergence as "wrong mode". The final
+        // mode falls through to the follower-divergence handling below, so when a single mode applies -- at or
+        // above the activation ordinal -- this function behaves exactly as it did before allow-spend modes existed.
+        def attempt(remaining: List[AllowSpendBlockAcceptanceMode]): F[GlobalSnapshotInfo] =
+          remaining match {
+            case mode :: Nil =>
+              createContextWithMode(
+                context,
+                lastArtifact,
+                signedArtifact,
+                getGlobalSnapshotByOrdinal,
+                mode,
+                enforceModeAgreement = false
+              )
+            case mode :: rest =>
+              createContextWithMode(
+                context,
+                lastArtifact,
+                signedArtifact,
+                getGlobalSnapshotByOrdinal,
+                mode,
+                enforceModeAgreement = true
+              ).handleErrorWith { error =>
+                // While a fallback mode remains, ANY failure means this mode did not reproduce the signed
+                // snapshot rather than that this node has forked -- both the soft divergence signalled by
+                // AllowSpendModeMismatchError and a hard failure such as the balance underflow escrow
+                // semantics produce on pre-activation snapshots. Matches the mainnet fix, which likewise
+                // falls back on any raised error. The final mode never reaches here, so a genuine failure
+                // there still surfaces unchanged.
+                logger.debug(error)(s"Retrying global snapshot recreation with allow-spend mode=${rest.head}") >>
+                  attempt(rest)
+              }
+            case Nil =>
+              new IllegalStateException("No allow-spend acceptance mode available for global snapshot recreation")
+                .raiseError[F, GlobalSnapshotInfo]
+          }
+
+        attempt(modes)
+      }
+
+      private def createContextWithMode(
+        context: GlobalSnapshotInfo,
+        lastArtifact: Signed[GlobalIncrementalSnapshot],
+        signedArtifact: Signed[GlobalIncrementalSnapshot],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode,
+        enforceModeAgreement: Boolean
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
 
@@ -227,7 +282,7 @@ object GlobalSnapshotContextFunctions {
 
         (
           acceptanceResult,
-          _,
+          allowSpendBlockAcceptanceResult,
           _,
           _,
           _,
@@ -323,26 +378,39 @@ object GlobalSnapshotContextFunctions {
                   }
                 },
             StateChannelValidationType.Historical,
-            getGlobalSnapshotByOrdinal
+            getGlobalSnapshotByOrdinal,
+            allowSpendBlockAcceptanceMode
           )
 
         // Followers (currency-l0, dag-l1, currency-l1) AND dag-l0 recovery/replay reconstruct the global context
         // by RE-RUNNING acceptance over the already-L0-validated signedArtifact. Items the local reconstruction
-        // rejects (blocks / state-channels / rewards that the signed snapshot included) mean this node computed a
-        // DIFFERENT GlobalSnapshotInfo than the canonical one -- its global state has diverged. This was previously
-        // three benign-looking warnings ("Continuing since validated"), which masked real forks. We now surface it
-        // as a single loud, greppable signal. Full per-ordinal MPT re-validation stays skipped here (too expensive
-        // -- ~2 min for 800K entries; the MPT is synced once during initial download). By default we still continue
-        // (followers trust the L0 majority and re-sync via the caller's download path); set
-        // CL_RAISE_ON_FOLLOWER_DIVERGENCE=true to instead halt so the caller's recovery re-syncs the correct state.
+        // rejects (blocks / allow-spend blocks / state-channels / rewards that the signed snapshot included) mean
+        // this node computed a DIFFERENT GlobalSnapshotInfo than the canonical one -- its global state has
+        // diverged. This was previously three benign-looking warnings ("Continuing since validated"), which masked
+        // real forks. We now surface it as a single loud, greppable signal. Full per-ordinal MPT re-validation
+        // stays skipped here (too expensive -- ~2 min for 800K entries; the MPT is synced once during initial
+        // download). By default we still continue (followers trust the L0 majority and re-sync via the caller's
+        // download path); set CL_RAISE_ON_FOLLOWER_DIVERGENCE=true to instead halt so the caller's recovery
+        // re-syncs the correct state.
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
-        diverged = acceptanceResult.notAccepted.nonEmpty || returnedSCEvents.nonEmpty || diffRewards.nonEmpty
+        diverged = acceptanceResult.notAccepted.nonEmpty || allowSpendBlockAcceptanceResult.notAccepted.nonEmpty ||
+          returnedSCEvents.nonEmpty || diffRewards.nonEmpty
+
+        // While another allow-spend mode is still available, a divergence means this mode did not reproduce the
+        // signed snapshot rather than that this node has forked. Signal that internally so createContext can try
+        // the next mode; the retry there is the only handler, so it never escapes and never reaches an operator.
+        // On the final mode this is skipped and the handling below runs unchanged.
+        _ <- AllowSpendModeMismatchError(signedArtifact.ordinal)
+          .raiseError[F, Unit]
+          .whenA(enforceModeAgreement && diverged)
+
         _ <- (
           logger.error(
             s"[FOLLOWER-STATE-DIVERGENCE] ordinal=${signedArtifact.ordinal.show}: local reconstruction diverged from " +
               s"the L0-validated snapshot (this node may be on a forked global state and should re-sync). " +
               s"blocksNotAccepted=${acceptanceResult.notAccepted.size} " +
               s"[${acceptanceResult.notAccepted.map { case (_, reason) => reason }.mkString("; ")}] " +
+              s"allowSpendBlocksNotAccepted=${allowSpendBlockAcceptanceResult.notAccepted.size} " +
               s"stateChannelsReturned=${returnedSCEvents.size} [${returnedSCEvents.toList.map(_.address).mkString(",")}] " +
               s"rewardsDiff=${diffRewards.size}"
           ) >>
@@ -356,6 +424,13 @@ object GlobalSnapshotContextFunctions {
 
   @derive(eqv, show)
   case class CannotApplyBlocksError(reasons: List[BlockNotAcceptedReason]) extends NoStackTrace {
+
+    override def getMessage: String =
+      s"Cannot build global snapshot ${reasons.show}"
+  }
+
+  @derive(eqv, show)
+  case class CannotApplyAllowSpendBlocksError(reasons: List[AllowSpendBlockNotAcceptedReason]) extends NoStackTrace {
 
     override def getMessage: String =
       s"Cannot build global snapshot ${reasons.show}"
@@ -381,5 +456,14 @@ object GlobalSnapshotContextFunctions {
 
     override def getMessage: String =
       s"Follower reconstruction diverged from the L0-validated snapshot at ordinal=${ordinal.value}"
+  }
+
+  // Internal to createContext's allow-spend mode selection: raised by an attempt that still has another mode to
+  // fall back to, and caught by that retry. It never escapes, so it is never a signal to an operator -- a genuine
+  // divergence on the final mode is reported by GlobalStateDivergenceError above.
+  case class AllowSpendModeMismatchError(ordinal: SnapshotOrdinal) extends NoStackTrace {
+
+    override def getMessage: String =
+      s"Allow-spend acceptance mode did not reproduce the signed snapshot at ordinal=${ordinal.value}"
   }
 }

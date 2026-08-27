@@ -157,7 +157,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           validationErrorStorage
         )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](creator, validators.signedValidator, None, None)
+        .make[IO](creator, validators.signedValidator, None, None, SnapshotOrdinal.MinValue)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,

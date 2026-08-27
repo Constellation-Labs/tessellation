@@ -583,7 +583,8 @@ object GlobalSnapshotConsensusFunctions {
               lastDeprecatedTips,
               rewardsWithFacilitators(lastFacilitators),
               StateChannelValidationType.Full,
-              getGlobalSnapshotByOrdinal
+              getGlobalSnapshotByOrdinal,
+              AllowSpendBlockAcceptanceMode.live
             )
         acceptEndMs <- Async[F].monotonic.map(_.toMillis)
         balanceDiagnostics = {

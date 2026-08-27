@@ -51,6 +51,10 @@ object types {
     delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
     feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, acceptFeeTxs applies fee transactions through checked Balance arithmetic. Below it, the
+    // original wrapping fold is replayed so already-signed history re-derives byte-identically -- the fix changes what a
+    // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
+    fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
     // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
