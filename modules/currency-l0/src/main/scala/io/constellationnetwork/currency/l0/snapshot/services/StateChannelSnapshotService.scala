@@ -2,25 +2,23 @@ package io.constellationnetwork.currency.l0.snapshot.services
 
 import java.security.KeyPair
 
-import cats.Monad
 import cats.data.NonEmptySet
 import cats.effect.Async
-import cats.effect.std.Supervisor
 import cats.syntax.all._
+import cats.{Monad, MonadThrow}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer, SizeCalculator}
+import io.constellationnetwork.json.{JsonSerializer, SizeCalculator}
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.DataApplicationSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.ID.Id
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
@@ -49,6 +47,12 @@ trait StateChannelSnapshotService[F[_]] {
     */
   def enqueueBinary(binaryHashed: Hashed[StateChannelSnapshotBinary], currencySnapshotOrdinal: SnapshotOrdinal): F[Unit]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]]
+  def createBinaryValue(
+    snapshot: Signed[CurrencySnapshotArtifact],
+    lastSnapshotBinaryHash: Hash,
+    globalSnapshotOrdinal: SnapshotOrdinal,
+    stakingAddress: Option[Address]
+  ): F[StateChannelSnapshotBinary]
   def createBinary(
     snapshot: Signed[CurrencySnapshotArtifact],
     lastSnapshotBinaryHash: Hash,
@@ -60,6 +64,21 @@ trait StateChannelSnapshotService[F[_]] {
 }
 
 object StateChannelSnapshotService {
+
+  private[services] def loadStakedBalance[F[_]: MonadThrow](
+    ordinal: SnapshotOrdinal,
+    address: Address,
+    getExact: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]]
+  ): F[Balance] =
+    getExact(ordinal)
+      .flatMap(
+        _.liftTo[F](
+          new IllegalStateException(
+            s"Global snapshot context ordinal=${ordinal.show} is unavailable for deterministic state-channel fee calculation"
+          )
+        )
+      )
+      .map(_.balances.getOrElse(address, Balance.empty))
 
   /** Sequence finalize-time effects only after the accepted snapshot is present in storage.
     *
@@ -93,25 +112,34 @@ object StateChannelSnapshotService {
         signatureCount: Int,
         maybeStakingAddress: Option[Address],
         maybeGlobalSnapshotOrdinal: Option[SnapshotOrdinal]
-      ): F[SnapshotFee] =
-        lastGlobalSnapshotStorage.getCombined
-          .map(_.flatMap { case (_, state) => maybeStakingAddress.flatMap(state.balances.get) }.getOrElse(Balance.empty))
-          .flatMap { staked =>
-            JsonSerializer[F]
-              .serialize(
-                Signed(
-                  StateChannelSnapshotBinary(lastHash, bytes, SnapshotFee(NonNegLong.MaxValue)),
-                  NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
-                )
-              )
-              .map(_.length)
-              .flatMap { noSigsBytesSize =>
-                val bytesSize = noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes
-                val sizeKb = SizeCalculator.toKilobytes(bytesSize)
-
-                feeCalculator.calculateRecommendedFee(maybeGlobalSnapshotOrdinal, feeCalculationDelay)(staked, sizeKb)
-              }
+      ): F[SnapshotFee] = {
+        val staked = maybeStakingAddress.fold(Balance.empty.pure[F]) { address =>
+          maybeGlobalSnapshotOrdinal match {
+            case Some(ordinal) =>
+              loadStakedBalance(ordinal, address, requested => lastGlobalSnapshotStorage.getCombined(requested).map(_.map(_._2)))
+            case None =>
+              lastGlobalSnapshotStorage.getCombined
+                .map(_.flatMap { case (_, state) => state.balances.get(address) }.getOrElse(Balance.empty))
           }
+        }
+
+        staked.flatMap { staked =>
+          JsonSerializer[F]
+            .serialize(
+              Signed(
+                StateChannelSnapshotBinary(lastHash, bytes, SnapshotFee(NonNegLong.MaxValue)),
+                NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
+              )
+            )
+            .map(_.length)
+            .flatMap { noSigsBytesSize =>
+              val bytesSize = noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes
+              val sizeKb = SizeCalculator.toKilobytes(bytesSize)
+
+              feeCalculator.calculateRecommendedFee(maybeGlobalSnapshotOrdinal, feeCalculationDelay)(staked, sizeKb)
+            }
+        }
+      }
 
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]] =
         for {
@@ -133,6 +161,17 @@ object StateChannelSnapshotService {
           fee <- calculateFee(lastSnapshotBinaryHash, bytes, snapshot.proofs.length, stakingAddress, maybeGlobalSnapshotOrdinal)
           binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee).sign(keyPair)
         } yield binary
+
+      def createBinaryValue(
+        snapshot: Signed[CurrencySnapshotArtifact],
+        lastSnapshotBinaryHash: Hash,
+        globalSnapshotOrdinal: SnapshotOrdinal,
+        stakingAddress: Option[Address]
+      ): F[StateChannelSnapshotBinary] =
+        for {
+          bytes <- JsonSerializer[F].serialize(snapshot)
+          fee <- calculateFee(lastSnapshotBinaryHash, bytes, snapshot.proofs.length, stakingAddress, globalSnapshotOrdinal.some)
+        } yield StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee)
 
       def persist(
         signedArtifact: Signed[CurrencySnapshotArtifact],

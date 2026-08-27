@@ -56,12 +56,15 @@ object ConsensusRetrySafetySuite extends FunSuite {
   private def majority(view: Long, hash: Hash = proposalHash): MajoritySignature =
     MajoritySignature(signature, facilitatorsHash, lastSnapshotHash, view, hash)
 
+  private def binary(view: Long = 0L): BinarySignature =
+    BinarySignature(signature, facilitatorsHash, lastSnapshotHash, otherHash, view, proposalHash)
+
   test("GL0 same-key retry retains Facility and clears every attempt-bound declaration slot") {
     val declarations = PeerDeclarations(
       facility = facility.some,
       proposal = proposal(0L).some,
       signature = majority(0L).some,
-      binarySignature = BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some
+      binarySignature = binary().some
     )
     val retained = ConsensusStorage.declarationsAfterAbandon(declarations, LegacyViewChangePolicy.FreezeAfterVote)
 
@@ -76,7 +79,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
       facility = facility.some,
       proposal = proposal(0L).some,
       signature = majority(0L).some,
-      binarySignature = BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some
+      binarySignature = binary().some
     )
 
     expect.same(
@@ -155,14 +158,14 @@ object ConsensusRetrySafetySuite extends FunSuite {
       .and(expect(!ConsensusStorage.retainVoteLockAcrossAbandon(LegacyViewChangePolicy.PreserveLegacy)))
   }
 
-  test("certified view pruning drops lower-view slots and all view-less binary signatures") {
+  test("certified view pruning drops lower-view attempt slots including binary signatures") {
     val lower = PeerDeclarations(
       facility.some,
       proposal(1L).some,
       majority(1L).some,
-      BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some
+      binary(1L).some
     )
-    val current = PeerDeclarations(facility.some, proposal(2L).some, majority(2L).some, None)
+    val current = PeerDeclarations(facility.some, proposal(2L).some, majority(2L).some, binary(2L).some)
     val prunedLower = ConsensusStorage.pruneAttemptDeclarationsForView(lower, 2L)
     val prunedCurrent = ConsensusStorage.pruneAttemptDeclarationsForView(current, 2L)
 
@@ -172,6 +175,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
       .and(expect(prunedLower.binarySignature.isEmpty))
       .and(expect(prunedCurrent.proposal.nonEmpty))
       .and(expect(prunedCurrent.signature.nonEmpty))
+      .and(expect(prunedCurrent.binarySignature.nonEmpty))
   }
 
   test("MajoritySignature attempt domain rejects every stale domain component") {
@@ -397,7 +401,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
       emptyResources.copy(peerDeclarationsMap = Map(peer -> PeerDeclarations.empty.copy(signature = majority(0L).some)))
     val binaryProgress = emptyResources.copy(
       peerDeclarationsMap = Map(
-        peer -> PeerDeclarations.empty.copy(binarySignature = BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some)
+        peer -> PeerDeclarations.empty.copy(binarySignature = binary().some)
       )
     )
     val ackProgress = emptyResources.copy(acksMap = Map((peer, "facility") -> Set(peer)))

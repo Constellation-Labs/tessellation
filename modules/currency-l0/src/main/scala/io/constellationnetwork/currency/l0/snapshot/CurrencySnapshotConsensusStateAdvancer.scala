@@ -79,6 +79,20 @@ abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
 
 object CurrencySnapshotConsensusStateAdvancer {
 
+  /** A declaration-count quorum is not a proof quorum. Callers must apply this check after cryptographic verification and before using a
+    * proof set to construct or finalize a state-channel binary.
+    */
+  private[snapshot] def hasValidSignatureQuorum(
+    validSignatures: List[SignatureProof],
+    eligibleVoters: Set[PeerId],
+    decision: QuorumDenominatorShrink.Decision
+  ): Boolean = {
+    val signerIds = validSignatures.map(_.id.toPeerId)
+    val distinctSignerIds = signerIds.toSet
+
+    signerIds.size == distinctSignerIds.size && distinctSignerIds.subsetOf(eligibleVoters) && decision.meets(distinctSignerIds)
+  }
+
   def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
     consensusConfig: ConsensusConfig,
     keyPair: KeyPair,
@@ -1752,7 +1766,6 @@ object CurrencySnapshotConsensusStateAdvancer {
         )
         for {
           maybeSignatures <- maybeGetAllDeclarations(state, resources)(_.signature.filter(attemptDomain.contains))
-          maybeFacilities <- maybeGetAllDeclarations(state, resources)(_.facility)
           // Skip facilitatorsHash fork check when view > 0 (eviction), solo→multi transition,
           // or during joining grace period (peer quality scores haven't converged yet).
           lastSolo2 <- wasLastRoundSolo
@@ -1765,11 +1778,10 @@ object CurrencySnapshotConsensusStateAdvancer {
           _ <- maybeSignatures.traverse_(
             checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
           )
-          maybeGlobalOrd = extractGlobalSnapshotOrdinal(maybeFacilities)
-          result <- (maybeGlobalOrd, maybeSignatures) match {
-            case (Some(globalOrd), Some(signatures)) =>
+          result <- maybeSignatures match {
+            case Some(signatures) =>
               HasherSelector[F].withCurrent { implicit hs =>
-                toBinarySignaturesPhase(state, status, globalOrd, signatures)
+                toBinarySignaturesPhase(state, status, signatures, resources)
               }
             case _ =>
               none[Transition].pure[F]
@@ -1777,87 +1789,159 @@ object CurrencySnapshotConsensusStateAdvancer {
         } yield result
       }
 
-      private def extractGlobalSnapshotOrdinal(maybeFacilities: Option[SortedMap[PeerId, Facility]]): Option[SnapshotOrdinal] =
-        maybeFacilities
-          .map(_.values.map(_.lastGlobalSnapshotOrdinal).toList)
-          .flatMap(pickMajority(_))
-
       private def toBinarySignaturesPhase(
         state: CurrencySnapshotConsensusState,
         status: CollectingSignatures,
-        globalOrdinal: SnapshotOrdinal,
-        signatures: SortedMap[PeerId, MajoritySignature]
+        signatures: SortedMap[PeerId, MajoritySignature],
+        resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val proofs = signatures.map { case (id, sig) => SignatureProof(PeerId._Id.get(id), sig.signature) }.toList
+        val eligibleVoters =
+          if (clusterFloorActive(state)) state.roundStartFacilitators.value.toSet else state.coreFacilitators.value.toSet
 
         for {
           valid <- proofs.filterA(verifySignatureProof(status.majorityArtifactInfo.hash, _))
           _ <- logInvalidSignatures(state.key, proofs.size, valid.size)
+          finalityDecision <- quorumFinalityDecision(state)
+          hasQuorum = hasValidSignatureQuorum(valid, eligibleVoters, finalityDecision)
           role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
           _ <- logger.info(
             s"[CONSENSUS:$role] SIGNATURES->BINARY_SIGNATURES key=${state.key.show} signatures=${valid.size}/${proofs.size} " +
-              s"hash=${status.majorityArtifactInfo.hash.show.take(8)}... trigger=${status.majorityTrigger} globalOrdinal=${globalOrdinal.show} " +
+              s"hash=${status.majorityArtifactInfo.hash.show.take(8)}... trigger=${status.majorityTrigger} " +
               s"leader=${state.leader.show.take(8)}... self=${selfId.show.take(8)}... view=${state.viewNumber}"
           )
-          result <- buildBinaryTransition(state, status, valid, globalOrdinal)
+          _ <- logger
+            .warn(
+              s"[CONSENSUS:$role] Refusing state-channel binary construction without a valid proof quorum " +
+                s"key=${state.key.show} valid=${valid.size} required=${finalityDecision.baseQuorum}"
+            )
+            .whenA(!hasQuorum)
+          result <-
+            if (!hasQuorum) none[Transition].pure[F]
+            else if (selfId === state.leader) buildLeaderBinaryTransition(state, status, valid)
+            else adoptLeaderBinaryTransition(state, status, resources)
         } yield result
       }
+
+      private def buildLeaderBinaryTransition(
+        state: CurrencySnapshotConsensusState,
+        status: CollectingSignatures,
+        validSignatures: List[SignatureProof]
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] =
+        NonEmptySet.fromSet(validSignatures.toSortedSet).flatTraverse { signaturesNes =>
+          val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
+          val stakingAddress = fetchStakingAddress(state.lastOutcome.finished.context.snapshotInfo)
+
+          status.majorityArtifactInfo.artifact.globalSyncView.map(_.ordinal) match {
+            case None =>
+              logger
+                .error(s"Cannot construct state-channel binary without an agreed globalSyncView key=${state.key.show}")
+                .as(none[Transition])
+            case Some(globalOrdinal) =>
+              stateChannelSnapshotService
+                .createBinaryValue(signedArtifact, state.lastOutcome.finished.binaryArtifactHash, globalOrdinal, stakingAddress)
+                .flatMap { binary =>
+                  buildBinaryTransition(
+                    state,
+                    status,
+                    signedArtifact,
+                    binary,
+                    BinaryProposal(signaturesNes, binary).some
+                  )
+                }
+          }
+        }
+
+      private def adoptLeaderBinaryTransition(
+        state: CurrencySnapshotConsensusState,
+        status: CollectingSignatures,
+        resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] =
+        resources.peerDeclarationsMap
+          .get(state.leader)
+          .flatMap(_.binarySignature)
+          .flatMap(signature => signature.proposal.map(signature -> _)) match {
+          case None => none[Transition].pure[F]
+          case Some((leaderSignature, proposal)) =>
+            val artifactProofs = proposal.artifactSignatures.toNonEmptyList.toList
+            val eligibleVoters =
+              if (clusterFloorActive(state)) state.roundStartFacilitators.value.toSet else state.coreFacilitators.value.toSet
+            val stakingAddress = fetchStakingAddress(state.lastOutcome.finished.context.snapshotInfo)
+
+            for {
+              binaryHash <- proposal.binary.hash
+              expectedDomain = BinarySignatureAttemptDomain(
+                status.facilitatorsHash,
+                status.lastSnapshotHash,
+                binaryHash,
+                state.viewNumber.toLong,
+                status.majorityArtifactInfo.hash
+              )
+              domainMatches = expectedDomain.contains(leaderSignature)
+              leaderProof = SignatureProof(PeerId._Id.get(state.leader), leaderSignature.signature)
+              leaderProofValid <- verifySignatureProof(binaryHash, leaderProof)
+              validArtifactProofs <- artifactProofs.filterA(verifySignatureProof(status.majorityArtifactInfo.hash, _))
+              finalityDecision <- quorumFinalityDecision(state)
+              artifactQuorumValid =
+                validArtifactProofs.size == artifactProofs.size &&
+                  hasValidSignatureQuorum(validArtifactProofs, eligibleVoters, finalityDecision)
+              signedArtifact = Signed(status.majorityArtifactInfo.artifact, proposal.artifactSignatures)
+              expectedBinary <- status.majorityArtifactInfo.artifact.globalSyncView.map(_.ordinal) match {
+                case Some(globalOrdinal) =>
+                  stateChannelSnapshotService
+                    .createBinaryValue(signedArtifact, state.lastOutcome.finished.binaryArtifactHash, globalOrdinal, stakingAddress)
+                    .map(_.some)
+                case None => none[StateChannelSnapshotBinary].pure[F]
+              }
+              binaryMatches = expectedBinary.exists(_ === proposal.binary)
+              accepted = domainMatches && leaderProofValid && artifactQuorumValid && binaryMatches
+              _ <- logger
+                .warn(
+                  s"Rejected leader state-channel binary proposal key=${state.key.show} domain=$domainMatches " +
+                    s"leaderSignature=$leaderProofValid artifactQuorum=$artifactQuorumValid binary=$binaryMatches"
+                )
+                .whenA(!accepted)
+              result <-
+                if (accepted) buildBinaryTransition(state, status, signedArtifact, proposal.binary, none)
+                else none[Transition].pure[F]
+            } yield result
+        }
 
       private def buildBinaryTransition(
         state: CurrencySnapshotConsensusState,
         status: CollectingSignatures,
-        validSignatures: List[SignatureProof],
-        globalOrdinal: SnapshotOrdinal
+        signedArtifact: Signed[CurrencySnapshotArtifact],
+        binary: StateChannelSnapshotBinary,
+        proposal: Option[BinaryProposal]
       )(implicit hasher: Hasher[F]): F[Option[Transition]] =
-        // Canonical committee hash — see dag-l0 equivalent.
-        state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
-          NonEmptySet.fromSet(validSignatures.toSortedSet).traverse { signaturesNes =>
-            val signedArtifact = Signed(status.majorityArtifactInfo.artifact, signaturesNes)
-            val stakingAddress = fetchStakingAddress(state.lastOutcome.finished.context.snapshotInfo)
-
-            stateChannelSnapshotService
-              .createBinary(signedArtifact, state.lastOutcome.finished.binaryArtifactHash, globalOrdinal.some, stakingAddress)
-              .flatMap { signedBinary =>
-                // Self-store the BinarySignature locally — same rationale as the
-                // MajoritySignature self-store in dag-l0. Without this, our own
-                // BinarySignature only enters resources via gossip round-trip; if
-                // three other peers' binary sigs cross quorum in 1-3ms, our node
-                // finalizes the currency round without its own signature (the
-                // currency analogue of the ord-10 race). Currently
-                // masked in dev by quorumThresholdFraction=1.0, but becomes
-                // active on any cluster configured with supermajority quorum.
-                val selfBinarySig = BinarySignature(
-                  signedBinary.proofs.head.signature,
-                  facilitatorsHash,
-                  state.lastOutcome.finished.snapshotHash
-                )
-                consensusStorage
-                  .addBinarySignature(selfId, state.key, selfBinarySig)
-                  .as(
-                    Transition(
-                      newState = state.copy(status =
-                        CollectingBinarySignatures(
-                          signedArtifact,
-                          status.majorityArtifactInfo.context,
-                          signedBinary.value,
-                          status.majorityTrigger,
-                          status.candidates,
-                          facilitatorsHash,
-                          state.lastOutcome.finished.snapshotHash
-                        )
-                      ),
-                      sideEffect = spreadBinarySignature(
-                        state,
-                        state.key,
-                        signedBinary.proofs.head.signature,
-                        facilitatorsHash,
-                        state.lastOutcome.finished.snapshotHash
-                      )
-                    )
-                  )
-              }
-          }
-        }
+        for {
+          binaryHash <- binary.hash
+          signature <- Signature.fromHash(keyPair.getPrivate, binaryHash)
+          selfBinarySignature = BinarySignature(
+            signature,
+            status.facilitatorsHash,
+            status.lastSnapshotHash,
+            binaryHash,
+            state.viewNumber.toLong,
+            status.majorityArtifactInfo.hash,
+            proposal
+          )
+          _ <- consensusStorage.addBinarySignature(selfId, state.key, selfBinarySignature)
+        } yield
+          Transition(
+            newState = state.copy(status =
+              CollectingBinarySignatures(
+                signedArtifact,
+                status.majorityArtifactInfo.context,
+                binary,
+                status.majorityTrigger,
+                status.candidates,
+                status.facilitatorsHash,
+                status.lastSnapshotHash
+              )
+            ),
+            sideEffect = spreadBinarySignature(state, state.key, selfBinarySignature)
+          ).some
 
       // =========================================================================
       // COLLECTING BINARY SIGNATURES → FINISHED
@@ -1868,26 +1952,35 @@ object CurrencySnapshotConsensusStateAdvancer {
         status: CollectingBinarySignatures,
         resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
       ): F[Option[Transition]] =
-        for {
-          maybeBinarySignatures <- maybeGetAllDeclarations(state, resources)(
-            _.binarySignature.filter(signature =>
-              signature.facilitatorsHash == status.facilitatorsHash && signature.lastSnapshotHash == status.lastSnapshotHash
+        HasherSelector[F].withCurrent { implicit hasher =>
+          for {
+            binaryHash <- status.binary.hash
+            proposalHash <- status.signedMajorityArtifact.value.hash
+            attemptDomain = BinarySignatureAttemptDomain(
+              status.facilitatorsHash,
+              status.lastSnapshotHash,
+              binaryHash,
+              state.viewNumber.toLong,
+              proposalHash
             )
-          )
-          // Skip facilitatorsHash fork check when view > 0 (eviction), solo→multi transition,
-          // or during joining grace period (peer quality scores haven't converged yet).
-          lastSolo3 <- wasLastRoundSolo
-          inGrace3 <- nodeStorage.isInJoiningGracePeriod
-          _ <- maybeBinarySignatures
-            .traverse_(
-              checkForkByFacilitatorsHash(_, status.facilitatorsHash, config.forkConfirmationMinObservations)(_.facilitatorsHash)
+            maybeBinarySignatures <- maybeGetAllDeclarations(state, resources)(
+              _.binarySignature.filter(attemptDomain.contains)
             )
-            .whenA(!lastSolo3 && !inGrace3)
-          _ <- maybeBinarySignatures.traverse_(
-            checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
-          )
-          result <- maybeBinarySignatures.flatTraverse(toFinishedPhase(state, status, _))
-        } yield result
+            // Skip facilitatorsHash fork check when view > 0 (eviction), solo→multi transition,
+            // or during joining grace period (peer quality scores haven't converged yet).
+            lastSolo3 <- wasLastRoundSolo
+            inGrace3 <- nodeStorage.isInJoiningGracePeriod
+            _ <- maybeBinarySignatures
+              .traverse_(
+                checkForkByFacilitatorsHash(_, status.facilitatorsHash, config.forkConfirmationMinObservations)(_.facilitatorsHash)
+              )
+              .whenA(!lastSolo3 && !inGrace3)
+            _ <- maybeBinarySignatures.traverse_(
+              checkForkByLastSnapshotHash(_, status.lastSnapshotHash, config.forkConfirmationMinObservations)
+            )
+            result <- maybeBinarySignatures.flatTraverse(toFinishedPhase(state, status, _))
+          } yield result
+        }
 
       private def toFinishedPhase(
         state: CurrencySnapshotConsensusState,
@@ -1901,13 +1994,25 @@ object CurrencySnapshotConsensusStateAdvancer {
             binaryHash <- status.binary.hash
             valid <- proofs.filterA(verifySignatureProof(binaryHash, _))
             _ <- logInvalidBinarySignatures(state.key, proofs.size, valid.size)
+            finalityDecision <- quorumFinalityDecision(state)
+            eligibleVoters =
+              if (clusterFloorActive(state)) state.roundStartFacilitators.value.toSet else state.coreFacilitators.value.toSet
+            hasQuorum = hasValidSignatureQuorum(valid, eligibleVoters, finalityDecision)
             role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
             _ <- logger.info(
               s"[CONSENSUS:$role] BINARY_SIGNATURES->FINISHED key=${state.key.show} ordinal=${status.signedMajorityArtifact.ordinal.show} " +
                 s"binarySignatures=${valid.size}/${proofs.size} binaryHash=${binaryHash.show.take(8)}... " +
                 s"trigger=${status.majorityTrigger} leader=${state.leader.show.take(8)}... self=${selfId.show.take(8)}... view=${state.viewNumber}"
             )
-            result <- buildFinishedTransition(state, status, valid)
+            _ <- logger
+              .warn(
+                s"Refusing Currency L0 finalization without a valid binary-signature quorum key=${state.key.show} " +
+                  s"valid=${valid.size} required=${finalityDecision.baseQuorum}"
+              )
+              .whenA(!hasQuorum)
+            result <-
+              if (hasQuorum) buildFinishedTransition(state, status, valid)
+              else none[Transition].pure[F]
           } yield result
         }
 
@@ -2032,11 +2137,9 @@ object CurrencySnapshotConsensusStateAdvancer {
       private def spreadBinarySignature(
         state: CurrencySnapshotConsensusState,
         key: CurrencySnapshotKey,
-        signature: Signature,
-        facilitatorsHash: Hash,
-        lastSnapshotHash: Hash
+        signature: BinarySignature
       ): F[Unit] = {
-        val declaration = ConsensusPeerDeclaration(key, BinarySignature(signature, facilitatorsHash, lastSnapshotHash))
+        val declaration = ConsensusPeerDeclaration(key, signature)
         gossip.spreadDirect(declaration, state.facilitators.value.toSet)
       }
 

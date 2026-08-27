@@ -79,7 +79,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   ): F[Option[ConsensusResources[Artifact, Kind]]]
 
   // Public for the same self-store reason as addSignature — see comment above.
-  // currency-l0's buildBinaryTransition calls addBinarySignature(selfId, ...) locally
+  // currency-l0's certified-binary transition calls addBinarySignature(selfId, ...) locally
   // right after signing, closing the race where the local BinarySignature only enters
   // resources via gossip round-trip after quorum from peers has already finalized the round.
   def addBinarySignature(
@@ -233,8 +233,8 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   private[consensus] def clearResourcesPreservingDeclarations(key: Key): F[Unit]
 
   /** Drop attempt-bound declaration slots before entering a certified higher view. Facility is intentionally retained: it is round-scoped
-    * on the current wire format and is retransmitted independently. Proposal/MajoritySignature are view-scoped; BinarySignature carries no
-    * view and therefore must not survive a view boundary.
+    * on the current wire format and is retransmitted independently. Proposal, MajoritySignature, and BinarySignature are all explicitly
+    * view-scoped.
     */
   private[consensus] def pruneAttemptDeclarationsForView(key: Key, minViewToKeep: Long): F[Unit]
 
@@ -464,7 +464,7 @@ object ConsensusStorage {
     declarations.copy(
       proposal = declarations.proposal.filter(_.view >= minViewToKeep),
       signature = declarations.signature.filter(_.view >= minViewToKeep),
-      binarySignature = None
+      binarySignature = declarations.binarySignature.filter(_.view >= minViewToKeep)
     )
 
   private[consensus] def sameKeySoftResetAllowed(
@@ -911,12 +911,9 @@ object ConsensusStorage {
           assembledAdmissionCertsR(key).get.map(_.getOrElse(Set.empty))
 
         def addBinarySignature(peerId: PeerId, key: Key, signature: BinarySignature): F[Option[ConsensusResources[Artifact, Kind]]] =
-          // Latest-write-wins, same rationale as `addFacility`. `BinarySignature` has no `view` field
-          // (declaration.scala:381) but carries `facilitatorsHash` and `lastSnapshotHash`, both of which can
-          // legitimately shift across intra-round view-changes. A first-stored binary signature anchored on a
-          // stale facilitatorsHash would mismatch every later view's locally-computed hash. Rumor signature
-          // verification upstream binds the BinarySignature to its signer; replacement can only come from the
-          // same peer. Symmetric with the `addFacility` fix shipped in the alpha.92 follow-on.
+          // Latest-write-wins, same rationale as `addFacility`. The declaration is explicitly bound to the
+          // key's view, proposal hash, and exact binary hash; a later same-peer attempt must be able to replace
+          // an obsolete one after a view change. Rumor verification binds the replacement to the same origin.
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.binarySignature).replace(signature.some)
           }

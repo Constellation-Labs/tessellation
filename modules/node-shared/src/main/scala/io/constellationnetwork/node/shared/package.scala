@@ -71,6 +71,7 @@ package object shared {
       classOf[TimeoutCertificate] -> 544,
       classOf[ConsensusPeerTimeoutVote[_]] -> 545,
       TimeoutReason.NoProgress.getClass -> 546,
-      TimeoutReason.QuorumInfeasible.getClass -> 547
+      TimeoutReason.QuorumInfeasible.getClass -> 547,
+      classOf[BinaryProposal] -> 548
     ).union(sharedKryoRegistrar)
 }

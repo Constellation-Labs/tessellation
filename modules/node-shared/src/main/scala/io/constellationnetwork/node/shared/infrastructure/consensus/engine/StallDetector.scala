@@ -1203,10 +1203,9 @@ class StallDetector[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx, Stat
                         val phaseIndex = ops.phaseIndex(state.status)
                         val viewChangeOrBinaryHalt =
                           if (phaseIndex == 3 && storage.legacyViewChangePolicy == LegacyViewChangePolicy.FreezeAfterVote)
-                            // Currency BinarySignature has no view/proposal hash on the
-                            // legacy wire. Advancing it across a view would let stale
-                            // binary declarations satisfy a different attempt, so rc.8
-                            // remains deliberately fail-closed here.
+                            // FreezeAfterVote is GL0's strict policy. GL0 never enters the Currency-only
+                            // binary phase, so reaching this branch indicates an invalid policy/status
+                            // combination and remains deliberately fail-closed.
                             Metrics[F].incrementCounter(
                               "dag_consensus_binary_finality_view_change_suppressed_total"
                             ) >>

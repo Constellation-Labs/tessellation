@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
+import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -487,7 +488,27 @@ object declaration {
     proposalHash: Hash
   ) extends PeerDeclaration
 
+  /** The Currency L0 leader's exact state-channel binary proposal.
+    *
+    * The currency artifact itself was already agreed in the Proposal phase, so carrying its quorum certificate and the resulting binary is
+    * sufficient for every follower to reconstruct and validate the same bytes. The enclosing [[BinarySignature]] binds this proposal to the
+    * current key/view/proposal hash and cryptographically signs `binaryHash`.
+    */
   @derive(eqv, show, encoder, decoder)
-  case class BinarySignature(signature: Signature, facilitatorsHash: Hash, lastSnapshotHash: Hash) extends PeerDeclaration
+  case class BinaryProposal(
+    artifactSignatures: NonEmptySet[SignatureProof],
+    binary: StateChannelSnapshotBinary
+  )
+
+  @derive(eqv, show, encoder, decoder)
+  case class BinarySignature(
+    signature: Signature,
+    facilitatorsHash: Hash,
+    lastSnapshotHash: Hash,
+    binaryHash: Hash,
+    view: Long,
+    proposalHash: Hash,
+    proposal: Option[BinaryProposal] = None
+  ) extends PeerDeclaration
 
 }

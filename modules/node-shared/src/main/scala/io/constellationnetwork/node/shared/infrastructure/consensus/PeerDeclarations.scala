@@ -22,6 +22,11 @@ object PeerDeclarationsArbitraries {
   implicit val timeoutCertificateOptionArb: Arbitrary[Option[TimeoutCertificate]] =
     Arbitrary(Gen.const(None))
 
+  // Binary proposals carry a real quorum certificate and serialized state-channel payload. Generic PeerDeclarations generators do not
+  // have the cryptographic context to construct one; focused consensus tests build them explicitly.
+  implicit val binaryProposalOptionArb: Arbitrary[Option[BinaryProposal]] =
+    Arbitrary(Gen.const(None))
+
   // Same rationale for EvictionCertificate list: the cert wraps a NonEmptySet[Signed[EvictionVote]]
   // that needs full crypto generators. Property-based test fixtures almost never need random
   // eviction certificates; tests that need a real cert build one explicitly.

@@ -671,9 +671,9 @@ class StateTransitions[
       if (phaseIndex == 3 && storage.legacyViewChangePolicy == LegacyViewChangePolicy.FreezeAfterVote)
         meter("deferred_binary_finality", "binary_signature_phase")
       else if (phaseIndex == 3)
-        // Currency's PreserveLegacy policy retains rc.7's view-less binary-phase
-        // deferral. Its monitor may still abandon/retry the attempt; GL0 never enters
-        // this phase and uses the strict branch above.
+        // Currency's PreserveLegacy policy defers direct state-transition handling while its monitor
+        // coordinates the binary-phase retry/view change. Binary declarations are now explicitly bound
+        // to view, proposal, and binary hash; GL0 never enters this phase.
         meter("deferred_binary_finality", "binary_signature_phase_preserve_legacy") >> scheduleOnce
       else if (!localProgress)
         applyTransition(state, resources)
