@@ -9,8 +9,10 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.AllowSpendOpsManager
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SpendTransaction
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.security._
@@ -39,6 +41,8 @@ object AllowSpendStateManagerResurrectionSuite extends MutableIOSuite {
   } yield (j, h, sp)
 
   private val manager = AllowSpendStateManager.make[IO]()
+  private val currencyBalanceManager = AllowSpendOpsManager.make[IO]
+  private val globalBalanceManager = SpendTransactionBalanceManager.make[IO]()
 
   private val expiry = EpochProgress(500L)
   private val currentEpoch = EpochProgress(10L)
@@ -55,6 +59,25 @@ object AllowSpendStateManagerResurrectionSuite extends MutableIOSuite {
       expiry,
       List(destination)
     )
+
+  private case class SettlementFixture(
+    source: Address,
+    destination: Address,
+    signedAllowSpend: Signed[AllowSpend],
+    hashedAllowSpend: Hashed[AllowSpend],
+    spendTransaction: SpendTransaction
+  )
+
+  private def settlementFixture(implicit hasher: Hasher[IO], securityProvider: SecurityProvider[IO]): IO[SettlementFixture] =
+    for {
+      sourceKey <- KeyPairGenerator.makeKeyPair[IO]
+      destinationKey <- KeyPairGenerator.makeKeyPair[IO]
+      source = sourceKey.getPublic.toAddress
+      destination = destinationKey.getPublic.toAddress
+      signed <- Signed.forAsyncHasher(allowSpend(source, destination, 1000L), sourceKey)
+      hashed <- signed.toHashed
+      transaction = SpendTransaction(hashed.hash.some, none, SwapAmount(1000L), source, destination)
+    } yield SettlementFixture(source, destination, signed, hashed, transaction)
 
   test("does not re-add a retired reference reported again by a lagging metagraph snapshot") { res =>
     implicit val (_, h, sp) = res
@@ -263,5 +286,91 @@ object AllowSpendStateManagerResurrectionSuite extends MutableIOSuite {
         .getOrElse(none[Address], SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
         .getOrElse(user, SortedSet.empty[Signed[AllowSpend]])
     } yield expect(!activeGlobal.contains(retiredSpend))
+  }
+
+  test("consumes a settled reference during the currency balance fold") { res =>
+    implicit val (_, h, sp) = res
+
+    settlementFixture.map { fixture =>
+      val active = SortedMap(fixture.source -> List(fixture.hashedAllowSpend))
+      val transactions = List(fixture.spendTransaction, fixture.spendTransaction)
+      val balances = SortedMap(fixture.source -> Balance.empty, fixture.destination -> Balance.empty)
+
+      val legacy = currencyBalanceManager.updateCurrencyBalancesBySpendTransactions(
+        balances,
+        active,
+        transactions,
+        consumeSettledAllowSpends = false
+      )
+      val fixed = currencyBalanceManager.updateCurrencyBalancesBySpendTransactions(
+        balances,
+        active,
+        transactions,
+        consumeSettledAllowSpends = true
+      )
+
+      expect(legacy.exists(_.get(fixture.destination).contains(Balance(2000L)))) && expect(fixed.isLeft)
+    }
+  }
+
+  test("consumes a settled reference during the global balance fold") { res =>
+    implicit val (_, h, sp) = res
+
+    settlementFixture.map { fixture =>
+      val active = SortedMap(fixture.source -> List(fixture.hashedAllowSpend))
+      val transactions = List(fixture.spendTransaction, fixture.spendTransaction)
+      val balances = SortedMap(fixture.source -> Balance.empty, fixture.destination -> Balance.empty)
+
+      val legacy = globalBalanceManager.updateGlobalBalancesBySpendTransactions(
+        balances,
+        active,
+        transactions,
+        consumeSettledAllowSpends = false
+      )
+      val fixed = globalBalanceManager.updateGlobalBalancesBySpendTransactions(
+        balances,
+        active,
+        transactions,
+        consumeSettledAllowSpends = true
+      )
+
+      expect(legacy.exists(_._1.get(fixture.destination).contains(Balance(2000L)))) && expect(fixed.isLeft)
+    }
+  }
+
+  test("does not refund an expired global allow-spend settled in the same snapshot") { res =>
+    implicit val (_, h, sp) = res
+
+    for {
+      fixture <- settlementFixture
+      active = SortedMap(fixture.source -> SortedSet(fixture.signedAllowSpend))
+      refundable <- GlobalSnapshotAcceptanceManager.filterExpiredGlobalAllowSpends(
+        active,
+        EpochProgress(501L),
+        List(fixture.spendTransaction),
+        suppressSpent = true
+      )
+      legacyRefundable <- GlobalSnapshotAcceptanceManager.filterExpiredGlobalAllowSpends(
+        active,
+        EpochProgress(501L),
+        List(fixture.spendTransaction),
+        suppressSpent = false
+      )
+    } yield expect(refundable.values.forall(_.isEmpty)) && expect(legacyRefundable == active)
+  }
+
+  test("continues refunding an unspent expired global allow-spend") { res =>
+    implicit val (_, h, sp) = res
+
+    for {
+      fixture <- settlementFixture
+      active = SortedMap(fixture.source -> SortedSet(fixture.signedAllowSpend))
+      refundable <- GlobalSnapshotAcceptanceManager.filterExpiredGlobalAllowSpends(
+        active,
+        EpochProgress(501L),
+        List.empty,
+        suppressSpent = true
+      )
+    } yield expect(refundable == active)
   }
 }

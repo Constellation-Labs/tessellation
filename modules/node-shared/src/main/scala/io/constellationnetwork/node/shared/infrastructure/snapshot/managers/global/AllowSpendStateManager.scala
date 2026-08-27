@@ -54,7 +54,7 @@ trait AllowSpendStateManager[F[_]] {
     epochProgress: EpochProgress,
     currentBalances: SortedMap[Address, Balance],
     globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-    lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    refundableExpiredGlobalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
   ): Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, Balance])]
 }
 
@@ -319,12 +319,9 @@ object AllowSpendStateManager {
       epochProgress: EpochProgress,
       currentBalances: SortedMap[Address, Balance],
       globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+      refundableExpiredGlobalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
     ): Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, Balance])] = {
-      val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-      val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)
-
-      val result = (globalAllowSpends |+| expiredGlobalAllowSpends)
+      val result = (globalAllowSpends |+| refundableExpiredGlobalAllowSpends)
         .foldLeft[Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedMap[Address, Balance])]](
           Right((currentBalances, SortedMap.empty[Address, Balance]))
         ) {
