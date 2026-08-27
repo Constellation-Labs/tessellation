@@ -164,6 +164,16 @@ object Services {
         sharedStorages.lastGlobalSnapshot
       )
 
+      currencySnapshotRecoveryStorage = CurrencySnapshotRecoveryStorage.make[F](
+        storages.snapshot,
+        storages.cluster,
+        p2PClient.dataApplication,
+        maybeDataApplication,
+        storages.calculatedStateStorage,
+        storages.eventMempool,
+        l0NodeContext
+      )
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedServices.gossip,
@@ -179,6 +189,7 @@ object Services {
           client,
           session,
           stateChannelSnapshotService,
+          currencySnapshotRecoveryStorage,
           maybeDataApplication,
           creator,
           validator,
@@ -209,7 +220,8 @@ object Services {
         globalSnapshotContextFunctions = globalSnapshotContextFns,
         stateChannelBinarySender = stateChannelBinarySender,
         restart = sharedServices.restart,
-        currencyMessages = currencyMessagesService
+        currencyMessages = currencyMessagesService,
+        currencySnapshotRecoveryStorage = currencySnapshotRecoveryStorage
       ) {}
 }
 
@@ -228,5 +240,6 @@ sealed abstract class Services[F[_], R <: CliMethod] private (
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   val stateChannelBinarySender: StateChannelBinarySender[F],
   val restart: RestartService[F, R],
-  val currencyMessages: CurrencyMessagesService[F]
+  val currencyMessages: CurrencyMessagesService[F],
+  val currencySnapshotRecoveryStorage: CurrencySnapshotRecoveryStorage[F]
 )

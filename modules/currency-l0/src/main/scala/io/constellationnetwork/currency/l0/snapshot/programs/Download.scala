@@ -20,7 +20,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
-import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensus
+import io.constellationnetwork.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotRecoveryStorage}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
@@ -50,6 +50,13 @@ import retry.RetryPolicies._
 import retry._
 
 object Download {
+  private[programs] def selectPersistence[F[_]](
+    recovery: Boolean,
+    sequential: F[Unit],
+    recoveryReset: F[Unit]
+  ): F[Unit] =
+    if (recovery) recoveryReset else sequential
+
   def make[F[_]: Async: Random](
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -67,7 +74,8 @@ object Download {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
+    recoveryStorage: CurrencySnapshotRecoveryStorage[F]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F, CurrencyIncrementalSnapshot] = new Download[F, CurrencyIncrementalSnapshot] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -78,13 +86,15 @@ object Download {
     type DownloadResult = (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
-    // Currency L0 recovery delegates to the full download path for now.
-    // The download walker is already incremental (fetches only the gap),
-    // so the main cost is cache clearing + observe phase — acceptable
-    // until a dedicated recovery path is warranted.
-    def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = download
+    // Recovery observes and validates the same bounded forward chain as an initial download, but
+    // persistence must reset the recovered head. A sequential prepend is correct only for an empty
+    // initial node or the immediate next ordinal; it rejects the non-contiguous jump produced by a
+    // follower that catches up from an older accepted head.
+    def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit] = run(recovery = true)
 
-    def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
+    def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = run(recovery = false)
+
+    private def run(recovery: Boolean)(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       implicit val hasher = hasherSelector.getCurrent
 
       nodeStorage
@@ -96,18 +106,30 @@ object Download {
           logger.info(s"[Download] Cleanup for snapshots greater than ${snapshot.ordinal}") >>
             currencySnapshotCleanupStorage.cleanupAbove(snapshot.ordinal) >>
             combinedSnapshotCheckpointFileSystemStorage.deleteAbove(snapshot.ordinal) >>
-            eventMempool.clear >>
-            logger.info("[Download] Cleared event mempool for recovery") >>
-            snapshotStorage.prepend(snapshot, context).flatMap { prepended =>
-              if (!prepended)
-                (new Exception(s"Failed to prepend currency snapshot ordinal=${snapshot.ordinal} to storage")).raiseError[F, Unit]
-              else
-                Applicative[F].unit
-            } >>
-            fetchAndSetCalculatedState(snapshot) >>
             identifierStorage.get.flatMap { currencyAddress =>
-              consensus.manager
-                .startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
+              val snapshotContext = CurrencySnapshotContext(currencyAddress, context)
+              val sequentialPersistence =
+                eventMempool.clear >>
+                  logger.info("[Download] Cleared event mempool for initial download") >>
+                  snapshotStorage.prepend(snapshot, context).flatMap { prepended =>
+                    if (!prepended)
+                      (new Exception(s"Failed to prepend currency snapshot ordinal=${snapshot.ordinal} to storage"))
+                        .raiseError[F, Unit]
+                    else
+                      Applicative[F].unit
+                  } >>
+                  fetchAndSetCalculatedState(snapshot)
+
+              Download.selectPersistence(
+                recovery,
+                sequentialPersistence,
+                recoveryStorage.synchronize(snapshot, snapshotContext)
+              ) >> consensus.manager.startFacilitatingAfterDownload(
+                observationLimit,
+                snapshot,
+                snapshotContext,
+                isRecovery = recovery
+              )
             }
         }
     }

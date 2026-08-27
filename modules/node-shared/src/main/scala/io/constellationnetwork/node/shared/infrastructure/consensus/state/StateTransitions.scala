@@ -2614,8 +2614,18 @@ class StateTransitions[
           externalAligned,
           required
         )
+        val retryRecovery = StateTransitions.readyPromotionRecoveryRetryRequired(
+          readyCandidates.size,
+          externalAligned,
+          ahead,
+          missing,
+          mismatched,
+          failed,
+          required
+        )
         val reason =
           if (promote) "aligned_quorum"
+          else if (retryRecovery) "downloaded_outcome_superseded"
           else if (readyCandidates.isEmpty) "no_ready_candidates"
           else if (externalAligned === 0) "no_aligned_ready_candidates"
           else if (alignedWithSelf < required) "below_quorum"
@@ -2628,7 +2638,7 @@ class StateTransitions[
           outcomeConsensusKey.show,
           "n/a",
           LogEvent.DownloadInitReadyPromotion,
-          "result" -> (if (promote) "promoted" else "waiting_for_ready"),
+          "result" -> (if (promote) "promoted" else if (retryRecovery) "retry_recovery" else "waiting_for_ready"),
           "reason" -> reason,
           "outcomeHash" -> outcomeHash.value.take(12),
           "externalAligned" -> externalAligned.toString,
@@ -2646,7 +2656,7 @@ class StateTransitions[
           Metrics[F].incrementCounter(
             "dag_consensus_init_download_ready_promotion_decision_total",
             Seq(
-              resultLabel -> (if (promote) "promoted" else "waiting_for_ready"),
+              resultLabel -> (if (promote) "promoted" else if (retryRecovery) "retry_recovery" else "waiting_for_ready"),
               reasonLabel -> reason
             )
           ) >>
@@ -2658,7 +2668,11 @@ class StateTransitions[
             Metrics[F].updateGauge("dag_consensus_init_download_external_failed", failed.toLong) >>
             Metrics[F].updateGauge("dag_consensus_init_download_promotion_required", required.toLong)
         } >>
-          promote.pure[F]
+          (if (retryRecovery)
+             StateTransitions
+               .DownloadedOutcomeSuperseded(outcomeConsensusKey.show, externalAligned, ahead, required)
+               .raiseError[F, Boolean]
+           else promote.pure[F])
       }
     }
   }
@@ -2747,6 +2761,12 @@ object StateTransitions {
     case object Mismatched extends ReadyPromotionPeerAlignment
     case object Failed extends ReadyPromotionPeerAlignment
   }
+
+  final case class DownloadedOutcomeSuperseded(key: String, externalAligned: Int, ahead: Int, required: Int)
+      extends RuntimeException(
+        s"Downloaded consensus outcome key=$key was superseded during Ready promotion: " +
+          s"externalAligned=$externalAligned ahead=$ahead required=$required"
+      )
 
   private[consensus] final case class RollbackFirstRoundQuorumStatus(
     selfReady: Boolean,
@@ -3051,6 +3071,22 @@ object StateTransitions {
   private[consensus] def readyPromotionAllowed(readyCandidates: Int, externalAligned: Int, required: Int): Boolean =
     if (readyCandidates === 1) externalAligned === 1
     else readyCandidates > 1 && externalAligned + 1 >= required
+
+  /** Retry recovery immediately when a quorum has authenticated either the exact downloaded outcome or a strictly newer live outcome, and
+    * no peer reports a conflicting, missing, or failed response. WaitingForReady cannot complete the downloaded next round after the live
+    * committee has moved beyond it, so holding that state only delays the same recovery decision by five abandoned rounds.
+    */
+  private[consensus] def readyPromotionRecoveryRetryRequired(
+    readyCandidates: Int,
+    externalAligned: Int,
+    ahead: Int,
+    missing: Int,
+    mismatched: Int,
+    failed: Int,
+    required: Int
+  ): Boolean =
+    readyCandidates > 0 && ahead > 0 && missing === 0 && mismatched === 0 && failed === 0 &&
+      externalAligned + ahead + 1 >= required
 
   private[consensus] def rollbackFirstRoundQuorumStatus(
     selfReady: Boolean,

@@ -146,6 +146,48 @@ object StateTransitionsSuite extends SimpleIOSuite {
     expect(StateTransitions.readyPromotionAllowed(readyCandidates = 2, externalAligned = 2, required = 2))
   }
 
+  pureTest("ready promotion retries recovery when exact-or-ahead Ready witnesses meet quorum") {
+    expect(
+      StateTransitions.readyPromotionRecoveryRetryRequired(
+        readyCandidates = 4,
+        externalAligned = 1,
+        ahead = 3,
+        missing = 0,
+        mismatched = 0,
+        failed = 0,
+        required = 4
+      )
+    )
+  }
+
+  pureTest("ready promotion does not retry recovery when exact-or-ahead witnesses are below quorum") {
+    expect(
+      !StateTransitions.readyPromotionRecoveryRetryRequired(
+        readyCandidates = 4,
+        externalAligned = 1,
+        ahead = 1,
+        missing = 2,
+        mismatched = 0,
+        failed = 0,
+        required = 4
+      )
+    )
+  }
+
+  pureTest("ready promotion does not retry recovery across an authenticated mismatch") {
+    expect(
+      !StateTransitions.readyPromotionRecoveryRetryRequired(
+        readyCandidates = 4,
+        externalAligned = 1,
+        ahead = 2,
+        missing = 0,
+        mismatched = 1,
+        failed = 0,
+        required = 4
+      )
+    )
+  }
+
   pureTest("rollback first-round status is infeasible before rollback node is Ready") {
     val status = StateTransitions.rollbackFirstRoundQuorumStatus(
       selfReady = false,

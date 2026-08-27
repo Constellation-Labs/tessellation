@@ -58,7 +58,8 @@ object Programs {
         storages.snapshot,
         storages.currencySnapshotCleanup,
         storages.combinedCurrencySnapshotCheckpointStorage,
-        storages.eventMempool
+        storages.eventMempool,
+        services.currencySnapshotRecoveryStorage
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(

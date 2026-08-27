@@ -57,8 +57,14 @@ object CurrencySnapshotValidator {
     * `globalSyncView` (a later GL0 view) diverged from the signed one and every metagraph snapshot was reject-and-skipped from global
     * state.
     */
+  def pinExpectedGlobalSyncView(
+    recreated: CurrencyIncrementalSnapshot,
+    expected: CurrencyIncrementalSnapshot
+  ): CurrencyIncrementalSnapshot =
+    recreated.focus(_.globalSyncView).replace(expected.globalSyncView)
+
   def matchesExpected(recreated: CurrencyIncrementalSnapshot, expected: CurrencyIncrementalSnapshot): Boolean =
-    recreated.focus(_.globalSyncView).replace(expected.globalSyncView) === expected
+    pinExpectedGlobalSyncView(recreated, expected) === expected
 
   def make[F[_]: Async: KryoSerializer: JsonSerializer](
     currencySnapshotCreator: CurrencySnapshotCreator[F],
@@ -215,7 +221,7 @@ object CurrencySnapshotValidator {
               // Compare ignoring globalSyncView (pinned to the signed value) -- see matchesExpected. The error
               // reports the un-pinned recreated artifact so a real divergence is still fully visible downstream.
               if (matchesExpected(creationResult.artifact, expected))
-                creationResult.validNec
+                creationResult.focus(_.artifact.globalSyncView).replace(expected.globalSyncView).validNec
               else
                 SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
             }

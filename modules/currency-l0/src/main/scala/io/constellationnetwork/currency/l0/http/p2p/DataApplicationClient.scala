@@ -18,6 +18,16 @@ trait DataApplicationClient[F[_]] {
   def getCalculatedState(
     implicit decoder: Decoder[DataCalculatedState]
   ): PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)]
+
+  /** Fetch the persisted calculated state certified by one exact Currency L0 snapshot ordinal.
+    *
+    * Recovery must not use the moving `getCalculatedState` head after accepting a specific consensus outcome: the peer can finalize the
+    * next round between those two requests. The ordinal route keeps the downloaded artifact and its off-chain state in one immutable
+    * domain.
+    */
+  def getCalculatedState(
+    ordinal: SnapshotOrdinal
+  )(implicit decoder: Decoder[DataCalculatedState]): PeerResponse[F, Option[DataCalculatedState]]
 }
 
 object DataApplicationClient {
@@ -27,5 +37,10 @@ object DataApplicationClient {
         implicit decoder: Decoder[DataCalculatedState]
       ): PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)] =
         PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)]("currency/state/calculated")(client, session)
+
+      def getCalculatedState(
+        ordinal: SnapshotOrdinal
+      )(implicit decoder: Decoder[DataCalculatedState]): PeerResponse[F, Option[DataCalculatedState]] =
+        PeerResponse[F, Option[DataCalculatedState]](s"currency/state/calculated/${ordinal.value.value}")(client, session)
     }
 }

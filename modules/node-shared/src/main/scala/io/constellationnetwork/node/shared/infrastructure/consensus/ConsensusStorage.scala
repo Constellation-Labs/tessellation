@@ -1288,6 +1288,11 @@ object ConsensusStorage {
             // monitor decision. Bump before clearing so a pre-recovery AbandonRound can
             // never drain against state initialized afterward with the same epoch.
             _ <- roundAttemptIdR.update(_ + 1L)
+            // The accepted outcome is consensus state too. Leaving it installed makes the
+            // subsequent InitializeFromDownload fail closed when it tries to install the
+            // newer, certified recovery outcome. Both callers of this boundary are explicit
+            // recovery/rollback paths; ordinary round cleanup never reaches it.
+            _ <- lastOutcomeR.set(none)
             stateKeys <- statesR.keys
             _ <- stateKeys.traverse_(k => statesR(k).set(none))
             stateAttemptKeys <- stateAttemptIdR.keys

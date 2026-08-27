@@ -50,6 +50,17 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
     expect(CurrencySnapshotValidator.matchesExpected(recreatedLaterView, expected))
   }
 
+  pureTest("pinExpectedGlobalSyncView returns the signed artifact's trusted globalSyncView") {
+    val expected = snapshot(globalSyncView = Some(gsv(2)))
+    val recreatedLaterView = snapshot(globalSyncView = Some(gsv(3)))
+    val pinned = CurrencySnapshotValidator.pinExpectedGlobalSyncView(recreatedLaterView, expected)
+
+    expect.all(
+      pinned.globalSyncView == expected.globalSyncView,
+      pinned == expected
+    )
+  }
+
   pureTest("matchesExpected still fails on a real content difference") {
     val expected = snapshot(ordinal = SnapshotOrdinal.MinValue, globalSyncView = Some(gsv(2)))
     val realDiff = snapshot(ordinal = SnapshotOrdinal.unsafeApply(1L), globalSyncView = Some(gsv(2)))

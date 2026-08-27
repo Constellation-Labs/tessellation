@@ -541,6 +541,33 @@ object ConsensusEventLoop {
                     // changed only after the FSM has validated attempt and lineage tokens.
                     fsm.handle(cmd).handleErrorWith { err =>
                       (err, cmd) match {
+                        case (
+                              superseded: StateTransitions.DownloadedOutcomeSuperseded,
+                              ConsensusCommand.InitializeFromDownload(_, _, _, _)
+                            ) =>
+                          // The downloaded outcome was valid, but an authenticated quorum moved
+                          // beyond it before Ready promotion. WaitingForReady cannot complete that
+                          // obsolete next round. Re-enter follower catch-up immediately instead of
+                          // waiting for five guaranteed abandonments.
+                          ctx.logger.info(s"${superseded.getMessage}; retrying recovery from the live tip") >>
+                            Metrics[F].incrementCounter(
+                              "dag_consensus_downloaded_outcome_superseded_retry_total"
+                            ) >>
+                            nodeStorage.setRecoveryDownload >>
+                            // This is the same recovery boundary used after bounded
+                            // abandonment. Clear the installed obsolete outcome,
+                            // registration key, queued round state, and peer-key cache before
+                            // publishing WaitingForDownload; otherwise DownloadDaemon can race
+                            // into registerForConsensus with the prior observation key.
+                            ctx.storage.clearAllConsensusState >>
+                            ctx.storage.clearAllPeerRegistrations >>
+                            ctx.storage.clearTimeTrigger >>
+                            ctx.storage.clearObservationKey >>
+                            ctx.pending.clear() >>
+                            nodeStorage
+                              .tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload)
+                              .void
+
                         case (probationError, init @ ConsensusCommand.InitializeFromDownload(_, _, _, _))
                             if initDownloadFailureDisposition(probationError, admissionCandidateTipProbe.nonEmpty) ==
                               InitDownloadFailureDisposition.HoldObservingAndRetry =>
@@ -600,7 +627,7 @@ object ConsensusEventLoop {
                                 scheduleCheckUpdateRetry(key, none)
                               case ConsensusCommand.RetryCheckUpdate(key, expectedAttemptId) =>
                                 scheduleCheckUpdateRetry(key, expectedAttemptId.some)
-                              case init @ ConsensusCommand.InitializeFromDownload(_, _, _, _) =>
+                              case init @ ConsensusCommand.InitializeFromDownload(_, _, _, isRecovery) =>
                                 (ctx.plannedRecoveryCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
                                   case (planned, held) if planned.exists(_.nonEmpty) || held.contains(true) =>
                                     val explicitRecovery = planned.exists(_.nonEmpty)
@@ -635,12 +662,16 @@ object ConsensusEventLoop {
                                   case _ =>
                                     // After 20 retries, ordinary initFromDownload exhausts its retry policy and the error propagates
                                     // here. Transition back to WaitingForDownload so the DownloadDaemon can retry with fresh state.
+                                    // DownloadDaemon clears the mode after enqueueing this command, so an initialization failure from a
+                                    // recovery download must restore Recovery before publishing WaitingForDownload. Otherwise the retry
+                                    // silently takes the full/genesis path.
                                     ctx.logger
                                       .error(err)(
                                         "InitializeFromDownload failed after exhausting retries, triggering recovery download"
                                       ) >>
                                       Metrics[F].incrementCounter("dag_consensus_init_download_failure") >>
                                       abandonmentTracker.trackInitFromDownloadFailure >>
+                                      nodeStorage.setRecoveryDownload.whenA(isRecovery) >>
                                       nodeStorage.tryModifyStateGetResult(NodeState.Observing, NodeState.WaitingForDownload).flatMap {
                                         case NodeStateTransition.Success =>
                                           ctx.logger.info(

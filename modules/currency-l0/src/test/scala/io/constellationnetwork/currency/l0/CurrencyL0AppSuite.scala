@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.AdmissionCertificateBuilder
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
 import io.constellationnetwork.node.shared.infrastructure.consensus.{CommitteeBuilder, ConsensusPeerController}
+import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
@@ -94,6 +95,20 @@ object CurrencyL0AppSuite extends SimpleIOSuite {
       expect.same(Some(false), command.parse(Seq.empty).toOption) &&
         expect.same(Some(true), command.parse(Seq("--allow-solo-consensus")).toOption)
     )
+  }
+
+  test("chain-tip advertisement selects a newer recovered snapshot over a stale checkpoint") {
+    val staleCheckpoint = ChainTip(SnapshotOrdinal.unsafeApply(14L), Hash("checkpoint-14"))
+    val recoveredSnapshot = ChainTip(SnapshotOrdinal.unsafeApply(29L), Hash("snapshot-29"))
+
+    IO(expect.same(Some(recoveredSnapshot), CurrencyL0App.selectLocalChainTip(Some(staleCheckpoint), Some(recoveredSnapshot))))
+  }
+
+  test("chain-tip advertisement fails closed on conflicting hashes at the same ordinal") {
+    val checkpoint = ChainTip(SnapshotOrdinal.unsafeApply(29L), Hash("checkpoint-hash"))
+    val snapshot = ChainTip(SnapshotOrdinal.unsafeApply(29L), Hash("different-snapshot-hash"))
+
+    IO(expect.same(None, CurrencyL0App.selectLocalChainTip(Some(checkpoint), Some(snapshot))))
   }
 
   test("a singleton rollback committee can form an admission certificate from its own vote") {

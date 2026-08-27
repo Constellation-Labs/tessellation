@@ -6,9 +6,11 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, DataApplicationBlockEvent}
 import io.constellationnetwork.routes.internal._
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -19,7 +21,8 @@ import org.http4s.dsl.Http4sDsl
 
 final case class DataBlockRoutes[F[_]: Async](
   mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
-  dataApplication: BaseDataApplicationL0Service[F]
+  dataApplication: BaseDataApplicationL0Service[F],
+  calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
 )(implicit context: L0NodeContext[F], decoder: Decoder[DataTransaction], encoder: Encoder[DataCalculatedState])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -45,6 +48,13 @@ final case class DataBlockRoutes[F[_]: Async](
     case GET -> Root / "state" / "calculated" =>
       dataApplication.getCalculatedState
         .flatMap(Ok(_))
+
+    case GET -> Root / "state" / "calculated" / LongVar(rawOrdinal) =>
+      SnapshotOrdinal(rawOrdinal).fold(NotFound()) { ordinal =>
+        calculatedStateStorage
+          .read[DataCalculatedState](ordinal)(bytes => dataApplication.deserializeCalculatedState(bytes).flatMap(Async[F].fromEither))
+          .flatMap(Ok(_))
+      }
 
   }
 }
