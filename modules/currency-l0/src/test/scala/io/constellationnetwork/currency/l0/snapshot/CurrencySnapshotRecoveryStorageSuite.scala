@@ -23,7 +23,7 @@ object CurrencySnapshotRecoveryStorageSuite extends SimpleIOSuite {
 
   private def hooks(ref: Ref[IO, Vector[String]], actualProof: Hash = expectedProof): CalculatedStateHooks[IO, String] =
     CalculatedStateHooks[IO, String](
-      fetchExact = requested => record(ref, s"fetch:${requested.value.value}").as(recoveredState),
+      fetchExact = (requested, proof) => record(ref, s"fetch:${requested.value.value}:${proof.value}").as(recoveredState),
       hash = state => record(ref, s"hash:$state").as(actualProof),
       persist = (requested, state) => record(ref, s"persist:${requested.value.value}:$state")
     )
@@ -42,7 +42,7 @@ object CurrencySnapshotRecoveryStorageSuite extends SimpleIOSuite {
     } yield
       expect.same(
         Vector(
-          "fetch:17",
+          "fetch:17:expected",
           s"hash:$recoveredState",
           s"persist:17:$recoveredState",
           "snapshot-head",
@@ -69,7 +69,7 @@ object CurrencySnapshotRecoveryStorageSuite extends SimpleIOSuite {
       observed <- events.get
     } yield
       expect
-        .same(Vector("fetch:17", s"hash:$recoveredState"), observed)
+        .same(Vector("fetch:17:expected", s"hash:$recoveredState"), observed)
         .and(expect(result == Left(CalculatedStateProofMismatch(ordinal, wrongProof, expectedProof))))
   }
 
@@ -79,7 +79,7 @@ object CurrencySnapshotRecoveryStorageSuite extends SimpleIOSuite {
     for {
       events <- Ref.of[IO, Vector[String]](Vector.empty)
       unavailableHooks = CalculatedStateHooks[IO, String](
-        fetchExact = _ => record(events, "fetch").flatMap(_ => unavailable.raiseError[IO, String]),
+        fetchExact = (_, _) => record(events, "fetch").flatMap(_ => unavailable.raiseError[IO, String]),
         hash = _ => record(events, "hash").as(expectedProof),
         persist = (_, _) => record(events, "persist")
       )

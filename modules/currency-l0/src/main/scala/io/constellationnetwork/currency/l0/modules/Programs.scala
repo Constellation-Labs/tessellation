@@ -5,7 +5,6 @@ import java.security.KeyPair
 import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
-import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
@@ -53,7 +52,6 @@ object Programs {
         services.consensus,
         peerSelect,
         storages.identifier,
-        dataApplication.map { case (da, _) => da },
         services.globalL0.pullGlobalSnapshot,
         storages.snapshot,
         storages.currencySnapshotCleanup,

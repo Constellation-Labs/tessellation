@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
+import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.node.NodeState
@@ -25,6 +26,7 @@ import io.constellationnetwork.security.signature.Signed
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait CurrencySnapshotRecoveryStorage[F[_]] {
+  def synchronizeCalculatedState(artifact: Signed[CurrencySnapshotArtifact]): F[Unit]
   def synchronize(artifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit]
 }
 
@@ -40,7 +42,9 @@ object CurrencySnapshotRecoveryStorage {
       s"Currency recovery mode mismatch: artifact=$hasArtifactState calculatedStateHooks=$hasCalculatedStateHooks"
   }
 
-  final case class CalculatedStateUnavailable(ordinal: SnapshotOrdinal, attemptedPeers: Int) extends NoStackTrace {
+  final case class CalculatedStateUnavailable(ordinal: SnapshotOrdinal, attemptedPeers: Int)
+      extends NoStackTrace
+      with RecoveryFallbackEligible {
     override def getMessage: String =
       s"No peer served the calculated state certified at Currency snapshot ordinal=${ordinal.show}; attemptedPeers=$attemptedPeers"
   }
@@ -56,10 +60,28 @@ object CurrencySnapshotRecoveryStorage {
   }
 
   private[snapshot] final case class CalculatedStateHooks[F[_], State](
-    fetchExact: SnapshotOrdinal => F[State],
+    fetchExact: (SnapshotOrdinal, Hash) => F[State],
     hash: State => F[Hash],
     persist: (SnapshotOrdinal, State) => F[Unit]
   )
+
+  private[snapshot] def synchronizeCalculatedStateSteps[F[_]: MonadThrow, State](
+    ordinal: SnapshotOrdinal,
+    expectedProof: Option[Hash],
+    calculatedState: Option[CalculatedStateHooks[F, State]]
+  ): F[Unit] =
+    (expectedProof, calculatedState) match {
+      case (None, None) => ().pure[F]
+      case (Some(expected), Some(hooks)) =>
+        for {
+          state <- hooks.fetchExact(ordinal, expected)
+          actual <- hooks.hash(state)
+          _ <- CalculatedStateProofMismatch(ordinal, actual, expected).raiseError[F, Unit].whenA(actual =!= expected)
+          _ <- hooks.persist(ordinal, state)
+        } yield ()
+      case _ =>
+        RecoveryModeMismatch(expectedProof.nonEmpty, calculatedState.nonEmpty).raiseError[F, Unit]
+    }
 
   /** Ordered fail-closed recovery seam. The snapshot head is never advanced until the exact calculated state has passed its certified proof
     * and has been persisted. Mempool clearing is last and is safe to repeat after a partial local failure.
@@ -71,20 +93,7 @@ object CurrencySnapshotRecoveryStorage {
     setSnapshotHead: F[Unit],
     clearMempool: F[Unit]
   ): F[Unit] =
-    (expectedProof, calculatedState) match {
-      case (None, None) => setSnapshotHead >> clearMempool
-      case (Some(expected), Some(hooks)) =>
-        for {
-          state <- hooks.fetchExact(ordinal)
-          actual <- hooks.hash(state)
-          _ <- CalculatedStateProofMismatch(ordinal, actual, expected).raiseError[F, Unit].whenA(actual =!= expected)
-          _ <- hooks.persist(ordinal, state)
-          _ <- setSnapshotHead
-          _ <- clearMempool
-        } yield ()
-      case _ =>
-        RecoveryModeMismatch(expectedProof.nonEmpty, calculatedState.nonEmpty).raiseError[F, Unit]
-    }
+    synchronizeCalculatedStateSteps(ordinal, expectedProof, calculatedState) >> setSnapshotHead >> clearMempool
 
   def make[F[_]: Async: Random: HasherSelector](
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
@@ -101,13 +110,13 @@ object CurrencySnapshotRecoveryStorage {
 
       private def fetchExactCalculatedState(
         ordinal: SnapshotOrdinal,
+        expectedProof: Hash,
         dataApplication: BaseDataApplicationL0Service[F]
       ): F[DataCalculatedState] = {
         implicit val decoder = dataApplication.calculatedStateDecoder
 
         clusterStorage.getResponsivePeers
-          .map(NodeState.ready)
-          .map(_.toList)
+          .map(peers => NodeState.ready(peers).toList)
           .flatMap(Random[F].shuffleList)
           .flatMap { peers =>
             def go(remaining: List[io.constellationnetwork.schema.peer.Peer]): F[DataCalculatedState] =
@@ -118,6 +127,14 @@ object CurrencySnapshotRecoveryStorage {
                     .getCalculatedState(ordinal)
                     .run(peer)
                     .flatMap(_.liftTo[F](CalculatedStateUnavailable(ordinal, 1)))
+                    .flatMap { state =>
+                      dataApplication.hashCalculatedState(state).flatMap { actualProof =>
+                        CalculatedStateProofMismatch(ordinal, actualProof, expectedProof)
+                          .raiseError[F, DataCalculatedState]
+                          .whenA(actualProof =!= expectedProof)
+                          .as(state)
+                      }
+                    }
                     .handleErrorWith { error =>
                       logger.warn(error)(
                         s"[RecoveryDownload] Peer ${peer.id.value.value.take(8)} could not serve calculated state ordinal=${ordinal.show}"
@@ -136,7 +153,7 @@ object CurrencySnapshotRecoveryStorage {
           case (None, None, None) => none[CalculatedStateHooks[F, DataCalculatedState]].pure[F]
           case (Some(_), Some(dataApplication), Some(storage)) =>
             CalculatedStateHooks[F, DataCalculatedState](
-              fetchExact = fetchExactCalculatedState(_, dataApplication),
+              fetchExact = fetchExactCalculatedState(_, _, dataApplication),
               hash = dataApplication.hashCalculatedState,
               persist = (ordinal, state) =>
                 storage.write(ordinal, state)(dataApplication.serializeCalculatedState) >>
@@ -149,21 +166,24 @@ object CurrencySnapshotRecoveryStorage {
               .raiseError[F, Option[CalculatedStateHooks[F, DataCalculatedState]]]
         }
 
+      def synchronizeCalculatedState(artifact: Signed[CurrencySnapshotArtifact]): F[Unit] =
+        for {
+          _ <- logger.info(
+            s"[Download] Restoring exact calculated state certified at Currency ordinal=${artifact.ordinal.show}"
+          )
+          hooks <- calculatedStateHooks(artifact)
+          _ <- synchronizeCalculatedStateSteps(
+            artifact.ordinal,
+            artifact.dataApplication.map(_.calculatedStateProof),
+            hooks
+          )
+        } yield ()
+
       def synchronize(artifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] =
         HasherSelector[F].withCurrent { implicit hasher =>
-          for {
-            _ <- logger.info(
-              s"[RecoveryDownload] Aligning Currency application storage to newer accepted consensus outcome ordinal=${artifact.ordinal.show}"
-            )
-            hooks <- calculatedStateHooks(artifact)
-            _ <- synchronizeSteps(
-              artifact.ordinal,
-              artifact.dataApplication.map(_.calculatedStateProof),
-              hooks,
-              snapshotStorage.setHeadForRecovery(artifact, context.snapshotInfo),
-              eventMempool.clear
-            )
-          } yield ()
+          synchronizeCalculatedState(artifact) >>
+            snapshotStorage.setHeadForRecovery(artifact, context.snapshotInfo) >>
+            eventMempool.clear
         }
     }
 }
