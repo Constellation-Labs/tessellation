@@ -2,11 +2,14 @@ package io.constellationnetwork.node.shared.domain.swap.block
 
 import java.util.UUID
 
-import cats.data.NonEmptySet
-import cats.effect.{IO, Resource}
+import cats.data.Validated.Valid
+import cats.data.{EitherT, NonEmptySet, ValidatedNec}
+import cats.effect.{IO, Ref, Resource}
+import cats.syntax.all._
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendChainValidator.AllowSpendNel
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -112,7 +115,7 @@ object AllowSpendBlockAcceptanceLogicSuite extends MutableIOSuite {
     }
   }
 
-  test("credits the destination below the activation ordinal") { res =>
+  test("credits the destination only when legacy behavior is explicitly selected") { res =>
     implicit val (h, sp) = res
 
     accept(
@@ -163,6 +166,71 @@ object AllowSpendBlockAcceptanceLogicSuite extends MutableIOSuite {
       expect.all(
         first.exists(_.balances.get(destination).contains(balance(100L))),
         second.exists(_.balances.get(onward).contains(balance(100L)))
+      )
+  }
+  test("iterative acceptance retries phantom-funded blocks only under legacy semantics") { res =>
+    implicit val (h, sp) = res
+
+    val first = blockOf(source, destination, 100L, 1L, 1)
+    val second = blockOf(destination, onward, 100L, 0L, 2)
+    val context = contextOf(source -> 101L)
+
+    val validator = new AllowSpendBlockValidator[IO] {
+      def validate(
+        signedBlock: Signed[AllowSpendBlock],
+        snapshotOrdinal: io.constellationnetwork.schema.SnapshotOrdinal,
+        params: AllowSpendBlockValidationParams,
+        lastGlobalSnapshotEpochProgress: Option[EpochProgress]
+      )(implicit hasher: Hasher[IO]): IO[
+        ValidatedNec[AllowSpendBlockValidationError, (Signed[AllowSpendBlock], Map[Address, AllowSpendNel])]
+      ] = IO.pure(Valid((signedBlock, Map.empty)))
+    }
+
+    for {
+      attempts <- Ref.of[IO, List[RoundId]](List.empty)
+      underlying = AllowSpendBlockAcceptanceLogic.make[IO]
+      recordingLogic = new AllowSpendBlockAcceptanceLogic[IO] {
+        def acceptBlock(
+          block: Signed[AllowSpendBlock],
+          txChains: Map[Address, AllowSpendNel],
+          context: AllowSpendBlockAcceptanceContext[IO],
+          contextUpdate: AllowSpendBlockAcceptanceContextUpdate,
+          shouldPerformMetagraphSpecificValidations: Boolean,
+          creditDestination: Boolean
+        )(implicit hasher: Hasher[IO]): EitherT[IO, AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate] =
+          EitherT.liftF[IO, AllowSpendBlockNotAcceptedReason, Unit](attempts.update(block.value.roundId :: _)) >>
+            underlying.acceptBlock(block, txChains, context, contextUpdate, shouldPerformMetagraphSpecificValidations, creditDestination)(
+              hasher
+            )
+      }
+      manager = AllowSpendBlockAcceptanceManager.make[IO](recordingLogic, validator)
+      legacy <- manager.acceptBlocksIteratively(
+        List(first, second),
+        context,
+        io.constellationnetwork.schema.SnapshotOrdinal.MinValue,
+        shouldPerformMetagraphSpecificValidations = false,
+        None,
+        creditDestination = true
+      )
+      legacyAttempts <- attempts.get
+      _ <- attempts.set(List.empty)
+      escrow <- manager.acceptBlocksIteratively(
+        List(first, second),
+        context,
+        io.constellationnetwork.schema.SnapshotOrdinal.MinValue,
+        shouldPerformMetagraphSpecificValidations = false,
+        None,
+        creditDestination = false
+      )
+      escrowAttempts <- attempts.get
+    } yield
+      expect.all(
+        legacy.accepted.toSet == Set(first, second),
+        legacy.notAccepted.isEmpty,
+        legacyAttempts.count(_ == second.value.roundId) == 2,
+        escrow.accepted == List(first),
+        escrow.notAccepted.map(_._1) == List(second),
+        escrowAttempts.count(_ == second.value.roundId) == 2
       )
   }
 }

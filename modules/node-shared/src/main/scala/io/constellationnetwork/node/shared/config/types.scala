@@ -51,6 +51,10 @@ object types {
     delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
     feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, acceptFeeTxs applies fee transactions through checked Balance arithmetic. Below it, the
+    // original wrapping fold is replayed so already-signed history re-derives byte-identically -- the fix changes what a
+    // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
+    fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
     // the `fields-added-ordinals.dust-sweeps` HOCON block. This runtime configuration is not covered by the join-time
     // `versionHash`, which hashes the advertised version string (or `CL_VERSION_HASH`), so operators must deploy one reviewed value
@@ -68,7 +72,14 @@ object types {
     fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
     // destination is credited only when a SpendAction consumes the allowance.
-    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal the global layer keeps a record of every allow-spend reference it has retired and
+    // refuses to re-add those references to activeAllowSpends, even when a metagraph's own lagging
+    // info.activeAllowSpends still reports them (PROT-1691).
+    preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, an expired global AllowSpend consumed in the same snapshot is settled once
+    // instead of also being refunded to its source. The separate gate preserves already-signed history.
+    fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
       feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)

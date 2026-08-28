@@ -54,6 +54,7 @@ object GlobalSnapshotOpsManagerRecoverySuite extends SimpleIOSuite {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 

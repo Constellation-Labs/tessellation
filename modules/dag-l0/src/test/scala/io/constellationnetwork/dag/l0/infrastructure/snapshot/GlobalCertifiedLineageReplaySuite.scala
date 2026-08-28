@@ -249,6 +249,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     nodeCollateralWithdrawals = None,
     priceState = None,
     lastGlobalSnapshotsWithCurrency = None,
+    retiredAllowSpendRefs = None,
     mptRoot = None
   )
 

@@ -102,9 +102,10 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     }
   }
 
-  test("the protocol-v1 gate preserves the previous positional constructor") {
+  test("the protocol-v1 gate preserves the latest develop positional constructor") {
     val ordinals = Map.empty[AppEnvironment, SnapshotOrdinal]
     val legacyShape = FieldsAddedOrdinals(
+      ordinals,
       ordinals,
       ordinals,
       ordinals,

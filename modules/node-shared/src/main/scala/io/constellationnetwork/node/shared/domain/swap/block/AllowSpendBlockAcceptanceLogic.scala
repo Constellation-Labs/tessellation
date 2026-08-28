@@ -113,7 +113,8 @@ object AllowSpendBlockAcceptanceLogic {
       // hands the destination a balance no snapshot ever recorded, which it can then spend into further allow
       // spend blocks until recomputation disagrees and the snapshot fails to build.
       // TokenLockBlockAcceptanceLogic.processBalances, the other escrow, only debits.
-      // creditDestination retains the old behaviour below the activation ordinal so replay stays byte-identical.
+      // creditDestination exists only for signed historical recreation. Live Currency and Global L0
+      // creation and validation always pass false.
       private def processBalances(
         block: Signed[AllowSpendBlock],
         context: AllowSpendBlockAcceptanceContext[F],

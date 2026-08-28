@@ -222,7 +222,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validationErrorStorage
                 )
               currencySnapshotValidator = CurrencySnapshotValidator
-                .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
+                .make[IO](currencySnapshotCreator, validators.signedValidator, None, None, SnapshotOrdinal.MinValue)
 
               mptProducer <- InMemoryMerklePatriciaProducer.make[IO]().asResource
               mptStore <- MptStore
@@ -319,6 +319,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   SnapshotOrdinal.MinValue,
                   SnapshotOrdinal.MinValue,
                   mptStore,
+                  SnapshotOrdinal.MinValue,
                   SnapshotOrdinal.MinValue
                 )
               }
@@ -501,7 +502,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         nodeCollateralWithdrawals = None,
         priceState = None,
         lastGlobalSnapshotsWithCurrency = None,
-        mptRoot = None
+        mptRoot = None,
+        retiredAllowSpendRefs = None
       ),
       Some(SortedSet.empty),
       Some(SortedSet.empty),
@@ -524,6 +526,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       SortedMap.empty,
       SortedMap.empty,
       SortedMap.empty,
+      Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
@@ -597,6 +600,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -779,6 +783,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -979,6 +984,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -1261,6 +1267,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
@@ -1556,6 +1563,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
+            Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),
             Some(SortedMap.empty),

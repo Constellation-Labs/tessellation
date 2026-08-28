@@ -50,7 +50,7 @@ object GlobalSnapshotDustSweep {
     * swept). A reflective coverage test (`GlobalSnapshotDustSweepSuite`) mechanically fails if a future Address-keyed field is added but
     * not referenced here.
     *
-    * Address-keyed fields covered (13 total):
+    * Address-keyed fields covered (14 total):
     *   - lastStateChannelSnapshotHashes (Address keys)
     *   - lastCurrencySnapshots (Address keys)
     *   - lastCurrencySnapshotsProofs (Address keys)
@@ -64,6 +64,7 @@ object GlobalSnapshotDustSweep {
     *   - activeNodeCollaterals (Address keys)
     *   - nodeCollateralWithdrawals (Address keys)
     *   - metagraphSyncData (Address keys)
+    *   - retiredAllowSpendRefs (outer Option[Address] keys AND inner Address keys)
     *
     * `lastTxRefs` is Address-keyed but is DELIBERATELY EXCLUDED from this protected set. Every pure receiver (the entire dust population)
     * holds an empty-ref `lastTxRefs` entry, so treating `lastTxRefs` keys as protected would exclude the whole dust population and the
@@ -81,6 +82,17 @@ object GlobalSnapshotDustSweep {
     // activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, _]] -- flatten outer Option[Address] AND inner Address keys.
     val allowSpendAddrs: Set[Address] =
       gsi.activeAllowSpends.fold(Set.empty[Address]) { outer =>
+        outer.foldLeft(Set.empty[Address]) {
+          case (acc, (optOuter, inner)) =>
+            acc ++ optOuter.toSet ++ inner.keySet.toSet
+        }
+      }
+
+    // retiredAllowSpendRefs: SortedMap[Option[Address], SortedMap[Address, _]] -- same shape as activeAllowSpends.
+    // An address whose settled allow-spend references are still remembered holds non-balance state, so it must not
+    // be swept out from under that ledger.
+    val retiredAllowSpendRefAddrs: Set[Address] =
+      gsi.retiredAllowSpendRefs.fold(Set.empty[Address]) { outer =>
         outer.foldLeft(Set.empty[Address]) {
           case (acc, (optOuter, inner)) =>
             acc ++ optOuter.toSet ++ inner.keySet.toSet
@@ -108,7 +120,8 @@ object GlobalSnapshotDustSweep {
       optOuterKeys(gsi.delegatedStakesWithdrawals) ++
       optOuterKeys(gsi.activeNodeCollaterals) ++
       optOuterKeys(gsi.nodeCollateralWithdrawals) ++
-      optOuterKeys(gsi.metagraphSyncData)
+      optOuterKeys(gsi.metagraphSyncData) ++
+      retiredAllowSpendRefAddrs
   }
 
   /** Apply the ordinal-gated dust sweep as a post-construction transform.

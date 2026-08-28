@@ -34,8 +34,8 @@ trait BlockAcceptanceCoordinatorManager[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     snapshotOrdinal: SnapshotOrdinal,
     fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
-    fixingAllowSpendDestinationCredit: SnapshotOrdinal,
-    epochProgress: EpochProgress
+    epochProgress: EpochProgress,
+    creditDestination: Boolean
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult]
 
   def acceptTokenLockBlocks(
@@ -81,8 +81,8 @@ object BlockAcceptanceCoordinatorManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       snapshotOrdinal: SnapshotOrdinal,
       fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
-      fixingAllowSpendDestinationCredit: SnapshotOrdinal,
-      epochProgress: EpochProgress
+      epochProgress: EpochProgress,
+      creditDestination: Boolean
     )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
@@ -90,7 +90,6 @@ object BlockAcceptanceCoordinatorManager {
         collateral,
         AllowSpendReference.empty
       )
-      val creditDestination = snapshotOrdinal < fixingAllowSpendDestinationCredit
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
         allowSpendBlockAcceptanceManager.acceptBlocksIteratively(
           blocksForAcceptance,

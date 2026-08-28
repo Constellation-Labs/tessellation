@@ -47,6 +47,7 @@ object LastNGlobalSnapshotStorageInitializationSuite extends SimpleIOSuite {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 

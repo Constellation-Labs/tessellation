@@ -75,7 +75,8 @@ trait CurrencySnapshotCreator[F[_]] {
     // v20: see ConsensusFunctions for full rationale -- packed by caller from
     // the consensus-agreed previous round outcome.
     peerHistory: Option[ConsensusOperationalState] = None,
-    historicalDependencyResolution: Boolean = false
+    historicalDependencyResolution: Boolean = false,
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -113,7 +114,8 @@ object CurrencySnapshotCreator {
       shouldPerformMetagraphSpecificValidations: Boolean,
       maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
       peerHistory: Option[ConsensusOperationalState] = None,
-      historicalDependencyResolution: Boolean = false
+      historicalDependencyResolution: Boolean = false,
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -248,7 +250,8 @@ object CurrencySnapshotCreator {
                 lastArtifact.proofs,
                 previouslyProcessedGlobalSnapshots,
                 historicalDependencyResolution,
-                lastArtifact.version
+                lastArtifact.version,
+                allowSpendBlockAcceptanceMode
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
