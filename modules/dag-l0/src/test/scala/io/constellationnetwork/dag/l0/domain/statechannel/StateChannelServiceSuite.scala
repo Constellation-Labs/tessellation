@@ -138,7 +138,8 @@ object StateChannelServiceSuite extends MutableIOSuite {
             nodeCollateralWithdrawals = None,
             priceState = None,
             lastGlobalSnapshotsWithCurrency = None,
-            mptRoot = None
+            mptRoot = None,
+            retiredAllowSpendRefs = None
           ),
           None,
           None,

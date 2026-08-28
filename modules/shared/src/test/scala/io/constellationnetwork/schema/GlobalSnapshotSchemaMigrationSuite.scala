@@ -144,7 +144,8 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
           activeNodeCollaterals = Some(SortedMap.empty),
           nodeCollateralWithdrawals = Some(SortedMap.empty),
           priceState = Some(SortedMap.empty),
-          metagraphSyncData = Some(SortedMap.empty)
+          metagraphSyncData = Some(SortedMap.empty),
+          retiredAllowSpendRefs = Some(SortedMap.empty)
         )
 
         // Test with legacy format (ordinal 5, boundary 10)
@@ -192,7 +193,8 @@ object GlobalSnapshotSchemaMigrationSuite extends MutableIOSuite with Checkers {
       activeNodeCollaterals = Some(SortedMap.empty),
       nodeCollateralWithdrawals = Some(SortedMap.empty),
       priceState = Some(SortedMap.empty),
-      metagraphSyncData = Some(SortedMap.empty)
+      metagraphSyncData = Some(SortedMap.empty),
+      retiredAllowSpendRefs = Some(SortedMap.empty)
     )
 
   test("sub-trie roots inert by default: MPT proof leaves per-field fields empty/None") { implicit res =>

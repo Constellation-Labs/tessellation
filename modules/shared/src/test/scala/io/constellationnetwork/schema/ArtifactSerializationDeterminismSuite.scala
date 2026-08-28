@@ -198,7 +198,8 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
       nodeCollateralWithdrawals = None,
       priceState = None,
       lastGlobalSnapshotsWithCurrency = None,
-      mptRoot = None
+      mptRoot = None,
+      retiredAllowSpendRefs = None
     )
 
   private val emptyTips: SnapshotTips = SnapshotTips(deprecated = SortedSet.empty, remainedActive = SortedSet.empty)

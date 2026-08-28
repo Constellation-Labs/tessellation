@@ -60,6 +60,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
     for {
@@ -84,6 +85,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       None,
       None,
       None,
+      Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),

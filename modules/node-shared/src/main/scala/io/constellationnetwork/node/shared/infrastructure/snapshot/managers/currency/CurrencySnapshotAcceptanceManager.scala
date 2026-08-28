@@ -198,6 +198,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       .getOrElse(environment, SnapshotOrdinal.MinValue)
     fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
       .getOrElse(environment, SnapshotOrdinal.MinValue)
+    preventingAllowSpendResurrection = fieldsAddedOrdinals.preventingAllowSpendResurrection
+      .getOrElse(environment, SnapshotOrdinal.MinValue)
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
       blocksForAcceptance,
@@ -478,7 +480,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         .updateCurrencyBalancesBySpendTransactions(
           updatedBalancesByAllowSpends,
           allActiveCurrencyAllowSpends,
-          metagraphIdSpendTransactions
+          metagraphIdSpendTransactions,
+          // Replay against the global ordinal committed by the previous currency snapshot, never the live GL0 head.
+          maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > preventingAllowSpendResurrection
         )
         .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
     )

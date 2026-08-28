@@ -156,6 +156,28 @@ object GlobalSnapshotAcceptanceManager {
 
   private case object InvalidMerkleTree extends NoStackTrace
 
+  private[global] def filterExpiredGlobalAllowSpends[F[_]: Async](
+    allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+    epochProgress: EpochProgress,
+    globalSpendTransactions: List[SpendTransaction],
+    suppressSpent: Boolean
+  )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = {
+    val expired = allowSpends.view.mapValues(_.filter(_.lastValidEpochProgress < epochProgress)).to(SortedMap)
+
+    if (!suppressSpent) expired.pure[F]
+    else {
+      val spentRefs = globalSpendTransactions.flatMap(_.allowSpendRef).toSet
+
+      expired.toList.traverse {
+        case (address, signedAllowSpends) =>
+          signedAllowSpends.toList
+            .traverse(_.toHashed)
+            .map(_.filterNot(hashed => spentRefs.contains(hashed.hash)).map(_.signed).toSortedSet)
+            .map(address -> _)
+      }.map(_.to(SortedMap))
+    }
+  }
+
   def make[F[_]: Async: Parallel: HasherSelector: SecurityProvider: JsonSerializer](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     metagraphsSyncConfig: MetagraphsSyncConfig,
@@ -557,7 +579,9 @@ object GlobalSnapshotAcceptanceManager {
         updatedCreateNodeCollateralsCleaned: SortedMap[Address, SortedSet[NodeCollateralRecord]],
         updatedWithdrawNodeCollateralsCleaned: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]],
         updatedPriceState: SortedMap[TokenPair, PriceRecord],
-        updatedAcceptedMetagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo]
+        updatedAcceptedMetagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo],
+        preventAllowSpendResurrection: Boolean,
+        updatedRetiredAllowSpendRefs: SortedMap[Option[Address], SortedMap[Address, SortedMap[Hash, EpochProgress]]]
       ): GlobalSnapshotInfo =
         GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
@@ -578,7 +602,8 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedCreateNodeCollateralsCleaned.some,
           if (ordinal < tessellation3MigrationStartingOrdinal) none else updatedWithdrawNodeCollateralsCleaned.some,
           if (ordinal < tessellation301MigrationStartingOrdinal) none else updatedPriceState.some,
-          if (ordinal < metagraphSyncDataStartingOrdinal) none else updatedAcceptedMetagraphSyncData.some
+          if (ordinal < metagraphSyncDataStartingOrdinal) none else updatedAcceptedMetagraphSyncData.some,
+          if (!preventAllowSpendResurrection) none else updatedRetiredAllowSpendRefs.some
         )
 
       def accept(
@@ -627,6 +652,17 @@ object GlobalSnapshotAcceptanceManager {
 
         val metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
           .getOrElse(environment, SnapshotOrdinal.MinValue)
+
+        val preventingAllowSpendResurrectionOrdinal = fieldsAddedOrdinals.preventingAllowSpendResurrection
+          .getOrElse(environment, SnapshotOrdinal.MinValue)
+
+        // Below the activation ordinal the retired-reference ledger is neither read nor written, so signed history
+        // replays byte-identically: the new GlobalSnapshotInfo field stays None and JsonSerializer drops nulls.
+        val preventAllowSpendResurrection = ordinal > preventingAllowSpendResurrectionOrdinal
+
+        val fixingGlobalAllowSpendExpirationOrdinal = fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration
+          .getOrElse(environment, SnapshotOrdinal.MaxValue)
+        val suppressSpentExpiredAllowSpends = ordinal >= fixingGlobalAllowSpendExpirationOrdinal
 
         val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
           .getOrElse(environment, SnapshotOrdinal.MinValue)
@@ -833,9 +869,14 @@ object GlobalSnapshotAcceptanceManager {
             allAcceptedSpendTxns = acceptedSpendActions.toSortedMap.values.flatten
               .flatMap(spendAction => spendAction.spendTransactions.toList)
               .toList
+            globalSpendTransactions = allAcceptedSpendTxns.filter(_.currencyId.isEmpty)
 
             globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
               SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+            )
+            lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(
+              None,
+              SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
             )
             globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
               SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
@@ -867,18 +908,38 @@ object GlobalSnapshotAcceptanceManager {
               SortedMap.empty[Address, TokenLockReference]
             )
 
-            AllowSpendAcceptanceResult(updatedAllowSpends, allowSpendsDeltas, removedAllowSpendKeys) <- allowSpendStateManager
+            globalRetiredAllowSpendRefs = lastSnapshotContext.retiredAllowSpendRefs.getOrElse(
+              SortedMap.empty[Option[Address], SortedMap[Address, SortedMap[Hash, EpochProgress]]]
+            )
+
+            AllowSpendAcceptanceResult(
+              updatedAllowSpends,
+              allowSpendsDeltas,
+              removedAllowSpendKeys,
+              updatedRetiredAllowSpendRefs,
+              retiredAllowSpendRefsDeltas,
+              removedRetiredAllowSpendRefKeys
+            ) <- allowSpendStateManager
               .acceptAllowSpends(
                 epochProgress,
                 activeAllowSpendsFromCurrencySnapshots,
                 globalAllowSpends,
                 globalActiveAllowSpends,
-                allAcceptedSpendTxns
+                allAcceptedSpendTxns,
+                globalRetiredAllowSpendRefs,
+                preventAllowSpendResurrection
               )
 
             updatedAllowSpendRefs = allowSpendStateManager.acceptAllowSpendRefs(
               globalLastAllowSpendRefs,
               allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
+            )
+
+            refundableExpiredGlobalAllowSpends <- filterExpiredGlobalAllowSpends(
+              lastActiveGlobalAllowSpends,
+              epochProgress,
+              globalSpendTransactions,
+              suppressSpentExpiredAllowSpends
             )
 
             (updatedBalancesByAllowSpends, updatedBalancesByAllowSpendsDeltas) <- Async[F].fromEither(
@@ -887,7 +948,7 @@ object GlobalSnapshotAcceptanceManager {
                   epochProgress,
                   updatedBalancesByRewards,
                   globalAllowSpends,
-                  globalActiveAllowSpends
+                  refundableExpiredGlobalAllowSpends
                 )
                 .leftMap(ex => SnapshotFailure.BalanceArithmeticError.AllowSpends(ex.toString))
             )
@@ -950,8 +1011,6 @@ object GlobalSnapshotAcceptanceManager {
                 .leftMap(error => SnapshotFailure.BalanceArithmeticError.TokenLocks(error.toString))
             )
 
-            lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-
             combined = (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList
             allGlobalAllowSpends <-
               if (combined.isEmpty) {
@@ -992,19 +1051,13 @@ object GlobalSnapshotAcceptanceManager {
                   }
               }
 
-            globalSpendTransactions = acceptedSpendActions.toSortedMap.flatMap {
-              case (_, spendActions) =>
-                spendActions
-                  .flatMap(_.spendTransactions.toList)
-                  .filter(_.currencyId.isEmpty)
-            }.toList
-
             (updatedBalancesBySpendTransactions, updatedBalancesBySpendTransactionsDeltas) <- Async[F].fromEither(
               spendTransactionBalanceManager
                 .updateGlobalBalancesBySpendTransactions(
                   updatedBalancesByTokenLocks,
                   allGlobalAllowSpends,
-                  globalSpendTransactions
+                  globalSpendTransactions,
+                  preventAllowSpendResurrection
                 )
                 .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
             )
@@ -1081,7 +1134,9 @@ object GlobalSnapshotAcceptanceManager {
               updatedCreateNodeCollateralsCleaned,
               updatedWithdrawNodeCollateralsCleaned,
               updatedPriceState,
-              updatedAcceptedMetagraphSyncData
+              updatedAcceptedMetagraphSyncData,
+              preventAllowSpendResurrection,
+              updatedRetiredAllowSpendRefs
             )
 
             // CONSENSUS-CRITICAL ordinal-gated dust sweep (state deflation).
@@ -1129,7 +1184,9 @@ object GlobalSnapshotAcceptanceManager {
               activeNodeCollaterals = updatedCreateNodeCollateralsCleaned,
               nodeCollateralWithdrawals = updatedWithdrawNodeCollateralsCleaned,
               metagraphSyncData = metagraphSyncDataDeltas,
+              retiredAllowSpendRefs = retiredAllowSpendRefsDeltas,
               removedAllowSpendKeys = removedAllowSpendKeys,
+              removedRetiredAllowSpendRefKeys = removedRetiredAllowSpendRefKeys,
               removedTokenLockKeys = removedTokenLockKeys,
               removedTokenLockBalanceKeys = removedTokenLockBalanceKeys,
               removedDelegatedStakeKeys = removedDelegatedStakeKeys,
@@ -1200,10 +1257,7 @@ object GlobalSnapshotAcceptanceManager {
             )
 
             (expiredAllowSpends, expiredTokenLocks) = (
-              allowSpendStateManager.filterExpiredAllowSpends(
-                lastActiveGlobalAllowSpends,
-                epochProgress
-              ),
+              refundableExpiredGlobalAllowSpends,
               tokenLockStateManager.filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
             )
 
