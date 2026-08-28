@@ -72,7 +72,8 @@ trait CurrencySnapshotCreator[F[_]] {
     maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
     // v20: see ConsensusFunctions for full rationale -- packed by caller from
     // the consensus-agreed previous round outcome.
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -108,7 +109,8 @@ object CurrencySnapshotCreator {
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       shouldPerformMetagraphSpecificValidations: Boolean,
       maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -227,7 +229,8 @@ object CurrencySnapshotCreator {
                 getGlobalSnapshotByOrdinal,
                 lastArtifact.globalSyncView,
                 shouldPerformMetagraphSpecificValidations,
-                lastArtifact.proofs
+                lastArtifact.proofs,
+                allowSpendBlockAcceptanceMode
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {

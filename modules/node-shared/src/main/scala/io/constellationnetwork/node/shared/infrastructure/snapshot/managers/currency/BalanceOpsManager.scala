@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -69,12 +70,15 @@ class BalanceOpsManager[F[_]: Async](
 
   def acceptFeeTxs(
     balances: SortedMap[Address, Balance],
-    maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
+    checkedArithmetic: Boolean
   ): F[(SortedMap[Address, Balance], Option[SortedSet[Signed[FeeTransaction]]])] =
     maybeTxs match {
       case None => (balances, maybeTxs).pure[F]
       case Some(txs) =>
-        val (updatedBalances, acceptedTxs, rejectedTxs) = BalanceOpsManager.applyFeeTransactions(balances, txs)
+        val (updatedBalances, acceptedTxs, rejectedTxs) =
+          if (checkedArithmetic) BalanceOpsManager.applyFeeTransactions(balances, txs)
+          else BalanceOpsManager.applyFeeTransactionsUnchecked(balances, txs)
 
         rejectedTxs.traverse_ { signedTx =>
           logger.warn(
@@ -100,6 +104,28 @@ object BalanceOpsManager {
     * @return
     *   the updated balances, the accepted transactions, and the rejected ones in iteration order
     */
+  /** The pre-fix wrapping implementation, kept so global ordinals at or below the activation still replay to the state that was actually
+    * signed. Selected via fixingFeeTransactionBalanceOverflow.
+    */
+  def applyFeeTransactionsUnchecked(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[Signed[FeeTransaction]]
+  ): (SortedMap[Address, Balance], SortedSet[Signed[FeeTransaction]], List[Signed[FeeTransaction]]) = {
+    val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
+    val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
+      case (acc, address) => acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
+    }
+    val updated = txs.foldLeft(feeReferredBalances) {
+      case (acc, tx) =>
+        acc
+          .updatedWith(tx.value.source)(existing => (existing.getOrElse(0L) - tx.value.amount.value.value).some)
+          .updatedWith(tx.value.destination)(existing => (existing.getOrElse(0L) + tx.value.amount.value.value).some)
+    }
+    val asBalances = updated.map { case (a, v) => a -> Balance(NonNegLong.unsafeFrom(v)) }
+
+    (balances ++ asBalances, txs, List.empty)
+  }
+
   def applyFeeTransactions(
     balances: SortedMap[Address, Balance],
     txs: SortedSet[Signed[FeeTransaction]]

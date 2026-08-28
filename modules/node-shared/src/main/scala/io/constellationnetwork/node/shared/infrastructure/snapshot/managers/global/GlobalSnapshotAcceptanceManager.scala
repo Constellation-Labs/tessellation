@@ -131,7 +131,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
     validationType: StateChannelValidationType,
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   ): F[
     (
       BlockAcceptanceResult,
@@ -385,7 +386,8 @@ object GlobalSnapshotAcceptanceManager {
         allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
         tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
         lastSnapshotContext: GlobalSnapshotInfo,
-        fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal
+        fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
       )(implicit hasher: Hasher[F]): F[(AllowSpendBlockAcceptanceResult, TokenLockBlockAcceptanceResult)] =
         for {
           allowSpend <- blockAcceptanceCoordinatorManager.acceptAllowSpendBlocks(
@@ -393,7 +395,8 @@ object GlobalSnapshotAcceptanceManager {
             lastSnapshotContext,
             ordinal,
             fixingAllowSpendAndTokenLockValidation,
-            epochProgress
+            epochProgress,
+            allowSpendBlockAcceptanceMode.creditDestination
           )
           tokenLock <- blockAcceptanceCoordinatorManager.acceptTokenLockBlocks(
             tokenLockBlocksForAcceptance,
@@ -623,7 +626,8 @@ object GlobalSnapshotAcceptanceManager {
         lastDeprecatedTips: SortedSet[DeprecatedTip],
         calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult],
         validationType: StateChannelValidationType,
-        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
       ): F[
         (
           BlockAcceptanceResult,
@@ -687,7 +691,8 @@ object GlobalSnapshotAcceptanceManager {
                 allowSpendBlocksForAcceptance,
                 tokenLockBlocksForAcceptance,
                 lastSnapshotContext,
-                fixingAllowSpendAndTokenLockValidation
+                fixingAllowSpendAndTokenLockValidation,
+                allowSpendBlockAcceptanceMode
               )
 
             acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)

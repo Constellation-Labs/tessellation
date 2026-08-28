@@ -64,7 +64,8 @@ object CurrencySnapshotValidator {
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
-    maybeDataApplication: Option[BaseDataApplicationService[F]]
+    maybeDataApplication: Option[BaseDataApplicationService[F]],
+    fixingAllowSpendDestinationCredit: SnapshotOrdinal
   ): CurrencySnapshotValidator[F] = new CurrencySnapshotValidator[F] {
     def validateSignedSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
@@ -72,23 +73,31 @@ object CurrencySnapshotValidator {
       artifact: Signed[CurrencySnapshotArtifact],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
-      validateSigned(artifact).flatMap { signedV =>
-        val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
+      validateSigned(artifact).flatMap {
+        case Validated.Invalid(errors) =>
+          Async[F].pure[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]](
+            Validated.Invalid(errors)
+          )
+        case Validated.Valid(validatedArtifact) =>
+          val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
+          val historicalModes = AllowSpendBlockAcceptanceMode.currencyHistoricalRecreationModes(
+            lastArtifact.globalSyncView,
+            fixingAllowSpendDestinationCredit
+          )
 
-        validateSnapshot(
-          lastArtifact,
-          lastContext,
-          artifact,
-          facilitators,
-          getGlobalSnapshotByOrdinal,
-          // Chain-replay path: no live consensus state to consult, so re-feed the
-          // artifact's own claim as the recreation input. The signature-validation
-          // above already binds the value to the signing facilitators -- if it
-          // were tampered with, this would have failed first.
-          artifact.value.peerHistory
-        ).map { snapshotV =>
-          signedV.product(snapshotV.map { case (_, info) => info })
-        }
+          validateSnapshotWithModes(
+            lastArtifact,
+            lastContext,
+            artifact,
+            facilitators,
+            getGlobalSnapshotByOrdinal,
+            // Chain-replay path: no live consensus state to consult, so re-feed the
+            // artifact's own claim as the recreation input. The signature-validation
+            // above already binds the value to the signing facilitators -- if it
+            // were tampered with, this would have failed first.
+            artifact.value.peerHistory,
+            historicalModes
+          ).map(_.map { case (_, info) => (validatedArtifact, info) })
       }
 
     def validateSnapshot(
@@ -98,6 +107,25 @@ object CurrencySnapshotValidator {
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       peerHistory: Option[ConsensusOperationalState] = None
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] =
+      validateSnapshotWithModes(
+        lastArtifact,
+        lastContext,
+        artifact,
+        facilitators,
+        getGlobalSnapshotByOrdinal,
+        peerHistory,
+        List(AllowSpendBlockAcceptanceMode.live)
+      )
+
+    private def validateSnapshotWithModes(
+      lastArtifact: Signed[CurrencySnapshotArtifact],
+      lastContext: CurrencySnapshotContext,
+      artifact: CurrencySnapshotArtifact,
+      facilitators: Set[PeerId],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState],
+      allowSpendRecreationModes: List[AllowSpendBlockAcceptanceMode]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
         lastArtifact,
@@ -105,7 +133,8 @@ object CurrencySnapshotValidator {
         artifact,
         facilitators,
         getGlobalSnapshotByOrdinal,
-        peerHistory
+        peerHistory,
+        allowSpendRecreationModes
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -138,7 +167,8 @@ object CurrencySnapshotValidator {
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState]
+      peerHistory: Option[ConsensusOperationalState],
+      allowSpendRecreationModes: List[AllowSpendBlockAcceptanceMode]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -173,7 +203,10 @@ object CurrencySnapshotValidator {
         }
       })
 
-      def recreateFn(trigger: ConsensusTrigger) =
+      def recreateFn(
+        trigger: ConsensusTrigger,
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
+      ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
         mkEvents.flatMap { events =>
           def usingHasher = (lastArtifactHasher: Hasher[F]) =>
             currencySnapshotCreator
@@ -191,10 +224,13 @@ object CurrencySnapshotValidator {
                 getGlobalSnapshotByOrdinal,
                 shouldPerformMetagraphSpecificValidations = false,
                 Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
-                peerHistory
+                peerHistory,
+                allowSpendBlockAcceptanceMode
               )
 
-          def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
+          def check(
+            result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
+          ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
             // Rewrite if implementation not provided
             result.map { creationResult =>
               maybeDataApplication match {
@@ -223,8 +259,30 @@ object CurrencySnapshotValidator {
           check(usingHasher(Hasher.forJson[F]))
         }
 
-      recreateFn(TimeTrigger).flatMap { tV =>
-        recreateFn(EventTrigger).map(_.orElse(tV))
+      def recreateWithModes(
+        trigger: ConsensusTrigger,
+        modes: List[AllowSpendBlockAcceptanceMode]
+      ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
+        modes match {
+          case Nil =>
+            new IllegalStateException("No allow-spend acceptance mode available for snapshot recreation")
+              .raiseError[F, CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]]
+          case mode :: remaining =>
+            recreateFn(trigger, mode).attempt.flatMap {
+              case Right(valid @ Validated.Valid(_)) =>
+                Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](valid)
+              case Right(invalid @ Validated.Invalid(_)) =>
+                if (remaining.nonEmpty) recreateWithModes(trigger, remaining)
+                else
+                  Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](invalid)
+              case Left(error) =>
+                if (remaining.nonEmpty) recreateWithModes(trigger, remaining)
+                else error.raiseError[F, CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]]
+            }
+        }
+
+      recreateWithModes(TimeTrigger, allowSpendRecreationModes).flatMap { tV =>
+        recreateWithModes(EventTrigger, allowSpendRecreationModes).map(_.orElse(tV))
       }
     }
 

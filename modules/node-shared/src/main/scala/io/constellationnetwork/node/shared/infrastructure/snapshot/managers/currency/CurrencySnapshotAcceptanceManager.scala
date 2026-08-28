@@ -21,7 +21,11 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.metagraphsBalancesAdjustments
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{
+  AllowSpendBlockAcceptanceMode,
+  CurrencyMessageValidator,
+  GlobalSnapshotSyncValidator
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
@@ -59,7 +63,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     lastGlobalSyncView: Option[GlobalSyncView],
     shouldPerformMetagraphSpecificValidations: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -175,7 +180,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     maybeLastGlobalSyncView: Option[GlobalSyncView],
     shouldPerformMetagraphSpecificValidations: Boolean,
-    lastArtifactProofs: NonEmptySet[SignatureProof]
+    lastArtifactProofs: NonEmptySet[SignatureProof],
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
     initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
     tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -238,9 +244,14 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       )
     )
 
+    // Gated on the GLOBAL ordinal, like every other FieldsAddedOrdinals entry -- the currency ordinal is
+    // only used for balance adjustments. At or below the activation the original wrapping path runs, so
+    // history replays to the state that was actually signed.
     (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- balanceOps.acceptFeeTxs(
       updatedBalancesByRewards,
-      feeTransactionsForAcceptance
+      feeTransactionsForAcceptance,
+      maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >
+        fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow.getOrElse(environment, SnapshotOrdinal.MaxValue)
     )
 
     acceptedSharedArtifacts = sharedArtifactsForAcceptance
@@ -346,7 +357,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         shouldPerformMetagraphSpecificValidations,
         lastUnsyncGlobalSnapshot.ordinal,
         fixingAllowSpendAndTokenLockValidation,
-        lastGlobalSnapshotEpochProgress
+        lastGlobalSnapshotEpochProgress,
+        allowSpendBlockAcceptanceMode.creditDestination
       )
     ).parMapN((tokenLock, allowSpend) => (tokenLock, allowSpend))
 
@@ -508,9 +520,13 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     }
 
     updatedBalancesByInvalidAddressChecks <-
-      metagraphsBalancesAdjustments
-        .get(lastSnapshotContext.address)
-        .fold[F[SortedMap[Address, Balance]]] {
+      // A metagraph may be authorized at several ordinals, so select the block matching this one
+      // rather than assuming a single entry. Keying uniquely meant the last block in the resource
+      // silently retired every earlier block for the same currency: replaying one of those ordinals
+      // applied no adjustment and diverged without raising, and a follow-up adjustment could not be
+      // scheduled at all.
+      metagraphsBalancesAdjustments.get(lastSnapshotContext.address) match {
+        case None =>
           if (balanceAdjustments.nonEmpty) {
             val unauthorizedError = new RuntimeException(
               s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
@@ -519,16 +535,16 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
           } else {
             updatedBalancesBySpendTransactions.pure[F]
           }
-        } { info =>
-          if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment) {
-            info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
-              case Right(balances) => balances.pure[F]
-              case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+        case Some(infos) =>
+          infos
+            .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+            .fold(updatedBalancesBySpendTransactions.pure[F]) { info =>
+              info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+                case Right(balances) => balances.pure[F]
+                case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+              }
             }
-          } else {
-            updatedBalancesBySpendTransactions.pure[F]
-          }
-        }
+      }
 
     csi = CurrencySnapshotInfo(
       if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)

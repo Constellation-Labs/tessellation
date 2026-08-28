@@ -143,7 +143,9 @@ object Services {
         creator,
         signedValidator,
         maybeRewards,
-        maybeDataApplication
+        maybeDataApplication,
+        sharedCfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+          .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
       )
 
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)

@@ -37,10 +37,11 @@ object CurrencyBalanceAdjustments {
   case class BalanceAdjustmentAtOrdinal(
     snapshotOrdinal: SnapshotOrdinal,
     environment: AppEnvironment,
+    exactMatchRequired: Boolean,
     balanceAdjustFunction: (SortedMap[Address, Balance], Set[BalanceAdjustment]) => Either[String, SortedMap[Address, Balance]]
   )
 
-  val metagraphsBalancesAdjustments: Map[Address, BalanceAdjustmentAtOrdinal] =
+  val metagraphsBalancesAdjustments: Map[Address, List[BalanceAdjustmentAtOrdinal]] =
     BalanceAdjustmentLoader.loadAndCreateAdjustmentEntries(
       "/adjustments.json"
     ) match {
@@ -61,7 +62,8 @@ object CurrencyBalanceAdjustments {
       updatedBalances <- applyBalanceAdjustments(currentBalances, balanceAdjustments)
     } yield updatedBalances
 
-  /** Validates that all required adjustments are present in the balance adjustments set
+  /** Legacy validation retained for historical adjustment blocks. It checks that every required address/direction/amount tuple is present,
+    * but deliberately ignores metadata and extras because tightening already-signed history can change replay results.
     */
   def validateRequiredAdjustments(
     balanceAdjustments: Set[BalanceAdjustment],
@@ -76,6 +78,37 @@ object CurrencyBalanceAdjustments {
     if (missingAdjustments.nonEmpty) {
       val missingDescription = missingAdjustments.map(describeRequiredAdjustment).mkString(", ")
       Left(s"Missing required adjustments: $missingDescription")
+    } else {
+      Right(())
+    }
+  }
+
+  /** Validates the complete artifact values for a newly authorized adjustment block, then applies them.
+    *
+    * Equality includes address, reason, reference set, increase and deduction. This prevents a metagraph from satisfying an authorized
+    * deduction while attaching an unauthorized increase, repeating it with different metadata, or adding another artifact.
+    */
+  def applyAndValidateExactBalanceAdjustments(
+    currentBalances: SortedMap[Address, Balance],
+    balanceAdjustments: Set[BalanceAdjustment],
+    authorizedAdjustments: Set[BalanceAdjustment]
+  ): Either[String, SortedMap[Address, Balance]] =
+    for {
+      _ <- validateExactBalanceAdjustments(balanceAdjustments, authorizedAdjustments)
+      updatedBalances <- applyBalanceAdjustments(currentBalances, balanceAdjustments)
+    } yield updatedBalances
+
+  def validateExactBalanceAdjustments(
+    balanceAdjustments: Set[BalanceAdjustment],
+    authorizedAdjustments: Set[BalanceAdjustment]
+  ): Either[String, Unit] = {
+    val missingAdjustments = authorizedAdjustments -- balanceAdjustments
+    val unauthorizedAdjustments = balanceAdjustments -- authorizedAdjustments
+
+    if (missingAdjustments.nonEmpty) {
+      Left(s"Missing required adjustments: ${missingAdjustments.mkString(", ")}")
+    } else if (unauthorizedAdjustments.nonEmpty) {
+      Left(s"Unauthorized balance adjustments not present in the authorized set: ${unauthorizedAdjustments.mkString(", ")}")
     } else {
       Right(())
     }
