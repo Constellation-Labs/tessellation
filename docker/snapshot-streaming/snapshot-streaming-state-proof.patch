@@ -123,3 +123,171 @@ index 2e0472c..80bee59 100644
            configuration.incrementalDelegatedStakingStartingOrdinal.getOrElse(env, SnapshotOrdinal.MinValue),
 +          fixingAllowSpendDestinationCredit
          )
+diff --git a/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala b/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala
+index 3b81d15..18fe202 100644
+--- a/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala
++++ b/src/test/scala/org/constellation/snapshotstreaming/opensearch/mapper/GlobalSnapshotMapperSuite.scala
+@@ -131,7 +131,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+         None,
+         None,
+         None,
+-        None
++        None,
++        retiredAllowSpendRefs = None
+       )
+
+       snapshot <- incrementalGlobalSnapshot[IO](
+@@ -194,7 +195,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+         None,
+         None,
+         None,
+-        None
++        None,
++        retiredAllowSpendRefs = None
+       )
+
+       snapshot <- incrementalGlobalSnapshot[IO](
+@@ -256,7 +258,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+         None,
+         None,
+         None,
+-        None
++        None,
++        retiredAllowSpendRefs = None
+       )
+       snapshot <- incrementalGlobalSnapshot[IO](
+         100L,
+@@ -310,7 +313,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     for {
+@@ -397,7 +401,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val newSnapshotInfo = GlobalSnapshotInfo(
+@@ -417,7 +422,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+     val hasher = hs.getCurrent
+     val gsm = GlobalSnapshotMapper.make(sharedCfg)
+@@ -528,7 +534,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val newSnapshotInfo = GlobalSnapshotInfo(
+@@ -548,7 +555,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+     implicit val hasher = hs.getCurrent
+     val gsm = GlobalSnapshotMapper.make(sharedCfg)
+@@ -662,7 +670,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     implicit val hasher: Hasher[IO] = hs.getCurrent
+@@ -760,7 +769,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     implicit val hasher: Hasher[IO] = hs.getCurrent
+@@ -835,7 +845,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val newSnapshotInfo = GlobalSnapshotInfo(
+@@ -855,7 +866,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val hasher = hs.getCurrent
+@@ -906,7 +918,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val hasher = hs.getCurrent
+@@ -984,7 +997,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val newSnapshotInfo = GlobalSnapshotInfo(
+@@ -1004,7 +1018,8 @@ object GlobalSnapshotMapperSuite extends MutableIOSuite {
+       None,
+       None,
+       None,
+-      None
++      None,
++      retiredAllowSpendRefs = None
+     )
+
+     val hasher = hs.getCurrent
+diff --git a/src/test/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorageSuite.scala b/src/test/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorageSuite.scala
+index 5a0a3be..84ad17b 100644
+--- a/src/test/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorageSuite.scala
++++ b/src/test/scala/org/constellation/snapshotstreaming/storage/FileBasedLastGlobalIncrementalSnapshotStorageSuite.scala
+@@ -101,7 +101,8 @@ object FileBasedLastGlobalIncrementalSnapshotStorageSuite extends MutableIOSuite
+     None,
+     None,
+     None,
+-    None
++    None,
++    retiredAllowSpendRefs = None
+   )
+
+   private def mkInitialSnapshot()(implicit ks: KryoSerializer[IO], h: HasherSelector[IO], jsonSerializer: JsonSerializer[IO]) =
