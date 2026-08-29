@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.domain.cluster.programs
 import cats.data.{EitherT, NonEmptySet}
 import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
+import cats.effect.syntax.all._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.apply._
@@ -16,6 +17,7 @@ import cats.syntax.parallel._
 import cats.syntax.show._
 import cats.{Applicative, MonadThrow, Parallel}
 
+import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
@@ -88,7 +90,8 @@ class Joining[
             nodeStorage
               .tryModifyState(SessionStarted, stateAfterJoining)
               .whenA(peers.nonEmpty)
-          }
+          } >>
+          reconcileConcurrentJoin(toPeer)
       }.start
 
   def rejoin(withPeer: PeerToJoin): F[Unit] =
@@ -166,11 +169,32 @@ class Joining[
       .semiflatMap(discoverFrom)
       .map(_.map(toP2PContext))
 
-  private def joinAll(peerToJoin: P2PContext): F[Unit] = {
+  /** Initial joiners can contact the same entry peer at nearly the same time. Their first discovery responses are then valid but incomplete
+    * snapshots of the changing cluster, leaving peer pairs permanently unknown because ordinary discovery only runs during join. Re-query
+    * the authenticated entry peer on a short bounded backoff and connect every newly discovered peer. Each handshake remains fully
+    * validated, and an empty discovery response is a no-op.
+    */
+  private def reconcileConcurrentJoin(entryPeer: P2PContext): F[Unit] =
+    List(1.second, 2.seconds, 4.seconds).traverse_ { delay =>
+      Async[F].sleep(delay) >>
+        clusterStorage
+          .getPeer(entryPeer.id)
+          .flatMap {
+            case None => Applicative[F].unit
+            case Some(peer) =>
+              discoverFrom(peer).flatMap(discovered => joinAll(discovered.toList.map(toP2PContext).toSet))
+          }
+          .handleErrorWith(error => logger.warn(error)(s"Concurrent join reconciliation failed through ${entryPeer.id.show}"))
+    }
+
+  private def joinAll(peerToJoin: P2PContext): F[Unit] =
+    joinAll(Set(peerToJoin))
+
+  private def joinAll(initialPeers: Set[P2PContext]): F[Unit] = {
     type Agg = (Set[P2PContext], Set[P2PContext])
     type Res = Unit
 
-    (Set(peerToJoin), Set.empty[P2PContext]).tailRecM {
+    (initialPeers, Set.empty[P2PContext]).tailRecM {
       case (toJoin, _) if toJoin.isEmpty => ().asRight[Agg].pure
       case (toJoin, attempted) =>
         for {
@@ -181,6 +205,7 @@ class Joining[
                 .as(Set.empty[P2PContext])
             }
           }
+            .guarantee(peerDiscovery.markAttemptsFinished(toJoin.toList.map(_.id).toSet))
           reduced = discovered.combineAll
           updatedAttempted = attempted ++ toJoin
           updatedToJoin = reduced.diff(updatedAttempted)

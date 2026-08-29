@@ -131,4 +131,44 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
     }
   }
 
+  test("a peer is discoverable again after its join attempt finishes") {
+    forall { (discoverFromPeer: Peer, candidate: Peer) =>
+      val returnedPeers = Set(candidate)
+
+      for {
+        peerDiscovery <- mkPeerDiscovery(Set.empty, returnedPeers)
+        first <- peerDiscovery.discoverFrom(discoverFromPeer)
+        suppressedWhileQueued <- peerDiscovery.discoverFrom(discoverFromPeer)
+        _ <- peerDiscovery.markAttemptsFinished(Set(candidate.id))
+        rediscovered <- peerDiscovery.discoverFrom(discoverFromPeer)
+      } yield
+        expect.same(first, returnedPeers) &&
+          expect(suppressedWhileQueued.isEmpty) &&
+          expect.same(rediscovered, returnedPeers)
+    }
+  }
+
+  test("batch completion clears peers re-added by an in-flight discovery") {
+    val candidateA = peerGen.sample.get.copy(id = PeerId(Hex("11" * 64)))
+    val candidateB = peerGen.sample.get.copy(id = PeerId(Hex("22" * 64)))
+    val entryPeer = peerGen.sample.get.copy(id = PeerId(Hex("33" * 64)))
+    val concurrentPeer = peerGen.sample.get.copy(id = PeerId(Hex("44" * 64)))
+    val returnedPeers = Set(candidateA, candidateB)
+    val attemptedIds = returnedPeers.map(_.id)
+
+    for {
+      peerDiscovery <- mkPeerDiscovery(Set.empty, returnedPeers)
+      initial <- peerDiscovery.discoverFrom(entryPeer)
+      _ <- peerDiscovery.markAttemptsFinished(Set(candidateA.id))
+      readded <- peerDiscovery.discoverFrom(concurrentPeer)
+      _ <- peerDiscovery.markAttemptsFinished(attemptedIds)
+      cachedAfterBatch <- peerDiscovery.getPeers
+      rediscovered <- peerDiscovery.discoverFrom(entryPeer)
+    } yield
+      expect.same(initial, returnedPeers) &&
+        expect.same(readded, Set(candidateA)) &&
+        expect(cachedAfterBatch.isEmpty) &&
+        expect.same(rediscovered, returnedPeers)
+  }
+
 }
