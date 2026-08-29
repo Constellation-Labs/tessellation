@@ -360,7 +360,7 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
     )
   }
 
-  pureTest("a benign one-round peer lead preserves the installed immediate-successor attempt") {
+  pureTest("peer-ahead recovery preserves only current or still-authorized consensus generations") {
     val authority = Set(peer(1), peer(2), peer(3))
     val immediateSuccessor = Map(peer(2) -> 11.some, peer(3) -> 11.some)
     val beyondImmediateSuccessor = Map(peer(2) -> 12.some, peer(3) -> 12.some)
@@ -372,21 +372,31 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
       ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = true,
         currentGenerationFinished = false,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = false
       ),
       !ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = true,
         currentGenerationFinished = false,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = true
       ),
       !ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = false,
         currentGenerationFinished = false,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = false
       ),
       ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = true,
         currentGenerationFinished = true,
+        currentOutcomeAuthorizesSelf = true,
+        authorityMajorityBeyondImmediateSuccessor = true
+      ),
+      !ConsensusManager.preservePeerAheadGeneration(
+        hasCurrentGeneration = true,
+        currentGenerationFinished = true,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = true
       )
     )

@@ -57,7 +57,7 @@ object Programs {
         services.consensus,
         peerSelect,
         storages.identifier,
-        dataApplication.map { case (da, _) => da },
+        dataApplication,
         services.globalL0.pullGlobalSnapshot,
         storages.snapshot,
         storages.currencySnapshotCleanup,

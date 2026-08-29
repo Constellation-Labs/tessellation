@@ -143,7 +143,8 @@ object CurrencySnapshotConsensus {
         maybeRewards,
         creator,
         validator,
-        maybeCustomArtifacts
+        maybeCustomArtifacts,
+        lastGlobalSnapshotStorage
       )
 
       eventGossipClient = EventGossipClient.make[F, CurrencySnapshotEvent](client, session)

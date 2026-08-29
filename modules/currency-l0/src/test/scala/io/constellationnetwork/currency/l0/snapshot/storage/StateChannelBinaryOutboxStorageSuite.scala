@@ -279,6 +279,31 @@ object StateChannelBinaryOutboxStorageSuite extends SimpleIOSuite {
     }
   }
 
+  test("a downloaded validator waits for a missing canonical bridge instead of reporting a false conflict") {
+    Files[IO].tempDirectory.use { directory =>
+      for {
+        implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+        implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+        canonicalHash = Hash("canonical-binary-60")
+        missingBridgeHash = Hash("canonical-binary-61")
+        storage <- StateChannelBinaryOutboxStorage.make[IO](directory)
+        successor <- binaryWithParent(62L, missingBridgeHash)
+        _ <- storage.prepare(successor, artifact(62L, "artifact-62"))
+        _ <- storage.markLocallyCommitted(successor.hash)
+        confirmedBeforeBridge <- storage.confirmCanonicalTip(SnapshotOrdinal.unsafeApply(60L), canonicalHash)
+        pendingBeforeBridge <- storage.getCommitted(Set.empty, 100)
+        confirmedAfterBridge <- storage.confirmCanonicalTip(SnapshotOrdinal.unsafeApply(61L), missingBridgeHash)
+        pendingAfterBridge <- storage.getCommitted(Set.empty, 100)
+      } yield
+        expect.all(
+          confirmedBeforeBridge.isEmpty,
+          pendingBeforeBridge.map(_.binaryHash) === List(successor.hash),
+          confirmedAfterBridge.isEmpty,
+          pendingAfterBridge.map(_.binaryHash) === List(successor.hash)
+        )
+    }
+  }
+
   test("outbox backpressures before count or serialized-byte bounds can grow without limit") {
     Files[IO].tempDirectory.use { directory =>
       for {

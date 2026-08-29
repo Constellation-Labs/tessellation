@@ -376,26 +376,33 @@ object StateChannelBinaryOutboxStorage {
                   case _ =>
                     val ordered = entries.values.toList.sortBy(_.currencySnapshotOrdinal)
                     val firstPending = ordered.find(_.currencySnapshotOrdinal > currencyOrdinal)
+                    val missingCanonicalBridge = firstPending.exists(_.currencySnapshotOrdinal > currencyOrdinal.next)
                     val pendingIsAttached = firstPending.forall(entry =>
                       entry.currencySnapshotOrdinal === currencyOrdinal.next && entry.binary.value.lastSnapshotHash === binaryHash
                     )
                     val firstPendingHash = firstPending.fold(binaryHash)(_.binary.value.lastSnapshotHash)
 
-                    Async[F].raiseUnless(pendingIsAttached)(
-                      CanonicalTipMismatch(
-                        firstPending.fold(currencyOrdinal.next)(_.currencySnapshotOrdinal),
-                        binaryHash,
-                        firstPendingHash
-                      )
-                    ) >> {
-                      val confirmed = ordered
-                        .filter(entry =>
-                          entry.locallyCommitted &&
-                            (entry.currencySnapshotOrdinal < currencyOrdinal ||
-                              (entry.currencySnapshotOrdinal === currencyOrdinal && entry.binaryHash === binaryHash))
+                    // A downloaded validator intentionally discards its local publication copies. It can therefore have a valid pending
+                    // binary N+1 while its local GL0 view still confirms only N-1. The missing binary N may already be queued at GL0 and
+                    // will close the gap in a later Global snapshot. Keep the suffix pending until the canonical tip reaches N; then the
+                    // ordinary direct-parent or same-ordinal hash check below can prove it. A direct conflicting successor still fails.
+                    if (missingCanonicalBridge) List.empty[Entry].pure[F]
+                    else
+                      Async[F].raiseUnless(pendingIsAttached)(
+                        CanonicalTipMismatch(
+                          firstPending.fold(currencyOrdinal.next)(_.currencySnapshotOrdinal),
+                          binaryHash,
+                          firstPendingHash
                         )
-                      confirmed.traverse_(delete).as(confirmed)
-                    }
+                      ) >> {
+                        val confirmed = ordered
+                          .filter(entry =>
+                            entry.locallyCommitted &&
+                              (entry.currencySnapshotOrdinal < currencyOrdinal ||
+                                (entry.currencySnapshotOrdinal === currencyOrdinal && entry.binaryHash === binaryHash))
+                          )
+                        confirmed.traverse_(delete).as(confirmed)
+                      }
                 }
               }
             }
