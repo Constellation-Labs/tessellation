@@ -54,6 +54,21 @@ abstract class SnapshotClient[
       decodeCombinedBody(body)
     }
 
+  /** Fetch the peer's current consensus head and its exact state context.
+    *
+    * [[getLatest]] intentionally reads the latest durable periodic checkpoint. That is useful for ordinary historical traversal, but a
+    * Currency validator joining after a long outage cannot always reconstruct every successor: deterministic Currency history may depend on
+    * Global snapshots that have already left the peer's bounded rolling window. The live head already carries the state proof that commits
+    * to this context, and Currency's private hand-off subsequently requires the artifact and context to match a corroborated consensus
+    * outcome before installation.
+    *
+    * This endpoint is peer-authenticated and decoded with the same bounded-memory spool-to-disk path as the checkpoint stream.
+    */
+  def getLatestHead: PeerResponse[F, (Signed[S], SI)] =
+    PeerResponse.stream[F, (Signed[S], SI)](uri => uri.addPath(s"$urlPrefix/latest/combined"))(client, optionalSession) { body =>
+      decodeCombinedBody(body)
+    }
+
   /** Conditional variant of [[getLatest]]. The client sends `If-None-Match: "<localOrdinal>-<localHash>"`; the server returns 304
     * NotModified (no body) when its tip matches the immutable identity `(ordinal, snapshotHash)` and 200 with a fresh combined-snapshot
     * stream otherwise.

@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
+import cats.effect.Ref
 import cats.effect.kernel.Async
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
@@ -26,27 +27,58 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object LastSyncGlobalSnapshotStorage {
+
+  /** Keep a small access-ordered window of exact historical contexts which have actually been used.
+    *
+    * Currency snapshots can intentionally carry the same signed GlobalSyncView for many rounds. A delayed Currency round must therefore
+    * retain that exact value/context pair even after the rolling GL0 download window and filesystem checkpoint retention have advanced.
+    * Four entries cover the active view plus recent recovery transitions without duplicating the much larger rolling GL0 window.
+    */
+  private val retainedExactCapacity = 4
+
+  private[storage] def retainExact[A](
+    retained: Vector[(SnapshotOrdinal, A)],
+    ordinal: SnapshotOrdinal,
+    value: A,
+    capacity: Int = retainedExactCapacity
+  ): Vector[(SnapshotOrdinal, A)] =
+    (retained.filterNot(_._1 === ordinal) :+ (ordinal -> value)).takeRight(math.max(1, capacity))
+
+  private[storage] def takeRetainedExact[A](
+    retained: Vector[(SnapshotOrdinal, A)],
+    ordinal: SnapshotOrdinal
+  ): (Vector[(SnapshotOrdinal, A)], Option[A]) =
+    retained.find(_._1 === ordinal) match {
+      case Some((_, value)) => (retainExact(retained, ordinal, value), value.some)
+      case None             => (retained, none)
+    }
+
   def make[F[_]: Async](
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     currencySnapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F]
   ): F[LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F]] =
-    SignallingRef
-      .of[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
-      .map(
+    (
+      SignallingRef
+        .of[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty),
+      Ref.of[F, Vector[(SnapshotOrdinal, (GlobalIncrementalSnapshot, GlobalSnapshotInfo))]](Vector.empty)
+    ).mapN {
+      case (snapshotsR, retainedExactR) =>
         make[F](
           lastGlobalSnapshotsSyncConfig,
-          _,
+          snapshotsR,
+          retainedExactR,
           currencySnapshotStorage,
           globalSnapshotsWithStateLocalFileSystemStorage,
           globalSnapshotsWithStateDeltasLocalFileSystemStorage
         )
-      )
+    }
 
   def make[F[_]: Async](
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     snapshotsR: SignallingRef[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
+    retainedExactR: Ref[F, Vector[(SnapshotOrdinal, (GlobalIncrementalSnapshot, GlobalSnapshotInfo))]],
     currencySnapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
     globalSnapshotsWithStateDeltasLocalFileSystemStorage: GlobalSnapshotsWithStateDeltasLocalFileSystemStorage[F]
@@ -69,15 +101,31 @@ object LastSyncGlobalSnapshotStorage {
                 .read(ordinal)
         }
 
+      private def retainExact(
+        ordinal: SnapshotOrdinal,
+        combined: (GlobalIncrementalSnapshot, GlobalSnapshotInfo)
+      ): F[Unit] =
+        retainedExactR.update(LastSyncGlobalSnapshotStorage.retainExact(_, ordinal, combined))
+
+      private def getRetainedExact(ordinal: SnapshotOrdinal): F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] =
+        retainedExactR.modify(LastSyncGlobalSnapshotStorage.takeRetainedExact(_, ordinal))
+
       def getCombined(ordinal: SnapshotOrdinal): F[Option[(GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] =
         snapshotsR.get.map(_.get(ordinal)).flatMap {
           case Some(snapshotWithState) =>
-            logger.info(s"Getting ordinal $ordinal from memory") >> (snapshotWithState._1.signed.value, snapshotWithState._2).some.pure[F]
+            val combined = (snapshotWithState._1.signed.value, snapshotWithState._2)
+            logger.info(s"Getting ordinal $ordinal from memory") >> retainExact(ordinal, combined).as(combined.some)
           case None =>
-            logger.info(s"Trying to load $ordinal from file system") >>
-              globalSnapshotsWithStateLocalFileSystemStorage
-                .read(ordinal)
-                .map(_.map(value => (value.snapshot, value.state)))
+            getRetainedExact(ordinal).flatMap {
+              case Some(combined) =>
+                logger.info(s"Getting retained exact ordinal $ordinal from memory").as(combined.some)
+              case None =>
+                logger.info(s"Trying to load $ordinal from file system") >>
+                  globalSnapshotsWithStateLocalFileSystemStorage
+                    .read(ordinal)
+                    .map(_.map(value => (value.snapshot.value, value.state)))
+                    .flatTap(_.traverse_(retainExact(ordinal, _)))
+            }
         }
 
       def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
@@ -106,10 +154,12 @@ object LastSyncGlobalSnapshotStorage {
 
       def setForRecovery(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
         logger.info(s"[LastSyncGlobalSnapshotStorage] Recovery reset at ordinal=${snapshot.ordinal}") >>
+          retainedExactR.set(Vector.empty) >>
           snapshotsR.set(SortedMap(snapshot.ordinal -> (snapshot, state)))
 
       def clear: F[Unit] =
         logger.info("[LastSyncGlobalSnapshotStorage] Clearing for recovery download") >>
+          retainedExactR.set(Vector.empty) >>
           snapshotsR.set(SortedMap.empty)
 
       def get: F[Option[Hashed[GlobalIncrementalSnapshot]]] = getCombined.map(_.map { case (snapshot, _) => snapshot })
