@@ -55,6 +55,16 @@ abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]
 
 object GlobalSnapshotConsensusStateCreator {
 
+  /** Build the round-start atomic-replacement effect without running it. The state creator retains this effect with the new consensus
+    * state, so the voter can read the committed round before it signs or stores a vote. Assembly is checked before the first Facility.
+    */
+  private[snapshot] def atomicReplacementRoundStartEffect[F[_]: Sync](
+    alreadyVoted: Boolean,
+    emitVote: F[Unit],
+    checkAssembly: F[Unit]
+  ): F[Unit] =
+    (if (alreadyVoted) Sync[F].unit else emitVote) >> checkAssembly
+
   private def resetLegacyOutcomeToAuthenticatedSeed[F[_]: cats.Functor: Hasher](
     outcome: GlobalConsensusOutcome,
     seed: List[PeerId]
@@ -281,7 +291,7 @@ object GlobalSnapshotConsensusStateCreator {
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
       observedAt: FiniteDuration,
       cadenceAllowed: Boolean
-    ): F[Unit] = {
+    ): F[F[Unit]] = {
       val parentEvidence = lastOutcome.controllerEvidence.flatMap(_.get(lastOutcome.key))
       val locallyObservedParentSigners =
         lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
@@ -294,13 +304,13 @@ object GlobalSnapshotConsensusStateCreator {
           // Recovery from a snapshot whose one-round operational sidecar is unavailable can
           // temporarily lack the exact parent round-start committee. Clear local streaks and
           // skip rather than bridging an unknown round into a false consecutive-miss sequence.
-          finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
+          (finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
             Metrics[F]
               .incrementCounter(
                 "dag_consensus_signing_finality_audit_total",
                 Seq(outcomeLabel -> "missing_parent_evidence")
               )
-              .whenA(!inBootstrap && currentCore.contains(selfId))
+              .whenA(!inBootstrap && currentCore.contains(selfId))).as(Sync[F].unit)
 
         case Some(evidence) =>
           val currentCommittee = currentSigningCommittee
@@ -373,14 +383,11 @@ object GlobalSnapshotConsensusStateCreator {
           }.flatMap {
             case Some(audit) if FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(audit, finalityHeadroom, cadenceAllowed) =>
               val alreadyVoted = resources.evictionVotes.get(audit.target).exists(_.contains(selfId))
-              val emit =
-                if (alreadyVoted) Sync[F].unit
-                else evictionVoter.emitEvictionVote(key, audit.target, EvictionReason.Silent)
-
-              emit >>
-                // Queue assembly before the first Facility is sent. Every honest Core voter
-                // audits the same target; local proof differences can only cause abstention.
-                consensusQueue.offer(ConsensusCommand.CheckEvictionAssembly(key, audit.target)) >>
+              val roundStartEffect = GlobalSnapshotConsensusStateCreator.atomicReplacementRoundStartEffect(
+                alreadyVoted,
+                evictionVoter.emitEvictionVote(key, audit.target, EvictionReason.Silent),
+                consensusQueue.offer(ConsensusCommand.CheckEvictionAssembly(key, audit.target))
+              ) >>
                 ConsensusLog.info(
                   logger,
                   Facilitator,
@@ -408,11 +415,15 @@ object GlobalSnapshotConsensusStateCreator {
                   Seq(outcomeLabel -> (if (alreadyVoted) "already_voted" else "vote_emitted"))
                 )
 
+              Sync[F].pure(roundStartEffect)
+
             case Some(audit) if audit.signatureObserved =>
-              Metrics[F].incrementCounter(
-                "dag_consensus_signing_finality_audit_total",
-                Seq(outcomeLabel -> "signature_observed")
-              )
+              Metrics[F]
+                .incrementCounter(
+                  "dag_consensus_signing_finality_audit_total",
+                  Seq(outcomeLabel -> "signature_observed")
+                )
+                .as(Sync[F].unit)
 
             case Some(audit) =>
               val outcome =
@@ -444,12 +455,14 @@ object GlobalSnapshotConsensusStateCreator {
                 "nextSeatFinalityMargin" -> finalityHeadroom.nextSeatMargin.toString,
                 "cadenceAllowed" -> cadenceAllowed.toString
               ) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_signing_finality_audit_total",
-                  Seq(outcomeLabel -> outcome)
-                )
+                Metrics[F]
+                  .incrementCounter(
+                    "dag_consensus_signing_finality_audit_total",
+                    Seq(outcomeLabel -> outcome)
+                  )
+                  .as(Sync[F].unit)
 
-            case None => Sync[F].unit
+            case None => Sync[F].pure(Sync[F].unit)
           }
       }
     }
@@ -1168,9 +1181,9 @@ object GlobalSnapshotConsensusStateCreator {
           ConsensusLog.info(logger, Lifecycle, key.show, role, RoundStarted, (basePairs ++ optionalPairs): _*)
         }
 
-        // Complete every dynamic/fallible read and local maintenance action before committing
-        // the state. The retained post-commit effect below may be replayed after delivery fails or
-        // is cancelled, so it must contain only the exact Facility self-store and gossip delivery.
+        // Complete dynamic reads and deterministic audit preparation before committing the state.
+        // The retained effect runs the prepared membership action and exact Facility delivery only
+        // after the round is committed, and may be replayed after failure or cancellation.
         assembledEvictionCertificates <- consensusStorage.getAssembledEvictionCertificates(key)
         _ <- GlobalSnapshotConsensusStateCreator
           .evictionVoteRetransmission(
@@ -1188,7 +1201,7 @@ object GlobalSnapshotConsensusStateCreator {
               consensusQueue.offer(ConsensusCommand.CheckEvictionAssembly(key, retransmission.target)) >>
               Metrics[F].incrementCounter("dag_consensus_eviction_vote_retransmitted_total")
           }
-        _ <-
+        roundStartMembershipEffect <-
           if (membershipPolicy.allowsCertifiedAtomicReplacement(config.certifiedConsensusActiveAt(key.value.value)))
             auditSigningFinalityParticipation(
               key,
@@ -1199,18 +1212,18 @@ object GlobalSnapshotConsensusStateCreator {
               time,
               expansionAllowedThisRound
             ).handleErrorWith { error =>
-              logger.warn(error)(s"Signing finality-participation audit failed for key=$key; continuing round") >>
+              (logger.warn(error)(s"Signing finality-participation audit failed for key=$key; continuing round") >>
                 Metrics[F].incrementCounter(
                   "dag_consensus_signing_finality_audit_total",
                   Seq(Metrics.unsafeLabelName("outcome") -> "error")
-                )
+                )).as(Sync[F].unit)
             }
           else
-            finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
+            (finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
               Metrics[F].incrementCounter(
                 "dag_consensus_signing_finality_audit_total",
                 Seq(Metrics.unsafeLabelName("outcome") -> "disabled_by_membership_policy")
-              )
+              )).as(Sync[F].unit)
         _ <- HasherSelector[F].withCurrent { implicit hasher =>
           DagAwaitingParentQueue.maintain(
             eventMempool,
@@ -1259,7 +1272,7 @@ object GlobalSnapshotConsensusStateCreator {
           triggerStatement = triggerStatement
         )
         declaration = ConsensusPeerDeclaration(key, facility)
-        effect = ConsensusStateCreator.exactFacilityEffect[F, GlobalSnapshotKey](
+        facilityEffect = ConsensusStateCreator.exactFacilityEffect[F, GlobalSnapshotKey](
           facility,
           declaration,
           signingFacilitators.toSet
@@ -1267,6 +1280,7 @@ object GlobalSnapshotConsensusStateCreator {
           captured => consensusStorage.addFacility(selfId, key, captured).void,
           (captured, targets) => gossip.spreadDirect(captured, targets)
         )
+        effect = roundStartMembershipEffect >> facilityEffect
 
       } yield (state, effect)
   }
