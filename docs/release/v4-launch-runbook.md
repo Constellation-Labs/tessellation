@@ -90,8 +90,10 @@ already-signed history re-derives byte-identically. The mechanism is `FieldsAdde
 These values are literals packaged into the assembly jar's `application.conf`; there are no
 environment-variable overrides for `fields-added-ordinals`. They must be finalized before assembly,
 and changing one requires a coordinated artifact redeploy rather than a runtime config update.
-`FieldsAddedOrdinals` is not included in `deterministicConfigHash`, and
+Most `FieldsAddedOrdinals` values are not included in `deterministicConfigHash`, and
 `RegistrationRequest.jar` is not compared, so the handshake does not detect a wrong ordinal.
+The Currency protocol-v1 ordinal is the explicit exception: it is copied into each L0's
+effective consensus configuration and hash-fenced.
 
 > **The cardinal rule, stated once:** an ordinal gate must be set so the chain crosses it **only after**
 > the new jar is live cluster-wide. A too-early crossing on the old jar misses the gated behaviour. For
@@ -151,6 +153,24 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       exact source-wallet signatures on every accepted path. IntegrationNet is scheduled for
       `5880000`; Mainnet and Testnet remain at `9999999`. Every Currency L1 and ML0 node must run the
       new jar before IntegrationNet crosses the gate.
+
+- [ ] **`currency-snapshot-protocol-v1`**. IntegrationNet is scheduled for Global ordinal
+      `5923000`. Rebuild and deploy every active Currency L0/L1/Data L1 stack against the exact
+      release SDK, audit signed `unappliedGlobalChangeOrdinals`, and keep legacy dormant lineages
+      offline. Testnet and Mainnet remain absent and therefore fail closed.
+
+- [ ] **Post-rc.12 accounting gates**: `fixing-data-application-fee-validation`,
+      `fixing-allow-spend-destination-credit`, `preventing-allow-spend-resurrection`, and
+      `fixing-global-allow-spend-expiration`. IntegrationNet is scheduled for `5923000`; Testnet
+      remains at `9999999`. The first requires the complete Currency L1/ML0 rollout. The destination
+      credit gate is also the immutable historical recreation boundary. Do not move
+      `fixing-fee-transaction-balance-overflow.integrationnet` from its historical `5905000`
+      replay boundary.
+
+- [ ] **Global v35**: `snapshot.certified-consensus-activation-ordinal.integrationnet` is
+      `5923000` in `dag-l0.conf`. This is not a `FieldsAddedOrdinals` entry, but it is hash-fenced
+      and must match across the entire GL0 fleet. Complete the v35 rollout runbook and independently
+      release the matching Snapshot Streaming artifact before crossing it.
 
 - [ ] **Sanity-check the historical gates** (`application.conf:211-258`). The migration gates above this
       block (`tessellation-3-migration`, `tessellation-301-migration`, `check-sync-global-snapshot-field`,

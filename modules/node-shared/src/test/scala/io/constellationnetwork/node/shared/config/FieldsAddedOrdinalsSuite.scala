@@ -88,16 +88,53 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     )
   }
 
-  test("Currency snapshot protocol v1 is enabled for dev and fails closed for every public environment") {
+  test("Currency snapshot protocol v1 is scheduled for IntegrationNet and fails closed elsewhere") {
     IO {
       ConfigSource.resources("application.conf").at("fields-added-ordinals").load[FieldsAddedOrdinals] match {
         case Left(failures) =>
           failure(failures.toList.mkString("\n"))
         case Right(fieldsAddedOrdinals) =>
           expect.same(SnapshotOrdinal.MinValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Dev)) &&
-          expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Integrationnet)) &&
+          expect.same(
+            SnapshotOrdinal.unsafeApply(5923000L),
+            fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Integrationnet)
+          ) &&
           expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Testnet)) &&
           expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Mainnet))
+      }
+    }
+  }
+
+  test("pins the IntegrationNet rc.13 accounting gates without moving the historical overflow boundary") {
+    IO {
+      ConfigSource.resources("application.conf").at("fields-added-ordinals").load[FieldsAddedOrdinals] match {
+        case Left(failures) =>
+          failure(failures.toList.mkString("\n"))
+        case Right(fieldsAddedOrdinals) =>
+          val integrationnet = AppEnvironment.Integrationnet
+          val rc13Activation = Some(SnapshotOrdinal.unsafeApply(5923000L))
+
+          expect.same(
+            Map(
+              "fixing-data-application-fee-validation" ->
+                fieldsAddedOrdinals.fixingDataApplicationFeeValidation.get(integrationnet),
+              "fixing-allow-spend-destination-credit" ->
+                fieldsAddedOrdinals.fixingAllowSpendDestinationCredit.get(integrationnet),
+              "preventing-allow-spend-resurrection" ->
+                fieldsAddedOrdinals.preventingAllowSpendResurrection.get(integrationnet),
+              "fixing-global-allow-spend-expiration" ->
+                fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration.get(integrationnet)
+            ),
+            Map(
+              "fixing-data-application-fee-validation" -> rc13Activation,
+              "fixing-allow-spend-destination-credit" -> rc13Activation,
+              "preventing-allow-spend-resurrection" -> rc13Activation,
+              "fixing-global-allow-spend-expiration" -> rc13Activation
+            )
+          ) && expect.same(
+            Some(SnapshotOrdinal.unsafeApply(5905000L)),
+            fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow.get(integrationnet)
+          )
       }
     }
   }

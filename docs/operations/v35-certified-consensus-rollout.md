@@ -11,16 +11,16 @@ Passing this repository's tests does not satisfy those independent release gates
 
 ## Scheduled activations
 
-- No replacement public activation key is recorded in this document yet. The former
-  IntegrationNet DAG L0 key at `5,890,500` was withdrawn before activation. The release
-  intended for public deployment must not be approved until its future key, announcement
-  window, matching Snapshot Streaming release, and activation rehearsals are recorded;
-  dormant code is a staging property, not a plan for an unscheduled extra deployment.
+- IntegrationNet Global L0 v35 is scheduled for Global snapshot ordinal `5,923,000`
+  in `v4.1.0-rc.13`, following the planned 2026-09-04 20:00 UTC coordinated cold
+  restart. The former key at `5,890,500` was withdrawn before activation and must not
+  be reused. The matching Snapshot Streaming release, activation rehearsal evidence,
+  and final operator census remain independent go/no-go gates.
 - V35 certification applies only to Global L0. Currency L0 uses its Currency-local flat
   synchronous protocol and has no certified-consensus activation key.
-- Currency snapshot protocol `1.0.0` is also unscheduled on every public network. Its
-  gate is a GLOBAL L0 ordinal shared by all metagraph lineages, not a Currency-local v35
-  key. It may be announced in the same release window, but it remains a distinct gate.
+- IntegrationNet Currency snapshot protocol `1.0.0` is separately scheduled for the
+  same Global snapshot ordinal, `5,923,000`. Its gate is shared by all metagraph
+  lineages and is not a Currency-local v35 key. Testnet and Mainnet remain unscheduled.
 
 ## Compatibility boundaries
 
@@ -226,8 +226,8 @@ and is therefore fenced independently as well.
     with the env absent before declaring recovery activation-ready.
 
 Capacity-plan the added certificate history before activation. At the measured 73-seat
-committee, `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a
-sustained 43-second cadence, before filesystem/JSON overhead. Signed incremental artifacts were
+committee, `CertifiedOutcome` is approximately 30 KiB per round, or roughly 21 GiB/year at a
+sustained 43-second cadence (20.89 GiB/year before filesystem overhead). Signed incremental artifacts were
 already retained; interior SnapshotInfo remains logarithmically retained, while the exact A-1
 activation-parent SnapshotInfo is explicitly pinned for the lifetime of that configured activation,
 so v35 does not add the rejected
@@ -239,10 +239,10 @@ The reproducible `CertifiedConsensusSuite` production-JSON measurement at 73 sea
 
 ```text
 TriggerStatement quorum evidence  34,938 bytes  (consensus message only)
-ProposalValue                     23,289 bytes
-ProposalQC                        26,203 bytes
+ProposalValue                     24,644 bytes
+ProposalQC                        27,558 bytes
 CoreCommitQC                       2,993 bytes
-CertifiedOutcome                  29,227 bytes  (persisted/child-carried)
+CertifiedOutcome                  30,582 bytes  (persisted/child-carried)
 ```
 
 The same suite measures sizes at 3, 31, 73, 100, 200, and the configured maximum 1,000
@@ -263,7 +263,8 @@ blocker.
 
 1. Choose and announce one future Global v35 activation key. If Currency protocol v1 is
    included, separately choose and announce one future Global L0 ordinal for all metagraph
-   lineages; it need not equal the v35 key.
+   lineages; it need not equal the v35 key. For IntegrationNet `v4.1.0-rc.13`, both
+   separately configured gates are `5,923,000`.
 2. Stop the complete active cluster. Archive snapshots, certified-outcome sidecars,
    certified-vote-lock journals, configuration, and logs; verify a coherent
    pre-activation checkpoint. Version 35 has not been publicly activated on any operated

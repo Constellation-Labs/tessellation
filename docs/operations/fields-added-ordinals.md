@@ -53,7 +53,12 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `sub-trie-roots` | 9999999 | 9999999 | 5880000 | 0 |
 | `delegated-rewards-full-committee` | 9999999 | 9999999 | 5880000 | 0 |
 | `fee-transaction-security` | 9999999 | 9999999 | 5880000 | 0 |
-| `currency-snapshot-protocol-v1` | absent | absent | absent | 0 |
+| `currency-snapshot-protocol-v1` | absent | absent | 5923000 | 0 |
+| `fixing-fee-transaction-balance-overflow` | 6814499 | 3255000 | 5905000 | 0 |
+| `fixing-data-application-fee-validation` | 6818000 | 9999999 | 5923000 | 0 |
+| `fixing-allow-spend-destination-credit` | 6818000 | 9999999 | 5923000 | 0 |
+| `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 5923000 | 0 |
+| `fixing-global-allow-spend-expiration` | 6828500 | 9999999 | 5923000 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
@@ -170,7 +175,12 @@ Currency Snapshot ordinals never activate this platform rule. See
   - `sub-trie-roots.mainnet` and `.testnet` (`9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. IntegrationNet activated at `5880000` and requires matching Snapshot Streaming support for every current deployment. For a cold restart at checkpoint `N`, use `N + 1` only on a network that has not already crossed its selected gate.
   - `delegated-rewards-full-committee.<env>`: set the deploying environment to the first ordinal produced by the corrected jar. Below it, the historical evidence-score filter must remain available for replay.
   - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet is scheduled for `5880000`.
-  - `currency-snapshot-protocol-v1.<env>`: set one future GLOBAL L0 ordinal only after every active Currency stack is upgraded. Active lineages transition their existing signed `version` to `1.0.0`; dormant lineages must upgrade before returning. See [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
+  - `currency-snapshot-protocol-v1.<env>`: set one future GLOBAL L0 ordinal only after every active Currency stack is upgraded. IntegrationNet is scheduled for `5923000`. Active lineages transition their existing signed `version` to `1.0.0`; dormant lineages must upgrade before returning. See [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
+  - `fixing-data-application-fee-validation`, `fixing-allow-spend-destination-credit`,
+    `preventing-allow-spend-resurrection`, and `fixing-global-allow-spend-expiration`:
+    IntegrationNet is scheduled for `5923000`. Do not move
+    `fixing-fee-transaction-balance-overflow.integrationnet` from its historical
+    `5905000` replay boundary.
   - `dust-sweeps` has no mainnet entry yet (`application.conf:286-292`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf:281-285`). Bump it up if the chain nears it before the coordinated cold restart completes.
 - Most historical gates do not participate in `deterministicConfigHash`. Currency snapshot protocol v1 is deliberately resolved into both DAG and Currency L0 effective consensus configs and therefore does. The advertised jar metadata hash is still not a substitute for either the release-version gate or this config fence. A unanimously wrong ordinal remains dangerous even when every node reports the same hash, so verify gates by inspection before assembly and deploy the identical artifact cluster-wide.

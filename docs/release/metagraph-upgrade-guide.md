@@ -11,6 +11,11 @@ The node release and Currency protocol transition are separate gates:
 - `fields-added-ordinals.currency-snapshot-protocol-v1` selects Currency snapshot
   protocol `1.0.0` at one announced **Global L0 ordinal**.
 
+For the IntegrationNet `v4.1.0-rc.13` candidate, the planned coordinated cold
+restart is 2026-09-04 20:00 UTC and the Currency protocol-v1 boundary is Global
+snapshot ordinal `5,923,000`. The ordinal is authoritative; any projected wall-clock
+activation time is informational.
+
 Do not infer either gate from SemVer. Record the exact release tag and announced ordinal
 in the release announcement and deployment manifest.
 
@@ -43,6 +48,12 @@ For an external metagraph, pin the same exact value in its dependency definition
 publish or deploy an assembly whose build metadata advertises a different Tessellation
 version. Record the source commit, SDK coordinate, assembly checksums or image digests,
 JDK vendor/version, and metagraph version in the release manifest.
+
+`BaseDataApplicationL0Service.onSnapshotConsensusResult` is an at-least-once callback.
+A retained Currency finalization effect can invoke it again when the callback succeeds but
+a later event-clear or binary-enqueue step fails and the effect retries. Implementations must
+be idempotent, preferably keyed by the snapshot hash (or ordinal plus hash), and must not
+perform unkeyed irreversible side effects.
 
 ### Assembly merge strategy
 
