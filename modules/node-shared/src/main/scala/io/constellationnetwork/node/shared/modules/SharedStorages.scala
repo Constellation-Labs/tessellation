@@ -20,15 +20,17 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{Last
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.mpt.producer.FileSystemMerklePatriciaProducer
+import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object SharedStorages {
 
-  def make[F[_]: Parallel: JsonSerializer: Async: Hasher](
+  def make[F[_]: Parallel: JsonSerializer: Async: Hasher: HasherSelector: SecurityProvider](
     clusterId: ClusterId,
-    cfg: SharedConfig
+    cfg: SharedConfig,
+    globalSnapshotSignerAllowlist: Option[Set[PeerId]] = None
   ): F[SharedStorages[F]] =
     for {
       clusterStorage <- ClusterStorage.make[F](clusterId)
@@ -36,7 +38,7 @@ object SharedStorages {
       sessionStorage <- SessionStorage.make[F]
       rumorStorage <- RumorStorage.make[F](cfg.gossip.storage)
       currencySnapshotEventValidationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(cfg.validationErrorStorage.maxSize)
-      lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F](cfg.lastGlobalSnapshotsSync)
+      lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F](cfg.lastGlobalSnapshotsSync, globalSnapshotSignerAllowlist)
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       mptProducer <- FileSystemMerklePatriciaProducer.make[F](cfg.mptSnapshotInfoPath)
       mptStore <- MptStore.make[F, GlobalStateKey](

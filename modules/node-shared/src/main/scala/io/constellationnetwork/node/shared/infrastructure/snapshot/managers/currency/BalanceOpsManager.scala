@@ -70,41 +70,89 @@ class BalanceOpsManager[F[_]: Async](
 
   def acceptFeeTxs(
     balances: SortedMap[Address, Balance],
-    maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
+    checkedArithmetic: Boolean
   ): F[(SortedMap[Address, Balance], Option[SortedSet[Signed[FeeTransaction]]])] =
     maybeTxs match {
       case None => (balances, maybeTxs).pure[F]
       case Some(txs) =>
-        val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
-        val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
-          case (acc, address) =>
-            acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
-        }
-        val updatedFeeReferredBalances = txs
-          .foldLeft(feeReferredBalances) {
-            case (balances, tx) =>
-              balances
-                .updatedWith(tx.source)(existing => (existing.getOrElse(Balance.empty.value.value) - tx.amount.value.value).some)
-                .updatedWith(tx.destination)(existing => (existing.getOrElse(Balance.empty.value.value) + tx.amount.value.value).some)
-          }
+        val (updatedBalances, acceptedTxs, rejectedTxs) =
+          if (checkedArithmetic) BalanceOpsManager.applyFeeTransactions(balances, txs)
+          else BalanceOpsManager.applyFeeTransactionsUnchecked(balances, txs)
 
-        updatedFeeReferredBalances.toList
-          .foldLeftM(SortedMap.empty[Address, Balance]) {
-            case (acc, (address, balance)) =>
-              NonNegLong
-                .from(balance)
-                .map(Balance(_))
-                .map(acc.updated(address, _))
-                .leftMap(e => new ArithmeticException(s"Unexpected state when applying fee transactions: $e"))
-                .liftTo[F]
-          }
-          .map { updates =>
-            (balances ++ updates, txs.some)
-          }
+        rejectedTxs.traverse_ { signedTx =>
+          logger.warn(
+            s"Rejected fee transaction from ${signedTx.value.source} to ${signedTx.value.destination} of " +
+              s"${signedTx.value.amount.value.value}: source balance insufficient or destination balance overflow"
+          )
+        }
+          .as((updatedBalances, acceptedTxs.some))
     }
 }
 
 object BalanceOpsManager {
+
+  /** Applies fee transactions sequentially, dropping any transaction whose source cannot cover it.
+    *
+    * Every debit and credit goes through `Balance.minus`/`Balance.plus`, which reject underflow and overflow. Accumulating raw `Long`s and
+    * checking only the final per-address total allowed a group of transactions to wrap a source balance past `Long.MinValue` back to a
+    * non-negative value, crediting destinations with supply that was never debited from anywhere.
+    *
+    * Unaffordable transactions are dropped rather than failing the snapshot: fee transactions are user-supplied, so raising here would let
+    * anyone halt a metagraph.
+    *
+    * @return
+    *   the updated balances, the accepted transactions, and the rejected ones in iteration order
+    */
+  /** The pre-fix wrapping implementation, kept so global ordinals at or below the activation still replay to the state that was actually
+    * signed. Selected via fixingFeeTransactionBalanceOverflow.
+    */
+  def applyFeeTransactionsUnchecked(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[Signed[FeeTransaction]]
+  ): (SortedMap[Address, Balance], SortedSet[Signed[FeeTransaction]], List[Signed[FeeTransaction]]) = {
+    val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
+    val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
+      case (acc, address) => acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
+    }
+    val updated = txs.foldLeft(feeReferredBalances) {
+      case (acc, tx) =>
+        acc
+          .updatedWith(tx.value.source)(existing => (existing.getOrElse(0L) - tx.value.amount.value.value).some)
+          .updatedWith(tx.value.destination)(existing => (existing.getOrElse(0L) + tx.value.amount.value.value).some)
+    }
+    val asBalances = updated.map { case (a, v) => a -> Balance(NonNegLong.unsafeFrom(v)) }
+
+    (balances ++ asBalances, txs, List.empty)
+  }
+
+  def applyFeeTransactions(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[Signed[FeeTransaction]]
+  ): (SortedMap[Address, Balance], SortedSet[Signed[FeeTransaction]], List[Signed[FeeTransaction]]) = {
+    val (feeReferredBalances, rejected) =
+      txs.foldLeft((SortedMap.empty[Address, Balance], List.empty[Signed[FeeTransaction]])) {
+        case ((acc, rejected), signedTx) =>
+          val tx = signedTx.value
+
+          def balanceOf(address: Address, current: SortedMap[Address, Balance]): Balance =
+            current.getOrElse(address, balances.getOrElse(address, Balance.empty))
+
+          val applied = for {
+            debited <- balanceOf(tx.source, acc).minus(tx.amount)
+            afterDebit = acc.updated(tx.source, debited)
+            credited <- balanceOf(tx.destination, afterDebit).plus(tx.amount)
+          } yield afterDebit.updated(tx.destination, credited)
+
+          applied match {
+            case Right(updated) => (updated, rejected)
+            case Left(_)        => (acc, signedTx :: rejected)
+          }
+      }
+
+    (balances ++ feeReferredBalances, txs -- rejected, rejected.reverse)
+  }
+
   def make[F[_]: Async](
     feeTransactionValidator: FeeTransactionValidator[F]
   ): BalanceOpsManager[F] =

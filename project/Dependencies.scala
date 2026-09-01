@@ -5,7 +5,11 @@ object Dependencies {
   object V {
     val bouncyCastle = "1.83"
     val betterFiles = "3.9.2"
-    val brotli4j = "1.12.0" // DO NOT UPDATE, >= 1.13.0 breaks backwards compat
+    // State-channel binary encoder compatibility. All facilitators in one Currency release must
+    // construct the same bytes, and >= 1.13.0 has changed the encoded output in repository tests.
+    // Historical binaries are consumed as received bytes; Global v35 lineage does not reconstruct
+    // or re-compress Currency ancestry, so this is not a permanent v35 verifier dependency.
+    val brotli4j = "1.12.0"
     val cats = "2.13.0"
     val catsEffect = "3.6.3"
     val catsRetry = "3.1.3"

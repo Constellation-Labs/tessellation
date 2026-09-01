@@ -1,12 +1,14 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
-import cats.effect.std.{Queue, Supervisor}
-import cats.effect.{IO, Ref, Resource}
-import cats.syntax.option._
+import cats.effect._
+import cats.effect.std.{Mutex, Queue, Supervisor}
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
+import scala.concurrent.duration._
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -32,7 +34,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
-  def sharedResource: Resource[IO, Res] = for {
+  def sharedResource: cats.effect.Resource[IO, Res] = for {
     supervisor <- Supervisor[IO]
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
@@ -60,20 +62,17 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       }
     }
 
-  def mkStorageWithAcceptedHead(
+  def mkSeparatedStorage(
     tmpDir: File,
-    snapshot: Signed[GlobalIncrementalSnapshot],
-    acceptedState: GlobalSnapshotInfo
+    persistenceMutex: Mutex[IO],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
   )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) = {
-    // Models cancellation after the head CAS succeeds but before enqueue persists the accepted tuple.
     val snapshotsPath = Path((tmpDir / "snapshots").pathAsString)
     val snapshotInfoPath = Path((tmpDir / "snapshot-info").pathAsString)
     val checkpointsPath = Path((tmpDir / "checkpoints").pathAsString)
 
     for {
-      headRef <- SignallingRef.of[IO, Option[(Signed[GlobalIncrementalSnapshot], Hasher[IO], GlobalSnapshotInfo)]](
-        (snapshot, H, acceptedState).some
-      )
+      headRef <- SignallingRef.of[IO, Option[(Signed[GlobalIncrementalSnapshot], Hasher[IO], GlobalSnapshotInfo)]](none)
       ordinalCache <- MapRef.ofSingleImmutableMap[IO, SnapshotOrdinal, Hash](Map.empty)
       hashCache <- MapRef.ofSingleImmutableMap[IO, Hash, Signed[GlobalIncrementalSnapshot]](Map.empty)
       notPersistedCache <- Ref.of[IO, Set[SnapshotOrdinal]](Set.empty)
@@ -93,12 +92,61 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
             notPersistedCache,
             offloadQueue,
             snapshotInfoCutoffQueue,
+            persistenceMutex,
             snapshotFileStorage,
             snapshotInfoFileStorage,
             inMemoryCapacity = 5L,
             SnapshotOrdinal.MinValue,
             hs,
-            checkpointStorage
+            checkpointStorage,
+            protectedSnapshotInfoOrdinals
+          )
+      }
+    } yield (storage, snapshotFileStorage, snapshotInfoFileStorage, checkpointStorage)
+  }
+
+  def mkStorageWithAcceptedHead(
+    tmpDir: File,
+    snapshot: Signed[GlobalIncrementalSnapshot],
+    acceptedState: GlobalSnapshotInfo
+  )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) = {
+    // Models cancellation after the head CAS succeeds but before enqueue persists the accepted tuple.
+    val snapshotsPath = Path((tmpDir / "snapshots").pathAsString)
+    val snapshotInfoPath = Path((tmpDir / "snapshot-info").pathAsString)
+    val checkpointsPath = Path((tmpDir / "checkpoints").pathAsString)
+
+    for {
+      headRef <- SignallingRef.of[IO, Option[(Signed[GlobalIncrementalSnapshot], Hasher[IO], GlobalSnapshotInfo)]](
+        (snapshot, H, acceptedState).some
+      )
+      ordinalCache <- MapRef.ofSingleImmutableMap[IO, SnapshotOrdinal, Hash](Map.empty)
+      hashCache <- MapRef.ofSingleImmutableMap[IO, Hash, Signed[GlobalIncrementalSnapshot]](Map.empty)
+      notPersistedCache <- Ref.of[IO, Set[SnapshotOrdinal]](Set.empty)
+      offloadQueue <- Queue.unbounded[IO, SnapshotOrdinal]
+      snapshotInfoCutoffQueue <- Queue.unbounded[IO, SnapshotOrdinal]
+      persistenceMutex <- Mutex[IO]
+      snapshotFileStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](snapshotsPath)
+      snapshotInfoFileStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](snapshotInfoPath)
+      checkpointStorage <- CombinedSnapshotCheckpointFileSystemStorage
+        .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](checkpointsPath)
+      storage <- {
+        implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
+        io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotStorage
+          .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            headRef,
+            ordinalCache,
+            hashCache,
+            notPersistedCache,
+            offloadQueue,
+            snapshotInfoCutoffQueue,
+            persistenceMutex,
+            snapshotFileStorage,
+            snapshotInfoFileStorage,
+            inMemoryCapacity = 5L,
+            SnapshotOrdinal.MinValue,
+            hs,
+            checkpointStorage,
+            Set.empty[SnapshotOrdinal]
           )
       }
     } yield (storage, snapshotFileStorage, snapshotInfoFileStorage)
@@ -169,6 +217,43 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
           expect.eql(none, _)
         }
       }
+    }
+  }
+
+  test("live snapshot cutoff retains an explicitly protected certified activation parent") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    def awaitDeleted(
+      storage: SnapshotInfoLocalFileSystemStorage[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+      ordinal: SnapshotOrdinal
+    ): IO[Unit] =
+      storage.exists(ordinal).flatMap {
+        case false => IO.unit
+        case true  => IO.sleep(20.millis) >> awaitDeleted(storage, ordinal)
+      }
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        persistenceMutex <- Mutex[IO]
+        protectedOrdinal = SnapshotOrdinal.unsafeApply(123L)
+        ordinaryOldOrdinal = SnapshotOrdinal.unsafeApply(124L)
+        currentOrdinal = SnapshotOrdinal.unsafeApply(1000L)
+        built <- mkSeparatedStorage(tmpDir, persistenceMutex, Set(protectedOrdinal))
+        (storage, _, snapshotInfoStorage, _) = built
+        pair <- KeyPairGenerator.makeKeyPair[IO]
+        (_, base) <- mkSnapshots
+        current <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          base.value.copy(ordinal = currentOrdinal),
+          pair
+        )
+        info = GlobalSnapshotInfo.empty
+        _ <- snapshotInfoStorage.write(protectedOrdinal, info)
+        _ <- snapshotInfoStorage.write(ordinaryOldOrdinal, info)
+        accepted <- storage.prepend(current, info)
+        _ <- awaitDeleted(snapshotInfoStorage, ordinaryOldOrdinal).timeout(5.seconds)
+        protectedExists <- snapshotInfoStorage.exists(protectedOrdinal)
+        currentExists <- snapshotInfoStorage.exists(currentOrdinal)
+      } yield expect.all(accepted, protectedExists, currentExists)
     }
   }
 
@@ -282,6 +367,150 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
                   .and(expect.eql(persistedStateAfterRetry, acceptedState.some))
           }
       }
+    }
+  }
+
+  test("exact recovery replaces same-value randomized proofs durably without ordinary prepend") { res =>
+    implicit val (s, kryo, j, h, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkSeparatedStorage(tmpDir, mutex)
+        (storage, _, _, _) = built
+        snapshots <- mkSnapshots
+        (genesis, original) = snapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        replacementKey <- KeyPairGenerator.makeKeyPair[IO]
+        replacement <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](original.value, replacementKey)
+        valueHash <- original.value.hash
+        _ <- storage.prepend(original, context)
+        installed <- io.constellationnetwork.node.shared.domain.snapshot.storage.ExactSnapshotStorage
+          .installExactForRecovery(storage, replacement, context)
+        warmHead <- storage.head
+        warmOrdinal <- storage.get(replacement.ordinal)
+        warmHash <- storage.get(valueHash)
+        coldMutex <- Mutex[IO]
+        coldBuilt <- mkSeparatedStorage(tmpDir, coldMutex)
+        (coldStorage, _, _, _) = coldBuilt
+        coldOrdinal <- coldStorage.get(replacement.ordinal)
+        coldHash <- coldStorage.get(valueHash)
+      } yield
+        expect.all(
+          original.proofs != replacement.proofs,
+          installed,
+          warmHead.exists(_._1.proofs == replacement.proofs),
+          warmOrdinal.exists(_.proofs == replacement.proofs),
+          warmHash.exists(_.proofs == replacement.proofs),
+          coldOrdinal.exists(_.proofs == replacement.proofs),
+          coldHash.exists(_.proofs == replacement.proofs)
+        )
+    }
+  }
+
+  test("exact recovery evicts a cleaned future suffix and removes the abandoned anchor hash") { res =>
+    implicit val (s, kryo, j, h, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkSeparatedStorage(tmpDir, mutex)
+        (storage, snapshotFiles, snapshotInfoFiles, checkpoints) = built
+        snapshots <- mkSnapshots
+        (genesis, original) = snapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        originalHash <- original.value.hash
+        futureKey <- KeyPairGenerator.makeKeyPair[IO]
+        future <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          original.value.copy(
+            ordinal = original.ordinal.next,
+            lastSnapshotHash = originalHash
+          ),
+          futureKey
+        )
+        futureHash <- future.value.hash
+        replacementKey <- KeyPairGenerator.makeKeyPair[IO]
+        replacement <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          original.value.copy(version = semver.SnapshotVersion("1.0.0")),
+          replacementKey
+        )
+        replacementHash <- replacement.value.hash
+        _ <- storage.prepend(original, context)
+        _ <- storage.prepend(future, context)
+        installed <- io.constellationnetwork.node.shared.domain.snapshot.storage.ExactSnapshotStorage
+          .installCanonicalSuffixForRecovery(
+            storage,
+            replacement,
+            context,
+            snapshotFiles.delete(futureHash) >>
+              snapshotFiles.delete(future.ordinal) >>
+              snapshotInfoFiles.deleteAbove(original.ordinal) >>
+              checkpoints.deleteAbove(original.ordinal)
+          )
+        warmFutureOrdinal <- storage.get(future.ordinal)
+        warmFutureHash <- storage.get(futureHash)
+        warmOldAnchor <- storage.get(originalHash)
+        warmReplacement <- storage.get(replacementHash)
+        coldMutex <- Mutex[IO]
+        coldBuilt <- mkSeparatedStorage(tmpDir, coldMutex)
+        (coldStorage, _, _, _) = coldBuilt
+        coldFutureOrdinal <- coldStorage.get(future.ordinal)
+        coldFutureHash <- coldStorage.get(futureHash)
+        coldOldAnchor <- coldStorage.get(originalHash)
+        coldReplacement <- coldStorage.get(replacementHash)
+      } yield
+        expect.all(
+          installed,
+          originalHash != replacementHash,
+          warmFutureOrdinal.isEmpty,
+          warmFutureHash.isEmpty,
+          warmOldAnchor.isEmpty,
+          warmReplacement.exists(_.value == replacement.value),
+          coldFutureOrdinal.isEmpty,
+          coldFutureHash.isEmpty,
+          coldOldAnchor.isEmpty,
+          coldReplacement.exists(_.value == replacement.value)
+        )
+    }
+  }
+
+  test("exact recovery waits for the shared persistence critical section") { res =>
+    implicit val (s, kryo, j, h, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkSeparatedStorage(tmpDir, mutex)
+        (storage, _, _, _) = built
+        snapshots <- mkSnapshots
+        (genesis, original) = snapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        replacementKey <- KeyPairGenerator.makeKeyPair[IO]
+        replacement <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](original.value, replacementKey)
+        _ <- storage.prepend(original, context)
+        cleanupRuns <- Ref.of[IO, Int](0)
+        finished <- Deferred[IO, Unit]
+        held <- mutex.lock.allocated
+        (_, release) = held
+        fiber <- io.constellationnetwork.node.shared.domain.snapshot.storage.ExactSnapshotStorage
+          .installCanonicalSuffixForRecovery(storage, replacement, context, cleanupRuns.update(_ + 1))
+          .flatTap(_ => finished.complete(()))
+          .start
+        _ <- IO.cede.replicateA_(8)
+        whileHeld <- finished.tryGet
+        cleanupWhileHeld <- cleanupRuns.get
+        _ <- release
+        installed <- fiber.joinWithNever
+        head <- storage.head
+        cleanupAfter <- cleanupRuns.get
+      } yield
+        expect.all(
+          whileHeld.isEmpty,
+          cleanupWhileHeld === 0,
+          cleanupAfter === 1,
+          installed,
+          head.exists(_._1.proofs == replacement.proofs)
+        )
     }
   }
 

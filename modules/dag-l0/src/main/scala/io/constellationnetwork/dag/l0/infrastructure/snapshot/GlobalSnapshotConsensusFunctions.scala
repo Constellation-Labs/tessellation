@@ -33,6 +33,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -120,7 +121,8 @@ object GlobalSnapshotConsensusFunctions {
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
@@ -169,7 +171,8 @@ object GlobalSnapshotConsensusFunctions {
         events,
         facilitators,
         getGlobalSnapshotByOrdinal,
-        peerHistory
+        peerHistory,
+        certifiedLineage
       )
 
       def check(result: F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])]) =
@@ -212,7 +215,8 @@ object GlobalSnapshotConsensusFunctions {
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
@@ -314,10 +318,7 @@ object GlobalSnapshotConsensusFunctions {
           }
       }
 
-      def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
-        case JsonHash => lastArtifactHasher.hash(lastArtifact.value)
-        case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
-      }
+      def getLastArtifactHash = GlobalSnapshotArtifactHasher.historicalHash(lastArtifact.value)(lastArtifactHasher)
 
       def balanceEventMetric(stage: String, eventType: String, count: Long): F[Unit] = {
         val tags = Seq(
@@ -583,7 +584,8 @@ object GlobalSnapshotConsensusFunctions {
               lastDeprecatedTips,
               rewardsWithFacilitators(lastFacilitators),
               StateChannelValidationType.Full,
-              getGlobalSnapshotByOrdinal
+              getGlobalSnapshotByOrdinal,
+              AllowSpendBlockAcceptanceMode.live
             )
         acceptEndMs <- Async[F].monotonic.map(_.toMillis)
         balanceDiagnostics = {
@@ -762,7 +764,7 @@ object GlobalSnapshotConsensusFunctions {
           acceptedNnodeCollateralCreates.some,
           acceptedNnodeCollateralWithdrawals.some,
           peerHistory
-        )
+        ).copy(certifiedLineage = certifiedLineage)
         _ <- emitBalanceEventMetrics(
           "artifact",
           "dag_block" -> globalSnapshot.blocks.size.toLong,

@@ -44,8 +44,8 @@ object Main
       "currency-l0",
       "currency L0 node",
       ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
-      tessellationVersion = TessellationVersion.unsafeFrom("1.0.0"),
-      metagraphVersion = MetagraphVersion.unsafeFrom("1.0.0")
+      tessellationVersion = TessellationVersion.unsafeFrom(com.my.project_template.l0.BuildInfo.tessellationVersion),
+      metagraphVersion = MetagraphVersion.unsafeFrom(com.my.project_template.l0.BuildInfo.metagraphVersion)
     ) {
 
   private def makeBaseDataApplicationL0Service(

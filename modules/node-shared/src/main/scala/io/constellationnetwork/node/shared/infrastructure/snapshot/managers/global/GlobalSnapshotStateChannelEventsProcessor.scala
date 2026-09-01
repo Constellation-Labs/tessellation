@@ -65,17 +65,23 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async: JsonSerializer: Parallel: Metrics](
+  // This processor is also embedded by snapshot-streaming, which has no Metrics runtime.
+  // Node applications pass Some(Metrics[F]); library-only consumers retain the legacy source API.
+  def make[F[_]: Async: JsonSerializer: Parallel](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     feeCalculator: FeeCalculator[F],
     mptStore: MptStore[F, GlobalStateKey],
     fieldsAddedOrdinals: FieldsAddedOrdinals,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    metrics: Option[Metrics[F]] = None
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
+
+      private def recordMetric(update: Metrics[F] => F[Unit]): F[Unit] =
+        metrics.traverse_(telemetry => update(telemetry).attempt.void)
 
       private type CurrencyProcessingResult =
         (SortedMap[Address, MetagraphAcceptanceResult], Set[StateChannelOutput])
@@ -317,10 +323,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
               }
 
             def recordDependencyRejection(reason: String, count: Int, error: Throwable): F[Unit] =
-              Metrics[F].incrementCounterBy(
-                "dag_l0_state_channel_dependency_rejection_total",
-                count,
-                Seq(Metrics.unsafeLabelName("reason") -> reason)
+              recordMetric(
+                _.incrementCounterBy(
+                  "dag_l0_state_channel_dependency_rejection_total",
+                  count,
+                  Seq(Metrics.unsafeLabelName("reason") -> reason)
+                )
               ) >> logger.warn(error)(
                 s"Returning unsupported state-channel lineage address=${address.show} reason=$reason count=$count"
               )
@@ -340,10 +348,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 rejected: List[Signed[StateChannelSnapshotBinary]],
                 reason: String
               ): F[BranchResult] =
-                Metrics[F].incrementCounterBy(
-                  "dag_l0_state_channel_rejection_total",
-                  rejected.size,
-                  Seq(Metrics.unsafeLabelName("reason") -> reason)
+                recordMetric(
+                  _.incrementCounterBy(
+                    "dag_l0_state_channel_rejection_total",
+                    rejected.size,
+                    Seq(Metrics.unsafeLabelName("reason") -> reason)
+                  )
                 ) >> Async[F].pure(BranchTerminalRejected(normalize(current), rejected, reason): BranchResult)
 
               def loop(state: Result, remaining: List[Signed[StateChannelSnapshotBinary]]): F[BranchResult] =
@@ -430,9 +440,11 @@ object GlobalSnapshotStateChannelEventsProcessor {
                               case error: ProcessedHistoryUnproven =>
                                 dependencyRejected(current, head :: tail, "processed_history_unproven", error)
                               case error: MissingInsideRetainedWindow =>
-                                Metrics[F].incrementCounter(
-                                  "dag_l0_state_channel_dependency_rejection_total",
-                                  Seq(Metrics.unsafeLabelName("reason") -> "missing_recent")
+                                recordMetric(
+                                  _.incrementCounter(
+                                    "dag_l0_state_channel_dependency_rejection_total",
+                                    Seq(Metrics.unsafeLabelName("reason") -> "missing_recent")
+                                  )
                                 ) >> error.raiseError[F, BranchResult]
                               case error =>
                                 logger.warn(error)(
@@ -461,14 +473,14 @@ object GlobalSnapshotStateChannelEventsProcessor {
                     case BranchDependencyRejected(Some(prefix), suffix, _, _) =>
                       (address, prefix.some, rejected ++ suffix).pure[F]
                     case BranchDependencyRejected(None, suffix, _, _) if alternatives.nonEmpty =>
-                      Metrics[F].incrementCounter("dag_l0_state_channel_dependency_branch_fallback_total") >>
+                      recordMetric(_.incrementCounter("dag_l0_state_channel_dependency_branch_fallback_total")) >>
                         tryBranches(alternatives, rejected ++ suffix)
                     case BranchDependencyRejected(None, suffix, _, _) =>
                       (address, none[MetagraphAcceptanceResult], rejected ++ suffix).pure[F]
                     case BranchTerminalRejected(Some(prefix), suffix, _) =>
                       (address, prefix.some, rejected ++ suffix).pure[F]
                     case BranchTerminalRejected(None, suffix, _) if alternatives.nonEmpty =>
-                      Metrics[F].incrementCounter("dag_l0_state_channel_terminal_branch_fallback_total") >>
+                      recordMetric(_.incrementCounter("dag_l0_state_channel_terminal_branch_fallback_total")) >>
                         tryBranches(alternatives, rejected ++ suffix)
                     case BranchTerminalRejected(None, suffix, _) =>
                       (address, none[MetagraphAcceptanceResult], rejected ++ suffix).pure[F]
@@ -486,14 +498,18 @@ object GlobalSnapshotStateChannelEventsProcessor {
         }.flatTap {
           case (accepted, returned) =>
             val acceptedCount = accepted.valuesIterator.map(_._1.size).sum
-            Metrics[F].incrementCounterBy(
-              "dag_l0_state_channel_currency_result_total",
-              acceptedCount,
-              Seq(Metrics.unsafeLabelName("outcome") -> "accepted")
-            ) >> Metrics[F].incrementCounterBy(
-              "dag_l0_state_channel_currency_result_total",
-              returned.size,
-              Seq(Metrics.unsafeLabelName("outcome") -> "typed_rejected")
+            recordMetric(
+              _.incrementCounterBy(
+                "dag_l0_state_channel_currency_result_total",
+                acceptedCount,
+                Seq(Metrics.unsafeLabelName("outcome") -> "accepted")
+              )
+            ) >> recordMetric(
+              _.incrementCounterBy(
+                "dag_l0_state_channel_currency_result_total",
+                returned.size,
+                Seq(Metrics.unsafeLabelName("outcome") -> "typed_rejected")
+              )
             )
         }
       }

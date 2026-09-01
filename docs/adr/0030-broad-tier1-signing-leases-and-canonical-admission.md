@@ -88,6 +88,15 @@ mechanics, with its existing controller-target gate preserved.
 9. Bump `consensusSchemaVersion` to 34 because Proposal gains the optional
    admission-nominee field. The accepted singleton is carried forward in the
    existing `Finished.candidates` field. The version enters `deterministicConfigHash`.
+
+   > **V35 supersession:** Decisions 10-12 below describe the v34 proactive
+   > Tier-1 standalone-eviction bridge. ADR-0032 supersedes that authority once
+   > certified consensus is active. V35 audits the complete frozen signing
+   > committee and permits an eviction certificate only as one half of an exact,
+   > Core-certified one-for-one replacement in the dead band. A standalone or
+   > unequal eviction batch fails closed, so the next-round signing roster cannot
+   > shrink through this health-derived path.
+
 10. Reuse the existing eviction-certificate path as a bounded bridge for actual
     Tier-1 finality participation. At round creation, update node-local consecutive
     proof-miss streaks for every peer in `currentTier1 intersect
@@ -164,6 +173,10 @@ mechanics, with its existing controller-target gate preserved.
     zero.
 
 ## Consequences
+
+The Tier-1-only standalone-eviction consequences below are historical v34 behavior.
+For v35 Global L0, ADR-0032's all-signing-member atomic-replacement consequences are
+authoritative.
 
 - After the one-round nomination pipeline is primed, a successful open certificate can
   add at most one phase-aligned healthy signing/reward seat on each five-round admission

@@ -1,49 +1,119 @@
-# Currency L0 dormant-lineage resurrection (rc.13)
+# Currency L0 deterministic history and dormant-lineage resurrection
 
-## Scope and compatibility boundary
+> **Storage preflight:** do not keep same-filesystem hardlink backups of the
+> live Currency snapshot `hash/` index. Rollback/download cleanup uses the
+> canonical hash+ordinal link count to avoid decoding all retained history and
+> to identify hash-only torn writes. Copy archives or place them on a different
+> filesystem.
 
-Rc.13 extends the existing one-node Currency L0 rollback recovery so a dormant
-metagraph can reconnect its `GlobalSnapshotSync` lineage to the current Global
-L0 chain. It reuses the existing `GlobalSnapshotSync`,
-`GlobalSnapshotsProcessed`, signed state-channel binary, and snapshot types.
-It introduces no consensus/wire codec, wire field, hash construction,
-state-proof field, or ordinal activation. The durable publication receipt is
-local operational state serialized with the repository's existing
-`JsonSerializer`; it is neither gossiped nor included in signed bytes.
+## Scope and activation boundary
 
-This is nevertheless a consensus-behavior change. A successful reset adds an
-existing-schema marker to the signed Currency artifact, so that artifact and
-its ordinary state proof intentionally differ from what rc.12 would derive.
-Every validator of the recovering metagraph MUST therefore run rc.13 before a
-reset is emitted. For IntegrationNet/DeD, the operator controls every Currency
-L0 node and upgrades the complete metagraph cohort before recovery.
+This feature makes Currency L0 historical dependency resolution reproducible after a
+JVM restart and gives an authorized solo rollback lead a deterministic way to replace a
+dormant, inherited multi-peer `GlobalSnapshotSync` view.
 
-Global L0 also requires the normal full-fleet cold restart on a distinctly
-advertised `v4.1.0-rc.13` version. Do not run mixed rc.12/rc.13 GL0 validators.
-Rc.13 adds the already-existing `syncOffset` and recent-window size to the
-deterministic consensus-config fingerprint; it does not add a new operator
-setting. The advertised version gate and deterministic-config gate are
-separate and both must agree.
+It is a general Currency snapshot protocol transition, not a DeD- or
+IntegrationNet-specific exception. It reuses these public types:
 
-There is no network-wide activation ordinal. The exact
-`GlobalSnapshotsProcessed({SnapshotOrdinal.MaxValue})` artifact is a
-per-lineage activation marker. Pre-marker historical replay retains rc.12
-semantics; after a valid reset, every descendant carries the marker and uses
-the deterministic rc.13 history rules.
+- `CurrencyIncrementalSnapshot.version`;
+- `GlobalSnapshotSync`;
+- `GlobalSnapshotsProcessed`; and
+- the ordinary signed state-channel binary.
 
-Before deployment, stop the dormant metagraph producer. Confirm from signed
-Global Snapshot Info that its `unappliedGlobalChangeOrdinals` set is empty.
-Rc.13 deliberately fails closed when earlier spend-action processing cannot be
-proven from signed Currency history. Do not infer an empty set from a local
-cache.
+No new field, codec, hash algorithm, or state-proof shape is introduced. The signed
+Currency artifact does change at activation: its existing `version` advances from
+`0.0.1` to `1.0.0`, and version `1.0.0` assigns cumulative semantics to
+`GlobalSnapshotsProcessed`. This requires the normal announced, coordinated rollout.
 
-## Recovery transition
+Two independent boundaries must not be confused:
 
-The rollback lead completes the ordinary rollback and creates its new cluster
-and node sessions. Before it starts solo consensus, it refreshes the canonical
-GL0 parent/window, publishes one ordinary signed `GlobalSnapshotSync` through
-the existing event-mempool path, and arms that exact event as mandatory in the
-first successor.
+1. the release-version join gate and deterministic consensus-config hash fence all
+   members of each L0 cluster at connection time; and
+2. `fields-added-ordinals.currency-snapshot-protocol-v1` is a GLOBAL L0 ordinal that
+   authorizes each Currency lineage's signed `0.0.1 -> 1.0.0` transition.
+
+The jar's SemVer (`4.1.0-rc.X`, `4.1.0`, and later releases) is not written into the
+chain and does not select replay behavior. Historical replay reads the signed Currency
+snapshot version. Once a lineage reaches `1.0.0`, it cannot downgrade.
+
+Public environments deliberately omit the gate until an activation is announced;
+absence resolves to `SnapshotOrdinal.MaxValue` and remains legacy. Dev activates at
+global ordinal zero so the generated CI metagraph continuously exercises version
+`1.0.0`.
+
+At the first eligible Currency snapshot, transition is delayed rather than guessed if
+signed Global Snapshot Info still reports an unresolved
+`unappliedGlobalChangeOrdinals` entry at or below the selected Global L0 sync view.
+Legacy process-local state cannot prove which such ordinals were already applied.
+Entries above the selected view have not entered the Currency artifact yet and do not
+block transition. Operators should nevertheless make the complete set empty before a
+public activation whenever possible.
+
+## Compatibility and deployment population
+
+Before the announced global ordinal:
+
+- deploy the same release and activation configuration to the complete Global L0
+  fleet;
+- rebuild and deploy every active Currency L0 with that release;
+- update the Currency L1/data L1 applications that ship the Tessellation SDK; and
+- keep dormant metagraphs offline until they are upgraded.
+
+An old metagraph returning after activation cannot create an acceptable `0.0.1`
+successor against an activation-eligible parent: upgraded validators rederive
+`1.0.0`, so artifact equality fails closed. This is intentional and is why community
+notice is required.
+
+The retained-window size, sync offset, and resolved protocol activation ordinal all
+participate in `deterministicConfigHash`. The advertised release-version hash is a
+separate gate. Both must match; neither substitutes for the other.
+
+## Deterministic historical dependencies
+
+Currency artifact recreation must not depend on whether one validator happens to have
+an old Global L0 snapshot on disk or can fetch it from a peer. One typed resolver covers
+both historical consumers:
+
+- the selected `GlobalSnapshotSync` target; and
+- Global L0 snapshots consulted for unapplied `SpendAction`s.
+
+The retained interval is inclusive:
+
+```text
+[parentOrdinal - (maxLastGlobalSnapshotsInMemory - 1), parentOrdinal]
+```
+
+Live processing always uses this bounded interval. An ordinal outside it returns
+`outside_retention` without consulting the disk-backed Global L0 callback or the
+network-backed Currency callback. An ordinal inside the interval but absent from LastN
+returns `missing_recent`; that means the recent window is incomplete and must not be
+papered over with node-local history.
+
+Historical replay selects behavior from the signed Currency parent/child version:
+
+- signed `0.0.1` history retains the legacy callback behavior so existing history
+  remains reproducible; and
+- signed `1.0.0` history is bounded during both live construction and replay.
+
+Legacy validation keeps its compatibility rule that pins the signed `globalSyncView`
+before comparing recreated content. Protocol `1.0.0` removes that exception: the
+retained-window inputs are deterministic, so `globalSyncView` must rederive exactly.
+
+Under `1.0.0`, the existing `GlobalSnapshotsProcessed` artifact carries processed
+ordinals cumulatively while Global L0 still reports them as unapplied. Global L0
+already consumes this artifact idempotently by set difference. The former
+`globalSnapshotsAlreadyProcessed` ref remains only for replaying signed `0.0.1`
+history; it is not an input to `1.0.0` construction.
+
+The transition has no sentinel artifact. `SnapshotOrdinal.MaxValue` retains only its
+ordinary role as the fail-closed default for an absent configuration gate.
+
+## Dormant-lineage reset
+
+The rollback lead completes ordinary rollback and creates its new cluster and node
+sessions. Before starting solo consensus, it refreshes the canonical Global L0
+parent/window, publishes one signed `GlobalSnapshotSync` through the ordinary event
+mempool, and arms that exact event as mandatory in the first successor.
 
 | Inherited signed sync view | First-successor behavior |
 |---|---|
@@ -51,218 +121,174 @@ first successor.
 | exactly the rollback lead | ordinary chained declaration |
 | contains any other peer | dormant-lineage reset (`parentOrdinal = MinValue`) |
 
-The reset is not accepted merely because the rollback lead used an operator
-flag. Every Currency and GL0 validator independently recognizes and validates
-it from signed or consensus-carried inputs. Acceptance requires:
+The operator flag authorizes emission only. Every Currency and Global L0 validator
+recognizes and validates reset content independently. A reset requires:
 
-1. the authoritative Currency proof/facilitator set is exactly the reset
-   signer;
+1. the authoritative Currency proof/facilitator set is exactly the reset signer;
 2. the inherited sync view contains a peer other than that signer;
 3. the declaration parent is `GlobalSnapshotSyncOrdinal.MinValue`;
-4. the signer's session is strictly newer than its inherited session, when one
-   exists;
-5. the declared GL0 anchor ordinal/hash is in the validator's canonical recent
-   window and is not ahead of the consensus GL0 parent;
-6. the target selected after `syncOffset` is in that same window;
-7. the metagraph's last GL0 acceptance is older than the retained window;
+4. the signer's session is newer than its inherited session, when present;
+5. the declared Global L0 anchor ordinal/hash is canonical, recent, and not ahead of
+   the consensus Global L0 parent;
+6. the target selected after `syncOffset` is in the retained window and is at or after
+   `currency-snapshot-protocol-v1` activation;
+7. the metagraph's last Global L0 acceptance is older than the retained window;
 8. `unappliedGlobalChangeOrdinals` is empty;
-9. the signer passes existing signature, facilitator, seedlist, and
-   state-channel allowance-list checks; and
-10. the accepted Currency artifact contains exactly one reset declaration and
-    no competing accepted sync declaration.
+9. the signer passes existing signature, facilitator, seedlist, and allowance-list
+   checks; and
+10. exactly one reset and no competing accepted sync declaration enters the artifact.
 
-A valid reset atomically replaces the inherited multi-peer declaration map
-with the singleton declaration and pins `globalSyncView` to the reset's
-validated canonical target—even if the parent names a numerically newer view
-from an orphaned branch. A self-only inherited view chains normally. A newly
-admitted peer in a multi-member committee can still issue its ordinary first
-MinValue-parent declaration because reset recognition additionally requires
-the authoritative signer set to equal that peer alone.
+A valid reset atomically replaces the inherited multi-peer declaration map with the
+singleton declaration and pins `globalSyncView` to the canonical target, even if the
+legacy parent names a numerically newer orphaned view. It also creates a signed
+protocol-`1.0.0` successor. A reset before activation fails at startup and validation.
 
-The rollback lead refuses to construct the first successor if the exact armed
-declaration is absent, including after proposal size-cut retries. Normal
-periodic sync publication is suppressed while either the construction guard or
-the durable recovery publication is pending.
+A self-only inherited view chains normally. A newly admitted peer in a multi-member
+committee can still issue its ordinary first MinValue-parent declaration because reset
+shape additionally requires that peer to be the entire authoritative signer set.
+
+The two validating layers use the strongest signer authority available in their own
+state: Currency L0 checks its live facilitator set, while Global L0 can check only the
+proof set carried by the signed Currency artifact. In the intended recovery, the solo
+lead is both sets. The public schema does not carry an uncommitted Currency committee,
+so proving more at Global L0 would require another schema field. Seedlist,
+state-channel allowance-list, signature, dormancy, retained-window, and singleton-proof
+checks bound this residual under the network's allowlisted-operator model.
 
 ## Durable publication protocol
 
-Local Currency finality is not recovery success: GL0 must include the exact
-signed state-channel binary. Rc.13 therefore uses a two-phase durable outbox at
+Local Currency finality is not recovery success: Global L0 must include the exact
+signed state-channel binary. The rollback lead therefore uses the ordinary exact-binary
+outbox plus a stricter recovery receipt at
 `<incremental-snapshot-path>/.recovery-sync-publication/pending.json`:
 
-1. Before Currency persistence, write a non-publishable intent containing the
-   exact signed binary, its hash/proofs hash, the exact signed Currency artifact
-   identity, mode, and GL0 deadline.
-2. Persist the Currency artifact and context, then read them back: both
-   content-addressed and ordinal indexes must identify the exact signed
-   artifact (including its proof set), and the persisted snapshot-info file
-   must equal the finalized context.
-3. Mark the intent locally committed, then enqueue the exact binary.
-4. Clear only the process-local first-successor construction guard after the
-   Currency outcome commits. The durable outbox remains armed.
-5. Keep reposting across ordinary queue clears and JVM restarts.
-6. Delete the outbox and set the publication-pending gauge to zero only after
-   the exact unsigned binary hash appears in a canonical GL0 snapshot.
+1. Before Currency persistence, prepare the non-publishable ordinary outbox entry and
+   the recovery intent containing the exact binary, hashes, signed Currency artifact
+   identity, mode, and Global L0 deadline.
+2. Persist and read back the Currency artifact/context. Content-addressed and ordinal
+   indexes must identify the exact proof-bearing artifact and matching context.
+3. Mark the deadline-bearing recovery receipt locally committed.
+4. Mark the ordinary publishable outbox entry committed **last**. A crash cannot publish
+   through the ordinary queue while bypassing the recovery deadline.
+5. Enqueue that exact binary, clear only the in-process construction guard after Currency
+   outcome commit, and keep
+   the durable outbox armed.
+6. Repost across queue clears and JVM restarts.
+7. Delete both receipts only after the exact unsigned binary hash appears in canonical
+   Global L0.
 
-On startup, the sender checks every canonical GL0 snapshot in the retained
-window, not only the current tip. This recovers the receipt when the lead died
-after GL0 inclusion but before it processed that particular incremental
-snapshot.
-
-Crash behavior is fail-closed. A pre-commit intent without a complete matching
-local Currency artifact and context is discarded at startup and is never
-published. An exact durable artifact/context pair promotes the intent and
-resumes publication. A conflicting complete artifact at that ordinal fails
-startup. A committed intent is never discarded by an ordinary consensus soft
-reset.
-
-The two gauges describe different boundaries:
-
-- `construction_guard_armed = 1`: the exact sync must still appear in the first
-  locally committed Currency successor.
-- `refresh_pending = 1`: the exact committed binary has not yet been observed
-  in canonical GL0. Do not start the remaining metagraph validators yet.
-
-## Deterministic historical dependencies
-
-Currency artifact recreation must not depend on whether one validator happens
-to have an old GL0 snapshot on disk or can fetch it from a peer. Rc.13 applies
-one typed resolver to both historical consumers:
-
-- the selected `GlobalSnapshotSync` target; and
-- GL0 snapshots consulted for unapplied `SpendAction`s.
-
-The retained interval is inclusive:
-
-```
-[parentOrdinal - (maxLastGlobalSnapshotsInMemory - 1), parentOrdinal]
-```
-
-Live processing and reset-epoch processing use only `LastNGlobalSnapshotStorage`.
-An ordinal outside the interval yields `outside_retention` without consulting
-the disk-backed GL0 callback or the network-backed Currency callback. An
-ordinal inside the interval but absent from LastN yields `missing_recent` and
-fails locally: that is an incomplete recent window, not evidence that a stale
-lineage is acceptable. Historical replay of already-signed pre-marker history
-keeps the legacy callback behavior so existing chain replay remains compatible.
-
-The former process-local `globalSnapshotsAlreadyProcessed` cache remains only
-for pre-marker historical compatibility. In the reset epoch, the existing
-`GlobalSnapshotsProcessed` artifact carries processed ordinals cumulatively
-while GL0 still reports them as unapplied. GL0 already consumes that artifact
-idempotently by set difference. If the signed parent plus current signed GL0
-state cannot prove the history, validation returns `ProcessedHistoryUnproven`
-instead of guessing from memory or archives.
-
-GL0 keeps the exact rc.12 root selector as its first choice. If that root is
-uniformly rejected for a typed historical dependency or root-level fee failure,
-it tries deterministic sibling content hashes. Rejected binaries are returned
-through the existing state-channel event path; rc.13 adds no dead-letter store
-and does not silently delete them.
+Startup searches the complete retained canonical window for confirmation. An
+incomplete pre-commit intent is discarded and never published. A complete exact local
+artifact promotes the intent and resumes publication. A conflicting artifact at that
+ordinal fails startup.
 
 ## Time bound
 
-With IntegrationNet's current values
-`maxLastGlobalSnapshotsInMemory = 50` and `syncOffset = 2`, a reset anchored at
-GL0 ordinal `A` remains selectable through parent `A + 47`. At a 43-second
-time-trigger cadence this is approximately 33 minutes 41 seconds. Treat 30
-minutes as the operational deadline and alert when five or fewer ordinals
-remain.
+With `maxLastGlobalSnapshotsInMemory = 50` and `syncOffset = 2`, a reset anchored at
+Global L0 ordinal `A` remains selectable through parent `A + 47`. At a 43-second
+cadence this is about 33 minutes 41 seconds. Treat 30 minutes as the operational
+deadline and alert with five or fewer ordinals remaining.
 
-If GL0 has not accepted the exact binary before the target leaves the window,
-stop the Currency cohort, preserve logs and `pending.json`, choose a new current
-anchor, and perform a new rollback recovery. Do not keep an expired lead
-running, edit snapshots on disk, or restart GL0 merely to refresh the deadline.
-Expiry stops retransmission but deliberately leaves `refresh_pending = 1`;
-only exact canonical GL0 confirmation clears that gauge. A zero gauge therefore
-cannot be confused with an expired, unsuccessful attempt.
+If confirmation does not arrive, stop the Currency cohort, preserve logs and
+`pending.json`, select a new current anchor, and run a new rollback recovery. Do not
+edit snapshots, keep an expired lead producing, or restart Global L0 to refresh the
+deadline. Expiry leaves `refresh_pending = 1`; only exact canonical confirmation clears
+it.
 
-## Runbook
+## Rollout and recovery runbook
 
-### Phase A: contain and preflight
+### A. Announce and preflight
 
-1. Stop the dormant metagraph producer and every Currency L0 node.
-2. Keep telemetry collection running, but disable automated restart/rollback
-   actions for GL0 and the Currency cohort.
-3. Confirm GL0 is converged and advancing on the predecessor release before
-   the release restart.
-4. Read signed Global Snapshot Info and confirm for the metagraph:
-   - `unappliedGlobalChangeOrdinals` is empty;
-   - the old sync view contains the expected stale peers;
-   - the lineage's last accepted GL0 ordinal is older than the retained window.
-5. Record the metagraph address, last accepted Currency ordinal/hash, current
-   GL0 ordinal/hash, old sync-view peer IDs, and designated rollback lead.
-6. Confirm the lead is in the Currency seedlist and GL0 state-channel
-   allowance list, and confirm the metagraph can pay any currently required
-   state-channel fee.
+1. Announce the release and global activation ordinal with enough time for all active
+   metagraph operators to rebuild Currency L0/L1 applications.
+2. Record release tag/commit, assembly hashes, advertised version hash, deterministic
+   config hash, activation ordinal, sync offset, and retention size.
+3. Confirm active metagraphs have empty `unappliedGlobalChangeOrdinals`, or explicitly
+   accept that their version transition will wait until every entry at or below the
+   selected Global L0 view is acknowledged.
+4. Keep dormant metagraph producers stopped until their full cohorts are upgraded.
+5. Disable automatic restart/rollback during each coordinated cold restart.
 
-### Phase B: deploy rc.13
+### B. Deploy and cross activation
 
-1. Tag/build a distinct `v4.1.0-rc.13` artifact.
-2. Cold-restart the complete IntegrationNet GL0 fleet on that version.
-3. Keep automated restart/rollback disabled until first-round alignment
-   releases and a GL0 successor finalizes.
-4. Install rc.13 on every DeD Currency L0 node. Leave all Currency nodes
-   stopped until the GL0 fleet is stable.
+1. Cold-restart the complete Global L0 fleet on the same release/config.
+2. Cold-restart each complete active Currency L0 cohort; never deploy mixed versions
+   inside a cluster.
+3. Before crossing, verify all expected nodes advertise the recorded version/config
+   hashes.
+4. At and after the boundary, verify new Currency artifacts carry `version = 1.0.0`,
+   transition counters do not report `blocked_unproven`, and Global L0 accepts them.
+5. Keep pre-activation `0.0.1` fixtures in replay tests permanently.
 
-### Phase C: recover the Currency lineage
+### C. Recover a dormant lineage
 
-1. Start exactly one lead with its normal rollback command plus
-   `--allow-solo-consensus`.
-2. Verify `RECOVERY_SYNC_REFRESH_ENQUEUED`; record its mode, Currency parent,
-   GL0 anchor, inherited-peer count, and valid-through ordinal.
-3. Require both `construction_guard_armed = 1` and `refresh_pending = 1` before
-   the first Currency round. If either is absent, stop.
-4. Wait for the first Currency successor. At local commit,
-   `construction_guard_armed` becomes zero while `refresh_pending` MUST remain
-   one.
-5. Wait for `RECOVERY_SYNC_PUBLICATION_CONFIRMED` and
-   `refresh_pending = 0`, and verify GL0's canonical Currency state names the
-   recovered lineage. This must occur before the 30-minute deadline.
-6. Let the lead continue producing. Start each remaining node one at a time
-   with normal `run-validator`; wait for download, Ready, certified admission,
+1. Stop every Currency node and select exactly one rollback lead.
+2. Before authorizing a replacement, let already-submitted state-channel work drain for at
+   least two Global L0 ordinals and verify this metagraph's canonical
+   `lastStateChannelSnapshotHashes` value is stable. A previously signed old Currency binary
+   that wins Global L0 acceptance after rollback can supersede the replacement lineage.
+3. Verify the stale sync view, dormancy, empty unapplied set, canonical recent Global L0
+   anchor, seedlist/allowance-list eligibility, and fee balance.
+4. Start the lead with its normal rollback command plus
+   `--allow-solo-consensus` on the upgraded release.
+5. Verify `RECOVERY_SYNC_REFRESH_ENQUEUED`, then require both
+   `construction_guard_armed = 1` and `refresh_pending = 1`.
+6. After the first local successor, require `construction_guard_armed = 0` while
+   `refresh_pending` remains one, and verify the successor is protocol `1.0.0`.
+7. Wait for `RECOVERY_SYNC_PUBLICATION_CONFIRMED` and `refresh_pending = 0` before the
+   deadline.
+8. Start remaining nodes one at a time with `run-validator`; require public download,
+   four-successor observation, corroborated exact-outcome handoff, synchronous registration,
    and an actual Currency proof before starting the next.
-7. Remove the one-shot rollback flag from the lead's next startup command.
-   Re-enable automated actions only after the multi-signer committee has
-   positive finality margin.
+9. Remove the solo flag from the lead's next startup command and restore automation
+   only after the intended multi-member facilitator list completes ordinary artifact and
+   binary proof phases on consecutive successors. Currency's synchronous engine does not
+   expose the Global L0 finality-margin gate.
 
-This recovery advances Currency and GL0 forward; it does not roll back GL0 and
-does not require Snapshot Streaming row surgery. A later operator-forced GL0
-rollback that removes the confirmed recovery binary is outside this contract
-and can orphan the recovered Currency lineage again.
+This advances Currency and Global L0 forward. It does not roll back Global L0 and does
+not require Snapshot Streaming surgery.
 
 ## Metrics
 
 | Metric | Meaning / action |
 |---|---|
-| `dag_currency_l0_recovery_sync_refresh_total{mode,outcome}` | `enqueued`, reset `accepted/rejected`, `local_committed`, `restored`, `restored_after_clear`, `gl0_confirmed`, or `expired` |
-| `dag_currency_l0_recovery_sync_construction_guard_armed{mode}` | Exact event still required in the first local successor; do not restart or start validators |
-| `dag_currency_l0_recovery_sync_refresh_pending{mode}` | Recovery publication is unresolved (before commit, awaiting canonical GL0 inclusion, or expired); only exact confirmation clears it; do not start validators |
-| `dag_currency_l0_recovery_sync_reset_anchor_age_ordinals` | Age of the selected anchor while recovery is unresolved |
-| `dag_currency_l0_recovery_sync_selected_target_remaining_ordinals` | Remaining retained-window headroom; alert at `<= 5` while pending |
-| `dag_l0_state_channel_dependency_total{purpose,outcome}` | Resolver result for `sync_target` or `unapplied_spend_action`: `recent`, `fetched`, `outside_retention`, `missing_recent` |
-| `dag_l0_state_channel_dependency_rejection_total{reason}` | Returned lineage due to `outside_retention`, `processed_history_unproven`, or fatal `missing_recent` |
-| `dag_l0_state_channel_dependency_branch_fallback_total` | Legacy primary root was unusable and a deterministic sibling was attempted |
+| `dag_currency_l0_snapshot_protocol_total{outcome}` | `legacy`, `activated`, `deterministic`, or `blocked_unproven`; a fleet-wide blocked result requires inspecting signed unapplied history |
+| `dag_currency_l0_recovery_sync_refresh_total{mode,outcome}` | Reset construction, publication, restoration, confirmation, and expiry lifecycle |
+| `dag_currency_l0_recovery_sync_construction_guard_armed{mode}` | Exact reset event still required in the first local successor; do not restart or start validators |
+| `dag_currency_l0_recovery_sync_refresh_pending{mode}` | Exact committed binary not yet canonically confirmed; only confirmation clears it |
+| `dag_currency_l0_recovery_sync_reset_anchor_age_ordinals` | Current anchor age while unresolved |
+| `dag_currency_l0_recovery_sync_selected_target_remaining_ordinals` | Retained-window headroom; alert at `<= 5` while pending |
+| `dag_l0_state_channel_dependency_total{purpose,outcome}` | `recent`, `fetched`, `outside_retention`, or `missing_recent` for sync/spend dependencies |
+| `dag_l0_state_channel_dependency_rejection_total{reason}` | Typed deterministic-history rejection returned to the event path |
+| `dag_l0_state_channel_dependency_branch_fallback_total` | Primary root unusable; deterministic sibling attempted |
 | `dag_l0_state_channel_terminal_branch_fallback_total` | Root-level typed fee/parse rejection caused sibling fallback |
-| `dag_l0_state_channel_rejection_total{reason}` | Typed fee/parse rejection (`fee_required_unparseable`, `fee_address_missing`, `fee_balance_insufficient`) |
-| `dag_l0_state_channel_currency_result_total{outcome}` | Accepted versus `typed_rejected` Currency binaries |
-| `dag_currency_l0_processed_history_total{outcome}` | `carried`, newly `processed`, or `unproven` deterministic spend history |
+| `dag_l0_state_channel_rejection_total{reason}` | Typed fee/parse rejection |
+| `dag_l0_state_channel_currency_result_total{outcome}` | Accepted versus typed-rejected Currency binaries |
+| `dag_currency_l0_processed_history_total{outcome}` | Cumulative `carried`, newly `processed`, or `unproven` history |
 
-`missing_recent` on one node calls for repair of that node's recent GL0 window.
-A fleet-wide rise immediately after a cold restart indicates systematic window
-thinness: investigate before restarting anything. `outside_retention` on the
-old dormant branch is expected; the new reset binary has a distinct unsigned
-content hash and remains eligible as a sibling.
+`missing_recent` on one node calls for repair of that node's retained window. A
+fleet-wide rise after restart indicates systematic window thinness: investigate before
+restarting anything.
 
 ## Failure posture
 
-The feature is fail-closed. A bad signature, wrong signer set, stale session,
-noncanonical anchor, nonempty unapplied set, missing recent snapshot, unproven
-processed history, competing accepted sync declaration, omitted required event,
-undurable Currency artifact, or mismatched outbox prevents progress rather than
-silently mutating the sync view.
+The feature fails closed. Wrong version transition, wrong signer set, stale session,
+pre-activation reset target, noncanonical anchor, nonempty unapplied set, missing recent
+snapshot, unproven processed history, competing declaration, omitted event, undurable
+artifact, or mismatched outbox prevents progress rather than mutating lineage.
 
 Two independently run solo rollback leads can still create competing Currency
-histories. Exactly-one-lead coordination remains mandatory. The reset also
-cannot repair a nonempty old unapplied-spend set without additional signed
-history; that is an explicit blocker, not a best-effort path.
+histories. Exactly-one-lead coordination remains mandatory. Legacy unapplied history at
+or below the selected Global L0 view cannot be repaired by guessing; it must drain under
+legacy semantics or be handled by a separately designed, signed migration.
+
+Unsupported binaries are returned to the existing event pool and may be reconsidered
+on later TimeTrigger rounds. Rc.10's consumed new-intent watermark prevents that retained
+backlog from creating an EventTrigger storm, but a noisy sender can still produce steady
+typed-rejection work and counters. Per-address quarantine/backoff is a follow-up; it must
+not alter signed ordering or silently discard a lineage.
+
+The legacy catch-all for Currency recreation errors remains for `0.0.1` replay
+compatibility. Protocol `1.0.0` gives historical dependency and processed-history
+failures typed behavior, but converting every unrelated legacy recreation error into a
+hard live rejection is separate work.

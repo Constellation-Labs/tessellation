@@ -205,22 +205,22 @@ object ConsensusRetrySafetyIOSuite extends SimpleIOSuite {
     } yield expect.all(mutationCount == 0, retryCount == 0)
   }
 
-  pureTest("planned initialization resumes from every partial-install lifecycle state only") {
-    expect(ConsensusEventLoop.plannedInitializationRetryableState(NodeState.Observing)) &&
-    expect(ConsensusEventLoop.plannedInitializationRetryableState(NodeState.WaitingForReady)) &&
-    expect(ConsensusEventLoop.plannedInitializationRetryableState(NodeState.Ready)) &&
-    expect(!ConsensusEventLoop.plannedInitializationRetryableState(NodeState.WaitingForDownload)) &&
-    expect(!ConsensusEventLoop.plannedInitializationRetryableState(NodeState.Leaving))
+  pureTest("recovery/aligned initialization resumes from every partial-install lifecycle state only") {
+    expect(ConsensusEventLoop.recoveryInitializationRetryableState(NodeState.Observing)) &&
+    expect(ConsensusEventLoop.recoveryInitializationRetryableState(NodeState.WaitingForReady)) &&
+    expect(ConsensusEventLoop.recoveryInitializationRetryableState(NodeState.Ready)) &&
+    expect(!ConsensusEventLoop.recoveryInitializationRetryableState(NodeState.WaitingForDownload)) &&
+    expect(!ConsensusEventLoop.recoveryInitializationRetryableState(NodeState.Leaving))
   }
 
-  pureTest("planned initialization node-state transition is idempotent and fail-closed") {
-    import StateTransitions.PlannedInitializationStateDisposition._
+  pureTest("recovery/aligned initialization node-state transition is idempotent and fail-closed") {
+    import StateTransitions.RecoveryInitializationStateDisposition._
 
-    expect.same(EnterWaitingForReady, StateTransitions.plannedInitializationStateDisposition(NodeState.Observing)) &&
-    expect.same(ResumeAndRepublish, StateTransitions.plannedInitializationStateDisposition(NodeState.WaitingForReady)) &&
-    expect.same(ResumeAndRepublish, StateTransitions.plannedInitializationStateDisposition(NodeState.Ready)) &&
-    expect.same(Reject, StateTransitions.plannedInitializationStateDisposition(NodeState.WaitingForDownload)) &&
-    expect.same(Reject, StateTransitions.plannedInitializationStateDisposition(NodeState.Leaving))
+    expect.same(EnterWaitingForReady, StateTransitions.recoveryInitializationStateDisposition(NodeState.Observing)) &&
+    expect.same(ResumeAndRepublish, StateTransitions.recoveryInitializationStateDisposition(NodeState.WaitingForReady)) &&
+    expect.same(ResumeAndRepublish, StateTransitions.recoveryInitializationStateDisposition(NodeState.Ready)) &&
+    expect.same(Reject, StateTransitions.recoveryInitializationStateDisposition(NodeState.WaitingForDownload)) &&
+    expect.same(Reject, StateTransitions.recoveryInitializationStateDisposition(NodeState.Leaving))
   }
 
   test("a partial round-start failure cleans local ownership and publishes the only retry despite telemetry failure") {

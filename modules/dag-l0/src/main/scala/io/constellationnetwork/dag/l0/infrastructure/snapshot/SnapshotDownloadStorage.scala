@@ -10,11 +10,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.snapshot.programs.SnapshotFailure
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
-  CombinedSnapshotCheckpointFileSystemStorage,
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -40,7 +36,8 @@ object SnapshotDownloadStorage {
       GlobalSnapshotInfo
     ],
     hashSelect: HashSelect,
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): SnapshotDownloadStorage[F] =
@@ -52,6 +49,14 @@ object SnapshotDownloadStorage {
 
       private val validator = StateProofValidator.forGlobal(Some(mptStore.underlying))
       private val builder = GlobalSnapshotInfo.stateProofBuilder(Some(mptStore.underlying))
+
+      private def readSnapshotInfo(
+        ordinal: SnapshotOrdinal
+      ): F[Option[Either[GlobalSnapshotInfoV2, GlobalSnapshotInfo]]] =
+        hashSelect.select(ordinal) match {
+          case JsonHash => snapshotInfoStorage.read(ordinal).map(_.map(_.asRight[GlobalSnapshotInfoV2]))
+          case KryoHash => snapshotInfoKryoStorage.read(ordinal).map(_.map(_.asLeft[GlobalSnapshotInfo]))
+        }
 
       def readPersisted(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]] = persistedStorage.read(ordinal)
 
@@ -142,13 +147,8 @@ object SnapshotDownloadStorage {
       )(
         implicit hasher: Hasher[F],
         stateProofSelector: StateProofSelector
-      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
-        val maybeInfo = hashSelect.select(ordinal) match {
-          case JsonHash => snapshotInfoStorage.read(ordinal).map(_.map(_.asRight[GlobalSnapshotInfoV2]))
-          case KryoHash => snapshotInfoKryoStorage.read(ordinal).map(_.map(_.asLeft[GlobalSnapshotInfo]))
-        }
-
-        (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), maybeInfo).tupled.map(_.tupled).flatMap {
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+        (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), readSnapshotInfo(ordinal)).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
             for {
               // Use syncFullIfNeeded for atomic sync - avoids redundant syncs if already at this ordinal
@@ -195,11 +195,40 @@ object SnapshotDownloadStorage {
             } yield result
           case _ => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
         }
-      }
+      def readCombinedValidated(
+        ordinal: SnapshotOrdinal
+      )(
+        implicit hasher: Hasher[F],
+        stateProofSelector: StateProofSelector
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+        readCombinedValidatedAtProofOrdinal(ordinal, ordinal)
+
+      def readCombinedValidatedAtProofOrdinal(
+        ordinal: SnapshotOrdinal,
+        proofOrdinal: SnapshotOrdinal
+      )(
+        implicit hasher: Hasher[F],
+        stateProofSelector: StateProofSelector
+      ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+        (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), readSnapshotInfo(ordinal)).tupled.map(_.tupled).flatMap {
+          case Some((snapshot, info)) =>
+            (info match {
+              case Left(infoV2) =>
+                infoV2.stateProof(proofOrdinal).flatMap(proof => StateProofValidator.validateProof(snapshot, proof).map(_.isValid))
+              case Right(gsi) =>
+                gsi.stateProof(proofOrdinal).flatMap(proof => StateProofValidator.validateProof(snapshot, proof).map(_.isValid))
+            }).map {
+              case true  => (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some
+              case false => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
+            }
+          case None => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+        }
 
       def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
         snapshotInfoStorage.write(ordinal, info) >> {
-          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
+          // A later restart must still be able to authenticate the v35 activation parent.
+          // Download replay and live snapshot persistence therefore share the same explicit pin.
+          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal) ++ protectedSnapshotInfoOrdinals
 
           snapshotInfoStorage.listStoredOrdinals.flatMap {
             _.compile.toList
@@ -240,15 +269,11 @@ object SnapshotDownloadStorage {
 
         val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)
 
-        // Fallback direct-deletion when the standard cleanupAboveOrdinal path leaves files behind.
-        // Triggered when persistedStorage.cleanupAboveOrdinal's movePersistedToTmp fails (e.g. tmp
-        // destination directories don't exist for orphaned hashes -- the failure is swallowed by
-        // processFileChunk as NoSuchFileException, so the ordinal hardlinks survive on disk).
-        // findAbove enumerates only the ordinal/ subtree, so deleting each ordinal hardlink is
-        // sufficient to satisfy the verify check. Any orphaned hash/ files are left in place; they
-        // are unreachable from normal lookup paths since the ordinal hardlink is gone, and an
-        // operator can collect them later. Bounded: a max-iteration cap prevents infinite loops if
-        // the deletion itself fails permission-wise.
+        // Bounded last-resort deletion if a concurrently recreated or malformed ordinal index
+        // survives the normal cleanup. The normal path already unlinks unreadable future ordinals,
+        // lazily removes valid future hashes, and quarantines unreadable hash-only content. This
+        // loop is therefore defense in depth for the ordinal namespace, not the primary orphan
+        // cleanup mechanism. A max-iteration cap prevents an infinite loop on permission errors.
         val maxFallbackIterations = 3
 
         def fallbackDirectDelete: F[Long] =
@@ -301,9 +326,13 @@ object SnapshotDownloadStorage {
                     if (stillRemaining > 0L)
                       Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(stillRemaining, ordinal))
                     else
-                      logger.info(
-                        s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"
-                      )
+                      // Deleting an ordinal hardlink can expose its content path as nlink=1.
+                      // Run the lazy orphan pass once more so that valid future content moves
+                      // to tmp and unreadable content is quarantined before recovery continues.
+                      persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp) >>
+                        logger.info(
+                          s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"
+                        )
                   }
                 }
             } else {

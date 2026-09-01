@@ -12,6 +12,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.currencyMessage._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security.signature.Signed
 
@@ -41,5 +42,6 @@ case class CurrencySnapshotAcceptanceResult(
   stateProof: CurrencySnapshotStateProof,
   globalSyncView: GlobalSyncView,
   syncGlobalSnapshotOrdinal: SnapshotOrdinal,
-  lastGlobalSnapshotToCheckFields: SnapshotOrdinal
+  lastGlobalSnapshotToCheckFields: SnapshotOrdinal,
+  snapshotVersion: SnapshotVersion
 )

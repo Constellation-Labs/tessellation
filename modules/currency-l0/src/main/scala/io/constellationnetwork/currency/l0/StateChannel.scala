@@ -128,13 +128,13 @@ object StateChannel {
         case (Some(required), _) =>
           val anchorAge = Math.max(0L, snapshot.ordinal.value.value - required.value.globalSnapshotOrdinal.value.value)
           val remaining = Math.max(0L, required.validThroughGlobalParent.value.value - snapshot.ordinal.value.value)
-          Metrics[F].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", anchorAge) >>
-            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", remaining)
+          (Metrics[F].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", anchorAge) >>
+            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", remaining)).attempt.void
         case (None, Some(publication)) =>
           val anchorAge = Math.max(0L, snapshot.ordinal.value.value - publication.refresh.globalSnapshotOrdinal.value.value)
           val remaining = Math.max(0L, publication.validThroughGlobalParent.value.value - snapshot.ordinal.value.value)
-          Metrics[F].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", anchorAge) >>
-            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", remaining)
+          (Metrics[F].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", anchorAge) >>
+            Metrics[F].updateGauge("dag_currency_l0_recovery_sync_selected_target_remaining_ordinals", remaining)).attempt.void
         case (None, None) =>
           (lastSentGlobalSnapshotSync, storages.session.getToken).flatMapN {
             case (Some(lastGlobalSnapshotSyncRef), Some(session)) =>
@@ -178,10 +178,9 @@ object StateChannel {
           Async[F].unit
       }
 
-    /** Initial download may start from a tip newer than the GL0 snapshot that included a pending recovery binary. The exact inclusion is
-      * still inside the same retained window that bounded reset acceptance, so scan that canonical window before deciding the durable
-      * outbox is unresolved. No artifact derivation depends on this scan; it only restores an operational publication receipt.
-      */
+    // Initial download may start from a tip newer than the GL0 snapshot that included a pending recovery binary. The exact inclusion is
+    // still inside the same retained window that bounded reset acceptance, so scan that canonical window before deciding the durable
+    // outbox is unresolved. No artifact derivation depends on this scan; it only restores an operational publication receipt.
     def confirmRetainedStateChannelBinaries: F[Unit] =
       sharedStorages.lastNGlobalSnapshot.getLastN.flatMap(_.sortBy(_.ordinal).traverse_(confirmStateChannelBinaries))
 

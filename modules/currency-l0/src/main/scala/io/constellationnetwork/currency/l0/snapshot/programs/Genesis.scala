@@ -7,8 +7,6 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
-import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
-import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
@@ -16,17 +14,14 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import io.constellationnetwork.node.shared.domain.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
-import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.IdentifierStorage
 import io.constellationnetwork.schema.CurrencyStateProofSelector
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
+import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -36,18 +31,18 @@ trait Genesis[F[_]] {
     implicit context: L0NodeContext[F],
     hasher: Hasher[F],
     currencyStateProofSelector: CurrencyStateProofSelector
-  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)]
+  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hashed[StateChannelSnapshotBinary], Address)]
 
   def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
     implicit context: L0NodeContext[F],
     hasher: Hasher[F],
     currencyStateProofSelector: CurrencyStateProofSelector
-  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)]
+  ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hashed[StateChannelSnapshotBinary], Address)]
 
   def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
     balancesPath: Path,
     keyPair: KeyPair
-  )(implicit hasher: Hasher[F]): F[Unit]
+  )(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[Unit]
 }
 
 object Genesis {
@@ -72,7 +67,7 @@ object Genesis {
       implicit context: L0NodeContext[F],
       hasher: Hasher[F],
       currencyStateProofSelector: CurrencyStateProofSelector
-    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)] = for {
+    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hashed[StateChannelSnapshotBinary], Address)] = for {
       hashedGenesis <- genesis.toHashed[F]
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
@@ -97,17 +92,17 @@ object Genesis {
         None,
         None
       )
-      incrementalBinaryHash <- signedIncrementalBinary.toHashed.map(_.hash)
+      hashedIncrementalBinary <- signedIncrementalBinary.toHashed
       _ <- stateChannelSnapshotClient.send(identifier, signedIncrementalBinary)(globalL0Peer)
 
-      _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${incrementalBinaryHash.show} accepted and sent to Global L0")
-    } yield (signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo, incrementalBinaryHash, identifier)
+      _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${hashedIncrementalBinary.hash.show} accepted and sent to Global L0")
+    } yield (signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo, hashedIncrementalBinary, identifier)
 
     override def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
       implicit context: L0NodeContext[F],
       hasher: Hasher[F],
       currencyStateProofSelector: CurrencyStateProofSelector
-    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hash, Address)] = genesisLoader
+    ): F[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo, Hashed[StateChannelSnapshotBinary], Address)] = genesisLoader
       .loadSignedGenesis(genesisPath)
       .flatTap { genesis =>
         dataApplication
@@ -118,14 +113,19 @@ object Genesis {
     def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
       balancesPath: Path,
       keyPair: KeyPair
-    )(implicit hasher: Hasher[F]): F[Unit] = {
+    )(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[Unit] = {
       def mkBalances =
         genesisLoader
           .loadBalances(balancesPath)
           .map(_.map(a => (a.address, a.balance)).toMap)
 
       def mkDataApplicationPart =
-        dataApplication.traverse(da => da.serializedOnChainGenesis.map(DataApplicationPartV1(_, List.empty, Hash.empty)))
+        dataApplication.traverse { da =>
+          (
+            da.serializedOnChainGenesis,
+            da.hashCalculatedState(da.genesis.calculated)
+          ).mapN(DataApplicationPartV1(_, List.empty, _))
+        }
 
       for {
         balances <- mkBalances

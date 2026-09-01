@@ -518,11 +518,17 @@ verify_healthy
 show_time "Cluster became healthy"
 
 # ------------------------------------------------
-# Start background transaction sender (keeps EventTrigger flowing)
+# Start background transaction sender (keeps EventTrigger flowing for DAG/fork-recovery tests)
 # ------------------------------------------------
 TX_SENDER_JAR="$PROJECT_ROOT/docker/jars/tools.jar"
 TX_SENDER_CONF="$PROJECT_ROOT/docker/config/tx-sender.conf"
-if [ -f "$TX_SENDER_JAR" ] && [ -f "$TX_SENDER_CONF" ]; then
+# Metagraph suites submit their own traffic and some intentionally run for many TimeTrigger rounds.
+# Running the unrelated steady sender there lets its L1 parent chain advance faster than GL0 drains
+# it under new-intent batching, eventually tripping maxParentOrdinalGap and starving the suite's
+# own DAG transactions. Keep the sender scoped to the DAG tests it was introduced to exercise.
+if [ "${needs_metagraph:-false}" = "true" ]; then
+  echo "Skipping background tx-sender (selected metagraph tests provide their own traffic)"
+elif [ -f "$TX_SENDER_JAR" ] && [ -f "$TX_SENDER_CONF" ]; then
   echo "Starting background transaction sender..."
   docker rm -f tx-sender 2>/dev/null || true
   docker run -d --name tx-sender \
@@ -676,6 +682,9 @@ fi
 # ------------------------------------------------
 
 if [ -n "$METAGRAPH" ]; then
+  # An unfiltered `just test` starts the sender for the DAG tests above. Do not carry that
+  # unrelated, unbounded source chain into the longer metagraph suites.
+  docker rm -f tx-sender 2>/dev/null || true
 
   if should_run_test "currency"; then
     echo "================================================"
@@ -764,5 +773,4 @@ echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
-
 

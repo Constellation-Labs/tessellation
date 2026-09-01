@@ -606,7 +606,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     }
   }
 
-  test("POST /data returns OK - data transactions - Source wallet not sign the FeeTransaction") { implicit res =>
+  test("POST /data rejects a fee transaction not signed by its source wallet") { implicit res =>
     implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
@@ -628,7 +628,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
           dataQueue <- ViewableQueue.make[F, DataTransactions]
           l1Service = makeValidatingService(
             validateUpdateFn = valid,
-            validateFeeFn = invalid,
+            validateFeeFn = valid,
             estimateFeeResult = maybeEstimateFee
           )
           keypair <- KeyPairGenerator.makeKeyPair
@@ -681,9 +681,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
             "retriable" -> Json.fromBoolean(false),
             "details" -> Json.fromJsonObject(
               JsonObject(
-                "reason" -> Json.fromString(
-                  "Invalid data update, reason: Chain(SourceWalletNotSignTheTransaction)"
-                )
+                "reason" -> Json.fromString("Invalid data update, reason: Chain(InvalidFeeTransactionSignature)")
               )
             )
           )
@@ -699,7 +697,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     }
   }
 
-  test("POST /data returns OK - data transactions - Invalid signature") { implicit res =>
+  test("POST /data rejects a fee transaction whose signature does not match its value") { implicit res =>
     implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
@@ -721,7 +719,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
           dataQueue <- ViewableQueue.make[F, DataTransactions]
           l1Service = makeValidatingService(
             validateUpdateFn = valid,
-            validateFeeFn = invalid,
+            validateFeeFn = valid,
             estimateFeeResult = maybeEstimateFee
           )
           keypair <- KeyPairGenerator.makeKeyPair
@@ -772,7 +770,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
           )
 
           expectedResponse = JsonObject(
-            "error" -> Json.fromString("Invalid signature in data transactions")
+            "code" -> Json.fromLong(3L),
+            "message" -> Json.fromString("Invalid request body"),
+            "retriable" -> Json.fromBoolean(false),
+            "details" -> Json.fromJsonObject(
+              JsonObject(
+                "reason" -> Json.fromString("Invalid data update, reason: Chain(InvalidFeeTransactionSignature)")
+              )
+            )
           )
 
           testResult <- expectHttpBodyAndStatus(

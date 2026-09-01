@@ -33,4 +33,47 @@ object StateChannelSnapshotServiceSuite extends SimpleIOSuite {
       .attempt
       .map(result => expect.same(Left(failure), result))
   }
+
+  test("recovery publication commits durability, special receipt, then ordinary outbox") {
+    for {
+      order <- Ref.of[IO, Vector[String]](Vector.empty)
+      _ <- StateChannelSnapshotService.commitPreparedPublications(
+        recoveryRequired = true,
+        ensureRecoveryArtifactDurable = order.update(_ :+ "durable"),
+        markRecoveryLocallyCommitted = order.update(_ :+ "recovery"),
+        markOrdinaryLocallyCommitted = order.update(_ :+ "ordinary")
+      )
+      observed <- order.get
+    } yield expect.same(Vector("durable", "recovery", "ordinary"), observed)
+  }
+
+  test("a failure before the recovery receipt commits never makes the ordinary outbox publishable") {
+    val failure = new RuntimeException("durable read-back failed")
+
+    for {
+      order <- Ref.of[IO, Vector[String]](Vector.empty)
+      result <- StateChannelSnapshotService
+        .commitPreparedPublications(
+          recoveryRequired = true,
+          ensureRecoveryArtifactDurable = order.update(_ :+ "durable") >> failure.raiseError[IO, Unit],
+          markRecoveryLocallyCommitted = order.update(_ :+ "recovery"),
+          markOrdinaryLocallyCommitted = order.update(_ :+ "ordinary")
+        )
+        .attempt
+      observed <- order.get
+    } yield expect.same(Left(failure), result) && expect.same(Vector("durable"), observed)
+  }
+
+  test("without a recovery refresh only the ordinary outbox is committed") {
+    for {
+      order <- Ref.of[IO, Vector[String]](Vector.empty)
+      _ <- StateChannelSnapshotService.commitPreparedPublications(
+        recoveryRequired = false,
+        ensureRecoveryArtifactDurable = order.update(_ :+ "unexpected-durable"),
+        markRecoveryLocallyCommitted = order.update(_ :+ "unexpected-recovery"),
+        markOrdinaryLocallyCommitted = order.update(_ :+ "ordinary")
+      )
+      observed <- order.get
+    } yield expect.same(Vector("ordinary"), observed)
+  }
 }

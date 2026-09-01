@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.{CertifiedProposalQC, OutcomeVote}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -37,7 +38,11 @@ case class ConsensusResources[A, Kind](
   // outer key = target peer (previously-removed peer now being re-admitted), inner key
   // = voter (a current facilitator who observes the target at tip). Round-scoped,
   // preserved across abandonment retries.
-  admissionVotes: Map[PeerId, Map[PeerId, Signed[AdmissionVote]]] = Map.empty
+  admissionVotes: Map[PeerId, Map[PeerId, Signed[AdmissionVote]]] = Map.empty,
+  // V35 prepare votes are indexed by (certified view, complete ProposalValue hash), so equivocations remain visible rather than one value
+  // overwriting another. Each inner map is first-write-wins per authenticated rumor origin.
+  outcomeVotes: Map[(Long, Hash), Map[PeerId, OutcomeVote]] = Map.empty,
+  certifiedProposalQcs: Map[(Long, Hash), CertifiedProposalQC] = Map.empty
 )
 
 object ConsensusResources {

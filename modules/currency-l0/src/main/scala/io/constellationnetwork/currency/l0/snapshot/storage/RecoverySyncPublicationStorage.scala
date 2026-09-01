@@ -57,6 +57,11 @@ trait RecoverySyncPublicationStorage[F[_]] {
 
   /** Stop resending once the deterministic retained-window deadline has passed, while preserving the receipt for diagnosis/recovery. */
   def expireAt(globalParent: SnapshotOrdinal): F[Option[Publication]]
+
+  /** Explicit canonical-history replacement authority. A controlled rollback or validated download supersedes any prior recovery
+    * publication, which must not be reposted or block the adopted lineage. Ordinary process restart never calls this.
+    */
+  def discardForCanonicalReplacement: F[Option[Publication]]
 }
 
 object RecoverySyncPublicationStorage {
@@ -95,173 +100,194 @@ object RecoverySyncPublicationStorage {
         s"Recovery publication local Currency artifact mismatch at ordinal=$ordinal expected=$expected actual=$actual"
       )
 
-  def make[F[_]: Async: Files: JsonSerializer](base: Path)(implicit hasher: io.constellationnetwork.security.Hasher[F])
-    : F[RecoverySyncPublicationStorage[F]] = {
+  def make[F[_]: Async: Files: JsonSerializer](
+    base: Path
+  )(implicit hasher: io.constellationnetwork.security.Hasher[F]): F[RecoverySyncPublicationStorage[F]] = {
     val logger = Slf4jLogger.getLoggerFromName[F]("RecoverySyncPublicationStorage")
     val target = base / FileName
 
     def load: F[Option[Publication]] =
-      Files[F].exists(target).ifM(
-        Files[F]
-          .readAll(target, 64 * 1024, Flags.Read)
-          .compile
-          .to(Array)
-          .flatMap(JsonSerializer[F].deserialize[Publication])
-          .flatMap(_.liftTo[F])
-          .flatMap { publication =>
-            publication.binary.toHashed[F].flatMap { derived =>
-              if (derived.hash === publication.binaryHash && derived.proofsHash === publication.proofsHash)
-                publication.some.pure[F]
-              else CorruptPublication(publication.binaryHash, derived.hash).raiseError[F, Option[Publication]]
-            }
-          },
-        none[Publication].pure[F]
-      )
+      Files[F]
+        .exists(target)
+        .ifM(
+          Files[F]
+            .readAll(target, 64 * 1024, Flags.Read)
+            .compile
+            .to(Array)
+            .flatMap(JsonSerializer[F].deserialize[Publication])
+            .flatMap(_.liftTo[F])
+            .flatMap { publication =>
+              publication.binary.toHashed[F].flatMap { derived =>
+                if (derived.hash === publication.binaryHash && derived.proofsHash === publication.proofsHash)
+                  publication.some.pure[F]
+                else CorruptPublication(publication.binaryHash, derived.hash).raiseError[F, Option[Publication]]
+              }
+            },
+          none[Publication].pure[F]
+        )
 
     for {
       writer <- CrashSafeAtomicFileWriter.make[F](base)
       initial <- load
       state <- Ref.of[F, Option[Publication]](initial)
       mutex <- Mutex[F]
-    } yield new RecoverySyncPublicationStorage[F] {
+    } yield
+      new RecoverySyncPublicationStorage[F] {
 
-      def get: F[Option[Publication]] = state.get
+        def get: F[Option[Publication]] = state.get
 
-      private def persist(publication: Publication): F[Unit] =
-        JsonSerializer[F].serialize(publication).flatMap(writer.write(FileName, _)) >> state.set(publication.some)
+        private def persist(publication: Publication): F[Unit] =
+          JsonSerializer[F].serialize(publication).flatMap(writer.write(FileName, _)) >> state.set(publication.some)
 
-      def prepare(
-        required: RequiredRecoveryRefresh,
-        binary: Hashed[StateChannelSnapshotBinary],
-        currencyArtifact: Hashed[CurrencyIncrementalSnapshot]
-      ): F[Publication] =
-        mutex.lock.surround {
-          Async[F].uncancelable { _ =>
-            val publication = Publication(
-              required.value,
-              required.mode.metricLabel,
-              required.validThroughGlobalParent,
-              binary.signed,
-              binary.hash,
-              binary.proofsHash,
-              currencyArtifact.ordinal,
-              currencyArtifact.hash,
-              currencyArtifact.proofsHash,
-              locallyCommitted = false,
-              expired = false
-            )
+        def prepare(
+          required: RequiredRecoveryRefresh,
+          binary: Hashed[StateChannelSnapshotBinary],
+          currencyArtifact: Hashed[CurrencyIncrementalSnapshot]
+        ): F[Publication] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              val publication = Publication(
+                required.value,
+                required.mode.metricLabel,
+                required.validThroughGlobalParent,
+                binary.signed,
+                binary.hash,
+                binary.proofsHash,
+                currencyArtifact.ordinal,
+                currencyArtifact.hash,
+                currencyArtifact.proofsHash,
+                locallyCommitted = false,
+                expired = false
+              )
 
-            state.get.flatMap {
-              case Some(existing) if existing.binaryHash === publication.binaryHash => existing.pure[F]
-              case Some(existing) if !existing.expired =>
-                PublicationConflict(existing.binaryHash, publication.binaryHash).raiseError[F, Publication]
-              case _ =>
-                persist(publication) >>
-                  logger
-                    .warn(
-                      s"RECOVERY_SYNC_PUBLICATION_PREPARED mode=${publication.mode} currencyOrdinal=${currencyArtifact.ordinal} " +
-                        s"binaryHash=${publication.binaryHash} validThrough=${publication.validThroughGlobalParent}"
-                    )
-                    .as(publication)
+              state.get.flatMap {
+                case Some(existing) if existing.binaryHash === publication.binaryHash => existing.pure[F]
+                case Some(existing) if !existing.expired =>
+                  PublicationConflict(existing.binaryHash, publication.binaryHash).raiseError[F, Publication]
+                case _ =>
+                  persist(publication) >>
+                    logger
+                      .warn(
+                        s"RECOVERY_SYNC_PUBLICATION_PREPARED mode=${publication.mode} currencyOrdinal=${currencyArtifact.ordinal} " +
+                          s"binaryHash=${publication.binaryHash} validThrough=${publication.validThroughGlobalParent}"
+                      )
+                      .as(publication)
+              }
             }
           }
-        }
 
-      def markLocallyCommitted(binaryHash: Hash): F[Publication] =
-        mutex.lock.surround {
-          Async[F].uncancelable { _ =>
-            state.get.flatMap {
-              case Some(publication) if publication.binaryHash === binaryHash && publication.locallyCommitted =>
-                publication.pure[F]
-              case Some(publication) if publication.binaryHash === binaryHash =>
-                val committed = publication.copy(locallyCommitted = true)
-                persist(committed) >>
-                  logger
-                    .warn(
-                      s"RECOVERY_SYNC_PUBLICATION_LOCAL_COMMITTED mode=${committed.mode} " +
-                        s"currencyOrdinal=${committed.currencySnapshotOrdinal} binaryHash=${committed.binaryHash}"
-                    )
-                    .as(committed)
-              case _ => PublicationNotPrepared(binaryHash).raiseError[F, Publication]
+        def markLocallyCommitted(binaryHash: Hash): F[Publication] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case Some(publication) if publication.binaryHash === binaryHash && publication.locallyCommitted =>
+                  publication.pure[F]
+                case Some(publication) if publication.binaryHash === binaryHash =>
+                  val committed = publication.copy(locallyCommitted = true)
+                  persist(committed) >>
+                    logger
+                      .warn(
+                        s"RECOVERY_SYNC_PUBLICATION_LOCAL_COMMITTED mode=${committed.mode} " +
+                          s"currencyOrdinal=${committed.currencySnapshotOrdinal} binaryHash=${committed.binaryHash}"
+                      )
+                      .as(committed)
+                case _ => PublicationNotPrepared(binaryHash).raiseError[F, Publication]
+              }
             }
           }
-        }
 
-      def abortPrepared(binaryHash: Hash): F[Unit] =
-        mutex.lock.surround {
-          Async[F].uncancelable { _ =>
-            state.get.flatMap {
-              case Some(publication) if publication.binaryHash === binaryHash && !publication.locallyCommitted =>
-                writer.delete(FileName) >> state.set(none)
-              case _ => Async[F].unit
+        def abortPrepared(binaryHash: Hash): F[Unit] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case Some(publication) if publication.binaryHash === binaryHash && !publication.locallyCommitted =>
+                  writer.delete(FileName) >> state.set(none)
+                case _ => Async[F].unit
+              }
             }
           }
-        }
 
-      def reconcilePrepared(
-        getCurrencySnapshot: SnapshotOrdinal => F[Option[Hashed[CurrencyIncrementalSnapshot]]]
-      ): F[Option[Publication]] =
-        mutex.lock.surround {
-          Async[F].uncancelable { _ =>
-            state.get.flatMap {
-              case None => none[Publication].pure[F]
-              case current @ Some(publication) if publication.locallyCommitted =>
-                (current: Option[Publication]).pure[F]
-              case Some(publication) =>
-                getCurrencySnapshot(publication.currencySnapshotOrdinal).flatMap {
-                  case Some(snapshot)
-                      if snapshot.hash === publication.currencyArtifactHash &&
-                        snapshot.proofsHash === publication.currencyArtifactProofsHash =>
-                    val committed = publication.copy(locallyCommitted = true)
-                    persist(committed) >>
-                      logger
-                        .warn(
-                          s"RECOVERY_SYNC_PUBLICATION_RECONCILED currencyOrdinal=${committed.currencySnapshotOrdinal} " +
-                            s"binaryHash=${committed.binaryHash} outcome=local_commit_recovered"
-                        )
-                        .as(committed.some)
-                  case None =>
-                    writer.delete(FileName) >> state.set(none) >>
-                      logger
-                        .warn(
-                          s"RECOVERY_SYNC_PUBLICATION_RECONCILED currencyOrdinal=${publication.currencySnapshotOrdinal} " +
-                            s"binaryHash=${publication.binaryHash} outcome=uncommitted_intent_discarded"
-                        )
-                        .as(none[Publication])
-                  case Some(snapshot) =>
-                    LocalCurrencyArtifactMismatch(
-                      publication.currencySnapshotOrdinal,
-                      publication.currencyArtifactHash,
-                      snapshot.hash
-                    ).raiseError[F, Option[Publication]]
-                }
+        def reconcilePrepared(
+          getCurrencySnapshot: SnapshotOrdinal => F[Option[Hashed[CurrencyIncrementalSnapshot]]]
+        ): F[Option[Publication]] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case None => none[Publication].pure[F]
+                case current @ Some(publication) if publication.locallyCommitted =>
+                  (current: Option[Publication]).pure[F]
+                case Some(publication) =>
+                  getCurrencySnapshot(publication.currencySnapshotOrdinal).flatMap {
+                    case Some(snapshot)
+                        if snapshot.hash === publication.currencyArtifactHash &&
+                          snapshot.proofsHash === publication.currencyArtifactProofsHash =>
+                      val committed = publication.copy(locallyCommitted = true)
+                      persist(committed) >>
+                        logger
+                          .warn(
+                            s"RECOVERY_SYNC_PUBLICATION_RECONCILED currencyOrdinal=${committed.currencySnapshotOrdinal} " +
+                              s"binaryHash=${committed.binaryHash} outcome=local_commit_recovered"
+                          )
+                          .as(committed.some)
+                    case None =>
+                      writer.delete(FileName) >> state.set(none) >>
+                        logger
+                          .warn(
+                            s"RECOVERY_SYNC_PUBLICATION_RECONCILED currencyOrdinal=${publication.currencySnapshotOrdinal} " +
+                              s"binaryHash=${publication.binaryHash} outcome=uncommitted_intent_discarded"
+                          )
+                          .as(none[Publication])
+                    case Some(snapshot) =>
+                      LocalCurrencyArtifactMismatch(
+                        publication.currencySnapshotOrdinal,
+                        publication.currencyArtifactHash,
+                        snapshot.hash
+                      ).raiseError[F, Option[Publication]]
+                  }
+              }
             }
           }
-        }
 
-      def confirm(confirmedHashes: Set[Hash]): F[Option[Publication]] =
-        mutex.lock.surround {
-          Async[F].uncancelable { _ =>
-            state.get.flatMap {
-              case Some(publication) if publication.locallyCommitted && confirmedHashes.contains(publication.binaryHash) =>
-                writer.delete(FileName) >> state.set(none) >> publication.some.pure[F]
-              case _ => none[Publication].pure[F]
+        def confirm(confirmedHashes: Set[Hash]): F[Option[Publication]] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case Some(publication) if publication.locallyCommitted && confirmedHashes.contains(publication.binaryHash) =>
+                  writer.delete(FileName) >> state.set(none) >> publication.some.pure[F]
+                case _ => none[Publication].pure[F]
+              }
             }
           }
-        }
 
-      def expireAt(globalParent: SnapshotOrdinal): F[Option[Publication]] =
-        mutex.lock.surround {
-          Async[F].uncancelable { _ =>
-            state.get.flatMap {
-              case Some(publication)
-                  if publication.locallyCommitted && !publication.expired && globalParent > publication.validThroughGlobalParent =>
-                val expired = publication.copy(expired = true)
-                persist(expired) >> expired.some.pure[F]
-              case _ => none[Publication].pure[F]
+        def expireAt(globalParent: SnapshotOrdinal): F[Option[Publication]] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case Some(publication)
+                    if publication.locallyCommitted && !publication.expired && globalParent > publication.validThroughGlobalParent =>
+                  val expired = publication.copy(expired = true)
+                  persist(expired) >> expired.some.pure[F]
+                case _ => none[Publication].pure[F]
+              }
             }
           }
-        }
-    }
+
+        def discardForCanonicalReplacement: F[Option[Publication]] =
+          mutex.lock.surround {
+            Async[F].uncancelable { _ =>
+              state.get.flatMap {
+                case current @ Some(publication) =>
+                  writer.delete(FileName) >> state.set(none) >>
+                    logger
+                      .warn(
+                        s"RECOVERY_SYNC_PUBLICATION_DISCARDED_FOR_CANONICAL_REPLACEMENT mode=${publication.mode} " +
+                          s"currencyOrdinal=${publication.currencySnapshotOrdinal} binaryHash=${publication.binaryHash}"
+                      )
+                      .as(current)
+                case None => none[Publication].pure[F]
+              }
+            }
+          }
+      }
   }
 }

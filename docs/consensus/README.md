@@ -1,6 +1,14 @@
 # Tessellation Consensus Process
 
-This document provides an in-depth walkthrough of the Tessellation consensus mechanism. It is the definitive reference for how Tessellation consensus works.
+This document provides an in-depth walkthrough of the **Global L0** consensus mechanism.
+Unless a section explicitly says otherwise, its command FSM, Core/Tier-1/Witness committees,
+leaders, views, certificates, eviction/admission votes, and v35 behavior do not apply to
+Currency L0.
+
+Currency L0 deliberately uses a separate flat, fully synchronous protocol for its small
+permissioned metagraph cohort. See
+[Currency L0 synchronous consensus](currency-l0-synchronous.md). DAG L1, Currency L1, and
+Data L1 consensus are not modified by either design.
 
 ## Table of Contents
 
@@ -289,13 +297,13 @@ The handler also force-completes a stuck round when an `InitializeFromDownload` 
 
 ### Currency L0 rollback committee recovery
 
-Currency L0 rollback normally initializes the next consensus outcome from the
-rolled-back snapshot's proof signers. A fully stopped metagraph can use
-`run-rollback --allow-solo-consensus` on exactly one coordinated recovery node
-to bootstrap progress before the other nodes rejoin as ordinary validators.
-The flag is off by default and two isolated uses can create conflicting
-histories. See the
-[Currency L0 single-node rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
+Currency L0 rollback/genesis initializes a self-only flat synchronous committee on
+exactly one controlled lead. Every other Currency node runs `run-validator`, downloads
+the public lineage, observes successors, and registers for admission. The
+`--allow-solo-consensus` flag does not select the committee; it separately arms the
+operator-authorized dormant-lineage publication refresh. Two isolated rollback leads can
+still create conflicting histories. See the
+[Currency L0 controlled rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
 for the compatibility boundary, committee-regrowth trace, metrics, and rollout
 procedure, and distribute the corresponding
 [operator release note](../release/currency-l0-solo-rollback.md) before use.
@@ -303,39 +311,36 @@ procedure, and distribute the corresponding
 ### Global L0 anchor-bound committee recovery
 
 Global L0 can replace an unrecoverable rollback anchor's dead committee with a
-lead-signed, anchor-bound recovery plan during a coordinated full-fleet cold
-restart. Exactly one controlled node consumes the plan with
-`run-rollback --recovery-plan`; every other named committee member verifies
-and consumes the same plan with `run-validator --recovery-plan`. Unnamed peers
-remain ordinary validators. The option is inert by default and changes no public
-snapshot, state-proof, or consensus-message schema. See the
-[Global L0 recovery-plan runbook](../operations/global-l0-recovery-plan.md) for
-the signed domain, fail-closed checks, first-round alignment gate, and removal
-of the one-shot option after recovery.
-
-The schema-compatible retry and legacy-view safety boundary shipped with that
-operator tool is documented in the
+trusted env-selected committee during a coordinated full-fleet cold restart.
+Exactly one controlled node runs `run-rollback`; every other node runs
+`run-validator`. Only the named controlled cohort receives the same
+`CL_GL0_RECOVERY_SEED_COMMITTEE` value. A generation-bound first-round gate on
+every selected node requires exact outcome alignment of the entire named
+committee. The option is inert when absent. See the schema-compatible retry and
+legacy-view safety boundary in the
 [v4.1.0-rc.8 IntegrationNet bridge release note](../release/v4.1.0-rc.8-integrationnet-bridge.md).
 
-Rc.9 adds an unsigned, trusted-operator alternative for the normal
-one-rollback-lead/all-other-validators cold-start topology. The exact committee
-comes from `CL_GL0_RECOVERY_SEED_COMMITTEE` on the named controlled nodes only;
-it reuses the same typed synthetic outcome and exact all-member barrier, then
-disarms for that JVM invocation on the first accepted successor while tracking
-selected-member next-seat proof headroom as a separate rollout gate. The
-external environment is intentionally repeatable: every fresh selected-source
-JVM launch re-arms it until the operator comments or removes the variable. It
-does not pin later ordinal committees inside one invocation. Each re-armed
-launch is a full operational reseed from which membership and reward breadth
-must regrow; no cleanup restart, symlink change, or jar swap is required for
-that recovery invocation. See the
+The exact committee comes only from the env on selected nodes. The running
+invocation disarms on the first accepted successor while tracking selected-
+member next-seat proof headroom separately. The operator must comment/remove
+the env after that successor; a fresh external JVM otherwise re-arms it. Each
+explicitly re-armed launch is a full operational reseed from which membership
+and reward breadth must regrow. No cleanup restart, symlink change, or jar swap
+is required. See the
 [trusted recovery seed runbook](../operations/global-l0-recovery-seed-committee.md).
+
+After v35 activation, the first successor's ordinary QC binds the public parent
+and selected committee, but remains terminal/private on the source cohort. The
+second successor carries that QC in public lineage. Only then can unconfigured
+community validators reconstruct the canonical reset root from the certificate
+and independently validated public parent, then replay the latest contiguous
+recovery epoch. No private plan or second signature ceremony is required.
 
 Rc.12 aligns an established GL0 anchor committee before the first ordinary
 post-rollback round. The rollback lead waits for an exact `Q(N)` of anchor
 proof signers with no timeout escape; members of that set wait for the first
 existing authenticated Facility pulse instead of starting independent timers.
-The explicit recovery plan/seed paths keep their stronger all-member barrier.
+The explicit recovery-seed path keeps its stronger all-member barrier.
 See the
 [Global L0 first-round alignment runbook](../operations/global-l0-first-round-alignment.md).
 
@@ -571,10 +576,12 @@ Sent after proposals are collected:
 - `signature: Signature` - over the majority artifact hash
 - `facilitatorsHash: Hash`, `lastSnapshotHash: Hash`, `view: Long`, `proposalHash: Hash`
 
-### BinarySignature (Currency L0 only)
+### BinarySignature (Currency L0 only; separate synchronous schema)
 
-Sent after `MajoritySignature` is collected:
-- `signature: Signature`, `facilitatorsHash: Hash`, `lastSnapshotHash: Hash`
+Currency's local synchronous engine sends this after it has collected and verified one
+artifact signature from every retained member and constructed one exact unsigned
+state-channel binary. The declaration contains the binary signature, exact binary hash,
+and immutable attempt domain. It is not part of the Global declaration schema or v35.
 
 ### ViewChangeVote
 
@@ -618,7 +625,11 @@ There are two deliberately different evidence lanes:
 - **Open expansion:** the parent Proposal carries one canonical nominee chosen by deterministic rendezvous rank. On the five-round admission cadence, each Core voter first waits for that Ready nominee's authenticated Facility declaration bound to the same current round, then directly fetches its authenticated snapshot metadata even if cached gossip says it is nearby. The response must name the exact parent ordinal and hash. Failure, mismatch, or absence means abstain; a late Facility can still trigger the one-shot probe later in the round, and the voter never walks to a second candidate. Parent entropy changes the ranking, but rendezvous has no no-repeat guarantee.
 - **Penalty/probation recovery:** a carried probation peer cannot emit a Facility until its certificate clears probation. This lane therefore probes one deterministic target through the authenticated chain-tip endpoint and requires the configured streak of fresh exact-parent observations. It remains cadence-independent and uses its wider recovery witness pool.
 
-Currency L0 has no direct-probe wiring and retains its legacy cached-chain-tip admission behavior. Global L0's exact-tip/Facility rule adds no declaration or snapshot field: it reuses existing authenticated metadata, signed Facilities, AdmissionVotes, and AdmissionCertificates.
+Currency L0 does not use this certified-admission pipeline. Registrations are carried in
+the complete synchronous Facility union and bounded by incumbent ACK headroom plus the
+legacy flat-committee cap. Global L0's exact-tip/Facility rule adds no declaration or
+snapshot field: it reuses existing authenticated metadata, signed Facilities,
+AdmissionVotes, and AdmissionCertificates.
 
 ---
 

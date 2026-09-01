@@ -216,7 +216,13 @@ object DataApplicationSnapshotAcceptanceManagerSuite extends MutableIOSuite {
     context: L0NodeContext[IO],
     storage: CalculatedStateLocalFileSystemStorage[IO]
   )(implicit hasher: Hasher[IO], json: JsonSerializer[IO], securityProvider: SecurityProvider[IO]) =
-    DataApplicationSnapshotAcceptanceManager.make[IO](service, context, storage, SnapshotOrdinal.MinValue)
+    DataApplicationSnapshotAcceptanceManager.make[IO](
+      service,
+      context,
+      storage,
+      SnapshotOrdinal.MinValue,
+      SnapshotOrdinal.MinValue
+    )
 
   test("exact-current replay verifies the certified hash and repairs storage without recalculating or setting service state") {
     case (hasher, securityProvider, json) =>

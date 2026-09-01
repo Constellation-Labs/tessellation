@@ -101,11 +101,11 @@ trait EventMempool[F[_], Event, Key] {
     * @return
     *   Current mempool state bounded by limit
     */
-  def snapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]]
+  def snapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]]
 
   /** Get a snapshot of entries temporarily held out of proposal selection.
     */
-  def suspendedSnapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]]
+  def suspendedSnapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]]
 
   /** Clear events that were included in a finalized snapshot.
     *
@@ -123,6 +123,13 @@ trait EventMempool[F[_], Event, Key] {
   /** Return previously suspended events to normal proposal selection.
     */
   def reactivate(hashes: Set[Hash]): F[Unit]
+
+  /** Move active entries to the back of FIFO proposal order without dropping them.
+    *
+    * This is the fair-retry primitive for state-dependent validation: an event that is not valid against the current parent remains
+    * available for a later parent, but it cannot permanently occupy the bounded proposal head ahead of newer work.
+    */
+  def deferToBack(hashes: Set[Hash]): F[Unit]
 
   /** Get the current proposal-eligible size of the mempool.
     *
@@ -189,6 +196,9 @@ private[mempool] object MempoolState {
 }
 
 object EventMempool {
+
+  /** Protocol work bound reused by event gossip and Currency Facility construction. */
+  val DefaultSnapshotLimit: Int = 10000
 
   /** Create a new event mempool.
     */
@@ -273,7 +283,7 @@ object EventMempool {
       def contains(hash: Hash): F[Boolean] =
         storage.get.map(_.entries.contains(hash))
 
-      def snapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]] =
+      def snapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]] =
         storage.get.map { state =>
           MempoolSnapshot(
             state.insertionOrder
@@ -284,7 +294,7 @@ object EventMempool {
           )
         }
 
-      def suspendedSnapshot(limit: Int = 10000): F[MempoolSnapshot[Event, Key]] =
+      def suspendedSnapshot(limit: Int = EventMempool.DefaultSnapshotLimit): F[MempoolSnapshot[Event, Key]] =
         storage.get.map { state =>
           MempoolSnapshot(
             state.insertionOrder
@@ -306,6 +316,12 @@ object EventMempool {
       def reactivate(hashes: Set[Hash]): F[Unit] =
         storage.update { state =>
           state.copy(suspended = state.suspended -- hashes)
+        }
+
+      def deferToBack(hashes: Set[Hash]): F[Unit] =
+        storage.update { state =>
+          val present = state.insertionOrder.filter(hashes.contains)
+          state.copy(insertionOrder = state.insertionOrder.filterNot(hashes.contains) ++ present)
         }
 
       def size: F[Int] =

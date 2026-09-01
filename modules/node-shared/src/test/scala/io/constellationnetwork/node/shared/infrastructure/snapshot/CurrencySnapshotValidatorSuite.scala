@@ -1,14 +1,25 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
+import cats.effect.IO
+
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotStateProof}
+import io.constellationnetwork.currency.schema.CurrencySnapshotSemantics
+import io.constellationnetwork.currency.schema.currency.{
+  CurrencyIncrementalSnapshot,
+  CurrencyIncrementalSnapshotV1,
+  CurrencySnapshotStateProof
+}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.{SnapshotOrdinal, SnapshotTips}
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 
+import eu.timepit.refined.auto._
 import weaver.SimpleIOSuite
 
 object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
@@ -18,7 +29,8 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
 
   private def snapshot(
     ordinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
-    globalSyncView: Option[GlobalSyncView]
+    globalSyncView: Option[GlobalSyncView],
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ): CurrencyIncrementalSnapshot =
     CurrencyIncrementalSnapshot(
       ordinal = ordinal,
@@ -37,7 +49,8 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
       artifacts = None,
       allowSpendBlocks = None,
       tokenLockBlocks = None,
-      globalSyncView = globalSyncView
+      globalSyncView = globalSyncView,
+      version = version
     )
 
   // #1 regression: when a signed currency snapshot is validated while the GL0 cache has advanced, the
@@ -50,6 +63,19 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
     expect(CurrencySnapshotValidator.matchesExpected(recreatedLaterView, expected))
   }
 
+  pureTest("deterministic-history snapshots require globalSyncView to rederive exactly") {
+    val expected = snapshot(
+      globalSyncView = Some(gsv(2)),
+      version = CurrencySnapshotSemantics.DeterministicHistoryVersion
+    )
+    val recreatedLaterView = snapshot(
+      globalSyncView = Some(gsv(3)),
+      version = CurrencySnapshotSemantics.DeterministicHistoryVersion
+    )
+
+    expect(!CurrencySnapshotValidator.matchesExpected(recreatedLaterView, expected))
+  }
+
   pureTest("matchesExpected still fails on a real content difference") {
     val expected = snapshot(ordinal = SnapshotOrdinal.MinValue, globalSyncView = Some(gsv(2)))
     val realDiff = snapshot(ordinal = SnapshotOrdinal.unsafeApply(1L), globalSyncView = Some(gsv(2)))
@@ -60,5 +86,35 @@ object CurrencySnapshotValidatorSuite extends SimpleIOSuite {
     val expected = snapshot(ordinal = SnapshotOrdinal.MinValue, globalSyncView = Some(gsv(2)))
     val both = snapshot(ordinal = SnapshotOrdinal.unsafeApply(1L), globalSyncView = Some(gsv(3)))
     expect(!CurrencySnapshotValidator.matchesExpected(both, expected))
+  }
+
+  pureTest("matchesExpected treats the signed snapshot protocol version as consensus content") {
+    val expected = snapshot(globalSyncView = Some(gsv(2)))
+    val wrongProtocol = snapshot(
+      globalSyncView = Some(gsv(2)),
+      version = SnapshotVersion("1.0.0")
+    )
+
+    expect(!CurrencySnapshotValidator.matchesExpected(wrongProtocol, expected))
+  }
+
+  test("the existing canonical Currency projection preserves and hashes the signed protocol version") {
+    JsonSerializer.forAsync[IO].flatMap { implicit serializer =>
+      implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
+
+      val legacy = snapshot(globalSyncView = Some(gsv(2)))
+      val differentVersion = SnapshotVersion("1.0.0")
+      val deterministic = legacy.copy(version = differentVersion)
+
+      for {
+        legacyHash <- hasher.hash(legacy)
+        deterministicHash <- hasher.hash(deterministic)
+      } yield
+        expect(legacyHash != deterministicHash) &&
+          expect.same(
+            differentVersion,
+            CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(deterministic).version
+          )
+    }
   }
 }

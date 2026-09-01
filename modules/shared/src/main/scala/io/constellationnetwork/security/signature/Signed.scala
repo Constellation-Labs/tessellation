@@ -63,7 +63,18 @@ object Signed {
 
   implicit def autoUnwrap[T](t: Signed[T]): T = t.value
 
+  /** Semantic equality intentionally ignores the proof envelope.
+    *
+    * Different honest observers may collect different valid quorum proof subsets for the same value. Callers at an authority boundary where
+    * the proof set itself carries meaning (for example, selecting a genesis committee from its signers) must use [[sameValueAndProofs]]
+    * explicitly.
+    */
   implicit def eq[A: Eq]: Eq[Signed[A]] = (a, b) => Eq[A].eqv(a, b)
+
+  /** Proof-aware equality for the narrow trust boundaries where both the signed value and its exact proof set are authoritative. */
+  def sameValueAndProofs[A: Eq](left: Signed[A], right: Signed[A]): Boolean =
+    Eq[A].eqv(left.value, right.value) &&
+      Eq[NonEmptySet[SignatureProof]].eqv(left.proofs, right.proofs)
 
   implicit def order[A: Order]: Order[Signed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
 

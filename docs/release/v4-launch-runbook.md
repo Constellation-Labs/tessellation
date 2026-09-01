@@ -46,18 +46,39 @@ artifact because a different jar built with the same reported version is not rej
 
 ### Deploy sequence
 
-1. Quiesce the network and **hard-kill the JVMs on every peer**. Because the version-hash fence applies
-   only when a peer joins, there is no safe overlap window; all nodes must be down before any new-jar
-   node comes up.
-2. Confirm the launch jar is staged on every node and that the gate-ordinal checklist (section 2) has
+1. Disable automated restart/rollback actions. Before stopping anything, create
+   the timestamped evidence bundle required by
+   [`RELEASE_POLICY.md`](RELEASE_POLICY.md#mandatory-pre-stop-evidence-and-monitoring-gate).
+   Capture active and rotated application/HTTP logs; the system journal,
+   service and exit status; any existing heap/core/JVM crash artifact; redacted
+   environment, effective configuration, launch/unit/deployment definitions;
+   jar, version, `versionHash`, `deterministicConfigHash`, and schema-version
+   identifiers; the chosen anchor and Snapshot Streaming observations; and
+   manifests of snapshot indexes, locks/journals, and sidecars. Source log
+   retention can be less than 24 hours under load, so preserve this bundle
+   outside live rotation directories as durable release evidence.
+2. Quiesce the network and request an orderly stop on every peer. Because the
+   version-hash fence applies only when a peer joins, there is no safe overlap
+   window; all nodes must be down before any new-jar node comes up. Escalate an
+   unresponsive JVM to a hard kill only after the evidence capture, and record
+   its stop timeout, final service status, signal, and exit status in the bundle.
+3. Confirm the launch jar is staged on every node and that the gate-ordinal checklist (section 2) has
    been completed in the jar-packaged config before assembly.
-3. Bring up the source / priority peers first. The priority set is configured under `priority-peer-ids`
-   in `application.conf:129`. Confirm each reaches `Ready` before proceeding.
-4. Bring up the remaining peers. They register against the priority peers; matching version hashes
+4. Bring up the source / priority peers first. The priority set is configured under `priority-peer-ids`
+   in `application.conf:129`. `Ready` confirms only node lifecycle progress; it
+   does not release the monitoring gate.
+5. Bring up the remaining peers. They register against the priority peers; matching version hashes
    admit them. Independently verify the deterministic config hash is byte-identical fleet-wide.
-5. Only after the source/priority peers are confirmed `Ready` should auto-restart monitoring (the
-   auto-restart lambda referenced in `RELEASE_POLICY.md`) be re-enabled, so a node still mid-handshake is
-   not force-cycled.
+6. While `dag_consensus_normal_first_round_alignment_held == 1`, a flat tip is
+   intentional synchronization and is a **DO-NOT-RESTART** condition. Monitoring
+   may alert, but automated stop/restart/rollback actions remain inhibited.
+7. Re-enable those actions only after the canonical first successor is accepted
+   and `dag_consensus_signing_finality_audit_current_finality_margin > 0`. A
+   `Ready` source set alone is insufficient. If the restart uses
+   `CL_GL0_RECOVERY_SEED_COMMITTEE`, apply the stronger recovery gates: remove
+   the environment from every selected source, wait through canonical `R+2` and
+   public durability at/after v35, and verify Snapshot Streaming lineage
+   alignment before enabling automation.
 
 ---
 

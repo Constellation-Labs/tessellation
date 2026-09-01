@@ -1,35 +1,41 @@
 package io.constellationnetwork.currency.l0.snapshot
 
+import cats.Monad
 import cats.effect.kernel.Clock
+import cats.effect.syntax.all._
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedSet
+import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.l0.snapshot.schema.{CollectingFacilities, CurrencyConsensusKind, CurrencyConsensusOutcome}
+import io.constellationnetwork.currency.l0.snapshot.synchronous._
+import io.constellationnetwork.currency.l0.snapshot.synchronous.declaration.{AttemptDomain, Facility}
+import io.constellationnetwork.currency.l0.snapshot.synchronous.message.ConsensusPeerDeclaration
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
-import io.constellationnetwork.node.shared.config.types.ConsensusConfig
+import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
-import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
-import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
-import io.constellationnetwork.node.shared.infrastructure.consensus.state.{ConsensusStateCreator, _}
+import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.infrastructure.gossip.event._
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.node.shared.snapshot.currency._
-import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.currencyMessage.{MessageOrdinal, MessageType, fetchOwnerAddress}
+import io.constellationnetwork.schema.peer.{Peer, PeerId}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
-import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
@@ -45,635 +51,327 @@ abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
 
 object CurrencySnapshotConsensusStateCreator {
 
-  def make[F[_]: Async: Metrics](
+  private val hashOrdering: Ordering[Hash] = cats.Order[Hash].toOrdering
+
+  private val availabilityRequestTimeout = 5.seconds
+
+  /** The fan-out is processed in bounded parallel waves. Reusing one peer's timeout for the aggregate made a 20-member committee race three
+    * waves against a one-wave budget. Keep one small scheduling margin after the worst-case per-peer timeouts have fired.
+    */
+  private[snapshot] def availabilityFanoutDeadline(peerCount: Int, maxParallelism: Int): FiniteDuration = {
+    val parallelism = math.max(1, maxParallelism)
+    val waves = math.max(1, (math.max(0, peerCount) + parallelism - 1) / parallelism)
+    availabilityRequestTimeout * waves.toLong + 1.second
+  }
+
+  /** Each member advertises only its deterministic share of the fixed proposal work budget. The complete Facility union is defensively
+    * capped to the same bound by the advancer, so declarations and availability work remain bounded as N grows.
+    */
+  private[snapshot] def facilityEventLimit(committeeSize: Int): Int =
+    math.max(1, EventMempool.DefaultSnapshotLimit / math.max(1, committeeSize))
+
+  /** Keeps only events that have a confirmed copy on every round-start facilitator.
+    *
+    * Currency event data is transported independently from Facility declarations. Without this barrier, a node can advertise a hash and
+    * crash after only part of the committee received the corresponding event: some nodes advance while others wait forever, and ordinary
+    * Facility ACKs incorrectly classify the crashed advertiser as responsive. A confirmed hash remains retrievable after any one member
+    * fails. A failed confirmation must contribute the empty set, not be omitted: each node can observe a different responder subset, so
+    * intersecting responders only would let honest nodes advertise different event sets under asymmetric connectivity. Deferral never
+    * prevents an otherwise-empty round from starting; the ordinary all-member Facility/ACK protocol handles the unavailable member.
+    */
+  private[snapshot] val availabilityProbeParallelism: Int = 8
+
+  /** Actively closes the gap between hash advertisement and event transport.
+    *
+    * The ordinary event-gossip mesh is deliberately sparse, so a valid event submitted to one facilitator is not guaranteed to have reached
+    * every other facilitator before the next Currency round. A synchronous round cannot advertise that event safely until every member can
+    * reconstruct the same proposal. Probe first to avoid redundant traffic, then push the exact signed envelope to each peer that is
+    * missing it. A successful push response is emitted only after the receiver has hash-checked and stored the envelope.
+    */
+  private[snapshot] def ensurePeerEventAvailability[F[_]: Async, Event](
+    events: Map[Hash, Signed[Event]],
+    probe: Set[Hash] => F[Set[Hash]],
+    push: (Hash, Signed[Event]) => F[Boolean],
+    maxParallelism: Int = availabilityProbeParallelism
+  ): F[Set[Hash]] =
+    if (events.isEmpty) Set.empty[Hash].pure[F]
+    else
+      for {
+        reportedPresent <- probe(events.keySet)
+        alreadyPresent = reportedPresent.intersect(events.keySet)
+        missing = events.toList.filterNot { case (hash, _) => alreadyPresent.contains(hash) }
+          .sortBy(_._1)(hashOrdering)
+        replicated <- fs2.Stream
+          .emits(missing)
+          .covary[F]
+          .parEvalMap(math.max(1, maxParallelism)) {
+            case (hash, event) =>
+              push(hash, event).map(success => Option.when(success)(hash))
+          }
+          .unNone
+          .compile
+          .toList
+      } yield alreadyPresent ++ replicated
+
+  private[snapshot] def retainUniversallyAvailableHashes[F[_]: Async](
+    localHashes: Set[Hash],
+    peers: List[PeerId],
+    maxParallelism: Int = availabilityProbeParallelism,
+    deadline: Option[FiniteDuration] = None
+  )(
+    confirm: (PeerId, Set[Hash]) => F[Set[Hash]]
+  ): F[SortedSet[Hash]] =
+    if (localHashes.isEmpty) SortedSet.empty[Hash](hashOrdering).pure[F]
+    else
+      fs2.Stream
+        .emits(peers)
+        .covary[F]
+        .parEvalMap(math.max(1, maxParallelism))(peerId => confirm(peerId, localHashes))
+        .compile
+        .toList
+        .timeoutTo(
+          deadline.getOrElse(availabilityFanoutDeadline(peers.size, maxParallelism)),
+          List(Set.empty[Hash]).pure[F]
+        )
+        .map(_.foldLeft(localHashes)(_ intersect _))
+        .map(hashes => SortedSet.from(hashes)(hashOrdering))
+
+  /** Applies the deterministic seedlist/collateral eligibility boundary before a registration may enter a Facility. */
+  private[snapshot] def retainEligibleCandidates[F[_]: Monad](
+    registered: Set[PeerId],
+    seedlistAllows: PeerId => Boolean
+  )(
+    parentAllows: PeerId => F[Boolean]
+  ): F[Candidates] =
+    registered.toList.sorted
+      .filter(seedlistAllows)
+      .filterA(parentAllows)
+      .map(peers => Candidates(peers.toSet))
+
+  val InitialOwnerMessageOrdinal: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(2L)
+
+  /** The initial Owner message can only be accepted at snapshot ordinal 2 and the global L0 charges snapshot fees to the owner address from
+    * that ordinal on. Producing snapshot 2 without the Owner message dooms every subsequent snapshot to rejection, so the round must not
+    * start until the message is available for inclusion.
+    */
+  def canStartOwnedConsensus[F[_]: Monad](
+    key: CurrencySnapshotKey,
+    maybeOwnerAddress: Option[Address],
+    getLastGlobalSnapshotOrdinal: F[Option[SnapshotOrdinal]],
+    feeCalculator: FeeCalculator[F],
+    pendingOwnerMessageExists: F[Boolean]
+  ): F[Boolean] =
+    if (key =!= InitialOwnerMessageOrdinal || maybeOwnerAddress.isDefined)
+      true.pure[F]
+    else
+      getLastGlobalSnapshotOrdinal
+        .map(_.map(feeCalculator.isFeeRequired).getOrElse(feeCalculator.isFeeRequired(SnapshotOrdinal.unsafeApply(Long.MaxValue))))
+        .ifM(pendingOwnerMessageExists, true.pure[F])
+
+  /** Matches the initial Owner message for this metagraph: an Owner message whose parent ordinal is the minimum, i.e. the one that takes
+    * the special ordinal-2 acceptance path (see `CurrencySnapshotAcceptanceManager`). A type-only `Owner` match could instead be satisfied
+    * by an Owner event for a different metagraph or by a non-initial Owner message with the wrong parent ordinal, which would open the gate
+    * but be rejected by message acceptance and allow ordinal 2 to finalize without an accepted Owner.
+    */
+  def isInitialOwnerMessageEvent(
+    metagraphId: Address
+  ): CurrencySnapshotEvent => Boolean = {
+    case CurrencyMessageEvent(message) =>
+      message.messageType === MessageType.Owner &&
+      message.metagraphId === metagraphId &&
+      message.parentOrdinal === MessageOrdinal.MinValue
+    case _ => false
+  }
+
+  def make[F[_]: Async: HasherSelector: Metrics](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    feeCalculator: FeeCalculator[F],
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]],
-    facilitatorSelector: FacilitatorSelector,
-    consensusConfigHash: Hash,
-    consensusConfig: ConsensusConfig,
-    peerQualityTracker: PeerQualityTracker[F],
-    tcaFilter: TrailingCommonAncestorFilter[F],
+    getMetagraphId: F[Address],
     eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
-    localHealthMonitor: LocalHealthMonitor[F],
-    // v19 multi-committee Core floor. Mirror of dag-l0 -- per-environment value
-    // routed through `SnapshotConfig.coreCommitteeSize`.
-    coreCommitteeSize: Int
+    clusterStorage: ClusterStorage[F],
+    eventGossipClient: EventGossipClient[F, CurrencySnapshotEvent]
   ): CurrencySnapshotConsensusStateCreator[F] = new CurrencySnapshotConsensusStateCreator[F] {
-    val config: ConsensusConfig = consensusConfig
+    private val logger = Slf4jLogger.getLogger[F]
 
-    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
+    private def recordAvailability(peerId: PeerId, outcome: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_currency_consensus_event_availability_confirmation_total",
+        Seq(
+          Metrics.unsafeLabelName("peer_id") -> peerId.show,
+          Metrics.unsafeLabelName("outcome") -> outcome
+        )
+      )
+
+    private def confirmPeerHasEvents(
+      peerId: PeerId,
+      requested: Map[Hash, Signed[CurrencySnapshotEvent]]
+    ): F[Set[Hash]] =
+      clusterStorage.getPeer(peerId).flatMap {
+        case None =>
+          recordAvailability(peerId, "peer_unavailable") >>
+            logger.warn(s"Deferring Currency events because round-start facilitator ${peerId.show} is unavailable").as(Set.empty)
+        case Some(peer) =>
+          val context = Peer.toP2PContext(peer)
+
+          ensurePeerEventAvailability(
+            requested,
+            hashes => eventGossipClient.getIHaveFor(IWantRequest(hashes)).run(context).map(_.hashes),
+            (hash: Hash, event: Signed[CurrencySnapshotEvent]) =>
+              eventGossipClient
+                .pushEvent(EventPush(hash, event))
+                .run(context)
+                .flatTap { success =>
+                  Metrics[F].incrementCounter(
+                    "dag_currency_consensus_event_replication_total",
+                    Seq(Metrics.unsafeLabelName("outcome") -> (if (success) "stored" else "rejected"))
+                  )
+                }
+                .handleErrorWith { error =>
+                  Metrics[F].incrementCounter(
+                    "dag_currency_consensus_event_replication_total",
+                    Seq(Metrics.unsafeLabelName("outcome") -> "request_failed")
+                  ) >> logger
+                    .warn(error)(s"Failed to replicate Currency event ${hash.show} to facilitator ${peerId.show}")
+                    .as(false)
+                }
+          )
+            .timeout(availabilityRequestTimeout)
+            .flatMap { confirmed =>
+              recordAvailability(peerId, if (confirmed.size === requested.size) "confirmed" else "partial").as(confirmed)
+            }
+            .handleErrorWith { error =>
+              recordAvailability(peerId, "request_failed") >>
+                logger
+                  .warn(error)(s"Deferring Currency events that could not be replicated to facilitator ${peerId.show}")
+                  .as(Set.empty)
+            }
+      }
+
+    private def facilityEventHashes(roundStartFacilitators: List[PeerId]): F[SortedSet[Hash]] =
+      for {
+        localSnapshot <- eventMempool.snapshot(facilityEventLimit(roundStartFacilitators.size))
+        localHashes = localSnapshot.hashes
+        localEvents = localSnapshot.entries.view.mapValues(_.hashed.signed).toMap
+        peers = roundStartFacilitators.filterNot(_ === selfId)
+        confirmed <- retainUniversallyAvailableHashes(localHashes, peers) { (peerId, requested) =>
+          confirmPeerHasEvents(peerId, requested.flatMap(hash => localEvents.get(hash).map(hash -> _)).toMap)
+        }
+        _ <- logger
+          .info(
+            s"Deferred ${localHashes.size - confirmed.size} Currency events that were not confirmed on every round-start facilitator"
+          )
+          .whenA(confirmed.size < localHashes.size)
+        _ <- Metrics[F].updateGauge(
+          "dag_currency_consensus_facility_event_deferred",
+          (localHashes.size - confirmed.size).toLong
+        )
+      } yield confirmed
 
     def tryFacilitateConsensus(
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
-      priorAbandonmentCount: Int,
-      expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
+      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
     ): F[StateCreateResult] =
-      consensusStorage.resumePendingStateEffect(key) >>
-        consensusStorage
-          .condModifyStateWithSideEffect(key)(
-            toCreateStateFn(
-              validateExpectedRoundStartFacilitators(
-                facilitateConsensus(key, lastOutcome, maybeTrigger, resources, priorAbandonmentCount),
-                expectedRoundStartFacilitators
-              )
-            )
+      canStartOwnedConsensus(
+        key,
+        fetchOwnerAddress(lastOutcome.finished.context.snapshotInfo),
+        lastGlobalSnapshotStorage.getOrdinal,
+        feeCalculator,
+        getMetagraphId.flatMap { id =>
+          eventMempool.snapshot().map(_.events.exists(event => isInitialOwnerMessageEvent(id)(event.signed.value)))
+        }
+      ).ifM(
+        consensusStorage.runRetainedEffect(key) >>
+          consensusStorage
+            .condModifyStateWithEffect(key) {
+              case None =>
+                facilitateConsensus(key, lastOutcome, maybeTrigger, resources).map(
+                  _.map { case (state, effect) => (state.some, state.some, effect) }
+                )
+              case Some(_) => none[(Option[CurrencySnapshotConsensusState], Option[CurrencySnapshotConsensusState], F[Unit])].pure[F]
+            }
+            .map(_.flatten)
+            .flatTap(_ => consensusStorage.runRetainedEffect(key))
+            .flatTap(logIfCreatedState(_)),
+        logger
+          .warn(
+            s"Deferring consensus for key ${key.show}: waiting for the initial Owner message to set the metagraph owner " +
+              s"before creating the first fee-paying snapshot, otherwise it gets rejected by the global L0"
           )
-          .map(_.flatten)
-          .flatTap(logIfCreated)
-
-    // Reads the stored self-Facility and re-sends via direct push. Mirrors dag-l0.
-    def retransmitOwnFacility(key: CurrencySnapshotKey, targets: Set[PeerId]): F[Unit] =
-      consensusStorage.getResources(key).flatMap { resources =>
-        resources.peerDeclarationsMap
-          .get(selfId)
-          .flatMap(_.facility)
-          .fold(Sync[F].unit) { facility =>
-            val declaration = ConsensusPeerDeclaration(key, facility)
-            ConsensusLog.info(
-              logger,
-              Category.Facilitator,
-              key.show,
-              "n/a",
-              Event.FacilityRetransmit,
-              "targets" -> targets.size.toString
-            ) >>
-              gossip.spreadDirect(declaration, targets)
-          }
-      }
+          .as(none)
+      )
 
     private def facilitateConsensus(
       key: CurrencySnapshotKey,
       lastOutcome: CurrencyConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind],
-      priorAbandonmentCount: Int
-    ): F[(CurrencySnapshotConsensusState, F[Unit])] =
+      resources: ConsensusResources[CurrencySnapshotArtifact, CurrencyConsensusKind]
+    ): F[Option[(CurrencySnapshotConsensusState, F[Unit])]] =
       for {
-        candidates <- consensusStorage.getCandidates(key.next)
-        previousEligible = lastOutcome.eligibleOrFacilitators
-        approvedCandidates = lastOutcome.finished.candidates.value
-        seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
 
-        filteredPreviousEligible = previousEligible
-          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
+        registeredCandidates <- consensusStorage.getCandidates(key.next)
+        // A registration proves only that the peer reached Observing. Filter it against the
+        // same signed parent/seedlist eligibility used when the next committee is created;
+        // otherwise an ineligible peer can be carried as a candidate, accept the private
+        // hand-off, and then remain WaitingForReady forever when StateCreator filters it out.
+        eligibleCandidates <- retainEligibleCandidates(
+          registeredCandidates.value,
+          peerId => seedlist.forall(_.map(_.peerId).contains(peerId))
+        )(consensusFns.facilitatorFilter(lastOutcome.finished.signedMajorityArtifact, lastOutcome.finished.context, _))
 
-        filteredCandidates = approvedCandidates
-          .filter(peerId => seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId))
+        roundStartFacilitators <- lastOutcome.facilitators.value
+          .concat(lastOutcome.finished.candidates.value)
+          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
+          .filterA(consensusFns.facilitatorFilter(lastOutcome.finished.signedMajorityArtifact, lastOutcome.finished.context, _))
+          .map(_.distinct.sorted)
 
-        // Full base. Use only the parent round's canonical facilitator set. In schema v34
-        // `finished.candidates` carries the accepted Proposal's open-admission nominee for vote
-        // convergence; nomination alone is not membership authority. Only a quorum-certified
-        // admission may change this base.
-        fullBase = ConsensusPeerController.canonicalFacilitatorBase(
-          parentFacilitators = lastOutcome.facilitators.value,
-          seedlistPeerIds = seedlistPeerIds
-        )
-
-        _ <- logger.debug(
-          s"Facilitator selection for key=$key: " +
-            s"previousEligible=${filteredPreviousEligible.size}, " +
-            s"candidates=${filteredCandidates.size}, " +
-            s"fullBase=${fullBase.size}"
-        )
-
-        // TCA filter: degraded = consensus-agreed evictions from lastOutcome.removedFacilitators.
-        // See dag-l0 mirror for full rationale. Previously this read `signedMajorityArtifact.proofs`
-        // which is per-node-local and caused divergent committees across nodes.
-        lastFacilitators = lastOutcome.facilitators.value.toSet
-        lastSigners = lastFacilitators -- lastOutcome.removedFacilitators.value
-        tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
-        tcaFilteredBase = tcaDegraded match {
-          case Some(degraded) =>
-            val filtered = fullBase.filterNot(degraded.contains)
-            if (filtered.isEmpty) fullBase
-            else filtered
-          case None => fullBase
-        }
-
-        _ <- tcaDegraded.traverse_ { degraded =>
-          ConsensusLog.info(
-            logger,
-            Category.Facilitator,
-            key.show,
-            "n/a",
-            Event.TcaFilterApplied,
-            "tcaDegraded" -> degraded.size.toString,
-            "fullBase" -> fullBase.size.toString,
-            "tcaFiltered" -> tcaFilteredBase.size.toString,
-            "degradedPeers" -> degraded.toList.map(_.value.value.take(8)).mkString(",")
-          )
-        }
-
-        // All eligible after collateral filtering (includes previously removed peers so they can re-enter)
-        allEligible <- tcaFilteredBase
-          .filterA(
-            consensusFns.facilitatorFilter(
-              lastOutcome.finished.signedMajorityArtifact,
-              lastOutcome.finished.context,
-              _
-            )
-          )
-          .map { list =>
-            if (list.isEmpty) List(selfId) else list
-          }
-
-        filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
-        _ <- filteredOutByCollateral.traverse_ { peerId =>
-          logger.debug(s"Facilitator ${peerId.show} removed by facilitatorFilter for key=$key")
-        }
-
-        // Multi-round removal penalty (security tier). Mirror of dag-l0 cleanup -- v19
-        // tier partition handles chronic non-signers, prior-round-missing, tightening
-        // window, and candidate deferral at CommitteeBuilder. Penalty remains the
-        // post-fork-eviction gate. Deterministic: derived from consensus-agreed lastOutcome.
-        // Stage 4 cert-anchored penalties: pure ordinal comparison against the consensus-agreed
-        // key, unioned into `penalizedPeers`. Mirror of dag-l0; see there for full rationale.
-        certPenalizedPeers = lastOutcome.penaltyUntil
-          .getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal])
-          .filter { case (_, until) => until.value.value > key.value.value }
-          .keySet
-        penalizedPeers = lastOutcome.removalPenalties.filter(_._2 > 0).keySet ++ certPenalizedPeers
-
-        // B2 re-admission probation. Non-bypassable; see dag-l0 mirror.
-        probationPeers = ReadmissionMaintenance.probationPeers(lastOutcome.readmissionCountdown)
-
-        _ <- logger
-          .debug(
-            s"Removal penalties for key=$key: ${penalizedPeers.size} penalized peers" +
-              (if (penalizedPeers.nonEmpty)
-                 s" [${lastOutcome.removalPenalties.filter(_._2 > 0).map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
-               else "")
-          )
-          .whenA(penalizedPeers.nonEmpty)
-
-        _ <- logger
-          .debug(
-            s"Readmission probation for key=$key: ${probationPeers.size} probation peers" +
-              (if (probationPeers.nonEmpty)
-                 s" [${lastOutcome.readmissionCountdown.map(kv => s"${kv._1.value.value.take(8)}:${kv._2}").mkString(",")}]"
-               else "")
-          )
-          .whenA(probationPeers.nonEmpty)
-        _ <- Metrics[F].updateGauge("dag_consensus_readmission_probation_size", probationPeers.size.toLong)
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_readmission_probation_ready_size",
-          lastOutcome.readmissionCountdown.count { case (_, countdown) => countdown == 0 }.toLong
-        )
-
-        // Per-peer quality gauges (Prometheus). With v19 cleanup, the quality-degradation
-        // override in CommitteeBuilder demotes peers with cumulative ratio < minRatio to
-        // Tier 1, so these gauges remain the key operator signal for "who's drifting toward
-        // Tier 1?"
-        peerIdLabel = Metrics.unsafeLabelName("peer_id")
-        _ <- lastOutcome.peerQuality.toList.traverse_ {
-          case (pid, (completed, participated)) =>
-            val ratio = if (participated > 0) completed.toDouble / participated.toDouble else 1.0
-            val pidTag: Metrics.TagSeq = Seq((peerIdLabel, pid.value.value.take(8)))
-            Metrics[F].updateGauge("dag_currency_consensus_peer_quality_ratio", ratio, pidTag) >>
-              Metrics[F].updateGauge("dag_currency_consensus_peer_quality_participated", participated.toLong, pidTag) >>
-              Metrics[F].updateGauge("dag_currency_consensus_peer_quality_completed", completed.toLong, pidTag)
-        }
-
-        // Clear the abandoned-missing tracker every round (local-only, never used for exclusion).
-        abandonedMissing <- peerQualityTracker.getAndClearAbandonedMissingPeers
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Category.Facilitator,
-            key.show,
-            "n/a",
-            Event.AbandonedMissingLogged,
-            "count" -> abandonedMissing.size.toString,
-            "peers" -> abandonedMissing.toList.map(_.value.value.take(8)).mkString(",")
-          )
-          .whenA(abandonedMissing.nonEmpty)
-
-        // Eligibility: penalty + probation only. v19 tier partition at CommitteeBuilder
-        // handles all behavioural classification beyond these two security/B2 gates.
-        eligibleThisRound = {
-          val excluded = penalizedPeers ++ probationPeers
-          val filtered = allEligible.filterNot(excluded.contains)
-          if (filtered.nonEmpty) filtered
-          else {
-            val allEligibleMinusProbation = allEligible.filterNot(probationPeers.contains)
-            if (allEligibleMinusProbation.nonEmpty) allEligibleMinusProbation
-            else if (allEligible.nonEmpty) allEligible
-            else List(selfId)
-          }
-        }
-
-        // Apply deterministic subset selection using hash-distance ordering
-        // Uses the previous round's snapshot hash as entropy for randomization
-        entropy = lastOutcome.finished.snapshotHash
-        selectedFacilitators = facilitatorSelector.select(eligibleThisRound, entropy)
-        admissionSizing = ConsensusPeerController.AdmissionSizing.from(
-          config,
-          coreCommitteeSize,
-          selectedFacilitators.size
-        )
-        expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
-        expansionAllowedThisRound = ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
-          key.value.value,
-          config.activeAdmissionExpansionIntervalRounds
-        )
-        maxExpansionThisRound =
-          if (expansionAllowedThisRound) config.activeAdmissionMaxExpansionPerRound
-          else 0
-        // Stage 4 read-side switch with carried-map fallback while the evidence window is
-        // empty. Mirror of dag-l0; see there for full rationale. The evidence-vs-carried
-        // decision (including empty viewChanges / selfHealth in the evidence regime) lives
-        // entirely inside controllerInputsWithFallback -- no conditional logic here.
-        controllerInputs = ControllerEvidenceDerivation.controllerInputsWithFallback(
-          evidence = lastOutcome.controllerEvidence.getOrElse(SortedMap.empty),
-          carriedScores = lastOutcome.activeAdmissionScores.toMap,
-          carriedQuality = lastOutcome.peerQuality.toMap,
-          carriedTiers = lastOutcome.peerTiers,
-          carriedViewChanges = lastOutcome.peerViewChanges.toMap,
-          carriedSelfHealth = lastOutcome.peerSelfHealth.toMap
-        )
-        _ <- logger.info(
-          s"Controller inputs for key=$key: " + (
-            if (controllerInputs.evidenceRounds === 0) "controller_evidence=empty fallback=carried"
-            else s"controller_evidence=${controllerInputs.evidenceRounds} rounds"
-          )
-        )
-        activeAdmission = ConsensusPeerController.chooseActive(
-          ConsensusPeerController.AdmissionInput(
-            selected = selectedFacilitators,
-            recentSigners = lastOutcome.recentSigners,
-            latestRoundStartFacilitators =
-              lastOutcome.controllerEvidence.flatMap(_.lastOption.map(_._2.roundStartFacilitators.toSet)).getOrElse(Set.empty),
-            peerQuality = controllerInputs.peerQuality,
-            activeScores = controllerInputs.activeScores,
-            sizing = admissionSizing,
-            minParticipationObservations = config.minParticipationObservations,
-            minParticipationRatio = config.minParticipationRatio,
-            config = ConsensusPeerController.Config(
-              promoteThreshold = config.activeAdmissionPromoteThreshold,
-              retainThreshold = config.activeAdmissionRetainThreshold,
-              demoteThreshold = config.activeAdmissionDemoteThreshold,
-              maxScore = config.activeAdmissionMaxScore,
-              signatureReward = config.activeAdmissionSignatureReward,
-              responderReward = config.activeAdmissionResponderReward,
-              missedActivePenalty = config.activeAdmissionMissedActivePenalty,
-              timeoutMissingPenalty = config.activeAdmissionTimeoutMissingPenalty,
-              evictedPenalty = config.activeAdmissionEvictedPenalty,
-              degradedPenalty = config.activeAdmissionDegradedPenalty,
-              criticalPenalty = config.activeAdmissionCriticalPenalty,
-              passiveDecay = config.activeAdmissionPassiveDecay,
-              maxExpansionPerRound = maxExpansionThisRound,
-              minProbationReentrySlots = config.activeAdmissionMinProbationReentrySlots,
-              recentSignerWindow = config.activeAdmissionRecentSignerWindow
-            )
-          )
-        )
-        activeFacilitators = activeAdmission.active
-
-        _ <- ConsensusLog
-          .info(
-            logger,
-            Category.Facilitator,
-            key.show,
-            "n/a",
-            Event.FacilitatorSubsetting,
-            "allEligible" -> allEligible.size.toString,
-            "eligibleThisRound" -> eligibleThisRound.size.toString,
-            "selected" -> selectedFacilitators.size.toString,
-            "active" -> activeFacilitators.size.toString,
-            "activeTarget" -> activeAdmission.targetSize.toString,
-            "activeCandidates" -> activeAdmission.candidateSize.toString,
-            "promotedCandidates" -> activeAdmission.promotedCandidateSize.toString,
-            "scoreExcluded" -> activeAdmission.scoreExcludedSize.toString,
-            "qualityExcluded" -> activeAdmission.qualityExcludedSize.toString,
-            "demotedRecentSigners" -> activeAdmission.demotedRecentSignerSize.toString,
-            "belowRetainRecentSigners" -> activeAdmission.belowRetainRecentSignerSize.toString,
-            "recentSignerPool" -> activeAdmission.recentSignerPoolSize.toString,
-            "expansionAdmitted" -> activeAdmission.expansionAdmittedSize.toString,
-            "reserveAdmitted" -> activeAdmission.reserveAdmittedSize.toString,
-            "probationAdmitted" -> activeAdmission.probationAdmittedSize.toString,
-            "stickyProbationCandidates" -> activeAdmission.stickyProbationCandidateSize.toString,
-            "freshProbationCandidates" -> activeAdmission.freshProbationCandidateSize.toString,
-            "freshProbationStarved" -> activeAdmission.freshProbationStarved.toString,
-            "expansionIntervalRounds" -> expansionIntervalRounds.toString,
-            "expansionAllowed" -> expansionAllowedThisRound.toString,
-            "recentSignerWindow" -> activeAdmission.recentWindowSize.toString,
-            "recentSignerFilterApplied" -> activeAdmission.recentFilterApplied.toString,
-            "recentSignerExclusions" -> activeAdmission.exclusions.size.toString
-          )
-          .whenA(selectedFacilitators.size < allEligible.size || activeAdmission.exclusions.nonEmpty)
-
-        admissionReasonLabel = Metrics.unsafeLabelName("reason")
-        admissionDecisionLabel = Metrics.unsafeLabelName("decision")
-        _ <- activeAdmission.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_active_facilitator_admission_total",
-                exclusions.size,
-                Seq(
-                  admissionDecisionLabel -> "excluded",
-                  admissionReasonLabel -> reason
-                )
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_expansion_admitted_total",
-          activeAdmission.expansionAdmittedSize,
-          Seq.empty
-        )
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_reserve_admitted_total",
-          activeAdmission.reserveAdmittedSize,
-          Seq.empty
-        )
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_admission_total",
-          activeAdmission.probationAdmittedSize,
-          Seq(
-            admissionDecisionLabel -> "admitted",
-            admissionReasonLabel -> "probation"
-          )
-        )
-        _ <- activeAdmission.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_active_facilitator_expansion_excluded_total",
-                exclusions.size,
-                Seq(admissionReasonLabel -> reason)
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_active_facilitator_admission_total",
-          activeFacilitators.size,
-          Seq(
-            admissionDecisionLabel -> "admitted",
-            admissionReasonLabel -> "selected_pool"
-          )
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_selected_size", selectedFacilitators.size.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_target_size", activeAdmission.targetSize.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_candidate_size", activeAdmission.candidateSize.toLong)
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_promoted_candidate_size",
-          activeAdmission.promotedCandidateSize.toLong
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_admitted_size", activeFacilitators.size.toLong)
-        _ <- Metrics[F]
-          .updateGauge("dag_consensus_active_facilitator_probation_admitted_size", activeAdmission.probationAdmittedSize.toLong)
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_sticky_probation_candidate_size",
-          activeAdmission.stickyProbationCandidateSize.toLong
-        )
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_fresh_probation_candidate_size",
-          activeAdmission.freshProbationCandidateSize.toLong
-        )
-        _ <- Metrics[F].updateGauge(
-          "dag_consensus_active_facilitator_fresh_probation_starved",
-          if (activeAdmission.freshProbationStarved) 1L else 0L
-        )
-        _ <- Metrics[F]
-          .updateGauge("dag_consensus_active_facilitator_reserve_admitted_size", activeAdmission.reserveAdmittedSize.toLong)
-        _ <- Metrics[F].updateGauge("dag_consensus_active_facilitator_recent_pool_size", activeAdmission.recentSignerPoolSize.toLong)
-        activeExclusionCounts = activeAdmission.exclusions.groupMapReduce(_.reason.label)(_ => 1)(_ + _)
-        _ <- List(
-          ActiveFacilitatorAdmission.ExclusionReason.QualityBelowThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowPromoteThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowDemoteThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.ScoreBelowRetainThreshold,
-          ActiveFacilitatorAdmission.ExclusionReason.MissedLatestRound
-        ).traverse_ { reason =>
-          Metrics[F].updateGauge(
-            "dag_consensus_active_facilitator_blocker_size",
-            activeExclusionCounts.getOrElse(reason.label, 0).toLong,
-            Seq(admissionReasonLabel -> reason.label)
-          )
-        }
-
-        (withdrawn, active) = activeFacilitators.partition { peerId =>
+        (withdrawn, remained) = roundStartFacilitators.partition { peerId =>
           resources.withdrawalsMap.get(peerId).contains(CurrencyConsensusKind.Facility)
         }
-        _ <- withdrawn.traverse_ { peerId =>
-          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus at key=$key")
-        }
+
         time <- Clock[F].monotonic
+        // The declaration domain is fixed before applying asynchronous withdrawal
+        // intent. Every honest node therefore emits the same domain whether the
+        // withdrawal arrived just before or just after state creation.
+        roundStartFacilitatorSet = SortedSet.from(roundStartFacilitators)
+        facilitatorsHash <- HasherSelector[F].withCurrent(implicit hasher => roundStartFacilitatorSet.hash)
+        parentArtifactHash <- HasherSelector[F].withCurrent(implicit hasher => lastOutcome.finished.signedMajorityArtifact.hash)
         lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
-
-        // v19 multi-committee derivation, including the chronic-core replacement ladder
-        // (evidence-derived `chronicMisses` bars chronic peers from Core and swaps them for
-        // healthy reserves). Mirror of dag-l0; see CommitteeBuilder scaladoc for the ladder.
-        committees = CommitteeBuilder.build(
-          candidates = active,
-          priorTiers = controllerInputs.peerTiers,
-          peerQuality = controllerInputs.peerQuality,
-          coreFloor = coreCommitteeSize,
-          minObservations = config.minParticipationObservations,
-          minRatio = config.minParticipationRatio,
-          nonCorePeers = activeAdmission.probationAdmitted.toSet,
-          chronicMisses = controllerInputs.chronicMisses,
-          activeScores = controllerInputs.activeScores
-        )
-
-        _ <- logger
-          .info(
-            s"Chronic core replacement at key=$key: " +
-              s"excluded=${committees.chronicExcluded.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")} " +
-              s"replacements=${committees.chronicReplacements.map(_.value.value.take(8)).mkString(",")} " +
-              s"readmitted=${committees.chronicReadmitted.map { case (pid, misses) => s"${pid.value.value.take(8)}:$misses" }.mkString(",")}"
-          )
-          .whenA(committees.chronicExcluded.nonEmpty || committees.chronicReadmitted.nonEmpty)
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_chronic_core_replacement_total",
-          committees.chronicReplacements.size,
-          Seq.empty
-        )
-        _ <- Metrics[F].updateGauge("dag_consensus_chronic_core_excluded_size", committees.chronicExcluded.size.toLong)
-
-        _ <- ConsensusLog.info(
-          logger,
-          Category.Facilitator,
-          key.show,
-          "n/a",
-          Event.FacilitatorsFinalized,
-          "core" -> committees.core.size.toString,
-          "tier1" -> committees.tier1.size.toString,
-          "witness" -> committees.witness.size.toString,
-          "coreFloor" -> coreCommitteeSize.toString
-        )
-
-        // Quality-weighted leader selection using consensus-agreed integer quality scores.
-        // v19: leader pool draws ONLY from the Core committee. See dag-l0 mirror.
-        coreList = committees.core
-        leaderEligibility = LeaderEligibility.fromRecentSigners(
-          core = coreList,
-          peerQuality = controllerInputs.peerQuality,
-          recentSigners = lastOutcome.recentSigners,
-          minParticipationObservations = config.minParticipationObservations,
-          minLeaderPoolSize = config.minLeaderPoolSize
-        )
-        leaderPool = leaderEligibility.leaderPool
-        exclusionReasonLabel = Metrics.unsafeLabelName("reason")
-        exclusionDecisionLabel = Metrics.unsafeLabelName("decision")
-        _ <- leaderEligibility.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_leader_eligibility_total",
-                exclusions.size,
-                Seq(
-                  exclusionDecisionLabel -> "excluded",
-                  exclusionReasonLabel -> reason
-                )
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_leader_eligibility_total",
-          leaderPool.size,
-          Seq(
-            exclusionDecisionLabel -> "eligible",
-            exclusionReasonLabel -> "selected_pool"
-          )
-        )
-        // Deterministic currency-L0 view seed (mirror of dag-l0 GlobalSnapshotConsensusStateCreator):
-        // `timeView` is computed as a pacemaker timeout hint only, NOT proposal-critical state. A local
-        // wall clock must not pick the round-start view/leader directly; view movement must arrive
-        // through the signed VCV/VCC path so all honest peers converge on the same view before
-        // accepting proposals.
-        nowMs <- Clock[F].realTime.map(_.toMillis)
-        parentEndTimeMs = lastOutcome.recentRoundEndTimes.lastOption.map(_._2)
-        timeView = ViewFromTime.compute(nowMs, parentEndTimeMs, config.viewInterval.toMillis)
-        // Round-start view must be certificate-derived. `priorAbandonmentCount` is a local retry
-        // diagnostic and `timeView` is only a pacemaker hint; neither is quorum evidence, so neither
-        // may seed proposal-critical view/leader selection.
-        initialView = 0
-        leader = facilitatorSelector.selectLeaderWeighted(
-          leaderPool,
-          entropy,
-          viewNumber = initialView,
-          qualityScores = controllerInputs.peerQuality,
-          selfHealthHints = controllerInputs.selfHealth,
-          peerViewChanges = controllerInputs.viewChanges,
-          minLeaderRatioPct = config.leaderRotationMinRatioPct,
-          hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
-          minLeaderPoolSize = config.minLeaderPoolSize
-        )
-
-        _ <- ConsensusLog.info(
-          logger,
-          Category.Facilitator,
-          key.show,
-          if (leader === selfId) "Leader" else "Validator",
-          Event.FacilitatorsFinalized,
-          "eligible" -> allEligible.size.toString,
-          "active" -> active.size.toString,
-          "core" -> coreList.size.toString,
-          "leaderPool" -> leaderPool.size.toString,
-          "recentSignerActivePool" -> activeAdmission.recentSignerPoolSize.toString,
-          "recentSignerActiveFilterApplied" -> activeAdmission.recentFilterApplied.toString,
-          "activeExclusions" -> activeAdmission.exclusions.size.toString,
-          "graduatedLeaderPool" -> leaderEligibility.graduatedPoolSize.toString,
-          "recentSignerLeaderPool" -> leaderEligibility.recentSignerPoolSize.toString,
-          "recentSignerWindow" -> leaderEligibility.recentWindowSize.toString,
-          "recentSignerFilterApplied" -> leaderEligibility.recentFilterApplied.toString,
-          "leaderExclusions" -> leaderEligibility.exclusions.size.toString,
-          "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
-          "leader" -> ConsensusLog.pid(leader),
-          "timeViewTimeoutHint" -> timeView.toString
-        )
-
-        state = ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
-          key,
-          lastOutcome,
-          Facilitators(active),
-          // Canonical round-start committee -- frozen at creation, never mutated by withdrawals.
-          Facilitators(active),
-          CollectingFacilities(
-            maybeTrigger,
-            lastOutcome.finished.facilitatorsHash,
-            lastOutcome.finished.snapshotHash
-          ),
-          time,
-          withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
-          eligibleFacilitators = EligibleFacilitators(allEligible),
-          coreFacilitators = CoreFacilitators(committees.core),
-          tier1Facilitators = Tier1Facilitators(committees.tier1),
-          leader = leader,
-          // Round-start view = 0 (certificate-derived only; mirror of dag-l0). MUST match the
-          // viewNumber argument passed to selectLeaderWeighted above for leader consistency.
-          viewNumber = initialView,
-          // Mirror dag-l0 alpha.90 P0 #1 self-wedge fix -- see GlobalSnapshotConsensusStateCreator
-          // for the full rationale on `initialViewNumber`. Frozen at construction so the validator
-          // can accept the no-VCC seed-view proposal.
-          initialViewNumber = initialView,
-          entropy = entropy
-        )
-
-        role = ConsensusLog.role(selfId, leader)
-        leaderScore <- peerQualityTracker.getQualityScore(leader)
-        _ <- {
-          val basePairs = Seq(
-            "trigger" -> maybeTrigger.map(_.toString).getOrElse("none"),
-            "facilitators" -> active.size.toString,
-            "eligible" -> allEligible.size.toString,
-            "candidates" -> filteredCandidates.size.toString,
-            "leader" -> ConsensusLog.pid(leader),
-            "leaderScore" -> f"$leaderScore%.2f",
-            "self" -> ConsensusLog.pid(selfId),
-            "view" -> initialView.toString,
-            "lastGlobalOrd" -> lastGlobalSnapshotOrdinal.show
-          )
-          val optionalPairs =
-            (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
-              (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
-              (if (probationPeers.nonEmpty) Seq("probation" -> probationPeers.size.toString) else Seq.empty) ++
-              (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
-              (if (priorAbandonmentCount > 0) Seq("retryCount" -> priorAbandonmentCount.toString) else Seq.empty)
-          ConsensusLog.info(logger, Category.Lifecycle, key.show, role, Event.RoundStarted, (basePairs ++ optionalPairs): _*)
-        }
-
-        // Sample all Facility inputs before the state commit. A retained retry must only repeat
-        // self-storage and direct gossip of this immutable declaration; it must never re-read the
-        // mempool, local health, or wall clock.
-        eventHashes <- eventMempool.getEventHashes
-        selfHealth <- localHealthMonitor.current
-        // v19 phase 2: wall-clock millis at signing time. See dag-l0 mirror.
-        proposerClockMs <- Clock[F].realTime.map(_.toMillis)
+        eventHashes <- facilityEventHashes(remained)
         facility = Facility(
           eventHashes,
-          candidates,
+          eligibleCandidates,
           maybeTrigger,
-          lastOutcome.finished.facilitatorsHash,
           lastGlobalSnapshotOrdinal,
-          lastOutcome.finished.snapshotHash,
-          consensusConfigHash = consensusConfigHash.some,
-          selfHealthHint = selfHealth.some,
-          proposerClockMs = proposerClockMs.some
+          AttemptDomain(facilitatorsHash, parentArtifactHash, lastOutcome.finished.binaryArtifactHash)
         )
-        declaration = ConsensusPeerDeclaration(key, facility)
-        effect = ConsensusStateCreator.exactFacilityEffect[F, CurrencySnapshotKey](
-          facility,
-          declaration,
-          active.toSet
-        )(
-          captured => consensusStorage.addFacility(selfId, key, captured).void,
-          (captured, targets) => gossip.spreadDirect(captured, targets)
-        )
-
-      } yield (state, effect)
+        result = Option.when(remained.contains(selfId)) {
+          val effect = consensusStorage.retainAttemptDomain(key, facility.domain) >>
+            consensusStorage.addFacility(selfId, key, facility, facility.domain.some) >>
+            gossip.spread(ConsensusPeerDeclaration(key, facility))
+          val state = ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind](
+            key,
+            lastOutcome,
+            Facilitators(remained),
+            CollectingFacilities(
+              maybeTrigger,
+              facilitatorsHash
+            ),
+            time,
+            withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
+            spreadAckKinds = Set.empty
+          )
+          (state, effect)
+        }
+        _ <- logger
+          .debug(s"Skipping Currency facilitation for key=${key.show}: self is not in the flat committee")
+          .whenA(result.isEmpty)
+      } yield result
   }
 }

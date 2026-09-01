@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.FacilitatorSelector
-import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.AdmissionCertificate
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionCertificate, AdmissionReason}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -12,8 +12,7 @@ import io.constellationnetwork.security.hash.Hash
   * than that cap. Post-stall, several candidates can assemble certificates for the same round; without this cap every leader proposal
   * carries the full set and every validator rejects it -- a permanent proposal-rejection loop (live wedge at ordinal 3150066, alpha.149).
   *
-  * Shared between dag-l0's `GlobalSnapshotConsensusStateAdvancer` and currency-l0's `CurrencySnapshotConsensusStateAdvancer` (see
-  * `feedback_share_logic_no_drift` -- consensus-adjacent logic must not be replicated).
+  * Kept as a pure helper so Global L0 proposal construction and validation tests share one ordering rule.
   *
   * Selection is deterministic under input-ordering permutations: candidates are sorted by `AdmissionCertificate.ordering` (lexicographic on
   * the target `PeerId` value first, then reason / facilitatorsHash / lastSnapshotHash as tie-breakers) and the first `cap` are kept. Two
@@ -67,5 +66,24 @@ object AdmissionCertificateSelector {
     }
     val (kept, dropped) = ranked.splitAt(cap)
     Selection(kept, dropped)
+  }
+
+  /** Select the ACS half of an atomic silent-seat replacement.
+    *
+    * This intentionally reverses the ordinary probation-first proposal priority. A probation target can still be pre-Ready and therefore
+    * cannot replace a signer denominator-neutrally. Partitioning before the cap ensures a waiting probation certificate cannot hide a
+    * simultaneously available open ReadyAtTip certificate when the configured cap is one.
+    */
+  def selectOpenReadyForReplacement(
+    assembled: Iterable[AdmissionCertificate],
+    activeAdmissionMaxExpansionPerRound: Int,
+    entropy: Hash,
+    probation: Set[PeerId]
+  ): Selection = {
+    val all = assembled.toList
+    val openReady = all.filter(cert => !probation.contains(cert.targetPeer) && cert.reason == AdmissionReason.ReadyAtTip)
+    val selected = selectForProposal(openReady, activeAdmissionMaxExpansionPerRound, entropy)
+    val kept = selected.kept.toSet
+    Selection(selected.kept, all.filterNot(kept.contains).sorted(AdmissionCertificate.ordering))
   }
 }

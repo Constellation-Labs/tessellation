@@ -4,7 +4,11 @@ import cats.effect.IO
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncOrdinal, GlobalSnapshotSyncReference}
+import io.constellationnetwork.currency.schema.globalSnapshotSync.{
+  GlobalSnapshotSync,
+  GlobalSnapshotSyncOrdinal,
+  GlobalSnapshotSyncReference
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.RecoveryGlobalSnapshotSync._
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.cluster.SessionToken
@@ -64,7 +68,8 @@ object RecoveryGlobalSnapshotSyncSuite extends SimpleIOSuite {
       retainedCount = 50,
       syncOffset = 2L,
       metagraphLastAcceptedOn = ordinal(lastAccepted),
-      unappliedGlobalChangeOrdinals = SortedSet.empty
+      unappliedGlobalChangeOrdinals = SortedSet.empty,
+      snapshotProtocolV1ActivationOrdinal = ordinal(51L)
     )
 
   private def reset(anchor: Long, sessionValue: Long = 2L): GlobalSnapshotSync =
@@ -82,12 +87,27 @@ object RecoveryGlobalSnapshotSyncSuite extends SimpleIOSuite {
 
   test("an in-window anchor is rejected when sync offset puts its selected target outside retention") {
     val signer = peer(1)
+    val context = validContext(signer).copy(snapshotProtocolV1ActivationOrdinal = SnapshotOrdinal.MinValue)
     IO.pure(
       expect.same(
         Left(ResetSelectedTargetOutsideRetainedWindow),
-        validateReset(signer, reset(52L), validContext(signer))
+        validateReset(signer, reset(52L), context)
       )
     )
+  }
+
+  test("a reset selected target cannot precede snapshot protocol v1 activation") {
+    val signer = peer(1)
+    val context = validContext(signer).copy(snapshotProtocolV1ActivationOrdinal = ordinal(99L))
+
+    IO.pure(expect.same(Left(ResetBeforeSnapshotProtocolV1Activation), validateReset(signer, reset(100L), context)))
+  }
+
+  test("an absent MaxValue protocol activation never authorizes a recovery reset") {
+    val signer = peer(1)
+    val context = validContext(signer).copy(snapshotProtocolV1ActivationOrdinal = SnapshotOrdinal.MaxValue)
+
+    IO.pure(expect.same(Left(ResetBeforeSnapshotProtocolV1Activation), validateReset(signer, reset(100L), context)))
   }
 
   test("a locally cached snapshot ahead of the consensus parent cannot authorize a reset") {

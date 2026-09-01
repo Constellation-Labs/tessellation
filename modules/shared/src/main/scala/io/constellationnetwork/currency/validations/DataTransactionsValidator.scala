@@ -9,7 +9,7 @@ import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdate
 import io.constellationnetwork.currency.dataApplication.Errors.MissingDataUpdateTransaction
 import io.constellationnetwork.currency.dataApplication.FeeTransaction.getByDataUpdate
 import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.validations.FeeTransactionValidator.validateFeeTransaction
+import io.constellationnetwork.currency.validations.FeeTransactionValidator.{validateAllFeeTransactions, validateFeeTransaction}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
@@ -28,13 +28,26 @@ object DataTransactionsValidator {
     ) => F[ValidatedNec[DataApplicationValidationError, Unit]],
     feeValidationOrdinal: SnapshotOrdinal,
     globalSnapshotOrdinal: SnapshotOrdinal,
-    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal,
+    validateEveryFeeTransaction: Boolean
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] = {
 
     val dataUpdates = dataTransactions.collect {
       case Signed(dataUpdate: DataUpdate, proofs) => Signed(dataUpdate, proofs)
     }
     NonEmptyList.fromList(dataUpdates) match {
+      case Some(value) if validateEveryFeeTransaction =>
+        for {
+          // Only the metagraph's own fee policy stays per-data-update. The signature, hash and balance
+          // checks live in validateAllFeeTransactions, which sees every fee transaction in the envelope
+          // rather than the one getByDataUpdate happens to return.
+          perDataUpdateValidation <- value.traverse { dataUpdate =>
+            getByDataUpdate(dataTransactions, dataUpdate.value, dataApplication.serializeUpdate)
+              .flatMap(maybeFeeTransaction => validateFee(feeValidationOrdinal)(dataUpdate, maybeFeeTransaction))
+          }.map(_.reduce)
+          allFeeTransactionsValidation <- validateAllFeeTransactions(dataTransactions, balances, dataApplication)
+        } yield perDataUpdateValidation.productR(allFeeTransactionsValidation)
+
       case Some(value) =>
         value.traverse { dataUpdate =>
           for {
@@ -53,6 +66,7 @@ object DataTransactionsValidator {
               .productR(feeAgainstDataUpdateValidation)
         }
           .map(_.reduce)
+
       case None =>
         MissingDataUpdateTransaction
           .asInstanceOf[DataApplicationValidationError]
@@ -81,7 +95,9 @@ object DataTransactionsValidator {
         dataApplication.validateFee,
         gsOrdinal,
         gsOrdinal,
-        feeTransactionSecurityActivationOrdinal
+        feeTransactionSecurityActivationOrdinal,
+        // L1 is an admission check and never replays signed history, so it always runs the current rules.
+        validateEveryFeeTransaction = true
       )
     } yield dataUpdatesValidation.productR(dataTransactionsValidation)
 
@@ -92,7 +108,8 @@ object DataTransactionsValidator {
     currencySnapshotOrdinal: SnapshotOrdinal,
     parentGlobalSnapshotOrdinal: SnapshotOrdinal,
     currentState: DataState[DataOnChainState, DataCalculatedState],
-    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal,
+    validateEveryFeeTransaction: Boolean
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
     for {
       dataUpdates <- OptionT
@@ -106,7 +123,8 @@ object DataTransactionsValidator {
         dataApplication.validateFee,
         currencySnapshotOrdinal,
         parentGlobalSnapshotOrdinal,
-        feeTransactionSecurityActivationOrdinal
+        feeTransactionSecurityActivationOrdinal,
+        validateEveryFeeTransaction
       )
     } yield dataUpdatesValidation.productR(dataTransactionsValidation)
 

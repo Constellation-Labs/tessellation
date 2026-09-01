@@ -159,16 +159,22 @@ class AllowSpendOpsManager[F[_]: Async] {
   def updateCurrencyBalancesBySpendTransactions(
     currentBalances: SortedMap[Address, Balance],
     allActiveCurrencyAllowSpends: SortedMap[Address, List[io.constellationnetwork.security.Hashed[AllowSpend]]],
-    metagraphIdSpendTransactions: List[SpendTransaction]
+    metagraphIdSpendTransactions: List[SpendTransaction],
+    consumeSettledAllowSpends: Boolean
   ): Either[BalanceArithmeticError, SortedMap[Address, Balance]] =
-    metagraphIdSpendTransactions.foldLeft[Either[BalanceArithmeticError, SortedMap[Address, Balance]]](Right(currentBalances)) {
-      (txnAccEither, spendTransaction) =>
+    metagraphIdSpendTransactions
+      .foldLeft[
+        Either[
+          BalanceArithmeticError,
+          (SortedMap[Address, Balance], SortedMap[Address, List[io.constellationnetwork.security.Hashed[AllowSpend]]])
+        ]
+      ](Right((currentBalances, allActiveCurrencyAllowSpends))) { (txnAccEither, spendTransaction) =>
         for {
-          txnAcc <- txnAccEither
+          (txnAcc, availableAllowSpends) <- txnAccEither
           destinationAddress = spendTransaction.destination
           sourceAddress = spendTransaction.source
 
-          addressAllowSpends = allActiveCurrencyAllowSpends.getOrElse(sourceAddress, List.empty)
+          addressAllowSpends = availableAllowSpends.getOrElse(sourceAddress, List.empty)
           spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
           currentDestinationBalance = txnAcc.getOrElse(destinationAddress, Balance.empty)
 
@@ -179,6 +185,11 @@ class AllowSpendOpsManager[F[_]: Async] {
               val sourceAllowSpendAddress = allowSpend.source
               val currentSourceBalance = txnAcc.getOrElse(sourceAllowSpendAddress, Balance.empty)
               val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
+              val remainingAllowSpends =
+                if (consumeSettledAllowSpends)
+                  availableAllowSpends.updated(sourceAddress, addressAllowSpends.filterNot(_.hash === allowSpend.hash))
+                else
+                  availableAllowSpends
 
               for {
                 updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
@@ -190,9 +201,12 @@ class AllowSpendOpsManager[F[_]: Async] {
                   )
                 )
               } yield
-                txnAcc
-                  .updated(destinationAddress, updatedDestinationBalance)
-                  .updated(sourceAllowSpendAddress, updatedSourceBalance)
+                (
+                  txnAcc
+                    .updated(destinationAddress, updatedDestinationBalance)
+                    .updated(sourceAllowSpendAddress, updatedSourceBalance),
+                  remainingAllowSpends
+                )
 
             case None =>
               val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
@@ -201,12 +215,16 @@ class AllowSpendOpsManager[F[_]: Async] {
                 updatedDestinationBalance <- currentDestinationBalance.plus(spendTransactionAmount)
                 updatedSourceBalance <- currentSourceBalance.minus(spendTransactionAmount)
               } yield
-                txnAcc
-                  .updated(destinationAddress, updatedDestinationBalance)
-                  .updated(sourceAddress, updatedSourceBalance)
+                (
+                  txnAcc
+                    .updated(destinationAddress, updatedDestinationBalance)
+                    .updated(sourceAddress, updatedSourceBalance),
+                  availableAllowSpends
+                )
           }
         } yield updatedBalances
-    }
+      }
+      .map(_._1)
 
   def emitAllowSpendsExpired(
     addressToSet: SortedMap[Address, SortedSet[Signed[AllowSpend]]]

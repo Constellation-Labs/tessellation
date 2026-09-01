@@ -62,6 +62,7 @@ object artifact {
   case object SpendTransactionSourceNotApplied extends BalanceAdjustmentReason
   case object SpendTransactionDestinationNotApplied extends BalanceAdjustmentReason
   case object TokenUnlockBugDeduction extends BalanceAdjustmentReason
+  case object FeeTransactionBugDeduction extends BalanceAdjustmentReason
 
   @derive(decoder, encoder, order, ordering, show)
   case class BalanceAdjustment(
@@ -76,8 +77,8 @@ object artifact {
     *
     * This case class is included in the `artifacts` field of a `CurrencySnapshot` at the moment it is created. It signals that the listed
     * `GlobalIncrementalSnapshot` ordinals have already been consumed for extracting data — such as `SpendAction`s — and should not be
-    * reprocessed in the future. Starting with rc.13 behavior, the value is cumulative for the ordinals that GL0 still reports as unapplied:
-    * the signed parent carries them forward until GL0 acknowledges them by removing them from `unappliedGlobalChangeOrdinals`.
+    * reprocessed in the future. Under Currency snapshot protocol 1.0.0, the value is cumulative for the ordinals that GL0 still reports as
+    * unapplied: the signed parent carries them forward until GL0 acknowledges them by removing them from `unappliedGlobalChangeOrdinals`.
     *
     * This signed-chain authority replaces the former process-local cache. A JVM restart therefore cannot change whether a spend action is
     * applied or which artifact bytes are emitted.

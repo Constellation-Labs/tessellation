@@ -8,7 +8,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, StallDetector}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
@@ -74,6 +74,7 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
       case d: ConsensusPeerDeclaration[_, _]         => handleDeclaration(origin, d)
       case v: ConsensusPeerVote[_]                   => handlePeerVote(origin, v)
       case tv: ConsensusPeerTimeoutVote[_]           => handleTimeoutVote(origin, tv)
+      case ov: ConsensusPeerOutcomeVote[_]           => handleOutcomeVote(origin, ov)
       case e: ConsensusPeerEvictionVote[_]           => handleEvictionVote(origin, e)
       case av: ConsensusPeerAdmissionVote[_]         => handleAdmissionVote(origin, av)
       case vc: ConsensusAssembledVcc[_]              => handleAssembledVcc(origin, vc)
@@ -228,6 +229,41 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     }
   }
 
+  private def handleOutcomeVote(origin: PeerId, v: ConsensusPeerOutcomeVote[_]): F[Unit] = {
+    val key = v.key.asInstanceOf[Key]
+    val vote = v.vote
+    val signers = vote.proofs.toSortedSet.toList.map(_.id.toPeerId)
+
+    storage.observePeerAtKey(origin, key) >>
+      (signers match {
+        case signer :: Nil if signer === origin =>
+          ConsensusLog.debug(
+            log,
+            Category.Phase,
+            key.toString,
+            "n/a",
+            LogEvent.DeclarationReceived,
+            "kind" -> "OutcomeVote",
+            "from" -> ConsensusLog.pid(origin),
+            "view" -> vote.value.certifiedView.toString,
+            "valueHash" -> vote.value.valueHash.show.take(12)
+          ) >>
+            storage.addOutcomeVote(origin, key, vote).flatMap(triggerUpdateIfChanged(queue, key))
+        case _ =>
+          ConsensusLog.warn(
+            log,
+            Category.Phase,
+            key.toString,
+            "n/a",
+            LogEvent.DeclarationReceived,
+            "kind" -> "OutcomeVote",
+            "rejected" -> "origin_signer_mismatch_or_multiple_proofs",
+            "from" -> ConsensusLog.pid(origin),
+            "proofs" -> signers.size.toString
+          )
+      })
+  }
+
   private def handleEvictionVote(origin: PeerId, e: ConsensusPeerEvictionVote[_]): F[Unit] = {
     val key = e.key.asInstanceOf[Key]
     val observeTip = storage.observePeerAtKey(origin, key)
@@ -239,47 +275,51 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
     // else's vote is either buggy or adversarial. Rejecting relays here means the storage slot
     // is keyed by the actual signer PeerId, so duplicate-relay cannot inflate the quorum count
     // at certificate-assembly time.
-    if (!ctx.membershipPolicy.acceptsEvictionCertificates) {
-      observeTip >> ConsensusLog.debug(
-        log,
-        Category.Facilitator,
-        key.toString,
-        "n/a",
-        LogEvent.DeclarationReceived,
-        "kind" -> "EvictionVote",
-        "ignored" -> "membership_policy",
-        "from" -> ConsensusLog.pid(origin),
-        "target" -> ConsensusLog.pid(target)
-      )
-    } else if (origin =!= signer) {
-      observeTip >> ConsensusLog.warn(
-        log,
-        Category.Facilitator,
-        key.toString,
-        "n/a",
-        LogEvent.DeclarationReceived,
-        "kind" -> "EvictionVote",
-        "rejected" -> "origin_signer_mismatch",
-        "from" -> ConsensusLog.pid(origin),
-        "signer" -> ConsensusLog.pid(signer),
-        "target" -> ConsensusLog.pid(target)
-      )
-    } else {
-      observeTip >> ConsensusLog.info(
-        log,
-        Category.Facilitator,
-        key.toString,
-        "n/a",
-        LogEvent.DeclarationReceived,
-        "kind" -> "EvictionVote",
-        "from" -> ConsensusLog.pid(origin),
-        "target" -> ConsensusLog.pid(target),
-        "reason" -> signedVote.value.reason.toString
-      ) >>
-        storage
-          .addEvictionVote(origin, key, signedVote)
-          .flatMap(triggerUpdateIfChanged(queue, key)) >>
-        queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
+    storage.getState(key).flatMap { state =>
+      val acceptsAtKey = ctx.membershipPolicy.acceptsEvictionVotesAt(state.exists(_.certifiedConsensusActive))
+
+      if (!acceptsAtKey) {
+        observeTip >> ConsensusLog.debug(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "EvictionVote",
+          "ignored" -> "membership_policy_or_inactive_v35",
+          "from" -> ConsensusLog.pid(origin),
+          "target" -> ConsensusLog.pid(target)
+        )
+      } else if (origin =!= signer) {
+        observeTip >> ConsensusLog.warn(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "EvictionVote",
+          "rejected" -> "origin_signer_mismatch",
+          "from" -> ConsensusLog.pid(origin),
+          "signer" -> ConsensusLog.pid(signer),
+          "target" -> ConsensusLog.pid(target)
+        )
+      } else {
+        observeTip >> ConsensusLog.info(
+          log,
+          Category.Facilitator,
+          key.toString,
+          "n/a",
+          LogEvent.DeclarationReceived,
+          "kind" -> "EvictionVote",
+          "from" -> ConsensusLog.pid(origin),
+          "target" -> ConsensusLog.pid(target),
+          "reason" -> signedVote.value.reason.toString
+        ) >>
+          storage
+            .addEvictionVote(origin, key, signedVote)
+            .flatMap(triggerUpdateIfChanged(queue, key)) >>
+          queue.offer(ConsensusCommand.CheckEvictionAssembly(key, target))
+      }
     }
   }
 
@@ -317,10 +357,14 @@ class RumorHandler[F[_]: Async: HasherSelector: Metrics, Event, Key, Artifact, C
       ) >>
         storage
           .addAdmissionVote(origin, key, signedVote)
-          .flatMap(triggerUpdateIfChanged(queue, key)) >>
-        queue.offer(
-          ConsensusCommand.CheckAdmissionAssembly(key, target)
-        )
+          .flatMap {
+            // Keep the admission pipeline ordered like the local-vote path: the last
+            // quorum vote must be assembled before proposal reevaluation can close the
+            // current round. Both commands are exact-key scoped; a duplicate vote emits
+            // neither command because it cannot change the certificate.
+            case Some(_) => StallDetector.admissionVoteFollowUpCommands(key, target).traverse_(queue.offer)
+            case None    => Async[F].unit
+          }
     }
   }
 

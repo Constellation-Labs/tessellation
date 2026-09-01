@@ -182,6 +182,9 @@ object Errors {
   case object InvalidFeeTransactionSignature extends DataApplicationValidationError {
     val message = "Fee transaction signature validation failed"
   }
+  case object SameSourceAndDestinationAddress extends DataApplicationValidationError {
+    val message = "Fee transaction source and destination should differ"
+  }
   case object InvalidSignature extends DataApplicationValidationError {
     val message = "Invalid signature in data transactions"
   }

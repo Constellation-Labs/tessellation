@@ -19,6 +19,14 @@ final case class Gl0RecoverySeedCommittee private (committee: SortedSet[PeerId])
 object Gl0RecoverySeedCommittee {
   val EnvironmentVariable: String = "CL_GL0_RECOVERY_SEED_COMMITTEE"
 
+  /** The trusted recovery path is deliberately stricter than generic committee viability.
+    *
+    * Two nodes can technically certify a third seat at a 2/3 threshold, but a two-member env also lets two accidentally identically
+    * truncated source configurations release without the intended third source. The production recovery topology has three controlled
+    * sources, so omission of any one must fail at startup rather than silently reduce recovery authority.
+    */
+  val MinimumRecoveryCommitteeSize: Int = 3
+
   private val CanonicalPeerId = "[0-9a-f]{128}".r
 
   sealed trait Error extends NoStackTrace {
@@ -74,21 +82,21 @@ object Gl0RecoverySeedCommittee {
   def validate(
     seed: Gl0RecoverySeedCommittee,
     requiredMember: PeerId,
-    seedlist: Set[PeerId],
+    seedlist: Option[Set[PeerId]],
     allowanceList: Option[Set[PeerId]],
     maxFacilitatorCount: Option[Int],
     quorumThresholdFraction: Double
   ): Either[Error, Gl0RecoverySeedCommittee] = {
     val committee = seed.committee
-    val outsideSeedlist = committee.diff(seedlist)
+    val outsideSeedlist = seedlist.fold(SortedSet.empty[PeerId])(committee.diff)
     val outsideAllowance = allowanceList.fold(SortedSet.empty[PeerId])(committee.diff)
 
     Either
       .cond(
-        committee.size >= CommitteeViability.MinimumCoordinatedCommitteeSize,
+        committee.size >= MinimumRecoveryCommitteeSize,
         (),
         Invalid(
-          s"size=${committee.size}, minimum=${CommitteeViability.MinimumCoordinatedCommitteeSize}"
+          s"size=${committee.size}, minimum=$MinimumRecoveryCommitteeSize"
         ): Error
       )
       .flatMap(_ =>
@@ -112,6 +120,13 @@ object Gl0RecoverySeedCommittee {
           maxFacilitatorCount.forall(committee.size <= _),
           (),
           Invalid(s"size=${committee.size} exceeds max-facilitator-count=${maxFacilitatorCount.getOrElse(0)}"): Error
+        )
+      )
+      .flatMap(_ =>
+        Either.cond(
+          seedlist.exists(_.nonEmpty) || allowanceList.exists(_.nonEmpty),
+          (),
+          Invalid("neither seedlist nor hash-fenced custom allowance list is configured"): Error
         )
       )
       .flatMap(_ =>

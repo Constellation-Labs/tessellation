@@ -58,7 +58,7 @@ object ViewChangeVoter {
   *
   * Mid-round facilitator eviction is not performed at this layer. Before a legacy Global L0 vote, a VCC may rotate the leader; after a
   * vote, Global L0 deliberately holds the attempt because its artifact-only signature cannot certify a different higher-view outcome
-  * envelope. Currency L0 retains its pre-rc.8 view-change policy. V35 replaces the Global L0 hold with verified full-value QCs.
+  * envelope. V35 replaces that hold with verified full-value QCs.
   */
 class ViewChangeManager[F[_]: Async: Metrics, Key, Artifact, Ctx, Status, Outcome, Kind](
   storage: ConsensusStorage[F, _, Key, _, _, Status, Outcome, Kind],
@@ -196,9 +196,10 @@ class ViewChangeManager[F[_]: Async: Metrics, Key, Artifact, Ctx, Status, Outcom
   ): F[Unit] = {
     val fromView = currentState.viewNumber.toLong
     val toView = fromView + 1L
+    val mode = storage.viewSafetyMode(currentState.certifiedConsensusActive)
 
     storage.getVoteLock(key).flatMap {
-      case maybeLock @ Some(lock) if VoteLock.blocksLegacyViewChange(maybeLock, storage.legacyViewChangePolicy) =>
+      case maybeLock @ Some(lock) if VoteLock.blocksLegacyViewChange(maybeLock, mode) =>
         // A legacy artifact signature does not bind the proposal envelope. Helping to
         // certify a higher view after voting can only create a view this node is forbidden
         // to sign, and may help a different envelope finalize. Stay on the old attempt and

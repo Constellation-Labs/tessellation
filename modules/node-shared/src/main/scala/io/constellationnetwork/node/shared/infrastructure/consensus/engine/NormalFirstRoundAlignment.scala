@@ -11,7 +11,7 @@ import io.constellationnetwork.schema.peer.PeerId
   * outcome, while `facilityMatches` recognizes the layer's existing first-round Facility fields. The policy controls only when a local
   * process starts; it never changes the committee, quorum, declaration bytes, hashes, or state proof.
   *
-  * Currency L0 and true bootstrap leave this policy absent. Global L0 enables it only after the carried bootstrap window has completed.
+  * True bootstrap leaves this policy absent. Global L0 enables it only after the carried bootstrap window has completed.
   */
 final case class NormalFirstRoundAlignment[Key, Outcome](
   committeeOf: Outcome => Option[SortedSet[PeerId]],

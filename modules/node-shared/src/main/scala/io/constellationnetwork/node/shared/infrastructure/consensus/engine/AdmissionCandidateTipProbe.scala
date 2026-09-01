@@ -169,28 +169,32 @@ object AdmissionCandidateTipProbe {
     }.toSet
   }
 
-  /** Open admission requires two independent, local observations of the same fixed nominee:
+  /** Open admission normally requires two independent, local observations of the same fixed nominee:
     *
     *   1. a fresh authenticated response naming the exact expected parent; and 2. an authenticated Facility declaration already observed
     *      for the current consensus round and bound to this voter's round.
     *
     * The second observation proves that the peer's consensus FSM has actually entered the round. `Ready` plus a nearby snapshot tip is not
     * sufficient: an admitted peer one round behind can otherwise occupy the next finality denominator without contributing a timely
-    * signature. Both observations govern vote emission only; the quorum-certified AdmissionCertificate remains membership authority.
+    * signature. The sole exception is the first 1 -> 2 admission of a certified-consensus lineage configured from genesis. A singleton
+    * leader can finish before an unseated follower's Facility reaches it, so requiring that Facility would make genesis growth impossible.
+    * That exception still requires a fresh authenticated exact-parent response, and it ends as soon as the second seat is installed. Both
+    * observations govern vote emission only; the quorum-certified AdmissionCertificate remains membership authority.
     */
   private[consensus] def readyOpenTarget(
     target: Option[PeerId],
     observation: Observation,
     hasCurrentRoundFacility: PeerId => Boolean,
     expectedHash: Hash,
-    expectedOrdinal: Option[SnapshotOrdinal]
+    expectedOrdinal: Option[SnapshotOrdinal],
+    currentRoundFacilityRequired: Boolean = true
   ): Set[PeerId] = {
     val freshExact = observation match {
       case Observation.Attempted(Some(tip)) => AdmissionTipReadiness.isExact(tip, expectedHash, expectedOrdinal)
       case _                                => false
     }
 
-    target.filter(pid => freshExact && hasCurrentRoundFacility(pid)).toSet
+    target.filter(pid => freshExact && (!currentRoundFacilityRequired || hasCurrentRoundFacility(pid))).toSet
   }
 
   /** Merge a direct response only when it names the exact expected parent.
@@ -252,7 +256,7 @@ object AdmissionCandidateTipProbe {
 /** Exact interpretation of a fresh, direct candidate response.
   *
   * Global L0 open admission and probation recovery require both ordinal and hash to name the expected parent. The bounded-lag cached-tip
-  * rule remains only for layers without the direct probe (currently Currency L0).
+  * rule remains available for callers that do not require the direct probe.
   */
 object AdmissionTipReadiness {
 
@@ -262,4 +266,18 @@ object AdmissionTipReadiness {
     expectedOrdinal.fold(tip.snapshotHash === expectedHash) { ordinal =>
       tip.ordinal === ordinal && tip.snapshotHash === expectedHash
     }
+
+  /** Interpret asynchronously sampled gossip without leaking certified policy into generic callers. Certified atomic membership requires
+    * the exact parent; legacy callers retain the existing bounded-lag behavior byte-for-byte.
+    */
+  def isCachedReady(
+    tip: ChainTip,
+    expectedHash: Hash,
+    expectedOrdinal: Option[SnapshotOrdinal],
+    requireExact: Boolean
+  ): Boolean =
+    if (requireExact) isExact(tip, expectedHash, expectedOrdinal)
+    else
+      tip.snapshotHash === expectedHash ||
+      expectedOrdinal.exists(ordinal => tip.ordinal.value.value + OrdinalLagTolerance >= ordinal.value.value)
 }

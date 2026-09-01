@@ -4,8 +4,8 @@ import java.security.KeyPair
 
 import cats.Parallel
 import cats.data.NonEmptySet
-import cats.effect.std.{Random, Supervisor}
-import cats.effect.{Async, IO, Resource}
+import cats.effect.Async
+import cats.effect.std.Supervisor
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
@@ -20,8 +20,7 @@ import io.constellationnetwork.currency.l0.snapshot.services.{StateChannelBinary
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
-import io.constellationnetwork.kernel._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig}
@@ -31,18 +30,14 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.{AddressService, GlobalL0Service}
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
-import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.DataApplicationSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
-import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -51,13 +46,14 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
+import eu.timepit.refined.auto._
 import org.http4s.client.Client
 
 object Services {
 
   def make[F[
     _
-  ]: Async: Parallel: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
+  ]: Async: Parallel: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
     sharedCfg: SharedConfig,
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F, R],
@@ -79,11 +75,8 @@ object Services {
     hasherSelector: HasherSelector[F],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     customPeersAllowanceList: Option[Set[AllowanceListEntry]],
-    mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
-    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
-    queues: Queues[F],
-    getPeerChainTips: F[Map[PeerId, ChainTip]],
-    consensusDispatcher: Option[ConsensusDispatcher[F]] = None
+    initialBinaryPublishingEnabled: Boolean,
+    maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector,
     currencyStateProofSelector: CurrencyStateProofSelector
@@ -91,11 +84,7 @@ object Services {
     for {
       implicit0(hasher: Hasher[F]) <- hasherSelector.getCurrent.pure[F]
 
-      // Resolve a process death between recovery-outbox preparation and local Currency commit
-      // before the sender is allowed to restore anything. A matching durable Currency artifact
-      // promotes the exact binary; an absent artifact discards only the non-publishable intent;
-      // a conflicting artifact fails startup closed.
-      _ <- storages.recoverySyncPublication.reconcilePrepared { ordinal =>
+      getDurableCurrencyArtifact = (ordinal: SnapshotOrdinal) =>
         (storages.snapshot.getHashed(ordinal), storages.snapshotInfoLocalFileSystemStorage.read(ordinal)).tupled.flatMap {
           case (Some(artifact), Some(info)) =>
             CurrencySnapshotInfo
@@ -104,7 +93,17 @@ object Services {
               .map(proof => Option.when(proof === artifact.stateProof)(artifact))
           case _ => none[Hashed[CurrencyIncrementalSnapshot]].pure[F]
         }
-      }
+
+      // Resolve process death between outbox preparation and local Currency commit before
+      // the sender can restore anything. Exact artifact/state-proof readback is the only
+      // promotion authority for both the ordinary queue and the special recovery receipt.
+      _ <- storages.recoverySyncPublication
+        .reconcilePrepared(getDurableCurrencyArtifact)
+      // A controlled rollback is itself the authority to replace the target/suffix. It
+      // must be able to start even when an ordinary committed receipt belongs to that
+      // superseded fork; Rollback prunes target-and-above before publication is enabled.
+      _ <- storages.stateChannelBinaryOutbox
+        .reconcilePrepared(getDurableCurrencyArtifact)
 
       stateChannelBinarySender <- StateChannelBinarySender.make(
         storages.identifier,
@@ -116,7 +115,12 @@ object Services {
         cfg.environment,
         customPeersAllowanceList,
         storages.cluster,
-        storages.recoverySyncPublication
+        storages.node,
+        storages.recoverySyncPublication,
+        storages.stateChannelBinaryOutbox,
+        initialPublishingEnabled = initialBinaryPublishingEnabled,
+        onRecoveryPublicationConfirmed = storages.lastGlobalSnapshotSync.clearRequiredRecoveryRefresh >>
+          Metrics[F].updateGauge("dag_currency_l0_recovery_sync_construction_guard_armed", 0L)
       )
 
       l0NodeContext = L0NodeContext
@@ -128,7 +132,8 @@ object Services {
             service,
             l0NodeContext,
             storage,
-            sharedCfg.fieldsAddedOrdinals.feeTransactionSecurityFor(sharedCfg.environment)
+            sharedCfg.fieldsAddedOrdinals.feeTransactionSecurityFor(sharedCfg.environment),
+            sharedCfg.fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(sharedCfg.environment)
           )
       }
 
@@ -145,6 +150,7 @@ object Services {
           stateChannelBinarySender,
           storages.lastGlobalSnapshotSync,
           storages.recoverySyncPublication,
+          storages.stateChannelBinaryOutbox,
           feeCalculator,
           cfg.snapshotSize
         )
@@ -164,7 +170,9 @@ object Services {
         creator,
         signedValidator,
         maybeRewards,
-        maybeDataApplication
+        maybeDataApplication,
+        sharedCfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+          .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
       )
 
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
@@ -195,25 +203,25 @@ object Services {
           storages.cluster,
           storages.node,
           storages.lastSyncGlobalSnapshot,
+          // Services are allocated before run-genesis/run-validator/run-rollback
+          // installs the metagraph identifier. Keep the read suspended until a
+          // downloaded synchronous outcome needs to validate its context.
+          storages.identifier.get,
           maybeRewards,
           effectiveConsensusConfig,
           client,
           session,
           stateChannelSnapshotService,
+          feeCalculator,
           maybeDataApplication,
           creator,
           validator,
           hasherSelector,
           sharedServices.restart,
-          cfg.shared.leavingDelay,
+          sharedCfg.leavingDelay,
           globalL0Service.pullGlobalSnapshot,
           maybeCustomArtifacts,
-          storages.eventMempool,
-          storages.lastGlobalSnapshotSync,
-          queues.rumor,
-          getPeerChainTips,
-          sharedServices.localHealthMonitor,
-          consensusDispatcher
+          storages.eventMempool
         )
     } yield
       new Services[F, R](

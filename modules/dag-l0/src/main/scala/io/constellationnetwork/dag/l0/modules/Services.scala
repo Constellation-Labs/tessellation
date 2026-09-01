@@ -12,7 +12,7 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
-import io.constellationnetwork.dag.l0.domain.snapshot.recovery.{Gl0RecoveryPlanLoader, Gl0RecoveryPlanReceipt, Gl0RecoverySeedCommittee}
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.Gl0RecoverySeedCommittee
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
 import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
@@ -73,10 +73,8 @@ object Services {
     txHasher: Hasher[F],
     loggerBundle: LoggerBundle[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    configuredRecoveryPlan: F[Option[Gl0RecoveryPlanLoader.Verified]],
     configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
-    onUnsignedRecoverySuccessor: Option[GlobalConsensusOutcome => F[Unit]],
-    recoveryPlanReceipt: Gl0RecoveryPlanReceipt[F],
+    onRecoverySeedOutcomeCommitted: Option[GlobalConsensusOutcome => F[Unit]],
     initiallyHoldConsensusFirstRound: Boolean,
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
@@ -131,6 +129,7 @@ object Services {
             storages.cluster,
             storages.node,
             storages.globalSnapshot,
+            storages.snapshotDownload,
             validators,
             sharedServices,
             cfg,
@@ -153,10 +152,8 @@ object Services {
             loggerBundle,
             queues.rumor,
             getPeerChainTips,
-            configuredRecoveryPlan,
             configuredRecoverySeed,
-            onUnsignedRecoverySuccessor,
-            recoveryPlanReceipt,
+            onRecoverySeedOutcomeCommitted,
             initiallyHoldConsensusFirstRound,
             // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
             // into the SharedServices-owned Ref; Cluster reads from the same Ref via the

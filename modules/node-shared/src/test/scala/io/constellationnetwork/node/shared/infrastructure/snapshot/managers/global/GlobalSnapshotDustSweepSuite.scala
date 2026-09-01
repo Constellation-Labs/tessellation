@@ -16,6 +16,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generators.addressGen
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.snapshot.MetagraphSyncDataInfo
@@ -156,7 +157,8 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
       "delegatedStakesWithdrawals",
       "activeNodeCollaterals",
       "nodeCollateralWithdrawals",
-      "metagraphSyncData"
+      "metagraphSyncData",
+      "retiredAllowSpendRefs"
     )
 
     // `balances` is the swept field; updateNodeParameters is Id-keyed; priceState is TokenPair-keyed.
@@ -180,7 +182,9 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
       "delegatedStakesWithdrawals",
       "activeNodeCollaterals",
       "nodeCollateralWithdrawals",
-      "metagraphSyncData"
+      "metagraphSyncData",
+      "retiredAllowSpendRefsOuter",
+      "retiredAllowSpendRefsInner"
     )
 
     // Distinct, valid (parity-correct) sentinel addresses, one per slot.
@@ -212,7 +216,13 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
       delegatedStakesWithdrawals = Some(SortedMap(sentinels("delegatedStakesWithdrawals") -> SortedSet.empty)),
       activeNodeCollaterals = Some(SortedMap(sentinels("activeNodeCollaterals") -> SortedSet.empty)),
       nodeCollateralWithdrawals = Some(SortedMap(sentinels("nodeCollateralWithdrawals") -> SortedSet.empty)),
-      metagraphSyncData = Some(SortedMap(sentinels("metagraphSyncData") -> MetagraphSyncDataInfo.empty))
+      metagraphSyncData = Some(SortedMap(sentinels("metagraphSyncData") -> MetagraphSyncDataInfo.empty)),
+      retiredAllowSpendRefs = Some(
+        SortedMap(
+          sentinels("retiredAllowSpendRefsOuter").some ->
+            SortedMap(sentinels("retiredAllowSpendRefsInner") -> SortedMap.empty[Hash, EpochProgress])
+        )
+      )
     )
 
     val covered = GlobalSnapshotDustSweep.addressesWithNonBalanceState(populated)
@@ -232,7 +242,8 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
       "delegatedStakesWithdrawals",
       "activeNodeCollaterals",
       "nodeCollateralWithdrawals",
-      "metagraphSyncData"
+      "metagraphSyncData",
+      "retiredAllowSpendRefs"
     )
 
     // whale is keyed ONLY into balances => the swept field => must NOT be reported as protected.

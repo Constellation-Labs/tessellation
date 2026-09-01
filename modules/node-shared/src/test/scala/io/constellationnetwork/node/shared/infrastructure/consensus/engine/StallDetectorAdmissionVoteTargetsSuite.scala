@@ -60,4 +60,17 @@ object StallDetectorAdmissionVoteTargetsSuite extends FunSuite {
 
     expect.same(List(probationA, probationB, open), targets)
   }
+
+  test("a locally emitted admission vote wakes assembly and proposal reevaluation for the same key") {
+    val key = 42L
+    val target = peer(1)
+
+    expect.same(
+      List(
+        ConsensusCommand.CheckAdmissionAssembly(key, target),
+        ConsensusCommand.CheckUpdate(key)
+      ),
+      StallDetector.admissionVoteFollowUpCommands(key, target)
+    )
+  }
 }

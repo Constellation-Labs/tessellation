@@ -63,7 +63,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
       signature = majority(0L).some,
       binarySignature = BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some
     )
-    val retained = ConsensusStorage.declarationsAfterAbandon(declarations, LegacyViewChangePolicy.FreezeAfterVote)
+    val retained = ConsensusStorage.declarationsAfterAbandon(declarations, ViewSafetyMode.LegacyFreezeAfterVote)
 
     expect(retained.facility.contains(facility))
       .and(expect(retained.proposal.isEmpty))
@@ -81,7 +81,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
 
     expect.same(
       declarations,
-      ConsensusStorage.declarationsAfterAbandon(declarations, LegacyViewChangePolicy.PreserveLegacy)
+      ConsensusStorage.declarationsAfterAbandon(declarations, ViewSafetyMode.LegacyPreserve)
     )
   }
 
@@ -151,8 +151,8 @@ object ConsensusRetrySafetySuite extends FunSuite {
   }
 
   test("abandon retains GL0's fail-closed lock but clears Currency's legacy retry lock") {
-    expect(ConsensusStorage.retainVoteLockAcrossAbandon(LegacyViewChangePolicy.FreezeAfterVote))
-      .and(expect(!ConsensusStorage.retainVoteLockAcrossAbandon(LegacyViewChangePolicy.PreserveLegacy)))
+    expect(ConsensusStorage.retainVoteLockAcrossAbandon(ViewSafetyMode.LegacyFreezeAfterVote))
+      .and(expect(!ConsensusStorage.retainVoteLockAcrossAbandon(ViewSafetyMode.LegacyPreserve)))
   }
 
   test("certified view pruning drops lower-view slots and all view-less binary signatures") {
@@ -194,19 +194,19 @@ object ConsensusRetrySafetySuite extends FunSuite {
       viewNumber = 0,
       phaseIndex = 0,
       voteLockPopulated = false,
-      policy = LegacyViewChangePolicy.FreezeAfterVote
+      mode = ViewSafetyMode.LegacyFreezeAfterVote
     )
     val unsafeAtDrain = StallDetector.sameKeyRestartUnsafe(
       viewNumber = 0,
       phaseIndex = 0,
       voteLockPopulated = true,
-      policy = LegacyViewChangePolicy.FreezeAfterVote
+      mode = ViewSafetyMode.LegacyFreezeAfterVote
     )
     val unsafeAfterProposalAcceptance = StallDetector.sameKeyRestartUnsafe(
       viewNumber = 0,
       phaseIndex = 2,
       voteLockPopulated = false,
-      policy = LegacyViewChangePolicy.FreezeAfterVote
+      mode = ViewSafetyMode.LegacyFreezeAfterVote
     )
 
     expect(!safeWhenQueued)
@@ -253,7 +253,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
       view = 1L,
       proposalHash = otherHash,
       effectiveLockedQc = None,
-      policy = LegacyViewChangePolicy.PreserveLegacy
+      mode = ViewSafetyMode.LegacyPreserve
     )
 
     expect(higherViewVote.isRight)
@@ -263,7 +263,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
             viewNumber = 0,
             phaseIndex = 2,
             voteLockPopulated = true,
-            policy = LegacyViewChangePolicy.PreserveLegacy
+            mode = ViewSafetyMode.LegacyPreserve
           )
         )
       )
@@ -273,7 +273,7 @@ object ConsensusRetrySafetySuite extends FunSuite {
             viewNumber = 0,
             phaseIndex = 3,
             voteLockPopulated = true,
-            policy = LegacyViewChangePolicy.PreserveLegacy
+            mode = ViewSafetyMode.LegacyPreserve
           )
         )
       )
@@ -301,11 +301,54 @@ object ConsensusRetrySafetySuite extends FunSuite {
       ).some
     )
 
-    expect(ConsensusStorage.sameKeySoftResetAllowed(0, None, hasCertifiedAdvance = false))
-      .and(expect(!ConsensusStorage.sameKeySoftResetAllowed(0, voted.some, hasCertifiedAdvance = false)))
-      .and(expect(!ConsensusStorage.sameKeySoftResetAllowed(0, qcOnly.some, hasCertifiedAdvance = false)))
-      .and(expect(!ConsensusStorage.sameKeySoftResetAllowed(1, None, hasCertifiedAdvance = false)))
-      .and(expect(!ConsensusStorage.sameKeySoftResetAllowed(0, None, hasCertifiedAdvance = true)))
+    expect(
+      ConsensusStorage.sameKeySoftResetAllowed(
+        0,
+        None,
+        hasScheduledAdvance = false,
+        mode = ViewSafetyMode.LegacyFreezeAfterVote
+      )
+    )
+      .and(
+        expect(
+          !ConsensusStorage.sameKeySoftResetAllowed(
+            0,
+            voted.some,
+            hasScheduledAdvance = false,
+            mode = ViewSafetyMode.LegacyFreezeAfterVote
+          )
+        )
+      )
+      .and(
+        expect(
+          !ConsensusStorage.sameKeySoftResetAllowed(
+            0,
+            qcOnly.some,
+            hasScheduledAdvance = false,
+            mode = ViewSafetyMode.LegacyFreezeAfterVote
+          )
+        )
+      )
+      .and(
+        expect(
+          !ConsensusStorage.sameKeySoftResetAllowed(
+            1,
+            None,
+            hasScheduledAdvance = false,
+            mode = ViewSafetyMode.LegacyFreezeAfterVote
+          )
+        )
+      )
+      .and(
+        expect(
+          !ConsensusStorage.sameKeySoftResetAllowed(
+            0,
+            None,
+            hasScheduledAdvance = true,
+            mode = ViewSafetyMode.LegacyFreezeAfterVote
+          )
+        )
+      )
   }
 
   test("queued view-change requests are bound to view, state attempt, progress evidence, and unfinished state") {

@@ -11,9 +11,9 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.GlobalSnapshotOpsManager.{
+  DeterministicHistory,
   HistoricalReplay,
-  LiveBounded,
-  RecoveryEpoch
+  LiveBounded
 }
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -54,10 +54,13 @@ object GlobalSnapshotOpsManagerRecoverySuite extends SimpleIOSuite {
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 
-  private def snapshot(ordinal: Long)(implicit hasher: Hasher[IO], serializer: JsonSerializer[IO]): IO[Hashed[GlobalIncrementalSnapshot]] = {
+  private def snapshot(
+    ordinal: Long
+  )(implicit hasher: Hasher[IO], serializer: JsonSerializer[IO]): IO[Hashed[GlobalIncrementalSnapshot]] = {
     val value = SnapshotOrdinal.unsafeApply(ordinal)
 
     info.stateProof[IO](value).flatMap { stateProof =>
@@ -131,10 +134,19 @@ object GlobalSnapshotOpsManagerRecoverySuite extends SimpleIOSuite {
         expect.same(afterHistorical, afterLive)
   }
 
-  pureTest("the signed recovery epoch remains bounded during historical recreation") {
-    expect.same(RecoveryEpoch, GlobalSnapshotOpsManager.selectDependencyMode(historicalReplay = true, recoveryEpochActive = true)) &&
-    expect.same(HistoricalReplay, GlobalSnapshotOpsManager.selectDependencyMode(historicalReplay = true, recoveryEpochActive = false)) &&
-    expect.same(LiveBounded, GlobalSnapshotOpsManager.selectDependencyMode(historicalReplay = false, recoveryEpochActive = false))
+  pureTest("signed deterministic-history semantics remain bounded during historical recreation") {
+    expect.same(
+      DeterministicHistory,
+      GlobalSnapshotOpsManager.selectDependencyMode(historicalReplay = true, deterministicHistoryActive = true)
+    ) &&
+    expect.same(
+      HistoricalReplay,
+      GlobalSnapshotOpsManager.selectDependencyMode(historicalReplay = true, deterministicHistoryActive = false)
+    ) &&
+    expect.same(
+      LiveBounded,
+      GlobalSnapshotOpsManager.selectDependencyMode(historicalReplay = false, deterministicHistoryActive = false)
+    )
   }
 
   pureTest("a validated reset replaces a numerically newer orphaned parent sync view") {

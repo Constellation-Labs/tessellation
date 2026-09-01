@@ -10,8 +10,8 @@ proof, codec, hash, configuration field, or activation ordinal.
 
 It applies only to an established Global L0 chain after normal `run-rollback`.
 True bootstrap and Currency L0 retain their existing behavior. Explicit Global
-L0 recovery-plan and `CL_GL0_RECOVERY_SEED_COMMITTEE` starts retain their
-stronger all-member barrier and take precedence over this normal path.
+L0 `CL_GL0_RECOVERY_SEED_COMMITTEE` starts retain their stronger all-member
+barrier and take precedence over this normal path.
 
 ## The failure it closes
 
@@ -122,10 +122,7 @@ also hardens explicit recovery without changing its all-member release rule.
 Startup precedence is strict:
 
 ```text
-verified signed recovery plan
-  -> selected committee, exact all-member barrier
-
-else CL_GL0_RECOVERY_SEED_COMMITTEE
+CL_GL0_RECOVERY_SEED_COMMITTEE
   -> selected committee, exact all-member barrier
 
 else established normal GL0 rollback
@@ -177,6 +174,7 @@ operator involved. Byzantine hardening remains v35 work.
 | Minority of `C` is absent after `Q(N)` aligns | Quorum starts; absent members download the successor |
 | Old release arrives after reinitialization | `(key,generation)` validation rejects it |
 | Explicit recovery input is configured | Normal barrier is not selected |
+| One node runs `run-rollback` while the existing fleet remains live | Unsupported: it intentionally remains held rather than unilaterally creating a competing lineage |
 
 ## Full-fleet restart runbook
 
@@ -186,26 +184,44 @@ operator involved. Byzantine hardening remains v35 work.
 2. **Before stopping the fleet**, read the anchor artifact proofs and verify the
    intended `run-rollback` source PeerId is one of those proof signers. If it is
    not, select another controlled signer or use the trusted recovery-seed path.
-3. Confirm the recovery-plan option and `CL_GL0_RECOVERY_SEED_COMMITTEE` are
-   absent for an ordinary restart.
+3. Confirm `CL_GL0_RECOVERY_SEED_COMMITTEE` is absent for an ordinary restart.
 4. Build/tag one immutable, distinctly advertised rc.12 release. The
    `versionHash` gate hashes the advertised version string (or common
    `CL_VERSION_HASH`), not jar bytes and not `deterministicConfigHash`. Confirm
    both join fences agree fleet-wide.
-5. Disable automated restart/rollback actions and stop the complete fleet.
-6. Start exactly one verified signer as `run-rollback <anchor-hash>`. Start
+5. Disable automated restart/rollback actions. Before stopping anything,
+   preserve the evidence bundle required by
+   [Release Policy](../release/RELEASE_POLICY.md#mandatory-pre-stop-evidence-and-monitoring-gate):
+   active and rotated application/HTTP logs; the system journal, service and
+   exit status; any existing heap/core/JVM crash artifact; redacted environment,
+   effective configuration, launch/unit/deployment definitions; jar, version,
+   `versionHash`, `deterministicConfigHash`, and schema-version identifiers; the
+   selected anchor and Snapshot Streaming observations; and manifests of
+   snapshot indexes, locks/journals, and sidecars. Source log retention can be
+   less than 24 hours under load. Keep the timestamped bundle outside live
+   rotation directories as durable release evidence.
+6. Stop the complete fleet. Prefer an orderly stop. Escalate an unresponsive
+   JVM only after evidence capture and record the timeout, signal, and exit
+   status.
+7. Start exactly one verified signer as `run-rollback <anchor-hash>`. Start
    every other process with the ordinary `run-validator` role.
-7. Watch the lead's expected committee, required, aligned, and deficit gauges.
+   A standalone `run-rollback` invocation against a still-live fleet is not a
+   recovery mode. It cannot satisfy the anchor-committee alignment gate and is
+   expected to park fail-closed.
+8. Watch the lead's expected committee, required, aligned, and deficit gauges.
    A flat tip while `dag_consensus_normal_first_round_alignment_held == 1` is
    intentional synchronization and is a **DO-NOT-RESTART** condition.
-8. Require a lead release with reason `aligned_quorum`, follower releases with
+9. Require a lead release with reason `aligned_quorum`, follower releases with
    reason `facility_pulse`, one concentrated view-0 Facility domain, and zero
    committee-mismatch increments.
-9. Keep automatic restart inhibited until the first successor is accepted and
-   the ordinary committee has positive finality margin.
-10. If alignment cannot reach quorum, do not retry blind restarts. Stop the
-    attempt, inspect the missing/mismatch classification, then choose a viable
-    anchor or explicitly invoke the recovery-seed runbook.
+10. Keep automatic stop/restart/rollback actions inhibited until the canonical
+    first successor is accepted and
+    `dag_consensus_signing_finality_audit_current_finality_margin > 0`. `Ready`
+    alone is not a release condition.
+11. If alignment cannot reach quorum, do not retry blind restarts. Preserve an
+    updated evidence bundle before stopping the attempt, inspect the
+    missing/mismatch classification, then choose a viable anchor or explicitly
+    invoke the recovery-seed runbook.
 
 ## Metrics
 
@@ -213,8 +229,9 @@ The following metrics are node-local orchestration signals. They never enter a
 snapshot or consensus decision:
 
 - `dag_consensus_normal_first_round_alignment_held` — `1` while the local
-  normal first-round gate is held. Monitoring must inhibit restart while this
-  is `1`.
+  normal first-round gate is held. This is an authoritative
+  **DO-NOT-RESTART** signal: monitoring may alert, but must inhibit automated
+  stop/restart/rollback actions while it is `1`.
 - `dag_consensus_normal_first_round_expected_committee_size` — anchor-derived
   committee size on each held member.
 - `dag_consensus_normal_first_round_required_count` — `Q(N)` on each held
@@ -245,7 +262,7 @@ snapshot or consensus decision:
 - `dag_consensus_first_round_start_gate_superseded_total{opened}` — a validated
   newer download did or did not supersede a stale older-key hold.
 
-Existing generic gate-held, dropped-trigger, stale-release, and recovery-plan
+Existing generic gate-held, dropped-trigger, stale-release, and recovery-seed
 metrics remain in force. Existing `dag_consensus_committee_core_size` and
 `dag_consensus_committee_tier_size` expose the derived Core/Tier-1 composition
 when the released state is materialized; the normal expected-committee gauge

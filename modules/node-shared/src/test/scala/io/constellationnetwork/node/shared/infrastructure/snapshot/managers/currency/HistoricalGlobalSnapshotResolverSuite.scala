@@ -81,8 +81,8 @@ object HistoricalGlobalSnapshotResolverSuite extends SimpleIOSuite {
       result match {
         case Right(plan) =>
           expect.same(SortedSet(ordinal(70), ordinal(80)), plan.carried) &&
-            expect.same(SortedSet(ordinal(90)), plan.newlyRequired) &&
-            expect.same(SortedSet(ordinal(70), ordinal(80), ordinal(90)), plan.cumulative)
+          expect.same(SortedSet(ordinal(90)), plan.newlyRequired) &&
+          expect.same(SortedSet(ordinal(70), ordinal(80), ordinal(90)), plan.cumulative)
         case Left(error) => failure(error.getMessage)
       }
     )
@@ -120,15 +120,10 @@ object HistoricalGlobalSnapshotResolverSuite extends SimpleIOSuite {
     IO.pure(expect.same(Right(ProcessedGlobalSnapshotHistory.Plan(SortedSet(ordinal(90)), SortedSet.empty)), result))
   }
 
-  test("recovery marker is exact, excluded from payload, and reserved even in a mixed application artifact") {
-    val ordinary = GlobalSnapshotsProcessed(SortedSet(ordinal(70), ordinal(80)))
-    val mixed = GlobalSnapshotsProcessed(SortedSet(ordinal(70), SnapshotOrdinal.MaxValue))
-    val artifacts = List(ordinary, ProcessedGlobalSnapshotHistory.Marker, mixed)
+  test("processed-history payload combines every signed GlobalSnapshotsProcessed artifact") {
+    val first = GlobalSnapshotsProcessed(SortedSet(ordinal(70), ordinal(80)))
+    val second = GlobalSnapshotsProcessed(SortedSet(ordinal(80), ordinal(90)))
 
-    IO.pure(
-      expect(ProcessedGlobalSnapshotHistory.markerPresent(artifacts)) &&
-        expect(ProcessedGlobalSnapshotHistory.containsReservedMarker(mixed)) &&
-        expect.same(SortedSet(ordinal(70), ordinal(80)), ProcessedGlobalSnapshotHistory.payload(artifacts))
-    )
+    IO.pure(expect.same(SortedSet(ordinal(70), ordinal(80), ordinal(90)), ProcessedGlobalSnapshotHistory.payload(List(first, second))))
   }
 }

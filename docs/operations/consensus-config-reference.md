@@ -1,6 +1,6 @@
 # Consensus Configuration Reference (post-4.0)
 
-This is the operator-facing reference for the consensus and health configuration introduced into the Global L0 consensus path since v4.0.0. Most of these knobs are **consensus-critical**: they are folded into `ConsensusConfig.deterministicConfigHash`, which L0 advertises in its cluster registration and carries in every `Facility` declaration. L0 joining requires exact hash equality (including presence), while Facility comparison remains an additional structured diagnostic. The advertised `versionHash` is an independent release fence; it hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes or runtime configuration. Per-environment values are resolved through `SnapshotConfig.resolveEffectiveConsensusConfig`; startup threads that exact resolved consensus-critical projection to both the join fence and live consensus. Timing-only values and separately scheduled activation ordinals intentionally remain outside this fingerprint.
+This is the operator-facing reference for the consensus and health configuration introduced into the Global L0 consensus path since v4.0.0. Most of these knobs are **consensus-critical**: they are folded into `ConsensusConfig.deterministicConfigHash`, which L0 advertises in its cluster registration and carries in every Global `Facility` declaration. L0 joining requires exact hash equality (including presence), while Facility comparison remains an additional structured diagnostic. The advertised `versionHash` is an independent release fence; it hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes or runtime configuration. Per-environment values are resolved through `SnapshotConfig.resolveEffectiveConsensusConfig`; startup threads that exact resolved consensus-critical projection to both the join fence and live consensus. Most public `FieldsAddedOrdinals` remain outside this fingerprint. The Global-only v35 certified-consensus activation key, the resolved Global L0 Currency-snapshot-protocol-v1 gate, and `max-round-duration` are intentional exceptions because they directly select or constrain deterministic derivation. Currency L0 uses a separate flat synchronous engine; it still uses the version/config join fences, but it does not consume Core/tier/view/QC knobs as a v35 state machine.
 
 This document then flags three gaps an operator will hit in the field: `LocalHealthMonitorConfig` has no HOCON binding at all, and two operational toggles (`CL_MPT_VERIFY_INCREMENTAL`, `CL_RAISE_ON_FOLLOWER_DIVERGENCE`) are read directly from `sys.env` and appear in no `.conf` file.
 
@@ -11,10 +11,10 @@ This document then flags three gaps an operator will hit in the field: `LocalHea
 Every consensus knob lives in `ConsensusConfig` (`config/types.scala`). At construction time:
 
 1. Scalar HOCON keys under `snapshot.consensus { ... }` in `dag-l0.conf` map directly onto `ConsensusConfig` fields (kebab-case to camelCase). These are global, not per-environment.
-2. Per-environment knobs live one level up under `snapshot { ... }` as `Map[AppEnvironment, T]` (e.g. `core-committee-size`, `quorum-shrink-activation-views`). The construction site resolves the current environment's entry once and threads the resolved scalar into the corresponding `ConsensusConfig` field (the "coreCommitteeSize pattern", `config/types.scala:847-859`).
+2. Per-environment knobs live one level up under `snapshot { ... }` as `Map[AppEnvironment, T]` (e.g. `core-committee-size`, `quorum-shrink-activation-views`). `SnapshotConfig.resolveEffectiveConsensusConfig` resolves the current environment once and returns the exact `ConsensusConfig` object used by startup, joining, and live consensus.
 3. `ConsensusConfig.deterministicConfigHash` concatenates the consensus-critical fields into a stable string and hashes it. L0 advertises that exact effective hash in `RegistrationRequest`; unequal or one-sided values are rejected during joining. It is also compared during `Facility` processing for post-join diagnostics. Operators must still verify one effective hash before launch so a misconfigured fleet fails preflight instead of fragmenting during startup.
 
-A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. Timing-only fields (grace windows, view-apply delay, round-duration safety nets) are deliberately excluded, because the canonical `snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash, so nodes with different timing values still finalize the same snapshot (`config/types.scala:233-237, 244-250`).
+A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. Pure timing fields (grace windows and view-apply delay) are deliberately excluded, because the canonical `snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash. V35 is the exception for `max-round-duration`: it bounds the leader-proposed, Core-certified consensus end-time and therefore joins the deterministic hash.
 
 ---
 
@@ -38,6 +38,7 @@ These are folded into `deterministicConfigHash`. Divergent effective values are 
 | `min-observation-history-floor` | `CL_MIN_OBSERVATION_HISTORY_FLOOR` | Int | conf: `10` | Minimum `participated` count before chronic classification can fire (`dag-l0.conf:136-138`). |
 | `active-admission-*` (promote/retain/demote thresholds, max-score, rewards, penalties, decay, expansion) | `CL_ACTIVE_ADMISSION_*` (`dag-l0.conf:105-132`) | Int | see `dag-l0.conf:105-132` | The integral score controller classifies Core eligibility. Certified open admission separately grows Tier-1 signing leases, bounded by `active-admission-max-expansion-per-round` and enabled only every `active-admission-expansion-interval-rounds` (shipped value: `5`). Penalty/probation readmission is a separate, non-cadenced recovery lane. Values remain consensus-critical because they affect tier and admission derivation. |
 | `lock-on-vote-protocol-version` | `CL_LOCK_ON_VOTE_PROTOCOL_VERSION` | Int | conf: `2` | Lock-on-vote protocol version selector. |
+| `max-round-duration` | `CL_MAX_ROUND_DURATION` | Duration | `5 minutes` | V35 deterministic upper bound for the leader-proposed consensus end-time. It participates in ProposalValue validation and is therefore hash-folded. |
 
 `view-interval` (the v19 view-from-time pacemaker divisor) is consensus-critical (`viewIntervalMs` is in the hash, `config/types.scala:980`) but has **no HOCON key**: it is a compiled-in default of `60.seconds` (`config/types.scala:295`, raised from 30s; see the field comment at `config/types.scala:285-294`). Changing it requires a code change plus a coordinated cold restart.
 
@@ -47,15 +48,24 @@ These resolve once per environment at the construction site (the coreCommitteeSi
 
 | HOCON key | Type | Testnet value | Absent-entry behavior | Meaning |
 |-----------|------|---------------|-----------------------|---------|
-| `max-facilitator-count` | `Map[Env, PosInt]` | all shipped environments `1000` | no selector cap | Environment-resolved cap consumed by `FacilitatorSelector`. This is fingerprinted separately from the legacy scalar `snapshot.consensus.max-facilitator-count`; Currency intentionally keeps selector cap `1000` while its legacy controller-sizing scalar remains `20`. A value at or above the candidate population disables narrowing; it is not a desired reward-population size. |
+| `max-facilitator-count` | `Map[Env, PosInt]` | all shipped environments `1000` | no selector cap | Environment-resolved cap consumed by Global `FacilitatorSelector`. This is fingerprinted separately from the legacy scalar `snapshot.consensus.max-facilitator-count`. Currency's flat synchronous admission uses that legacy scalar (`20`) as an admission-only committee cap; it never sheds an incumbent to enforce it. A value at or above the Global candidate population disables narrowing; it is not a desired reward-population size. |
 | `core-committee-size` | `Map[Env, PosInt]` | testnet `3`, mainnet `15`, integrationnet `9`, dev `3` (`dag-l0.conf:156-168`) | resolved default `3` (`config/types.scala:1023`) | The Core committee floor. The LIVENESS quorum threshold is `ceil(coreFacilitators.size * quorumThresholdFraction)`, so this is the quorum denominator. Demotions to Tier-1 outside Core do not shrink it without consensus-agreed promotion of replacements (`config/types.scala:847-860, 1153-1167`). |
 | `quorum-shrink-activation-views` | `Map[Env, PosInt]` | testnet `10` (`dag-l0.conf:177-179`) | **disabled** (resolved `0`) | v33 `QuorumDenominatorShrink`: number of `view-interval` units of wall silence since the parent outcome closed before the escalating quorum-denominator shrink begins. Trades partition safety for liveness in its deep stage. Mainnet and dev are absent on purpose (`config/types.scala:861-872, 1168-1175`). |
 | `active-admission-min-probation-reentry-slots` | `Map[Env, Int]` | testnet `3`, mainnet `15`, integrationnet `9`, dev `3` | disabled (resolved `0`) | Minimum bounded probation cohort classified outside Core even when the controller's per-round expansion budget is exhausted. A peer that signs the latest round retains classifier priority until it reaches the retain band; missing ends that priority, not its signing lease. Current public GL0 environments configure one Core-sized cohort. |
 | `active-admission-recent-signer-window` | `Map[Env, Int]` (override `CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW`) | testnet `10` (`dag-l0.conf:216-219`) | floored to `3` (`DemotionConsecutiveMisses`) | Recent-signer controller lookback depth (in ordinals): how far back a peer may have last participated and still hold sticky Core-classification priority. It does not cap retained Tier-1 signing/reward membership (`config/types.scala:1185-1193`). |
+| `certified-consensus-activation-ordinal` | `Map[Env, SnapshotOrdinal]` | Global L0 dev `0`; all public Global entries absent until scheduled | **disabled** (`SnapshotOrdinal.MaxValue`) | **Global L0-only** v35 behavior boundary, interpreted in Global snapshot ordinal space. The resolved key is hash-folded and must be installed cluster-wide before the announced activation. Currency L0 has no configured v35 key and never switches its flat synchronous engine on this value; its shared `ConsensusConfig` projection retains only the disabled `Long.MaxValue` sentinel. |
 
 ### Other hashed knobs without their own table row
 
-`readmissionProbationRounds` (default `3`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `34`), and `qualityDecayThreshold` are also folded in. The deterministic config hash and advertised release `versionHash` are separate mandatory L0 join fences: one binds effective consensus settings and the other binds the advertised software release.
+`readmissionProbationRounds` (default `3`, `config/types.scala:224`; compiled-in, no HOCON key) seeds the B2 sticky-probation countdown and is in the hash. `coreCommitteeSize`, `consensusSchemaVersion` (now `35`), the resolved Global certified-consensus activation key, and `qualityDecayThreshold` are also folded in. `consensusSchemaVersion=35` is the immediate fence against mixed active-consensus wire versions; the Global ordinal key separately controls when Global v35 behavior starts. Currency's shared projection carries the disabled activation sentinel only; it has no Currency-local v35 transition.
+
+The cross-layer `lastGlobalSnapshotSyncOffset`, `lastGlobalSnapshotsInMemory`, and
+resolved `currencySnapshotProtocolV1ActivationOrdinal` are copied from shared config
+into both DAG and Currency L0 effective `ConsensusConfig` values and hash-folded. The
+last value authorizes the existing signed Currency snapshot `version` to advance from
+`0.0.1` to `1.0.0` in GLOBAL L0 ordinal space. It is separate from the Global-only v35
+certified-consensus key; there is no Currency-local certified-consensus key. See
+[ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
 
 ---
 
@@ -69,7 +79,6 @@ These affect liveness/latency, not what is decided. Mixed values across a networ
 | `tier-1-signature-grace-period` | `CL_TIER_1_SIGNATURE_GRACE_PERIOD` | Duration | `750 milliseconds` | The SHORT grace window used once Core is fully signed but the committee is not, to let late Tier-1 signatures land in `signedArtifact.proofs` and participation evidence. It does not select delegated reward recipients. Measured from Core-complete, not first quorum (`config/types.scala:239-251`). |
 | (no key) `view-change-apply-delay` | none | Duration | `7 seconds` | Delay between assembling/receiving a certified view change and locally applying it, so ordinary traffic can arrive first (`config/types.scala:252-259`). |
 | `time-trigger-interval` | `CL_TIME_TRIGGER_INTERVAL` | Duration | `43 seconds` | Regular round-trigger cadence (`dag-l0.conf:11-12`). |
-| `max-round-duration` | `CL_MAX_ROUND_DURATION` | Duration | `5 minutes` | Per-view round-duration safety net; not consensus logic (`dag-l0.conf:20-21`). |
 
 ### Signature grace state machine
 
@@ -94,10 +103,11 @@ from entering the next finality denominator. The invariant starts outside bootst
 with the existing full-committee finality floor. Bootstrap retains its legacy Core-only finality gate, which is not
 raised by a newly admitted Tier-1 seat. This is deliberately not part of proposal
 validation or state derivation, because valid proof subsets can differ between honest
-nodes. Tier-1 eviction likewise
-uses node-local actual-proof history and reuses the compiled-in
+nodes. Under v35, all-signing-member atomic replacement likewise uses node-local
+actual-proof history and reuses the compiled-in
 `TierTransitions.DemotionConsecutiveMisses` value (`3`); no new operator knob was
-added.
+added. The resulting eviction evidence is valid only when paired one-for-one with a
+Core-certified ReadyAtTip admission, so this policy cannot shrink the signing roster.
 
 ---
 
@@ -133,8 +143,8 @@ Neither toggle is in `deterministicConfigHash`; they change local behavior only.
 ## Quick operator rules
 
 1. **Never** override a knob listed in the consensus-critical tables on a shared network. The value is in `deterministicConfigHash`; divergent L0 peers are rejected during joining.
-2. Per-environment knobs (`core-committee-size`, `quorum-shrink-activation-views`, `active-admission-min-probation-reentry-slots`, `active-admission-recent-signer-window`) must match cluster-wide; **adding or removing an env entry is a consensus change** because absent means a specific resolved default.
-3. Changing any hashed knob (including the compiled-in `view-interval`) requires an all-or-nothing coordinated cold restart because divergent configs can derive and finalize different state. The advertised `versionHash` is only a release fence and does not certify runtime config equality; verify the effective `deterministicConfigHash` fleet-wide before launch.
+2. Per-environment Global knobs (`max-facilitator-count`, `core-committee-size`, `quorum-shrink-activation-views`, `active-admission-min-probation-reentry-slots`, `active-admission-recent-signer-window`, `certified-consensus-activation-ordinal`) must match the complete Global cluster; **adding or removing an env entry is a consensus change** because absent means a specific resolved default. Currency has no v35 activation entry.
+3. Changing any hashed knob (including the compiled-in `view-interval`) requires an all-or-nothing coordinated cold restart because divergent configs can derive and finalize different state. The advertised `versionHash` is only a release fence and does not certify runtime config equality; verify the effective `deterministicConfigHash` fleet-wide before launch. The v35 activation ordinal separately coordinates the certified state-machine boundary.
 4. Genuinely operator-safe knobs are the non-consensus ones: snapshot-serving rate limits (`snapshot-serving { ... }`), storage paths, and the timing-only grace/round-duration knobs.
 5. `LocalHealthMonitorConfig` has no operator knobs in this release; `operatorOverride` is inert. `CL_MPT_VERIFY_INCREMENTAL` and `CL_RAISE_ON_FOLLOWER_DIVERGENCE` are env-only diagnostics/safety toggles, both OFF by default.
 

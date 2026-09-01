@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionReason, EvictionVote}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerEvictionVote
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.HealthDerivedMembershipPolicy
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
@@ -38,6 +39,7 @@ class GossipingEvictionVoter[F[
   gossip: Gossip[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   lastSnapshotHashOf: Outcome => Hash,
+  membershipPolicy: HealthDerivedMembershipPolicy,
   logger: SelfAwareStructuredLogger[F]
 ) extends EvictionVoter[F, Key] {
 
@@ -73,8 +75,13 @@ class GossipingEvictionVoter[F[
             val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
             val vote = EvictionVote(target, reason, facilitatorsHash, lastSnapshotHash)
             vote.sign(keyPair).flatMap { signedVote =>
-              // Spread to live peers only — gossip delivery target, not vote content.
-              val targets = state.facilitators.value.toSet - selfId
+              // Transport recipients are layer/epoch policy only; vote authority stays in the signed content.
+              val targets = MembershipVoteGossipRecipients.select(
+                selfId,
+                membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive),
+                state.facilitators.value.toSet,
+                state.roundStartFacilitators.value.toSet
+              )
               storage.addEvictionVote(selfId, key, signedVote) >>
                 gossip.spreadDirect(ConsensusPeerEvictionVote[Key](key, signedVote), targets) >>
                 ConsensusLog

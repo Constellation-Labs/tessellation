@@ -23,6 +23,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Cons
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.Snapshot
@@ -38,6 +39,7 @@ case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoSt
 case object NoTipsRemaining extends NoStackTrace
 case class GlobalArtifactMismatch(expected: GlobalIncrementalSnapshot, found: GlobalIncrementalSnapshot) extends InvalidArtifact
 case class CurrencyArtifactMismatch(errors: List[CurrencySnapshotValidationError]) extends InvalidArtifact
+case class CertifiedLineageInvalid(reason: String) extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
   F[_]: Async: SecurityProvider,
@@ -54,10 +56,16 @@ abstract class SnapshotConsensusFunctions[
 
   def triggerPredicate(event: Event): Boolean = true
 
-  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
+  /** Context-only eligibility projection shared by round creation and certified next-round validation. Artifact proofs never participate in
+    * collateral eligibility; exposing the actual dependency prevents callers from inventing placeholder signatures just to reuse policy.
+    */
+  def facilitatorEligible(context: Context, peerId: peer.PeerId): F[Boolean] =
     peerId.toAddress[F].flatMap { address =>
-      getBalance(lastContext, address).map(_.satisfiesCollateral(getRequiredCollateral))
+      getBalance(context, address).map(_.satisfiesCollateral(getRequiredCollateral))
     }
+
+  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
+    facilitatorEligible(lastContext, peerId)
 
   def validateArtifact(
     lastSignedArtifact: Signed[Artifact],
@@ -66,7 +74,8 @@ abstract class SnapshotConsensusFunctions[
     artifact: Artifact,
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(

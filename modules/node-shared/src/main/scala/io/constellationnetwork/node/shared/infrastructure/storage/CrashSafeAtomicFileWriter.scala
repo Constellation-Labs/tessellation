@@ -13,7 +13,7 @@ import fs2.io.file.Path
   *
   * A successful write means the temporary file contents and metadata were forced, the destination was atomically replaced in the same
   * directory, and the directory entry was forced where the platform supports directory fsync. There is deliberately no non-atomic rename
-  * fallback. Node-local safety records share this primitive so their durability contract cannot drift.
+  * fallback. Consensus safety journals and the certified-outcome sidecars share this primitive so their durability contract cannot drift.
   */
 final class CrashSafeAtomicFileWriter[F[_]: Async] private (base: Path) {
 

@@ -1,12 +1,13 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
-import cats.effect.IO
-import cats.effect.kernel.Ref
+import cats.effect.{IO, Ref}
+import cats.syntax.functor._
 
 import scala.collection.immutable.SortedSet
 
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 
 import weaver.SimpleIOSuite
@@ -16,38 +17,27 @@ object StateTransitionsSuite extends SimpleIOSuite {
   private def pid(name: String): PeerId =
     PeerId(Hex(name.getBytes("UTF-8").map(b => f"$b%02x").mkString))
 
-  test("certified advance completes prune and CheckUpdate before fallible observability") {
-    Ref.of[IO, List[String]](List.empty).flatMap { order =>
-      val append = (value: String) => order.update(_ :+ value)
-
-      for {
-        _ <- StateTransitions.completeCertifiedAdvance[IO](
-          didAdvance = true,
-          prune = append("prune"),
-          enqueueCheckUpdate = append("check-update"),
-          advancedObservability = append("observability") >> IO.raiseError(new RuntimeException("metrics unavailable")),
-          notAdvancedObservability = append("not-advanced")
-        )
-        observed <- order.get
-      } yield expect.same(List("prune", "check-update", "observability"), observed)
-    }
+  test("download validation completes before the first mutation") {
+    for {
+      events <- Ref.of[IO, List[String]](Nil)
+      result <- StateTransitions.validateDownloadBeforeMutation(
+        events.update(_ :+ "validated"),
+        events.update(_ :+ "mutated").as("installed")
+      )
+      observed <- events.get
+    } yield expect.same("installed", result) && expect.same(List("validated", "mutated"), observed)
   }
 
-  test("certified advance race isolates not-advanced observability failures") {
-    Ref.of[IO, List[String]](List.empty).flatMap { order =>
-      val append = (value: String) => order.update(_ :+ value)
+  test("failed download validation prevents every mutation") {
+    val failure = new IllegalStateException("invalid certified outcome")
 
-      for {
-        _ <- StateTransitions.completeCertifiedAdvance[IO](
-          didAdvance = false,
-          prune = append("prune"),
-          enqueueCheckUpdate = append("check-update"),
-          advancedObservability = append("advanced"),
-          notAdvancedObservability = append("not-advanced") >> IO.raiseError(new RuntimeException("metrics unavailable"))
-        )
-        observed <- order.get
-      } yield expect.same(List("not-advanced"), observed)
-    }
+    for {
+      mutated <- Ref.of[IO, Boolean](false)
+      result <- StateTransitions
+        .validateDownloadBeforeMutation[IO, Unit](IO.raiseError(failure), mutated.set(true))
+        .attempt
+      wasMutated <- mutated.get
+    } yield expect.same(Left(failure), result) && expect(!wasMutated)
   }
 
   pureTest("exact downloaded outcomes preserve the caller's recovery mode") {
@@ -185,91 +175,23 @@ object StateTransitionsSuite extends SimpleIOSuite {
     expect(!status.quorumFeasible)
   }
 
-  pureTest("recovery-plan peer outcome requires full typed equality") {
+  pureTest("certified same-key recovery accepts multiple proof carriers for one semantic value") {
+    val valueHash = Hash.fromBytes("one-value".getBytes("UTF-8"))
+
     expect.same(
-      StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      StateTransitions.recoveryPlanPeerOutcome("seeded-full-outcome", Some("seeded-full-outcome"))
-    ) &&
-    expect.same(
-      StateTransitions.RecoveryPlanPeerOutcome.Mismatched,
-      StateTransitions.recoveryPlanPeerOutcome("seeded-full-outcome", Some("same-key-different-operational-state"))
-    ) &&
-    expect.same(
-      StateTransitions.RecoveryPlanPeerOutcome.Missing,
-      StateTransitions.recoveryPlanPeerOutcome[String]("seeded-full-outcome", None)
+      Right(Some("peer-a")),
+      StateTransitions.selectCertifiedRecoveryCandidate(List(valueHash -> "peer-a", valueHash -> "peer-b"))
     )
   }
 
-  pureTest("recovery-plan barrier accepts exactly named Ready and WaitingForReady peers with exact outcomes") {
-    val self = pid("recovery-lead")
-    val peerA = pid("recovery-a")
-    val peerB = pid("recovery-b")
-    val unrelated = pid("unrelated-ready")
-    val status = StateTransitions.recoveryPlanBarrierStatus(
-      selfId = self,
-      committee = SortedSet(self, peerA, peerB),
-      selfReady = true,
-      responsivePeerStates = Map(
-        peerA -> NodeState.Ready,
-        peerB -> NodeState.WaitingForReady,
-        unrelated -> NodeState.Ready
-      ),
-      peerOutcomes = Map(
-        peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-        peerB -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-        unrelated -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched
-      )
+  pureTest("certified same-key recovery fails closed on two valid semantic values") {
+    val first = Hash.fromBytes("first-value".getBytes("UTF-8"))
+    val second = Hash.fromBytes("second-value".getBytes("UTF-8"))
+
+    expect.same(
+      Left(2),
+      StateTransitions.selectCertifiedRecoveryCandidate(List(first -> "peer-a", second -> "peer-b"))
     )
-
-    expect(status.aligned) &&
-    expect.same(SortedSet(peerA, peerB), status.expectedExternal) &&
-    expect.same(SortedSet(peerA, peerB), status.alignedPeers)
-  }
-
-  pureTest("recovery-plan barrier fails closed on missing, wrong-state, mismatched, or unfetched planned peers") {
-    val self = pid("recovery-lead")
-    val missing = pid("missing")
-    val wrongState = pid("observing")
-    val mismatched = pid("mismatched")
-    val unfetched = pid("unfetched")
-    val status = StateTransitions.recoveryPlanBarrierStatus(
-      selfId = self,
-      committee = SortedSet(self, missing, wrongState, mismatched, unfetched),
-      selfReady = true,
-      responsivePeerStates = Map(
-        wrongState -> NodeState.Observing,
-        mismatched -> NodeState.Ready,
-        unfetched -> NodeState.WaitingForReady
-      ),
-      peerOutcomes = Map(mismatched -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched)
-    )
-
-    expect(!status.aligned) &&
-    expect(status.missingSession.contains(missing)) &&
-    expect.same(Some(NodeState.Observing), status.invalidState.get(wrongState)) &&
-    expect(status.mismatchedOutcome.contains(mismatched)) &&
-    expect(status.fetchFailed.contains(unfetched))
-  }
-
-  pureTest("recovery-plan barrier rejects a malformed singleton or a non-Ready lead") {
-    val self = pid("recovery-lead")
-    val singleton = StateTransitions.recoveryPlanBarrierStatus(
-      self,
-      SortedSet(self),
-      selfReady = true,
-      Map.empty,
-      Map.empty
-    )
-    val peerA = pid("recovery-a")
-    val nonReadyLead = StateTransitions.recoveryPlanBarrierStatus(
-      self,
-      SortedSet(self, peerA),
-      selfReady = false,
-      Map(peerA -> NodeState.Ready),
-      Map(peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned)
-    )
-
-    expect(singleton.invalidCommittee) && expect(!singleton.aligned) && expect(!nonReadyLead.aligned)
   }
 
   pureTest("normal first-round alignment counts an exact committee quorum and ignores unrelated Ready peers") {
@@ -288,10 +210,10 @@ object StateTransitionsSuite extends SimpleIOSuite {
       unrelated -> NodeState.Ready
     )
     val outcomes = Map(
-      peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      peerB -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      peerC -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-      unrelated -> StateTransitions.RecoveryPlanPeerOutcome.Aligned
+      peerA -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      peerB -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      peerC -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+      unrelated -> StateTransitions.RecoverySeedPeerOutcome.Aligned
     )
     val status = StateTransitions.firstRoundAlignmentBarrierStatus(
       self,
@@ -323,9 +245,9 @@ object StateTransitionsSuite extends SimpleIOSuite {
       selfReady = true,
       responsivePeerStates = Map(peerA -> NodeState.Ready, peerB -> NodeState.WaitingForReady, peerC -> NodeState.Ready),
       peerOutcomes = Map(
-        peerA -> StateTransitions.RecoveryPlanPeerOutcome.Aligned,
-        peerB -> StateTransitions.RecoveryPlanPeerOutcome.Mismatched,
-        peerC -> StateTransitions.RecoveryPlanPeerOutcome.FetchFailed
+        peerA -> StateTransitions.RecoverySeedPeerOutcome.Aligned,
+        peerB -> StateTransitions.RecoverySeedPeerOutcome.Mismatched,
+        peerC -> StateTransitions.RecoverySeedPeerOutcome.FetchFailed
       )
     )
 

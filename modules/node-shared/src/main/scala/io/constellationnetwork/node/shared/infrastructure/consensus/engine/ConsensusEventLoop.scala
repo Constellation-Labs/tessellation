@@ -101,10 +101,6 @@ object ConsensusEventLoop {
   private[consensus] def observeQueueDepthThenDispatch[F[_]: Async](observeQueueDepth: F[Unit])(dispatch: F[Unit]): F[Unit] =
     observeQueueDepth.attempt.void >> dispatch
 
-  /** Keep a queued pacemaker request failure from terminating the sole consensus command stream. The recovery effects are each isolated:
-    * logging/metrics failure must not prevent the monitor from being re-armed, and a monitor-rearm failure must not escape and kill the
-    * stream either.
-    */
   private[consensus] def recoverViewChangeRequestFailure[F[_]: Async](
     request: F[Unit],
     onError: Throwable => F[Unit],
@@ -112,10 +108,6 @@ object ConsensusEventLoop {
   ): F[Unit] =
     request.handleErrorWith(error => onError(error).attempt.void >> rearmMonitor.attempt.void)
 
-  /** Always attempt monitor re-arm after an abandonment drains. A real abandon removed the state, so re-arm is a no-op; a stale/safety
-    * suppression keeps the state and needs a new monitor. All error handling is best-effort so this helper cannot terminate the sole
-    * command stream.
-    */
   private[consensus] def containAbandonAndRearm[F[_]: Async](
     abandon: F[Unit],
     onError: Throwable => F[Unit],
@@ -141,11 +133,8 @@ object ConsensusEventLoop {
     offerTimeTick: F[Unit]
   ): F[Unit] =
     stateStillPresent.attempt.flatMap {
-      case Right(true)  => Async[F].unit
+      case Right(true) => Async[F].unit
       case Right(false) =>
-        // The original failure may have happened immediately after state=None and before
-        // `clearResourcesPreservingDeclarations`. Retry that idempotent, policy-aware cleanup so
-        // the next attempt cannot inherit stale Proposal/Signature/Binary slots.
         clearAttemptResources.attempt.void >> offerRoundCompleted.attempt.void >>
           nodeState.attempt.flatMap {
             case Right(state) if ConsensusFSM.consensusParticipatingState(state) => offerTimeTick.attempt.void
@@ -254,7 +243,7 @@ object ConsensusEventLoop {
     * any lifecycle state reached by the non-transactional initialization tail, rather than bouncing through a fresh download and losing the
     * only barrier installer.
     */
-  private[consensus] def plannedInitializationRetryableState(state: NodeState): Boolean =
+  private[consensus] def recoveryInitializationRetryableState(state: NodeState): Boolean =
     ConsensusFSM.consensusParticipatingState(state)
 
   final case class BuiltConsensusLoop[F[_], Event, Key, Artifact, Ctx, Status, Outcome, Kind](
@@ -297,18 +286,21 @@ object ConsensusEventLoop {
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
     admissionNomineesOf: Outcome => Set[PeerId],
+    // Canonical parent-round committee used to reproduce the signing-participation
+    // auditor's deterministic target when authorizing a paired atomic admission vote.
+    parentRoundCommitteeOf: Outcome => Set[PeerId],
     openAdmissionCadenceOf: Key => Boolean,
-    // Optional local proof view for the exact next-seat finality-headroom gate. Global L0
-    // supplies parent snapshot proof signers; Currency L0 deliberately leaves this absent
-    // because unanimity cannot prove an unseated (n + 1)th signer.
+    // Optional local proof view for the exact next-seat finality-headroom gate. Global L0 supplies parent snapshot proof signers.
     locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
+    // Monotonic certified-lineage fact. False only for the exact canonical from-genesis
+    // singleton before its first 1 -> 2 expansion.
+    expandedBeyondSingletonOf: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
-    // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission
-    // Ready-only while allowing carried probation peers to prove an exact tip before Ready;
-    // Currency L0 leaves direct probing disabled.
+    // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission Ready-only while allowing carried probation peers to
+    // prove an exact tip before Ready.
     admissionCandidateTipProbe: Option[AdmissionCandidateTipProbe.Probes[F]],
     // Layer-supplied HTTP preflight for AbandonmentTracker's rumor-stale escalation shape (issue
     // #1533): does a corroborated group of Ready peers report the same committed snapshot at or
@@ -325,9 +317,14 @@ object ConsensusEventLoop {
     // CheckEvictionAssembly command from its round-creation finality audit before the first
     // Facility is sent. Other layers retain the internal-queue behavior.
     injectedQueue: Option[Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]]] = None,
+    // Typed persistence hooks keep Global L0 recovery sidecars out of the generic event loop.
+    onOutcomeFinalized: Option[Outcome => F[Unit]] = None,
+    onOutcomeInitialized: Option[Outcome => F[Unit]] = None,
     onOutcomePreInitialize: Option[Outcome => F[Unit]] = None,
+    onOutcomeSafetyInitialized: Option[Outcome => F[Unit]] = None,
+    onOutcomeRollbackInitialized: Option[(Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit]] = None,
     initiallyHoldFirstRound: Boolean = false,
-    plannedRecoveryCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
+    recoverySeedCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
     normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   )(
     implicit _key: monocle.Lens[Outcome, Key],
@@ -370,11 +367,16 @@ object ConsensusEventLoop {
         peerQualityOf,
         _key.get _,
         lastOutcomeEndTimeMsOf,
+        onOutcomeFinalized.getOrElse((_: Outcome) => Async[F].unit),
+        onOutcomeInitialized.getOrElse((_: Outcome) => Async[F].unit),
         preInitialize,
+        onOutcomeSafetyInitialized.getOrElse((_: Outcome) => Async[F].unit),
+        onOutcomeRollbackInitialized.getOrElse((_: Outcome, _: ConsensusCommand.RollbackStartPolicy) => Async[F].unit),
         initiallyHoldFirstRound,
-        plannedRecoveryCommittee.getOrElse(none[SortedSet[PeerId]].pure[F]),
+        recoverySeedCommittee.getOrElse(none[SortedSet[PeerId]].pure[F]),
         normalFirstRoundAlignment
       )
+      _ <- Metrics[F].updateGauge("dag_consensus_first_round_start_gate_held", if (initiallyHoldFirstRound) 1L else 0L)
       healthRef <- injectedHealthRef.fold(ConsensusHealthStatus.ref[F])(Async[F].pure)
       requestedViewChanges <- Ref.of[F, Set[ViewChangeManager.RequestId[Key]]](Set.empty)
       viewChangeManager = new ViewChangeManager[F, Key, Artifact, Ctx, Status, Outcome, Kind](
@@ -401,8 +403,10 @@ object ConsensusEventLoop {
         admissionVoter,
         probationPeersOf,
         admissionNomineesOf,
+        parentRoundCommitteeOf,
         openAdmissionCadenceOf,
         locallyObservedParentSignersOf,
+        expandedBeyondSingletonOf,
         lastSnapshotHashOf,
         getPeerChainTips,
         admissionCandidateTipProbe,
@@ -493,27 +497,26 @@ object ConsensusEventLoop {
               } else
                 cmd match {
                   case ConsensusCommand.AbandonRound(key, reason, expectedAttemptId, expectedResourceGeneration) =>
-                    // #1 lost-update fix: the StallDetector monitor enqueues AbandonRound instead of calling
-                    // abandonmentTracker.abandonRound on its own fiber. Handling it here runs abandonRound's
-                    // condModifyState on this single command-loop fiber, the only state writer (see
-                    // ConsensusStorage.condModifyState). abandonRound re-checks outcome-readiness, so a round
-                    // that completed since the monitor's decision is not wiped.
                     containAbandonAndRearm(
-                      abandonmentTracker.abandonRound(key, reason, expectedAttemptId, expectedResourceGeneration),
+                      // A certified sidecar is stronger than a local abandon decision. Retain
+                      // this v35 recovery path before the rc.8 epoch-bound cleanup.
+                      fsm.tryAdoptCertifiedOutcome(key).flatMap { adopted =>
+                        if (adopted) Async[F].unit
+                        else abandonmentTracker.abandonRound(key, reason, expectedAttemptId, expectedResourceGeneration)
+                      },
                       err =>
                         ctx.logger.error(err)("Unhandled error processing AbandonRound, recovering") >>
                           Metrics[F].incrementCounter("dag_consensus_command_error"),
                       recoverFailedAbandonAfterStateRemoval(
                         ctx.storage.getState(key).map(_.isDefined),
                         nodeStorage.getNodeState,
-                        ctx.storage.clearResourcesPreservingDeclarations(key),
+                        // AbandonmentTracker now clears resources inside condModifyState before the state removal commits. If the state is
+                        // absent here cleanup already succeeded with the exact round's ViewSafetyMode; re-deriving it after removal would
+                        // cross the activation boundary incorrectly.
+                        Async[F].unit,
                         ctx.storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id))),
                         queue.offer(ConsensusCommand.TimeTick)
                       ),
-                      // The monitor exits as soon as it enqueues AbandonRound. If the drain-time
-                      // attempt/outcome/vote-lock checks suppress that command, the state remains
-                      // live and must receive a replacement monitor. This is a no-op after a real
-                      // abandon because performAbandon removed the state.
                       roundRunner.ensureRoundMonitor(key)
                     )
                   case ConsensusCommand.RequestViewChange(
@@ -580,7 +583,11 @@ object ConsensusEventLoop {
                                   ctx.storage.getState(key).map(_.isDefined),
                                   roundRunner.cleanupRound,
                                   pending.clear(),
-                                  ctx.storage.clearResourcesPreservingDeclarations(key),
+                                  // The soft reset cleared resources while the exact round state
+                                  // (and therefore its v35 safety mode) was still available. If the
+                                  // state is absent here, re-deriving a mode is impossible and a
+                                  // second cleanup could erase the certified vote lock.
+                                  Async[F].unit,
                                   queue.offer(ConsensusCommand.RoundCompleted(expectedAttemptId)),
                                   nodeStorage.getNodeState,
                                   queue.offer(ConsensusCommand.TimeTick),
@@ -601,18 +608,18 @@ object ConsensusEventLoop {
                               case ConsensusCommand.RetryCheckUpdate(key, expectedAttemptId) =>
                                 scheduleCheckUpdateRetry(key, expectedAttemptId.some)
                               case init @ ConsensusCommand.InitializeFromDownload(_, _, _, _) =>
-                                (ctx.plannedRecoveryCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
-                                  case (planned, held) if planned.exists(_.nonEmpty) || held.contains(true) =>
-                                    val explicitRecovery = planned.exists(_.nonEmpty)
+                                (ctx.recoverySeedCommittee.attempt, ctx.firstRoundStartGate.isHeld.attempt).tupled.flatMap {
+                                  case (recoverySeed, held) if recoverySeed.exists(_.nonEmpty) || held.contains(true) =>
+                                    val explicitRecovery = recoverySeed.exists(_.nonEmpty)
                                     val message =
                                       if (explicitRecovery)
-                                        "Signed recovery-plan initialization failed after a partial install; retrying the exact generation"
+                                        "Operator recovery-seed initialization failed after a partial install; retrying the exact generation"
                                       else
                                         "Normal first-round alignment initialization failed after a partial install; retrying the exact generation"
                                     val observeResume =
                                       ctx.logger.warn(message) >>
                                         (if (explicitRecovery)
-                                           Metrics[F].incrementCounter("dag_consensus_recovery_plan_init_resume_total")
+                                           Metrics[F].incrementCounter("dag_consensus_recovery_seed_init_resume_total")
                                          else
                                            Metrics[F].incrementCounter(
                                              "dag_consensus_normal_first_round_alignment_init_resume_total"
@@ -626,7 +633,7 @@ object ConsensusEventLoop {
                                       Async[F]
                                         .start(
                                           Async[F].sleep(1.second) >> nodeStorage.getNodeState.flatMap { state =>
-                                            queue.offer(init).whenA(plannedInitializationRetryableState(state))
+                                            queue.offer(init).whenA(recoveryInitializationRetryableState(state))
                                           }
                                         )
                                         .attempt

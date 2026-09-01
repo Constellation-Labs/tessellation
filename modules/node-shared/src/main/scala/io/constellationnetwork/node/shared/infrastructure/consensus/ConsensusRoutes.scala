@@ -21,8 +21,7 @@ import org.http4s.server.Router
 
 class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder, Artifact, Context, ConStatus, Outcome: Encoder, Kind](
   storage: ConsensusStorage[F, _, Key, Artifact, Context, ConStatus, Outcome, Kind],
-  rumorQueue: Queue[F, Hashed[RumorRaw]],
-  historicalOutcome: Option[Key => F[Option[Outcome]]] = None
+  rumorQueue: Queue[F, Hashed[RumorRaw]]
 )(implicit _key: Lens[Outcome, Key])
     extends Http4sDsl[F] {
 
@@ -37,20 +36,22 @@ class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder,
       for {
         outcomeRequest <- req.as[GetConsensusOutcomeRequest[Key]]
         live <- storage.getLastConsensusOutcome
+        // The live outcome is authoritative at its exact key. During an operator
+        // recovery seed the lead installs a synthetic selected committee at anchor N,
+        // while an old certified sidecar for N may still exist on disk. Serving that
+        // sidecar first would make validators install the superseded committee and the
+        // exact first-round alignment barrier could never open.
         result <- live match {
           case Some(value) if _key.get(value) === outcomeRequest.key => Ok(value.some)
-          case Some(value) if _key.get(value) < outcomeRequest.key   => Ok(none[Outcome])
-          case _ =>
-            historicalOutcome
-              .fold(none[Outcome].pure[F])(_(outcomeRequest.key))
-              .flatMap {
-                case Some(value) => Ok(value.some)
-                case None =>
-                  live match {
-                    case Some(value) if _key.get(value) > outcomeRequest.key => Conflict()
-                    case _                                                   => Ok(none[Outcome])
-                  }
-              }
+          // A typed sidecar is historical recovery evidence, never permission to
+          // advertise an outcome ahead of live consensus. This prevents retained
+          // pre-rollback N+1 files from bypassing a newly installed live anchor N.
+          case Some(value) if _key.get(value) < outcomeRequest.key => Ok(none[Outcome])
+          // Historical certified sidecars are local rollback/replay evidence only.
+          // They are never remote initialization authority: once live consensus is
+          // ahead, serving K would strand a validator in the superseded K+1 round.
+          case None    => Ok(none[Outcome])
+          case Some(_) => Conflict()
         }
       } yield result
     case req @ POST -> Root / "push-rumor" =>

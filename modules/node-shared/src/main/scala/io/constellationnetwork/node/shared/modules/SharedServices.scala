@@ -146,7 +146,8 @@ object SharedServices {
         validators.feeTransactionValidator,
         validators.globalSnapshotSyncValidator,
         storages.lastNGlobalSnapshot,
-        storages.lastGlobalSnapshot
+        storages.lastGlobalSnapshot,
+        Some(Metrics[F])
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
@@ -162,7 +163,9 @@ object SharedServices {
         ),
         validators.signedValidator,
         None,
-        None
+        None,
+        cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+          .getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
         currencySnapshotValidator
@@ -212,7 +215,8 @@ object SharedServices {
         cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         cfg.fieldsAddedOrdinals.setSumFix.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         storages.mptStore,
-        cfg.incrementalDelegatedStakingStartingOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
+        cfg.incrementalDelegatedStakingStartingOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
       )
     } yield
       new SharedServices[F, A](

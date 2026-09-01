@@ -17,7 +17,7 @@ import io.constellationnetwork.security.signature.Signed
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
 
-object GlobalRecoveryPlanOutcomeSuite extends MutableIOSuite {
+object GlobalRecoverySeedOutcomeSuite extends MutableIOSuite {
 
   implicit val globalStateProofSelector: GlobalStateProofSelector =
     GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
@@ -45,7 +45,7 @@ object GlobalRecoveryPlanOutcomeSuite extends MutableIOSuite {
       signedIncremental <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](incremental, keyPair)
       snapshotHash <- signedIncremental.toHashed[IO].map(_.hash)
       context = signedGenesis.value.info.toGlobalSnapshotInfo
-      outcome = GlobalRecoveryPlanOutcome.seed(signedIncremental, context, snapshotHash, committee)
+      outcome = GlobalRecoverySeedOutcome.seed(signedIncremental, context, snapshotHash, committee)
       operational = outcome.toOperationalState
     } yield
       expect.same(Facilitators(committee.toList), outcome.facilitators) &&
@@ -60,7 +60,9 @@ object GlobalRecoveryPlanOutcomeSuite extends MutableIOSuite {
             recentProofSizes = SortedMap(signedIncremental.ordinal -> committee.size)
           ),
           operational
-        )
+        ) &&
+        expect(GlobalRecoverySeedOutcome.isCanonicalRoot(outcome)) &&
+        expect(!GlobalRecoverySeedOutcome.isCanonicalRoot(outcome.copy(expandedBeyondSingleton = Some(true))))
   }
 
   test("recovery seed is permutation-invariant and a different committee is a different outcome") { res =>
@@ -79,9 +81,10 @@ object GlobalRecoveryPlanOutcomeSuite extends MutableIOSuite {
       signedIncremental <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](incremental, keyPair)
       snapshotHash <- signedIncremental.toHashed[IO].map(_.hash)
       context = signedGenesis.value.info.toGlobalSnapshotInfo
-      first = GlobalRecoveryPlanOutcome.seed(signedIncremental, context, snapshotHash, SortedSet(c, a, b))
-      same = GlobalRecoveryPlanOutcome.seed(signedIncremental, context, snapshotHash, SortedSet(b, c, a))
-      different = GlobalRecoveryPlanOutcome.seed(signedIncremental, context, snapshotHash, SortedSet(a, b))
+      first = GlobalRecoverySeedOutcome.seed(signedIncremental, context, snapshotHash, SortedSet(c, a, b))
+      same = GlobalRecoverySeedOutcome.seed(signedIncremental, context, snapshotHash, SortedSet(b, c, a))
+      different = GlobalRecoverySeedOutcome.seed(signedIncremental, context, snapshotHash, SortedSet(a, b))
     } yield expect.same(first, same) && expect(first != different)
   }
+
 }

@@ -411,7 +411,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                     state.viewNumber,
                     ctx.ops.phaseIndex(state.status),
                     voteLock.exists(_.blocksLegacyViewChange),
-                    storage.legacyViewChangePolicy
+                    storage.viewSafetyMode(state.certifiedConsensusActive)
                   ) =>
                 // The monitor may have queued this command immediately before proposal
                 // acceptance/self-signing. VoteLock writes do not necessarily bump the
@@ -495,6 +495,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
       storage
         .condModifyState[Unit](key) {
           case Some(state) =>
+            val mode = storage.viewSafetyMode(state.certifiedConsensusActive)
             // Attribute the abandon to its leader so operators can tell whether a flaky community
             // peer is dragging the cluster down. Pair with dag_consensus_round_completed_total
             // (same `peer_id` label) for a per-leader success-rate query.
@@ -507,17 +508,14 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
             ) >>
               peerQualityTracker
                 .recordRoundAbandoned(state.facilitators.value.toSet)
+                // Cleanup runs before condModifyState commits the state removal. A cleanup failure therefore leaves the exact state and
+                // activation mode intact for the serialized retry instead of re-deriving legacy mode from an already-empty slot.
+                .flatTap(_ => storage.clearResourcesPreservingDeclarations(key, mode))
                 .as((none[ConsensusState[Key, Status, Outcome, Kind]], ()).some)
           case _ =>
             none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Unit)].pure[F]
         }
         .void >>
-      // Preserve peerDeclarationsMap across the abandon/retry cycle. Peers with first-write-wins
-      // storage won't re-send their declarations as duplicates, so clearing them permanently
-      // breaks our ability to collect quorum on retry. See fork-recovery E2E analysis: gl0-0
-      // stuck at progress=1/5 after abandon because it wiped gl0-1/2/3's facilities locally
-      // while those nodes retained gl0-0's declaration.
-      storage.clearResourcesPreservingDeclarations(key) >>
       (if (reason.retriable)
          trackRetriableAtSameKey(key).flatMap { retriableCount =>
            val shouldEscalate = retriableCount >= maxRetriableAtSameKey

@@ -60,6 +60,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
           expect.same(Some(1000), effective.facilitatorSelectionMax) &&
             expect.same(Some(9), effective.coreCommitteeSize) &&
             expect.same(0, effective.quorumShrinkActivationViews) &&
+            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
             expect.same(9, effective.eventTriggerThreshold) &&
             expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
             expect.same(10, effective.activeAdmissionRecentSignerWindow) &&
@@ -73,6 +74,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       val withoutEnvironmentOverrides = cfg.snapshot.copy(
         maxFacilitatorCount = Map.empty,
+        certifiedConsensusActivationOrdinal = Map.empty,
         coreCommitteeSize = Map.empty,
         quorumShrinkActivationViews = Map.empty,
         activeAdmissionMinProbationReentrySlots = Map.empty,
@@ -88,6 +90,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
           expect.same(None, effective.facilitatorSelectionMax) &&
             expect.same(Some(3), effective.coreCommitteeSize) &&
             expect.same(0, effective.quorumShrinkActivationViews) &&
+            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
             expect.same(0, effective.activeAdmissionMinProbationReentrySlots) &&
             expect.same(3, effective.activeAdmissionRecentSignerWindow) &&
             expect.same(cfg.snapshot.consensus.activeFacilitatorTarget, effective.activeFacilitatorTarget) &&

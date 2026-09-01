@@ -70,7 +70,8 @@ object MessageValidationOpsManagerRecoverySuite extends SimpleIOSuite {
       retainedCount = 50,
       syncOffset = 2L,
       metagraphLastAcceptedOn = SnapshotOrdinal.unsafeApply(10L),
-      unappliedGlobalChangeOrdinals = SortedSet.empty
+      unappliedGlobalChangeOrdinals = SortedSet.empty,
+      snapshotProtocolV1ActivationOrdinal = SnapshotOrdinal.unsafeApply(51L)
     )
 
   test("a malformed reset-shaped declaration cannot poison the one valid reset") {
@@ -100,10 +101,10 @@ object MessageValidationOpsManagerRecoverySuite extends SimpleIOSuite {
           expect.same(SortedMap(signer -> valid), result.contextUpdate) &&
           expect(result.notAccepted.contains(malformed))
         }
-      }
+    }
   }
 
-  test("without the signed epoch marker the rc.12 ordinary interpretation is preserved") {
+  test("before snapshot protocol v1 activation the rc.12 ordinary interpretation is preserved") {
     val signer = peer(1)
     val other = peer(2)
     val inherited = SortedMap(other -> signedSync(other, 20L, "old-peer", 1L))
@@ -126,6 +127,6 @@ object MessageValidationOpsManagerRecoverySuite extends SimpleIOSuite {
           expect.same(List(firstDeclaration), result.accepted) &&
           expect.same(inherited.updated(signer, firstDeclaration), result.contextUpdate)
         }
-      }
+    }
   }
 }

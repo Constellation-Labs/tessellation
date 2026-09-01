@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
 import cats.Order._
-import cats.effect.std.{Queue, Supervisor}
+import cats.effect.std.{Mutex, Queue, Supervisor}
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
@@ -13,7 +13,7 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.cats.syntax.partialPrevious._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{SnapshotStorage => SnapshotStorageAlgebra}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
@@ -48,11 +48,12 @@ object SnapshotStorage {
     def mkNotPersistedCache = Ref.of(Set.empty[SnapshotOrdinal])
     def mkOffloadQueue = Queue.unbounded[F, SnapshotOrdinal]
     def mkCutoffQueue = Queue.unbounded[F, SnapshotOrdinal]
+    def mkPersistenceMutex = Mutex[F]
 
     def mkLogger = Slf4jLogger.create[F]
 
-    (mkHeadRef, mkOrdinalCache, mkHashCache, mkNotPersistedCache, mkOffloadQueue, mkCutoffQueue, mkLogger).mapN {
-      (_, _, _, _, _, _, _)
+    (mkHeadRef, mkOrdinalCache, mkHashCache, mkNotPersistedCache, mkOffloadQueue, mkCutoffQueue, mkPersistenceMutex, mkLogger).mapN {
+      (_, _, _, _, _, _, _, _)
     }
   }
 
@@ -62,10 +63,11 @@ object SnapshotStorage {
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
     hasherSelector: HasherSelector[F],
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
-  )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] =
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
+  )(implicit supervisor: Supervisor[F]): F[SnapshotStorageAlgebra[F, S, C] with LatestBalances[F]] =
     makeResources[F, S, C]().flatMap {
-      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, _) =>
+      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, persistenceMutex, _) =>
         make(
           headRef,
           ordinalCache,
@@ -73,12 +75,14 @@ object SnapshotStorage {
           notPersistedCache,
           offloadQueue,
           cutoffQueue,
+          persistenceMutex,
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage,
           inMemoryCapacity,
           snapshotInfoCutoffOrdinal,
           hasherSelector,
-          combinedSnapshotCheckpointFileSystemStorage
+          combinedSnapshotCheckpointFileSystemStorage,
+          protectedSnapshotInfoOrdinals
         )
     }
 
@@ -89,13 +93,15 @@ object SnapshotStorage {
     notPersistedCache: Ref[F, Set[SnapshotOrdinal]],
     offloadQueue: Queue[F, SnapshotOrdinal],
     snapshotInfoCutoffQueue: Queue[F, SnapshotOrdinal],
+    persistenceMutex: Mutex[F],
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
     snapshotInfoCutoffOrdinal: SnapshotOrdinal,
     hasherSelector: HasherSelector[F],
-    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C]
-  )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] = {
+    combinedSnapshotCheckpointFileSystemStorage: CombinedSnapshotCheckpointFileSystemStorage[F, S, C],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal]
+  )(implicit supervisor: Supervisor[F]): F[SnapshotStorageAlgebra[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
 
@@ -118,29 +124,31 @@ object SnapshotStorage {
               _.traverse {
                 case (ordinal, shouldPersist, shouldOffload) =>
                   def offload: F[Unit] =
-                    ordinalCache(ordinal).get.flatMap {
-                      case Some(hash) =>
-                        hashCache(hash).get.flatMap {
-                          case Some(snapshot) =>
-                            Applicative[F].whenA(shouldPersist) {
-                              hasherSelector.withCurrent { implicit hasher =>
-                                snapshotLocalFileSystemStorage.write(snapshot)
+                    persistenceMutex.lock.surround {
+                      ordinalCache(ordinal).get.flatMap {
+                        case Some(hash) =>
+                          hashCache(hash).get.flatMap {
+                            case Some(snapshot) =>
+                              Applicative[F].whenA(shouldPersist) {
+                                hasherSelector.withCurrent { implicit hasher =>
+                                  snapshotLocalFileSystemStorage.write(snapshot)
+                                } >>
+                                  notPersistedCache.update(current => current - ordinal)
                               } >>
-                                notPersistedCache.update(current => current - ordinal)
-                            } >>
-                              Applicative[F].whenA(shouldOffload) {
-                                ordinalCache(ordinal).set(none) >>
-                                  hashCache(hash).set(none)
-                              }
-                          case None =>
-                            MonadThrow[F].raiseError[Unit](
-                              new Throwable("Unexpected state: ordinal and hash found but snapshot not found")
-                            )
-                        }
-                      case None =>
-                        MonadThrow[F].raiseError[Unit](
-                          new Throwable("Unexpected state: hash not found but ordinal exists")
-                        )
+                                Applicative[F].whenA(shouldOffload) {
+                                  ordinalCache(ordinal).set(none) >>
+                                    hashCache(hash).set(none)
+                                }
+                            case None =>
+                              MonadThrow[F].raiseError[Unit](
+                                new Throwable("Unexpected state: ordinal and hash found but snapshot not found")
+                              )
+                          }
+                        case None =>
+                          MonadThrow[F].raiseError[Unit](
+                            new Throwable("Unexpected state: hash not found but ordinal exists")
+                          )
+                      }
                     }
 
                   offload.handleErrorWith { e =>
@@ -154,41 +162,58 @@ object SnapshotStorage {
     def snapshotInfoCutoffProcess: Stream[F, Unit] =
       Stream
         .fromQueueUnterminated(snapshotInfoCutoffQueue)
-        .evalMap { ordinal =>
-          val toKeep = cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, ordinal)
+        .evalMap { _ =>
+          persistenceMutex.lock.surround {
+            // Resolve retention from the current head, not the queued ordinal.
+            // A recovery can leave older cutoff notifications in the queue;
+            // replaying a stale future ordinal after rollback could otherwise
+            // prune the newly installed lower anchor.
+            headRef.get.flatMap {
+              case Some((current, _, _)) =>
+                snapshotInfoLocalFileSystemStorage.listStoredOrdinals.flatMap {
+                  _.compile.toList.map { stored =>
+                    // Certified replay authenticates the activation transition from the exact
+                    // A-1 artifact/context pair. Keep that one configured trust-root preimage in
+                    // addition to the ordinary logarithmic operational history.
+                    val retained =
+                      cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, current.ordinal) ++ protectedSnapshotInfoOrdinals
 
-          snapshotInfoLocalFileSystemStorage.listStoredOrdinals.flatMap {
-            _.compile.toList
-              .map(_.toSet.diff(toKeep).toList)
-              .flatMap(_.traverse(snapshotInfoLocalFileSystemStorage.delete))
+                    stored.toSet.diff(retained).toList
+                  }
+                    .flatMap(_.traverse_(snapshotInfoLocalFileSystemStorage.delete))
+                }
+              case None => Applicative[F].unit
+            }
           }
         }
         .void
 
     def enqueue(snapshot: Signed[S], snapshotInfo: C)(implicit hasher: Hasher[F]) =
-      snapshot.value.hash.flatMap { hash =>
-        hashCache(hash).set(snapshot.some) >>
-          ordinalCache(snapshot.ordinal).set(hash.some) >>
-          snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
-            snapshotExists(snapshot).ifM(
-              logger.info(s"Snapshot is already saved on disk. hash=$hash ordinal=${snapshot.ordinal}"),
-              logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
-                notPersistedCache.update(current => current + snapshot.ordinal)
-            )
-          } >>
-          snapshotInfoLocalFileSystemStorage
-            .write(snapshot.ordinal, snapshotInfo)
-            .handleErrorWith { error =>
-              logger.error(error)(s"Failed writing required snapshot info to disk! ordinal=${snapshot.ordinal}") >>
-                error.raiseError[F, Unit]
-            }
-            .flatMap { _ =>
-              snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
-                snapshot.ordinal
-                  .partialPreviousN(inMemoryCapacity)
-                  .fold(Applicative[F].unit)(offloadQueue.offer) >>
-                combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
-            }
+      persistenceMutex.lock.surround {
+        snapshot.value.hash.flatMap { hash =>
+          hashCache(hash).set(snapshot.some) >>
+            ordinalCache(snapshot.ordinal).set(hash.some) >>
+            snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
+              snapshotExists(snapshot).ifM(
+                logger.info(s"Snapshot is already saved on disk. hash=$hash ordinal=${snapshot.ordinal}"),
+                logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
+                  notPersistedCache.update(current => current + snapshot.ordinal)
+              )
+            } >>
+            snapshotInfoLocalFileSystemStorage
+              .write(snapshot.ordinal, snapshotInfo)
+              .handleErrorWith { error =>
+                logger.error(error)(s"Failed writing required snapshot info to disk! ordinal=${snapshot.ordinal}") >>
+                  error.raiseError[F, Unit]
+              }
+              .flatMap { _ =>
+                snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
+                  snapshot.ordinal
+                    .partialPreviousN(inMemoryCapacity)
+                    .fold(Applicative[F].unit)(offloadQueue.offer) >>
+                  combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
+              }
+        }
       }
 
     def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =
@@ -200,7 +225,7 @@ object SnapshotStorage {
         .map(_.reduce(_ && _))
 
     supervisor.supervise(offloadProcess.merge(snapshotInfoCutoffProcess).compile.drain).map { _ =>
-      new SnapshotStorage[F, S, C] with LatestBalances[F] {
+      new SnapshotStorageAlgebra[F, S, C] with LatestBalances[F] {
         def prepend(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Boolean] = {
 
           def offer = enqueue(snapshot, state).as(true)
@@ -280,6 +305,46 @@ object SnapshotStorage {
           logger.info(s"[SnapshotStorage] Recovery: setting head to ordinal=${snapshot.ordinal.show}") >>
             enqueue(snapshot, state) >>
             headRef.set((snapshot, hasher, state).some).void
+
+        private def replaceExactRecoveryHead(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] =
+          snapshot.toHashed.flatMap { hashed =>
+            for {
+              cachedOrdinals <- ordinalCache.keys
+              cachedHashes <- hashCache.keys
+              staleOrdinals = cachedOrdinals.filter(_ >= snapshot.ordinal)
+              staleHashes <- cachedHashes.filterA { hash =>
+                hashCache(hash).get.map(
+                  _.exists(cached => cached.ordinal > snapshot.ordinal || (cached.ordinal === snapshot.ordinal && hash =!= hashed.hash))
+                )
+              }
+              _ <- logger.info(s"[SnapshotStorage] Recovery: atomically replacing exact head ordinal=${snapshot.ordinal.show}")
+              _ <-
+                snapshotLocalFileSystemStorage.replaceForRecovery(snapshot) >>
+                  snapshotInfoLocalFileSystemStorage.replaceForRecovery(snapshot.ordinal, state) >>
+                  combinedSnapshotCheckpointFileSystemStorage.replaceForRecovery(
+                    snapshot.ordinal,
+                    snapshot,
+                    state,
+                    hashed.hash
+                  ) >>
+                  staleOrdinals.traverse_(ordinal => ordinalCache(ordinal).set(none)) >>
+                  staleHashes.traverse_(hash => hashCache(hash).set(none)) >>
+                  hashCache(hashed.hash).set(snapshot.some) >>
+                  ordinalCache(snapshot.ordinal).set(hashed.hash.some) >>
+                  notPersistedCache.update(_.filter(_ < snapshot.ordinal)) >>
+                  Async[F].delay(negativeCache.invalidate(snapshot.ordinal)) >>
+                  headRef.set((snapshot, hasher, state).some).void
+            } yield ()
+          }
+
+        override def setHeadForRecoveryExact(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] =
+          persistenceMutex.lock.surround(replaceExactRecoveryHead(snapshot, state))
+
+        override def replaceCanonicalSuffixForRecovery(snapshot: Signed[S], state: C, cleanupSuffix: F[Unit])(
+          implicit hasher: Hasher[F],
+          F0: cats.effect.MonadCancelThrow[F]
+        ): F[Unit] =
+          persistenceMutex.lock.surround(cleanupSuffix >> replaceExactRecoveryHead(snapshot, state))
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
           headRef.get.map(_.map(_._3.balances))

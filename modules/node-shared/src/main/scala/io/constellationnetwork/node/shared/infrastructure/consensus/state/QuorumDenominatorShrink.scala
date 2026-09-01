@@ -83,8 +83,8 @@ object QuorumDenominatorShrink {
 
   /** Number of escalation steps required per single quorum reduction BELOW the anchor majority (stage 2). Stage 1 reductions (down to the
     * anchor majority) cost one step each because they cannot produce conflicting certs; sub-majority reductions surrender that intersection
-    * guarantee, so they are deliberately 5x slower. Compiled-in constant, jar-hash gated (the `TierTransitions.DemotionConsecutiveMisses`
-    * convention).
+    * guarantee, so they are deliberately 5x slower. Compiled-in constant, advertised-release-version gated (the
+    * `TierTransitions.DemotionConsecutiveMisses` convention).
     */
   val SubMajorityStepCost: Int = 5
 

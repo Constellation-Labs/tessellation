@@ -188,7 +188,7 @@ graph LR
     Join -->|Adds Peers| CS
 ```
 
-**Consensus phases** (Global L0): CollectingFacilities → CollectingProposals → CollectingSignatures → Finished. Currency L0 adds CollectingBinarySignatures before Finished. Rounds are leader-driven with quorum-certified view-change / timeout certificates; the mermaid above shows only the gossip/FSM scaffold, not the committee/certificate engine (see [Subsystem Deep-Dives](#subsystem-deep-dives)).
+**Consensus phases** (Global L0): CollectingFacilities → CollectingProposals → CollectingSignatures → Finished. Global rounds are leader-driven and v35 adds quorum-certified proposal/commit evidence plus view-change/timeout recovery; the mermaid above shows only the gossip/FSM scaffold, not that committee/certificate engine (see [Subsystem Deep-Dives](#subsystem-deep-dives)). Currency L0 is a separate flat synchronous all-member engine with Facilities → Proposals → artifact signatures → binary signatures → Finished. It has no Global Core/Tier roles, leader/view pacemaker, ProposalQC, or timeout/view-change certificates.
 
 **Gossip types**:
 - Peer rumors: Origin-specific with consecutive ordinals
@@ -225,7 +225,7 @@ graph LR
 3. Facilitators create proposal artifacts
 4. Signatures collected, snapshot finalized
 5. Rewards distributed (signer-based: classic or delegated by epoch)
-6. At a configured ordinal, an ordinal-gated GSI dust sweep deflates global state and rebuilds the MPT in one shot (`GlobalSnapshotDustSweep`; deterministic, every node computes the identical swept state). See [operations/fields-added-ordinals](../operations/fields-added-ordinals.md)
+6. At a configured ordinal, an ordinal-gated GSI dust sweep deflates global state and rebuilds the MPT in one shot (`GlobalSnapshotDustSweep`; deterministic, every node computes the identical swept state). See [operations/fields-added-ordinals](operations/fields-added-ordinals.md)
 
 ---
 

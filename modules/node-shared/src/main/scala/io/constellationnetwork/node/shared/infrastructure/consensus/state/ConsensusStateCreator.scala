@@ -114,8 +114,8 @@ object ConsensusStateCreator {
       s"Derived first-round committee does not match the held startup expectation: expected=${expected.size} actual=${actual.size}"
   }
 
-  /** Pure boundary check shared by every concrete state creator. Keeping comparison here prevents DAG/Currency implementations and tests
-    * from acquiring subtly different set/order semantics.
+  /** Pure boundary check shared by Global L0 state-creation paths. Keeping comparison here prevents startup modes and tests from acquiring
+    * subtly different set/order semantics.
     */
   private[consensus] def validateExpectedRoundStartFacilitators(
     expected: Option[SortedSet[PeerId]],

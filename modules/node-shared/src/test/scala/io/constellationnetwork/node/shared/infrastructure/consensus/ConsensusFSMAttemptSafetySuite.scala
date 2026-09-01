@@ -181,6 +181,15 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
           cats.data.StateT.pure[IO, ConsensusState[SnapshotOrdinal, String, TestOutcome, String], IO[Unit]](IO.unit)
 
         def synchronizeDownloadedOutcome(artifact: Signed[String], context: String): IO[Unit] = IO.unit
+        def certifiedOutcomeAdoption(
+          state: ConsensusState[SnapshotOrdinal, String, TestOutcome, String],
+          candidate: TestOutcome
+        ): IO[
+          Either[
+            String,
+            CertifiedOutcomeAdoption[IO, ConsensusState[SnapshotOrdinal, String, TestOutcome, String]]
+          ]
+        ] = Left("certified_consensus_disabled_in_fixture").pure[IO]
         def afterConsensusOutcomeCommitted(outcome: TestOutcome): IO[Unit] = IO.unit
         protected def clusterStorage: ClusterStorage[IO] = unused[ClusterStorage[IO]]
         protected def config: ConsensusConfig = consensusConfig
@@ -192,7 +201,7 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         isRoundRunning = running,
         pending = pending,
         firstRoundStartGate = firstRoundGate,
-        plannedRecoveryCommittee = none.pure[IO],
+        recoverySeedCommittee = none.pure[IO],
         gossip = unused[Gossip[IO]],
         storage = storage,
         creator = unused[ConsensusStateCreator[IO, SnapshotOrdinal, String, String, String, TestOutcome, String]],
@@ -215,7 +224,11 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         peerQualityOf = _ => Map.empty,
         lastOutcomeKeyOf = _.key,
         lastOutcomeEndTimeMsOf = _ => None,
+        onOutcomeFinalized = _ => IO.unit,
+        onOutcomeInitialized = _ => IO.unit,
         onOutcomePreInitialize = _ => IO.unit,
+        onOutcomeSafetyInitialized = _ => IO.unit,
+        onOutcomeRollbackInitialized = (_, _) => IO.unit,
         recoveredAtKeyRef = recovered,
         retriableAtSameKeyRef = retriable
       )

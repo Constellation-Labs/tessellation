@@ -10,17 +10,13 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotTraverse
-import io.constellationnetwork.dag.l0.modules.{Services, Storages}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotConfig
-import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
-import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.security._
@@ -38,20 +34,20 @@ object RollbackLoader {
   }
 
   final case class PreflightIncrementalMissing(hash: Hash) extends NoStackTrace {
-    override def getMessage: String = s"Recovery-plan preflight could not read exact incremental rollback hash=${hash.value}"
+    override def getMessage: String = s"Rollback preflight could not read exact incremental rollback hash=${hash.value}"
   }
 
   final case class PreflightSnapshotInfoMissing(ordinal: SnapshotOrdinal) extends NoStackTrace {
-    override def getMessage: String = s"Recovery-plan preflight could not read snapshot info at ordinal=${ordinal.value.value}"
+    override def getMessage: String = s"Rollback preflight could not read snapshot info at ordinal=${ordinal.value.value}"
   }
 
   /** Keep the safety-critical ordering explicit and independently testable: a failed preflight cannot evaluate the mutation phase. */
   private[programs] def runPreflightThen[F[_]: Async, A](preflight: F[Unit], mutate: => F[A]): F[A] =
     preflight >> mutate
 
-  /** Resolve source policy before evaluating source-specific loading. Recovery-plan v1 uses this to reject a full-snapshot source before
-    * constructing its synthetic first incremental, running detailed anchor validation, consuming the one-shot receipt, or mutating rollback
-    * storage. Ordinary rollback supplies no source preflight and retains its exact path.
+  /** Resolve source policy before evaluating source-specific loading. The env recovery seed uses this to reject a full-snapshot source
+    * before constructing its synthetic first incremental, running exact-anchor validation, or mutating rollback storage. Ordinary rollback
+    * supplies no source preflight and retains its exact path.
     */
   private[programs] def runSourcePreflightThen[F[_]: Async, A](
     source: Source,
@@ -59,6 +55,18 @@ object RollbackLoader {
     load: => F[A]
   ): F[A] =
     preflight.fold(load)(validate => runPreflightThen(validate(source), load))
+
+  /** Decide whether an installed pre-load validator owns this anchor.
+    *
+    * An explicit recovery seed validates every supported anchor. Ordinary rollback installs the validator only for the certified epoch;
+    * legacy anchors must retain the pre-v35 loader path and must not gain an early snapshot-info requirement merely because certified
+    * rollback support exists in the same binary.
+    */
+  private[programs] def preLoadValidationRequired(
+    anchor: SnapshotOrdinal,
+    minimumOrdinal: Option[SnapshotOrdinal]
+  ): Boolean =
+    minimumOrdinal.forall(anchor >= _)
 
   def make[F[_]: Async: Parallel: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
@@ -115,15 +123,17 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
 
   private val logger = Slf4jLogger.getLogger[F]
 
-  /** Resolve and load the rollback anchor. `preLoadValidate` is absent on ordinary rollback, preserving its exact path. Operator recovery
-    * supplies a callback that runs against read-only local incremental/snapshot-info files before `GlobalSnapshotTraverse.loadChain` can
-    * initialize snapshot storage or sync MPT state.
+  /** Resolve and load the rollback anchor. `preLoadValidate` runs against read-only local incremental/snapshot-info files before
+    * `GlobalSnapshotTraverse.loadChain` can initialize snapshot storage or sync MPT state. `preLoadValidateFrom` scopes an ordinary
+    * certified rollback validator to its activation epoch; an explicit recovery validator omits that bound and validates every supported
+    * anchor. Below a supplied bound, the legacy load path remains authoritative.
     */
   def load(
     rollbackHash: Hash,
     download: Download[F, GlobalIncrementalSnapshot],
     preSourceValidate: Option[RollbackLoader.Source => F[Unit]] = None,
-    preLoadValidate: Option[(RollbackLoader.Source, GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot]) => F[Unit]] = None
+    preLoadValidate: Option[(RollbackLoader.Source, GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot]) => F[Unit]] = None,
+    preLoadValidateFrom: Option[SnapshotOrdinal] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] =
@@ -158,10 +168,13 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
                 exactSnapshot <- incrementalGlobalSnapshotLocalFileSystemStorage
                   .read(rollbackHash)
                   .flatMap(_.liftTo[F](RollbackLoader.PreflightIncrementalMissing(rollbackHash)))
-                exactInfo <- snapshotInfoLocalFileSystemStorage
-                  .read(exactSnapshot.ordinal)
-                  .flatMap(_.liftTo[F](RollbackLoader.PreflightSnapshotInfoMissing(exactSnapshot.ordinal)))
-                _ <- validate(RollbackLoader.Source.Incremental, exactInfo, exactSnapshot)
+                _ <-
+                  if (RollbackLoader.preLoadValidationRequired(exactSnapshot.ordinal, preLoadValidateFrom))
+                    snapshotInfoLocalFileSystemStorage
+                      .read(exactSnapshot.ordinal)
+                      .flatMap(_.liftTo[F](RollbackLoader.PreflightSnapshotInfoMissing(exactSnapshot.ordinal)))
+                      .flatMap(validate(RollbackLoader.Source.Incremental, _, exactSnapshot))
+                  else Async[F].unit
               } yield ()
 
               RollbackLoader.runPreflightThen(preflight, loadIncremental)
@@ -184,7 +197,11 @@ sealed abstract class RollbackLoader[F[_]: Async: Parallel: KryoSerializer: Json
               RollbackLoader.Source.FullSnapshot,
               preSourceValidate,
               preLoadValidate.fold(loadFull) { validate =>
-                loadFull.flatTap { case (info, snapshot) => validate(RollbackLoader.Source.FullSnapshot, info, snapshot) }
+                loadFull.flatTap {
+                  case (info, snapshot) =>
+                    validate(RollbackLoader.Source.FullSnapshot, info, snapshot)
+                      .whenA(RollbackLoader.preLoadValidationRequired(snapshot.ordinal, preLoadValidateFrom))
+                }
               }
             )
         }

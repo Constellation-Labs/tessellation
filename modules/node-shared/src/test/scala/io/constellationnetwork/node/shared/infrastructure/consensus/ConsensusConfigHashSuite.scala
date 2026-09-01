@@ -19,8 +19,7 @@ import weaver.SimpleIOSuite
   *
   * v20 routes the env-resolved value through `ConsensusConfig.coreCommitteeSize: Option[Int]` (populated by `GlobalSnapshotConsensus` /
   * `CurrencySnapshotConsensus` at the construction site) and folds it into the hash. Honest operators with divergent Core size values now
-  * compute different hashes. L0 advertises this exact effective hash at joining, where mismatched or one-sided values are rejected;
-  * Facility processing provides an additional diagnostic. The advertised `versionHash` independently fences software releases.
+  * compute different hashes and handshake-reject before any consensus state is exchanged.
   *
   * This suite asserts the invariant directly on `ConsensusConfig.deterministicConfigHash`:
   *
@@ -71,7 +70,7 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect.same(absent.deterministicConfigHash, explicit.deterministicConfigHash)
   }
 
-  pureTest("dev (3) vs testnet (5) -> different join hash after env resolution") {
+  pureTest("dev (3) vs testnet (5) -> different hash (env-resolved divergence rejected at handshake)") {
     val devConfig = baseConfig.copy(coreCommitteeSize = Some(3))
     val testnetConfig = baseConfig.copy(coreCommitteeSize = Some(5))
     expect(devConfig.deterministicConfigHash != testnetConfig.deterministicConfigHash)
@@ -84,21 +83,44 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(t != m).and(expect(t != i)).and(expect(m != i))
   }
 
-  pureTest("regression marker: divergent Core size between operators has a distinct join fingerprint") {
+  pureTest("regression marker: divergent Core size between operators is detected before consensus") {
     // Operator A configures Core=5, operator B configures Core=6 by accident. Pre-v20 both would
     // produce the same hash and their Facility messages would interoperate; the fork would emerge
-    // downstream when their Core committee derivations diverged. The L0 join gate now rejects the
-    // mismatch before Facility processing.
+    // downstream when their Core committee derivations diverged. v20 catches this at handshake.
     val operatorA = baseConfig.copy(coreCommitteeSize = Some(5))
     val operatorB = baseConfig.copy(coreCommitteeSize = Some(6))
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
+  }
+
+  pureTest("v35 activation key is a deterministic-config fence and activates at the exact key") {
+    val first = baseConfig.copy(certifiedConsensusActivationKey = 100L)
+    val second = baseConfig.copy(certifiedConsensusActivationKey = 101L)
+
+    expect(first.deterministicConfigHash != second.deterministicConfigHash)
+      .and(expect(!first.certifiedConsensusActiveAt(99L)))
+      .and(expect(first.certifiedConsensusActivatesAt(100L)))
+      .and(expect(first.certifiedConsensusActiveAt(101L)))
+  }
+
+  pureTest("absent v35 activation remains dormant") {
+    expect
+      .same(Long.MaxValue, baseConfig.certifiedConsensusActivationKey)
+      .and(expect(!baseConfig.certifiedConsensusActiveAt(0L)))
+      .and(expect(!baseConfig.certifiedConsensusActivatesAt(0L)))
+  }
+
+  pureTest("maxRoundDuration joins the deterministic hash when it bounds certified end time") {
+    val short = baseConfig.copy(maxRoundDuration = Some(1.minute))
+    val long = baseConfig.copy(maxRoundDuration = Some(2.minutes))
+
+    expect(short.deterministicConfigHash != long.deterministicConfigHash)
   }
 
   pureTest("tier1SignatureGracePeriod is NOT in deterministicConfigHash (timing-only, same as signatureGracePeriod)") {
     // Both grace periods are finalization-timing levers: the canonical snapshotHash is the agreed
     // ARTIFACT hash, not the signed-artifact hash, so divergent grace values produce the same
     // downstream hash and must NOT enter the config hash (otherwise honest operators with different
-    // timing would produce a noisy diagnostic mismatch). This guards the documented treatment.
+    // timing would needlessly handshake-reject). This guards the documented treatment.
     val a = baseConfig.copy(tier1SignatureGracePeriod = 750.milliseconds, signatureGracePeriod = 3.seconds)
     val b = baseConfig.copy(tier1SignatureGracePeriod = 2.seconds, signatureGracePeriod = 9.seconds)
     expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
@@ -127,5 +149,12 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(base.deterministicConfigHash != differentOffset.deterministicConfigHash) &&
     expect(base.deterministicConfigHash != differentRetention.deterministicConfigHash) &&
     expect(differentOffset.deterministicConfigHash != differentRetention.deterministicConfigHash)
+  }
+
+  pureTest("Currency snapshot protocol v1 activation participates in the deterministic join fence") {
+    val dormant = baseConfig.copy(currencySnapshotProtocolV1ActivationOrdinal = Long.MaxValue)
+    val scheduled = baseConfig.copy(currencySnapshotProtocolV1ActivationOrdinal = 6000000L)
+
+    expect(dormant.deterministicConfigHash != scheduled.deterministicConfigHash)
   }
 }

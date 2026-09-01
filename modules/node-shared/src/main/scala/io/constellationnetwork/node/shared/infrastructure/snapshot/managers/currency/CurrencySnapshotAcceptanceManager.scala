@@ -8,6 +8,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
+import io.constellationnetwork.currency.schema.CurrencySnapshotSemantics
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.currency.validations.FeeTransactionSignatureValidator.isEnabled
@@ -22,11 +23,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlock
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments.metagraphsBalancesAdjustments
-import io.constellationnetwork.node.shared.infrastructure.snapshot.{
-  CurrencyMessageValidator,
-  GlobalSnapshotSyncValidator,
-  RecoveryGlobalSnapshotSync
-}
+import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
@@ -34,6 +31,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
@@ -42,7 +40,7 @@ import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
-import eu.timepit.refined.auto.autoUnwrap
+import eu.timepit.refined.auto._
 import fs2.concurrent.SignallingRef
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -66,9 +64,9 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     shouldPerformMetagraphSpecificValidations: Boolean,
     lastArtifactProofs: NonEmptySet[SignatureProof],
     previouslyProcessedGlobalSnapshots: SortedSet[SnapshotOrdinal],
-    recoveryHistoryMarkerPresent: Boolean,
     historicalDependencyResolution: Boolean,
-    expectedRecoveryHistoryMarker: Boolean
+    parentSnapshotVersion: SnapshotVersion,
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 
   def acceptRewardTxs(
@@ -92,7 +90,9 @@ object CurrencySnapshotAcceptanceManager {
     if (isRecoveryReset) resolved
     else previous.filter(_.ordinal >= resolved.ordinal).getOrElse(resolved)
 
-  def make[F[_]: Async: Parallel: JsonSerializer: Metrics](
+  // This manager is also embedded by snapshot-streaming, which has no Metrics runtime.
+  // Node applications pass Some(Metrics[F]); library-only consumers retain the legacy source API.
+  def make[F[_]: Async: Parallel: JsonSerializer](
     fieldsAddedOrdinals: FieldsAddedOrdinals,
     environment: AppEnvironment,
     lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
@@ -104,7 +104,8 @@ object CurrencySnapshotAcceptanceManager {
     feeTransactionValidator: FeeTransactionValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
     lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    metrics: Option[Metrics[F]] = None
   )(
     implicit currencyStateProofSelector: CurrencyStateProofSelector
   ): F[CurrencySnapshotAcceptanceManager[F]] = for {
@@ -118,12 +119,14 @@ object CurrencySnapshotAcceptanceManager {
 
     messageOps = MessageValidationOpsManager.make[F](
       messageValidator,
-      globalSnapshotSyncValidator
+      globalSnapshotSyncValidator,
+      metrics
     )
 
     globalSnapshotOps = GlobalSnapshotOpsManager.make[F](
       lastGlobalSnapshotsSyncConfig,
-      globalSnapshotsAlreadyProcessed
+      globalSnapshotsAlreadyProcessed,
+      metrics
     )
 
     allowSpendOps = AllowSpendOpsManager.make[F]
@@ -142,7 +145,8 @@ object CurrencySnapshotAcceptanceManager {
       globalSnapshotOps,
       allowSpendOps,
       tokenLockOps,
-      balanceOps
+      balanceOps,
+      metrics
     ): CurrencySnapshotAcceptanceManager[F]
 }
 
@@ -159,10 +163,12 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
   globalSnapshotOps: GlobalSnapshotOpsManager[F],
   allowSpendOps: AllowSpendOpsManager[F],
   tokenLockOps: TokenLockOpsManager[F],
-  balanceOps: BalanceOpsManager[F]
+  balanceOps: BalanceOpsManager[F],
+  metrics: Option[Metrics[F]]
 )(implicit currencyStateProofSelector: CurrencyStateProofSelector)
     extends CurrencySnapshotAcceptanceManager[F] {
   private val feeTransactionSecurityActivationOrdinal = fieldsAddedOrdinals.feeTransactionSecurityFor(environment)
+  private val currencySnapshotProtocolV1ActivationOrdinal = fieldsAddedOrdinals.currencySnapshotProtocolV1For(environment)
 
   def accept(
     blocksForAcceptance: List[Signed[Block]],
@@ -184,9 +190,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     shouldPerformMetagraphSpecificValidations: Boolean,
     lastArtifactProofs: NonEmptySet[SignatureProof],
     previouslyProcessedGlobalSnapshots: SortedSet[SnapshotOrdinal],
-    recoveryHistoryMarkerPresent: Boolean,
     historicalDependencyResolution: Boolean,
-    expectedRecoveryHistoryMarker: Boolean
+    parentSnapshotVersion: SnapshotVersion,
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
     initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
     tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -208,6 +214,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
       .getOrElse(environment, SnapshotOrdinal.MinValue)
     fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
+      .getOrElse(environment, SnapshotOrdinal.MinValue)
+    preventingAllowSpendResurrection = fieldsAddedOrdinals.preventingAllowSpendResurrection
       .getOrElse(environment, SnapshotOrdinal.MinValue)
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
@@ -247,14 +255,17 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       )
     )
 
+    // Gated on the GLOBAL ordinal, like every other FieldsAddedOrdinals entry -- the currency ordinal is
+    // only used for balance adjustments. At or below the activation the original wrapping path runs, so
+    // history replays to the state that was actually signed.
     (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- balanceOps.acceptFeeTxs(
       updatedBalancesByRewards,
-      feeTransactionsForAcceptance
+      feeTransactionsForAcceptance,
+      maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >
+        fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow.getOrElse(environment, SnapshotOrdinal.MaxValue)
     )
 
-    // SnapshotOrdinal.MaxValue is a protocol-reserved epoch marker. A data application or
-    // custom-artifact producer cannot activate recovery semantics by injecting it.
-    callerSharedArtifacts = sharedArtifactsForAcceptance.filterNot(ProcessedGlobalSnapshotHistory.containsReservedMarker)
+    callerSharedArtifacts = sharedArtifactsForAcceptance
     maybeUnsyncLastGlobalSnapshot <- lastGlobalSnapshotStorage.getCombined
 
     (lastUnsyncGlobalSnapshot, lastUnsyncGlobalSnapshotInfo) <- OptionT
@@ -278,10 +289,20 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         retainedCount = lastGlobalSnapshotsSyncConfig.maxLastGlobalSnapshotsInMemory.value,
         syncOffset = lastGlobalSnapshotsSyncConfig.syncOffset.value,
         metagraphLastAcceptedOn = syncData.globalOrdinalLastAcceptedOn,
-        unappliedGlobalChangeOrdinals = syncData.unappliedGlobalChangeOrdinals
+        unappliedGlobalChangeOrdinals = syncData.unappliedGlobalChangeOrdinals,
+        snapshotProtocolV1ActivationOrdinal = currencySnapshotProtocolV1ActivationOrdinal
       )
     }
-    resetRecognitionEnabled = recoveryHistoryMarkerPresent || expectedRecoveryHistoryMarker
+    // Recognition is globally authorized by the announced GL0 activation boundary, while
+    // validateReset independently requires the reset's selected target to be at/after it.
+    // Parent v1 keeps recognition enabled forever for a lineage even if a replayer's local
+    // GL0 cursor is temporarily behind the activation boundary.
+    resetRecognitionEnabled =
+      CurrencySnapshotSemantics.usesDeterministicHistory(parentSnapshotVersion) ||
+        CurrencySnapshotSemantics.isActivationAuthorized(
+          lastUnsyncGlobalSnapshot.ordinal,
+          currencySnapshotProtocolV1ActivationOrdinal
+        )
 
     parallelResults <- (
       messageOps.acceptMessages(
@@ -304,22 +325,6 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     ).parMapN((messages, syncs) => (messages, syncs))
 
     (messagesAcceptanceResult, globalSnapshotSyncAcceptanceResult) = parallelResults
-    recoveryEpochActive = recoveryHistoryMarkerPresent || globalSnapshotSyncAcceptanceResult.isRecoveryReset
-    _ <- ProcessedGlobalSnapshotHistory
-      .RecoveryHistoryMarkerMismatch(expectedRecoveryHistoryMarker, recoveryEpochActive)
-      .raiseError[F, Unit]
-      .whenA(historicalDependencyResolution && expectedRecoveryHistoryMarker =!= recoveryEpochActive)
-    // The signed marker is the semantic boundary, including while GL0 recreates historical
-    // artifacts. Only unmarked rc.12 history may use its legacy archive/network callback;
-    // allowing a marked artifact to do so would reintroduce node-local archive availability as
-    // a consensus input during replay.
-    dependencyMode = GlobalSnapshotOpsManager.selectDependencyMode(historicalDependencyResolution, recoveryEpochActive)
-    // Before the reset marker, preserve rc.12 replay byte-for-byte: historical artifacts supplied their own
-    // GlobalSnapshotsProcessed value and the legacy process cache might or might not re-emit it. Once the
-    // deterministic recovery epoch starts, the value is derived below exclusively from signed parent history.
-    acceptedSharedArtifacts =
-      if (recoveryEpochActive) callerSharedArtifacts.filterNot(_.isInstanceOf[GlobalSnapshotsProcessed])
-      else callerSharedArtifacts
 
     fallbackOrdinal = lastUnsyncGlobalSnapshot.ordinal
 
@@ -348,6 +353,55 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
           }
       }
       .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
+
+    activationReference = maybeSnapshotOrdinalSync
+      .orElse(maybeLastGlobalSyncView.map(_.ordinal))
+      .getOrElse(SnapshotOrdinal.MinValue)
+    transitionHistoryProven = lastUnsyncMetagraphSyncData
+      .flatMap(_.get(metagraphId))
+      .forall(syncData =>
+        CurrencySnapshotSemantics.legacyHistoryResolvedThrough(
+          syncData.unappliedGlobalChangeOrdinals,
+          activationReference
+        )
+      )
+    snapshotVersion = CurrencySnapshotSemantics.nextVersion(
+      parentSnapshotVersion,
+      activationReference,
+      currencySnapshotProtocolV1ActivationOrdinal,
+      transitionHistoryProven
+    )
+    deterministicHistoryActive = CurrencySnapshotSemantics.usesDeterministicHistory(snapshotVersion)
+    _ <- new IllegalStateException("A recovery reset must activate deterministic Currency snapshot history")
+      .raiseError[F, Unit]
+      .whenA(globalSnapshotSyncAcceptanceResult.isRecoveryReset && !deterministicHistoryActive)
+    transitionOutcome =
+      if (CurrencySnapshotSemantics.usesDeterministicHistory(parentSnapshotVersion)) "deterministic"
+      else if (deterministicHistoryActive) "activated"
+      else if (
+        CurrencySnapshotSemantics.isActivationAuthorized(
+          activationReference,
+          currencySnapshotProtocolV1ActivationOrdinal
+        ) && !transitionHistoryProven
+      ) "blocked_unproven"
+      else "legacy"
+    _ <- metrics.traverse_ { telemetry =>
+      telemetry
+        .incrementCounter(
+          "dag_currency_l0_snapshot_protocol_total",
+          Seq(Metrics.unsafeLabelName("outcome") -> transitionOutcome)
+        )
+        .attempt
+        .void
+    }
+    // Signed CurrencySnapshot.version is the semantic boundary. Version 1.0.0 never
+    // consults the archive/network callback, including during historical recreation.
+    dependencyMode = GlobalSnapshotOpsManager.selectDependencyMode(historicalDependencyResolution, deterministicHistoryActive)
+    // Legacy artifacts preserve rc.12 behavior byte-for-byte. Version 1.0.0 derives the
+    // cumulative GlobalSnapshotsProcessed artifact only from its signed parent and GSI.
+    acceptedSharedArtifacts =
+      if (deterministicHistoryActive) callerSharedArtifacts.filterNot(_.isInstanceOf[GlobalSnapshotsProcessed])
+      else callerSharedArtifacts
 
     ordinalToFetchGlobalSnapshot <- maybeSnapshotOrdinalSync
       .orElse(maybeLastGlobalSyncView.map(_.ordinal))
@@ -396,7 +450,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         shouldPerformMetagraphSpecificValidations,
         lastUnsyncGlobalSnapshot.ordinal,
         fixingAllowSpendAndTokenLockValidation,
-        lastGlobalSnapshotEpochProgress
+        lastGlobalSnapshotEpochProgress,
+        allowSpendBlockAcceptanceMode.creditDestination
       )
     ).parMapN((tokenLock, allowSpend) => (tokenLock, allowSpend))
 
@@ -426,7 +481,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       lastUnsyncGlobalSnapshot.ordinal,
       updatingCombineFunctionSpendActions,
       dependencyMode,
-      deterministicProcessedHistory = recoveryEpochActive
+      deterministicProcessedHistory = deterministicHistoryActive
     )
 
     metagraphIdSpendTransactions = globalSnapshotsSpendActions.flatMap {
@@ -534,7 +589,9 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
         .updateCurrencyBalancesBySpendTransactions(
           updatedBalancesByAllowSpends,
           allActiveCurrencyAllowSpends,
-          metagraphIdSpendTransactions
+          metagraphIdSpendTransactions,
+          // Replay against the global ordinal committed by the previous currency snapshot, never the live GL0 head.
+          maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) > preventingAllowSpendResurrection
         )
         .leftMap(error => SnapshotFailure.BalanceArithmeticError.SpendTransactions(error.toString))
     )
@@ -560,9 +617,13 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     }
 
     updatedBalancesByInvalidAddressChecks <-
-      metagraphsBalancesAdjustments
-        .get(lastSnapshotContext.address)
-        .fold[F[SortedMap[Address, Balance]]] {
+      // A metagraph may be authorized at several ordinals, so select the block matching this one
+      // rather than assuming a single entry. Keying uniquely meant the last block in the resource
+      // silently retired every earlier block for the same currency: replaying one of those ordinals
+      // applied no adjustment and diverged without raising, and a follow-up adjustment could not be
+      // scheduled at all.
+      metagraphsBalancesAdjustments.get(lastSnapshotContext.address) match {
+        case None =>
           if (balanceAdjustments.nonEmpty) {
             val unauthorizedError = new RuntimeException(
               s"Metagraph $metagraphId not authorized to perform balance updates on ordinal $snapshotOrdinal"
@@ -571,16 +632,16 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
           } else {
             updatedBalancesBySpendTransactions.pure[F]
           }
-        } { info =>
-          if (info.snapshotOrdinal === snapshotOrdinal && info.environment === environment) {
-            info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
-              case Right(balances) => balances.pure[F]
-              case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+        case Some(infos) =>
+          infos
+            .find(info => info.snapshotOrdinal === snapshotOrdinal && info.environment === environment)
+            .fold(updatedBalancesBySpendTransactions.pure[F]) { info =>
+              info.balanceAdjustFunction(updatedBalancesBySpendTransactions, balanceAdjustments) match {
+                case Right(balances) => balances.pure[F]
+                case Left(error)     => Async[F].raiseError(new RuntimeException(s"Balance adjustment failed: $error"))
+              }
             }
-          } else {
-            updatedBalancesBySpendTransactions.pure[F]
-          }
-        }
+      }
 
     csi = CurrencySnapshotInfo(
       if (snapshotOrdinalToCheckFields < tessellation3MigrationStartingOrdinal)
@@ -614,15 +675,11 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     (allowSpendsExpiredEvents, tokenUnlocksEvents) = events
 
-    globalSnapshotProcessedEvents: SortedSet[SharedArtifact] = {
-      val payload =
-        if (globalSnapshotsProcessed.nonEmpty)
-          SortedSet[SharedArtifact](GlobalSnapshotsProcessed(globalSnapshotsProcessed))
-        else
-          SortedSet.empty[SharedArtifact]
-
-      if (recoveryEpochActive) payload + ProcessedGlobalSnapshotHistory.Marker else payload
-    }
+    globalSnapshotProcessedEvents: SortedSet[SharedArtifact] =
+      if (globalSnapshotsProcessed.nonEmpty)
+        SortedSet[SharedArtifact](GlobalSnapshotsProcessed(globalSnapshotsProcessed))
+      else
+        SortedSet.empty[SharedArtifact]
 
   } yield
     CurrencySnapshotAcceptanceResult(
@@ -638,7 +695,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       stateProof,
       globalSyncView,
       lastGlobalSnapshotOrdinal,
-      snapshotOrdinalToCheckFields
+      snapshotOrdinalToCheckFields,
+      snapshotVersion
     )
 
   def acceptRewardTxs(

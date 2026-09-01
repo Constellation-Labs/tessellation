@@ -76,7 +76,7 @@ trait CurrencySnapshotCreator[F[_]] {
     // the consensus-agreed previous round outcome.
     peerHistory: Option[ConsensusOperationalState] = None,
     historicalDependencyResolution: Boolean = false,
-    expectedRecoveryHistoryMarker: Boolean = false
+    allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -115,7 +115,7 @@ object CurrencySnapshotCreator {
       maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
       peerHistory: Option[ConsensusOperationalState] = None,
       historicalDependencyResolution: Boolean = false,
-      expectedRecoveryHistoryMarker: Boolean = false
+      allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -213,11 +213,7 @@ object CurrencySnapshotCreator {
             .orElse(feeTransactionFn.map(f => f()))
 
           parentSharedArtifacts = lastArtifact.artifacts.toList.flatten
-          recoveryHistoryMarkerPresent = ProcessedGlobalSnapshotHistory.markerPresent(parentSharedArtifacts)
           previouslyProcessedGlobalSnapshots = ProcessedGlobalSnapshotHistory.payload(parentSharedArtifacts)
-          recoveryResetMarkerRequired = maybeRequiredRecoveryRefresh.exists(
-            _.mode == RecoveryGlobalSnapshotSync.ResetInheritedMultiPeerView
-          )
 
           currencySnapshotAcceptanceResult <-
             currencySnapshotAcceptanceManager
@@ -253,9 +249,9 @@ object CurrencySnapshotCreator {
                 shouldPerformMetagraphSpecificValidations,
                 lastArtifact.proofs,
                 previouslyProcessedGlobalSnapshots,
-                recoveryHistoryMarkerPresent,
                 historicalDependencyResolution,
-                expectedRecoveryHistoryMarker || recoveryResetMarkerRequired
+                lastArtifact.version,
+                allowSpendBlockAcceptanceMode
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
@@ -327,7 +323,8 @@ object CurrencySnapshotCreator {
             else currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
             if (currencySnapshotAcceptanceResult.lastGlobalSnapshotToCheckFields < tessellation3MigrationStartingOrdinal) none
             else currencySnapshotAcceptanceResult.globalSyncView.some,
-            peerHistory
+            peerHistory,
+            currencySnapshotAcceptanceResult.snapshotVersion
           )
 
           _ <- maybeRequiredRecoveryRefresh.traverse_ {

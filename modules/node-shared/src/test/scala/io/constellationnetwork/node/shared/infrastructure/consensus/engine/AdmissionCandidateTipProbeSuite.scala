@@ -68,6 +68,30 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
     )
   }
 
+  test("cached readiness keeps legacy bounded lag while certified atomic membership requires the exact parent") {
+    val oneBehind = ChainTip(ordinal(99L), differentHash)
+    val expectedOrdinal = ordinal(100L).some
+
+    IO.pure(
+      expect(
+        AdmissionTipReadiness.isCachedReady(
+          oneBehind,
+          expectedHash,
+          expectedOrdinal,
+          requireExact = false
+        )
+      ) &&
+        expect(
+          !AdmissionTipReadiness.isCachedReady(
+            oneBehind,
+            expectedHash,
+            expectedOrdinal,
+            requireExact = true
+          )
+        )
+    )
+  }
+
   test("fresh direct readiness rejects a conflicting same-ordinal hash and every ahead mismatch") {
     val sameOrdinalConflict = ChainTip(ordinal(100L), differentHash)
     val oneAhead = ChainTip(ordinal(101L), differentHash)
@@ -98,6 +122,36 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
           AdmissionCandidateTipProbe.targetForRound(List(first, second), Set.empty)
         )
     )
+  }
+
+  test("cached readiness neither suppresses the direct open probe nor qualifies a failed direct response") {
+    val target = PeerId(Hex("01" * 64))
+
+    val selected = AdmissionCandidateTipProbe.targetForRound(List(target), Set.empty)
+    val ready = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(none[ChainTip]),
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
+    )
+
+    IO.pure(expect.same(target.some, selected) && expect(ready.isEmpty))
+  }
+
+  test("a wrong-hash direct response cannot qualify the current-Facility open lane") {
+    val target = PeerId(Hex("01" * 64))
+    val directConflict = ChainTip(ordinal(100L), differentHash)
+
+    val directReady = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(directConflict.some),
+      _ => true,
+      expectedHash,
+      ordinal(100L).some
+    )
+
+    IO.pure(expect(directReady.isEmpty))
   }
 
   test("a fresh direct response must exactly match the expected parent before it becomes vote evidence") {
@@ -172,6 +226,31 @@ object AdmissionCandidateTipProbeSuite extends SimpleIOSuite with Checkers {
         expect(staleTip.isEmpty) &&
         expect(notAttempted.isEmpty)
     )
+  }
+
+  test("the from-genesis singleton bootstrap exception still requires a fresh exact parent") {
+    val target = PeerId(Hex("01" * 64))
+    val exact = ChainTip(ordinal(100L), expectedHash)
+    val conflict = ChainTip(ordinal(100L), differentHash)
+
+    val exactWithoutFacility = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(exact.some),
+      _ => false,
+      expectedHash,
+      ordinal(100L).some,
+      currentRoundFacilityRequired = false
+    )
+    val conflictWithoutFacility = AdmissionCandidateTipProbe.readyOpenTarget(
+      target.some,
+      AdmissionCandidateTipProbe.Observation.Attempted(conflict.some),
+      _ => false,
+      expectedHash,
+      ordinal(100L).some,
+      currentRoundFacilityRequired = false
+    )
+
+    IO.pure(expect.same(Set(target), exactWithoutFacility) && expect(conflictWithoutFacility.isEmpty))
   }
 
   test("current-round Facility requires exact parent and the voter's round bindings") {

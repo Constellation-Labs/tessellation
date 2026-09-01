@@ -16,6 +16,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.GlobalStateFieldId
 import io.constellationnetwork.schema.node.UpdateNodeParameters
@@ -65,6 +66,7 @@ case class GlobalSnapshotInfoV1(
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 
@@ -95,6 +97,7 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
+      None,
       None,
       None,
       None,
@@ -155,7 +158,11 @@ case class GlobalSnapshotInfo(
   activeNodeCollaterals: Option[SortedMap[Address, SortedSet[NodeCollateralRecord]]],
   nodeCollateralWithdrawals: Option[SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]]],
   priceState: Option[SortedMap[TokenPair, PriceRecord]],
-  metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]]
+  metagraphSyncData: Option[SortedMap[Address, MetagraphSyncDataInfo]],
+  // Allow-spend references the global layer has already settled, keyed by currency then by the address the
+  // allow-spend belongs to, mirroring `activeAllowSpends`. The value is the allow-spend's lastValidEpochProgress,
+  // which is what later lets the entry be dropped. See AllowSpendStateManager (PROT-1691).
+  retiredAllowSpendRefs: Option[SortedMap[Option[Address], SortedMap[Address, SortedMap[Hash, EpochProgress]]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
 
   def toGlobalSnapshotInfo: GlobalSnapshotInfo =
@@ -176,7 +183,8 @@ case class GlobalSnapshotInfo(
       activeNodeCollaterals,
       nodeCollateralWithdrawals,
       priceState,
-      metagraphSyncData
+      metagraphSyncData,
+      retiredAllowSpendRefs
     )
 
   def stateProof[F[_]: Parallel: Async: Hasher: JsonSerializer](ordinal: SnapshotOrdinal)(
@@ -302,6 +310,7 @@ object GlobalSnapshotInfo {
           roots.get(GlobalStateFieldId.NodeCollateralWithdrawals),
           roots.get(GlobalStateFieldId.PriceState),
           roots.get(GlobalStateFieldId.MetagraphSyncData),
+          roots.get(GlobalStateFieldId.RetiredAllowSpendRefs),
           Some(mptRoot)
         )
       }
@@ -310,6 +319,7 @@ object GlobalSnapshotInfo {
         Hash.empty,
         Hash.empty,
         Hash.empty,
+        None,
         None,
         None,
         None,
@@ -345,8 +355,9 @@ object GlobalSnapshotInfo {
       info.activeNodeCollaterals.traverse(_.hash),
       info.nodeCollateralWithdrawals.traverse(_.hash),
       info.priceState.traverse(_.hash),
-      info.metagraphSyncData.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _, None))
+      info.metagraphSyncData.traverse(_.hash),
+      info.retiredAllowSpendRefs.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _, _, _, _, None))
 
   def empty: GlobalSnapshotInfo = GlobalSnapshotInfo(
     SortedMap.empty,
@@ -365,8 +376,13 @@ object GlobalSnapshotInfo {
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
+    Some(SortedMap.empty),
     Some(SortedMap.empty)
   )
+
+  implicit val hashKeyEncoder: KeyEncoder[Hash] = KeyEncoder[String].contramap(_.value)
+
+  implicit val hashKeyDecoder: KeyDecoder[Hash] = KeyDecoder[String].map(Hash(_))
 
   implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = new KeyEncoder[Option[Address]] {
     def apply(key: Option[Address]): String = key match {
