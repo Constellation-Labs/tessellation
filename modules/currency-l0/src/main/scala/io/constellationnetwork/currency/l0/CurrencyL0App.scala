@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref, Resource}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction, L0NodeContext}
 import io.constellationnetwork.currency.l0.StoragesInitializer.initializeCurrencySnapshotStorages
@@ -16,32 +17,35 @@ import io.constellationnetwork.currency.l0.modules._
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
+import io.constellationnetwork.currency.l0.snapshot.synchronous._
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSyncReference
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.node.shared.app._
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.ext.pureconfig._
-import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipConfig, EventGossipDaemon}
 import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastCheckpointInfo
+import io.constellationnetwork.node.shared.infrastructure.snapshot.RecoveryGlobalSnapshotSync
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSentGlobalSnapshotSyncStorage.RequiredRecoveryRefresh
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
+import io.constellationnetwork.node.shared.resources.MkHttpServer
 import io.constellationnetwork.node.shared.resources.MkHttpServer.ServerName
-import io.constellationnetwork.node.shared.resources.{ConsensusExecutor, MkHttpServer}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.cluster.ClusterId
-import io.constellationnetwork.schema.gossip.{Ordinal => GossipOrdinal}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
-import io.constellationnetwork.schema.{ConsensusOperationalState, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -49,7 +53,6 @@ import io.constellationnetwork.security.signature.Signed
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
-import fs2.concurrent.SignallingRef
 import io.circe.{Decoder => CirceDecoder, Encoder => CirceEncoder}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -70,13 +73,12 @@ trait OverridableL0 extends TessellationIOApp[Run] {
 
 object CurrencyL0App {
 
-  private[currency] def rollbackBootstrapFacilitators(
-    nodeId: PeerId,
-    proofSigners: List[PeerId],
-    allowSoloConsensus: Boolean
-  ): List[PeerId] =
-    if (allowSoloConsensus || !proofSigners.contains(nodeId)) List(nodeId)
-    else proofSigners
+  /** Currency L0 uses the release/mainnet bootstrap topology: exactly one operator-controlled `run-rollback` lead starts the flat
+    * committee, and validators join through normal candidate admission. Artifact proof signers authenticate the rollback anchor; they do
+    * not become the new live committee merely because they signed that historical artifact.
+    */
+  private[currency] def rollbackBootstrapFacilitators(nodeId: PeerId): List[PeerId] =
+    List(nodeId)
 }
 
 abstract class CurrencyL0App(
@@ -99,6 +101,25 @@ abstract class CurrencyL0App(
 
   protected val configFiles: List[String] = List("currency-l0.conf")
 
+  override protected def loadEffectiveConsensusConfig(method: Run, sharedConfig: SharedConfig): IO[Option[ConsensusConfig]] =
+    loadConfigAs[AppConfigReader].flatMap { reader =>
+      val appConfig = method.appConfig(reader, sharedConfig)
+      SnapshotConfig
+        .resolveEffectiveConsensusConfig(appConfig.snapshot, appConfig.environment)
+        .map(
+          _.copy(
+            lastGlobalSnapshotSyncOffset = sharedConfig.lastGlobalSnapshotsSync.syncOffset.value,
+            lastGlobalSnapshotsInMemory = sharedConfig.lastGlobalSnapshotsSync.maxLastGlobalSnapshotsInMemory.value,
+            currencySnapshotProtocolV1ActivationOrdinal = sharedConfig.fieldsAddedOrdinals
+              .currencySnapshotProtocolV1For(appConfig.environment)
+              .value
+              .value
+          )
+        )
+        .liftTo[IO]
+        .map(_.some)
+    }
+
   type KryoRegistrationIdRange = NodeSharedOrSharedRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
@@ -111,6 +132,9 @@ abstract class CurrencyL0App(
       cfgR <- loadConfigAs[AppConfigReader].asResource
       implicit0(logger: SelfAwareStructuredLogger[IO]) = Slf4jLogger.getLoggerFromName[IO](this.getClass.getName)
       cfg = method.appConfig(cfgR, sharedConfig)
+      loadedConsensusConfig <- IO
+        .fromOption(effectiveConsensusConfig)(new IllegalStateException("Currency L0 effective consensus config was not loaded"))
+        .asResource
 
       dataApplicationService <- dataApplication.sequence.adaptError {
         case error =>
@@ -124,18 +148,15 @@ abstract class CurrencyL0App(
 
       queues <- Queues.make[IO](sharedQueues).asResource
 
-      // B2 witness channel ref: see dag-l0 Main for full rationale. Default Map.empty —
-      // admission votes don't fire until eventGossipDaemon populates this post-startup.
-      peerChainTipsGetterRef <-
-        Ref
-          .of[IO, IO[Map[PeerId, ChainTip]]](
-            Map.empty[PeerId, ChainTip].pure[IO]
-          )
-          .asResource
-      getPeerChainTips = peerChainTipsGetterRef.get.flatten
-
       storages <- Storages
-        .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
+        .make[IO](
+          sharedConfig,
+          sharedStorages,
+          cfg.snapshot,
+          method.globalL0Peer,
+          dataApplicationService,
+          hasherSelectorAlwaysCurrent
+        )
         .asResource
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session, sharedConfig)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
@@ -148,10 +169,6 @@ abstract class CurrencyL0App(
 
       mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
-      // Dedicated work-stealing pool for the ConsensusEventLoop consume fiber. Mirrors the
-      // dag-l0 setup. Isolates round-timing from HTTP serving load on the default global
-      // compute pool. See ConsensusExecutor.
-      consensusEc <- ConsensusExecutor.optional[IO](cfg.snapshot.consensus.consensusDispatcherThreads)
       services <- Services
         .make[IO, Run](
           sharedConfig,
@@ -166,6 +183,7 @@ abstract class CurrencyL0App(
           nodeShared.nodeId,
           keyPair,
           cfg,
+          loadedConsensusConfig,
           dataApplicationService,
           rewards,
           validators.signedValidator,
@@ -174,11 +192,15 @@ abstract class CurrencyL0App(
           hasherSelectorAlwaysCurrent,
           maybeAllowanceList,
           nodeShared.customAllowanceList,
-          mkCell,
-          Some(customArtifacts),
-          queues,
-          getPeerChainTips,
-          consensusEc
+          // Validators may restore a durable outbox before their local Currency suffix has
+          // been replaced by the cluster's canonical download. Download opens publication
+          // only after exact installation and outbox reconciliation. Genesis has no remote
+          // suffix to adopt; rollback owns its separate explicit gate below.
+          method match {
+            case _: RunGenesis | _: CreateGenesis => true
+            case _                                => false
+          },
+          Some(customArtifacts)
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
@@ -195,12 +217,13 @@ abstract class CurrencyL0App(
         nodeShared.nodeId,
         cfg.globalL0Peer,
         sharedPrograms,
-        sharedStorages,
         storages,
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService.zip(storages.calculatedStateStorage)
+        dataApplicationService.zip(storages.calculatedStateStorage),
+        nodeShared.seedlist,
+        hasherSelectorAlwaysCurrent
       )
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck)
@@ -241,15 +264,12 @@ abstract class CurrencyL0App(
             sharedResources.gossipClient,
             sharedServices.session,
             config = EventGossipConfig(
-              heartbeatInterval = cfg.snapshot.consensus.eventGossipHeartbeatInterval,
-              pullInterval = cfg.snapshot.consensus.eventGossipPullInterval
+              heartbeatInterval = loadedConsensusConfig.eventGossipHeartbeatInterval,
+              pullInterval = loadedConsensusConfig.eventGossipPullInterval
             )
           )
           .asResource
       }
-      // B2 witness channel: publish peer chain tips into the Ref that consensus reads from.
-      _ <- Resource.eval(peerChainTipsGetterRef.set(eventGossipDaemon.getPeerChainTips))
-
       _ <- Daemons
         .start(
           storages,
@@ -260,6 +280,7 @@ abstract class CurrencyL0App(
           services.dataApplication,
           eventGossipDaemon,
           cfg,
+          loadedConsensusConfig,
           hasherSelectorAlwaysCurrent,
           sharedServices.stateEntryAtRef
         )
@@ -417,166 +438,272 @@ abstract class CurrencyL0App(
                       mkCell
                     )
                   } >>
-                  storages.node.tryModifyState(
-                    NodeState.Initial,
-                    NodeState.RollbackInProgress,
-                    NodeState.RollbackDone
-                  )(hasherSelector.withCurrent { implicit hasher =>
-                    for {
-                      (currencySnapshot, currencySnapshotInfo, lastBinaryHash) <- programs.rollback.rollback
-                      _ <- HasherSelector[IO].withCurrent { implicit hasher =>
-                        initializeCurrencySnapshotStorages[IO, Run](
-                          storages,
-                          currencySnapshot.some,
-                          currencySnapshotInfo.some
-                        )
-                      }
-                      hashedSnapshot <- currencySnapshot.toHashed[IO]
-                      // By default, derive both facilitator sets from the signed snapshot's proofs
-                      // so signer nodes seed an identical outcome. A non-signer keeps the existing
-                      // self-only fallback. The explicit recovery override also forces self-only,
-                      // accepting the documented risk of conflicting histories.
-                      signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                      bootstrapFacilitators =
-                        CurrencyL0App.rollbackBootstrapFacilitators(nodeId, signers, rr.allowSoloConsensus)
-                      bootstrapMode =
-                        if (rr.allowSoloConsensus) "forced_self_only"
-                        else if (bootstrapFacilitators === signers) "proof_signers"
-                        else "self_only_fallback"
-                      _ <- logger
-                        .warn(
-                          s"DANGER: Currency L0 rollback is forcing self-only consensus at ordinal=${currencySnapshot.ordinal}. " +
-                            s"Exactly one coordinated recovery node may use this override. " +
-                            s"nodeId=${nodeId.value.value.take(8)} proofSigners=${signers.map(_.value.value.take(8)).mkString(",")}"
-                        )
-                        .whenA(rr.allowSoloConsensus)
-                      _ <- Metrics[IO].incrementCounter(
-                        "dag_consensus_rollback_bootstrap_total",
-                        Seq(Metrics.unsafeLabelName("mode") -> bootstrapMode)
-                      )
-                      _ <- Metrics[IO].updateGauge(
-                        "dag_consensus_rollback_proof_signer_count",
-                        signers.size.toLong
-                      )
-                      _ <- Metrics[IO].updateGauge(
-                        "dag_consensus_rollback_bootstrap_facilitator_count",
-                        bootstrapFacilitators.size.toLong
-                      )
-                      // Restore consensus-derived peer-behavior counters from the rollback
-                      // snapshot if present. Older snapshots have `peerHistory = None` and the
-                      // cluster bootstraps from zero just as before. See dag-l0 mirror for the
-                      // known one-round off-by-one (we accept it; drift is below chronic floors).
-                      seedOperational = currencySnapshot.value.peerHistory.getOrElse(ConsensusOperationalState.empty)
-                      seedPeerQuality = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                        case (pid, r) if r.quality != ((0, 0)) => pid -> r.quality
-                      })
-                      seedRemovalPenalties = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                        case (pid, r) if r.removalPenalty > 0 => pid -> r.removalPenalty
-                      })
-                      seedCumulativeMissCounts = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                        case (pid, r) if r.cumulativeMissCount > 0L => pid -> r.cumulativeMissCount
-                      })
-                      seedReadmissionCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                        case (pid, r) if r.readmissionCountdown > 0 => pid -> r.readmissionCountdown
-                      })
-                      seedDeferralCountdown = SortedMap.from(seedOperational.perPeer.iterator.collect {
-                        case (pid, r) if r.deferralCountdown > 0 => pid -> r.deferralCountdown
-                      })
-                      // v16: per-peer cumulative view-change-caused. Mirror of dag-l0 seed
-                      // pattern; see dag-l0 Main for full rationale. viewChangesCaused is
-                      // Option[Long] for pre-v16 back-compat at decode time.
-                      seedPeerViewChanges = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
-                        case (pid, r) => r.viewChangesCaused.filter(_ > 0L).map(v => pid -> v)
-                      })
-                      rollbackRecentProofSizes =
-                        if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
-                        else
-                          SortedMap(
-                            currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                  Ref.of[IO, Option[CurrencyConsensusOutcome]](None).flatMap { pendingSoloOutcome =>
+                    storages.node.tryModifyState(
+                      NodeState.Initial,
+                      NodeState.RollbackInProgress,
+                      NodeState.RollbackDone
+                    )(hasherSelector.withCurrent { implicit hasher =>
+                      for {
+                        (currencySnapshot, currencySnapshotInfo, lastBinaryHash) <- programs.rollback.rollback
+                        _ <- HasherSelector[IO].withCurrent { implicit hasher =>
+                          initializeCurrencySnapshotStorages[IO, Run](
+                            storages,
+                            currencySnapshot.some,
+                            currencySnapshotInfo.some
                           )
-                      // Recent-signers window unwrap mirror of dag-l0 Main.scala.
-                      seedRecentSigners = seedOperational.recentSigners.getOrElse(SortedMap.empty[SnapshotOrdinal, SortedSet[PeerId]])
-                      // v19: per-peer tier classification seeded from PerPeerOperationalRecord.tier.
-                      // Mirror of dag-l0 Main.scala.
-                      seedPeerTiers = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
-                        case (pid, r) => r.tier.map(t => pid -> t)
-                      })
-                      seedActiveAdmissionScores = SortedMap.from(seedOperational.perPeer.iterator.flatMap {
-                        case (pid, r) => r.activeAdmissionScore.filter(_ > 0).map(score => pid -> score)
-                      })
-                      // v19 phase 2: view-from-time window unwrap mirror of dag-l0 Main.scala.
-                      seedRecentRoundEndTimes =
-                        seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
-                      _ <- services.consensus.manager.startFacilitatingAfterRollback(
-                        currencySnapshot.ordinal,
-                        CurrencyConsensusOutcome(
+                        }
+                        // Preserve the stable release/mainnet topology: one controlled rollback lead
+                        // starts alone; every run-validator node must register and be admitted by a
+                        // completed synchronous round. Proof signers authenticate this anchor but do
+                        // not select the new live committee.
+                        signers = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
+                        bootstrapFacilitators = CurrencyL0App.rollbackBootstrapFacilitators(nodeId)
+                        bootstrapMode = "controlled_rollback_lead"
+                        _ <- logger
+                          .warn(
+                            s"Currency L0 rollback recovery-sync refresh requested at ordinal=${currencySnapshot.ordinal}. " +
+                              s"The committee is self-only regardless of this compatibility flag; the flag only arms the " +
+                              s"operator-controlled deterministic-history refresh. nodeId=${nodeId.value.value.take(8)}"
+                          )
+                          .whenA(rr.allowSoloConsensus)
+                        _ <- Metrics[IO].incrementCounter(
+                          "dag_consensus_rollback_bootstrap_total",
+                          Seq(Metrics.unsafeLabelName("mode") -> bootstrapMode)
+                        )
+                        _ <- Metrics[IO].updateGauge(
+                          "dag_consensus_rollback_proof_signer_count",
+                          signers.size.toLong
+                        )
+                        _ <- Metrics[IO].updateGauge(
+                          "dag_consensus_rollback_bootstrap_facilitator_count",
+                          bootstrapFacilitators.size.toLong
+                        )
+                        bootstrapFacilitatorsHash <- SortedSet.from(bootstrapFacilitators).hash
+                        rollbackContext = CurrencySnapshotContext(rr.identifier, currencySnapshotInfo)
+                        rollbackOutcome = CurrencyConsensusOutcome(
                           currencySnapshot.ordinal,
                           Facilitators(bootstrapFacilitators),
                           RemovedFacilitators.empty,
                           WithdrawnFacilitators.empty,
-                          EligibleFacilitators(bootstrapFacilitators),
                           Finished(
                             currencySnapshot,
                             lastBinaryHash,
-                            CurrencySnapshotContext(rr.identifier, currencySnapshotInfo),
+                            rollbackContext,
                             EventTrigger,
                             Candidates.empty,
-                            Hash.empty,
-                            hashedSnapshot.hash
-                          ),
-                          removalPenalties = seedRemovalPenalties,
-                          deferralCountdown = seedDeferralCountdown,
-                          peerQuality = seedPeerQuality,
-                          cumulativeMissCounts = seedCumulativeMissCounts,
-                          recentProofSizes = rollbackRecentProofSizes,
-                          readmissionCountdown = seedReadmissionCountdown,
-                          peerViewChanges = seedPeerViewChanges,
-                          recentSigners = seedRecentSigners,
-                          peerTiers = seedPeerTiers,
-                          activeAdmissionScores = seedActiveAdmissionScores,
-                          recentRoundEndTimes = seedRecentRoundEndTimes
+                            bootstrapFacilitatorsHash,
+                            none
+                          )
+                        )
+                        _ <-
+                          if (rr.allowSoloConsensus) pendingSoloOutcome.set(rollbackOutcome.some)
+                          else
+                            services.stateChannelBinarySender.clearPending >>
+                              services.stateChannelBinarySender.enablePublishing >>
+                              services.consensus.manager.startFacilitatingAfterRollback(
+                                currencySnapshot.ordinal,
+                                rollbackOutcome
+                              )
+                      } yield ()
+                    }) >>
+                      gossipDaemon.startAsInitialValidator >>
+                      services.cluster.createSession >>
+                      services.session.createSession >>
+                      pendingSoloOutcome.get.flatMap(_.traverse_ { rollbackOutcome =>
+                        val currencySnapshot = rollbackOutcome.finished.signedMajorityArtifact
+                        val currencySnapshotInfo = rollbackOutcome.finished.context.snapshotInfo
+
+                        HasherSelector[IO].withCurrent { implicit hasher =>
+                          for {
+                            _ <- IO.raiseUnless(rollbackOutcome.facilitators.value === List(nodeId))(
+                              new IllegalStateException(
+                                s"Solo rollback recovery requires exactly self as facilitator, got=${rollbackOutcome.facilitators.value.mkString(",")}"
+                              )
+                            )
+                            // Rollback can outlive the initial Global L0 pull. Refresh the canonical
+                            // anchor and its retained window after rollback completes, but suppress
+                            // ordinary sync publication until the one required recovery declaration
+                            // is constructed below.
+                            _ <- StateChannel.performGlobalL0SnapshotProcess(
+                              storages,
+                              sharedStorages,
+                              services,
+                              dataApplicationService,
+                              keyPair,
+                              mkCell,
+                              publishSyncEvents = false
+                            )
+                            globalAnchor <- storages.lastSyncGlobalSnapshot.get.flatMap(
+                              _.liftTo[IO](new IllegalStateException("Cannot arm recovery sync refresh without a current Global L0 anchor"))
+                            )
+                            recentGlobalSnapshots <- sharedStorages.lastNGlobalSnapshot.getLastN
+                            selectedTarget <- SnapshotOrdinal(
+                              globalAnchor.ordinal.value - cfg.shared.lastGlobalSnapshotsSync.syncOffset
+                            ).liftTo[IO](
+                              new IllegalStateException(
+                                s"Recovery sync target underflow anchor=${globalAnchor.ordinal} offset=${cfg.shared.lastGlobalSnapshotsSync.syncOffset}"
+                              )
+                            )
+                            recentByOrdinal = recentGlobalSnapshots.iterator.map(value => value.ordinal -> value.hash).toMap
+                            _ <- IO.raiseUnless(
+                              recentByOrdinal.get(globalAnchor.ordinal).contains(globalAnchor.hash) &&
+                                recentByOrdinal.contains(selectedTarget)
+                            )(
+                              new IllegalStateException(
+                                s"Recovery sync requires a complete canonical recent window: anchor=${globalAnchor.ordinal} " +
+                                  s"selectedTarget=$selectedTarget available=${recentByOrdinal.keys.toList.sorted.mkString(",")}"
+                              )
+                            )
+                            pendingPublication <- storages.recoverySyncPublication.get
+                            _ <- pendingPublication match {
+                              case Some(publication) if !publication.expired =>
+                                IO.raiseError(
+                                  new IllegalStateException(
+                                    s"A recovery successor is still awaiting canonical Global L0 confirmation: " +
+                                      s"binaryHash=${publication.binaryHash} mode=${publication.mode} " +
+                                      s"validThrough=${publication.validThroughGlobalParent}. Do not create a competing successor."
+                                  )
+                                )
+                              case _ => IO.unit
+                            }
+                            session <- storages.session.getToken.flatMap(
+                              _.liftTo[IO](new IllegalStateException("Cannot arm recovery sync refresh without a node session"))
+                            )
+                            inheritedSigned = currencySnapshotInfo.globalSnapshotSyncView.getOrElse(
+                              SortedMap.empty[PeerId, Signed[io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync]]
+                            )
+                            inheritedReferences <- inheritedSigned.toList.traverse {
+                              case (peerId, sync) => GlobalSnapshotSyncReference.of[IO](sync).map(peerId -> _)
+                            }.map(entries => SortedMap.from[PeerId, GlobalSnapshotSyncReference](entries))
+                            refreshMode = RecoveryGlobalSnapshotSync.classify(nodeId, inheritedReferences)
+                            snapshotProtocolV1ActivationOrdinal = sharedConfig.fieldsAddedOrdinals
+                              .currencySnapshotProtocolV1For(cfg.environment)
+                            _ <- IO.raiseUnless(
+                              refreshMode != RecoveryGlobalSnapshotSync.ResetInheritedMultiPeerView ||
+                                RecoveryGlobalSnapshotSync.isActivationAuthorized(
+                                  selectedTarget,
+                                  snapshotProtocolV1ActivationOrdinal
+                                )
+                            )(
+                              new IllegalStateException(
+                                s"Recovery sync reset is not authorized before Currency snapshot protocol v1 activation: " +
+                                  s"selectedTarget=$selectedTarget activation=$snapshotProtocolV1ActivationOrdinal"
+                              )
+                            )
+                            refreshParent = refreshMode match {
+                              case RecoveryGlobalSnapshotSync.Chained(parent) => parent
+                              case _                                          => GlobalSnapshotSyncReference.empty
+                            }
+                            signedRefresh <- StateChannel.publishGlobalSnapshotSync(
+                              globalAnchor,
+                              refreshParent,
+                              session,
+                              keyPair,
+                              mkCell
+                            )
+                            _ <- storages.lastGlobalSnapshotSync.set(signedRefresh)
+                            requiredEvent = io.constellationnetwork.node.shared.snapshot.currency.GlobalSnapshotSyncEvent(signedRefresh)
+                            refreshPresent <- {
+                              def awaitInsertion(remaining: Int): IO[Boolean] =
+                                storages.eventMempool.size.flatMap { size =>
+                                  storages.eventMempool.snapshot(Math.max(1, size)).flatMap { snapshot =>
+                                    if (snapshot.events.exists(_.signed.value === requiredEvent)) true.pure[IO]
+                                    else if (remaining <= 0) false.pure[IO]
+                                    else IO.sleep(100.millis) >> awaitInsertion(remaining - 1)
+                                  }
+                                }
+
+                              awaitInsertion(20)
+                            }
+                            _ <- IO.raiseUnless(refreshPresent)(
+                              new IllegalStateException("Recovery GlobalSnapshotSync was not present in the event mempool after enqueue")
+                            )
+                            recoveryHeadroom = Math.max(
+                              0L,
+                              cfg.shared.lastGlobalSnapshotsSync.maxLastGlobalSnapshotsInMemory.value.toLong - 1L -
+                                cfg.shared.lastGlobalSnapshotsSync.syncOffset.value
+                            )
+                            validThroughGlobalParent = SnapshotOrdinal.unsafeApply(
+                              Math.addExact(globalAnchor.ordinal.value.value, recoveryHeadroom)
+                            )
+                            required = RequiredRecoveryRefresh(
+                              signedRefresh,
+                              refreshMode,
+                              validThroughGlobalParent
+                            )
+                            _ <- storages.lastGlobalSnapshotSync.armRecoveryRefresh(required)
+                            _ <- Metrics[IO].updateGauge(
+                              "dag_currency_l0_recovery_sync_refresh_pending",
+                              1L,
+                              Seq(Metrics.unsafeLabelName("mode") -> refreshMode.metricLabel)
+                            )
+                            _ <- Metrics[IO].updateGauge(
+                              "dag_currency_l0_recovery_sync_construction_guard_armed",
+                              1L,
+                              Seq(Metrics.unsafeLabelName("mode") -> refreshMode.metricLabel)
+                            )
+                            _ <- Metrics[IO].incrementCounter(
+                              "dag_currency_l0_recovery_sync_refresh_total",
+                              Seq(
+                                Metrics.unsafeLabelName("mode") -> refreshMode.metricLabel,
+                                Metrics.unsafeLabelName("outcome") -> "enqueued"
+                              )
+                            )
+                            _ <- Metrics[IO].updateGauge("dag_currency_l0_recovery_sync_reset_anchor_age_ordinals", 0L)
+                            _ <- Metrics[IO].updateGauge(
+                              "dag_currency_l0_recovery_sync_selected_target_remaining_ordinals",
+                              recoveryHeadroom
+                            )
+                            _ <- logger.warn(
+                              s"RECOVERY_SYNC_REFRESH_ENQUEUED mode=${refreshMode.metricLabel} currencyParent=${currencySnapshot.ordinal} " +
+                                s"globalAnchor=${globalAnchor.ordinal} inheritedPeers=${inheritedReferences.size}"
+                            )
+                            _ <- services.stateChannelBinarySender.clearPending
+                            _ <- services.stateChannelBinarySender.enablePublishing
+                            _ <- services.consensus.manager.startFacilitatingAfterRollback(
+                              currencySnapshot.ordinal,
+                              rollbackOutcome
+                            )
+                          } yield ()
+                        }
+                      }) >>
+                      programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                      storages.node.setNodeState(NodeState.Ready) >>
+                      services.restart.setClusterLeaveRestartMethod(
+                        RunValidator(
+                          rr.keyStore,
+                          rr.alias,
+                          rr.password,
+                          rr.httpConfig,
+                          rr.environment,
+                          rr.seedlistPath,
+                          rr.prioritySeedlistPath,
+                          rr.collateralAmount,
+                          rr.globalL0Peer,
+                          rr.identifier,
+                          rr.trustRatingsPath,
+                          rr.allowanceListPath
+                        )
+                      ) >>
+                      services.restart.setNodeForkedRestartMethod(
+                        RunValidatorWithJoinAttempt(
+                          rr.keyStore,
+                          rr.alias,
+                          rr.password,
+                          rr.httpConfig,
+                          rr.environment,
+                          rr.seedlistPath,
+                          rr.prioritySeedlistPath,
+                          rr.collateralAmount,
+                          rr.globalL0Peer,
+                          rr.identifier,
+                          rr.trustRatingsPath,
+                          _,
+                          rr.allowanceListPath
                         )
                       )
-                    } yield ()
-                  }) >>
-                  gossipDaemon.startAsInitialValidator >>
-                  services.cluster.createSession >>
-                  services.session.createSession >>
-                  programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-                  storages.node.setNodeState(NodeState.Ready) >>
-                  services.restart.setClusterLeaveRestartMethod(
-                    RunValidator(
-                      rr.keyStore,
-                      rr.alias,
-                      rr.password,
-                      rr.httpConfig,
-                      rr.environment,
-                      rr.seedlistPath,
-                      rr.prioritySeedlistPath,
-                      rr.collateralAmount,
-                      rr.globalL0Peer,
-                      rr.identifier,
-                      rr.trustRatingsPath,
-                      rr.allowanceListPath
-                    )
-                  ) >>
-                  services.restart.setNodeForkedRestartMethod(
-                    RunValidatorWithJoinAttempt(
-                      rr.keyStore,
-                      rr.alias,
-                      rr.password,
-                      rr.httpConfig,
-                      rr.environment,
-                      rr.seedlistPath,
-                      rr.prioritySeedlistPath,
-                      rr.collateralAmount,
-                      rr.globalL0Peer,
-                      rr.identifier,
-                      rr.trustRatingsPath,
-                      _,
-                      rr.allowanceListPath
-                    )
-                  )
+                  }
 
               case m: RunGenesis =>
                 storages.node.tryModifyState(
@@ -585,7 +712,10 @@ abstract class CurrencyL0App(
                   NodeState.GenesisReady
                 )(hasherSelector.withCurrent { implicit hasher =>
                   for {
-                    (currencySnapshot, currencySnapshotInfo, hash, identifier) <- programs.genesis.accept(dataApplicationService)(
+                    _ <- IO.raiseUnless(nodeShared.seedlist.forall(_.exists(_.peerId === nodeId)))(
+                      new IllegalStateException(s"Controlled Currency genesis lead ${nodeId.show} is not seedlist eligible")
+                    )
+                    (currencySnapshot, currencySnapshotInfo, hashedBinary, identifier) <- programs.genesis.accept(dataApplicationService)(
                       m.genesisPath
                     )
                     _ <- HasherSelector[IO].withCurrent { implicit hasher =>
@@ -624,32 +754,27 @@ abstract class CurrencyL0App(
                           }
                         } yield ()
                       } else IO.unit
-                    hashedSnapshot <- currencySnapshot.toHashed[IO]
-                    genesisSigners = currencySnapshot.proofs.toSortedSet.toList.map(_.id.toPeerId)
-                    // Genesis path — seed window with the genesis snapshot's proof count.
-                    // See dag-l0 mirror for rationale.
-                    genesisRecentProofSizes = SortedMap(
-                      currencySnapshot.ordinal -> currencySnapshot.proofs.size.toInt
+                    genesisFacilitators = List(nodeId)
+                    genesisFacilitatorsHash <- SortedSet.from(genesisFacilitators).hash
+                    genesisContext = CurrencySnapshotContext(identifier, currencySnapshotInfo)
+                    genesisOutcome = CurrencyConsensusOutcome(
+                      currencySnapshot.ordinal,
+                      Facilitators(genesisFacilitators),
+                      RemovedFacilitators.empty,
+                      WithdrawnFacilitators.empty,
+                      Finished(
+                        currencySnapshot,
+                        hashedBinary.hash,
+                        genesisContext,
+                        EventTrigger,
+                        Candidates.empty,
+                        genesisFacilitatorsHash,
+                        none
+                      )
                     )
                     _ <- services.consensus.manager.startFacilitatingAfterRollback(
                       currencySnapshot.ordinal,
-                      CurrencyConsensusOutcome(
-                        currencySnapshot.ordinal,
-                        Facilitators(genesisSigners),
-                        RemovedFacilitators.empty,
-                        WithdrawnFacilitators.empty,
-                        EligibleFacilitators(genesisSigners),
-                        Finished(
-                          currencySnapshot,
-                          hash,
-                          CurrencySnapshotContext(identifier, currencySnapshotInfo),
-                          EventTrigger,
-                          Candidates.empty,
-                          Hash.empty,
-                          hashedSnapshot.hash
-                        ),
-                        recentProofSizes = genesisRecentProofSizes
-                      )
+                      genesisOutcome
                     )
                   } yield ()
                 }) >>

@@ -121,6 +121,7 @@ object CurrencySnapshotValidatorAllowSpendModeSuite extends MutableIOSuite {
         shouldPerformMetagraphSpecificValidations: Boolean,
         maybeCustomArtifacts: Option[Signed[CurrencyIncrementalSnapshot] => Option[SortedSet[SharedArtifact]]],
         peerHistory: Option[ConsensusOperationalState],
+        historicalDependencyResolution: Boolean,
         allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
       )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
         calls

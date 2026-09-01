@@ -6,6 +6,8 @@ import cats.effect.std.Supervisor
 import cats.kernel.Next
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
@@ -13,6 +15,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -58,13 +61,19 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       cancelRoundFibers
 
   def runRound(trigger: Option[ConsensusTrigger]): F[Unit] =
+    runRound(trigger, none)
+
+  def runRound(
+    trigger: Option[ConsensusTrigger],
+    expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
+  ): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
       case None =>
-        // No outcome exists yet — round cannot run. Unconditional (no attempt-id): the queue is
-        // already quiescent and the FSM must Idle cleanly.
+        // No outcome exists yet — round cannot run. Bind the release to the current local epoch;
+        // even a startup completion must not cancel a recovery attempt created before it drains.
         ConsensusLog.warn(logger, Category.Lifecycle, "n/a", "n/a", LogEvent.NoPreviousOutcome) >>
           Metrics[F].incrementCounter("dag_consensus_round_no_outcome") >>
-          queue.offer(ConsensusCommand.RoundCompleted(None))
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
 
       case Some(outcome) =>
         val nextKey = outcomeKey.get(outcome).next
@@ -84,10 +93,15 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           "declarationTimeout" -> config.declarationTimeout.toString,
           "timeTriggerInterval" -> config.timeTriggerInterval.toString
         ) >>
-          facilitateRound(outcome, nextKey, trigger)
+          facilitateRound(outcome, nextKey, trigger, expectedRoundStartFacilitators)
     }
 
-  private def facilitateRound(lastOutcome: Outcome, key: Key, trigger: Option[ConsensusTrigger]): F[Unit] =
+  private def facilitateRound(
+    lastOutcome: Outcome,
+    key: Key,
+    trigger: Option[ConsensusTrigger],
+    expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
+  ): F[Unit] =
     for {
       resources <- storage.getResources(key)
       // Retry/view-change history is passed as a compatibility and diagnostic signal only. Consensus
@@ -97,7 +111,14 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
         case Some(maxToView) => maxToView + 1
         case None            => 0L
       }).toInt
-      facilitated <- creator.tryFacilitateConsensus(key, lastOutcome, trigger, resources, priorAbandonmentCount)
+      facilitated <- creator.tryFacilitateConsensus(
+        key,
+        lastOutcome,
+        trigger,
+        resources,
+        priorAbandonmentCount,
+        expectedRoundStartFacilitators
+      )
 
       // Validators must not produce solo — solo production from multiple validators creates
       // divergent forks when they restart simultaneously. Abort the round if this is a
@@ -127,7 +148,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
                 "facilitators" -> count.toString
               ) >>
                 Metrics[F].incrementCounter("dag_consensus_validator_solo_blocked") >>
-                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+                storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
             } else {
               Metrics[F].incrementCounter(
                 "dag_consensus_round_facilitated",
@@ -179,7 +200,7 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
           Seq(unsafeLabelName("outcome") -> "no_state")
         ) >>
           ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.NoState) >>
-          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(Some(id))))
+          storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id)))
     }
 
   private def doInitialCheck(key: Key): F[Unit] =
@@ -257,10 +278,23 @@ class ConsensusRoundRunner[F[_]: Async: Metrics, Event, Key: Next, Artifact, Ctx
       _ <- queue.offer(ConsensusCommand.TimeTick).whenA(maybeTimeTrigger.exists(currentTime >= _))
     } yield ()
 
+  /** Re-arm monitoring for a round that still exists after a queued abandonment was suppressed at drain time. The original monitor
+    * intentionally terminates after it enqueues `AbandonRound`; without this re-arm, the safety checks that preserve a newer attempt would
+    * also leave that attempt permanently unmonitored.
+    */
+  def ensureRoundMonitor(key: Key): F[Unit] =
+    storage.getState(key).flatMap {
+      case Some(state) if advancer.getConsensusOutcome(state).isEmpty => startRoundMonitor(key)
+      case _                                                          => Async[F].unit
+    }
+
   private def startRoundMonitor(key: Key): F[Unit] =
     for {
       signal <- Deferred[F, Unit]
-      _ <- cancelSignalRef.set(Some(signal))
+      // Replace, rather than merely overwrite, any prior monitor signal. This keeps
+      // ensureRoundMonitor idempotent when a newer transition already re-armed the round.
+      previousSignal <- cancelSignalRef.getAndSet(Some(signal))
+      _ <- previousSignal.traverse_(_.complete(()).attempt.void)
       _ <- spawnTracked {
         stallDetector
           .monitor(key, signal)

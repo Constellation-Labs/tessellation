@@ -262,7 +262,8 @@ object method {
       Opts
         .flag(
           "allow-solo-consensus",
-          "DANGER: seed rollback consensus with this node only; use on exactly one node during coordinated recovery"
+          "DANGER: arm the one-shot deterministic-history recovery refresh on the controlled rollback lead; " +
+            "Currency rollback consensus is lead-only regardless of this compatibility flag"
         )
         .orFalse
 

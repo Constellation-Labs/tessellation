@@ -100,7 +100,9 @@ else
   fi
 
   cd "$BUILD_DIR"
-  sbt --error assembly
+  # Compile-time compatibility is insufficient for a proof-shape change. Run the
+  # Snapshot Streaming repository's own suites before producing the E2E artifact.
+  sbt --error test assembly
   # Try multiple JAR naming patterns (sbt-assembly varies by project config)
   JAR_PATH=$(ls -1tS target/scala-2.13/*-assembly*.jar 2>/dev/null | head -n1)
   if [ -z "$JAR_PATH" ]; then

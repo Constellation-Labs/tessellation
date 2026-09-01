@@ -35,8 +35,8 @@ import eu.timepit.refined.types.numeric.NonNegLong
   * earns 20 per entry and crosses the promote threshold (100) after 5 entries -- saturating well above promote within one window. A peer
   * that signs only half its eligible rounds nets 20-15=5 per two entries and stays pinned near the demote threshold.
   *
-  * Compiled-in constants (jar-hash gated, the `TierTransitions.DemotionConsecutiveMisses` convention); promote to config if runtime tuning
-  * is ever needed.
+  * Compiled-in constants (advertised-release-version gated, the `TierTransitions.DemotionConsecutiveMisses` convention); promote to config
+  * if runtime tuning is ever needed.
   */
 object ControllerEvidenceDerivation {
 
@@ -118,7 +118,7 @@ object ControllerEvidenceDerivation {
     * Tier 1. Aligning the two means the moment the tier derivation sheds a silent Core peer, the chronic classification ALSO bars the
     * Core-floor from immediately re-promoting it (the demote-then-repromote loop behind the ordinal-3150040 quorum-infeasible stall). Small
     * enough to react within one evidence window; large enough that a single slow round (GC pause, network blip) does not strip a healthy
-    * peer. Compiled-in constant, jar-hash gated, same convention as `DemotionConsecutiveMisses`.
+    * peer. Compiled-in constant, advertised-release-version gated, same convention as `DemotionConsecutiveMisses`.
     */
   val ChronicMissThreshold: Int = TierTransitions.DemotionConsecutiveMisses
 
@@ -273,6 +273,24 @@ object ControllerEvidenceDerivation {
   ): SortedSet[PeerId] =
     roundStartFacilitators -- certifiedEvictions
 
+  /** Deterministic next committee represented by one signed Global L0 controller-evidence entry. */
+  def nextCommittee(entry: ControllerEvidenceEntry): SortedSet[PeerId] =
+    (entry.roundStartFacilitators -- entry.evictedPeers) ++ entry.admittedPeers
+
+  /** Deterministic committee seed available at a legacy-to-certified activation boundary.
+    *
+    * A snapshot's signed `peerHistory` is intentionally one outcome behind because the artifact is created before its own consensus outcome
+    * exists. Its latest evidence entry therefore describes the parent round's committee transition. Reusing that resulting committee for
+    * the first certified round deliberately delays the final legacy round's membership delta by one round; it is the only committee source
+    * here that is both signed and byte-identical across nodes. In particular, DAG's historical `GlobalIncrementalSnapshot.nextFacilitators`
+    * field is a constant bootstrap value and must not be used for this purpose.
+    */
+  def certifiedActivationCommittee(peerHistory: Option[ConsensusOperationalState]): Option[List[PeerId]] =
+    peerHistory
+      .flatMap(_.controllerEvidence)
+      .flatMap(_.lastOption.map { case (_, entry) => nextCommittee(entry).toList })
+      .filter(_.nonEmpty)
+
   /** Canonical completed-signer set for a finalized round, used for `ControllerEvidenceEntry.completedSigners` AND the `recentSigners`
     * window entry by BOTH StateAdvancers (shared here so the two layers cannot drift).
     *
@@ -287,11 +305,11 @@ object ControllerEvidenceDerivation {
     *   - `roundStartFacilitators`: frozen once at round creation by the deterministic committee derivation and never mutated (the ord-5
     *     fork fix). Every MajoritySignature binds `facilitatorsHash`, so a node holding a different committee cannot contribute valid
     *     signatures to this round at all.
-    *   - `acceptedObservedResponders`: the leader's signed participation observation CARRIED ON THE QUORUM-ACCEPTED PROPOSAL
-    *     (REPLACE-on-accept at buildSignatureTransition). Unlike any locally collected declaration or signature snapshot, it is a CLOSED
-    *     set: authored once by the leader, bound to the leader by the rumor envelope signature, and certified by the quorum that signed the
-    *     proposal's artifact hash (VoteLock pins one hash per (key, view)). It cannot accrete after acceptance, so a fast finalizer and a
-    *     slow finalizer read the identical bytes.
+    *   - `acceptedObservedResponders`: the leader's participation observation CARRIED ON THE QUORUM-ACCEPTED PROPOSAL (REPLACE-on-accept at
+    *     buildSignatureTransition). Unlike any locally collected declaration or signature snapshot, it is a CLOSED set: authored once by
+    *     the leader and bound to the leader by the rumor envelope signature. On v35 it is also a field of ProposalValue and therefore
+    *     certified by both semantic Core QCs. Legacy artifact-only signatures did not prove this stronger fact; the activation bridge
+    *     flushes those legacy windows before they can seed certified consensus.
     *   - `certifiedEvictions`: targets of quorum-signed EvictionCertificates embedded in the same accepted proposal -- same argument.
     *
     * Inputs that are explicitly FORBIDDEN here, with the reason each one diverges:

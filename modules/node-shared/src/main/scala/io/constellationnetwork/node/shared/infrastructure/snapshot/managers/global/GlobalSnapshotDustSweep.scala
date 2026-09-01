@@ -22,8 +22,8 @@ import eu.timepit.refined.types.numeric.NonNegLong
   * '''This is consensus-critical.''' Every honest node MUST compute the identical swept `GlobalSnapshotInfo` and the identical MPT state
   * root at the sweep ordinal, or the cluster forks. The transform is a pure function of the GSI map contents at a fixed ordinal (sorted
   * maps, commutative datum sum), so every node at the sweep ordinal computes the identical pruned GSI and root. The gating, threshold, and
-  * burn-vs-treasury choice come from the per-environment compile-time `dustSweeps` config literal (NOT HOCON): the jar hash plus the
-  * environment is the determinism fence.
+  * burn-vs-treasury choice come from the per-environment compile-time `dustSweeps` config literal (NOT HOCON): the advertised release plus
+  * the environment is the determinism fence.
   *
   * Safety gates (an address is swept only if ALL hold):
   *

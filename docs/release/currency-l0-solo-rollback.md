@@ -1,48 +1,61 @@
-# Currency L0 rollback recovery: operator release note
+# Currency L0 controlled rollback: operator release note
 
-This release adds an opt-in Currency L0 recovery command for a fully stopped
-metagraph:
+Currency L0 now follows the stable flat synchronous recovery topology:
 
 ```text
-currency-l0 run-rollback ... --allow-solo-consensus
+one controlled node: run-rollback <canonical-checkpoint>
+every other node:     run-validator
 ```
 
-The override lets one designated rollback node seed the next consensus outcome
-with itself so it can produce the snapshots that returning validators need for
-their observation window. The flag is off by default. Normal rollback continues
-to preserve the checkpoint proof-signer committee and ordering.
+The rollback/genesis lead always seeds the live facilitator list with itself. Historical
+checkpoint proofs authenticate the anchor but do not select the post-rollback committee.
+Returning validators download public successors, validate an exact private outcome,
+register, and enter through a completed synchronous outcome.
 
-## Operator-visible behavior change
+The compatibility-named flag:
 
-Currency L0 now marks `run-validator` processes as validators at startup, as
-DAG L0 already does. A validator whose temporary local view contains only
-itself will no longer produce a competing solo history. Consequently, restarting
-only one former validator is not a recovery procedure for a fully stopped
-metagraph. Use the coordinated rollback procedure when that situation occurs.
+```text
+--allow-solo-consensus
+```
 
-This is an intentional fork-safety tradeoff. It does not change snapshot or
-state-proof schemas, signed message schemas, deterministic configuration, or
-behavior for a normally operating cluster.
+does **not** enable the self-only committee. Rollback is self-only without it. The flag
+only arms the one-shot deterministic-history publication/reset used to resurrect a
+dormant Currency lineage at or after the announced Currency snapshot protocol-v1
+boundary. Omit it for ordinary rollback.
+
+Currency L0 does not use Global L0's Core/Tier committees, ProposalQC, certified
+admission, or v35 pacemaker. This command adds no Currency-local v35 activation key and
+does not stamp jar SemVer into Currency history.
 
 ## Required operational controls
 
-> **DANGER — never persist `--allow-solo-consensus`.** Do not put it in a
-> systemd unit, container entrypoint, deployment manifest, environment variable,
-> or monitoring/automatic-restart command. It is a one-node, one-invocation
-> outage-recovery override. Repeating it automatically on isolated nodes can
-> create conflicting valid histories.
+> **DANGER — one rollback lead only.** Stop the complete metagraph, disable all
+> automatic restart/rollback, choose one canonical checkpoint, and run exactly one
+> controlled rollback lead. Two isolated leads can produce conflicting valid Currency
+> histories.
 
-Before using it:
+> **DANGER — never persist `--allow-solo-consensus`.** Do not put it in a systemd
+> unit, container entrypoint, deployment manifest, environment variable, or monitoring
+> command. Every external invocation re-arms a deterministic-history refresh. Use it
+> only for one reviewed dormant-lineage recovery, then verify every persistent command
+> is flag-free before restoring automation.
 
-1. Confirm the metagraph is fully stopped and disable every automatic restart.
-2. Deploy the same jar to all metagraph nodes.
-3. Run rollback with the flag on exactly one designated producer.
-4. Confirm that producer advances at least five ordinals.
-5. Rejoin the remaining nodes one at a time with ordinary `run-validator`.
-6. Remove the flag from the operator command and verify all persistent launch
-   configurations remain flag-free before restoring monitoring.
+For ordinary recovery:
+
+1. Stop the complete Currency cohort and disable restart automation.
+2. Deploy one immutable compatible version to every metagraph node.
+3. Start exactly one rollback lead without the flag.
+4. Require the lead to produce the four-successor public observation window.
+5. Start validators one at a time with ordinary `run-validator`.
+6. Verify actual Currency facilitator membership and artifact/binary proofs, not only
+   cluster `Ready` state.
+
+For dormant-lineage resurrection, add the flag only after completing the activation,
+retained-window, unapplied-history, and canonical-anchor preflight. Do not add validators
+until the exact first-successor recovery binary is canonically accepted by Global L0.
 
 See the full
-[Currency L0 single-node rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
-for safety checks, metrics, committee-regrowth expectations, and stop
-conditions.
+[Currency L0 controlled rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
+and the
+[dormant-lineage resurrection runbook](../operations/currency-l0-dormant-resurrection.md)
+for validation predicates, metrics, publication deadlines, and stop conditions.

@@ -48,8 +48,8 @@ import io.constellationnetwork.schema.peer.PeerId
   *
   * The floor is consensus-critical: divergent values across operators would derive divergent Core committees and silently fork the cluster.
   * `coreCommitteeSize` is keyed by `AppEnvironment`, resolved to a flat `Option[Int]` at the consensus construction site, and (as of v20)
-  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at
-  * handshake by the config hash, in addition to the jar hash already gating the peer connection. `minObservations` and `minRatio` reuse the
+  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at L0
+  * join handshake by the config hash, in addition to the independent advertised-version hash. `minObservations` and `minRatio` reuse the
   * existing `minParticipationObservations` / `minParticipationRatio` config knobs.
   *
   * ==Chronic-core replacement ladder==
@@ -88,9 +88,9 @@ object CommitteeBuilder {
     * The cert quorum is computed FROM the Core size (`max(1, ceil(size * quorumThresholdFraction))`, see `QuorumPolicy`), so every size is
     * arithmetically quorum-viable; 2 is the smallest committee where leader rotation and mutual attestation are meaningful (the
     * `minLeaderPoolSize` rationale: with a single peer, `viewNumber % 1 = 0` makes view change a no-op). Hence `max(2, quorum-viable)` = 2.
-    * Compiled-in constant, jar-hash gated.
+    * Compiled-in constant, release-version gated by coordinated deployment.
     */
-  val MinViableCoreSize: Int = 2
+  val MinViableCoreSize: Int = CommitteeViability.MinimumCoordinatedCommitteeSize
 
   /** Final per-committee classification result. `core`, `tier1`, `witness` partition `candidates` exactly: every peer in `candidates` lands
     * in exactly one of the three.
@@ -153,6 +153,7 @@ object CommitteeBuilder {
     minObservations: Int,
     minRatio: Double,
     nonCorePeers: Set[PeerId] = Set.empty,
+    forcedTier1Peers: Set[PeerId] = Set.empty,
     chronicMisses: Map[PeerId, Int] = Map.empty,
     activeScores: Map[PeerId, Int] = Map.empty
   ): Committees = {
@@ -170,7 +171,8 @@ object CommitteeBuilder {
       hasSufficientHistory(pid).exists(_ >= minRatio)
 
     val effectiveTier: PeerId => Int = pid =>
-      if (nonCorePeers.contains(pid))
+      if (forcedTier1Peers.contains(pid)) Tier1
+      else if (nonCorePeers.contains(pid))
         priorTiers.get(pid).filter(_ == Witness).getOrElse(Tier1)
       else if (isQualityDegraded(pid)) Tier1
       else
@@ -196,7 +198,7 @@ object CommitteeBuilder {
     // non-chronic Tier 1 reserves outside the probation set. Chronic peers are
     // categorically barred from BOTH mechanisms -- this is the fix for the floor
     // re-promoting dead peers into the quorum denominator.
-    val corePromotablePool = rawTier1.filterNot(pid => isChronic(pid) || nonCorePeers.contains(pid))
+    val corePromotablePool = rawTier1.filterNot(pid => isChronic(pid) || nonCorePeers.contains(pid) || forcedTier1Peers.contains(pid))
 
     // Step 2, REPLACE: one-for-one swap for each excluded Core member, highest
     // evidence score first, PeerId lex tie-break. Evidence-derived scores only --
@@ -239,7 +241,7 @@ object CommitteeBuilder {
     val healthySize = healthyCore.size + replacements.size + promoted.size
     val readmitTarget = math.min(MinViableCoreSize, math.max(coreFloor, rawCore.size))
     val readmitted = (chronicCore ++ rawTier1.filter(isChronic))
-      .filterNot(nonCorePeers.contains)
+      .filterNot(pid => nonCorePeers.contains(pid) || forcedTier1Peers.contains(pid))
       .sortBy(pid => (chronicMisses.getOrElse(pid, Int.MaxValue), pid.value.value))
       .take(math.max(0, readmitTarget - healthySize))
     val readmittedSet = readmitted.toSet

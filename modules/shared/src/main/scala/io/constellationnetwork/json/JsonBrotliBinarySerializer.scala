@@ -19,6 +19,9 @@ trait JsonBrotliBinarySerializer[F[_]] {
 }
 
 object JsonBrotliBinarySerializer {
+  // State-channel binary encoder. The sorted/drop-null JSON printer and Brotli quality remain
+  // explicit so all members of one release construct identical binary values. Historical binary
+  // verification consumes received bytes; certified Global L0 lineage does not re-compress Currency ancestry.
   private val compressionLevel = 2
   private val parser = JawnParser(allowDuplicateKeys = false)
   private val UTF8 = StandardCharsets.UTF_8

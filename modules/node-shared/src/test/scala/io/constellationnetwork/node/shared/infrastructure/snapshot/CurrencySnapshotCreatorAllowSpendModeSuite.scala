@@ -37,6 +37,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.round.RoundId
+import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
@@ -153,6 +154,9 @@ object CurrencySnapshotCreatorAllowSpendModeSuite extends SimpleIOSuite {
         lastGlobalSyncView: Option[GlobalSyncView],
         shouldPerformMetagraphSpecificValidations: Boolean,
         lastArtifactProofs: NonEmptySet[SignatureProof],
+        previouslyProcessedGlobalSnapshots: SortedSet[SnapshotOrdinal],
+        historicalDependencyResolution: Boolean,
+        parentSnapshotVersion: SnapshotVersion,
         allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
       )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotAcceptanceResult] = {
         val logic = AllowSpendBlockAcceptanceLogic.make[IO]
@@ -231,9 +235,10 @@ object CurrencySnapshotCreatorAllowSpendModeSuite extends SimpleIOSuite {
               None,
               _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO],
               shouldPerformMetagraphSpecificValidations = false,
-              None,
-              None,
-              AllowSpendBlockAcceptanceMode.live
+              maybeCustomArtifacts = None,
+              peerHistory = None,
+              historicalDependencyResolution = false,
+              allowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
             )
             .attempt
           result <- observed.get

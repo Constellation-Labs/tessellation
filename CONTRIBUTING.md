@@ -56,6 +56,31 @@ git push -u origin 747-update-contrib
 
 ## Coding Standards
 
+### Public-network protocol baseline
+
+IntegrationNet, Testnet, and Mainnet have all permanently crossed the historical Kryo-to-JSON
+snapshot serialization boundary. New protocol functionality targets the JSON-serde era:
+
+- do not add Kryo registrations, fallback readers, frozen Kryo projections, or Kryo-to-current
+  compatibility tests solely for new functionality;
+- do not constrain a new JSON-era schema design around hypothetical rollback or replay across the
+  retired Kryo boundary;
+- retain existing Kryo readers only where already-supported historical data or tooling still uses
+  them, and do not make new functionality depend on those readers; and
+- continue to apply ordinary schema-version, deterministic hashing, activation-ordinal, and
+  coordinated-rollout review to JSON-era changes. Passing the Kryo boundary does not waive those
+  requirements.
+
+`GlobalSnapshot` is the frozen genesis-era full diff+state type. New protocol fields must not be
+added to it. Versioned incremental snapshots may evolve behind their coordinated activation gate;
+compact certified checkpoints, if introduced, must be standalone authenticated manifests paired
+with immutable combined incremental checkpoints.
+
+Public releases use a permissioned, allowlisted topology and a coordinated full-cluster cold
+restart: one controlled source runs `run-rollback`, and every other node runs `run-validator` on
+the same distinctly versioned artifact. Do not design recovery around a permissionless-network
+threat model or require community validators to authorize an operator recovery plan.
+
 ### Style Guide
 
 - Follow existing code style in the repository

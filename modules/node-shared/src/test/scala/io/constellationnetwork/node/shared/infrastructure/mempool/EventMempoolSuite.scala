@@ -97,6 +97,22 @@ object EventMempoolSuite extends SimpleIOSuite {
       )
   }
 
+  test("addWithStatus atomically distinguishes a new insertion from an idempotent delivery") {
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+      mempool <- EventMempool.make[IO, TestEvent, TestKey](noopExtractor, defaultConfig)
+      ev = fakeSignedEvent("trigger-intent")
+      first <- mempool.addWithStatus(ev)
+      duplicate <- mempool.addWithStatus(ev)
+    } yield
+      expect.all(
+        first.exists(_.inserted),
+        duplicate.exists(result => !result.inserted),
+        first.map(_.entry.hashed.hash) == duplicate.map(_.entry.hashed.hash)
+      )
+  }
+
   // ── capacity ─────────────────────────────────────────────────
 
   test("add is rejected with MempoolFull when at capacity") {
@@ -171,6 +187,28 @@ object EventMempoolSuite extends SimpleIOSuite {
       _ <- (1 to 5).toList.traverse_(i => mempool.add(fakeSignedEvent(s"ev-$i")))
       snap <- mempool.snapshot(limit = 3)
     } yield expect(snap.entries.size == 3, s"Snapshot should have 3 events, got ${snap.entries.size}")
+  }
+
+  test("deferToBack preserves an event while releasing the bounded FIFO head") {
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
+      mempool <- EventMempool.make[IO, TestEvent, TestKey](noopExtractor, defaultConfig)
+      oldest <- mempool.add(fakeSignedEvent("oldest-invalid-for-this-parent")).map(_.toOption.get)
+      next <- mempool.add(fakeSignedEvent("next-valid")).map(_.toOption.get)
+      _ <- mempool.add(fakeSignedEvent("newest"))
+      before <- mempool.snapshot(limit = 1)
+      _ <- mempool.deferToBack(Set(oldest.hashed.hash))
+      after <- mempool.snapshot(limit = 1)
+      retained <- mempool.get(oldest.hashed.hash)
+      size <- mempool.size
+    } yield
+      expect.all(
+        before.hashes === Set(oldest.hashed.hash),
+        after.hashes === Set(next.hashed.hash),
+        retained.isDefined,
+        size === 3
+      )
   }
 
   test("suspend hides events from snapshots and hash declarations until reactivated") {

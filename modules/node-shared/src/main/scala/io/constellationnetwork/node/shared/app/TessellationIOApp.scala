@@ -92,6 +92,14 @@ abstract class TessellationIOApp[A <: CliMethod](
       }
       .loadF[IO, C]()
 
+  /** Optional layer-specific consensus fingerprint advertised by this node during cluster joining.
+    *
+    * L0 applications override this with the hash of the exact effective configuration consumed by their consensus engine. Other layers
+    * retain `None`, so the shared cluster stack does not pretend to know a consensus configuration it does not own.
+    */
+  protected def loadEffectiveConsensusConfig(_method: A, _sharedConfig: SharedConfig): IO[Option[ConsensusConfig]] =
+    IO.pure(None)
+
   override protected def computeWorkerThreadCount: Int =
     Math.max(2, Runtime.getRuntime().availableProcessors() - 1)
 
@@ -187,6 +195,11 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           .withCurrent(_.hash(version))
                                           .asResource
                                           .map(x => sys.env.get("CL_VERSION_HASH").map(Hash(_)).getOrElse(x))
+                                        loadedEffectiveConsensusConfig <- loadEffectiveConsensusConfig(method, cfg).asResource
+                                        consensusConfigHash = loadedEffectiveConsensusConfig.map(_.deterministicConfigHash)
+                                        _ <- logger
+                                          .info(s"Consensus config hash: ${consensusConfigHash.fold("disabled")(_.value)}")
+                                          .asResource
                                         metagraphVersionHash <- _hasherSelector
                                           .withCurrent(_.hash(metagraphVersion))
                                           .asResource
@@ -196,8 +209,12 @@ abstract class TessellationIOApp[A <: CliMethod](
                                         _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
                                         _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
                                         maybeCustomAllowanceList <- loadAllowanceList("allowanceList", method.allowanceListPath).asResource
+                                        globalSnapshotSignerAllowlist =
+                                          (if (layer == DagL0) _seedlist else _l0Seedlist).map(_.map(_.peerId))
                                         storages <- _hasherSelector
-                                          .withCurrent(implicit hasher => SharedStorages.make[IO](clusterId, cfg))
+                                          .withCurrent(implicit hasher =>
+                                            SharedStorages.make[IO](clusterId, cfg, globalSnapshotSignerAllowlist)
+                                          )
                                           .asResource
                                         res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
                                         session = Session.make[IO](storages.session, storages.node, storages.cluster)
@@ -259,6 +276,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                             _seedlist,
                                             _restartSignal,
                                             versionHash,
+                                            consensusConfigHash,
                                             metagraphVersionHash,
                                             jarHash,
                                             cfg.collateral,
@@ -282,6 +300,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                             _seedlist,
                                             selfId,
                                             versionHash,
+                                            consensusConfigHash,
                                             metagraphVersionHash,
                                             maybeCustomAllowanceList,
                                             tokenIdentifierOpt
@@ -305,6 +324,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           val trustRatings = _trustRatings
 
                                           val sharedConfig = cfg
+                                          val effectiveConsensusConfig = loadedEffectiveConsensusConfig
 
                                           val hashSelect = _hashSelect
 

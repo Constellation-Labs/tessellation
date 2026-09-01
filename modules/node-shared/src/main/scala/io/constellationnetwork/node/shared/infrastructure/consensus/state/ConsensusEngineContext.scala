@@ -4,12 +4,14 @@ import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Queue
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, PendingTriggersF}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine._
 import io.constellationnetwork.node.shared.infrastructure.consensus.{FacilitatorSelector, _}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -53,6 +55,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   queue: Queue[F, ConsensusCommand[Key, Artifact, Context, Outcome]],
   isRoundRunning: Ref[F, Boolean],
   pending: PendingTriggersF[F],
+  firstRoundStartGate: FirstRoundStartGate[F, Key],
+  recoverySeedCommittee: F[Option[SortedSet[PeerId]]],
   // Gossip handle for re-distributing locally-derived consensus artifacts that downstream
   // peers need but might miss via the per-peer assembly path. Currently used to broadcast
   // an assembled `ViewChangeCertificate` from `StateTransitions.checkViewChangeAssembly` so
@@ -73,6 +77,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   consensusClient: ConsensusClient[F, Key, Outcome],
   facilitatorSelector: FacilitatorSelector,
   peerQualityTracker: PeerQualityTracker[F],
+  // Boundary for Global L0 health-derived membership removal. The deployed policy retains signing leases.
+  membershipPolicy: HealthDerivedMembershipPolicy,
   // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
   // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
   // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
@@ -95,10 +101,9 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // forever (gl0-4 in fork-recovery E2E). Same wiring source as `StallDetector`'s B2
   // admission emission — see the ConsensusEventLoop construction site.
   probationPeersOf: Outcome => Set[PeerId],
-  // Layer-specific extraction of consensus-agreed peerQuality from the carried outcome.
+  // Extraction of consensus-agreed peerQuality from the carried outcome.
   // Used to widen the witness pool for B1/B2/VCC cert assembly beyond the round-start
-  // committee. peerQuality lives in the concrete outcome type (GlobalConsensusOutcome /
-  // CurrencyConsensusOutcome) and is signed as part of the snapshot, so every honest node
+  // committee. peerQuality lives in the concrete GlobalConsensusOutcome and is signed as part of the snapshot, so every honest node
   // computes byte-identical maps and therefore the same wider witness pool. See
   // `StateTransitions.witnessPoolFor` for the deterministic derivation.
   //
@@ -119,6 +124,22 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // `StallDetector` emits a signed ViewChangeVote. It does not seed `ConsensusState.viewNumber`
   // directly; view advancement still requires quorum assembly into a VCC.
   lastOutcomeEndTimeMsOf: Outcome => Option[Long],
+  // Layer-owned durable companions to the in-memory outcome. Hooks run only after the
+  // corresponding storage transition succeeds and are failure-isolated by StateTransitions:
+  // losing a sidecar must never lose a finalized snapshot or prevent recovery initialization.
+  onOutcomeFinalized: Outcome => F[Unit],
+  onOutcomeInitialized: Outcome => F[Unit],
+  // Fail-fast preflight before initialization mutates consensus/journal state. Recovery seeds use
+  // this boundary to validate exact anchor content/collateral before invocation-local authority is used.
+  onOutcomePreInitialize: Outcome => F[Unit],
+  // Safety-critical durable-state cleanup after either rollback or download installs
+  // an authoritative outcome. Unlike the ordinary best-effort sidecar hook above,
+  // failures propagate and block Ready/next-round startup until a retry succeeds.
+  onOutcomeSafetyInitialized: Outcome => F[Unit],
+  // Explicit rollback is the only initialization path allowed to discard safety records above
+  // the accepted boundary. Ordinary download/restart initialization must retain an in-flight
+  // next-key vote lock, otherwise a process restart re-opens the cross-view double-vote window.
+  onOutcomeRollbackInitialized: (Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit],
   // Local-only marker: the consensus key at which this node most recently completed
   // `initFromDownload` (recovery path). Set by `StateTransitions.initFromDownload`.
   //
@@ -142,12 +163,13 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // diagnostic/local liveness state only. It must not seed proposal-critical `viewNumber` or
   // leader selection; alpha.104 showed nodes can restart the same key with different local retry
   // counts and then emit non-coalescing VCVs from different views.
-  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)]
+  retriableAtSameKeyRef: Ref[F, (Option[Key], Int)],
+  normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
 )
 
 object ConsensusEngineContext {
 
-  def create[F[_]: Async, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
+  def create[F[_]: Async, Event, Key: cats.Eq, Artifact, Ctx, Status, Outcome, Kind](
     selfId: PeerId,
     queue: Queue[F, ConsensusCommand[Key, Artifact, Ctx, Outcome]],
     pending: PendingTriggersF[F],
@@ -166,15 +188,25 @@ object ConsensusEngineContext {
     consensusClient: ConsensusClient[F, Key, Outcome],
     facilitatorSelector: FacilitatorSelector,
     peerQualityTracker: PeerQualityTracker[F],
+    membershipPolicy: HealthDerivedMembershipPolicy,
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
-    lastOutcomeEndTimeMsOf: Outcome => Option[Long] = (_: Outcome) => None
+    lastOutcomeEndTimeMsOf: Outcome => Option[Long],
+    onOutcomeFinalized: Outcome => F[Unit],
+    onOutcomeInitialized: Outcome => F[Unit],
+    onOutcomePreInitialize: Outcome => F[Unit],
+    onOutcomeSafetyInitialized: Outcome => F[Unit],
+    onOutcomeRollbackInitialized: (Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit],
+    initiallyHoldFirstRound: Boolean,
+    recoverySeedCommittee: F[Option[SortedSet[PeerId]]],
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
   ): F[ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]] =
     for {
       running <- Ref.of[F, Boolean](false)
+      firstRoundStartGate <- FirstRoundStartGate.make[F, Key](initiallyHoldFirstRound)
       recoveredAtKey <- Ref.of[F, Option[Key]](None)
       retriableAtSameKey <- Ref.of[F, (Option[Key], Int)]((none[Key], 0))
     } yield
@@ -183,6 +215,8 @@ object ConsensusEngineContext {
         queue,
         running,
         pending,
+        firstRoundStartGate,
+        recoverySeedCommittee,
         gossip,
         storage,
         creator,
@@ -198,13 +232,20 @@ object ConsensusEngineContext {
         consensusClient,
         facilitatorSelector,
         peerQualityTracker,
+        membershipPolicy,
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
         peerQualityOf,
         lastOutcomeKeyOf,
         lastOutcomeEndTimeMsOf,
+        onOutcomeFinalized,
+        onOutcomeInitialized,
+        onOutcomePreInitialize,
+        onOutcomeSafetyInitialized,
+        onOutcomeRollbackInitialized,
         recoveredAtKey,
-        retriableAtSameKey
+        retriableAtSameKey,
+        normalFirstRoundAlignment
       )
 }

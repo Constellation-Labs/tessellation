@@ -4,7 +4,7 @@ import cats.effect.IO
 
 import io.constellationnetwork.dag.l0.config.types._
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types.SharedConfigReader
+import io.constellationnetwork.node.shared.config.types.{SharedConfigReader, SnapshotConfig}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 
 import eu.timepit.refined.pureconfig._
@@ -47,6 +47,66 @@ object ConfigLoadSuite extends SimpleIOSuite {
         .and(expect(qs.get(AppEnvironment.Mainnet).contains(0)))
         .and(expect(qs.get(AppEnvironment.Integrationnet).contains(0)))
         .and(expect(qs.get(AppEnvironment.Dev).contains(0)))
+    }
+  }
+
+  test("the packaged IntegrationNet config resolves identically for the join fence and live consensus") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val resolved = SnapshotConfig.resolveEffectiveConsensusConfig(cfg.snapshot, AppEnvironment.Integrationnet)
+
+      resolved.fold(
+        error => failure(error.getMessage),
+        effective =>
+          expect.same(Some(1000), effective.facilitatorSelectionMax) &&
+            expect.same(Some(9), effective.coreCommitteeSize) &&
+            expect.same(0, effective.quorumShrinkActivationViews) &&
+            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
+            expect.same(9, effective.eventTriggerThreshold) &&
+            expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
+            expect.same(10, effective.activeAdmissionRecentSignerWindow) &&
+            expect.same(Some(19), effective.activeFacilitatorTarget) &&
+            expect.same(Some(37), effective.activeFacilitatorMax)
+      )
+    }
+  }
+
+  test("resolver defaults and floors are applied before hashing") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val withoutEnvironmentOverrides = cfg.snapshot.copy(
+        maxFacilitatorCount = Map.empty,
+        certifiedConsensusActivationOrdinal = Map.empty,
+        coreCommitteeSize = Map.empty,
+        quorumShrinkActivationViews = Map.empty,
+        activeAdmissionMinProbationReentrySlots = Map.empty,
+        activeAdmissionRecentSignerWindow = Map(AppEnvironment.Integrationnet -> 1),
+        activeFacilitatorTarget = Map.empty,
+        activeFacilitatorMax = Map.empty
+      )
+      val resolved = SnapshotConfig.resolveEffectiveConsensusConfig(withoutEnvironmentOverrides, AppEnvironment.Integrationnet)
+
+      resolved.fold(
+        error => failure(error.getMessage),
+        effective =>
+          expect.same(None, effective.facilitatorSelectionMax) &&
+            expect.same(Some(3), effective.coreCommitteeSize) &&
+            expect.same(0, effective.quorumShrinkActivationViews) &&
+            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
+            expect.same(0, effective.activeAdmissionMinProbationReentrySlots) &&
+            expect.same(3, effective.activeAdmissionRecentSignerWindow) &&
+            expect.same(cfg.snapshot.consensus.activeFacilitatorTarget, effective.activeFacilitatorTarget) &&
+            expect.same(cfg.snapshot.consensus.activeFacilitatorMax, effective.activeFacilitatorMax)
+      )
+    }
+  }
+
+  test("resolver rejects an invalid controller range before the node can join") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val invalid = cfg.snapshot.copy(
+        activeFacilitatorTarget = Map(AppEnvironment.Integrationnet -> 8),
+        activeFacilitatorMax = Map(AppEnvironment.Integrationnet -> 7)
+      )
+
+      expect(SnapshotConfig.resolveEffectiveConsensusConfig(invalid, AppEnvironment.Integrationnet).isLeft)
     }
   }
 }

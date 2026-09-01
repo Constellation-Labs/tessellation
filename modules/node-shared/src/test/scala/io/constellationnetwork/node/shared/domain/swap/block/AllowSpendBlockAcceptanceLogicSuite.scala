@@ -87,7 +87,14 @@ object AllowSpendBlockAcceptanceLogicSuite extends MutableIOSuite {
   ): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
     AllowSpendBlockAcceptanceLogic
       .make[IO]
-      .acceptBlock(signedBlock, Map.empty, context, contextUpdate, shouldPerformMetagraphSpecificValidations = false, creditDestination)
+      .acceptBlock(
+        signedBlock,
+        Map.empty,
+        context,
+        contextUpdate,
+        shouldPerformMetagraphSpecificValidations = false,
+        creditDestination
+      )
       .value
 
   test("escrows at the source without crediting the destination") { res =>
@@ -161,7 +168,6 @@ object AllowSpendBlockAcceptanceLogicSuite extends MutableIOSuite {
         second.exists(_.balances.get(onward).contains(balance(100L)))
       )
   }
-
   test("iterative acceptance retries phantom-funded blocks only under legacy semantics") { res =>
     implicit val (h, sp) = res
 

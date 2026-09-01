@@ -1,13 +1,17 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
-import cats.effect.kernel.{Async, Temporal}
+import cats.effect.kernel.{Async, Ref, Temporal}
 import cats.effect.std.Random
+import cats.effect.syntax.all._
+import cats.kernel.Next
 import cats.syntax.all._
-import cats.{Eq, Show}
+import cats.{Eq, Monad, Show}
 
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
+import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.TimeoutReason
@@ -72,7 +76,16 @@ import retry.syntax.all._
   * @see
   *   ConsensusStateAdvancer for advancement logic
   */
-class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeTag: Encoder, Artifact: Eq, Ctx: Eq, Status, Outcome, Kind](
+class StateTransitions[
+  F[_]: Async: Random: Metrics,
+  Event,
+  Key: Eq: Show: Next: TypeTag: Encoder,
+  Artifact: Eq,
+  Ctx: Eq,
+  Status,
+  Outcome: Eq,
+  Kind
+](
   ctx: ConsensusEngineContext[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind]
 )(
   implicit outcomeKey: Lens[Outcome, Key],
@@ -81,20 +94,23 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{
-    advancer,
-    config,
-    facilitatorSelector,
-    gossip,
-    logger => log,
-    peerQualityOf,
-    peerQualityTracker,
-    queue,
-    remover,
-    storage,
-    updater
-  }
+  import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, peerQualityOf, queue, remover, storage, updater}
   import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusAssembledVcc
+
+  private def runOutcomeHook(stage: String, outcome: Outcome)(hook: Outcome => F[Unit]): F[Unit] =
+    for {
+      startedAt <- Async[F].monotonic
+      result <- hook(outcome).attempt
+      finishedAt <- Async[F].monotonic
+      resultName = result.fold(_ => "failure", _ => "success")
+      labels = Seq(unsafeLabelName("stage") -> stage, unsafeLabelName("outcome") -> resultName)
+      _ <- Metrics[F].recordTimeHistogram("dag_consensus_outcome_hook", finishedAt - startedAt, labels)
+      _ <- Metrics[F].incrementCounter("dag_consensus_outcome_sidecar_total", labels)
+      _ <- result.fold(
+        error => log.warn(error)(s"Best-effort consensus outcome hook failed at stage=$stage"),
+        _ => Async[F].unit
+      )
+    } yield ()
 
   /** Deterministic witness pool for B1/B2/VCC certificate assembly.
     *
@@ -151,6 +167,34 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
   ): F[QuorumDenominatorShrink.Decision] =
     advancer.quorumShrinkDecision(state)
 
+  /** Select the one certificate-voter universe for the active schema.
+    *
+    * Legacy rounds retain the wider witness pool and optional shrink rung. V35 VCC/TC certificates are instead made only from uniquely
+    * identified frozen-Core voters and require the same BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in
+    * the shared state machine prevents the VCC and TC paths from drifting onto different safety universes.
+    */
+  private def certificateQuorum[A](
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    votes: Map[PeerId, Signed[A]],
+    shrinkDecision: QuorumDenominatorShrink.Decision
+  ): StateTransitions.CertificateQuorum[A] =
+    if (state.certifiedConsensusActive) {
+      val core = state.coreFacilitators.value.toSet
+      val coreVotes = votes.collect {
+        case (origin, signed)
+            if signed.proofs.size === 1L &&
+              signed.proofs.head.id.toPeerId === origin &&
+              core.contains(origin) =>
+          origin -> signed
+      }
+      val required = CertifiedConsensus.requiredCoreQuorum(core.size, config.quorumThresholdFraction)
+
+      StateTransitions.CertificateQuorum(coreVotes, core, required, coreVotes.size >= required)
+    } else {
+      val required = shrinkDecision.builderQuorum(votes.keySet)
+      StateTransitions.CertificateQuorum(votes, widerWitnessPoolAll(state), required, shrinkDecision.meets(votes.keySet))
+    }
+
   /** Observability for a gate that passed only via the shrunken quorum margin: one INFO line + the rung-activation counter. */
   private def logQuorumShrinkApplied(
     key: Key,
@@ -185,14 +229,163 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     for {
       resources <- storage.getResources(key)
       maybeUpdate <- updater.tryUpdateConsensus(key, resources)
-      _ <- maybeUpdate.traverse_ {
-        case (_, newState) =>
-          advancer
-            .getConsensusOutcome(newState)
-            .map { case (prevKey, outcome) => finalizeAndNotify(newState, prevKey, outcome) }
-            .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
+      // A retained post-commit effect may have failed after the state reached Finished.
+      // On retry the updater legitimately reports no new transition, so inspect the current
+      // state as well as a newly-updated state and resume the same finalization tail.
+      currentState <- maybeUpdate.fold(storage.getState(key)) { case (_, state) => state.some.pure[F] }
+      _ <- currentState.traverse_ { state =>
+        advancer
+          .getConsensusOutcome(state)
+          .map { case (prevKey, outcome) => finalizeAndNotify(state, prevKey, outcome) }
+          .getOrElse(log.debug(ConsensusLog.format(Category.Phase, key.show, "n/a", LogEvent.StateUpdated)))
       }
     } yield ()
+
+  /** Attempt same-key convergence from a peer's fully certified v35 outcome before abandoning the round.
+    *
+    * The HTTP response and node-local sidecar are transport only. Every candidate is re-derived by the layer advancer against this node's
+    * locally known parent and frozen committee, and all artifact/QC signatures are verified before state changes. Two independently valid
+    * value hashes fail closed.
+    */
+  def tryAdoptCertifiedOutcome(key: Key): F[Boolean] =
+    storage.getState(key).flatMap {
+      case Some(state) if state.certifiedConsensusActive && advancer.getConsensusOutcome(state).isEmpty =>
+        ctx.clusterStorage.getResponsivePeers.flatMap { peers =>
+          val candidates = peers.iterator
+            .filter(peer => peer.id =!= ctx.selfId && (peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady))
+            .toList
+
+          Random[F]
+            .shuffleList(candidates)
+            .map(_.take(StateTransitions.CertifiedRecoverySampleSize))
+            .flatMap(
+              _.parTraverseN(StateTransitions.CertifiedRecoveryParallelism) { peer =>
+                ctx.consensusClient
+                  .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
+                  .run(peer)
+                  .map(_.map(peer -> _))
+                  .timeoutTo(StateTransitions.CertifiedRecoveryPerPeerTimeout, none[(Peer, Outcome)].pure[F])
+                  .handleError(_ => none[(Peer, Outcome)])
+              }
+            )
+            .map(_.flatten)
+            .flatMap { fetched =>
+              fetched.traverse {
+                case (peer, candidate) =>
+                  advancer.certifiedOutcomeAdoption(state, candidate).flatMap {
+                    case Right(adoption) => (peer, candidate, adoption.valueHash).some.pure[F]
+                    case Left(reason) =>
+                      Metrics[F].incrementCounter(
+                        "dag_consensus_certified_recovery_candidate_total",
+                        Seq(unsafeLabelName("outcome") -> "rejected", unsafeLabelName("reason") -> reason)
+                      ) >>
+                        ConsensusLog
+                          .debug(
+                            log,
+                            Category.Recovery,
+                            key.show,
+                            "n/a",
+                            LogEvent.CertifiedOutcomeRecovery,
+                            "outcome" -> "candidate_rejected",
+                            "peer" -> ConsensusLog.pid(peer.id),
+                            "reason" -> reason
+                          )
+                          .as(none[(Peer, Outcome, Hash)])
+                  }
+              }.flatMap { verifiedOptions =>
+                val verified = verifiedOptions.flatten
+                val selection = StateTransitions.selectCertifiedRecoveryCandidate(
+                  verified.sortBy(_._1.id.value.value).map { case (peer, candidate, hash) => hash -> (peer -> candidate) }
+                )
+
+                selection match {
+                  case Left(distinctHashes) =>
+                    ConsensusLog
+                      .error(
+                        log,
+                        Category.Fork,
+                        key.show,
+                        "n/a",
+                        LogEvent.CertifiedOutcomeRecovery,
+                        "outcome" -> "divergent_valid_certificates",
+                        "valueHashes" -> distinctHashes.toString,
+                        "candidates" -> verified.size.toString
+                      ) >>
+                      Metrics[F]
+                        .incrementCounter(
+                          "dag_consensus_certified_recovery_total",
+                          Seq(unsafeLabelName("outcome") -> "divergent_valid_certificates")
+                        )
+                        .as(false)
+                  case Right(None) =>
+                    Metrics[F]
+                      .incrementCounter(
+                        "dag_consensus_certified_recovery_total",
+                        Seq(unsafeLabelName("outcome") -> "no_valid_candidate")
+                      )
+                      .as(false)
+                  case Right(Some((peer, candidate))) => adoptCertifiedOutcome(key, peer, candidate)
+                }
+              }
+            }
+        }
+      case _ => false.pure[F]
+    }
+
+  private def adoptCertifiedOutcome(key: Key, source: Peer, candidate: Outcome): F[Boolean] = {
+    type Adoption = (
+      ConsensusState[Key, Status, Outcome, Kind],
+      Previous[Key],
+      Outcome,
+      F[Unit]
+    )
+
+    val modify = new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Adoption] {
+      def apply(
+        maybeState: Option[ConsensusState[Key, Status, Outcome, Kind]]
+      ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Adoption)]] =
+        maybeState match {
+          case Some(current) if current.certifiedConsensusActive && advancer.getConsensusOutcome(current).isEmpty =>
+            advancer.certifiedOutcomeAdoption(current, candidate).map {
+              case Right(adoption) =>
+                advancer.getConsensusOutcome(adoption.state).map {
+                  case (previous, outcome) =>
+                    adoption.state.some -> (adoption.state, previous, outcome, adoption.sideEffect)
+                }
+              case Left(_) => none
+            }
+          case _ => none[(Option[ConsensusState[Key, Status, Outcome, Kind]], Adoption)].pure[F]
+        }
+    }
+
+    storage.condModifyState[Adoption](key)(modify).flatMap {
+      case Some((recoveredState, previous, outcome, sideEffect)) =>
+        sideEffect >>
+          finalizeAndNotify(recoveredState, previous, outcome) >>
+          ConsensusLog.info(
+            log,
+            Category.Recovery,
+            key.show,
+            "n/a",
+            LogEvent.CertifiedOutcomeRecovery,
+            "outcome" -> "adopted",
+            "peer" -> ConsensusLog.pid(source.id)
+          ) >>
+          Metrics[F]
+            .incrementCounter(
+              "dag_consensus_certified_recovery_total",
+              Seq(unsafeLabelName("outcome") -> "adopted")
+            )
+            .as(true)
+      case None =>
+        Metrics[F]
+          .incrementCounter(
+            "dag_consensus_certified_recovery_total",
+            Seq(unsafeLabelName("outcome") -> "state_changed")
+          )
+          .as(false)
+    }
+  }
 
   /** Handle CheckViewChangeAssembly command.
     *
@@ -212,28 +405,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         val toView = fromView + 1L
         (storage.getResources(key), quorumShrinkDecisionFor(state)).tupled.flatMap {
           case (resources, shrinkDecision) =>
-            val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-            // v19: VCC assembly quorum threshold computed against the Core committee --
-            // mirrors `validateProposalVcc` in the advancer. The signer pool stays open to
-            // all of `roundStartFacilitators` (Tier 1 and Tier 0 peers may sign view changes
-            // and earn rewards), but the LIVENESS denominator that determines when q votes
-            // have arrived is Core-sized. Integer math via `QuorumPolicy.fromFraction`.
-            // v33: under the escalated quorum-denominator shrink, `requiredQuorum`
-            // anchor-member votes also satisfy the gate; `builderQuorum` keeps the builder's
-            // internal under-quorum check consistent with whichever path passed.
-            val q = shrinkDecision.builderQuorum(votes.keySet)
-            if (shrinkDecision.meets(votes.keySet)) {
+            val rawVotes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+            val quorum = certificateQuorum(state, rawVotes, shrinkDecision)
+            val votes = quorum.votes
+            val q = quorum.required
+            if (quorum.meets) {
               val facilitatorsHashCandidates = votes.values.map(_.value.facilitatorsHash).toSet
               facilitatorsHashCandidates.toList match {
                 case singleHash :: Nil =>
-                  // Widen VCC witness pool to match EvictionCertificateBuilder's widening.
-                  // The proposal-validation path in the advancer derives the same pool
-                  // from the same consensus-agreed inputs, so this is the canonical pool for the
-                  // round. Quorum stays committee-sized (passed in q above).
-                  val vccPool = widerWitnessPoolAll(state)
                   val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
                   ViewChangeCertificateBuilder
-                    .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
+                    .build(fromView, toView, singleHash, lastSnapshotHash, votes, q, quorum.voterPool) match {
                     case Left(error) =>
                       ConsensusLog.warn(
                         log,
@@ -257,8 +439,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                         )
                     case Right(vcc) =>
                       for {
-                        shouldSchedule <- storage.markAssembledVccApplyScheduled(key, lastSnapshotHash, fromView, toView)
                         _ <- storage.storeAssembledVcc(key, vcc)
+                        shouldSchedule <- storage.markAssembledVccApplyScheduled(key, lastSnapshotHash, fromView, toView)
+                        _ <- Async[F]
+                          .start(
+                            Temporal[F].sleep(config.viewChangeApplyDelay) >>
+                              queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
+                          )
+                          .void
+                          .whenA(shouldSchedule)
                         _ <- logQuorumShrinkApplied(key, "vcc_assembly", shrinkDecision, votes.keySet)
                         // Re-distribute the assembled VCC so peers that did NOT reach quorum
                         // locally for this (fromView, toView) -- e.g. due to gossip lag -- still
@@ -294,13 +483,6 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                               unsafeLabelName("reason") -> "apply_delay"
                             )
                           )
-                          .whenA(shouldSchedule)
-                        _ <- Async[F]
-                          .start(
-                            Temporal[F].sleep(config.viewChangeApplyDelay) >>
-                              queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
-                          )
-                          .void
                           .whenA(shouldSchedule)
                       } yield ()
                   }
@@ -350,19 +532,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             val toView = fromView + 1L
             val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
             val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-            val vccPool = widerWitnessPoolAll(state)
 
             votes.values.toList.groupBy(_.value.reason).toList.traverse_ {
               case (reason, reasonVotes) =>
-                val votesBySigner = reasonVotes.map(v => v.proofs.head.id.toPeerId -> v).toMap
-                // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied
-                // (anchor-member votes may satisfy `requiredQuorum` when the rung is live; inert
-                // decision degrades to the legacy `votesBySigner.size >= base` gate).
-                val q = shrinkDecision.builderQuorum(votesBySigner.keySet)
+                val rawVotesBySigner = reasonVotes.map(v => v.proofs.head.id.toPeerId -> v).toMap
+                val quorum = certificateQuorum(state, rawVotesBySigner, shrinkDecision)
+                val votesBySigner = quorum.votes
+                val q = quorum.required
                 votesBySigner.values.map(_.value.facilitatorsHash).toSet.toList match {
-                  case singleHash :: Nil if shrinkDecision.meets(votesBySigner.keySet) =>
+                  case singleHash :: Nil if quorum.meets =>
                     TimeoutCertificateBuilder
-                      .build(fromView, toView, singleHash, lastSnapshotHash, reason, votesBySigner, q, vccPool) match {
+                      .build(fromView, toView, singleHash, lastSnapshotHash, reason, votesBySigner, q, quorum.voterPool) match {
                       case Left(error) =>
                         ConsensusLog.warn(
                           log,
@@ -387,8 +567,15 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                           )
                       case Right(tc) =>
                         for {
-                          shouldSchedule <- storage.markTimeoutCertificateApplyScheduled(key, lastSnapshotHash, fromView, toView)
                           _ <- storage.storeTimeoutCertificate(key, tc)
+                          shouldSchedule <- storage.markTimeoutCertificateApplyScheduled(key, lastSnapshotHash, fromView, toView)
+                          _ <- Async[F]
+                            .start(
+                              Temporal[F].sleep(config.viewChangeApplyDelay) >>
+                                queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView))
+                            )
+                            .void
+                            .whenA(shouldSchedule)
                           _ <- logQuorumShrinkApplied(key, "tc_assembly", shrinkDecision, votesBySigner.keySet)
                           _ <- ConsensusLog
                             .info(
@@ -424,13 +611,6 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                               )
                             )
                             .unlessA(shouldSchedule)
-                          _ <- Async[F]
-                            .start(
-                              Temporal[F].sleep(config.viewChangeApplyDelay) >>
-                                queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView))
-                            )
-                            .void
-                            .whenA(shouldSchedule)
                         } yield ()
                     }
                   case Nil =>
@@ -516,7 +696,24 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 )
               )
             case Some(tc) =>
-              applyCertifiedTimeoutCertificate(key, state, resources, fromView, toView, tc.reason)
+              val mode = storage.viewSafetyMode(state.certifiedConsensusActive)
+              if (mode == ViewSafetyMode.LegacyPreserve)
+                applyCertifiedTimeoutCertificate(key, state, resources, fromView, toView, tc.reason)
+              else
+                applyCertifiedAfterLastChance(
+                  key,
+                  state,
+                  resources,
+                  fromView,
+                  (outcome, reason) =>
+                    Metrics[F].incrementCounter(
+                      "dag_consensus_timeout_certificate_apply_total",
+                      Seq(unsafeLabelName("outcome") -> outcome, unsafeLabelName("reason") -> reason)
+                    ),
+                  ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView)
+                ) { (latestState, latestResources) =>
+                  applyCertifiedTimeoutCertificate(key, latestState, latestResources, fromView, toView, tc.reason)
+                }
           }
         }
     }
@@ -542,36 +739,122 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         )
       case Some(state) =>
         storage.getResources(key).flatMap { resources =>
-          val currentKindHasCoreDeclarations = ctx.ops
-            .maybeCollectingKind(state.status)
-            .exists(kind =>
-              resources.peerDeclarationsMap.exists {
-                case (peerId, declarations) =>
-                  state.coreFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
-              }
-            )
-          val localProgress =
-            ctx.ops.isSignaturesPhase(state.status) || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
-
-          if (localProgress)
-            Metrics[F].incrementCounter(
-              "dag_consensus_vcc_apply_total",
-              Seq(
-                unsafeLabelName("outcome") -> "deferred_local_progress",
-                unsafeLabelName("reason") -> "proposal_or_signature_in_progress"
-              )
-            ) >>
-              queue.offer(ConsensusCommand.CheckUpdate(key)) >>
-              Async[F]
-                .start(
-                  Temporal[F].sleep(config.viewChangeApplyDelay / 2) >>
-                    queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
-                )
-                .void
+          val mode = storage.viewSafetyMode(state.certifiedConsensusActive)
+          if (mode == ViewSafetyMode.LegacyPreserve)
+            applyCertifiedViewChangePreservingLegacyDeferral(key, state, resources, fromView, toView)
           else
-            applyCertifiedViewChange(key, state, resources, fromView, toView)
+            applyCertifiedAfterLastChance(
+              key,
+              state,
+              resources,
+              fromView,
+              (outcome, reason) =>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_vcc_apply_total",
+                  Seq(unsafeLabelName("outcome") -> outcome, unsafeLabelName("reason") -> reason)
+                ),
+              ConsensusCommand.CheckViewChangeApply(key, fromView, toView)
+            ) { (latestState, latestResources) =>
+              applyCertifiedViewChange(key, latestState, latestResources, fromView, toView)
+            }
         }
     }
+
+  private def applyCertifiedViewChangePreservingLegacyDeferral(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    resources: ConsensusResources[Artifact, Kind],
+    fromView: Long,
+    toView: Long
+  ): F[Unit] = {
+    val currentKindHasCoreDeclarations = ctx.ops
+      .maybeCollectingKind(state.status)
+      .exists(kind =>
+        resources.peerDeclarationsMap.exists {
+          case (peerId, declarations) =>
+            state.coreFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
+        }
+      )
+    val localProgress =
+      ctx.ops.isSignaturesPhase(state.status) || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
+
+    if (localProgress)
+      Metrics[F].incrementCounter(
+        "dag_consensus_vcc_apply_total",
+        Seq(
+          unsafeLabelName("outcome") -> "deferred_local_progress",
+          unsafeLabelName("reason") -> "proposal_or_signature_in_progress"
+        )
+      ) >>
+        queue.offer(ConsensusCommand.CheckUpdate(key)) >>
+        Async[F]
+          .start(
+            Temporal[F].sleep(config.viewChangeApplyDelay / 2) >>
+              queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView))
+          )
+          .void
+    else
+      applyCertifiedViewChange(key, state, resources, fromView, toView)
+  }
+
+  private def applyCertifiedAfterLastChance(
+    key: Key,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    resources: ConsensusResources[Artifact, Kind],
+    fromView: Long,
+    meter: (String, String) => F[Unit],
+    retryCommand: ConsensusCommand[Key, Artifact, Ctx, Outcome]
+  )(
+    applyTransition: (ConsensusState[Key, Status, Outcome, Kind], ConsensusResources[Artifact, Kind]) => F[Unit]
+  ): F[Unit] = {
+    val mode = storage.viewSafetyMode(state.certifiedConsensusActive)
+    val phaseIndex = ctx.ops.phaseIndex(state.status)
+    val currentKindHasCoreDeclarations = ctx.ops
+      .maybeCollectingKind(state.status)
+      .exists(kind =>
+        resources.peerDeclarationsMap.exists {
+          case (peerId, declarations) =>
+            state.coreFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
+        }
+      )
+    val localProgress = phaseIndex == 2 || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
+
+    def scheduleOnce: F[Unit] =
+      Async[F].start(Temporal[F].sleep(config.viewChangeApplyDelay / 2) >> queue.offer(retryCommand)).void
+
+    def unlessLegacyVoteLocked(onUnlocked: => F[Unit]): F[Unit] =
+      storage.getVoteLock(key).flatMap {
+        case maybeLock if VoteLock.blocksLegacyViewChange(maybeLock, mode) =>
+          meter("deferred_legacy_vote_lock", "artifact_signature_does_not_bind_proposal_value")
+        case _ => onUnlocked
+      }
+
+    unlessLegacyVoteLocked {
+      if (phaseIndex == 3 && mode == ViewSafetyMode.LegacyFreezeAfterVote)
+        meter("deferred_binary_finality", "binary_signature_phase")
+      else if (phaseIndex == 3 && mode == ViewSafetyMode.LegacyPreserve)
+        meter("deferred_binary_finality", "binary_signature_phase_preserve_legacy") >> scheduleOnce
+      else if (!localProgress) applyTransition(state, resources)
+      else
+        meter("last_chance_update", "proposal_or_majority_signature_in_progress") >>
+          checkUpdate(key) >>
+          storage.getState(key).flatMap {
+            case None                                                  => meter("stale", "round_state_removed_after_last_chance")
+            case Some(latest) if ctx.ops.isFinished(latest.status)     => meter("stale", "round_finished_after_last_chance")
+            case Some(latest) if latest.viewNumber.toLong =!= fromView => meter("stale", "view_changed_after_last_chance")
+            case Some(latest) =>
+              val latestMode = storage.viewSafetyMode(latest.certifiedConsensusActive)
+              val latestPhaseIndex = ctx.ops.phaseIndex(latest.status)
+              if (latestPhaseIndex == 3 && latestMode == ViewSafetyMode.LegacyFreezeAfterVote)
+                meter("deferred_binary_finality", "binary_signature_phase_after_last_chance")
+              else if (latestPhaseIndex == 3 && latestMode == ViewSafetyMode.LegacyPreserve)
+                meter("deferred_binary_finality", "binary_signature_phase_after_last_chance_preserve_legacy") >> scheduleOnce
+              else if (latestPhaseIndex =!= phaseIndex)
+                unlessLegacyVoteLocked(meter("deferred_phase_progress", s"phase_${phaseIndex}_to_$latestPhaseIndex") >> scheduleOnce)
+              else unlessLegacyVoteLocked(storage.getResources(key).flatMap(applyTransition(latest, _)))
+          }
+    }
+  }
 
   private def applyCertifiedViewChange(
     key: Key,
@@ -580,12 +863,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     fromView: Long,
     toView: Long
   ): F[Unit] = quorumShrinkDecisionFor(state).flatMap { shrinkDecision =>
-    val votes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
-    // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied (inert
-    // decision degrades to the legacy base-quorum gate).
-    val q = shrinkDecision.builderQuorum(votes.keySet)
+    val rawVotes = resources.viewChangeVotes.getOrElse((fromView, toView), Map.empty)
+    val quorum = certificateQuorum(state, rawVotes, shrinkDecision)
+    val votes = quorum.votes
+    val q = quorum.required
 
-    if (!shrinkDecision.meets(votes.keySet))
+    if (!quorum.meets)
       Metrics[F].incrementCounter(
         "dag_consensus_vcc_apply_total",
         Seq(
@@ -596,9 +879,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     else
       votes.values.map(_.value.facilitatorsHash).toSet.toList match {
         case singleHash :: Nil =>
-          val vccPool = widerWitnessPoolAll(state)
           val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, votes, q, vccPool) match {
+          ViewChangeCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, votes, q, quorum.voterPool) match {
             case Left(error) =>
               ConsensusLog.warn(
                 log,
@@ -621,9 +903,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   )
                 )
             case Right(vcc) =>
-              val leaderPool = StateTransitions.viewChangeLeaderPool(
+              val viewMembershipPolicy = ctx.membershipPolicy.forCertifiedView(state.certifiedConsensusActive)
+              val leaderPool = viewMembershipPolicy.certifiedViewChangeLeaderPool(
                 state.coreFacilitators.value,
-                state.facilitators.value
+                state.facilitators.value,
+                state.roundStartFacilitators.value
               )
               val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
@@ -634,16 +918,21 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                     maybeState match {
                       case Some(s) if s.viewNumber.toLong === fromView =>
+                        val canonicalFacilitators = viewMembershipPolicy.canonicalFacilitators(
+                          s.facilitators.value,
+                          s.roundStartFacilitators.value
+                        )
+                        val membershipState = s.copy(facilitators = Facilitators(canonicalFacilitators))
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
-                            s.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               status = fresh,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
                             )
                           case None =>
-                            s.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
@@ -657,47 +946,40 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
               for {
                 _ <- storage.storeAssembledVcc(key, vcc)
-                _ <- logQuorumShrinkApplied(key, "vcc_apply", shrinkDecision, votes.keySet)
                 advanced <- storage.condModifyState[Boolean](key)(modify)
                 didAdvance = advanced.getOrElse(false)
-                _ <- ConsensusLog
-                  .info(
-                    log,
-                    Category.Phase,
-                    key.show,
-                    "n/a",
-                    LogEvent.ViewChange,
-                    "assembly" -> "quorum_reached_advanced",
-                    "fromView" -> fromView.toString,
-                    "toView" -> toView.toString,
-                    "votes" -> votes.size.toString,
-                    "quorum" -> q.toString,
-                    "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
-                    "leaderPoolSize" -> leaderPool.size.toString,
-                    "newLeader" -> ConsensusLog.pid(newLeader),
-                    "statusReset" -> resetStatus.isDefined.toString
-                  )
-                  .whenA(didAdvance)
-                _ <- Metrics[F]
-                  .incrementCounter(
-                    "dag_consensus_vcc_apply_total",
-                    Seq(
-                      unsafeLabelName("outcome") -> "advanced",
-                      unsafeLabelName("reason") -> "none"
-                    )
-                  )
-                  .whenA(didAdvance)
-                _ <- Metrics[F]
-                  .incrementCounter(
+                _ <- StateTransitions.completeCertifiedAdvance(
+                  didAdvance,
+                  storage.pruneAttemptDeclarationsForView(key, toView),
+                  queue.offer(ConsensusCommand.CheckUpdate(key)),
+                  logQuorumShrinkApplied(key, "vcc_apply", shrinkDecision, votes.keySet) >>
+                    ConsensusLog.info(
+                      log,
+                      Category.Phase,
+                      key.show,
+                      "n/a",
+                      LogEvent.ViewChange,
+                      "assembly" -> "quorum_reached_advanced",
+                      "fromView" -> fromView.toString,
+                      "toView" -> toView.toString,
+                      "votes" -> votes.size.toString,
+                      "quorum" -> q.toString,
+                      "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                      "leaderPoolSize" -> leaderPool.size.toString,
+                      "newLeader" -> ConsensusLog.pid(newLeader),
+                      "statusReset" -> resetStatus.isDefined.toString
+                    ) >> Metrics[F].incrementCounter(
+                      "dag_consensus_vcc_apply_total",
+                      Seq(unsafeLabelName("outcome") -> "advanced", unsafeLabelName("reason") -> "none")
+                    ) >> Metrics[F].updateGauge("dag_consensus_view_number", toView),
+                  Metrics[F].incrementCounter(
                     "dag_consensus_vcc_apply_total",
                     Seq(
                       unsafeLabelName("outcome") -> "not_advanced_race",
                       unsafeLabelName("reason") -> "state_already_advanced"
                     )
                   )
-                  .unlessA(didAdvance)
-                _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
-                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
+                )
               } yield ()
           }
         case multiple =>
@@ -731,13 +1013,12 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     reason: TimeoutReason
   ): F[Unit] = quorumShrinkDecisionFor(state).flatMap { shrinkDecision =>
     val votes = resources.timeoutVotes.getOrElse((fromView, toView), Map.empty)
-    val reasonVotes = votes.collect { case (pid, signed) if signed.value.reason === reason => pid -> signed }
-    // v33: Core-quorum threshold with the escalated quorum-denominator shrink applied (inert
-    // decision degrades to the legacy base-quorum gate). On the shrunken path `q` is also the
-    // certified-shrink floor below, so the round-local active set may reduce to the TC voters.
-    val q = shrinkDecision.builderQuorum(reasonVotes.keySet)
+    val rawReasonVotes = votes.collect { case (pid, signed) if signed.value.reason === reason => pid -> signed }
+    val quorum = certificateQuorum(state, rawReasonVotes, shrinkDecision)
+    val reasonVotes = quorum.votes
+    val q = quorum.required
 
-    if (!shrinkDecision.meets(reasonVotes.keySet))
+    if (!quorum.meets)
       Metrics[F].incrementCounter(
         "dag_consensus_timeout_certificate_apply_total",
         Seq(
@@ -746,11 +1027,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         )
       )
     else
-      votes.values.filter(_.value.reason === reason).map(_.value.facilitatorsHash).toSet.toList match {
+      reasonVotes.values.map(_.value.facilitatorsHash).toSet.toList match {
         case singleHash :: Nil =>
-          val tcPool = widerWitnessPoolAll(state)
           val lastSnapshotHash = ctx.lastSnapshotHashOf(state.lastOutcome)
-          TimeoutCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, reason, reasonVotes, q, tcPool) match {
+          TimeoutCertificateBuilder.build(fromView, toView, singleHash, lastSnapshotHash, reason, reasonVotes, q, quorum.voterPool) match {
             case Left(error) =>
               ConsensusLog.warn(
                 log,
@@ -776,57 +1056,19 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             case Right(_) =>
               val shrinkFloor = q
               val currentActive = state.facilitators.value
-              // Evaluate shrink on the first certified timeout too. Live alpha.129 data showed
-              // view-0 TCs with quorum evidence advancing the view but preserving a 4-of-4 active
-              // set where only two peers kept responding, causing the next view to wedge again.
-              // Evaluate against the full active facilitator set, not Core only. Timeout
-              // certificates are validated against the wider witness pool; retaining certified
-              // voters from Tier 1 lets an existing reserve replace missing Core peers round-locally
-              // without reading local gossip state or changing the committed committee.
-              val shouldEvaluateShrink = true
-              val certifiedShrink =
-                if (shouldEvaluateShrink)
-                  ActiveFacilitatorAdmission.fromCertifiedTimeout(
-                    selected = currentActive,
-                    // StateTransitions is generic over Outcome and cannot inspect recentSigners
-                    // without a new ConsensusEngineContext hook. Keep this first certified-shrink
-                    // slice protocol-wide by retaining TC voters only; the helper supports
-                    // recent-signer fill for a later typed hook if we need it.
-                    recentSigners = scala.collection.immutable.SortedMap.empty,
-                    timeoutVoters = reasonVotes.keySet,
-                    minActiveSize = shrinkFloor
-                  )
-                else
-                  ActiveFacilitatorAdmission.Result(
-                    active = currentActive,
-                    exclusions = List.empty,
-                    recentSignerPoolSize = 0,
-                    candidateSize = currentActive.size,
-                    targetSize = currentActive.size,
-                    promotedCandidateSize = 0,
-                    scoreExcludedSize = 0,
-                    qualityExcludedSize = 0,
-                    demotedRecentSignerSize = 0,
-                    belowRetainRecentSignerSize = 0,
-                    expansionAdmittedSize = 0,
-                    reserveAdmitted = List.empty,
-                    reserveAdmittedSize = 0,
-                    probationAdmitted = List.empty,
-                    probationAdmittedSize = 0,
-                    stickyProbationCandidateSize = 0,
-                    freshProbationCandidateSize = 0,
-                    freshProbationStarved = false,
-                    recentSignerMinCount = 0,
-                    recentSignerMaxCount = 0,
-                    recentWindowSize = 0,
-                    recentFilterApplied = false
-                  )
-              val effectiveCore = certifiedShrink.active
-              val shrunk = shouldEvaluateShrink && certifiedShrink.recentFilterApplied
-              val leaderPool = StateTransitions.viewChangeLeaderPool(
-                effectiveCore,
-                effectiveCore
+              // The policy remains the authority for health-derived membership changes. V35 freezes the current GL0 round while advancing
+              // this view.
+              val viewMembershipPolicy = ctx.membershipPolicy.forCertifiedView(state.certifiedConsensusActive)
+              val timeoutMembership = viewMembershipPolicy.timeoutMembership(
+                facilitators = currentActive,
+                coreFacilitators = state.coreFacilitators.value,
+                roundStartFacilitators = state.roundStartFacilitators.value,
+                timeoutVoters = reasonVotes.keySet,
+                shrinkFloor = shrinkFloor
               )
+              val effectiveActive = timeoutMembership.evaluatedActive
+              val shrunk = timeoutMembership.shrinkApplied
+              val leaderPool = timeoutMembership.leaderPool
               val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
@@ -836,24 +1078,29 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                   ): F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], Boolean)]] =
                     maybeState match {
                       case Some(s) if s.viewNumber.toLong === fromView =>
-                        val shrinkState =
-                          if (shrunk)
-                            s.copy(
-                              facilitators = Facilitators(effectiveCore),
-                              coreFacilitators = CoreFacilitators(effectiveCore)
-                            )
-                          else
-                            s
+                        // GL0 retain mode canonicalizes the live active view back to the frozen round-start committee.
+                        val activeAfterCertifiedShrink =
+                          if (timeoutMembership.shrinkApplied) timeoutMembership.facilitators else s.facilitators.value
+                        val canonicalFacilitators = viewMembershipPolicy.canonicalFacilitators(
+                          activeAfterCertifiedShrink,
+                          s.roundStartFacilitators.value
+                        )
+                        val coreAfterCertifiedShrink =
+                          if (timeoutMembership.shrinkApplied) timeoutMembership.coreFacilitators else s.coreFacilitators.value
+                        val membershipState = s.copy(
+                          facilitators = Facilitators(canonicalFacilitators),
+                          coreFacilitators = CoreFacilitators(coreAfterCertifiedShrink)
+                        )
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
-                            shrinkState.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               status = fresh,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
                             )
                           case None =>
-                            shrinkState.copy(
+                            membershipState.copy(
                               viewNumber = toView.toInt,
                               leader = newLeader,
                               withdrawnFacilitators = WithdrawnFacilitators.empty
@@ -868,6 +1115,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               for {
                 advanced <- storage.condModifyState[Boolean](key)(modify)
                 didAdvance = advanced.getOrElse(false)
+                // Once the CAS commits, declaration pruning and serialized re-evaluation are protocol-critical. Telemetry below may fail
+                // without stranding the new view.
+                _ <- (storage.pruneAttemptDeclarationsForView(key, toView) >>
+                  queue.offer(ConsensusCommand.CheckUpdate(key))).whenA(didAdvance)
                 _ <- logQuorumShrinkApplied(key, "tc_apply", shrinkDecision, reasonVotes.keySet).whenA(didAdvance)
                 _ <- ConsensusLog
                   .info(
@@ -890,9 +1141,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "statusReset" -> resetStatus.isDefined.toString,
                     "certifiedShrink" -> shrunk.toString,
                     "shrinkFrom" -> currentActive.size.toString,
-                    "shrinkTo" -> effectiveCore.size.toString,
+                    "shrinkTo" -> effectiveActive.size.toString,
                     "timeoutVoters" -> reasonVotes.size.toString,
-                    "shrinkExclusions" -> certifiedShrink.exclusions.size.toString
+                    "shrinkExclusions" -> timeoutMembership.exclusionCount.toString,
+                    "membershipPolicy" -> viewMembershipPolicy.productPrefix
                   )
                   .whenA(didAdvance)
                 _ <- ConsensusLog
@@ -907,11 +1159,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "fromView" -> fromView.toString,
                     "toView" -> toView.toString,
                     "fromSize" -> currentActive.size.toString,
-                    "toSize" -> effectiveCore.size.toString,
+                    "toSize" -> effectiveActive.size.toString,
                     "floor" -> shrinkFloor.toString,
                     "timeoutVoters" -> reasonVotes.size.toString,
-                    "recentSignerPool" -> certifiedShrink.recentSignerPoolSize.toString,
-                    "excluded" -> certifiedShrink.exclusions.size.toString
+                    "recentSignerPool" -> timeoutMembership.recentSignerPoolSize.toString,
+                    "excluded" -> timeoutMembership.exclusionCount.toString
                   )
                   .whenA(didAdvance && shrunk)
                 _ <- Metrics[F]
@@ -937,18 +1189,17 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                     "dag_consensus_certified_shrink_total",
                     Seq(
                       unsafeLabelName("outcome") -> (if (shrunk) "applied"
-                                                     else if (shouldEvaluateShrink) "not_needed"
-                                                     else "first_timeout"),
+                                                     else if (timeoutMembership.shrinkEvaluated) "not_needed"
+                                                     else "disabled_by_policy"),
                       unsafeLabelName("reason") -> reason.toString
                     )
                   )
                   .whenA(didAdvance)
-                _ <- Metrics[F].updateGauge("dag_consensus_certified_shrink_retained_size", effectiveCore.size.toLong).whenA(didAdvance)
+                _ <- Metrics[F].updateGauge("dag_consensus_certified_shrink_retained_size", effectiveActive.size.toLong).whenA(didAdvance)
                 _ <- Metrics[F]
-                  .updateGauge("dag_consensus_certified_shrink_missing_size", certifiedShrink.exclusions.size.toLong)
+                  .updateGauge("dag_consensus_certified_shrink_missing_size", timeoutMembership.exclusionCount.toLong)
                   .whenA(didAdvance)
                 _ <- Metrics[F].updateGauge("dag_consensus_view_number", toView).whenA(didAdvance)
-                _ <- queue.offer(ConsensusCommand.CheckUpdate(key)).whenA(didAdvance)
               } yield ()
           }
         case Nil =>
@@ -994,6 +1245,25 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     */
   def checkEvictionAssembly(key: Key, target: PeerId): F[Unit] =
     storage.getState(key).flatMap {
+      case Some(state)
+          if ctx.membershipPolicy.acceptsEvictionCertificates ||
+            ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive) =>
+        checkEvictionAssemblyEnabled(key, target)
+      case _ =>
+        ConsensusLog.debug(
+          log,
+          Category.Phase,
+          key.show,
+          "n/a",
+          LogEvent.Eviction,
+          "assembly" -> "disabled_by_membership_policy",
+          "target" -> ConsensusLog.pid(target)
+        )
+    }
+
+  /** Exact rc.6 assembly path, reached only for layers whose membership policy enables ECS. */
+  private def checkEvictionAssemblyEnabled(key: Key, target: PeerId): F[Unit] =
+    storage.getState(key).flatMap {
       case None                                                => Async[F].unit
       case Some(state) if ctx.isInBootstrap(state.lastOutcome) =>
         // Phase B1 gate: no certificate assembly during bootstrap. Even if eviction votes
@@ -1019,7 +1289,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           // a leader assembling with q Core-derived signatures will validate against
           // every follower's matching denominator. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
-          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+          val atomicReplacement =
+            ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+          val q =
+            if (atomicReplacement) CertifiedConsensus.requiredCoreQuorum(n, config.quorumThresholdFraction)
+            else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
             // voter was signing against a different committee view and the certificate
@@ -1037,19 +1311,23 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                 val reasons = matchingVotes.values.map(_.value.reason).toSet
                 reasons.toList match {
                   case singleReason :: Nil =>
-                    // Tier-1 finality-participation eviction is Core-attested. Core-target
+                    // Certified signing-participation replacement is Core-attested. Core-target
                     // stall eviction keeps the wider historical witness recovery lane that
                     // prevents a damaged Core committee from making its own repair impossible.
                     // The shared selector is also used by both proposal validators so assembly
                     // and acceptance cannot drift.
-                    val witnessPool = EvictionVoterPool.select(
-                      target,
-                      state.tier1Facilitators.value.contains(target),
-                      state.coreFacilitators.value.toSet,
-                      widerWitnessPool(state, target)
-                    )
+                    val witnessPool =
+                      if (atomicReplacement) state.coreFacilitators.value.toSet - target
+                      else
+                        EvictionVoterPool.select(
+                          target,
+                          state.tier1Facilitators.value.contains(target),
+                          state.coreFacilitators.value.toSet,
+                          widerWitnessPool(state, target)
+                        )
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
-                    EvictionCertificateBuilder.build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
+                    EvictionCertificateBuilder
+                      .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
                       case Left(error) =>
                         ConsensusLog.warn(
                           log,
@@ -1065,6 +1343,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
                         )
                       case Right(cert) =>
                         storage.storeAssembledEvictionCertificate(key, cert) >>
+                          queue.offer(CheckUpdate(key)) >>
                           ConsensusLog.info(
                             log,
                             Category.Phase,
@@ -1136,16 +1415,23 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           // full rationale on decoupling the Core-sized liveness quorum from the broad
           // signing committee. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.coreFacilitators.value.size
-          val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
+          val requiresCoreAdmissionCertification =
+            ctx.membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive)
+          val q = AdmissionVoterPool.requiredQuorum(
+            n,
+            config.quorumThresholdFraction,
+            requiresCoreAdmissionCertification
+          )
           // Open expansion is certified by Core only: Tier 1 remains outside the liveness
-          // machinery and cannot become necessary for committee growth. Penalty readmission is
-          // deliberately different. A peer already in probation may need the historical witness
-          // lane to recover from the exact committee failure that evicted it, so retain the wider
-          // deterministic pool for that path.
+          // machinery and cannot become necessary for committee growth. The legacy probation
+          // path retains its wider deterministic witness pool. Under certified atomic membership,
+          // however, every admission-only transition changes the Core-certified proposal value,
+          // so probation ACS assembly is Core-certified too.
           val isProbationReadmission = ctx.probationPeersOf(state.lastOutcome).contains(target)
           val voterPool = AdmissionVoterPool.select(
             target,
             isProbationReadmission,
+            requiresCoreAdmissionCertification,
             state.coreFacilitators.value.toSet,
             widerWitnessPool(state, target)
           )
@@ -1239,140 +1525,156 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     newState: ConsensusState[Key, Status, Outcome, Kind],
     prevKey: Previous[Key],
     outcome: Outcome
-  ): F[Unit] =
+  ): F[Unit] = {
+    val activeKey = outcomeKey.get(outcome)
+    val trigger = outcomeTrigger.get(outcome)
+
+    // The last-outcome CAS and tokenized FSM notification are the only critical tail.
+    // Queue is unbounded; masking this short Ref/CAS/offer sequence closes cancellation
+    // between committing the outcome and releasing the Busy FSM. A retry observes
+    // AlreadyCurrent and safely offers the same token again.
+    Async[F].uncancelable { _ =>
+      storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome).flatMap {
+        case result @ (ConsensusStorage.OutcomeUpdateResult.Advanced | ConsensusStorage.OutcomeUpdateResult.AlreadyCurrent) =>
+          storage.getRoundAttemptId.flatMap { expectedAttemptId =>
+            queue
+              .offer(ConsensusFinished(activeKey, outcome, trigger, expectedAttemptId))
+              .as(result: ConsensusStorage.OutcomeUpdateResult)
+          }
+        case ConsensusStorage.OutcomeUpdateResult.Conflict =>
+          Async[F].pure[ConsensusStorage.OutcomeUpdateResult](ConsensusStorage.OutcomeUpdateResult.Conflict)
+      }
+    }.flatMap {
+      case ConsensusStorage.OutcomeUpdateResult.Advanced =>
+        // Non-idempotent local accounting runs at most once. Every item is isolated so
+        // observability/maintenance cannot suppress the already-enqueued completion.
+        runOutcomeHook("finalized", outcome)(ctx.onOutcomeFinalized) >>
+          ctx.peerQualityTracker.recordRoundSuccess(newState.facilitators.value.toSet).attempt.void >>
+          ctx.nodeStorage.decrementJoiningGracePeriod.attempt.void >>
+          finalizedRoundObservability(newState, outcome).attempt.void >>
+          finalizedRoundIdempotentMaintenance(activeKey, outcome)
+
+      case ConsensusStorage.OutcomeUpdateResult.AlreadyCurrent =>
+        // A prior attempt committed the outcome but failed before its completion command
+        // drained. Do not repeat peer-quality/grace counters; idempotent maintenance may resume.
+        finalizedRoundIdempotentMaintenance(activeKey, outcome)
+
+      case ConsensusStorage.OutcomeUpdateResult.Conflict =>
+        // Another value already won. Remove only this conflicting round; the winning
+        // tokenized completion (if local) remains responsible for releasing the FSM.
+        (storage.cleanupConflictedRound(activeKey) >>
+          Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
+          ConsensusLog.warn(
+            log,
+            Category.Lifecycle,
+            activeKey.show,
+            "n/a",
+            LogEvent.OutcomeConflict,
+            "reason" -> "same_key_different_outcome"
+          )).attempt.void
+    }
+  }
+
+  private def finalizedRoundIdempotentMaintenance(activeKey: Key, outcome: Outcome): F[Unit] =
+    advancer.afterConsensusOutcomeCommitted(outcome).attempt.void >>
+      storage.pruneStaleResources(activeKey).attempt.void >>
+      ctx.clusterStorage.getResponsivePeers
+        .flatMap(peers => storage.pruneStalePeerRegistrations(peers.iterator.map(_.id).toSet + ctx.selfId))
+        .attempt
+        .void >>
+      ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).attempt.void
+
+  private def finalizedRoundObservability(
+    newState: ConsensusState[Key, Status, Outcome, Kind],
+    outcome: Outcome
+  ): F[Unit] = {
+    val key = outcomeKey.get(outcome)
+    val trigger = outcomeTrigger.get(outcome)
+    val withdrawnCount = newState.withdrawnFacilitators.value.size
+    val removedCount = newState.removedFacilitators.value.size
+    val signedArtifact = outcomeArtifact.get(outcome)
+    val signerSet = signedArtifact.proofs.toList.map(_.id.toPeerId).toSet
+    val activeSet = newState.facilitators.value.toSet
+    val signerIds = signerSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
+    val facilitatorIds = activeSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
+    val missingActiveSigners = (activeSet -- signerSet).toList.sorted
+    val missingActiveSignerIds = missingActiveSigners.map(ConsensusLog.pid).mkString(",")
+    val signerCount = signedArtifact.proofs.size
+    val missingActiveSignerCount = missingActiveSigners.size
+    val missingActiveSignerRatio =
+      if (activeSet.nonEmpty) missingActiveSignerCount.toDouble / activeSet.size.toDouble else 0.0
+
     for {
       now <- Async[F].monotonic
       duration = now - newState.createdAt
+      leaderScore <- ctx.peerQualityTracker.getQualityScore(newState.leader)
       _ <- Metrics[F].recordTime("dag_consensus_duration", duration)
       _ <- Metrics[F].recordTimeHistogram("dag_consensus_duration", duration)
-
-      _ <- ctx.peerQualityTracker.recordRoundSuccess(newState.facilitators.value.toSet)
-      leaderScore <- ctx.peerQualityTracker.getQualityScore(newState.leader)
-      updated <- storage.tryUpdateLastConsensusOutcomeWithCleanup(prevKey, outcome)
-      _ <- ctx.nodeStorage.decrementJoiningGracePeriod
-      // Prune stale resources for keys other than the newly completed key.
-      // This prevents memory growth from abandoned rounds leaving behind resource entries.
-      activeKey = outcomeKey.get(outcome)
-      _ <- storage.pruneStaleResources(activeKey)
-      // Prune peer registrations from peers no longer in the cluster.
-      // Peer registrations must be pruned to prevent stale departed-peer entries from
-      // corrupting lagging detection in StallDetector (peersAtDifferentKey count).
-      responsivePeers <- ctx.clusterStorage.getResponsivePeers
-      activePeerIds = responsivePeers.map(_.id) + ctx.selfId
-      _ <- storage.pruneStalePeerRegistrations(activePeerIds)
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_outcome_finalized",
+        Seq(unsafeLabelName("trigger_type") -> trigger.toString)
+      )
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_round_completed_total",
+        Seq(
+          unsafeLabelName("peer_id") -> ConsensusLog.pid(newState.leader),
+          unsafeLabelName("trigger_type") -> trigger.toString
+        )
+      )
+      _ <- Metrics[F].updateGauge("dag_consensus_round_facilitator_count", newState.facilitators.value.size)
+      _ <- Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size)
+      _ <- ConsensusLog.info(
+        log,
+        Category.Lifecycle,
+        key.show,
+        ConsensusLog.role(ctx.selfId, newState.leader),
+        LogEvent.RoundCompleted,
+        (Seq(
+          "trigger" -> trigger.toString,
+          "duration" -> s"${duration.toMillis}ms",
+          "facilitators" -> newState.facilitators.value.size.toString,
+          "facilitatorIds" -> facilitatorIds,
+          "signerCount" -> signerCount.toString,
+          "signerIds" -> signerIds,
+          "missingActiveSignerCount" -> missingActiveSignerCount.toString,
+          "missingActiveSignerIds" -> missingActiveSignerIds,
+          "leader" -> ConsensusLog.pid(newState.leader),
+          "leaderScore" -> f"$leaderScore%.2f",
+          "view" -> newState.viewNumber.toString
+        ) ++
+          (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
+          (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
+      )
+      _ <- Metrics[F].updateGauge("dag_consensus_last_signer_count", signerCount.toLong)
+      _ <- Metrics[F].updateGauge("dag_consensus_missing_active_signer_count", missingActiveSignerCount.toLong)
+      _ <- Metrics[F].updateGauge("dag_consensus_missing_active_signer_ratio", missingActiveSignerRatio)
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_outcome_signer_count_total",
+        Seq(unsafeLabelName("signer_count") -> signerCount.toString)
+      )
+      _ <- Metrics[F].incrementCounter(
+        "dag_consensus_outcome_signer_vs_active_total",
+        Seq(
+          unsafeLabelName("signer_count") -> signerCount.toString,
+          unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
+        )
+      )
+      responders = newState.observedResponders.value.toSet
+      committee = newState.roundStartFacilitators.value
       _ <-
-        if (updated) {
-          val key = activeKey
-          val trigger = outcomeTrigger.get(outcome)
-
-          val withdrawnCount = newState.withdrawnFacilitators.value.size
-          val removedCount = newState.removedFacilitators.value.size
-
-          Metrics[F].incrementCounter(
-            "dag_consensus_outcome_finalized",
-            Seq(unsafeLabelName("trigger_type") -> trigger.toString)
-          ) >>
-            Metrics[F].incrementCounter(
-              "dag_consensus_round_completed_total",
-              Seq(
-                unsafeLabelName("peer_id") -> ConsensusLog.pid(newState.leader),
-                unsafeLabelName("trigger_type") -> trigger.toString
-              )
-            ) >>
-            Metrics[F].updateGauge("dag_consensus_round_facilitator_count", newState.facilitators.value.size) >>
-            Metrics[F].updateGauge("dag_consensus_round_eligible_count", newState.eligibleFacilitators.value.size) >> {
-              // Diagnostic: include actual signers so we can compare across nodes. Different
-              // nodes completing "same" ordinal with different signer sets is a fork — this
-              // exposes it in logs rather than leaving it invisible.
-              val signedArtifact = outcomeArtifact.get(outcome)
-              val signerSet = signedArtifact.proofs.toList.map(_.id.toPeerId).toSet
-              val activeSet = newState.facilitators.value.toSet
-              val signerIds = signerSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
-              val facilitatorIds = activeSet.toList.map(ConsensusLog.pid).sorted.mkString(",")
-              val missingActiveSigners = (activeSet -- signerSet).toList.sorted
-              val missingActiveSignerIds = missingActiveSigners.map(ConsensusLog.pid).mkString(",")
-              val signerCount = signedArtifact.proofs.size
-              val missingActiveSignerCount = missingActiveSigners.size
-              val missingActiveSignerRatio =
-                if (activeSet.nonEmpty) missingActiveSignerCount.toDouble / activeSet.size.toDouble else 0.0
-
-              ConsensusLog.info(
-                log,
-                Category.Lifecycle,
-                key.show,
-                ConsensusLog.role(ctx.selfId, newState.leader),
-                LogEvent.RoundCompleted,
-                (Seq(
-                  "trigger" -> trigger.toString,
-                  "duration" -> s"${duration.toMillis}ms",
-                  "facilitators" -> newState.facilitators.value.size.toString,
-                  "facilitatorIds" -> facilitatorIds,
-                  "signerCount" -> signerCount.toString,
-                  "signerIds" -> signerIds,
-                  "missingActiveSignerCount" -> missingActiveSignerCount.toString,
-                  "missingActiveSignerIds" -> missingActiveSignerIds,
-                  "leader" -> ConsensusLog.pid(newState.leader),
-                  "leaderScore" -> f"$leaderScore%.2f",
-                  "view" -> newState.viewNumber.toString
-                ) ++
-                  (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty) ++
-                  (if (removedCount > 0) Seq("removed" -> removedCount.toString) else Seq.empty)): _*
-              ) >>
-                Metrics[F].updateGauge("dag_consensus_last_signer_count", signerCount.toLong) >>
-                Metrics[F].updateGauge("dag_consensus_missing_active_signer_count", missingActiveSignerCount.toLong) >>
-                Metrics[F].updateGauge("dag_consensus_missing_active_signer_ratio", missingActiveSignerRatio) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_outcome_signer_count_total",
-                  Seq(unsafeLabelName("signer_count") -> signerCount.toString)
-                ) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_outcome_signer_vs_active_total",
-                  Seq(
-                    unsafeLabelName("signer_count") -> signerCount.toString,
-                    unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
-                  )
-                )
-            } >> {
-              // Per-peer observed_responders accounting: for each canonical committee member,
-              // increment either `credited` (peer was in observedResponders, will get
-              // completed+=1 in lastOutcome.peerQuality) or `omitted` (committee member that
-              // missed observedResponders). The omission ratchet is what pushes a peer out of
-              // the leader-rotation band over time. Label name `peer_id` matches the existing
-              // dag_consensus_peer_quality_* family so a single Prometheus query joins them.
-              // Skipped during bootstrap when observedResponders is empty.
-              val responders: Set[PeerId] = newState.observedResponders.value.toSet
-              val committee = newState.roundStartFacilitators.value
-              if (responders.isEmpty || committee.isEmpty) Async[F].unit
-              else {
-                val peerIdLabel = unsafeLabelName("peer_id")
-                committee.toList.traverse_ { pid =>
-                  val labels: Metrics.TagSeq = Seq(peerIdLabel -> ConsensusLog.pid(pid))
-                  if (responders.contains(pid))
-                    Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
-                  else
-                    Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
-                }
-              }
-            } >>
-            ctx.nodeStorage.tryModifyStateGetResult(NodeState.WaitingForReady, NodeState.Ready).void >>
-            queue.offer(ConsensusFinished(key, outcome, trigger))
-        } else {
-          // OUTCOME_CONFLICT: another round completed first and stored its outcome.
-          // Clean up the stale state and resources for this key to prevent memory leaks.
-          // Without this cleanup, finished state entries accumulate in statesR/resourcesR
-          // since cleanupStateAndResource only runs on the success path.
-          storage.cleanupConflictedRound(activeKey) >>
-            Metrics[F].incrementCounter("dag_consensus_outcome_conflict") >>
-            ConsensusLog.warn(
-              log,
-              Category.Lifecycle,
-              activeKey.show,
-              "n/a",
-              LogEvent.OutcomeConflict,
-              "reason" -> "concurrent_finalization"
-            )
+        if (responders.isEmpty || committee.isEmpty) Async[F].unit
+        else {
+          val peerIdLabel = unsafeLabelName("peer_id")
+          committee.toList.traverse_ { pid =>
+            val labels: Metrics.TagSeq = Seq(peerIdLabel -> ConsensusLog.pid(pid))
+            if (responders.contains(pid))
+              Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
+            else
+              Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
+          }
         }
     } yield ()
+  }
 
   def registerPeer(peer: Peer): F[Unit] =
     storage.getLastConsensusOutcome.flatMap {
@@ -1394,9 +1696,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
   /** `dag_consensus_init_download_outcome_total{outcome}` - telemetry on which path through `initFromDownload` is exercised. `outcome`
     * labels: `success`, `self_in_probation` (B2 gate fired), `no_outcome_available` (fetchOutcomeFromCluster exhausted retries),
-    * `outcome_validation_failed` (post-retry artifact/context mismatch), `storage_init_failed` (trySetInitialConsensusOutcome returned
-    * false), `other` (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and
-    * `dag_consensus_force_leave_triggered` to identify why a recovering peer ends up in Leaving.
+    * `outcome_validation_failed` (post-retry artifact/context mismatch), `certified_outcome_validation_failed` (layer preflight rejected
+    * missing/invalid certified lineage before mutation), `storage_init_failed` (trySetInitialConsensusOutcome returned false), `other`
+    * (anything else). Read alongside `dag_consensus_init_download_failure_tracked` and `dag_consensus_force_leave_triggered` to identify
+    * why a recovering peer ends up in Leaving.
     */
   private def initDownloadOutcome(outcome: String): F[Unit] =
     Metrics[F].incrementCounter(
@@ -1405,11 +1708,13 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
     )
 
   private def classifyInitDownloadError(err: Throwable): String = err match {
-    case _: SelfStillInProbation => "self_in_probation"
+    case _: StateTransitions.SelfStillInProbation => "self_in_probation"
     case t =>
       val msg = Option(t.getMessage).getOrElse("")
       if (msg.startsWith("[DownloadInit] Could not observe outcome")) "no_outcome_available"
       else if (msg.startsWith("[DownloadInit] Outcome validation failed")) "outcome_validation_failed"
+      else if (msg.contains("downloaded_certified_outcome") || msg.contains("trusted_predecessor"))
+        "certified_outcome_validation_failed"
       else if (msg.contains("Failed to initialize consensus storage")) "storage_init_failed"
       else "other"
   }
@@ -1417,10 +1722,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
   def initFromDownload(key: Key, artifact: Signed[Artifact], context: Ctx, isRecovery: Boolean = false): F[Unit] =
     (for {
       _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.DownloadInitStart)
+      recoverySeedCommittee <- ctx.recoverySeedCommittee
       // isRecoveryEffective = true if either the caller flagged this as recovery, OR the cluster
       // has advanced past our downloaded ordinal (peer returned a newer outcome). In both cases
       // we skip the 43s TimeTrigger deferral so the node joins the cluster immediately.
-      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery)
+      (outcome, isRecoveryEffective) <- fetchOutcomeFromCluster(key, artifact, context, isRecovery, recoverySeedCommittee)
         .flatMap(_.liftTo[F](new Throwable(s"[DownloadInit] Could not observe outcome for key=$key")))
         .flatMap { o =>
           // Explicit post-retry validation: retryingOnFailuresAndAllErrors returns the last value
@@ -1431,7 +1737,14 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           val contextMatch = outcomeContext.get(o) === context
           StateTransitions.downloadOutcomeDisposition(keyMatch, artifactMatch, contextMatch, isRecovery) match {
             case StateTransitions.DownloadOutcomeDisposition.AcceptExact(isRecoveryEffective) =>
-              (o, isRecoveryEffective).pure[F]
+              // Layer preflight is a trust boundary, not an after-initialization callback.
+              // In certified consensus it verifies the peer-supplied outcome against an
+              // independently trusted predecessor before any application or consensus
+              // storage is mutated. Legacy layers keep the inert default hook.
+              StateTransitions.validateDownloadBeforeMutation(
+                ctx.onOutcomePreInitialize(o),
+                (o, isRecoveryEffective).pure[F]
+              )
 
             // If the specific-outcome endpoint reports Conflict, fetchOutcomeFromCluster falls
             // back to the peer's latest outcome. That can legitimately be N+1 after download
@@ -1439,20 +1752,28 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             // N+1 creates a torn handoff: consensus next emits N+2 while application storage
             // still requires N+1. Align the layer before installing the newer outcome.
             case StateTransitions.DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage =>
-              ctx.advancer
-                .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
-                ConsensusLog.info(
-                  log,
-                  Category.Lifecycle,
-                  outcomeKey.get(o).show,
-                  "n/a",
-                  LogEvent.DownloadInitStart,
-                  "stage" -> "newer_outcome_storage_aligned",
-                  "requestedKey" -> key.show,
-                  "acceptedKey" -> outcomeKey.get(o).show
-                ) >>
-                Metrics[F].incrementCounter("dag_consensus_download_newer_outcome_storage_aligned_total") >>
-                (o, true).pure[F]
+              if (recoverySeedCommittee.nonEmpty)
+                new Throwable(
+                  s"[DownloadInit] Recovery-seed validator requires exact anchor outcome for key=$key; peer returned newer key=${outcomeKey.get(o)}"
+                ).raiseError[F, (Outcome, Boolean)]
+              else
+                StateTransitions.validateDownloadBeforeMutation(
+                  ctx.onOutcomePreInitialize(o),
+                  ctx.advancer
+                    .synchronizeDownloadedOutcome(outcomeArtifact.get(o), outcomeContext.get(o)) >>
+                    ConsensusLog.info(
+                      log,
+                      Category.Lifecycle,
+                      outcomeKey.get(o).show,
+                      "n/a",
+                      LogEvent.DownloadInitStart,
+                      "stage" -> "newer_outcome_storage_aligned",
+                      "requestedKey" -> key.show,
+                      "acceptedKey" -> outcomeKey.get(o).show
+                    ) >>
+                    Metrics[F].incrementCounter("dag_consensus_download_newer_outcome_storage_aligned_total") >>
+                    (o, true).pure[F]
+                )
 
             case StateTransitions.DownloadOutcomeDisposition.Reject =>
               new Throwable(
@@ -1461,6 +1782,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               ).raiseError[F, (Outcome, Boolean)]
           }
         }
+      // The layer preflight above has already authenticated the selected outcome before any
+      // application-storage mutation. Arming here is therefore only a local scheduling hold;
+      // it does not confer trust on the downloaded value.
+      normalCommittee = recoverySeedCommittee.fold(
+        ctx.normalFirstRoundAlignment
+          .flatMap(_.committeeOf(outcome))
+          .filter(_.contains(ctx.selfId))
+      )(_ => none[SortedSet[PeerId]])
+      heldCommittee = recoverySeedCommittee.orElse(normalCommittee)
+      firstRoundPermit <- heldCommittee.traverse(_ => ctx.firstRoundStartGate.arm(outcomeKey.get(outcome)))
       // B2 readmission gate: refuse to facilitate while self is on probation per the carried
       // outcome. A peer that was B1-evicted during isolation comes back
       // via recovery with a downloaded snapshot containing a `readmissionCountdown[selfId]` entry,
@@ -1470,10 +1801,10 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       // expected committee and the round wedges at `progress=1/5` until the whole 90s phase
       // timeout fires (gl0-4 fork-recovery E2E).
       //
-      // Instead, raise `SelfStillInProbation` so the outer event-loop retry path re-issues
-      // initFromDownload after backoff. The next attempt re-fetches the outcome from the cluster;
-      // once the cluster has emitted a quorum-witnessed AdmissionCertificate clearing self from
-      // probation, the check passes and recovery proceeds normally.
+      // Instead, raise `SelfStillInProbation`. A layer with the direct probation-probe capability
+      // keeps the node stably Observing and re-issues initFromDownload after backoff; legacy layers
+      // retain the rc.6 recovery-download behavior. Once the cluster has emitted a quorum-witnessed
+      // AdmissionCertificate clearing self from probation, the check passes and recovery proceeds.
       _ <-
         if (ctx.probationPeersOf(outcome).contains(ctx.selfId)) {
           ConsensusLog
@@ -1485,7 +1816,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
               LogEvent.DownloadInitStart,
               "gate" -> "self_in_readmission_probation",
               "action" -> "deferring_facilitation_until_b2_clears_probation"
-            ) >> new SelfStillInProbation(ctx.selfId, key.toString)
+            ) >> new StateTransitions.SelfStillInProbation(ctx.selfId, key.toString)
             .raiseError[F, Unit]
         } else Async[F].unit
       // Mark recovery completion at this key. The local self-yield this used to drive
@@ -1495,66 +1826,134 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       // reintroduction can reuse it without new plumbing. See
       // `ConsensusEngineContext.recoveredAtKeyRef` for full rationale.
       _ <- ctx.recoveredAtKeyRef.set(Some(outcomeKey.get(outcome)))
-      _ <- storage
-        .trySetInitialConsensusOutcome(outcome)
-        .ifM(
-          ifFalse = new Throwable(s"[DownloadInit] Failed to initialize consensus storage").raiseError[F, Unit],
-          ifTrue = downloadReadyPromotionAllowed(outcome).flatMap { promoteToReady =>
-            val targetState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
-            // Initial download promotion is also the candidate-admission path. A peer exposes
-            // its next-round registration key through `observationKey`; clearing it here makes
-            // the peer visible as Ready but invisible to committee selection, so bootstrap can
-            // collapse back to a singleton facilitator.
-            storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective) >>
-              ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState) >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_init_download_target_state_total",
-                Seq(unsafeLabelName("target_state") -> targetState.entryName)
-              ) >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_init_download_ready_promotion_total",
-                Seq(unsafeLabelName("result") -> (if (promoteToReady) "promoted" else "waiting_for_ready"))
-              ) >>
-              ctx.nodeStorage.setJoiningGracePeriod >>
-              ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
-                if (isValidator && isRecoveryEffective) {
-                  // Validator recovery: start round immediately. The validator solo block
-                  // prevents solo production, and starting immediately avoids the 43s deferral
-                  // that caused ordinal mismatch deadlocks with the leader.
-                  ConsensusLog.info(
-                    log,
-                    Category.Lifecycle,
-                    key.toString,
-                    "n/a",
-                    LogEvent.DownloadInitRecoveryImmediate,
-                    "note" -> "Validator recovery: starting round immediately (solo blocked)"
-                  ) >>
-                    queue.offer(StartRound(TimeTrigger.some))
-                } else {
-                  // Initial join (all node types) or non-validator recovery: defer to align
-                  // with the cluster's TimeTrigger cadence. Without this delay on initial join,
-                  // validators form a majority without genesis, causing an irrecoverable split.
-                  ConsensusLog.info(
-                    log,
-                    Category.Lifecycle,
-                    key.toString,
-                    "n/a",
-                    if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
-                    "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
-                  ) >>
-                    Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
-                    queue.offer(StartRound(TimeTrigger.some))
-                }
-              }
+      initialized <- storage.trySetInitialConsensusOutcome(outcome)
+      retainedOutcome <- storage.getLastConsensusOutcome
+      _ <- new Throwable(s"[DownloadInit] Failed to initialize consensus storage")
+        .raiseError[F, Unit]
+        .unlessA(retainedOutcome.contains(outcome))
+      // The cleanup is fail-fast and retryable. If it fails after the in-memory
+      // outcome was installed, a later init attempt observes the same exact outcome,
+      // re-runs this hook, and still cannot promote/start until it succeeds.
+      _ <- ctx.onOutcomeSafetyInitialized(outcome)
+      _ <- recoverySeedCommittee.traverse_(committee =>
+        ctx.onOutcomeRollbackInitialized(outcome, RollbackStartPolicy.RequireAlignedCommittee(committee))
+      )
+      _ <- runOutcomeHook("download_initialized", outcome)(ctx.onOutcomeInitialized).whenA(initialized)
+      // A held first-round validator deliberately waits in WaitingForReady. The exact alignment
+      // barrier is stronger than the legacy local promotion probe, and the first completed round
+      // performs the existing WaitingForReady -> Ready transition.
+      promoteToReady <- heldCommittee.fold(downloadReadyPromotionAllowed(outcome))(_ => false.pure[F])
+      targetState: NodeState = if (promoteToReady) NodeState.Ready else NodeState.WaitingForReady
+      // Initial download promotion is also the candidate-admission path. A peer exposes
+      // its next-round registration key through `observationKey`; clearing it here makes
+      // the peer visible as Ready but invisible to committee selection, so bootstrap can
+      // collapse back to a singleton facilitator.
+      _ <- storage.clearObservationKey.whenA(promoteToReady && isRecoveryEffective)
+      _ <- heldCommittee.fold(ctx.nodeStorage.tryModifyState(NodeState.Observing, targetState)) { _ =>
+        ctx.nodeStorage.getNodeState.flatMap { currentState =>
+          StateTransitions.recoveryInitializationStateDisposition(currentState) match {
+            case StateTransitions.RecoveryInitializationStateDisposition.EnterWaitingForReady =>
+              ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForReady)
+            case StateTransitions.RecoveryInitializationStateDisposition.ResumeAndRepublish =>
+              // A previous attempt may have updated the Ref before Topic publication failed. Publishing the accepted state again makes
+              // peer lifecycle observation idempotent and lets the exact gate/barrier tail resume.
+              ctx.nodeStorage.setNodeState(currentState)
+            case StateTransitions.RecoveryInitializationStateDisposition.Reject =>
+              new IllegalStateException(
+                s"[DownloadInit] Cannot resume recovery/aligned initialization from node state=$currentState"
+              ).raiseError[F, Unit]
           }
+        }
+      }
+      installedState <- ctx.nodeStorage.getNodeState
+      _ <- new IllegalStateException(
+        s"[DownloadInit] Failed to establish recovery/aligned node state: expected=$targetState actual=$installedState"
+      ).raiseError[F, Unit]
+        .unlessA(
+          heldCommittee.isEmpty || installedState === targetState ||
+            (targetState === NodeState.WaitingForReady && installedState === NodeState.Ready)
         )
+      // Joining grace is a first-round prerequisite, not telemetry. Install it before starting
+      // the barrier so an already-aligned fleet cannot race into aggressive timeouts.
+      _ <- ctx.nodeStorage.setJoiningGracePeriod
+      // Open an older generation only after the replacement outcome and lifecycle state have
+      // both been installed successfully. Opening immediately after the remote fetch would let a
+      // later probation/storage/state failure expose the stale parent to ordinary triggers.
+      _ <- heldCommittee.fold(
+        ctx.firstRoundStartGate.openIfSupersededBy(outcomeKey.get(outcome)).flatMap { opened =>
+          Metrics[F]
+            .incrementCounter(
+              "dag_consensus_first_round_start_gate_superseded_total",
+              Seq(unsafeLabelName("opened") -> opened.toString)
+            )
+            .attempt
+            .void
+        }
+      )(_ => Async[F].unit)
+      _ <- (recoverySeedCommittee, firstRoundPermit).tupled.traverse {
+        case (committee, permit) =>
+          scheduleRecoverySeedFirstRound(outcomeKey.get(outcome), outcome, committee, permit)
+      }
+      _ <- (normalCommittee, firstRoundPermit).tupled.traverse {
+        case (committee, permit) =>
+          scheduleNormalFirstRoundFollower(outcomeKey.get(outcome), outcome, committee, permit)
+      }
+      _ <- (Metrics[F].incrementCounter(
+        "dag_consensus_init_download_target_state_total",
+        Seq(unsafeLabelName("target_state") -> targetState.entryName)
+      ) >> Metrics[F].incrementCounter(
+        "dag_consensus_init_download_ready_promotion_total",
+        Seq(unsafeLabelName("result") -> (if (promoteToReady) "promoted" else "waiting_for_ready"))
+      )).attempt.void
+      _ <- heldCommittee.fold {
+        ctx.nodeStorage.isValidatorMode.flatMap { isValidator =>
+          if (isValidator && isRecoveryEffective) {
+            // Validator recovery: start round immediately. The validator solo block
+            // prevents solo production, and starting immediately avoids the 43s deferral
+            // that caused ordinal mismatch deadlocks with the leader.
+            ConsensusLog.info(
+              log,
+              Category.Lifecycle,
+              key.toString,
+              "n/a",
+              LogEvent.DownloadInitRecoveryImmediate,
+              "note" -> "Validator recovery: starting round immediately (solo blocked)"
+            ) >>
+              queue.offer(StartRound(TimeTrigger.some))
+          } else {
+            // Initial join (all node types) or non-validator recovery: defer to align
+            // with the cluster's TimeTrigger cadence. Without this delay on initial join,
+            // validators form a majority without genesis, causing an irrecoverable split.
+            ConsensusLog.info(
+              log,
+              Category.Lifecycle,
+              key.toString,
+              "n/a",
+              if (isRecoveryEffective) LogEvent.DownloadInitRecoveryDeferred else LogEvent.DownloadInitDeferred,
+              "deferral" -> s"${ctx.config.timeTriggerInterval.toSeconds}s"
+            ) >>
+              Temporal[F].sleep(ctx.config.timeTriggerInterval) >>
+              queue.offer(StartRound(TimeTrigger.some))
+          }
+        }
+      }(_ => Async[F].unit)
     } yield ())
-      .flatTap(_ => initDownloadOutcome("success"))
-      .onError { case err => initDownloadOutcome(classifyInitDownloadError(err)) }
+      .flatTap(_ => initDownloadOutcome("success").attempt.void)
+      .onError { case err => initDownloadOutcome(classifyInitDownloadError(err)).attempt.void }
 
-  def initFromRollback(key: Key, outcome: Outcome, deferFirstRound: Boolean = false): F[Unit] =
+  def initFromRollback(
+    key: Key,
+    outcome: Outcome,
+    startPolicy: RollbackStartPolicy = RollbackStartPolicy.Immediate
+  ): F[Unit] =
     for {
-      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackInitStart)
+      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackInitStart).attempt.void
+      firstRoundPermit <- startPolicy match {
+        case RollbackStartPolicy.RequireAlignedCommittee(_) | RollbackStartPolicy.RequireOutcomeAlignedQuorum(_) =>
+          ctx.firstRoundStartGate.arm(key).map(_.some)
+        case _ => none[FirstRoundStartGate.Permit[Key]].pure[F]
+      }
+      _ <- ctx.onOutcomePreInitialize(outcome)
       // Clear ALL stale consensus state before initializing from rollback.
       // Without this cleanup, peer registrations from the pre-rollback network survive
       // and contain keys higher than the rollback ordinal. The StallDetector then sees
@@ -1566,9 +1965,37 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
       _ <- storage.clearTimeTrigger
       _ <- storage.clearObservationKey
       _ <- ctx.pending.clear()
-      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackStateCleared)
-      _ <- storage.trySetInitialConsensusOutcome(outcome)
-      _ <- ConsensusLog.info(
+      _ <- ConsensusLog.info(log, Category.Lifecycle, key.toString, "n/a", LogEvent.RollbackStateCleared).attempt.void
+      initialized <- storage.trySetInitialConsensusOutcome(outcome)
+      _ <- runOutcomeHook("rollback_initialized", outcome)(ctx.onOutcomeInitialized).whenA(initialized)
+      seededOutcome <- storage.getLastConsensusOutcome
+      _ <- new IllegalStateException("Rollback initialization did not retain the requested outcome")
+        .raiseError[F, Unit]
+        .unlessA(seededOutcome.contains(outcome))
+      _ <- ctx.onOutcomeSafetyInitialized(outcome)
+      // This is safety state, not a sidecar. Run on every idempotent retry and propagate failure: the first-round barrier/start command must
+      // never be armed until deleteAbove (or the layer-equivalent hook) has succeeded.
+      _ <- ctx.onOutcomeRollbackInitialized(outcome, startPolicy)
+      // Joining grace is a first-round prerequisite and must precede the barrier.
+      _ <- ctx.nodeStorage.setJoiningGracePeriod
+      // Install the recovery/alignment barrier before post-install observability. Once the exact anchor and
+      // joining grace exist, incidental logging/metrics failures cannot burn the generation.
+      _ <- startPolicy match {
+        case RollbackStartPolicy.RequireAlignedCommittee(committee) =>
+          scheduleRecoverySeedFirstRound(key, outcome, committee, firstRoundPermit.get)
+        case RollbackStartPolicy.RequireOutcomeAlignedQuorum(committee) =>
+          val required = math.max(1, QuorumPolicy.fromFraction(committee.size, config.quorumThresholdFraction))
+          scheduleAlignedFirstRound(
+            key,
+            outcome,
+            committee,
+            StateTransitions.FirstRoundAlignmentRequirement.AtLeast(required),
+            firstRoundPermit.get,
+            mode = "normal_rollback"
+          )
+        case _ => Async[F].unit
+      }
+      _ <- (ConsensusLog.info(
         log,
         Category.Lifecycle,
         key.toString,
@@ -1576,18 +2003,16 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         LogEvent.RollbackBootstrapActive,
         "mode" -> "checkpoint_server",
         "action" -> "serving_initial_outcome_before_first_round"
-      )
-      _ <- Metrics[F].incrementCounter("dag_consensus_rollback_bootstrap_active_total")
-      // Set joining grace period to use relaxed timeouts for first rounds after rollback.
-      // Without this, the rollback node uses aggressive timeouts while peers are still
-      // downloading to the rollback ordinal, leading to premature stall detection.
-      _ <- ctx.nodeStorage.setJoiningGracePeriod
+      ) >> Metrics[F].incrementCounter("dag_consensus_rollback_bootstrap_active_total")).attempt.void
       // GL0 full-network rollback orchestration starts one rollback node first, then
       // validators join and confirm the downloaded outcome. Deferring the first round
       // lets those validators reach Ready before readiness gates evaluate the cluster.
-      _ <-
-        if (deferFirstRound) scheduleRollbackFirstRound(key)
-        else queue.offer(StartRound(TimeTrigger.some))
+      _ <- startPolicy match {
+        case RollbackStartPolicy.Immediate                      => queue.offer(StartRound(TimeTrigger.some))
+        case RollbackStartPolicy.LegacyDeferred                 => scheduleRollbackFirstRound(key)
+        case RollbackStartPolicy.RequireAlignedCommittee(_)     => Async[F].unit
+        case RollbackStartPolicy.RequireOutcomeAlignedQuorum(_) => Async[F].unit
+      }
     } yield ()
 
   private def scheduleRollbackFirstRound(key: Key): F[Unit] = {
@@ -1652,11 +2077,556 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         .void
   }
 
+  /** Shared fail-closed first-round barrier for normal and operator-authorized rollback committees.
+    *
+    * Unlike the legacy rollback delay, this never counts arbitrary Ready peers and has no elapsed-time escape. Each counted external member
+    * must be in the current responsive cluster session, be Ready or WaitingForReady, and return the structurally exact seeded `Outcome`
+    * from the authenticated specific-outcome endpoint. Structural equality is intentional: matching only key/artifact/context would miss
+    * divergent operational fields, the same class of disagreement that previously produced different facilitator and reward derivations.
+    * Operator recovery rechecks every member on every poll; only normal large-committee rollback caches exact responses for a peer's
+    * current session.
+    */
+  private def scheduleAlignedFirstRound(
+    key: Key,
+    expectedOutcome: Outcome,
+    committee: SortedSet[PeerId],
+    requirement: StateTransitions.FirstRoundAlignmentRequirement,
+    permit: FirstRoundStartGate.Permit[Key],
+    mode: String
+  ): F[Unit] = {
+    val pollInterval = 1.second
+    val perPeerTimeout = 3.seconds
+    val normalRollback = mode === "normal_rollback"
+
+    def fetchAlignment(peer: Peer): F[(PeerId, StateTransitions.RecoverySeedPeerOutcome)] =
+      Temporal[F]
+        .timeoutTo(
+          ctx.consensusClient
+            .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
+            .run(peer)
+            .map(outcome => StateTransitions.recoverySeedPeerOutcome(expectedOutcome, outcome)),
+          perPeerTimeout,
+          (StateTransitions.RecoverySeedPeerOutcome.FetchFailed: StateTransitions.RecoverySeedPeerOutcome).pure[F]
+        )
+        .handleErrorWith { err =>
+          if (normalRollback)
+            (StateTransitions.RecoverySeedPeerOutcome.FetchFailed: StateTransitions.RecoverySeedPeerOutcome).pure[F]
+          else
+            ConsensusLog
+              .warn(
+                log,
+                Category.Lifecycle,
+                key.toString,
+                "n/a",
+                LogEvent.RollbackFirstRoundDeferred,
+                "mode" -> mode,
+                "peer" -> ConsensusLog.pid(peer.id),
+                "reason" -> "outcome_fetch_failed",
+                "error" -> Option(err.getMessage).getOrElse(err.getClass.getSimpleName)
+              )
+              .as(StateTransitions.RecoverySeedPeerOutcome.FetchFailed)
+        }
+        .tupleLeft(peer.id)
+
+    def fetchUncached(peers: List[Peer]): F[List[(PeerId, StateTransitions.RecoverySeedPeerOutcome)]] =
+      if (normalRollback)
+        peers.traverse(peer => Async[F].start(fetchAlignment(peer))).flatMap(_.traverse(_.joinWithNever))
+      else peers.traverse(fetchAlignment)
+
+    def inspect(
+      alignedSessions: Ref[F, Map[PeerId, Peer]]
+    ): F[StateTransitions.RecoverySeedBarrierStatus] =
+      (ctx.nodeStorage.getNodeState, ctx.clusterStorage.getResponsivePeers).flatMapN { (nodeState, peers) =>
+        val peerById = peers.iterator.map(peer => peer.id -> peer).toMap
+        val expectedExternal = committee - ctx.selfId
+        val fetchable = expectedExternal.toList.flatMap(peerById.get).filter { peer =>
+          peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady
+        }
+
+        alignedSessions.modify { cached =>
+          // Cache only the normal large-committee quorum path. The explicit operator-recovery
+          // path intentionally preserves its existing stronger semantics: every named member
+          // must be observed exact on the current poll, not merely earlier in the same session.
+          val current =
+            if (normalRollback)
+              cached.filter {
+                case (peerId, peer) =>
+                  peerById.get(peerId).exists { currentPeer =>
+                    currentPeer.clusterSession === peer.clusterSession &&
+                    (currentPeer.state === NodeState.Ready || currentPeer.state === NodeState.WaitingForReady)
+                  }
+              }
+            else Map.empty[PeerId, Peer]
+          val cachedIds = current.keySet
+          current -> (current, fetchable.filterNot(peer => cachedIds.contains(peer.id)))
+        }.flatMap {
+          case (cached, uncached) =>
+            fetchUncached(uncached).flatMap { fetched =>
+              val newlyAligned = fetched.collect {
+                case (peerId, StateTransitions.RecoverySeedPeerOutcome.Aligned) => peerId
+              }.toSet
+              val fetchedPeerById = uncached.iterator.map(peer => peer.id -> peer).toMap
+              val additions = newlyAligned.flatMap(peerId => fetchedPeerById.get(peerId).map(peerId -> _)).toMap
+              val peerOutcomes = fetched.foldLeft(
+                cached.keySet.iterator
+                  .map(_ -> (StateTransitions.RecoverySeedPeerOutcome.Aligned: StateTransitions.RecoverySeedPeerOutcome))
+                  .toMap
+              ) {
+                case (outcomes, (peerId, outcome)) => outcomes.updated(peerId, outcome)
+              }
+
+              (if (normalRollback)
+                 alignedSessions.update { current =>
+                   additions.foldLeft(current) {
+                     case (sessions, (peerId, peer)) => sessions.updated(peerId, peer)
+                   }
+                 }
+               else Async[F].unit) >>
+                StateTransitions
+                  .firstRoundAlignmentBarrierStatus(
+                    selfId = ctx.selfId,
+                    committee = committee,
+                    requirement = requirement,
+                    selfReady = nodeState === NodeState.Ready || nodeState === NodeState.WaitingForReady,
+                    responsivePeerStates = peerById.view.mapValues(_.state).toMap,
+                    peerOutcomes = peerOutcomes
+                  )
+                  .pure[F]
+            }
+        }
+      }
+
+    def ids(peers: Iterable[PeerId]): String =
+      peers.iterator.map(ConsensusLog.pid).toList.sorted.mkString(",")
+
+    def record(status: StateTransitions.RecoverySeedBarrierStatus, attempt: Long): F[Unit] = {
+      val normalOutcome =
+        if (status.aligned) "aligned"
+        else if (status.invalidCommittee) "invalid_committee"
+        else if (status.mismatchedOutcome.nonEmpty) "mismatch"
+        else if (status.fetchFailed.nonEmpty) "fetch_failed"
+        else if (status.missingOutcome.nonEmpty) "missing_outcome"
+        else if (status.invalidState.nonEmpty) "invalid_state"
+        else if (status.missingSession.nonEmpty) "missing_session"
+        else "below_quorum"
+
+      val logStatus =
+        if (!normalRollback && status.aligned)
+          ConsensusLog.info(
+            log,
+            Category.Lifecycle,
+            key.toString,
+            "n/a",
+            LogEvent.RollbackQuorumFeasible,
+            "mode" -> mode,
+            "reason" -> "exact_recovery_seed_committee_aligned",
+            "committee" -> ids(committee),
+            "alignedPeers" -> ids(status.alignedPeers),
+            "attempt" -> attempt.toString
+          )
+        else if (!normalRollback && (attempt === 1L || attempt % 5L === 0L))
+          ConsensusLog.warn(
+            log,
+            Category.Lifecycle,
+            key.toString,
+            "n/a",
+            LogEvent.RollbackFirstRoundDeferred,
+            "mode" -> mode,
+            "reason" -> "recovery_seed_committee_not_aligned",
+            "attempt" -> attempt.toString,
+            "selfReady" -> status.selfReady.toString,
+            "invalidCommittee" -> status.invalidCommittee.toString,
+            "expectedExternal" -> ids(status.expectedExternal),
+            "alignedPeers" -> ids(status.alignedPeers),
+            "missingSession" -> ids(status.missingSession),
+            "invalidState" -> status.invalidState.iterator.map { case (pid, state) => s"${ConsensusLog.pid(pid)}=$state" }.mkString(","),
+            "missingOutcome" -> ids(status.missingOutcome),
+            "mismatchedOutcome" -> ids(status.mismatchedOutcome),
+            "fetchFailed" -> ids(status.fetchFailed)
+          )
+        else if (normalRollback && status.aligned)
+          ConsensusLog.info(
+            log,
+            Category.Lifecycle,
+            key.toString,
+            "n/a",
+            LogEvent.RollbackQuorumFeasible,
+            "mode" -> mode,
+            "reason" -> "exact_committee_quorum_aligned",
+            "committeeSize" -> committee.size.toString,
+            "alignedCount" -> status.alignedCount.toString,
+            "required" -> status.required.toString,
+            "attempt" -> attempt.toString
+          )
+        else if (normalRollback && (attempt === 1L || attempt % 5L === 0L))
+          ConsensusLog.warn(
+            log,
+            Category.Lifecycle,
+            key.toString,
+            "n/a",
+            LogEvent.RollbackFirstRoundDeferred,
+            "mode" -> mode,
+            "reason" -> "anchor_committee_quorum_not_aligned",
+            "attempt" -> attempt.toString,
+            "selfReady" -> status.selfReady.toString,
+            "invalidCommittee" -> status.invalidCommittee.toString,
+            "committeeSize" -> committee.size.toString,
+            "alignedCount" -> status.alignedCount.toString,
+            "required" -> status.required.toString,
+            "deficit" -> status.deficit.toString,
+            "missingSessionCount" -> status.missingSession.size.toString,
+            "invalidStateCount" -> status.invalidState.size.toString,
+            "missingOutcomeCount" -> status.missingOutcome.size.toString,
+            "mismatchedOutcomeCount" -> status.mismatchedOutcome.size.toString,
+            "fetchFailedCount" -> status.fetchFailed.size.toString
+          )
+        else Async[F].unit
+
+      val metrics =
+        if (normalRollback)
+          Metrics[F].incrementCounter(
+            "dag_consensus_normal_first_round_alignment_poll_total",
+            Seq(unsafeLabelName("outcome") -> normalOutcome)
+          ) >>
+            Metrics[F].updateGauge("dag_consensus_normal_first_round_expected_committee_size", committee.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_normal_first_round_required_count", status.required.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_normal_first_round_aligned_count", status.alignedCount.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_deficit", status.deficit.toLong)
+        else
+          Metrics[F].incrementCounter(
+            "dag_consensus_recovery_seed_alignment_poll_total",
+            Seq(unsafeLabelName("aligned") -> status.aligned.toString)
+          ) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_missing_session", status.missingSession.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_invalid_state", status.invalidState.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_missing_outcome", status.missingOutcome.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_mismatched_outcome", status.mismatchedOutcome.size.toLong) >>
+            Metrics[F].updateGauge("dag_consensus_recovery_seed_alignment_fetch_failed", status.fetchFailed.size.toLong)
+
+      logStatus >> metrics
+    }
+
+    def reportFailure(stage: String, err: Throwable): F[Unit] =
+      // Reporting is deliberately best-effort: neither a logger nor metrics backend failure may
+      // terminate the fail-closed alignment barrier that is guarding the first consensus round.
+      log
+        .error(err)(
+          s"First-round alignment barrier mode=$mode stage=$stage failed at key=$key; retrying without timeout escape"
+        )
+        .attempt
+        .void >>
+        (if (normalRollback)
+           Metrics[F].incrementCounter(
+             "dag_consensus_normal_first_round_alignment_error_total",
+             Seq(unsafeLabelName("stage") -> stage)
+           )
+         else
+           Metrics[F].incrementCounter(
+             "dag_consensus_recovery_seed_alignment_error_total",
+             Seq(unsafeLabelName("stage") -> stage)
+           )).attempt.void
+
+    val announce =
+      if (normalRollback)
+        ConsensusLog.info(
+          log,
+          Category.Lifecycle,
+          key.toString,
+          "n/a",
+          LogEvent.RollbackFirstRoundDeferred,
+          "mode" -> mode,
+          "pollInterval" -> pollInterval.toString,
+          "perPeerTimeout" -> perPeerTimeout.toString,
+          "maxDelay" -> "none",
+          "committeeSize" -> committee.size.toString,
+          "required" -> requirement.required(committee.size).toString
+        )
+      else
+        ConsensusLog.info(
+          log,
+          Category.Lifecycle,
+          key.toString,
+          "n/a",
+          LogEvent.RollbackFirstRoundDeferred,
+          "mode" -> mode,
+          "pollInterval" -> pollInterval.toString,
+          "perPeerTimeout" -> perPeerTimeout.toString,
+          "maxDelay" -> "none",
+          "committee" -> ids(committee)
+        )
+
+    val initialMetrics =
+      if (normalRollback)
+        Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 1L)
+      else Metrics[F].incrementCounter("dag_consensus_recovery_seed_first_round_deferred_total")
+
+    for {
+      alignedSessions <- Ref.of[F, Map[PeerId, Peer]](Map.empty)
+      startedAt <- Temporal[F].monotonic
+      // Publish the hold before returning from initialization. Monitoring must never mistake
+      // this intentional synchronization window for an ordinary flat-tip stall.
+      _ <- initialMetrics.handleErrorWith(err => reportFailure("initial_metrics", err))
+      _ <- Async[F]
+        .start(
+          announce.handleErrorWith(err => reportFailure("initial_record", err)) >>
+            StateTransitions.runFirstRoundAlignmentLoop(
+              inspect(alignedSessions),
+              (status: StateTransitions.RecoverySeedBarrierStatus) => status.aligned,
+              record,
+              Temporal[F].sleep(pollInterval),
+              queue.offer(ReleaseFirstRoundStart(permit, committee)),
+              ctx.firstRoundStartGate.isPending(permit),
+              reportFailure
+            ) >>
+            (if (normalRollback)
+               ctx.firstRoundStartGate.isHeld.flatMap {
+                 case true => Async[F].unit
+                 case false =>
+                   Temporal[F].monotonic.flatMap { finishedAt =>
+                     Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 0L) >>
+                       Metrics[F].incrementCounter(
+                         "dag_consensus_normal_first_round_release_total",
+                         Seq(unsafeLabelName("role") -> "lead", unsafeLabelName("reason") -> "aligned_quorum")
+                       ) >>
+                       Metrics[F].recordTimeHistogram("dag_consensus_normal_first_round_wait", finishedAt - startedAt)
+                   }
+               }
+             else Async[F].unit)
+        )
+        .void
+    } yield ()
+  }
+
+  private def scheduleRecoverySeedFirstRound(
+    key: Key,
+    expectedOutcome: Outcome,
+    committee: SortedSet[PeerId],
+    permit: FirstRoundStartGate.Permit[Key]
+  ): F[Unit] =
+    scheduleAlignedFirstRound(
+      key,
+      expectedOutcome,
+      committee,
+      StateTransitions.FirstRoundAlignmentRequirement.AllMembers,
+      permit,
+      mode = "operator_recovery_seed"
+    )
+
+  /** Normal post-bootstrap validator release path.
+    *
+    * A held validator does not run its own first-round timer. It waits until an ordinary Facility for `key.next` has been stored from a
+    * current-session member of the expected committee, validates the Facility through the layer policy, and confirms that origin's latest
+    * typed outcome is still the exact installed parent. The Facility is only a timing pulse: the serialized release still derives the
+    * complete round locally and enforces the expected committee before any local Facility effect can commit.
+    */
+  private def scheduleNormalFirstRoundFollower(
+    key: Key,
+    expectedOutcome: Outcome,
+    committee: SortedSet[PeerId],
+    permit: FirstRoundStartGate.Permit[Key]
+  ): F[Unit] =
+    ctx.normalFirstRoundAlignment match {
+      case None =>
+        new IllegalStateException("Normal first-round follower was armed without a layer alignment policy").raiseError[F, Unit]
+
+      case Some(policy) =>
+        val pollInterval = 1.second
+        val perPeerTimeout = 3.seconds
+        val nextKey = key.next
+
+        final case class PulseInspection(
+          status: StateTransitions.NormalFirstRoundPulseStatus,
+          invalidFacilityCount: Int,
+          recoveryAlreadyTriggered: Boolean
+        )
+
+        def latestOutcome(peer: Peer): F[(PeerId, StateTransitions.NormalFirstRoundPulsePeerOutcome)] =
+          Temporal[F]
+            .timeoutTo(
+              ctx.consensusClient.getLatestConsensusOutcome.run(peer).map[StateTransitions.NormalFirstRoundPulsePeerOutcome] {
+                case Some(outcome) if outcome === expectedOutcome     => StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned
+                case Some(outcome) if outcomeKey.get(outcome) =!= key => StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead
+                case Some(_)                                          => StateTransitions.NormalFirstRoundPulsePeerOutcome.Mismatched
+                case None                                             => StateTransitions.NormalFirstRoundPulsePeerOutcome.Missing
+              },
+              perPeerTimeout,
+              (StateTransitions.NormalFirstRoundPulsePeerOutcome.FetchFailed: StateTransitions.NormalFirstRoundPulsePeerOutcome).pure[F]
+            )
+            .handleError(_ => StateTransitions.NormalFirstRoundPulsePeerOutcome.FetchFailed)
+            .tupleLeft(peer.id)
+
+        def inspect(recoveryTriggered: Ref[F, Boolean]): F[PulseInspection] =
+          (ctx.clusterStorage.getResponsivePeers, storage.getResources(nextKey), storage.getPeerCurrentKeys).flatMapN {
+            (peers, resources, peerCurrentKeys) =>
+              val peerById = peers.iterator.map(peer => peer.id -> peer).toMap
+              val committeeFacilities = resources.peerDeclarationsMap.iterator.collect {
+                case (peerId, declarations) if committee.contains(peerId) =>
+                  declarations.facility.map(peerId -> _)
+              }.flatten.toMap
+              val matchingOrigins = committeeFacilities.collect {
+                case (peerId, facility) if policy.facilityMatches(key, expectedOutcome, facility) => peerId
+              }.toSet
+              val invalidFacilityCount = committeeFacilities.size - matchingOrigins.size
+              // A node that starts alone while the chain is already moving may miss the K+1
+              // Facility pulse. An authenticated declaration at K+2 or later proves only that the
+              // origin is worth querying; it never releases the gate by itself. The typed latest
+              // outcome must still prove that recovery, rather than stale-round start, is required.
+              val futureDeclarationOrigins = peerCurrentKeys.collect {
+                case (peerId, observedKey) if committee.contains(peerId) && observedKey =!= key && observedKey =!= nextKey => peerId
+              }.toSet
+              val matchingPeers = matchingOrigins.toList.flatMap(peerById.get).filter { peer =>
+                peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady
+              }
+              val aheadPeers = futureDeclarationOrigins.toList.flatMap(peerById.get).filter { peer =>
+                peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady
+              }
+              // One typed corroboration is sufficient for either local action. Sampling one
+              // current-session origin per poll avoids an O(N^2) HTTP burst when a large committee
+              // gossips all of its Facilities at once. Future-key evidence takes precedence so a
+              // late member cannot release an old round merely because a straggler still serves K.
+              val probeCandidates = if (futureDeclarationOrigins.nonEmpty) aheadPeers else matchingPeers
+              val observeOne =
+                if (probeCandidates.isEmpty) List.empty[(PeerId, StateTransitions.NormalFirstRoundPulsePeerOutcome)].pure[F]
+                else Random[F].elementOf(probeCandidates).flatMap(latestOutcome).map(List(_))
+
+              (observeOne, recoveryTriggered.get).mapN { (observed, alreadyTriggered) =>
+                PulseInspection(
+                  StateTransitions.normalFirstRoundPulseStatus(
+                    committee,
+                    matchingOrigins,
+                    futureDeclarationOrigins,
+                    peerById.view.mapValues(_.state).toMap,
+                    observed.toMap
+                  ),
+                  invalidFacilityCount,
+                  alreadyTriggered
+                )
+              }
+          }
+
+        def triggerPeerAheadRecovery(origin: PeerId, triggered: Ref[F, Boolean]): F[Unit] =
+          triggered.get.ifM(
+            Async[F].unit,
+            (
+              ConsensusLog.warn(
+                log,
+                Category.Recovery,
+                key.show,
+                "n/a",
+                LogEvent.RollbackFirstRoundDeferred,
+                "mode" -> "normal_rollback_follower",
+                "reason" -> "pulse_origin_already_ahead",
+                "origin" -> ConsensusLog.pid(origin),
+                "action" -> "reenter_recovery_download"
+              ) >>
+                ctx.nodeStorage.setRecoveryDownload >>
+                ctx.nodeStorage.getNodeState.flatMap {
+                  case NodeState.WaitingForReady =>
+                    ctx.nodeStorage.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload)
+                  case NodeState.Ready     => ctx.nodeStorage.tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
+                  case NodeState.Observing => ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForDownload)
+                  case _                   => Async[F].unit
+                }
+            ) >> triggered.set(true)
+          )
+
+        def record(triggered: Ref[F, Boolean])(inspection: PulseInspection, attempt: Long): F[Unit] = {
+          val status = inspection.status
+          val maybeAhead = status.aheadOrigin.traverse_(triggerPeerAheadRecovery(_, triggered))
+          val logStatus =
+            if (status.releaseOrigin.nonEmpty || attempt === 1L || attempt % 5L === 0L)
+              ConsensusLog.info(
+                log,
+                Category.Lifecycle,
+                key.show,
+                "n/a",
+                LogEvent.RollbackFirstRoundDeferred,
+                "mode" -> "normal_rollback_follower",
+                "outcome" -> status.outcomeLabel,
+                "attempt" -> attempt.toString,
+                "committeeSize" -> committee.size.toString,
+                "matchingFacilityOrigins" -> status.matchingFacilityOrigins.size.toString,
+                "invalidFacilities" -> inspection.invalidFacilityCount.toString,
+                "releaseOrigin" -> status.releaseOrigin.fold("none")(ConsensusLog.pid),
+                "aheadOrigin" -> status.aheadOrigin.fold("none")(ConsensusLog.pid)
+              )
+            else Async[F].unit
+
+          logStatus >>
+            Metrics[F].incrementCounter(
+              "dag_consensus_normal_first_round_pulse_total",
+              Seq(unsafeLabelName("outcome") -> status.outcomeLabel)
+            ) >> maybeAhead
+        }
+
+        def reportFailure(stage: String, err: Throwable): F[Unit] =
+          (log.error(err)(
+            s"Normal first-round follower pulse stage=$stage failed at key=$key; retrying without timeout escape"
+          ) >> Metrics[F].incrementCounter(
+            "dag_consensus_normal_first_round_alignment_error_total",
+            Seq(unsafeLabelName("stage") -> s"follower_$stage")
+          )).attempt.void
+
+        for {
+          peerAheadTriggered <- Ref.of[F, Boolean](false)
+          startedAt <- Temporal[F].monotonic
+          _ <- Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 1L).attempt.void
+          _ <- Metrics[F]
+            .updateGauge("dag_consensus_normal_first_round_expected_committee_size", committee.size.toLong)
+            .attempt
+            .void
+          _ <- Metrics[F]
+            .updateGauge(
+              "dag_consensus_normal_first_round_required_count",
+              math.max(1, QuorumPolicy.fromFraction(committee.size, config.quorumThresholdFraction)).toLong
+            )
+            .attempt
+            .void
+          _ <- Async[F]
+            .start(
+              StateTransitions.runFirstRoundAlignmentLoop(
+                inspect(peerAheadTriggered),
+                (inspection: PulseInspection) =>
+                  StateTransitions.shouldReleaseNormalFirstRoundPulse(
+                    inspection.status,
+                    inspection.recoveryAlreadyTriggered
+                  ),
+                record(peerAheadTriggered),
+                Temporal[F].sleep(pollInterval),
+                queue.offer(ReleaseFirstRoundStart(permit, committee)),
+                ctx.firstRoundStartGate.isPending(permit),
+                reportFailure
+              ) >>
+                ctx.firstRoundStartGate.isHeld.flatMap {
+                  case true => Async[F].unit
+                  case false =>
+                    peerAheadTriggered.get.flatMap {
+                      case true =>
+                        // A newer validated initialization superseded this permit. It did not
+                        // release the stale first round, so do not report a Facility-pulse release.
+                        Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 0L)
+                      case false =>
+                        Temporal[F].monotonic.flatMap { finishedAt =>
+                          Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 0L) >>
+                            Metrics[F].incrementCounter(
+                              "dag_consensus_normal_first_round_release_total",
+                              Seq(unsafeLabelName("role") -> "validator", unsafeLabelName("reason") -> "facility_pulse")
+                            ) >>
+                            Metrics[F].recordTimeHistogram("dag_consensus_normal_first_round_wait", finishedAt - startedAt)
+                        }
+                    }
+                }
+            )
+            .void
+        } yield ()
+    }
+
   private def fetchOutcomeFromCluster(
     key: Key,
     artifact: Signed[Artifact],
     context: Ctx,
-    isRecovery: Boolean = false
+    isRecovery: Boolean,
+    recoverySeedCommittee: Option[SortedSet[PeerId]]
   ): F[Option[Outcome]] = {
     val retryPolicy = limitRetries(20).join(constantDelay(3.seconds))
 
@@ -1668,9 +2638,11 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         // bottleneck where only the rollback-lead node is Ready while sibling source
         // nodes sit in WaitingForReady waiting on a round to close: joining peers
         // funnel through the lone Ready peer and stall.
-        val primaryCandidates =
-          allPeers.filter(p => p.state == NodeState.Ready || p.state == NodeState.WaitingForReady).toSeq
-        val observingPeers = allPeers.filter(_.state == NodeState.Observing).toSeq
+        val inRecoverySeed = (peer: Peer) => recoverySeedCommittee.forall(_.contains(peer.id)) && peer.id =!= ctx.selfId
+        val primaryCandidates = allPeers
+          .filter(p => inRecoverySeed(p) && (p.state == NodeState.Ready || p.state == NodeState.WaitingForReady))
+          .toSeq
+        val observingPeers = allPeers.filter(p => inRecoverySeed(p) && p.state == NodeState.Observing).toSeq
 
         val candidates = if (primaryCandidates.nonEmpty) primaryCandidates else observingPeers
 
@@ -1685,7 +2657,8 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
             "peerStates" -> s"[$peerStates]"
           ) >>
             new NoValidPeersException(
-              s"No peers in Ready, WaitingForReady, or Observing state. Available: ${allPeers.size} peers"
+              s"No ${recoverySeedCommittee.fold("fleet")(c => s"recovery-seed(${c.size})")} peers in Ready, WaitingForReady, or Observing state. " +
+                s"Available: ${allPeers.size} peers"
             ).raiseError[F, Peer]
         } else {
           Random[F].elementOf(candidates)
@@ -1708,8 +2681,9 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
           .recoverWith {
             // 409 means the peer has already evicted this ordinal's outcome (cluster moved on).
             // Fall back to the latest available outcome so we can join at the current tip.
-            case _: org.http4s.client.UnexpectedStatus =>
+            case _: org.http4s.client.UnexpectedStatus if recoverySeedCommittee.isEmpty =>
               ctx.consensusClient.getLatestConsensusOutcome.run(peer)
+            case _: org.http4s.client.UnexpectedStatus => none[Outcome].pure[F]
           }
 
     def wasSuccessful(maybeOutcome: Option[Outcome]): F[Boolean] =
@@ -1722,7 +2696,7 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
         // The post-retry validation in initFromDownload handles keyMismatch correctly
         // (accepts the newer outcome and skips 43s deferral). Without this early-out,
         // recovery wastes 60s (20 retries × 3s) on every cycle, falling further behind.
-        exactMatch || isRecovery
+        exactMatch || (isRecovery && recoverySeedCommittee.isEmpty)
       }.pure[F]
 
     def onFailure(maybeOutcome: Option[Outcome], retryDetails: RetryDetails): F[Unit] = {
@@ -1882,19 +2856,59 @@ class StateTransitions[F[_]: Async: Random: Metrics, Event, Key: Eq: Show: TypeT
 
   class NoValidPeersException(message: String) extends RuntimeException(message)
 
-  /** Raised when `initFromDownload` resolves an outcome that still lists `selfId` in `readmissionCountdown` (B2 probation). The outer
-    * event-loop retry path catches this, backs off, and re-issues initFromDownload — by which time the cluster may have emitted an
-    * `AdmissionCertificate` clearing the probation, allowing recovery to proceed.
+}
+
+object StateTransitions {
+
+  /** Enforce the downloaded-outcome trust boundary before any application or consensus mutation.
+    *
+    * Kept generic so every L0 layer shares the same sequencing invariant and tests can prove that a failed layer preflight never evaluates
+    * the mutation effect.
     */
-  class SelfStillInProbation(val selfId: PeerId, val keyShow: String)
+  private[consensus] def validateDownloadBeforeMutation[F[_]: Monad, A](
+    validate: F[Unit],
+    mutate: => F[A]
+  ): F[A] =
+    validate >> mutate
+
+  private[consensus] sealed trait RecoveryInitializationStateDisposition
+  private[consensus] object RecoveryInitializationStateDisposition {
+    case object EnterWaitingForReady extends RecoveryInitializationStateDisposition
+    case object ResumeAndRepublish extends RecoveryInitializationStateDisposition
+    case object Reject extends RecoveryInitializationStateDisposition
+  }
+
+  /** Recovery/aligned initialization has a non-transactional lifecycle tail. Retrying its exact generation must therefore accept the states
+    * that tail may already have installed, while every unrelated lifecycle state remains fail-closed.
+    */
+  private[consensus] def recoveryInitializationStateDisposition(
+    state: NodeState
+  ): RecoveryInitializationStateDisposition =
+    state match {
+      case NodeState.Observing                         => RecoveryInitializationStateDisposition.EnterWaitingForReady
+      case NodeState.WaitingForReady | NodeState.Ready => RecoveryInitializationStateDisposition.ResumeAndRepublish
+      case _                                           => RecoveryInitializationStateDisposition.Reject
+    }
+
+  private[consensus] def completeCertifiedAdvance[F[_]: Async](
+    didAdvance: Boolean,
+    prune: F[Unit],
+    enqueueCheckUpdate: F[Unit],
+    advancedObservability: F[Unit],
+    notAdvancedObservability: F[Unit]
+  ): F[Unit] =
+    if (didAdvance) prune >> enqueueCheckUpdate >> advancedObservability.attempt.void
+    else notAdvancedObservability.attempt.void
+
+  /** Raised when `initFromDownload` resolves an outcome that still lists self in B2 probation. Layers with a direct probation probe treat
+    * this as an expected lifecycle deferral and keep Observing stable; legacy layers retain the recovery-download path.
+    */
+  final class SelfStillInProbation(val selfId: PeerId, val keyShow: String)
       extends RuntimeException(
         s"[DownloadInit] self ${selfId.value.value.take(8)} still in B2 readmission probation at key=$keyShow; " +
           s"deferring facilitation until cluster clears probation."
       )
       with scala.util.control.NoStackTrace
-}
-
-object StateTransitions {
 
   private[consensus] sealed trait DownloadOutcomeDisposition
 
@@ -1919,6 +2933,30 @@ object StateTransitions {
     else if (!keyMatches) DownloadOutcomeDisposition.AcceptAndAlignApplicationStorage
     else DownloadOutcomeDisposition.Reject
 
+  private[state] val CertifiedRecoverySampleSize: Int = 8
+  private[state] val CertifiedRecoveryParallelism: Int = 4
+  private[state] val CertifiedRecoveryPerPeerTimeout: FiniteDuration = 2.seconds
+
+  /** Pick one already-verified recovery candidate only when every valid certificate names the same semantic value hash. Candidate order is
+    * supplied by the caller (production sorts by source PeerId); multiple proof subsets for one value are harmless, while two values fail
+    * closed.
+    */
+  private[consensus] def selectCertifiedRecoveryCandidate[A](candidates: List[(Hash, A)]): Either[Int, Option[A]] = {
+    val byValueHash = candidates.groupBy(_._1)
+    if (byValueHash.size > 1) byValueHash.size.asLeft[Option[A]]
+    else candidates.headOption.map(_._2).asRight[Int]
+  }
+
+  /** Shared result of selecting the voter universe for a VCC or TC. Keeping this outside the generic state-machine instance avoids an
+    * outer-instance type while preserving one implementation for both certificate families and both L0 layers.
+    */
+  private[consensus] final case class CertificateQuorum[A](
+    votes: Map[PeerId, Signed[A]],
+    voterPool: Set[PeerId],
+    required: Int,
+    meets: Boolean
+  )
+
   private[consensus] sealed trait ReadyPromotionPeerAlignment
 
   private[consensus] object ReadyPromotionPeerAlignment {
@@ -1937,6 +2975,286 @@ object StateTransitions {
     activeFacilitatorFloor: Int,
     quorumFeasible: Boolean
   )
+
+  private[consensus] sealed trait RecoverySeedPeerOutcome
+
+  private[consensus] object RecoverySeedPeerOutcome {
+    case object Aligned extends RecoverySeedPeerOutcome
+    case object Missing extends RecoverySeedPeerOutcome
+    case object Mismatched extends RecoverySeedPeerOutcome
+    case object FetchFailed extends RecoverySeedPeerOutcome
+  }
+
+  private[consensus] sealed trait NormalFirstRoundPulsePeerOutcome
+
+  private[consensus] object NormalFirstRoundPulsePeerOutcome {
+    case object Aligned extends NormalFirstRoundPulsePeerOutcome
+    case object Ahead extends NormalFirstRoundPulsePeerOutcome
+    case object Missing extends NormalFirstRoundPulsePeerOutcome
+    case object Mismatched extends NormalFirstRoundPulsePeerOutcome
+    case object FetchFailed extends NormalFirstRoundPulsePeerOutcome
+  }
+
+  private[consensus] final case class NormalFirstRoundPulseStatus(
+    matchingFacilityOrigins: SortedSet[PeerId],
+    alignedOrigins: SortedSet[PeerId],
+    aheadOrigins: SortedSet[PeerId],
+    missingSession: SortedSet[PeerId],
+    invalidState: SortedMap[PeerId, NodeState],
+    missingOutcome: SortedSet[PeerId],
+    mismatchedOutcome: SortedSet[PeerId],
+    fetchFailed: SortedSet[PeerId]
+  ) {
+    val aheadOrigin: Option[PeerId] = aheadOrigins.headOption
+    // A peer already beyond the installed parent is stronger evidence than another peer still
+    // serving it. Prefer normal catch-up and never open a stale first round in that mixed view.
+    val releaseOrigin: Option[PeerId] = Option.when(aheadOrigin.isEmpty)(alignedOrigins.headOption).flatten
+
+    val outcomeLabel: String =
+      if (aheadOrigin.nonEmpty) "peer_ahead"
+      else if (releaseOrigin.nonEmpty) "aligned"
+      else if (mismatchedOutcome.nonEmpty) "mismatch"
+      else if (fetchFailed.nonEmpty) "fetch_failed"
+      else if (missingOutcome.nonEmpty) "missing_outcome"
+      else if (invalidState.nonEmpty) "invalid_state"
+      else if (missingSession.nonEmpty) "missing_session"
+      else "waiting_for_facility"
+  }
+
+  /** Process-local threshold for the shared exact-outcome first-round barrier.
+    *
+    * Recovery overrides retain their stronger all-member requirement. Normal post-bootstrap rollback uses the protocol quorum derived by
+    * the caller. Neither requirement changes a consensus quorum; it only determines when the local first-round gate may be released.
+    */
+  private[consensus] sealed trait FirstRoundAlignmentRequirement {
+    def required(committeeSize: Int): Int
+    def validFor(committeeSize: Int): Boolean
+  }
+
+  private[consensus] object FirstRoundAlignmentRequirement {
+    case object AllMembers extends FirstRoundAlignmentRequirement {
+      def required(committeeSize: Int): Int = committeeSize
+      def validFor(committeeSize: Int): Boolean = CommitteeViability.supportsCoordination(committeeSize)
+    }
+
+    final case class AtLeast(value: Int) extends FirstRoundAlignmentRequirement {
+      def required(committeeSize: Int): Int = value
+      def validFor(committeeSize: Int): Boolean = committeeSize > 0 && value > 0 && value <= committeeSize
+    }
+  }
+
+  private[consensus] final case class RecoverySeedBarrierStatus(
+    requirement: FirstRoundAlignmentRequirement,
+    committeeSize: Int,
+    selfReady: Boolean,
+    invalidCommittee: Boolean,
+    expectedExternal: SortedSet[PeerId],
+    alignedPeers: SortedSet[PeerId],
+    missingSession: SortedSet[PeerId],
+    invalidState: SortedMap[PeerId, NodeState],
+    missingOutcome: SortedSet[PeerId],
+    mismatchedOutcome: SortedSet[PeerId],
+    fetchFailed: SortedSet[PeerId]
+  ) {
+    val required: Int = requirement.required(committeeSize)
+    val alignedCount: Int = alignedPeers.size + (if (selfReady && !invalidCommittee) 1 else 0)
+    val deficit: Int = math.max(0, required - alignedCount)
+    val aligned: Boolean =
+      selfReady &&
+        !invalidCommittee &&
+        alignedCount >= required
+  }
+
+  private[consensus] def recoverySeedPeerOutcome[Outcome: Eq](
+    expected: Outcome,
+    observed: Option[Outcome]
+  ): RecoverySeedPeerOutcome =
+    observed match {
+      case Some(outcome) if outcome === expected => RecoverySeedPeerOutcome.Aligned
+      case Some(_)                               => RecoverySeedPeerOutcome.Mismatched
+      case None                                  => RecoverySeedPeerOutcome.Missing
+    }
+
+  /** Run a fail-closed alignment barrier until the generation-bound gate acknowledges that the exact first round was established.
+    *
+    * Every operational effect is failure-contained. An inspection, observation record, sleep, queue offer, logger, or metrics failure may
+    * delay recovery, but cannot silently kill the barrier fiber and leave a healthy aligned committee parked forever. A successful queue
+    * offer is not an acknowledgement: the loop remains alive until `startPending` becomes false. Cancellation remains cancellation;
+    * ordinary raised errors are reported best-effort and retried without an elapsed-time escape.
+    */
+  private[consensus] def runFirstRoundAlignmentLoop[F[_]: Temporal, A](
+    inspect: F[A],
+    isAligned: A => Boolean,
+    record: (A, Long) => F[Unit],
+    pause: F[Unit],
+    offerStart: F[Unit],
+    startPending: F[Boolean],
+    reportFailure: (String, Throwable) => F[Unit]
+  ): F[Unit] = {
+    def report(stage: String, err: Throwable): F[Unit] =
+      reportFailure(stage, err).attempt.void
+
+    def loop(attempt: Long): F[Unit] = {
+      def pauseThenRetry: F[Unit] =
+        pause
+          .handleErrorWith(err => report("sleep", err) >> Temporal[F].cede) >>
+          loop(attempt + 1L)
+
+      def continueUntilReleased: F[Unit] =
+        startPending.attempt.flatMap {
+          case Right(false) => Temporal[F].unit
+          case Right(true)  => pauseThenRetry
+          case Left(err)    => report("release_status", err) >> pauseThenRetry
+        }
+
+      startPending.attempt.flatMap {
+        case Right(false) => Temporal[F].unit
+        case Left(err)    => report("release_status", err) >> pauseThenRetry
+        case Right(true) =>
+          inspect.attempt.flatMap {
+            case Left(err) =>
+              report("inspect", err) >> pauseThenRetry
+            case Right(status) =>
+              record(status, attempt).handleErrorWith(report("record", _)) >>
+                (if (isAligned(status))
+                   offerStart.attempt.flatMap {
+                     case Right(_)  => continueUntilReleased
+                     case Left(err) => report("queue_offer", err) >> pauseThenRetry
+                   }
+                 else pauseThenRetry)
+          }
+      }
+    }
+
+    loop(1L)
+  }
+
+  private[consensus] def runRecoverySeedBarrierLoop[F[_]: Temporal, A](
+    inspect: F[A],
+    isAligned: A => Boolean,
+    record: (A, Long) => F[Unit],
+    pause: F[Unit],
+    offerStart: F[Unit],
+    startPending: F[Boolean],
+    reportFailure: (String, Throwable) => F[Unit]
+  ): F[Unit] =
+    runFirstRoundAlignmentLoop(inspect, isAligned, record, pause, offerStart, startPending, reportFailure)
+
+  /** Classify only the exact named recovery peers. Unrelated responsive/Ready peers are intentionally ignored. */
+  private[consensus] def recoverySeedBarrierStatus(
+    selfId: PeerId,
+    committee: SortedSet[PeerId],
+    selfReady: Boolean,
+    responsivePeerStates: Map[PeerId, NodeState],
+    peerOutcomes: Map[PeerId, RecoverySeedPeerOutcome]
+  ): RecoverySeedBarrierStatus =
+    firstRoundAlignmentBarrierStatus(
+      selfId,
+      committee,
+      FirstRoundAlignmentRequirement.AllMembers,
+      selfReady,
+      responsivePeerStates,
+      peerOutcomes
+    )
+
+  /** Classify only members of the expected committee and count exact outcomes according to `requirement`.
+    *
+    * Unrelated Ready peers are ignored. A quorum requirement may succeed while absent/mismatched minority members remain visible in the
+    * diagnostic sets; an all-member recovery requirement succeeds only when every named process is exact by construction.
+    */
+  private[consensus] def firstRoundAlignmentBarrierStatus(
+    selfId: PeerId,
+    committee: SortedSet[PeerId],
+    requirement: FirstRoundAlignmentRequirement,
+    selfReady: Boolean,
+    responsivePeerStates: Map[PeerId, NodeState],
+    peerOutcomes: Map[PeerId, RecoverySeedPeerOutcome]
+  ): RecoverySeedBarrierStatus = {
+    val expectedExternal = committee - selfId
+    val expectedPresent = expectedExternal.intersect(responsivePeerStates.keySet)
+    val missingSession = expectedExternal -- responsivePeerStates.keySet
+    val invalidState = SortedMap.from(expectedPresent.toList.flatMap { peerId =>
+      responsivePeerStates.get(peerId).collect {
+        case state if state =!= NodeState.Ready && state =!= NodeState.WaitingForReady => peerId -> state
+      }
+    })
+    val fetchable = expectedPresent -- invalidState.keySet
+    val alignedPeers = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.Aligned)))
+    val missingOutcome = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.Missing)))
+    val mismatchedOutcome = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.Mismatched)))
+    val explicitFetchFailures = fetchable.filter(peerOutcomes.get(_).contains(RecoverySeedPeerOutcome.FetchFailed))
+    val unobserved = fetchable -- peerOutcomes.keySet
+    val fetchFailed = SortedSet.from(explicitFetchFailures ++ unobserved)
+
+    RecoverySeedBarrierStatus(
+      requirement,
+      committee.size,
+      selfReady,
+      invalidCommittee = !requirement.validFor(committee.size) || !committee.contains(selfId),
+      expectedExternal,
+      alignedPeers,
+      missingSession,
+      invalidState,
+      missingOutcome,
+      mismatchedOutcome,
+      fetchFailed
+    )
+  }
+
+  /** Classify stored first-round Facilities and bounded peer-ahead probes without granting either new authority.
+    *
+    * Only a matching Facility from the expected committee and current Ready/WaitingForReady session can become a pulse candidate. The
+    * candidate's latest typed outcome must then still equal the installed parent; a candidate already ahead routes the held follower back
+    * through normal recovery instead of opening a stale round. A committee member observed declaring beyond the first-round key may be
+    * queried for that same ahead proof, but cannot become a release candidate without a matching Facility.
+    */
+  private[consensus] def normalFirstRoundPulseStatus(
+    committee: SortedSet[PeerId],
+    matchingFacilityOrigins: Set[PeerId],
+    aheadProbeOrigins: Set[PeerId],
+    responsivePeerStates: Map[PeerId, NodeState],
+    peerOutcomes: Map[PeerId, NormalFirstRoundPulsePeerOutcome]
+  ): NormalFirstRoundPulseStatus = {
+    val expectedOrigins = SortedSet.from(matchingFacilityOrigins.intersect(committee))
+    val probedOrigins = SortedSet.from((matchingFacilityOrigins ++ aheadProbeOrigins).intersect(committee))
+    val present = probedOrigins.intersect(responsivePeerStates.keySet)
+    val missingSession = probedOrigins -- responsivePeerStates.keySet
+    val invalidState = SortedMap.from(present.toList.flatMap { peerId =>
+      responsivePeerStates.get(peerId).collect {
+        case state if state =!= NodeState.Ready && state =!= NodeState.WaitingForReady => peerId -> state
+      }
+    })
+    val fetchable = present -- invalidState.keySet
+    val aligned = SortedSet.from(
+      fetchable.intersect(expectedOrigins).filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Aligned))
+    )
+    val ahead = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Ahead)))
+    val missing = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Missing)))
+    val mismatched = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Mismatched)))
+    val explicitFailures = fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.FetchFailed))
+    val unobserved = fetchable -- peerOutcomes.keySet
+
+    NormalFirstRoundPulseStatus(
+      expectedOrigins,
+      aligned,
+      ahead,
+      missingSession,
+      invalidState,
+      missing,
+      mismatched,
+      SortedSet.from(explicitFailures ++ unobserved)
+    )
+  }
+
+  /** Once any valid pulse origin proves it has advanced beyond the installed parent, that generation is recovery-only. Even if the
+    * advancing origin later disappears and another peer still serves the parent, the stale first round must not be reopened while the
+    * replacement download is in flight.
+    */
+  private[consensus] def shouldReleaseNormalFirstRoundPulse(
+    status: NormalFirstRoundPulseStatus,
+    recoveryAlreadyTriggered: Boolean
+  ): Boolean =
+    !recoveryAlreadyTriggered && status.releaseOrigin.nonEmpty
 
   /** View-change certificates use a Core-sized quorum, so the certified next leader must come from Core as well. The fallback preserves
     * startup/fork-recovery behavior if a malformed or transitional state has not populated Core yet.

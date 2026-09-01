@@ -5,6 +5,7 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ControllerEvidenceDerivation
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
@@ -45,12 +46,15 @@ object schema {
             facilitatorsHash,
             lastSnapshotHash,
             observedResponders,
-            observedSelfHealth
+            observedSelfHealth,
+            _,
+            _,
+            _
           ) =>
         s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
-      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash) =>
+      case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash, _, _) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
-      case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash) =>
+      case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash, _) =>
         s"Finished{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, snapshotHash=${snapshotHash.show}"
     }
   }
@@ -75,7 +79,14 @@ object schema {
     // v15: same byte-identical-re-spread rationale as observedResponders. The aggregated
     // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
     // original Proposal payload exactly. SortedMap so circe encodes in deterministic key order.
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
+    observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
+    // Frozen leader-selected Facility trigger evidence for byte-identical re-spread.
+    triggerEvidence: List[Signed[TriggerStatement]] = List.empty,
+    // Exact local candidate used if this node is the leader and must re-spread.
+    proposedValue: Option[ProposalValue] = None,
+    // Leader value already validated by this node. While populated, the state stays in
+    // CollectingProposals until a frozen-Core prepare QC is available.
+    acceptedValue: Option[ProposalValue] = None
   ) extends GlobalConsensusStep
 
   final case class CollectingSignatures(
@@ -83,7 +94,9 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    lastSnapshotHash: Hash
+    lastSnapshotHash: Hash,
+    proposalValue: Option[ProposalValue] = None,
+    proposalQc: Option[CertifiedProposalQC] = None
   ) extends GlobalConsensusStep
 
   @derive(encoder, decoder, eqv)
@@ -93,7 +106,8 @@ object schema {
     majorityTrigger: ConsensusTrigger,
     candidates: Candidates,
     facilitatorsHash: Hash,
-    snapshotHash: Hash
+    snapshotHash: Hash,
+    certifiedOutcome: Option[CertifiedOutcome] = None
   ) extends GlobalConsensusStep
 
   /** Outcome of a completed consensus round, carried forward as `lastOutcome` into the next round.
@@ -108,9 +122,10 @@ object schema {
     * Decode contract: this derives a circe decoder with `useDefaults = false`, so every NON-`Option` field must be present in the decoded
     * JSON. The Scala default values below (`= SortedMap.empty`, etc.) apply only to in-code construction -- they do NOT make decode
     * tolerant of a missing field. `Option`-typed fields are the exception: a missing key decodes to `None` (e.g. `controllerEvidence`).
-    * Decoding an outcome that lacks one of the non-`Option` fields would fail, but that is unreachable today: the jar-hash and
-    * `deterministicConfigHash` handshake stops mixed-version peers from exchanging outcomes at all. Before adding the next field, make it
-    * `Option`-typed or switch the derivation to `useDefaults`, so cross-version / historical decode stays safe (see ADR-0016).
+    * Decoding an outcome that lacks one of the non-`Option` fields would fail. Coordinated deployments rely on distinct advertised
+    * `versionHash` values to keep different release schemas from joining. L0 also requires exact `deterministicConfigHash` equality; the
+    * advertised jar field is metadata, not a fence. Before adding the next field, make it `Option`-typed or switch the derivation to
+    * `useDefaults`, so historical decode stays safe (see ADR-0016 and ADR-0027).
     */
   @derive(encoder, decoder, eqv)
   final case class GlobalConsensusOutcome(
@@ -163,8 +178,9 @@ object schema {
     // resulting peer with one view-change-caused. Used by the next round's
     // selectLeaderWeighted to compute a fork-safe integer qualityScore =
     // completed * (participated - viewChangesCaused) / participated^2 and hard-exclude
-    // peers below the configured floor. Default empty is construction-only; cross-version decode is
-    // fenced by the handshake (see the type scaladoc), so pre-v16 outcomes are never decoded here.
+    // peers below the configured floor. Default empty is construction-only; deployment-time schema
+    // separation relies on the advertised `versionHash` (see the type scaladoc), while historical
+    // decoding still requires the explicit compatibility rules above.
     // Persisted via v20/v21
     // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
     peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
@@ -238,7 +254,11 @@ object schema {
     // expired entries (<= current key) are dropped at finalization. Pure ordinal
     // comparisons only -- no per-round countdown mutation that a restart could observe
     // half-applied. Option-wrapped for circe back-compat like `controllerEvidence`.
-    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
+    penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None,
+    // V35 monotonic lineage fact. False only on the canonical from-genesis singleton root;
+    // once a certified committee reaches two members this remains true forever, including
+    // after later degradation. Option preserves historical outcome decoding.
+    expandedBeyondSingleton: Option[Boolean] = None
   ) {
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
@@ -258,7 +278,68 @@ object schema {
     // PeerId so each id appears once. The union of keys across the peer-keyed
     // source maps becomes the per-peer map's key set;
     // absent peers contribute `PerPeerOperationalRecord.empty` semantics on the consumer side.
-    def toOperationalState: ConsensusOperationalState = {
+    def toOperationalState: ConsensusOperationalState =
+      GlobalConsensusOutcome.operationalState(
+        removalPenalties,
+        deferralCountdown,
+        peerQuality,
+        cumulativeMissCounts,
+        recentProofSizes,
+        readmissionCountdown,
+        peerViewChanges,
+        recentSigners,
+        peerTiers,
+        activeAdmissionScores,
+        recentRoundEndTimes,
+        controllerEvidence,
+        penaltyUntil
+      )
+
+    // Stage 4: the peerHistory payload packed into SIGNED artifact bytes at proposal build
+    // and validateArtifact re-execution. Evidence-only: `perPeer` and `recentRoundEndTimes`
+    // (the locally-divergent fields behind the alpha.92/129/147 wedges) are excluded;
+    // delegation to the shared helper keeps the dag-l0 / currency-l0 signed subsets from
+    // drifting apart.
+    def signedArtifactPeerHistory: ConsensusOperationalState =
+      ControllerEvidenceDerivation.signedArtifactOperationalState(
+        recentProofSizes = recentProofSizes,
+        recentSigners = recentSigners,
+        controllerEvidence = controllerEvidence,
+        penaltyUntil = penaltyUntil
+      )
+  }
+
+  @derive(encoder, decoder, eqv, show)
+  sealed trait GlobalConsensusKind
+
+  object GlobalConsensusKind {
+    case object Facility extends GlobalConsensusKind
+
+    case object Proposal extends GlobalConsensusKind
+
+    case object Signature extends GlobalConsensusKind
+  }
+
+  object GlobalConsensusOutcome {
+
+    /** Pack the post-round operational state once for both the persisted outcome and the v35 QC commitment. Keeping this as the single
+      * constructor prevents proposal-time certification from drifting away from `GlobalConsensusOutcome.toOperationalState`.
+      */
+    def operationalState(
+      removalPenalties: SortedMap[PeerId, Int],
+      deferralCountdown: SortedMap[PeerId, Int],
+      peerQuality: SortedMap[PeerId, (Int, Int)],
+      cumulativeMissCounts: SortedMap[PeerId, Long],
+      recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+      readmissionCountdown: SortedMap[PeerId, Int],
+      peerViewChanges: SortedMap[PeerId, Long],
+      recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+      peerTiers: SortedMap[PeerId, Int],
+      activeAdmissionScores: SortedMap[PeerId, Int],
+      recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
+      controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
+      penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]]
+    ): ConsensusOperationalState = {
       val keys: Set[PeerId] =
         peerQuality.keySet |
           removalPenalties.keySet |
@@ -312,33 +393,6 @@ object schema {
         penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
     }
-
-    // Stage 4: the peerHistory payload packed into SIGNED artifact bytes at proposal build
-    // and validateArtifact re-execution. Evidence-only: `perPeer` and `recentRoundEndTimes`
-    // (the locally-divergent fields behind the alpha.92/129/147 wedges) are excluded;
-    // delegation to the shared helper keeps the dag-l0 / currency-l0 signed subsets from
-    // drifting apart.
-    def signedArtifactPeerHistory: ConsensusOperationalState =
-      ControllerEvidenceDerivation.signedArtifactOperationalState(
-        recentProofSizes = recentProofSizes,
-        recentSigners = recentSigners,
-        controllerEvidence = controllerEvidence,
-        penaltyUntil = penaltyUntil
-      )
-  }
-
-  @derive(encoder, decoder, eqv, show)
-  sealed trait GlobalConsensusKind
-
-  object GlobalConsensusKind {
-    case object Facility extends GlobalConsensusKind
-
-    case object Proposal extends GlobalConsensusKind
-
-    case object Signature extends GlobalConsensusKind
-  }
-
-  object GlobalConsensusOutcome {
     implicit val _artifact: Lens[GlobalConsensusOutcome, Signed[GlobalSnapshotArtifact]] =
       GenLens[GlobalConsensusOutcome](_.finished.signedMajorityArtifact)
     implicit val _context: Lens[GlobalConsensusOutcome, GlobalSnapshotContext] =

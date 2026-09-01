@@ -13,32 +13,32 @@ Ground truth is the code. Every claim below cites the source file and line it wa
 
 ## 1. Why a coordinated cold restart is mandatory
 
-The v4.1 jar bumps `consensusSchemaVersion` to **34** (`config/types.scala`) and folds several dozen
-consensus knobs plus the schema version into a single `deterministicConfigHash`
-(`config/types.scala:950-1044`). That hash is a handshake fence:
+The v4.1 jar has two distinct compatibility fingerprints. They must both be preserved and checked;
+they do not replace one another:
 
-- A joining peer sends its `consensusConfigHash` in its registration request. When both sides provide
-  one, the acceptor compares them and raises `ConsensusConfigMismatch` if they differ; the check is
-  skipped only when one side omits the hash (`domain/cluster/programs/Joining.scala:303-307`). On an
-  all-new-jar launch both sides set it, so a node whose config hash diverges cannot join.
-- Every `Facility` declaration also carries `consensusConfigHash: Option[Hash]` as a per-round, peer-side
-  fence (the Facility field is documented in `docs/consensus/README.md` section 6; the schema-version is
-  folded into the hash at `config/types.scala:1042-1043`). A peer on a divergent config is rejected at the
-  Facility stage even if it slipped past registration.
+- The hard join fence is `versionHash`: the current hasher hashes the embedded
+  `BuildInfo.version`, unless `CL_VERSION_HASH` supplies an opaque literal override
+  (`TessellationIOApp.scala:186-189`). Both directions of the join handshake compare this value and
+  raise `VersionMismatch` on inequality (`domain/cluster/programs/Joining.scala:252`). Official
+  release builds must therefore carry the intended, distinct release tag, and
+  `CL_VERSION_HASH` should be unset.
+- `consensusSchemaVersion` and the consensus knobs are folded into
+  `deterministicConfigHash` (`config/types.scala`). L0 startup resolves the exact effective config,
+  advertises its hash in `RegistrationRequest`, and `Joining` requires strict equality (including
+  presence). Facilities carry the same hash for additional logs/metrics. Equality remains a
+  mandatory operator preflight so bad settings fail before fragmenting a cold start.
 
 The join handshake does **not** compare `RegistrationRequest.jar`. That field is advertised and
-stored as peer metadata only. Joining validates the Tessellation version hash, metagraph version
-hash, environment, and (when both peers provide it) `consensusConfigHash`
-(`domain/cluster/programs/Joining.scala:252-254,303-307`). The release version and consensus config
-hash are therefore the protocol-enforced fences. Operators must still verify that every node runs
-the identical release artifact because a different jar built with the same reported versions and
-consensus config is not rejected solely by `RegistrationRequest.jar`.
+stored as peer metadata only. Operators must verify that every node runs the identical release
+artifact because a different jar built with the same reported version is not rejected solely by
+`RegistrationRequest.jar`.
 
 **Consequences for the deploy:**
 
-- **No rolling upgrade.** A mixed-version cluster partitions when the Tessellation version hash or
-  `deterministicConfigHash` differs; those values are checked at registration, and the config hash is
-  also checked at Facility. The upgrade is all-or-nothing.
+- **No rolling upgrade.** A distinctly tagged release partitions from the previous release at the
+  Tessellation version-hash join fence. The upgrade is all-or-nothing. This check applies at join
+  time; it does not evict an already-connected old process, so the entire fleet must be stopped
+  before any new process starts.
 - **Restart from a checkpoint, not genesis.** Genesis replay is never performed. The cluster restarts
   from a recent agreed snapshot ordinal that all source/priority nodes hold on disk. Already-signed
   history is preserved; the new jar must re-derive it byte-identically (this is what the ordinal gates in
@@ -46,18 +46,39 @@ consensus config is not rejected solely by `RegistrationRequest.jar`.
 
 ### Deploy sequence
 
-1. Quiesce the network and **hard-kill the JVMs on every peer**. Because the config-hash fence partitions
-   mixed-version peers, there is no safe overlap window; all nodes must be down before any new-jar node
-   comes up.
-2. Confirm the launch jar is staged on every node and that the gate-ordinal checklist (section 2) has
+1. Disable automated restart/rollback actions. Before stopping anything, create
+   the timestamped evidence bundle required by
+   [`RELEASE_POLICY.md`](RELEASE_POLICY.md#mandatory-pre-stop-evidence-and-monitoring-gate).
+   Capture active and rotated application/HTTP logs; the system journal,
+   service and exit status; any existing heap/core/JVM crash artifact; redacted
+   environment, effective configuration, launch/unit/deployment definitions;
+   jar, version, `versionHash`, `deterministicConfigHash`, and schema-version
+   identifiers; the chosen anchor and Snapshot Streaming observations; and
+   manifests of snapshot indexes, locks/journals, and sidecars. Source log
+   retention can be less than 24 hours under load, so preserve this bundle
+   outside live rotation directories as durable release evidence.
+2. Quiesce the network and request an orderly stop on every peer. Because the
+   version-hash fence applies only when a peer joins, there is no safe overlap
+   window; all nodes must be down before any new-jar node comes up. Escalate an
+   unresponsive JVM to a hard kill only after the evidence capture, and record
+   its stop timeout, final service status, signal, and exit status in the bundle.
+3. Confirm the launch jar is staged on every node and that the gate-ordinal checklist (section 2) has
    been completed in the jar-packaged config before assembly.
-3. Bring up the source / priority peers first. The priority set is configured under `priority-peer-ids`
-   in `application.conf:129`. Confirm each reaches `Ready` before proceeding.
-4. Bring up the remaining peers. They register against the priority peers; matching version hashes
-   and `consensusConfigHash` admit them, and divergent values are rejected.
-5. Only after the source/priority peers are confirmed `Ready` should auto-restart monitoring (the
-   auto-restart lambda referenced in `RELEASE_POLICY.md`) be re-enabled, so a node still mid-handshake is
-   not force-cycled.
+4. Bring up the source / priority peers first. The priority set is configured under `priority-peer-ids`
+   in `application.conf:129`. `Ready` confirms only node lifecycle progress; it
+   does not release the monitoring gate.
+5. Bring up the remaining peers. They register against the priority peers; matching version hashes
+   admit them. Independently verify the deterministic config hash is byte-identical fleet-wide.
+6. While `dag_consensus_normal_first_round_alignment_held == 1`, a flat tip is
+   intentional synchronization and is a **DO-NOT-RESTART** condition. Monitoring
+   may alert, but automated stop/restart/rollback actions remain inhibited.
+7. Re-enable those actions only after the canonical first successor is accepted
+   and `dag_consensus_signing_finality_audit_current_finality_margin > 0`. A
+   `Ready` source set alone is insufficient. If the restart uses
+   `CL_GL0_RECOVERY_SEED_COMMITTEE`, apply the stronger recovery gates: remove
+   the environment from every selected source, wait through canonical `R+2` and
+   public durability at/after v35, and verify Snapshot Streaming lineage
+   alignment before enabling automation.
 
 ---
 

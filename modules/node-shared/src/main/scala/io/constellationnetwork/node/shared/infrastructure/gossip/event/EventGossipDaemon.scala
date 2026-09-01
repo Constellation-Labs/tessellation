@@ -326,7 +326,9 @@ private[event] object GossipPuller {
           ihave <- client.getIHave.run(Peer.toP2PContext(peer))
           _ <- ihave.chainTip.traverse_(tip => meshState.updateChainTip(peer.id, tip))
           seen <- seenCache.keySet
-          missing = ihave.hashes.diff(seen)
+          // IWANT carries full event bodies. Pull one bounded deterministic page per
+          // peer/tick; later IHAVE rounds drain the remainder without a large response.
+          missing = ihave.hashes.diff(seen).toList.sorted.take(EventGossipBounds.MaxIWantRequestHashes).toSet
           _ <- missing.nonEmpty
             .pure[F]
             .ifM(

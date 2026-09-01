@@ -52,7 +52,10 @@ mechanics, with its existing controller-target gate preserved.
    parent nominee they retained or abstain; they never rank their differing local
    candidate universes. The Core-quorum certificate—not ephemeral recovered
    nominee state—is the state-transition authority, so a restarted node can accept
-   the same certified admission.
+   the same certified admission. Rendezvous ranking is deterministic for a parent
+   and changes as parent entropy changes; it is neither ascending PeerId order nor
+   node-local randomness, and it does not promise that consecutive parents select
+   different peers.
 5. Enforce the configured open-vote budget across the whole round. Apply the fixed
    target prefix before removing targets already voted by self, so monitor ticks
    cannot walk the candidate tail.
@@ -64,7 +67,14 @@ mechanics, with its existing controller-target gate preserved.
    reject new/open admission targets.
    Open Ready-at-tip votes and certificates are eligible only on the existing
    `activeAdmissionExpansionIntervalRounds` cadence. The shipped interval is five
-   rounds. Probation readmission is not cadence-gated. A `readmissionCountdown` map
+   rounds. Before a Global L0 Core member emits an open vote, the fixed nominee must
+   return authenticated metadata naming the exact parent ordinal and hash on a fresh
+   direct probe and must already have sent an authenticated Facility bound to that voter's
+   current round. This proves that the nominee's snapshot view and consensus FSM have
+   entered the same round key; it does not promise a future timely signature. `Ready`
+   plus a nearby cached tip is not sufficient. A missing Facility, stale/conflicting
+   response, or timeout causes abstention and never advances to a second candidate.
+   Probation readmission is not cadence-gated. A `readmissionCountdown` map
    entry remains probation authority when its value reaches zero; only an accepted
    AdmissionCertificate removes the entry. When probation and open certificates
    compete for the one-certificate proposal budget, probation recovery is selected
@@ -78,6 +88,15 @@ mechanics, with its existing controller-target gate preserved.
 9. Bump `consensusSchemaVersion` to 34 because Proposal gains the optional
    admission-nominee field. The accepted singleton is carried forward in the
    existing `Finished.candidates` field. The version enters `deterministicConfigHash`.
+
+   > **V35 supersession:** Decisions 10-12 below describe the v34 proactive
+   > Tier-1 standalone-eviction bridge. ADR-0032 supersedes that authority once
+   > certified consensus is active. V35 audits the complete frozen signing
+   > committee and permits an eviction certificate only as one half of an exact,
+   > Core-certified one-for-one replacement in the dead band. A standalone or
+   > unequal eviction batch fails closed, so the next-round signing roster cannot
+   > shrink through this health-derived path.
+
 10. Reuse the existing eviction-certificate path as a bounded bridge for actual
     Tier-1 finality participation. At round creation, update node-local consecutive
     proof-miss streaks for every peer in `currentTier1 intersect
@@ -111,8 +130,8 @@ mechanics, with its existing controller-target gate preserved.
 13. Do not change `GlobalIncrementalSnapshot`, `GlobalSnapshotStateProof`, state-proof
     construction/validation, reward arithmetic, or metagraph snapshot processing. The
     finality audit adds no message variant, Proposal field, config value, activation
-    ordinal, or schema-version increment beyond the v34 admission work already in this
-    ADR.
+    ordinal, or schema-version increment beyond the v34 admission work already in
+    this ADR.
 14. Before a Global-L0 Core node emits an open-admission vote, require the exact
     next-seat headroom invariant:
 
@@ -155,11 +174,17 @@ mechanics, with its existing controller-target gate preserved.
 
 ## Consequences
 
+The Tier-1-only standalone-eviction consequences below are historical v34 behavior.
+For v35 Global L0, ADR-0032's all-signing-member atomic-replacement consequences are
+authoritative.
+
 - After the one-round nomination pipeline is primed, a successful open certificate can
-  add at most one healthy signing/reward seat on each five-round admission cadence with
-  the shipped budget, and only while the prior proof set already satisfies the next
-  committee's finality floor. There is no controller target or fixed population cap at
-  which broad committee growth is forced to stop.
+  add at most one phase-aligned healthy signing/reward seat on each five-round admission
+  cadence with the shipped budget, and only while the prior proof set already satisfies
+  the next committee's finality floor. A nominee must prove both exact parent state and
+  current-round Facility participation before Core voters attest it. There is no
+  controller target or fixed population cap at which broad committee growth is forced
+  to stop.
 - Core can remain small and reliable while Tier 1 grows toward the healthy Ready
   population. Tier-1 silence does not enter the normal liveness denominator.
 - Open-admission gossip is bounded to approximately one vote per Core member per

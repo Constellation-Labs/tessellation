@@ -2,13 +2,14 @@ package io.constellationnetwork.node.shared.config
 
 import cats.effect.IO
 
+import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.types.FieldsAddedOrdinals
+import io.constellationnetwork.node.shared.config.types.{DustSweep, FieldsAddedOrdinals}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.schema.SnapshotOrdinal
 
 import pureconfig.ConfigSource
-import pureconfig.generic.auto._
 import weaver.SimpleIOSuite
 
 object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
@@ -85,5 +86,43 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
         fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet)
       )
     )
+  }
+
+  test("Currency snapshot protocol v1 is enabled for dev and fails closed for every public environment") {
+    IO {
+      ConfigSource.resources("application.conf").at("fields-added-ordinals").load[FieldsAddedOrdinals] match {
+        case Left(failures) =>
+          failure(failures.toList.mkString("\n"))
+        case Right(fieldsAddedOrdinals) =>
+          expect.same(SnapshotOrdinal.MinValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Dev)) &&
+          expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Integrationnet)) &&
+          expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Testnet)) &&
+          expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Mainnet))
+      }
+    }
+  }
+
+  test("the protocol-v1 gate preserves the latest develop positional constructor") {
+    val ordinals = Map.empty[AppEnvironment, SnapshotOrdinal]
+    val legacyShape = FieldsAddedOrdinals(
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      ordinals,
+      Map.empty[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]
+    )
+
+    IO(expect.same(Map.empty, legacyShape.currencySnapshotProtocolV1))
   }
 }

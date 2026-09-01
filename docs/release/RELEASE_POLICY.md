@@ -10,7 +10,10 @@ Releases flow through environments in sequence: **Testnet -> IntegrationNet -> M
 - **IntegrationNet** - Staging ground for external integrators, 3-day notice window
 - **MainNet** - Production network, 7-day advance notice with complete documentation
 
-All network upgrades require coordination with the auto-restart lambda and confirmation that source nodes have reached READY state before re-enabling automated monitoring.
+All network upgrades require coordination with the auto-restart lambda. A source
+node reaching `Ready` is only a startup observation; it is **not** permission to
+re-enable automated restart or rollback actions. The release gate is defined in
+[Mandatory pre-stop evidence and monitoring gate](#mandatory-pre-stop-evidence-and-monitoring-gate).
 
 Before performing a release or merging a PR with breaking changes, ensure you have this document and its references on hand and understand the purpose of each stage.
 
@@ -27,6 +30,53 @@ Before performing a release or merging a PR with breaking changes, ensure you ha
 - Release Process (internal runbook)
 - [Tessellation GitHub Releases](https://github.com/Constellation-Labs/tessellation/releases)
 - [Conventional Commits](https://www.conventionalcommits.org/) (see also [`docs/adr/0015-conventional-commits.md`](../adr/0015-conventional-commits.md))
+
+## Mandatory pre-stop evidence and monitoring gate
+
+Before any planned or incident-driven stop, rollback, restart, or hard kill,
+disable automated restart/rollback actions and preserve a timestamped evidence
+bundle. At minimum, capture the following from every controlled source and any
+node involved in the incident:
+
+- the active application log, every available rotated application log, and HTTP
+  or access logs;
+- the system/service journal covering the incident and preceding startup,
+  service status, process exit status or signal, and restart counters;
+- any heap dump, core dump, JVM fatal-error file, or other crash artifact that
+  already exists;
+- the redacted effective environment, rendered configuration, launch command,
+  service/unit definition, and deployment manifest;
+- the jar digest, advertised version and `versionHash`,
+  `deterministicConfigHash`, and consensus schema/configuration version;
+- the selected anchor ordinal and hash, direct source observations used to
+  establish it, and the Snapshot Streaming/database tip and hash; and
+- filename, size, link-count, and digest manifests for snapshot indexes,
+  consensus locks/journals, outcome sidecars, and other recovery sidecars.
+
+Store the bundle outside live log and snapshot-rotation directories. Source log
+retention has been observed to fall below 24 hours under load, with the busiest
+restart/incident window disappearing first. Pull before stopping, preserve
+periodic control bundles during a soak, and treat every incident bundle as
+durable release evidence rather than a cleanup candidate. If host safety makes
+a complete capture impossible, record exactly which evidence was unavailable
+and why before proceeding.
+
+During a normal coordinated Global L0 cold restart, monitoring may alert but must not
+stop, restart, or roll back nodes while
+`dag_consensus_normal_first_round_alignment_held == 1`. Re-enable those actions
+only after the canonical first successor is accepted and
+`dag_consensus_signing_finality_audit_current_finality_margin > 0`. That gauge
+is the canonical parent proof signers intersected with the current signing
+committee, minus its current finality floor. `Ready`, process uptime, and a flat
+tip by themselves do not satisfy this gate.
+
+An explicit recovery-seed restart has additional release conditions: remove
+`CL_GL0_RECOVERY_SEED_COMMITTEE` from every selected source launch environment;
+at/after v35, accept canonical `R+2` and require
+`dag_consensus_recovery_seed_boundary_publicly_durable == 1`; and prove Snapshot
+Streaming follows the same source-agreed lineage before enabling automated
+actions. See
+[Global L0 trusted recovery seed committee](../operations/global-l0-recovery-seed-committee.md).
 
 ## Functionality Definitions
 

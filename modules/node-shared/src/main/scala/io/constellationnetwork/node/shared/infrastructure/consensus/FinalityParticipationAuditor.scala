@@ -7,16 +7,16 @@ import scala.concurrent.duration.{Duration, FiniteDuration}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
-/** Bounded, deterministic audit of Tier-1 snapshot-signature participation.
+/** Bounded, deterministic audit of frozen signing-committee snapshot participation.
   *
   * The finalized artifact's proof set is intentionally node-local: honest nodes can cross the finality threshold with different valid
   * signature subsets. It must therefore never be copied directly into committee state. This helper uses that local observation only to
   * decide whether the local Core member emits an existing `EvictionVote(Silent)`. Membership changes only after the normal quorum-certified
   * EvictionCertificate is accepted in a Proposal.
   *
-  * One peer is audited per round. The auditable universe is consensus-agreed -- current Tier 1 intersected with the parent round's
-  * canonical committee -- and rendezvous-ranked from the parent snapshot hash. Intersecting with the parent committee prevents a newly
-  * admitted Tier-1 peer, which could not have signed the parent, from being immediately treated as missing.
+  * One peer is audited per round. The auditable universe is consensus-agreed -- the current Core + Tier-1 signing committee intersected
+  * with the parent round's canonical committee -- and rendezvous-ranked from the parent snapshot hash. Intersecting with the parent
+  * committee prevents a newly admitted Tier-1 peer, which could not have signed the parent, from being immediately treated as missing.
   */
 object FinalityParticipationAuditor {
 
@@ -47,16 +47,16 @@ object FinalityParticipationAuditor {
 
   final case class Observation(history: MissHistory, decision: Option[Decision])
 
-  /** Combine proof-miss hysteresis, the exact current-seat finality deficit, and the existing membership-change cadence.
-    *
-    * This remains a local vote-emission decision. A Core quorum of existing EvictionVotes is still required before membership changes.
+  /** V35 replacement evidence is emitted only in the protocol-derived dead band where the current committee remains finalizable but an
+    * additional seat is unsupported. The vote is not standalone removal authority; it can be consumed only in an equal-sized certified
+    * replacement.
     */
-  def shouldEmitSilentEvictionVote(
+  def shouldEmitAtomicReplacementVote(
     decision: Decision,
     headroom: FinalityHeadroom.Evaluation,
     cadenceAllowed: Boolean
   ): Boolean =
-    decision.shouldVote && headroom.allowsSilentEviction && cadenceAllowed
+    decision.shouldVote && headroom.allowsAtomicReplacement && cadenceAllowed
 
   /** Preserve the intended elapsed-time meaning of an N-round miss window when EventTrigger accelerates rounds.
     *
@@ -71,13 +71,13 @@ object FinalityParticipationAuditor {
   }
 
   def selectTarget(
-    currentTier1: Set[PeerId],
+    auditablePeers: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
     entropy: Hash
   ): Option[PeerId] = {
     implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
 
-    currentTier1
+    auditablePeers
       .intersect(parentRoundCommittee)
       .toList
       .sorted(scoreOrder.toOrdering)
@@ -86,15 +86,15 @@ object FinalityParticipationAuditor {
 
   /** Advance local proof-miss history once for the finalized parent and evaluate this round's consensus-agreed audit target.
     *
-    * Every auditable Tier-1 peer is updated on every new parent: a locally observed signature resets its streak to zero, while absence
-    * increments it. The target is still selected from the complete consensus-agreed auditable universe, never from local miss-qualified
-    * peers, so differing valid proof subsets can only make a Core voter abstain rather than vote for a different target. Re-observing the
-    * same `(ordinal, hash)` is idempotent; a non-consecutive ordinal starts a fresh sequence.
+    * Every auditable signing-committee peer is updated on every new parent: a locally observed signature resets its streak to zero, while
+    * absence increments it. The target is still selected from the complete consensus-agreed auditable universe, never from local
+    * miss-qualified peers, so differing valid proof subsets can only make a Core voter abstain rather than vote for a different target.
+    * Re-observing the same `(ordinal, hash)` is idempotent; a non-consecutive ordinal starts a fresh sequence.
     */
   def observe(
     selfId: PeerId,
     currentCore: Set[PeerId],
-    currentTier1: Set[PeerId],
+    auditablePeers: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
     locallyObservedParentSigners: Set[PeerId],
     parentOrdinal: Long,
@@ -109,7 +109,7 @@ object FinalityParticipationAuditor {
 
     if (inBootstrap) Observation(MissHistory.empty, None)
     else {
-      val auditable = currentTier1.intersect(parentRoundCommittee)
+      val auditable = auditablePeers.intersect(parentRoundCommittee)
       val observedParent = ObservedParent(parentOrdinal, entropy)
       val (nextMisses, nextMissStartedAt) =
         if (previous.lastObservedParent.contains(observedParent))
@@ -141,7 +141,7 @@ object FinalityParticipationAuditor {
       val nextHistory = MissHistory(Some(observedParent), nextMisses, nextMissStartedAt)
       val decision = Option
         .when(currentCore.contains(selfId)) {
-          selectTarget(currentTier1, parentRoundCommittee, entropy)
+          selectTarget(auditablePeers, parentRoundCommittee, entropy)
         }
         .flatten
         .map { target =>

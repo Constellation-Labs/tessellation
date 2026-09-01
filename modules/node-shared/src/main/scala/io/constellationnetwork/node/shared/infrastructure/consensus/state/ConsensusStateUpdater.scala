@@ -75,15 +75,16 @@ object ConsensusStateUpdater {
       private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
 
       def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact, Kind]): F[StateUpdateResult] =
-        tryUpdateExistingConsensus(key, updateConsensus(resources))
+        consensusStorage.resumePendingStateEffect(key) >>
+          tryUpdateExistingConsensus(key, updateConsensus(resources))
 
       private def tryUpdateExistingConsensus(
         key: Key,
         fn: ConsensusState[Key, Status, Outcome, Kind] => F[(ConsensusState[Key, Status, Outcome, Kind], F[Unit])]
       ): F[StateUpdateResult] =
         consensusStorage
-          .condModifyState(key)(toUpdateStateFn(fn))
-          .flatMap(evalEffect)
+          .condModifyStateWithSideEffect(key)(toUpdateStateFn(fn))
+          .map(_.flatten)
           .flatTap(logIfUpdatedState)
 
       private def toUpdateStateFn(
@@ -96,9 +97,6 @@ object ConsensusStateUpdater {
           }
         }
       }
-
-      private def evalEffect(maybeResultAndEffect: Option[(StateUpdateResult, F[Unit])]): F[StateUpdateResult] =
-        maybeResultAndEffect.flatTraverse { case (result, effect) => effect.as(result) }
 
       private def logIfUpdatedState(updateResult: StateUpdateResult): F[Unit] =
         updateResult.traverse {
@@ -225,19 +223,25 @@ object ConsensusStateUpdater {
 
     strictMajorityHash(observations.values) match {
       case None if totalObservations > 0 =>
-        // Codex review v2: surface the no-strict-majority case so operators can see it in logs;
-        // silent no-op was hiding diagnostic information promised by the docstring.
-        logger.info(
-          ConsensusLog.format(
-            Category.Fork,
-            "n/a",
-            "n/a",
-            LogEvent.ForkDetected,
-            "observation" -> observation.label,
-            "totalObservations" -> totalObservations.toString,
-            "action" -> ForkAction.NoStrictMajority.label
+        // Aug 11, ordinal 5,881,764: this exact facilitators-hash split was visible immediately before two nodes finalized the same artifact
+        // under different local outcome metadata. There is no authoritative cohort to recover toward yet, so do not mutate node state, but
+        // escalate the formerly INFO-only observation to an alertable metric + WARN rather than silently continuing.
+        metrics.incrementCounter(
+          "dag_consensus_fork_ambiguous_total",
+          Seq(unsafeLabelName("observation_type") -> observation.label)
+        ) >>
+          logger.warn(
+            ConsensusLog.format(
+              Category.Fork,
+              "n/a",
+              "n/a",
+              LogEvent.ForkDetected,
+              "observation" -> observation.label,
+              "totalObservations" -> totalObservations.toString,
+              "action" -> ForkAction.NoStrictMajority.label,
+              "severity" -> "critical"
+            )
           )
-        )
       case None => Applicative[F].unit
       case Some(majorityObservationHash) =>
         recoverIfForkingWithMajority(

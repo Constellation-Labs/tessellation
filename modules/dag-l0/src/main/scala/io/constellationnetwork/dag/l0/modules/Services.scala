@@ -12,18 +12,20 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
+import io.constellationnetwork.dag.l0.domain.snapshot.recovery.Gl0RecoverySeedCommittee
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
 import io.constellationnetwork.dag.l0.infrastructure.mempool.GlobalEventMempool
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
-import io.constellationnetwork.node.shared.config.types.SharedConfig
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -67,9 +69,13 @@ object Services {
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,
+    effectiveConsensusConfig: ConsensusConfig,
     txHasher: Hasher[F],
     loggerBundle: LoggerBundle[F],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
+    configuredRecoverySeed: F[Option[Gl0RecoverySeedCommittee]],
+    onRecoverySeedOutcomeCommitted: Option[GlobalConsensusOutcome => F[Unit]],
+    initiallyHoldConsensusFirstRound: Boolean,
     consensusDispatcher: Option[ConsensusDispatcher[F]] = None
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
@@ -123,9 +129,11 @@ object Services {
             storages.cluster,
             storages.node,
             storages.globalSnapshot,
+            storages.snapshotDownload,
             validators,
             sharedServices,
             cfg,
+            effectiveConsensusConfig,
             stateChannelPullDelay = cfg.stateChannel.pullDelay,
             stateChannelPurgeDelay = cfg.stateChannel.purgeDelay,
             stateChannelAllowanceLists,
@@ -144,6 +152,9 @@ object Services {
             loggerBundle,
             queues.rumor,
             getPeerChainTips,
+            configuredRecoverySeed,
+            onRecoverySeedOutcomeCommitted,
+            initiallyHoldConsensusFirstRound,
             // Activate the Cluster.leave() wedge guard: AbandonmentTracker writes wedge state
             // into the SharedServices-owned Ref; Cluster reads from the same Ref via the
             // consensusHealth thunk passed at Cluster.make time.

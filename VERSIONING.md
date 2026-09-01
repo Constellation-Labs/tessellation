@@ -63,6 +63,15 @@ Git tag v4.1.0 on HEAD  →  4.1.0 (clean release)
 Nearest tag v4.0.0, 3 commits ago  →  4.0.0+3.abc1234.build42
 ```
 
+## Cluster Join Fence
+
+The embedded `BuildInfo.version` is hashed into the `versionHash` carried by cluster registration.
+Joining peers require an exact match, so an official `v4.1.0-rc.7` build rejects `v4.1.0-rc.6`.
+This is a join-time release fence, not an assembly-hash comparison and not a replacement for the
+separate deterministic consensus-config fingerprint. `CL_VERSION_HASH` overrides the effective
+value with an opaque literal; leave it unset for official releases unless a separately reviewed
+recovery procedure explicitly requires it.
+
 ## Branch Strategy
 
 ```

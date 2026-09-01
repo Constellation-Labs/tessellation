@@ -14,22 +14,16 @@ import io.constellationnetwork.currency.dataApplication.storage.{
 }
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
-import io.constellationnetwork.currency.l0.modules.Storages
-import io.constellationnetwork.currency.l0.snapshot.CurrencyConsensusManager
-import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
+import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{ExactSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.dataApplication.DataApplicationTraverse
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{CombinedSnapshotCheckpointFileSystemStorage, IdentifierStorage}
-import io.constellationnetwork.node.shared.modules.SharedStorages
-import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -52,10 +46,8 @@ trait Rollback[F[_]] {
 
 object Rollback {
   def make[F[_]: Async: KryoSerializer: HasherSelector: JsonSerializer: SecurityProvider](
-    nodeId: PeerId,
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
-    collateral: Collateral[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
     currencySnapshotCleanupStorage: CurrencySnapshotCleanupStorage[F],
     globalSnapshotsWithStateLocalFileSystemStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],
@@ -66,7 +58,10 @@ object Rollback {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    recoverySyncPublicationStorage: RecoverySyncPublicationStorage[F],
+    stateChannelBinaryOutboxStorage: StateChannelBinaryOutboxStorage[F],
+    validateLeadBeforeMutation: (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo) => F[Unit]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
 
@@ -97,18 +92,32 @@ object Rollback {
         .toOptionT
         .getOrRaise(LastSnapshotInfoNotFound)
 
-      _ <- collateral
-        .hasCollateral(nodeId)
-        .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
+      // The controlled rollback lead is the sole initial committee authority. Reject an
+      // ineligible lead before cleanup, exact-snapshot replacement, or data-application writes.
+      _ <- validateLeadBeforeMutation(lastIncremental, lastInfo)
 
-      _ <- snapshotStorage.prepend(lastIncremental, lastInfo).flatMap { prepended =>
-        if (prepended)
-          logger.info(s"Prepended last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage before loadChain")
-        else
-          logger.warn(
-            s"Could not prepend last currency snapshot ordinal=${lastIncremental.ordinal.show} to snapshot storage (already at different head); loadChain may diverge"
-          )
-      }
+      // Explicit coordinated rollback is the only authority that can discard a committed
+      // recovery receipt or ordinary-binary outbox suffix. Ordinary restart/re-download
+      // never calls this.
+      _ <- recoverySyncPublicationStorage.discardForCanonicalReplacement
+      _ <- stateChannelBinaryOutboxStorage.discardAllForCanonicalReplacement
+
+      _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
+      lastIncrementalHash <- lastIncremental.value.hash
+      exactInstalled <- ExactSnapshotStorage.installCanonicalSuffixForRecovery(
+        snapshotStorage,
+        lastIncremental,
+        lastInfo,
+        currencySnapshotCleanupStorage.cleanupCanonicalSuffix(lastIncremental.ordinal, lastIncrementalHash) >>
+          combinedSnapshotCheckpointFileSystemStorage.deleteAbove(lastIncremental.ordinal)
+      )
+      _ <- Async[F].raiseUnless(exactInstalled)(
+        new IllegalStateException(
+          s"Could not install exact rollback Currency artifact/context ordinal=${lastIncremental.ordinal.show}; " +
+            "durable recovery replacement/readback failed; keep consensus stopped and inspect local storage"
+        )
+      )
+      _ <- logger.info(s"Installed exact rollback Currency snapshot ordinal=${lastIncremental.ordinal.show} before loadChain")
 
       _ <- dataApplication.map {
         case (da, cs) =>
@@ -149,10 +158,6 @@ object Rollback {
           }
 
       }.getOrElse(Applicative[F].unit)
-
-      _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
-      _ <- currencySnapshotCleanupStorage.cleanupAbove(lastIncremental.ordinal)
-      _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(lastIncremental.ordinal)
 
       _ <- logger.info(
         s"Finished rollback to currency snapshot of ${lastIncremental.ordinal.show} pulled from global snapshot of ${globalSnapshot.ordinal.show}"

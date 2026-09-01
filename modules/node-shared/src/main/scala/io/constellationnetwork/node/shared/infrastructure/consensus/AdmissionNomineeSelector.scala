@@ -9,7 +9,9 @@ import io.constellationnetwork.security.hash.Hash
   *
   * Candidate advertisements are local at Facility quorum-crossing time, so this selection is construction policy, not independently
   * re-derived consensus state. The leader's signed Proposal makes the selected value canonical for next-round voters. Ordering uses the
-  * existing rendezvous score and a PeerId tie-break; input order and duplicates cannot influence it.
+  * existing rendezvous score and a PeerId tie-break; input order and duplicates cannot influence it. Parent entropy changes the ranking
+  * from round to round, so this is deterministic rotation rather than a fixed PeerId order or node-local randomness. Rendezvous selection
+  * deliberately has no no-repeat guarantee: the same peer may remain highest-ranked for consecutive parents.
   */
 object AdmissionNomineeSelector {
 

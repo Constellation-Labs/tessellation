@@ -125,23 +125,36 @@ object DataApplicationSnapshotAcceptanceManager {
     ): F[Unit] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
-      OptionT
-        .fromOption(artifact.dataApplication)
-        .flatMap { da =>
-          OptionT
-            .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
-            .flatMapF { dataBlocks =>
-              artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
-                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal, parentGlobalSnapshotOrdinal)
-              )
-            }
-            .map(_.calculatedState)
-            .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
-            .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
-            .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
+      artifact.dataApplication.traverse_ { da =>
+        service.getCalculatedState.flatMap {
+          case (ordinal, state) if ordinal === artifact.ordinal =>
+            // At-least-once finalization may resume after the service state was installed
+            // but before snapshot persistence completed. Verify the exact certified hash and
+            // repair the idempotent filesystem write without recalculating N from N.
+            expectCalculatedStateHash(da.calculatedStateProof)(state) >>
+              calculatedStateStorage.write(artifact.ordinal, state)(service.serializeCalculatedState)
+
+          case (ordinal, _) if ordinal.value.value > artifact.ordinal.value.value =>
+            new IllegalStateException(
+              s"Calculated state is ahead of replayed artifact: calculated=$ordinal artifact=${artifact.ordinal}"
+            ).raiseError[F, Unit]
+
+          case _ =>
+            OptionT
+              .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
+              .flatMapF { dataBlocks =>
+                artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
+                  accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal, parentGlobalSnapshotOrdinal)
+                )
+              }
+              .map(_.calculatedState)
+              .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
+              .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
+              .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
+              .value
+              .void
         }
-        .value
-        .void
+      }
     }
 
     def accept(

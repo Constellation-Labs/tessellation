@@ -11,7 +11,7 @@ import cats.syntax.functor._
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.domain.Daemon
-import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.node.{DownloadMode, NodeStorage}
 import io.constellationnetwork.node.shared.domain.snapshot.PeerDiscoveryDelay
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.schema.node.NodeState
@@ -72,15 +72,19 @@ object DownloadDaemon {
       def go(attempt: Int, backoff: FiniteDuration): F[Unit] =
         nodeStorage.getNodeState.flatMap {
           case NodeState.WaitingForDownload =>
-            nodeStorage.isRecoveryDownload
-              .flatTap(flag => logger.info(s"[DownloadDaemon] Download attempt $attempt, isRecovery=$flag"))
-              .flatMap { isRecovery =>
-                val downloadAction = if (isRecovery) {
-                  logger.info("[DownloadDaemon] Using incremental recovery download path") >>
-                    download.recoveryDownload(hasherSelector)
-                } else {
-                  logger.info("[DownloadDaemon] Using full download path") >>
-                    download.download(hasherSelector)
+            nodeStorage.getDownloadMode
+              .flatTap(mode => logger.info(s"[DownloadDaemon] Download attempt $attempt, mode=$mode"))
+              .flatMap { mode =>
+                val downloadAction = mode match {
+                  case DownloadMode.Full =>
+                    logger.info("[DownloadDaemon] Using full download path") >>
+                      download.download(hasherSelector)
+                  case DownloadMode.Recovery =>
+                    logger.info("[DownloadDaemon] Using incremental recovery download path") >>
+                      download.recoveryDownload(hasherSelector)
+                  case DownloadMode.FollowerCatchUp =>
+                    logger.info("[DownloadDaemon] Using bounded follower catch-up path") >>
+                      download.followerCatchUp(hasherSelector)
                 }
                 (peerDiscoveryDelay.waitForPeers >> downloadAction)
                   .flatTap(_ => nodeStorage.clearRecoveryDownload)
@@ -96,7 +100,7 @@ object DownloadDaemon {
                     // concrete error case objects in each layer's Download.scala. Using a marker
                     // trait rather than `getClass.getSimpleName.contains(...)` means a rename of
                     // those errors fails at compile time instead of silently breaking the switch.
-                    val shouldSwitchToRecovery = !isRecovery && err.isInstanceOf[RecoveryFallbackEligible]
+                    val shouldSwitchToRecovery = mode == DownloadMode.Full && err.isInstanceOf[RecoveryFallbackEligible]
                     val switchAction =
                       (logger.warn(
                         s"[DownloadDaemon] Full download failed with recovery-eligible error (${err.getClass.getSimpleName}); switching to recovery path"

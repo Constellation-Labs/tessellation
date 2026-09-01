@@ -1,6 +1,14 @@
 # Tessellation Consensus Process
 
-This document provides an in-depth walkthrough of the Tessellation consensus mechanism. It is the definitive reference for how Tessellation consensus works.
+This document provides an in-depth walkthrough of the **Global L0** consensus mechanism.
+Unless a section explicitly says otherwise, its command FSM, Core/Tier-1/Witness committees,
+leaders, views, certificates, eviction/admission votes, and v35 behavior do not apply to
+Currency L0.
+
+Currency L0 deliberately uses a separate flat, fully synchronous protocol for its small
+permissioned metagraph cohort. See
+[Currency L0 synchronous consensus](currency-l0-synchronous.md). DAG L1, Currency L1, and
+Data L1 consensus are not modified by either design.
 
 ## Table of Contents
 
@@ -289,16 +297,52 @@ The handler also force-completes a stuck round when an `InitializeFromDownload` 
 
 ### Currency L0 rollback committee recovery
 
-Currency L0 rollback normally initializes the next consensus outcome from the
-rolled-back snapshot's proof signers. A fully stopped metagraph can use
-`run-rollback --allow-solo-consensus` on exactly one coordinated recovery node
-to bootstrap progress before the other nodes rejoin as ordinary validators.
-The flag is off by default and two isolated uses can create conflicting
-histories. See the
-[Currency L0 single-node rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
+Currency L0 rollback/genesis initializes a self-only flat synchronous committee on
+exactly one controlled lead. Every other Currency node runs `run-validator`, downloads
+the public lineage, observes successors, and registers for admission. The
+`--allow-solo-consensus` flag does not select the committee; it separately arms the
+operator-authorized dormant-lineage publication refresh. Two isolated rollback leads can
+still create conflicting histories. See the
+[Currency L0 controlled rollback recovery runbook](../operations/currency-l0-solo-rollback.md)
 for the compatibility boundary, committee-regrowth trace, metrics, and rollout
 procedure, and distribute the corresponding
 [operator release note](../release/currency-l0-solo-rollback.md) before use.
+
+### Global L0 anchor-bound committee recovery
+
+Global L0 can replace an unrecoverable rollback anchor's dead committee with a
+trusted env-selected committee during a coordinated full-fleet cold restart.
+Exactly one controlled node runs `run-rollback`; every other node runs
+`run-validator`. Only the named controlled cohort receives the same
+`CL_GL0_RECOVERY_SEED_COMMITTEE` value. A generation-bound first-round gate on
+every selected node requires exact outcome alignment of the entire named
+committee. The option is inert when absent. See the schema-compatible retry and
+legacy-view safety boundary in the
+[v4.1.0-rc.8 IntegrationNet bridge release note](../release/v4.1.0-rc.8-integrationnet-bridge.md).
+
+The exact committee comes only from the env on selected nodes. The running
+invocation disarms on the first accepted successor while tracking selected-
+member next-seat proof headroom separately. The operator must comment/remove
+the env after that successor; a fresh external JVM otherwise re-arms it. Each
+explicitly re-armed launch is a full operational reseed from which membership
+and reward breadth must regrow. No cleanup restart, symlink change, or jar swap
+is required. See the
+[trusted recovery seed runbook](../operations/global-l0-recovery-seed-committee.md).
+
+After v35 activation, the first successor's ordinary QC binds the public parent
+and selected committee, but remains terminal/private on the source cohort. The
+second successor carries that QC in public lineage. Only then can unconfigured
+community validators reconstruct the canonical reset root from the certificate
+and independently validated public parent, then replay the latest contiguous
+recovery epoch. No private plan or second signature ceremony is required.
+
+Rc.12 aligns an established GL0 anchor committee before the first ordinary
+post-rollback round. The rollback lead waits for an exact `Q(N)` of anchor
+proof signers with no timeout escape; members of that set wait for the first
+existing authenticated Facility pulse instead of starting independent timers.
+The explicit recovery-seed path keeps its stronger all-member barrier.
+See the
+[Global L0 first-round alignment runbook](../operations/global-l0-first-round-alignment.md).
 
 ### Round-Blocked States
 
@@ -486,7 +530,9 @@ Sent at the start of a round. Contains:
 - `facilitatorsHash: Hash` - hash of round-start facilitator set
 - `lastGlobalSnapshotOrdinal: SnapshotOrdinal`
 - `lastSnapshotHash: Hash`
-- `consensusConfigHash: Option[Hash]` - peer-side fence on `deterministicConfigHash`
+- `consensusConfigHash: Option[Hash]` - peer compatibility fingerprint from the exact effective
+  `deterministicConfigHash`; L0 joining requires exact equality (including presence), and Facility
+  processing also logs/metrics mismatches
 - `selfHealthHint: Option[SelfHealthHint]` - the peer's own current self-health (from
   `LocalHealthMonitor`); the leader aggregates these into `Proposal.observedSelfHealth`
   so the next round's leader selection can demote unhealthy peers (see
@@ -530,10 +576,12 @@ Sent after proposals are collected:
 - `signature: Signature` - over the majority artifact hash
 - `facilitatorsHash: Hash`, `lastSnapshotHash: Hash`, `view: Long`, `proposalHash: Hash`
 
-### BinarySignature (Currency L0 only)
+### BinarySignature (Currency L0 only; separate synchronous schema)
 
-Sent after `MajoritySignature` is collected:
-- `signature: Signature`, `facilitatorsHash: Hash`, `lastSnapshotHash: Hash`
+Currency's local synchronous engine sends this after it has collected and verified one
+artifact signature from every retained member and constructed one exact unsigned
+state-channel binary. The declaration contains the binary signature, exact binary hash,
+and immutable attempt domain. It is not part of the Global declaration schema or v35.
 
 ### ViewChangeVote
 
@@ -570,9 +618,18 @@ Sparse negative-evidence: when `StallDetector` decides to push a peer toward rem
 
 ### AdmissionVote (B2)
 
-Symmetric positive-evidence: every committee member that observes a probation peer gossiping the committee's expected tip emits a signed `AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)`. Quorum assembles into an `AdmissionCertificate` via `AdmissionCertificateBuilder`. Reasons are an open ADT; only `AdmissionReason.ReadyAtTip` is wired today.
+Symmetric positive-evidence: eligible voters sign `AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)`, and a quorum of distinct voter PeerIds assembles into an `AdmissionCertificate` via `AdmissionCertificateBuilder`. Reasons are an open ADT; only `AdmissionReason.ReadyAtTip` is wired today. Local observations decide only whether a voter emits; the accepted certificate is membership authority.
 
-The observation reads the shared chain-tip view (`getPeerChainTips`), which `EventGossipDaemon` populates by a round-robin **witness sweep across all responsive peers** -- not just the gossip mesh. This observation channel is distinct from the certificate *witness pool* (the voters, `eligibleFacilitators - target`) and is a liveness precondition of B2 (ADR-0022): it must cover the full probation-candidate set independent of the mesh degree (`meshHigh`), sized by `chainTipWitnessRefreshInterval` so every responsive peer's tip is refreshed within the admission tip-validity window. Scoping the observation to the gossip mesh left candidates outside the mesh unobservable and starved B2 on clusters larger than the mesh (IntegrationNet, v4.1.0).
+There are two deliberately different evidence lanes:
+
+- **Open expansion:** the parent Proposal carries one canonical nominee chosen by deterministic rendezvous rank. On the five-round admission cadence, each Core voter first waits for that Ready nominee's authenticated Facility declaration bound to the same current round, then directly fetches its authenticated snapshot metadata even if cached gossip says it is nearby. The response must name the exact parent ordinal and hash. Failure, mismatch, or absence means abstain; a late Facility can still trigger the one-shot probe later in the round, and the voter never walks to a second candidate. Parent entropy changes the ranking, but rendezvous has no no-repeat guarantee.
+- **Penalty/probation recovery:** a carried probation peer cannot emit a Facility until its certificate clears probation. This lane therefore probes one deterministic target through the authenticated chain-tip endpoint and requires the configured streak of fresh exact-parent observations. It remains cadence-independent and uses its wider recovery witness pool.
+
+Currency L0 does not use this certified-admission pipeline. Registrations are carried in
+the complete synchronous Facility union and bounded by incumbent ACK headroom plus the
+legacy flat-committee cap. Global L0's exact-tip/Facility rule adds no declaration or
+snapshot field: it reuses existing authenticated metadata, signed Facilities,
+AdmissionVotes, and AdmissionCertificates.
 
 ---
 
@@ -749,7 +806,7 @@ The StateCreator gates the candidate set by only **two** behavioural filters now
 
 **Tier assignment rule** (re-derived every round, in order): (1) **quality-degradation override** -- a peer whose cumulative `completed/participated` ratio has dropped below `minRatio` (with `participated >= minObservations`) is forced to Tier 1 regardless of its prior tier, so a degraded peer can never gate the liveness quorum; (2) **carried-forward** `priorTiers.get(pid)`; (3) **quality-proven bootstrap** -- a new peer (absent from `priorTiers`) enters Core only if `peerQuality` already proves it above the ratio bar; (4) **default Tier 1** -- unproven new peers join the witness-eligible pool, not the quorum (the replacement for the old "everyone defaults to Core" bootstrap that let unclassified peers wedge the cluster).
 
-**Core floor.** If derived Core is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1, ranked by quality (descending ratio, then descending completed count, then PeerId lex). `coreCommitteeSize` is consensus-critical and is folded into `deterministicConfigHash`, so a mismatched value is rejected at handshake.
+**Core floor.** If derived Core is below the per-environment `coreCommitteeSize`, peers are promoted from Tier 1, ranked by quality (descending ratio, then descending completed count, then PeerId lex). `coreCommitteeSize` is consensus-critical and is folded into `deterministicConfigHash`. L0 joining requires exact equality of that effective fingerprint, and Facility processing provides a second diagnostic comparison. The separate `versionHash` independently fences the advertised release string (or `CL_VERSION_HASH`); it is not a jar hash or a substitute for the config fence.
 
 **Chronic-core replacement ladder.** `chronicMisses` (evidence-derived trailing asked-but-silent streaks past `ChronicMissThreshold`) drives a deterministic ladder, applied in order: **exclude** every chronically-missing Core member (demoted to Tier 1, still signs and earns, just out of the quorum denominator); **replace** each one-for-one with a non-chronic Tier 1 reserve (highest evidence score first); **floor** tops Core back up to `coreCommitteeSize` from non-chronic reserves only; **shrink** leaves Core smaller rather than padding with chronic peers (the quorum is proportional, so a smaller all-healthy Core is strictly more live); **liveness fallback** re-admits the least-bad chronic peers only if healthy Core would fall below `MinViableCoreSize` (= 2). With no chronic peers every step is inert.
 
@@ -914,9 +971,11 @@ Poll (100ms-1000ms adaptive)
   → Detect status/resource changes → queue CheckUpdate
   → While in any signatures-collecting phase: heartbeat CheckUpdate every tick (re-evaluates
     the signatureGracePeriod gate without waiting for a resource change)
-  → On every tick, if state.lastOutcome carries a probation peer whose gossiped chain tip
-    (witnessed by the round-robin sweep over ALL responsive peers, not just the mesh; see §6)
-    matches the committed tip: emit AdmissionVote, queue CheckAdmissionAssembly
+  → On an open-admission cadence round, probe the one proposal-carried nominee directly;
+    emit AdmissionVote only when it names the exact parent and has already sent a Facility
+    bound to this current round
+  → Independently probe the fixed probation target; emit only after its configured streak
+    of fresh exact-parent responses (probation cannot require a Facility)
   → Reset roundStartTime on view advance (per-view round-duration budget)
   → Calculate phase-adaptive timeout
   → Early view change cases (no stall counted):
@@ -1159,13 +1218,26 @@ Recovery can be triggered by three independent paths, all converging on `Waiting
 
 5. **`DownloadDaemon` dispatch** (`DownloadDaemon.scala:69`) — Acquires the download semaphore and selects a path based on `isRecoveryDownload`:
    - **Recovery path** (`download.recoveryDownload`):
-     - Clear in-memory caches (lastN, lastGlobal) — NOT disk
+     - Clear in-memory snapshot/consensus heads and the event mempool. Persisted history is retained except when the selected network tip is
+       below the local tip: that rollback suffix is removed only after the existing strict-majority `(ordinal, hash)` corroboration gate.
      - Fetch latest tip from peers (preferring `RecoveryPeerHint` targets when set)
-     - Download only the gap (walk back from tip, stop at persisted hash on disk)
+     - Download only the gap. Walk backward over the peer-supplied hash chain and stop only at a complete local replay anchor: the
+       content-addressed bytes must hash to the expected value, the ordinal hardlink must identify those same bytes, and snapshot-info must
+       exist at that ordinal. A hash file by itself is never an anchor.
+     - If exact hash-addressed bytes exist but their ordinal hardlink is missing, recreate only that hardlink and verify it by reading and
+       hashing the result. An occupied ordinal is never overwritten by this repair. If snapshot-info is missing, continue walking and use
+       normal validated replay to rebuild the incomplete range.
      - Enforce any configured seedlist-signed recovery checkpoint: the checkpoint file is verified at startup, downloaded/observed snapshots must pass the checkpoint hash at the checkpoint ordinal, and a local persisted chain whose resolved anchor is already at/above the checkpoint must also prove the checkpoint locally.
+     - Replay validates every successor's parent hash, ordinal/height sequence, signatures, checkpoint, derived context, and state proof
+       before it becomes application state. Replacing an ordinal's local hash/ordinal indexes is uncancelable; recovery may run for hours
+       while progressing, but an inactivity watchdog retries it after ten minutes without an ordinal advance.
      - `setForRecovery` bypasses sequential prepend requirement on `SnapshotStorage`
    - **Full path** (`download.download`): used when a node has never run before.
-   - **Full → recovery switch**: if a full download fails with an error tagged `RecoveryFallbackEligible` (currently `CannotFetchGenesisSnapshot` and `InvalidChain` in dag-l0; `InvalidChain` in currency-l0), the daemon sets `isRecoveryDownload` and retries with the recovery path. Detection uses the `RecoveryFallbackEligible` marker trait — a `getClass.getSimpleName` match would silently break on rename (`RecoveryFallbackEligible.scala`).
+   - **Full → recovery switch**: if a full download fails with an error tagged `RecoveryFallbackEligible` (including unavailable genesis,
+     start timeout, missing replay input, typed chain-link/sequence mismatch, and context-creation failure in dag-l0; `InvalidChain` in
+     currency-l0), the daemon sets `isRecoveryDownload` and retries with the recovery path. Detection uses the
+     `RecoveryFallbackEligible` marker trait — a `getClass.getSimpleName` match would silently break on rename
+     (`RecoveryFallbackEligible.scala`).
    - **Retry**: failures sleep with exponential backoff capped at 60s and re-enter the loop until either success or the node leaves `WaitingForDownload`.
 
 6. **rejoinAfterRecovery** — Send `twoWayHandshake` to all known peers. Restores P2P mesh membership after `LocalHealthcheck` pruned the node during isolation.
@@ -1193,6 +1265,16 @@ Independent of the recovery pipeline above, `StallDetector` re-broadcasts the lo
 ### Failure Handling
 
 - **Download failure during isolation**: `isRecovery` flag preserved across retries. `DownloadDaemon` sleeps with capped exponential backoff (10s → 60s) and retries `recoveryDownload`. Metadata fetch has 5 retries with exponential backoff (~60s).
+- **Deep replay**: the recovery watchdog is progress-based, not a fixed total deadline. `dag_download_recovery_progress_ordinal` (decreasing
+  during hash walk-back and increasing during forward replay) and
+  `dag_download_recovery_progress_epoch` distinguish a healthy multi-hour replay from a stalled fiber;
+  `dag_download_recovery_inactivity_timeout_total` counts the latter.
+- **Persisted-index repair**: `dag_download_persisted_anchor_total{outcome}` distinguishes a complete anchor, a repaired missing hardlink,
+  missing hash index, missing snapshot-info, and corrupt/mismatched local bytes. `dag_download_persisted_hardlink_repaired_total` counts
+  every exact hardlink repair, including repairs whose snapshot-info must still be rebuilt by replay.
+  `dag_download_replay_snapshot_missing_total{source}` identifies any replay source that disappears after the backward walk. Typed
+  `dag_download_start_outcome_total` labels separate parent-link, sequence, replay-source, and context-creation failures; `chain_invalid`
+  remains only as a legacy catch-all.
 - **Stale chain tips**: When all peers are unreachable during isolation, `clearMesh` fires before `onForkDetected` is invoked so the recovering node does not reuse stale tips after restore.
 - **Force leave**: After `totalRecoveryAttempts ≥ 15` (3× recovery cycles), node transitions to `Leaving → Offline`. Requires manual restart.
 
@@ -1259,15 +1341,18 @@ full Mermaid sequence diagram.
 
 ### Known Limitations
 
-#### Kill 4/8 Observe Deadlock
+#### Kill 4/8 Observe Deadlock (pre-index-repair behavior)
 
 When both partitions lose quorum (4+4 with minQuorum=5), neither side can
 produce snapshots. After restore, one recovering node may have persisted a
 forked ordinal whose successor was never produced on the canonical chain.
-The download walker gets stuck looking for a non-existent ordinal.
+Before the exact-anchor repair, the download walker could stop at a content-addressed hash whose ordinal hardlink was missing, then get stuck
+looking for the non-existent ordinal during replay. The walker now repairs an exact missing hardlink or continues to a complete anchor and
+rebuilds the range under the existing validation pipeline. A 4+4 partition can still halt production while neither side has quorum; this
+change repairs a follower's local history after a canonical branch exists and does not manufacture quorum.
 
-**Mitigation:** External monitoring restarts the stuck node. 7/8 nodes
-self-recover.
+**Pre-rc.11 mitigation:** external monitoring restarted the stuck node, although a torn persisted index survived restarts. **Current
+behavior:** recovery retries locally and remains in download states until a validated canonical replay completes.
 
 #### Session Token on Eviction
 

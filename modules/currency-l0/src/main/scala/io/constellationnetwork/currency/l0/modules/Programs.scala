@@ -11,7 +11,8 @@ import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateL
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.http.p2p.P2PClient
 import io.constellationnetwork.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot}
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotContext}
+import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -20,24 +21,27 @@ import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
 import io.constellationnetwork.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
-import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedStorages}
+import io.constellationnetwork.node.shared.modules.SharedPrograms
 import io.constellationnetwork.schema.peer.{L0Peer, PeerId}
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector, R <: CliMethod](
+  def make[F[_]: Async: Parallel: Random: KryoSerializer: JsonSerializer: SecurityProvider, R <: CliMethod](
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,
     sharedPrograms: SharedPrograms[F, R],
-    sharedStorages: SharedStorages[F],
     storages: Storages[F],
     services: Services[F, R],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
+    seedlist: Option[Set[SeedlistEntry]],
+    hasherSelector: HasherSelector[F]
   )(implicit context: L0NodeContext[F]): Programs[F] = {
+    implicit val currencyHasherSelector: HasherSelector[F] = hasherSelector
+
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
         storages.cluster,
@@ -58,7 +62,10 @@ object Programs {
         storages.snapshot,
         storages.currencySnapshotCleanup,
         storages.combinedCurrencySnapshotCheckpointStorage,
-        storages.eventMempool
+        storages.eventMempool,
+        services.stateChannelBinarySender,
+        storages.recoverySyncPublication,
+        storages.stateChannelBinaryOutbox
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -81,17 +88,30 @@ object Programs {
     )
 
     val rollback = Rollback.make(
-      nodeId,
       services.globalL0,
       storages.identifier,
-      services.collateral,
       dataApplication,
       storages.currencySnapshotCleanup,
       storages.globalSnapshotsWithStateFileStorage,
       storages.globalSnapshotsWithStateDeltasFileStorage,
       services.globalSnapshotContextFunctions,
       storages.combinedCurrencySnapshotCheckpointStorage,
-      storages.snapshot
+      storages.snapshot,
+      storages.recoverySyncPublication,
+      storages.stateChannelBinaryOutbox,
+      (snapshot, info) =>
+        for {
+          identifier <- storages.identifier.get
+          collateralEligible <- services.consensus.consensusFns.facilitatorFilter(
+            snapshot,
+            CurrencySnapshotContext(identifier, info),
+            nodeId
+          )
+          seedlistEligible = seedlist.forall(_.exists(_.peerId === nodeId))
+          _ <- Async[F].raiseUnless(collateralEligible && seedlistEligible)(
+            new IllegalStateException(s"Controlled Currency rollback lead ${nodeId.show} is not seedlist/collateral eligible")
+          )
+        } yield ()
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}

@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { parseSharedArgs } = require('./shared');
+const { parseSharedArgs, withRetry } = require('./shared');
 
 const createConfig = () => {
   const args = process.argv.slice(2);
@@ -40,25 +40,36 @@ const main = async () => {
   const host = process.env.TEST_HOST || 'http://localhost';
   const snapshotUrl = process.env.ML0_URL ? `${process.env.ML0_URL}/snapshots/latest` : `${host}:${metagraphL0PortPrefix}00/snapshots/latest`
 
-  const { value } = await fetchData(snapshotUrl)
-  if (!value) {
-    throw Error(`Could not get value from snapshot`)
-  }
+  // Cluster health only proves that the ML0 nodes have joined. The latest snapshot can still be
+  // genesis (or the first post-genesis snapshot), neither of which is required to carry the
+  // configured reward distribution. Wait for an actually finalized reward-bearing snapshot so
+  // startup speed cannot turn this assertion into a race.
+  const { ordinal, rewards } = await withRetry(async () => {
+    const { value } = await fetchData(snapshotUrl)
+    if (!value) {
+      throw Error(`Could not get value from snapshot`)
+    }
 
-  const { rewards } = value
+    const rewards = value.rewards || []
+    const hasExpectedDistribution =
+      rewards.length === 2 && rewards.every(({ amount }) => amount === 555000000)
 
-  if (!rewards || rewards.length !== 2) {
-    throw Error(`Fail on rewards distribution: ${JSON.stringify(rewards)}`)
-  }
+    if (!hasExpectedDistribution) {
+      throw Error(
+        `Rewards not finalized at ordinal ${value.ordinal}: ${JSON.stringify(rewards)}`
+      )
+    }
 
-  const firstReward = rewards[0]
-  const secondReward = rewards[1]
+    return { ordinal: value.ordinal, rewards }
+  }, {
+    name: 'metagraph rewards distribution',
+    maxAttempts: 120,
+    interval: 1000,
+  })
 
-  if (firstReward.amount !== 555000000 || secondReward.amount !== 555000000) {
-    throw Error(`Fail with rewards amount: ${JSON.stringify(firstReward)} - ${JSON.stringify(secondReward)}`)
-  }
-
-  console.log(`All rewards were successfully distributed: ${JSON.stringify(rewards)}`)
+  console.log(
+    `All rewards were successfully distributed at ordinal ${ordinal}: ${JSON.stringify(rewards)}`
+  )
 }
 
 main()

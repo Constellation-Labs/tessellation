@@ -17,3 +17,6 @@ releases.
 6. State the exact release tag, network, restart date, hard-fork status, activation ordinal when
    applicable, and operator action. Distinguish Global Snapshot ordinals from Currency Snapshot
    ordinals.
+7. For a v4.1 release carrying Global v35 and Currency protocol v1, start from the
+   [v35/Currency-v1 template](discord-announcement-v4.1-v35-currency-v1-template.md). Preserve
+   the two activation ordinals as separate fields even when they share an announcement window.

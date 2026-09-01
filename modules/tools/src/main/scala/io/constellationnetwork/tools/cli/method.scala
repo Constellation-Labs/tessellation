@@ -14,7 +14,6 @@ import com.monovore.decline.Opts
 import com.monovore.decline.refined.refTypeArgument
 import eu.timepit.refined.api.RefType.refinedRefType
 import eu.timepit.refined.api.Refined
-import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.GreaterEqual
 import eu.timepit.refined.refineV
 import eu.timepit.refined.string.Url

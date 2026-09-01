@@ -40,7 +40,8 @@ object Storages {
     incrementalConfig: IncrementalConfig,
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
     environment: AppEnvironment,
-    hashSelect: HashSelect
+    hashSelect: HashSelect,
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal]
   )(
     implicit globalStateProofSelector: GlobalStateProofSelector
   ): F[Storages[F]] =
@@ -72,7 +73,8 @@ object Storages {
         snapshotConfig.inMemoryCapacity,
         incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
         HasherSelector[F],
-        combinedGlobalSnapshotCheckpointStorage
+        combinedGlobalSnapshotCheckpointStorage,
+        protectedSnapshotInfoOrdinals
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](
@@ -83,7 +85,8 @@ object Storages {
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
           combinedGlobalSnapshotCheckpointStorage,
           hashSelect,
-          sharedStorages.mptStore
+          sharedStorages.mptStore,
+          protectedSnapshotInfoOrdinals
         )
     } yield
       new Storages[F](

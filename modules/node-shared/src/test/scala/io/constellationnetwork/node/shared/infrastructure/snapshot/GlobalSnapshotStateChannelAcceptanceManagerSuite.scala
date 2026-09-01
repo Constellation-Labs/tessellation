@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.{NonEmptyChain, NonEmptyList}
+import cats.data.{NonEmptyChain, NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
@@ -190,6 +190,70 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
       expected = (SortedMap(address -> NonEmptyList.one(stateChannelOutput3.snapshotBinary)), Set.empty)
     } yield expect.same(expected, result)
 
+  }
+
+  test("branch alternatives preserve the exact legacy two-stage primary selector") { res =>
+    implicit val (h, sp, js) = res
+
+    def signWith(binary: StateChannelSnapshotBinary, count: Int): IO[Signed[StateChannelSnapshotBinary]] =
+      for {
+        keyPairs <- (1 to count).toList.traverse(_ => KeyPairGenerator.makeKeyPair[IO])
+        signed <- forAsyncHasher(binary, keyPairs.head).flatMap(single =>
+          keyPairs.tail.foldM(single)((current, keyPair) => current.signAlsoWith(keyPair))
+        )
+      } yield signed
+
+    for {
+      binaryA <- mkStateChannelSnapshotBinary(Hash.empty)
+      binaryB <- mkStateChannelSnapshotBinary(Hash.empty)
+      aThree <- signWith(binaryA, 3)
+      aFive <- signWith(binaryA, 5)
+      bFour <- signWith(binaryB, 4)
+      // Allowed-signature counts are A3=3, A5=1, B4=3. The legacy first pass
+      // retains A3 and B4, then its total-signature pass selects B4 (4 > 3).
+      allowedIds =
+        aThree.proofs.toSortedSet.map(_.id.toPeerId) ++
+          aFive.proofs.toSortedSet.take(1).map(_.id.toPeerId) ++
+          bFour.proofs.toSortedSet.take(3).map(_.id.toPeerId)
+      allowed = NonEmptySet.fromSetUnsafe(allowedIds)
+      manager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](
+        Some(Map(address -> allowed)),
+        pullDelay = NonNegLong.MinValue
+      )
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
+      result <- manager.acceptBranches(
+        SnapshotOrdinal(1L),
+        snapshotInfo,
+        List(StateChannelOutput(address, aThree), StateChannelOutput(address, aFive), StateChannelOutput(address, bFour))
+      )
+      branches = result._1(address)
+    } yield
+      expect.same(binaryB, branches.head.head.value) &&
+        expect.same(2, branches.length) &&
+        expect.same(binaryA, branches.tail.head.head.value)
+  }
+
+  test("sibling branch ordering is deterministic under event permutation") { res =>
+    implicit val (h, sp, js) = res
+
+    for {
+      outputA <- mkStateChannelOutput(2, address)
+      outputB <- mkStateChannelOutput(4, address)
+      outputC <- mkStateChannelOutput(3, address)
+      outputs = List(outputA, outputB, outputC)
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
+      random <- Random.scalaUtilRandom[IO]
+      results <- (1 to 20).toList.traverse { _ =>
+        for {
+          shuffled <- random.shuffleList(outputs)
+          manager <- mkManager(snapshotInfo, pullDelay = NonNegLong.MinValue)
+          accepted <- manager.acceptBranches(SnapshotOrdinal(1L), snapshotInfo, shuffled)
+        } yield accepted._1(address).toList.map(_.head.value)
+      }
+    } yield
+      expect.same(1, results.distinct.size) &&
+        expect.same(outputB.snapshotBinary.value, results.head.head) &&
+        expect.same(3, results.head.size)
   }
 
   test("valid state channels which form a chain should be accepted") { res =>

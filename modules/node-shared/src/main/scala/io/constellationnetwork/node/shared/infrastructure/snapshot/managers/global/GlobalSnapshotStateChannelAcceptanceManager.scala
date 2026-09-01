@@ -1,12 +1,13 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global
 
-import cats.Eval
 import cats.data.{NonEmptyChain, NonEmptyList, NonEmptySet}
 import cats.effect.kernel.{Async, Ref}
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.list._
 import cats.syntax.traverse._
+import cats.{Eval, Functor}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -25,6 +26,8 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
+  type Branches = NonEmptyList[NonEmptyList[Signed[StateChannelSnapshotBinary]]]
+
   def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
     implicit hasher: Hasher[F]
   ): F[
@@ -33,6 +36,18 @@ trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
       Set[StateChannelOutput]
     )
   ]
+
+  /** Returns deterministic sibling root alternatives. The first branch is byte-for-byte the legacy selection; later branches are tried only
+    * when Currency validation deterministically rejects an earlier root for an unsupported historical dependency.
+    */
+  def acceptBranches(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
+    implicit hasher: Hasher[F],
+    functor: Functor[F]
+  ): F[(SortedMap[Address, Branches], Set[StateChannelOutput])] =
+    accept(ordinal, lastGlobalSnapshotInfo, events).map {
+      case (selected, returned) =>
+        (selected.map { case (address, branch) => address -> NonEmptyList.one(branch) }, returned)
+    }
 }
 
 object GlobalSnapshotStateChannelAcceptanceManager {
@@ -52,6 +67,15 @@ object GlobalSnapshotStateChannelAcceptanceManager {
             Set[StateChannelOutput]
           )
         ] =
+          acceptBranches(ordinal, lastGlobalSnapshotInfo, events).map {
+            case (branches, returned) =>
+              (branches.map { case (address, alternatives) => address -> alternatives.head }, returned)
+          }
+
+        override def acceptBranches(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
+          implicit hasher: Hasher[F],
+          functor: Functor[F]
+        ): F[(SortedMap[Address, Branches], Set[StateChannelOutput])] =
           events
             .groupBy(_.address)
             .toList
@@ -83,7 +107,7 @@ object GlobalSnapshotStateChannelAcceptanceManager {
           (notAllowed, allowed) <- allowedForProcessing(ordinal, outputsWithHashes).map(_.partitionMap(identity))
           (impossibleCandidates, possibleCandidates) = onlyPossibleReferences(lastHash, allowed.flatten).partitionMap(identity)
           toReturn = notAllowed.flatten.map(_.output) ++ impossibleCandidates.map(_.output)
-          toAdd = selectStateChannels(allowedPeers)(lastHash, possibleCandidates)
+          toAdd = selectStateChannelBranches(allowedPeers)(lastHash, possibleCandidates)
         } yield (toAdd, toReturn)
 
         private def allowedForProcessing(ordinal: SnapshotOrdinal, withHashes: List[StateChannelOutputWithHash]) =
@@ -118,24 +142,45 @@ object GlobalSnapshotStateChannelAcceptanceManager {
           }
         }
 
-        private def selectStateChannels(
+        private def selectStateChannelBranches(
           allowedPeers: Option[NonEmptySet[PeerId]]
-        )(lastHash: Hash, stateChannels: List[StateChannelOutputWithHash]) = {
-          val lastHashForStateChannel = stateChannels.groupByNec(_.output.snapshotBinary.lastSnapshotHash)
+        )(lastHash: Hash, stateChannels: List[StateChannelOutputWithHash]): Option[Branches] = {
+          val byParent = stateChannels.groupByNec(_.output.snapshotBinary.lastSnapshotHash)
 
-          def unfold(lastHash: Hash): Eval[List[StateChannelOutputWithHash]] =
-            lastHashForStateChannel
-              .get(lastHash)
+          // Preserve the rc.12 primary selector literally. In particular, its two successive
+          // signature-count filters operate on individual signed envelopes before equal unsigned
+          // contents are counted. Collapsing envelopes by unsigned hash first is not equivalent:
+          // the maxima can belong to different re-signings of the same content. Alternatives are
+          // obtained only after removing every envelope for the already-selected unsigned hash.
+          def rankedByLegacySelection(outputs: NonEmptyChain[StateChannelOutputWithHash]): List[StateChannelOutputWithHash] = {
+            val selected = pickMajority(allowedPeers)(outputs)
+            val alternatives = outputs.toNonEmptyList.toList
+              .filterNot(_.hash === selected.hash)
+              .groupBy(_.hash)
+              .toList
+              .map { case (hash, sameContent) => hash -> sameContent.minBy(_.proofsHash) }
+              .sortBy(_._1)
+              .map(_._2)
+
+            selected :: alternatives
+          }
+
+          def primaryDescendants(parent: Hash): Eval[List[StateChannelOutputWithHash]] =
+            byParent
+              .get(parent)
               .map(pickMajority(allowedPeers))
-              .map { go =>
+              .map { selected =>
                 for {
-                  head <- Eval.now(go)
-                  tail <- unfold(go.hash)
-                } yield head :: tail
+                  tail <- primaryDescendants(selected.hash)
+                } yield selected :: tail
               }
               .getOrElse(Eval.now(List.empty))
 
-          unfold(lastHash).value.toNel.map(_.map(_.output.snapshotBinary).reverse)
+          byParent.get(lastHash).flatMap { roots =>
+            rankedByLegacySelection(roots)
+              .traverse(root => (root :: primaryDescendants(root.hash).value).map(_.output.snapshotBinary).reverse.toNel)
+              .flatMap(_.toNel)
+          }
         }
 
         private def pickMajority(allowedPeers: Option[NonEmptySet[PeerId]])(outputs: NonEmptyChain[StateChannelOutputWithHash]) =

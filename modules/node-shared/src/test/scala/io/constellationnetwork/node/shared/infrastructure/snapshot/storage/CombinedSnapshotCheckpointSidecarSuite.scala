@@ -14,6 +14,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, KeyPairGenerator, SecurityProvider}
 
 import better.files._
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 import org.http4s.headers.ETag
@@ -63,17 +64,17 @@ object CombinedSnapshotCheckpointSidecarSuite extends MutableIOSuite {
       for {
         pair <- mkSignedIncremental
         (snapshot, info) = pair
-        hash = Hash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        snapshotHash = Hash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         // First instance: write the checkpoint (this populates the in-memory hash cache
         // AND the on-disk sidecar via tryWrite).
         storage1 <- mkCheckpointStorage(tmpDir)
-        _ <- storage1.tryWrite(snapshot.ordinal, snapshot, info, hash)
+        _ <- storage1.tryWrite(snapshot.ordinal, snapshot, info, snapshotHash)
         before <- storage1.getCachedHash(snapshot.ordinal)
         // Second instance against the same directory: simulates a process restart. The
         // in-memory hashCache starts empty, so getCachedHash must read from the sidecar.
         storage2 <- mkCheckpointStorage(tmpDir)
         after <- storage2.getCachedHash(snapshot.ordinal)
-      } yield expect.all(before.contains(hash), after.contains(hash))
+      } yield expect.all(before.contains(snapshotHash), after.contains(snapshotHash))
     }
   }
 
@@ -118,22 +119,62 @@ object CombinedSnapshotCheckpointSidecarSuite extends MutableIOSuite {
     }
   }
 
-  test("second tryWrite at same ordinal overwrites sidecar with new hash") { res =>
+  test("rewriting a checkpoint updates the semantic ETag to the supplied public snapshot hash") { res =>
     implicit val (_, _, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       for {
         pair <- mkSignedIncremental
         (snapshot, info) = pair
-        oldHash = Hash("1111111111111111111111111111111111111111111111111111111111111111")
-        newHash = Hash("2222222222222222222222222222222222222222222222222222222222222222")
+        oldSnapshotHash = Hash("1111111111111111111111111111111111111111111111111111111111111111")
+        newSnapshotHash = Hash("2222222222222222222222222222222222222222222222222222222222222222")
         storage1 <- mkCheckpointStorage(tmpDir)
-        _ <- storage1.tryWrite(snapshot.ordinal, snapshot, info, oldHash)
-        _ <- storage1.tryWrite(snapshot.ordinal, snapshot, info, newHash)
+        _ <- storage1.tryWrite(snapshot.ordinal, snapshot, info, oldSnapshotHash)
+        _ <- storage1.tryWrite(snapshot.ordinal, snapshot, info, newSnapshotHash)
         // Force a "cold restart" so the in-memory cache cannot mask the sidecar.
         storage2 <- mkCheckpointStorage(tmpDir)
         result <- storage2.getCachedHash(snapshot.ordinal)
-      } yield expect(result.contains(newHash))
+      } yield expect(result.contains(newSnapshotHash))
+    }
+  }
+
+  test("recovery replacement removes stale future checkpoints before retaining the lower anchor") { res =>
+    implicit val (_, _, j, h, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        pair <- mkSignedIncremental
+        (base, info) = pair
+        anchor = base.copy(value = base.value.copy(ordinal = SnapshotOrdinal(10L)))
+        future1 = base.copy(value = base.value.copy(ordinal = SnapshotOrdinal(11L)))
+        future2 = base.copy(value = base.value.copy(ordinal = SnapshotOrdinal(12L)))
+        anchorHash = Hash("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+        future1Hash = Hash("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb1")
+        future2Hash = Hash("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc1")
+        storage <- mkCheckpointStorage(tmpDir)
+        _ <- storage.replaceForRecovery(future1.ordinal, future1, info, future1Hash)
+        _ <- storage.replaceForRecovery(future2.ordinal, future2, info, future2Hash)
+        before <- storage.listStoredOrdinals.flatMap(_.compile.toList)
+        _ <- storage.replaceForRecovery(anchor.ordinal, anchor, info, anchorHash)
+        after <- storage.listStoredOrdinals.flatMap(_.compile.toList)
+        warmFuture1 <- storage.getCachedHash(future1.ordinal)
+        warmFuture2 <- storage.getCachedHash(future2.ordinal)
+        restarted <- mkCheckpointStorage(tmpDir)
+        coldAfter <- restarted.listStoredOrdinals.flatMap(_.compile.toList)
+        coldAnchor <- restarted.getCachedHash(anchor.ordinal)
+        coldFuture1 <- restarted.getCachedHash(future1.ordinal)
+        coldFuture2 <- restarted.getCachedHash(future2.ordinal)
+      } yield
+        expect.all(
+          before.toSet == Set(future1.ordinal, future2.ordinal),
+          after == List(anchor.ordinal),
+          warmFuture1.isEmpty,
+          warmFuture2.isEmpty,
+          coldAfter == List(anchor.ordinal),
+          coldAnchor.contains(anchorHash),
+          coldFuture1.isEmpty,
+          coldFuture2.isEmpty
+        )
     }
   }
 

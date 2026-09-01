@@ -1,10 +1,12 @@
 package io.constellationnetwork.dag.l0.domain.snapshot.programs
 
+import cats.syntax.option._
+
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.Download.PeerTip
+import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
 
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.FunSuite
 
@@ -25,9 +27,22 @@ object DownloadSuite extends FunSuite {
   private val prevOrd: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(3106668L)
   private val prevHash: Hash = Hash("db444d682f7f32a1209accceafe069bccc920c975117103077aa7f8e06dabcdd")
   private val nextHash: Hash = Hash("1234567000000000000000000000000000000000000000000000000000000000")
+  private val nextTwoOrd: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(3106671L)
+  private val nextTwoHash: Hash = Hash("2234567000000000000000000000000000000000000000000000000000000000")
+  private val nextThreeOrd: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(3106672L)
+  private val nextThreeHash: Hash = Hash("3234567000000000000000000000000000000000000000000000000000000000")
 
   private def decide(tips: List[PeerTip]): SnapshotOrdinal =
     Download.chooseObservationLimit(localOrd, localHash, tips, observationOffset)
+
+  test("first incremental checkpoint detection is relative to the configured full snapshot") {
+    val publicCheckpoint = SnapshotOrdinal.unsafeApply(766717L)
+
+    expect(Download.isFirstIncrementalAfterFullSnapshot(SnapshotOrdinal.MinValue, SnapshotOrdinal.MinIncrementalValue)) &&
+    expect(Download.isFirstIncrementalAfterFullSnapshot(publicCheckpoint, SnapshotOrdinal.unsafeApply(766718L))) &&
+    expect(!Download.isFirstIncrementalAfterFullSnapshot(publicCheckpoint, SnapshotOrdinal.MinIncrementalValue)) &&
+    expect(!Download.isFirstIncrementalAfterFullSnapshot(publicCheckpoint, publicCheckpoint))
+  }
 
   // ── Safe-default (do not shortcut) cases ──────────────────────────────────────
 
@@ -110,5 +125,55 @@ object DownloadSuite extends FunSuite {
       PeerTip(prevOrd, prevHash)
     )
     expect.same(localOrd, decide(tips))
+  }
+
+  // ── Bounded follower catch-up target ─────────────────────────────────────────
+
+  test("follower catch-up accepts a strict-majority target one ordinal ahead") {
+    val tips = List(PeerTip(nextOrd, nextHash), PeerTip(nextOrd, nextHash), PeerTip(localOrd, localHash))
+    expect.same(PeerTip(nextOrd, nextHash).some, Download.chooseFollowerCatchUpTarget(localOrd, tips, queriedPeerCount = 3))
+  }
+
+  test("follower catch-up accepts the existing two-ordinal convergence tolerance") {
+    val tips = List(PeerTip(nextTwoOrd, nextTwoHash), PeerTip(nextTwoOrd, nextTwoHash), PeerTip(localOrd, localHash))
+    expect.same(PeerTip(nextTwoOrd, nextTwoHash).some, Download.chooseFollowerCatchUpTarget(localOrd, tips, queriedPeerCount = 3))
+  }
+
+  test("follower catch-up refuses a single uncorroborated peer even for a bounded forward gap") {
+    expect(Download.chooseFollowerCatchUpTarget(localOrd, List(PeerTip(nextOrd, nextHash)), queriedPeerCount = 1).isEmpty)
+  }
+
+  test("follower catch-up counts timed-out Ready peers against the corroboration denominator") {
+    val successfulTips = List(PeerTip(nextOrd, nextHash), PeerTip(nextOrd, nextHash))
+    expect(Download.chooseFollowerCatchUpTarget(localOrd, successfulTips, queriedPeerCount = 5).isEmpty)
+  }
+
+  test("follower catch-up rejects a three-ordinal gap") {
+    val tips = List(PeerTip(nextThreeOrd, nextThreeHash), PeerTip(nextThreeOrd, nextThreeHash))
+    expect(Download.chooseFollowerCatchUpTarget(localOrd, tips, queriedPeerCount = 2).isEmpty)
+  }
+
+  test("follower catch-up rejects disagreement without a strict majority") {
+    val tips = List(PeerTip(nextOrd, nextHash), PeerTip(nextTwoOrd, nextTwoHash))
+    expect(Download.chooseFollowerCatchUpTarget(localOrd, tips, queriedPeerCount = 2).isEmpty)
+  }
+
+  test("follower catch-up rejects a same-ordinal or rollback target") {
+    val same = List(PeerTip(localOrd, localHash), PeerTip(localOrd, localHash))
+    val behind = List(PeerTip(prevOrd, prevHash), PeerTip(prevOrd, prevHash))
+    expect(Download.chooseFollowerCatchUpTarget(localOrd, same, queriedPeerCount = 2).isEmpty) &&
+    expect(Download.chooseFollowerCatchUpTarget(localOrd, behind, queriedPeerCount = 2).isEmpty)
+  }
+
+  test("follower catch-up accepts only the exact corroborated ordinal and hash after download") {
+    val target = PeerTip(nextOrd, nextHash)
+
+    expect(Download.matchesFollowerCatchUpTarget(target, nextOrd, nextHash)) &&
+    expect(!Download.matchesFollowerCatchUpTarget(target, nextTwoOrd, nextHash)) &&
+    expect(!Download.matchesFollowerCatchUpTarget(target, nextOrd, altHashSameOrd))
+  }
+
+  test("a full-download timeout is statically eligible for recovery fallback") {
+    expect(Download.DownloadStartTimedOut.isInstanceOf[RecoveryFallbackEligible])
   }
 }
