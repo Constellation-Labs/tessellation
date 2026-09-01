@@ -7,13 +7,17 @@ on:
       - develop
       - hotfix/*
       - release/*
+
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Check scala code
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Java and scala
         env:

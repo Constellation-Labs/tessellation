@@ -1,7 +1,7 @@
 # Discord Announcements — IntegrationNet v4.1.0-rc.13
 
-Status: Draft — do not post until the release artifact, Snapshot Streaming artifact, operator contact,
-and restart window are confirmed.
+Status: Draft — post the advance notice after the release artifact, operator contact, and restart
+window are confirmed. Snapshot Streaming is a separate follow-up after the core deployment is stable.
 
 Prepared: 2026-09-01
 
@@ -20,10 +20,9 @@ approximately 2026-09-05 19:40 UTC. This timestamp is informational; the ordinal
 Before posting, replace every `<...>` field and confirm:
 
 - `v4.1.0-rc.13` is the exact published tag and all node artifacts come from that tag.
-- The cold-restart window still provides at least three days of advance notice.
-- The Snapshot Streaming version or digest is pinned to its reviewed artifact.
-- The active GL0 and metagraph operator rosters are complete.
-- All active metagraph stacks have been rebuilt against the exact v4.1 SDK.
+- The cold-restart window is still confirmed by the GL0 operators.
+- The operator support contact is filled in.
+- The notice makes each metagraph operator responsible for rebuilding and auditing its own stack.
 
 ## 1. Advance notice
 
@@ -44,6 +43,8 @@ Activation is estimated near Saturday, September 5 at 19:40 UTC. Chain pace can 
 
 This candidate also adds checked fee arithmetic and exact balance-adjustment authorization. Metagraph operators must rebuild and deploy the complete Currency L0, Currency L1, and Data L1 stack against the exact v4.1.0-rc.13 SDK. Audit `unappliedGlobalChangeOrdinals`; keep dormant or legacy stacks stopped.
 
+Snapshot Streaming will be updated separately after the core IntegrationNet deployment is confirmed stable.
+
 Candidate: https://github.com/Constellation-Labs/tessellation/pull/1566
 Guide: https://github.com/Constellation-Labs/tessellation/blob/v4.1.0-rc.13/docs/release/metagraph-upgrade-guide.md
 Support: <OPERATOR_CONTACT>
@@ -51,7 +52,7 @@ Support: <OPERATOR_CONTACT>
 
 ## 2. Cold-restart confirmation
 
-Post only after every required node and supporting service has been checked.
+Post only after the core GL0 fleet has been checked.
 
 ```text
 IntegrationNet v4.1.0-rc.13 restart complete
@@ -63,7 +64,7 @@ Activation boundaries remain:
 • Currency snapshot protocol 1.0.0: 5,923,000
 • security/accounting gates: 5,923,000
 
-Snapshot Streaming artifact: <SS_VERSION_OR_DIGEST>
+Snapshot Streaming status: <PENDING_OR_VERSION_DIGEST>
 Active GL0 census: <GL0_CENSUS_RESULT>
 Active metagraph census: <METAGRAPH_CENSUS_RESULT>
 

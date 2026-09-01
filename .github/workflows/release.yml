@@ -8,14 +8,13 @@ name: Release
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   build:
     name: Release
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
@@ -65,9 +64,9 @@ jobs:
         id: get_version
         run: |
           if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
-            VERSION=$(npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+')
+            VERSION=$(npx --yes commit-and-tag-version@13.1.2 --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+')
           elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
-            VERSION=$(npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)')
+            VERSION=$(npx --yes commit-and-tag-version@13.1.2 --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)')
           fi
           [ -n "$VERSION" ] || { echo "ERROR: Failed to extract version from commit-and-tag-version"; exit 1; }
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
@@ -76,9 +75,9 @@ jobs:
         id: get_changelog
         run: |
           if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
-            DRY_RUN=$(npx commit-and-tag-version --dry-run)
+            DRY_RUN=$(npx --yes commit-and-tag-version@13.1.2 --dry-run)
           elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
-            DRY_RUN=$(npx commit-and-tag-version --dry-run --prerelease rc)
+            DRY_RUN=$(npx --yes commit-and-tag-version@13.1.2 --dry-run --prerelease rc)
           fi
           {
             echo "CHANGELOG<<EOF"
@@ -90,16 +89,6 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-
-      - name: Create release tag
-        id: create_tag
-        env:
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
-        run: |
-          echo "Release-As: $VERSION" >> $GITHUB_STEP_SUMMARY
-          git tag -a v$VERSION -m "Release $VERSION"
-          git push origin v$VERSION
-          echo "release_tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Assembly 🚀
         run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
@@ -138,15 +127,25 @@ jobs:
           sudo umount ./ramdisk
           rm -rf ./ramdisk 
 
+      - name: Create release tag
+        id: create_tag
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          echo "Release-As: $VERSION" >> $GITHUB_STEP_SUMMARY
+          git tag -a v$VERSION -m "Release $VERSION"
+          git push origin v$VERSION
+          echo "release_tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         with:
           name: Release ${{ steps.get_version.outputs.VERSION }}
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           draft: true
-          prerelease: false
+          prerelease: ${{ github.ref_name == 'release/integrationnet' }}
           body: ${{ steps.get_changelog.outputs.CHANGELOG }}
           files: |
             ./cl-keytool.jar
@@ -154,10 +153,13 @@ jobs:
             ./cl-keytool.sig
             ./cl-wallet.jar
             ./cl-wallet.sha256
+            ./cl-wallet.sig
             ./cl-node.jar
             ./cl-node.sha256
+            ./cl-node.sig
             ./cl-dag-l1.jar
             ./cl-dag-l1.sha256
+            ./cl-dag-l1.sig
             ./mainnet/mainnet-seedlist
 
       - name: Trigger SDK publish
@@ -178,4 +180,3 @@ jobs:
             exit 1
           fi
           echo "Dispatched publish-sdk for $TAG"
-
