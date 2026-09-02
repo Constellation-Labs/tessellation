@@ -29,7 +29,8 @@ object Combiners {
 
   def combineUpdateUsage(
     signedUpdate: Signed[UsageUpdate],
-    acc: DataState[UsageUpdateState, UsageUpdateCalculatedState]
+    acc: DataState[UsageUpdateState, UsageUpdateCalculatedState],
+    metagraphId: Address
   ): DataState[UsageUpdateState, UsageUpdateCalculatedState] = {
     val update = signedUpdate.value
     val address = update.address
@@ -41,8 +42,14 @@ object Combiners {
     val updates: List[UsageUpdate] = update :: acc.onChain.updates
 
     val updatedSharedArtifacts = update match {
-      case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
-        acc.sharedArtifacts + SpendAction(NonEmptyList.of(spendTransactionA, spendTransactionB))
+      case UsageUpdateWithSpendTransaction(address, _, spendTransaction)
+          if spendTransaction.allowSpendRef.isDefined && spendTransaction.source === address =>
+        val metagraphPayout = spendTransaction.copy(
+          allowSpendRef = None,
+          currencyId = None,
+          source = metagraphId
+        )
+        acc.sharedArtifacts + SpendAction(NonEmptyList.of(spendTransaction, metagraphPayout))
       case UsageUpdateWithTokenUnlock(address, currencyId, tokenLockRef, unlockAmount, _) =>
         acc.sharedArtifacts + TokenUnlock(tokenLockRef, unlockAmount, currencyId.some, address)
       case _ => acc.sharedArtifacts

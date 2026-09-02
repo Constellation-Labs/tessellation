@@ -34,6 +34,7 @@ import com.my.project_template.shared_data.calculated_state.CalculatedStateServi
 import com.my.project_template.shared_data.deserializers.Deserializers
 import com.my.project_template.shared_data.serializers.Serializers
 import com.my.project_template.shared_data.types.Types._
+import com.my.project_template.shared_data.validations.SharedValidations
 import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
@@ -58,14 +59,23 @@ object Main
       override def validateData(
         state: DataState[UsageUpdateState, UsageUpdateCalculatedState],
         updates: NonEmptyList[Signed[UsageUpdate]]
-      )(implicit context: L0NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
-        IO.pure(().validNec)
+      )(implicit context: L0NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = {
+        implicit val sp: SecurityProvider[IO] = context.securityProvider
+        updates.toList.traverse { signed =>
+          SharedValidations.signerIsDeclaredAddress[IO](signed).map { signatureCheck =>
+            signatureCheck *> SharedValidations.spendLegsAreAllowanceBackedBySigner(signed.value)
+          }
+        }
+          .map(_.sequence.void)
+      }
 
       override def combine(
         state: DataState[UsageUpdateState, UsageUpdateCalculatedState],
         updates: List[Signed[UsageUpdate]]
       )(implicit context: L0NodeContext[IO]): IO[DataState[UsageUpdateState, UsageUpdateCalculatedState]] =
-        LifecycleSharedFunctions.combine[IO](state, updates)
+        context.getCurrencyId.flatMap { currencyId =>
+          LifecycleSharedFunctions.combine[IO](state, updates, currencyId.value)
+        }
 
       override def hashDataUpdate: Option[UsageUpdate => IO[Hash]] =
         Some((update: UsageUpdate) => serializeUpdate(update).map(Hash.fromBytes))
@@ -149,7 +159,7 @@ object Main
         A: Applicative[IO]
       ): IO[DataApplicationValidationErrorOr[Unit]] =
         dataUpdate.value match {
-          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
+          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
             ().validNec[DataApplicationValidationError].pure[IO]
           case _: UsageUpdateWithFee =>
             maybeFeeTransaction match {

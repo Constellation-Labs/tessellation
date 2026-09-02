@@ -22,6 +22,7 @@ import io.constellationnetwork.security.signature.Signed
 import com.my.project_template.shared_data.deserializers.Deserializers
 import com.my.project_template.shared_data.serializers.Serializers
 import com.my.project_template.shared_data.types.Types._
+import com.my.project_template.shared_data.validations.SharedValidations
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.NonNegLong
 import io.circe.{Decoder, Encoder}
@@ -42,7 +43,7 @@ object Main
       override def validateUpdate(
         update: UsageUpdate
       )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
-        ().validNec.pure[IO]
+        SharedValidations.spendLegsAreAllowanceBackedBySigner(update).pure[IO]
 
       override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] =
         HttpRoutes.empty
@@ -106,7 +107,7 @@ object Main
         gsOrdinal: SnapshotOrdinal
       )(update: UsageUpdate)(implicit context: L1NodeContext[IO], A: Applicative[IO]): IO[EstimatedFee] =
         update match {
-          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
+          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
             IO.pure(EstimatedFee(Amount(NonNegLong.MinValue), Address("DAG88C9WDSKH451sisyEP3hAkgCKn5DN72fuwjfQ")))
           case _: UsageUpdateWithFee => IO.pure(EstimatedFee(Amount(NonNegLong(100)), Address("DAG88C9WDSKH451sisyEP3hAkgCKn5DN72fuwjfQ")))
         }
@@ -118,7 +119,7 @@ object Main
         A: Applicative[IO]
       ): IO[DataApplicationValidationErrorOr[Unit]] =
         dataUpdate.value match {
-          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
+          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
             ().validNec[DataApplicationValidationError].pure[IO]
           case _: UsageUpdateWithFee =>
             maybeFeeTransaction match {
