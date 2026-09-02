@@ -12,6 +12,7 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
+import io.constellationnetwork.currency.l0.snapshot.storage.CurrencyFeeContextReceiptStorage
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -103,6 +104,7 @@ object CurrencySnapshotConsensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    feeContextReceiptStorage: CurrencyFeeContextReceiptStorage[F],
     getCurrencyAddress: F[Address],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     effectiveConsensusConfig: ConsensusConfig,
@@ -143,7 +145,9 @@ object CurrencySnapshotConsensus {
         maybeRewards,
         creator,
         validator,
-        maybeCustomArtifacts
+        maybeCustomArtifacts,
+        lastGlobalSnapshotStorage,
+        feeContextReceiptStorage
       )
 
       eventGossipClient = EventGossipClient.make[F, CurrencySnapshotEvent](client, session)
@@ -162,7 +166,8 @@ object CurrencySnapshotConsensus {
         leavingDelay,
         getGlobalSnapshotByOrdinal,
         seedlist,
-        eventMempool
+        eventMempool,
+        feeContextReceiptStorage
       )
 
       consensusStateCreator = CurrencySnapshotConsensusStateCreator.make[F](
@@ -225,7 +230,8 @@ object CurrencySnapshotConsensus {
         consensusClient,
         validateObservedOutcome,
         isAuthorizedForNextRound,
-        nextRoundAuthority
+        nextRoundAuthority,
+        feeContextReceiptStorage.abandonGeneration
       )
       routes = new synchronous.ConsensusRoutes(consensusStorage)
       handler = CurrencyConsensusHandler.make(consensusStorage, manager)

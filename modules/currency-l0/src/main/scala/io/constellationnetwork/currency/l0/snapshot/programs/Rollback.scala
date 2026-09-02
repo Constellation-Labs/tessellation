@@ -14,7 +14,11 @@ import io.constellationnetwork.currency.dataApplication.storage.{
 }
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnapshotCleanupStorage
-import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
+import io.constellationnetwork.currency.l0.snapshot.storage.{
+  CurrencyFeeContextReceiptStorage,
+  RecoverySyncPublicationStorage,
+  StateChannelBinaryOutboxStorage
+}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
@@ -61,6 +65,7 @@ object Rollback {
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     recoverySyncPublicationStorage: RecoverySyncPublicationStorage[F],
     stateChannelBinaryOutboxStorage: StateChannelBinaryOutboxStorage[F],
+    feeContextReceiptStorage: CurrencyFeeContextReceiptStorage[F],
     validateLeadBeforeMutation: (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo) => F[Unit]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLoggerFromName[F]("CurrencyRollback")
@@ -101,6 +106,7 @@ object Rollback {
       // never calls this.
       _ <- recoverySyncPublicationStorage.discardForCanonicalReplacement
       _ <- stateChannelBinaryOutboxStorage.discardAllForCanonicalReplacement
+      _ <- feeContextReceiptStorage.discardAllForCanonicalReplacement
 
       _ <- logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastIncremental.ordinal}")
       lastIncrementalHash <- lastIncremental.value.hash

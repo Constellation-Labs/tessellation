@@ -6,6 +6,7 @@ import cats.syntax.all._
 import scala.concurrent.duration.{Duration, _}
 
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusKind._
+import io.constellationnetwork.currency.l0.snapshot.storage.CurrencyFeeContextReceiptStorage
 import io.constellationnetwork.currency.l0.snapshot.synchronous._
 import io.constellationnetwork.currency.l0.snapshot.synchronous.update.UnlockConsensusUpdate
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
@@ -134,6 +135,21 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
         List(EventTrigger.some, none, TimeTrigger.some, EventTrigger.some)
       ) === EventTrigger
     )
+  }
+
+  test("a missing selected fee receipt fails before the consensus state can advance") {
+    val key = CurrencyFeeContextReceiptStorage.CurrencyFeeContextKey(SnapshotOrdinal.unsafeApply(42L), Hash("selected"))
+
+    for {
+      advanced <- Ref.of[IO, Boolean](false)
+      result <- CurrencySnapshotConsensusStateAdvancer
+        .requireFeeContextReceipt[IO](key, _ => none.pure[IO])
+        .flatMap(_ => advanced.set(true))
+        .attempt
+      didAdvance <- advanced.get
+    } yield
+      expect.same(Left(CurrencyFeeContextReceiptStorage.MissingCurrencyFeeContextReceipt(key)), result) &&
+        expect(!didAdvance)
   }
 
   private def lockedState(members: List[PeerId]): ConsensusState[Int, Option[Unit], Unit, Unit] =
@@ -360,7 +376,7 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
     )
   }
 
-  pureTest("a benign one-round peer lead preserves the installed immediate-successor attempt") {
+  pureTest("peer-ahead recovery preserves only current or still-authorized consensus generations") {
     val authority = Set(peer(1), peer(2), peer(3))
     val immediateSuccessor = Map(peer(2) -> 11.some, peer(3) -> 11.some)
     val beyondImmediateSuccessor = Map(peer(2) -> 12.some, peer(3) -> 12.some)
@@ -372,21 +388,31 @@ object CurrencySynchronousCommitteeSuite extends SimpleIOSuite {
       ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = true,
         currentGenerationFinished = false,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = false
       ),
       !ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = true,
         currentGenerationFinished = false,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = true
       ),
       !ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = false,
         currentGenerationFinished = false,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = false
       ),
       ConsensusManager.preservePeerAheadGeneration(
         hasCurrentGeneration = true,
         currentGenerationFinished = true,
+        currentOutcomeAuthorizesSelf = true,
+        authorityMajorityBeyondImmediateSuccessor = true
+      ),
+      !ConsensusManager.preservePeerAheadGeneration(
+        hasCurrentGeneration = true,
+        currentGenerationFinished = true,
+        currentOutcomeAuthorizesSelf = false,
         authorityMajorityBeyondImmediateSuccessor = true
       )
     )

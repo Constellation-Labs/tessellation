@@ -57,7 +57,7 @@ object Programs {
         services.consensus,
         peerSelect,
         storages.identifier,
-        dataApplication.map { case (da, _) => da },
+        dataApplication,
         services.globalL0.pullGlobalSnapshot,
         storages.snapshot,
         storages.currencySnapshotCleanup,
@@ -65,7 +65,8 @@ object Programs {
         storages.eventMempool,
         services.stateChannelBinarySender,
         storages.recoverySyncPublication,
-        storages.stateChannelBinaryOutbox
+        storages.stateChannelBinaryOutbox,
+        storages.currencyFeeContextReceipt
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -99,6 +100,7 @@ object Programs {
       storages.snapshot,
       storages.recoverySyncPublication,
       storages.stateChannelBinaryOutbox,
+      storages.currencyFeeContextReceipt,
       (snapshot, info) =>
         for {
           identifier <- storages.identifier.get

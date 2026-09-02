@@ -17,6 +17,7 @@ import io.constellationnetwork.currency.l0.infrastructure.snapshot.services.Curr
 import io.constellationnetwork.currency.l0.node.L0NodeContext
 import io.constellationnetwork.currency.l0.snapshot._
 import io.constellationnetwork.currency.l0.snapshot.services.{StateChannelBinarySender, StateChannelSnapshotService}
+import io.constellationnetwork.currency.l0.snapshot.storage.CurrencyFeeContextReceiptStorage.CurrencyFeeContextKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.domain.allowance_list.AllowanceListEntry
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
@@ -97,13 +98,23 @@ object Services {
       // Resolve process death between outbox preparation and local Currency commit before
       // the sender can restore anything. Exact artifact/state-proof readback is the only
       // promotion authority for both the ordinary queue and the special recovery receipt.
-      _ <- storages.recoverySyncPublication
+      recoveryPublication <- storages.recoverySyncPublication
         .reconcilePrepared(getDurableCurrencyArtifact)
       // A controlled rollback is itself the authority to replace the target/suffix. It
       // must be able to start even when an ordinary committed receipt belongs to that
       // superseded fork; Rollback prunes target-and-above before publication is enabled.
-      _ <- storages.stateChannelBinaryOutbox
+      ordinaryPublications <- storages.stateChannelBinaryOutbox
         .reconcilePrepared(getDurableCurrencyArtifact)
+      canonicalTerminal <- storages.snapshot.head.map(_.map(_._1.ordinal))
+      protectedFeeContextKeys =
+        ordinaryPublications
+          .map(entry => CurrencyFeeContextKey(entry.currencySnapshotOrdinal, entry.currencyArtifactHash))
+          .toSet ++ recoveryPublication
+          .map(entry => CurrencyFeeContextKey(entry.currencySnapshotOrdinal, entry.currencyArtifactHash))
+          .toSet
+      _ <- canonicalTerminal.traverse_(
+        storages.currencyFeeContextReceipt.sweepCompleted(_, protectedFeeContextKeys).void
+      )
 
       stateChannelBinarySender <- StateChannelBinarySender.make(
         storages.identifier,
@@ -151,6 +162,7 @@ object Services {
           storages.lastGlobalSnapshotSync,
           storages.recoverySyncPublication,
           storages.stateChannelBinaryOutbox,
+          storages.currencyFeeContextReceipt,
           feeCalculator,
           cfg.snapshotSize
         )
@@ -203,6 +215,7 @@ object Services {
           storages.cluster,
           storages.node,
           storages.lastSyncGlobalSnapshot,
+          storages.currencyFeeContextReceipt,
           // Services are allocated before run-genesis/run-validator/run-rollback
           // installs the metagraph identifier. Keep the read suspended until a
           // downloaded synchronous outcome needs to validate its context.

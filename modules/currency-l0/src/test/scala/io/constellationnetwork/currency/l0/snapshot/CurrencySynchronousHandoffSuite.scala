@@ -231,7 +231,8 @@ object CurrencySynchronousHandoffSuite extends SimpleIOSuite {
         client(responses),
         validateObservedOutcome,
         _.authority.contains(peerId(99)),
-        _.authority
+        _.authority,
+        _ => IO.unit
       )
     } yield Harness(storage, nodeStorage, manager)
 

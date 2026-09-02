@@ -13,6 +13,12 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.snapshot.schema._
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
+import io.constellationnetwork.currency.l0.snapshot.storage.CurrencyFeeContextReceiptStorage
+import io.constellationnetwork.currency.l0.snapshot.storage.CurrencyFeeContextReceiptStorage.{
+  CurrencyFeeContextKey,
+  CurrencyFeeContextReceipt,
+  MissingCurrencyFeeContextReceipt
+}
 import io.constellationnetwork.currency.l0.snapshot.synchronous.ConsensusStateUpdater._
 import io.constellationnetwork.currency.l0.snapshot.synchronous._
 import io.constellationnetwork.currency.l0.snapshot.synchronous.declaration._
@@ -59,6 +65,15 @@ object CurrencySnapshotConsensusStateAdvancer {
   private val hashOrdering: Ordering[Hash] = cats.Order[Hash].toOrdering
 
   private[snapshot] final case class CandidateSelection(candidates: Candidates, cursor: Option[PeerId])
+
+  /** Verify the selected proposal's durable fee authority before returning a state transition. Receipt cleanup remains in the retained
+    * effect, but a permanently missing receipt cannot commit CollectingSignatures and become an endlessly retried retained effect.
+    */
+  private[snapshot] def requireFeeContextReceipt[F[_]: cats.MonadThrow](
+    key: CurrencyFeeContextKey,
+    get: CurrencyFeeContextKey => F[Option[CurrencyFeeContextReceipt]]
+  ): F[Unit] =
+    get(key).flatMap(_.liftTo[F](MissingCurrencyFeeContextReceipt(key))).void
 
   private[snapshot] def boundedFacilityEventHashes(hashes: Iterable[Hash]): SortedSet[Hash] =
     SortedSet.from(hashes)(hashOrdering).take(EventMempool.DefaultSnapshotLimit)
@@ -138,7 +153,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     leavingDelay: FiniteDuration,
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     seedlist: Option[Set[SeedlistEntry]],
-    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey]
+    eventMempool: EventMempool[F, CurrencySnapshotEvent, CurrencyStateKey],
+    feeContextReceiptStorage: CurrencyFeeContextReceiptStorage[F]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -328,6 +344,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                               maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
                                 val acceptedEventHashes =
                                   if (majorityArtifactInfo.hash === proposalInfo.hash) ownAcceptedEventHashes else SortedSet.empty[Hash]
+                                val feeContextKey = CurrencyFeeContextKey(state.key, majorityArtifactInfo.hash)
                                 val newState =
                                   state.copy(status =
                                     identity[CurrencySnapshotStatus](
@@ -341,6 +358,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                                     )
                                   )
                                 for {
+                                  _ <- requireFeeContextReceipt(feeContextKey, feeContextReceiptStorage.get)
                                   parentHash <- parentArtifactHash(state)
                                   signature <- Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash)
                                   declaration = MajoritySignature(
@@ -348,7 +366,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                                     majorityArtifactInfo.hash,
                                     AttemptDomain(facilitatorsHash, parentHash, state.lastOutcome.finished.binaryArtifactHash)
                                   )
-                                  effect = consensusStorage.addSignature(selfId, state.key, declaration, declaration.domain.some) >>
+                                  effect = feeContextReceiptStorage
+                                    .retainSelected(feeContextKey)
+                                    .void >> consensusStorage.addSignature(selfId, state.key, declaration, declaration.domain.some) >>
                                     gossip.spread(ConsensusPeerDeclaration(state.key, declaration)) >>
                                     Metrics[F].recordDistribution(
                                       "dag_consensus_proposal_affinity",

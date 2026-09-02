@@ -18,6 +18,10 @@ trait DataApplicationClient[F[_]] {
   def getCalculatedState(
     implicit decoder: Decoder[DataCalculatedState]
   ): PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)]
+
+  def getCalculatedState(
+    ordinal: SnapshotOrdinal
+  )(implicit decoder: Decoder[DataCalculatedState]): PeerResponse[F, Option[DataCalculatedState]]
 }
 
 object DataApplicationClient {
@@ -27,5 +31,10 @@ object DataApplicationClient {
         implicit decoder: Decoder[DataCalculatedState]
       ): PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)] =
         PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)]("currency/state/calculated")(client, session)
+
+      def getCalculatedState(
+        ordinal: SnapshotOrdinal
+      )(implicit decoder: Decoder[DataCalculatedState]): PeerResponse[F, Option[DataCalculatedState]] =
+        PeerResponse[F, Option[DataCalculatedState]](s"currency/state/calculated/${ordinal.value.value}")(client, session)
     }
 }

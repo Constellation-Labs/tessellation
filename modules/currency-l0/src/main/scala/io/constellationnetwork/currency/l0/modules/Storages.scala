@@ -15,7 +15,11 @@ import io.constellationnetwork.currency.l0.domain.snapshot.storages.CurrencySnap
 import io.constellationnetwork.currency.l0.infrastructure.mempool.CurrencyEventMempool
 import io.constellationnetwork.currency.l0.infrastructure.snapshot.CurrencySnapshotCleanupStorage
 import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
-import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
+import io.constellationnetwork.currency.l0.snapshot.storage.{
+  CurrencyFeeContextReceiptStorage,
+  RecoverySyncPublicationStorage,
+  StateChannelBinaryOutboxStorage
+}
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, CurrencySnapshotStateProof}
 import io.constellationnetwork.json.JsonSerializer
@@ -94,6 +98,9 @@ object Storages {
           snapshotConfig.incrementalPersistedSnapshotPath / ".state-channel-binary-outbox"
         )
       }
+      currencyFeeContextReceiptStorage <- CurrencyFeeContextReceiptStorage.make[F](
+        snapshotConfig.incrementalPersistedSnapshotPath / ".currency-fee-context-receipts"
+      )
       currencySnapshotCleanupStorage = CurrencySnapshotCleanupStorage
         .make[F](
           snapshotLocalFileSystemStorage,
@@ -123,6 +130,7 @@ object Storages {
         lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
         recoverySyncPublication = recoverySyncPublicationStorage,
         stateChannelBinaryOutbox = stateChannelBinaryOutboxStorage,
+        currencyFeeContextReceipt = currencyFeeContextReceiptStorage,
         currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError,
         currencySnapshotCleanup = currencySnapshotCleanupStorage,
         combinedCurrencySnapshotCheckpointStorage = combinedCurrencySnapshotCheckpointStorage,
@@ -149,6 +157,7 @@ sealed abstract class Storages[F[_]] private (
   val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F],
   val recoverySyncPublication: RecoverySyncPublicationStorage[F],
   val stateChannelBinaryOutbox: StateChannelBinaryOutboxStorage[F],
+  val currencyFeeContextReceipt: CurrencyFeeContextReceiptStorage[F],
   val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason],
   val currencySnapshotCleanup: CurrencySnapshotCleanupStorage[F],
   val globalSnapshotsWithStateFileStorage: GlobalSnapshotsWithStateLocalFileSystemStorage[F],

@@ -2,13 +2,23 @@ package io.constellationnetwork.currency.l0.snapshot.services
 
 import java.security.KeyPair
 
-import cats.Monad
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.all._
+import cats.{Monad, MonadThrow}
 
-import io.constellationnetwork.currency.l0.snapshot.storage.{RecoverySyncPublicationStorage, StateChannelBinaryOutboxStorage}
+import io.constellationnetwork.currency.l0.snapshot.storage.CurrencyFeeContextReceiptStorage.{
+  CurrencyFeeContextKey,
+  CurrencyFeeContextReceipt,
+  MissingCurrencyFeeContextReceipt
+}
+import io.constellationnetwork.currency.l0.snapshot.storage.{
+  CurrencyFeeContextReceiptStorage,
+  RecoverySyncPublicationStorage,
+  StateChannelBinaryOutboxStorage
+}
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.{JsonSerializer, SizeCalculator}
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
@@ -85,9 +95,9 @@ trait StateChannelSnapshotService[F[_]] {
     implicit hasher: Hasher[F]
   ): F[Signed[StateChannelSnapshotBinary]]
 
-  /** Construct the common unsigned binary value used by flat synchronous Currency consensus. Fee inputs come only from the exact
-    * `globalSyncView` already signed into the Currency artifact. The historical GL0 value and state are hash-checked before their fee epoch
-    * and staking balance are used, so a moving node-local GL0 tip cannot change the binary hash.
+  /** Construct the common unsigned binary value used by flat synchronous Currency consensus. Fee inputs come only from the durable local
+    * receipt captured while the artifact's exact Global context was available and hash-checked. The receipt must match the selected
+    * artifact, signed Global view, and staking address before its balance is used.
     */
   def createSynchronousBinaryValue(
     snapshot: Signed[CurrencySnapshotArtifact],
@@ -98,6 +108,28 @@ trait StateChannelSnapshotService[F[_]] {
 }
 
 object StateChannelSnapshotService {
+
+  final case class CurrencyFeeContextReceiptMismatch(key: CurrencyFeeContextKey)
+      extends IllegalStateException(s"Currency fee-context receipt does not match selected artifact key=$key")
+
+  private[services] def loadFeeContextBalance[F[_]: MonadThrow](
+    key: CurrencyFeeContextKey,
+    expectedGlobalSyncView: GlobalSyncView,
+    expectedStakingAddress: Option[Address],
+    get: CurrencyFeeContextKey => F[Option[CurrencyFeeContextReceipt]]
+  ): F[Balance] =
+    get(key)
+      .flatMap(_.liftTo[F](MissingCurrencyFeeContextReceipt(key)))
+      .flatMap { receipt =>
+        CurrencyFeeContextReceiptMismatch(key)
+          .raiseError[F, Unit]
+          .whenA(
+            receipt.key =!= key ||
+              receipt.globalSyncView =!= expectedGlobalSyncView ||
+              receipt.stakingAddress =!= expectedStakingAddress
+          )
+          .as(receipt.stakingBalance)
+      }
 
   /** Sequence finalize-time effects only after the accepted snapshot is present in storage.
     *
@@ -127,6 +159,20 @@ object StateChannelSnapshotService {
       ensureRecoveryArtifactDurable >> markRecoveryLocallyCommitted >> markOrdinaryLocallyCommitted
     else markOrdinaryLocallyCommitted
 
+  private[services] def commitPreparedPublicationsAndReleaseFeeContext[F[_]: Monad](
+    recoveryRequired: Boolean,
+    ensureRecoveryArtifactDurable: F[Unit],
+    markRecoveryLocallyCommitted: F[Unit],
+    markOrdinaryLocallyCommitted: F[Unit],
+    releaseFeeContext: F[Unit]
+  ): F[Unit] =
+    commitPreparedPublications(
+      recoveryRequired,
+      ensureRecoveryArtifactDurable,
+      markRecoveryLocallyCommitted,
+      markOrdinaryLocallyCommitted
+    ) >> releaseFeeContext
+
   def make[F[_]: Async: JsonSerializer: SecurityProvider: Metrics](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
@@ -142,6 +188,7 @@ object StateChannelSnapshotService {
     lastSentGlobalSnapshotSyncStorage: LastSentGlobalSnapshotSyncStorage[F],
     recoverySyncPublicationStorage: RecoverySyncPublicationStorage[F],
     stateChannelBinaryOutboxStorage: StateChannelBinaryOutboxStorage[F],
+    feeContextReceiptStorage: CurrencyFeeContextReceiptStorage[F],
     feeCalculator: FeeCalculator[F],
     snapshotSizeConfig: SnapshotSizeConfig
   ): StateChannelSnapshotService[F] =
@@ -215,21 +262,12 @@ object StateChannelSnapshotService {
               s"Synchronous Currency artifact ordinal=${snapshot.ordinal} has no signed globalSyncView"
             )
           )
-          combined <- lastGlobalSnapshotStorage
-            .getCombined(globalSyncView.ordinal)
-            .flatMap(
-              _.liftTo[F](
-                new IllegalStateException(
-                  s"Exact GL0 fee context is unavailable ordinal=${globalSyncView.ordinal} currencyOrdinal=${snapshot.ordinal}"
-                )
-              )
-            )
-          (globalSnapshot, globalInfo) = combined
-          globalHash <- globalSnapshot.hash
-          _ <- Async[F].raiseUnless(globalHash === globalSyncView.hash)(
-            new IllegalStateException(
-              s"Exact GL0 fee context hash mismatch ordinal=${globalSyncView.ordinal} expected=${globalSyncView.hash} actual=$globalHash"
-            )
+          artifactHash <- snapshot.value.hash
+          stakingBalance <- StateChannelSnapshotService.loadFeeContextBalance(
+            CurrencyFeeContextKey(snapshot.ordinal, artifactHash),
+            globalSyncView,
+            stakingAddress,
+            feeContextReceiptStorage.get
           )
           bytes <- JsonSerializer[F].serialize(snapshot)
           fee <- calculateFeeFromBalance(
@@ -237,7 +275,7 @@ object StateChannelSnapshotService {
             bytes,
             snapshot.proofs.length,
             globalSyncView.ordinal.some,
-            stakingAddress.flatMap(globalInfo.balances.get).getOrElse(Balance.empty)
+            stakingBalance
           )
         } yield StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee)
 
@@ -351,11 +389,14 @@ object StateChannelSnapshotService {
         context: CurrencySnapshotInfo
       )(implicit hasher: Hasher[F]): F[Unit] =
         lastSentGlobalSnapshotSyncStorage.getRequiredRecoveryRefresh.flatMap { requiredRecovery =>
-          StateChannelSnapshotService.commitPreparedPublications(
+          StateChannelSnapshotService.commitPreparedPublicationsAndReleaseFeeContext(
             recoveryRequired = requiredRecovery.nonEmpty,
             ensureRecoveryArtifactDurable = ensureRecoveryArtifactDurable(signedArtifact, context),
             markRecoveryLocallyCommitted = recoverySyncPublicationStorage.markLocallyCommitted(binaryHash).void,
-            markOrdinaryLocallyCommitted = stateChannelBinaryOutboxStorage.markLocallyCommitted(binaryHash).void
+            markOrdinaryLocallyCommitted = stateChannelBinaryOutboxStorage.markLocallyCommitted(binaryHash).void,
+            releaseFeeContext = signedArtifact.value.hash.flatMap { artifactHash =>
+              feeContextReceiptStorage.complete(CurrencyFeeContextKey(signedArtifact.ordinal, artifactHash))
+            }
           )
         }
 

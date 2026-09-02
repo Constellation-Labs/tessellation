@@ -143,10 +143,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val allowSpendBlockRoutes = AllowSpendBlockRoutes[F](queues.l1Output)
   private val tokenLockBlockRoutes = TokenLockBlockRoutes[F](queues.l1Output)
 
-  private val dataBlockRoutes = maybeDataApplication.map { da =>
+  private val dataBlockRoutes = (maybeDataApplication, storages.calculatedStateStorage).mapN { (da, calculatedStateStorage) =>
     implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
     implicit val (d, e) = (DataTransaction.decoder, da.calculatedStateEncoder)
-    DataBlockRoutes[F](mkCell, da)
+    DataBlockRoutes[F](mkCell, da, calculatedStateStorage)
   }
 
   private val transactionValidationErrorRoutes =
