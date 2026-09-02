@@ -54,8 +54,7 @@ object Types {
   case class UsageUpdateWithSpendTransaction(
     address: Address,
     usage: NonNegLong,
-    spendTransactionA: SpendTransaction,
-    spendTransactionB: SpendTransaction
+    spendTransaction: SpendTransaction
   ) extends UsageUpdate
 
   @derive(decoder, encoder)

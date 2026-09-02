@@ -72,13 +72,13 @@ const transferTokensToCurrencyId = async (urls) => {
     await account.transferDag(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
     await metagraphClient.transfer(CONSTANTS.CURRENCY_TOKEN_ID, 1000, 0.1)
 
-    // Every spend bundle includes a metagraph self-spend leg (createMetagraphSpendTransaction) whose
+    // Every spend bundle makes the template's combine() emit a metagraph payout leg whose
     // allowSpendRef is null and currencyId is unset, so SpendActionValidator validates it against the
     // currencyId address's plain DAG balance (the allowSpendRef=None branch -> allBalances(None)(currencyId)).
     // The transfers above only submit; if the scenario continues before transferDag commits, that balance is
     // still 0 and the whole SpendAction is rejected with NotEnoughCurrencyIdBalance, dragging the otherwise
     // valid user leg down with it. Wait until the funding is reflected in the global snapshot balance before
-    // proceeding. getRandomAmounts().spend is at most 50, the most a metagraph leg can require.
+    // proceeding. The payout leg mirrors the user leg's amount, which is at most 150 (full allow spend).
     const minCurrencyIdDagBalance = 50
     // Progress-aware wait: the funding transferDag must commit into a global snapshot, but gl0 cadence can crawl
     // under heavy CI load, so a fixed attempt budget false-fails a slow-but-live chain. Keep polling while gl0
@@ -1152,26 +1152,20 @@ const createUserSpendTransaction = (allowSpendRef, sourceAddress, destinationAdd
     return tx;
 };
 
-const createMetagraphSpendTransaction = (destinationAddress) => {
-    const { spend: amount } = getRandomAmounts();
-    const tx = {
-        allowSpendRef: null,
-        currencyId: null,
-        amount,
-        source: CONSTANTS.CURRENCY_TOKEN_ID,
-        destination: destinationAddress
-    };
-    logWorkflow.info('Created metagraph spend transaction: ' + JSON.stringify({
-        type: 'Metagraph',
-        source: CONSTANTS.CURRENCY_TOKEN_ID,
-        destination: destinationAddress,
-        amount
-    }, null, 2));
-    return tx;
-};
+// The template's combine() authors the metagraph payout leg itself (C1 fix): it copies the
+// user leg's amount and destination, sets source to the metagraph address and allowSpendRef to
+// null. Users can no longer submit metagraph-balance legs. This reconstructs that expected leg
+// so the SpendAction recorded on the global layer can be matched exactly.
+const expectedMetagraphPayout = (userSpendTransaction) => ({
+    allowSpendRef: null,
+    currencyId: null,
+    amount: userSpendTransaction.amount,
+    source: CONSTANTS.CURRENCY_TOKEN_ID,
+    destination: userSpendTransaction.destination
+});
 
 const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount) => {
-    logWorkflow.info('Creating usage update with spend transactions: ' + JSON.stringify({
+    logWorkflow.info('Creating usage update with spend transaction: ' + JSON.stringify({
         sourceAddress,
         allowSpendRef,
         destinationAddress
@@ -1181,35 +1175,28 @@ const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, des
         UsageUpdateWithSpendTransaction: {
             address: sourceAddress,
             usage: 10,
-            spendTransactionA: createUserSpendTransaction(allowSpendRef, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount),
-            spendTransactionB: createMetagraphSpendTransaction(destinationAddress)
+            spendTransaction: createUserSpendTransaction(allowSpendRef, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount)
         }
     };
 
     logWorkflow.debug('Created complete usage update: ' + JSON.stringify({
         address: update.UsageUpdateWithSpendTransaction.address,
         usage: update.UsageUpdateWithSpendTransaction.usage,
-        spendTransactionA: {
+        spendTransaction: {
             type: 'User',
-            hasAllowSpendRef: !!update.UsageUpdateWithSpendTransaction.spendTransactionA.allowSpendRef,
-            destination: update.UsageUpdateWithSpendTransaction.spendTransactionA.destination,
-            amount: update.UsageUpdateWithSpendTransaction.spendTransactionA.amount
-        },
-        spendTransactionB: {
-            type: 'Metagraph',
-            hasAllowSpendRef: !!update.UsageUpdateWithSpendTransaction.spendTransactionB.allowSpendRef,
-            destination: update.UsageUpdateWithSpendTransaction.spendTransactionB.destination,
-            amount: update.UsageUpdateWithSpendTransaction.spendTransactionB.amount
+            hasAllowSpendRef: !!update.UsageUpdateWithSpendTransaction.spendTransaction.allowSpendRef,
+            destination: update.UsageUpdateWithSpendTransaction.spendTransaction.destination,
+            amount: update.UsageUpdateWithSpendTransaction.spendTransaction.amount
         }
     }, null, 2));
 
     return update;
 };
 
-const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount) => {
+const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount, sourcePrivateKey = PRIVATE_KEYS.key3) => {
     const dataUpdate = createUsageUpdateWithSpendTransaction(allowSpendHash, sourceAddress, destinationAddress, useFullAllowSpend, allowSpendAmount);
-    const account = dag4.createAccount(PRIVATE_KEYS.key3);
-    const proof = await generateProof(dataUpdate, PRIVATE_KEYS.key3, account, SerializerType.STANDARD);
+    const account = dag4.createAccount(sourcePrivateKey);
+    const proof = await generateProof(dataUpdate, sourcePrivateKey, account, SerializerType.STANDARD);
 
     const body = {
         value: dataUpdate,
@@ -1221,7 +1208,7 @@ const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress,
         const response = await axios.post(`${urls.dataL1Url}/data`, body);
         logWorkflow.success(`Response: ${JSON.stringify(response.data)}`);
 
-        const spendAmount = dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.amount;
+        const spendAmount = dataUpdate.UsageUpdateWithSpendTransaction.spendTransaction.amount;
 
         return { response: response.data, update: dataUpdate, spendAmount };
     } catch (e) {
@@ -1329,7 +1316,10 @@ const executeUnauthorizedSpendTransactionWorkflow = async () => {
             urls,
             hash,
             dag4.createAccount(PRIVATE_KEYS.key4).address,
-            dag4.createAccount(PRIVATE_KEYS.key4).address
+            dag4.createAccount(PRIVATE_KEYS.key4).address,
+            undefined,
+            undefined,
+            PRIVATE_KEYS.key4
         );
 
         await verifyUnauthorizedSpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
@@ -1393,7 +1383,10 @@ const executeUnauthorizedCurrencySpendTransactionWorkflow = async () => {
             urls,
             hash,
             dag4.createAccount(PRIVATE_KEYS.key4).address,
-            dag4.createAccount(PRIVATE_KEYS.key4).address
+            dag4.createAccount(PRIVATE_KEYS.key4).address,
+            undefined,
+            undefined,
+            PRIVATE_KEYS.key4
         );
 
         await verifyUnauthorizedSpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
@@ -1584,12 +1577,13 @@ const verifySpendActionInGlobalL0 = async (urls, metagraphId, update) => {
 
             logWorkflow.debug('Found spend actions: ' + JSON.stringify(spendActions, null, 2));
 
-            const {spendTransactionA, spendTransactionB} = update.UsageUpdateWithSpendTransaction;
+            const {spendTransaction} = update.UsageUpdateWithSpendTransaction;
+            const metagraphPayout = expectedMetagraphPayout(spendTransaction);
 
             const matchingSpend = spendActions.find(action => {
                 const [firstSpendTransaction, secondSpendTransaction] = action.spendTransactions || [];
 
-                return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransactionA) && sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(spendTransactionB);
+                return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransaction) && sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(metagraphPayout);
             });
 
             if (!matchingSpend) {
@@ -1609,7 +1603,8 @@ const verifySpendActionInGlobalL0 = async (urls, metagraphId, update) => {
 const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) => {
     logWorkflow.info('Verifying the double-use spend action is NOT accepted in global L0');
 
-    const { spendTransactionA, spendTransactionB } = update.UsageUpdateWithSpendTransaction;
+    const { spendTransaction } = update.UsageUpdateWithSpendTransaction;
+    const metagraphPayout = expectedMetagraphPayout(spendTransaction);
 
     // Negative check: a reused allow-spend must be rejected, so its SpendAction must never land in a committed
     // global snapshot. Absence cannot be proven in a single read, so watch a window of global ordinals; if the
@@ -1677,8 +1672,8 @@ const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) =>
 
         const wronglyAccepted = spendActions.find(action => {
             const [firstSpendTransaction, secondSpendTransaction] = action.spendTransactions || [];
-            return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransactionA) &&
-                sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(spendTransactionB);
+            return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransaction) &&
+                sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(metagraphPayout);
         });
 
         if (wronglyAccepted) {
@@ -1825,38 +1820,31 @@ const executeInvalidCurrencyDestinationWorkflow = async () => {
 
 const createExceedingAmountSpendTransaction = (allowSpendHash, sourceAddress, destinationAddress, allowSpendAmount) => {
     const exceedingAmount = allowSpendAmount + 100;
-    
+
     logWorkflow.info(`Creating spend transaction with amount (${exceedingAmount}) exceeding allow spend amount (${allowSpendAmount})`);
-    
+
     const dataUpdate = {
         UsageUpdateWithSpendTransaction: {
             address: sourceAddress,
             usage: 10,
-            spendTransactionA: {
+            spendTransaction: {
                 allowSpendRef: allowSpendHash,
-                currency: null,
+                currencyId: null,
                 amount: exceedingAmount,
                 source: sourceAddress,
                 destination: destinationAddress
-            },
-            spendTransactionB: createMetagraphSpendTransaction(destinationAddress)
+            }
         }
     };
 
     logWorkflow.debug('Created exceeding amount spend transaction: ' + JSON.stringify({
         address: dataUpdate.UsageUpdateWithSpendTransaction.address,
         usage: dataUpdate.UsageUpdateWithSpendTransaction.usage,
-        spendTransactionA: {
+        spendTransaction: {
             type: 'User',
-            hasAllowSpendRef: !!dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.allowSpendRef,
-            destination: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.destination,
-            amount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.amount
-        },
-        spendTransactionB: {
-            type: 'Metagraph',
-            hasAllowSpendRef: !!dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionB.allowSpendRef,
-            destination: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionB.destination,
-            amount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionB.amount
+            hasAllowSpendRef: !!dataUpdate.UsageUpdateWithSpendTransaction.spendTransaction.allowSpendRef,
+            destination: dataUpdate.UsageUpdateWithSpendTransaction.spendTransaction.destination,
+            amount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransaction.amount
         }
     }, null, 2));
 
@@ -1877,10 +1865,10 @@ const sendExceedingAmountSpendTransaction = async (urls, allowSpendHash, sourceA
         logWorkflow.info(`Sending data transaction with exceeding spend amount: ${JSON.stringify(body)}`);
         const response = await axios.post(`${urls.dataL1Url}/data`, body);
         logWorkflow.success(`Transaction accepted at endpoint level: ${JSON.stringify(response.data)}`);
-        return { 
-            response: response.data, 
-            update: dataUpdate, 
-            spendAmount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.amount
+        return {
+            response: response.data,
+            update: dataUpdate,
+            spendAmount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransaction.amount
         };
     } catch (error) {
         logWorkflow.error('Error sending data transaction with exceeding spend amount', error);
