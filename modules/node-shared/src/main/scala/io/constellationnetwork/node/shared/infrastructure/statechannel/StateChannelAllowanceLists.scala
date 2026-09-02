@@ -119,7 +119,7 @@ object StateChannelAllowanceLists {
               "1391276cd637be03331ae5914a5a063c549fbcc6515b140d1ccc0af7c67631804991ba0dae4c1d95b84f77dc812dd71ed2a1817e50c92b722e9b8182683366ed"
             ),
           // BioFi
-          Address("DAG2JaVh5yYiPCGLLEFi6tfkKk77WA4FzivVdBek") ->
+          Address("DAG7rJcErad85KV3GzNNYa727vW5c555XksBx9Hv") ->
             NonEmptySet.of(
               "9002807a99139d207c7b20d3065f72dbf77c8563e1a2e6d2969f64928c6082dbacfb399d67bacbc62a7997fc69b8dd5c035e3acf6ed696da7f4cebee5f76cdc8",
               "866d3c60d9ea2ed7b3db2a04ba736ae8b00a0c20e98e270ddda3c73602f348ef4ce5d65e55daa52221310ebb25b826b1de495664917a3f510f6b82226d12ffe7",
