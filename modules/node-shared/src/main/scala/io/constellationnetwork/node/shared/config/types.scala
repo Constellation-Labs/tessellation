@@ -41,7 +41,8 @@ object types {
     fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal],
     fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   )
 
   case class MetagraphsSyncConfig(
