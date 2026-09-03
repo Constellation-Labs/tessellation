@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.http.routes
 
+import cats.data.NonEmptySet
 import cats.effect._
 import cats.effect.std.Semaphore
 import cats.syntax.all._
@@ -28,6 +29,7 @@ import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, Snapshot
 import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.SignatureProof
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
@@ -654,52 +656,64 @@ trait CachedCombinedResponse[F[_], S <: Snapshot, SI <: SnapshotInfo[_]] {
 }
 
 object CachedCombinedResponse {
+  private type CacheIdentity = (SnapshotOrdinal, NonEmptySet[SignatureProof])
+
   private val printer: Printer = Printer.noSpaces.copy(dropNullValues = true)
 
   def make[F[_]: Async, S <: Snapshot: Encoder, SI <: SnapshotInfo[_]: Encoder]: F[CachedCombinedResponse[F, S, SI]] =
-    Ref[F].of(Option.empty[(SnapshotOrdinal, Deferred[F, Either[Throwable, Array[Byte]]])]).map { ref =>
-      new CachedCombinedResponse[F, S, SI] {
-        private def serialize(snapshot: Signed[S], state: SI): F[Array[Byte]] =
-          Async[F].blocking {
-            val baos = new java.io.ByteArrayOutputStream()
-            val writer = new java.io.OutputStreamWriter(baos, "UTF-8")
+    Ref[F]
+      .of(Option.empty[(CacheIdentity, Deferred[F, Either[Throwable, Array[Byte]]])])
+      .map { ref =>
+        new CachedCombinedResponse[F, S, SI] {
+          private def serialize(snapshot: Signed[S], state: SI): F[Array[Byte]] =
+            Async[F].blocking {
+              val baos = new java.io.ByteArrayOutputStream()
+              val writer = new java.io.OutputStreamWriter(baos, "UTF-8")
 
-            writer.append('[')
-            Encoder[Signed[S]] match {
-              case sce: StreamingCollectionEncoder[Signed[S]] =>
-                sce.streamEncode(snapshot, printer, writer)
-              case enc =>
-                printer.unsafePrintToAppendable(enc(snapshot), writer)
-            }
-            writer.append(',')
-            Encoder[SI] match {
-              case sce: StreamingCollectionEncoder[SI] =>
-                sce.streamEncode(state, printer, writer)
-              case enc =>
-                printer.unsafePrintToAppendable(enc(state), writer)
-            }
-            writer.append(']')
-            writer.flush()
-            baos.toByteArray
-          }
-
-        def get(currentOrdinal: SnapshotOrdinal, snapshot: Signed[S], state: SI): F[Array[Byte]] =
-          ref.get.flatMap {
-            case Some((ord, existing)) if ord === currentOrdinal =>
-              existing.get.flatMap(Async[F].fromEither)
-            case _ =>
-              Deferred[F, Either[Throwable, Array[Byte]]].flatMap { newDef =>
-                ref.modify {
-                  case Some((ord, existing)) if ord === currentOrdinal =>
-                    (Some((ord, existing)), existing.get.flatMap(Async[F].fromEither))
-                  case _ =>
-                    (
-                      Some((currentOrdinal, newDef)),
-                      serialize(snapshot, state).attempt.flatTap(newDef.complete).flatMap(Async[F].fromEither)
-                    )
-                }.flatten
+              writer.append('[')
+              Encoder[Signed[S]] match {
+                case sce: StreamingCollectionEncoder[Signed[S]] =>
+                  sce.streamEncode(snapshot, printer, writer)
+                case enc =>
+                  printer.unsafePrintToAppendable(enc(snapshot), writer)
               }
-          }
+              writer.append(',')
+              Encoder[SI] match {
+                case sce: StreamingCollectionEncoder[SI] =>
+                  sce.streamEncode(state, printer, writer)
+                case enc =>
+                  printer.unsafePrintToAppendable(enc(state), writer)
+              }
+              writer.append(']')
+              writer.flush()
+              baos.toByteArray
+            }
+
+          def get(currentOrdinal: SnapshotOrdinal, snapshot: Signed[S], state: SI): F[Array[Byte]] =
+            // Ordinal alone is not an exact cache identity. Recovery can replace a
+            // same-ordinal canonical artifact with a different signed envelope. The
+            // proof set is bound to the artifact value and distinguishes that replacement,
+            // preventing this live endpoint from serving bytes cached before rollback.
+            // The state is committed by the artifact's state proof.
+            {
+              val currentIdentity = currentOrdinal -> snapshot.proofs
+              ref.get.flatMap {
+                case Some((identity, existing)) if identity === currentIdentity =>
+                  existing.get.flatMap(Async[F].fromEither)
+                case _ =>
+                  Deferred[F, Either[Throwable, Array[Byte]]].flatMap { newDef =>
+                    ref.modify {
+                      case Some((identity, existing)) if identity === currentIdentity =>
+                        (Some((identity, existing)), existing.get.flatMap(Async[F].fromEither))
+                      case _ =>
+                        (
+                          Some((currentIdentity, newDef)),
+                          serialize(snapshot, state).attempt.flatTap(newDef.complete).flatMap(Async[F].fromEither)
+                        )
+                    }.flatten
+                  }
+              }
+            }
+        }
       }
-    }
 }

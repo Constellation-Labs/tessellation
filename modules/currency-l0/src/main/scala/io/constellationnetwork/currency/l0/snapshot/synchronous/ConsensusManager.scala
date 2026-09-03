@@ -128,15 +128,18 @@ object ConsensusManager {
 
   /** Preserve an installed immediate-successor attempt while the authority is only one finalized round ahead. That observation is
     * compatible with ordinary gossip/finalization lag because the local member may already have contributed the signatures that completed
-    * the remote outcome. A strict authority majority beyond the immediate successor proves the local attempt is obsolete and permits
-    * re-download. With no installed attempt, even a one-round lead is sufficient to re-anchor the local node.
+    * the remote outcome. A finished generation remains protected only if its outcome authorizes this node for the next round. A strict
+    * authority majority beyond the immediate successor proves any other local attempt is obsolete and permits re-download. With no
+    * installed attempt, even a one-round lead is sufficient to re-anchor the local node.
     */
   private[snapshot] def preservePeerAheadGeneration(
     hasCurrentGeneration: Boolean,
     currentGenerationFinished: Boolean,
+    currentOutcomeAuthorizesSelf: Boolean,
     authorityMajorityBeyondImmediateSuccessor: Boolean
   ): Boolean =
-    currentGenerationFinished || (hasCurrentGeneration && !authorityMajorityBeyondImmediateSuccessor)
+    (currentGenerationFinished && currentOutcomeAuthorizesSelf) ||
+      (hasCurrentGeneration && !authorityMajorityBeyondImmediateSuccessor)
 
   def make[F[_]: Async: Metrics, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq, Status: Eq, Outcome: Eq, Kind](
     selfId: PeerId,
@@ -152,7 +155,8 @@ object ConsensusManager {
     consensusClient: ConsensusClient[F, Key, Outcome],
     validateObservedOutcome: (Outcome, Key, Signed[Artifact], Context) => F[Boolean],
     isAuthorizedForNextRound: Outcome => Boolean,
-    nextRoundAuthority: Outcome => Set[PeerId]
+    nextRoundAuthority: Outcome => Set[PeerId],
+    onGenerationAbandoned: Key => F[Unit]
   )(
     implicit S: Supervisor[F],
     _artifact: Lens[Outcome, Signed[Artifact]],
@@ -210,15 +214,21 @@ object ConsensusManager {
                 Applicative[F].whenA(authorityMajorityAhead) {
                   consensusStorage
                     .abandonGenerationIfCurrent(localKey) { maybeState =>
+                      val maybeFinishedOutcome = maybeState.flatMap(
+                        consensusStateAdvancer.getConsensusOutcome(_).map { case (_, outcome) => outcome }
+                      )
+
                       preservePeerAheadGeneration(
                         hasCurrentGeneration = maybeState.nonEmpty,
-                        currentGenerationFinished = maybeState.exists(state => consensusStateAdvancer.getConsensusOutcome(state).nonEmpty),
+                        currentGenerationFinished = maybeFinishedOutcome.nonEmpty,
+                        currentOutcomeAuthorizesSelf = maybeFinishedOutcome.exists(isAuthorizedForNextRound),
                         authorityMajorityBeyondImmediateSuccessor = authorityMajorityBeyondImmediateSuccessor
                       )
                     }
                     .flatMap { abandoned =>
                       Applicative[F].whenA(abandoned) {
-                        Metrics[F].incrementCounter("dag_currency_consensus_peer_ahead_reanchor_total") >>
+                        onGenerationAbandoned(localKey.next) >>
+                          Metrics[F].incrementCounter("dag_currency_consensus_peer_ahead_reanchor_total") >>
                           logger.warn(
                             s"A strict majority of the frozen Currency authority is ahead; re-entering download {localKey=${localKey.show}}"
                           ) >>
@@ -397,8 +407,9 @@ object ConsensusManager {
                       // No outcome is the normal path when this validator registered but was
                       // not selected in the bounded candidate set. Clear the observation and
                       // re-download so it can register at a later key.
-                      consensusStorage.resetInitialConsensusOutcome(key).void >>
-                        consensusStorage.clearObservationKey >>
+                      consensusStorage.resetInitialConsensusOutcome(key).flatMap { reset =>
+                        onGenerationAbandoned(key.next).whenA(reset)
+                      } >> consensusStorage.clearObservationKey >>
                         nodeStorage
                           .tryModifyStateGetResult(Set[NodeState](Observing, WaitingForReady), WaitingForDownload)
                           .flatMap {
@@ -450,7 +461,8 @@ object ConsensusManager {
         for {
           maybeLastOutcome <- consensusStorage.clearAndGetLastConsensusOutcome
           _ <- maybeLastOutcome.traverse { lastOutcome =>
-            consensusStateRemover.withdrawFromConsensus(_key.get(lastOutcome).next)
+            val generation = _key.get(lastOutcome).next
+            consensusStateRemover.withdrawFromConsensus(generation) >> onGenerationAbandoned(generation)
           }
           _ <- consensusStorage.clearObservationKey
         } yield ()

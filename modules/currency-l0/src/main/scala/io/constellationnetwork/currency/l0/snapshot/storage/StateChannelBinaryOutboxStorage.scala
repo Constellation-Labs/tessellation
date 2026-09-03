@@ -17,6 +17,7 @@ import derevo.cats.eqv
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import fs2.io.file.{Files, Flags, Path}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /** Crash-safe local outbox for every finalized Currency state-channel binary.
   *
@@ -149,6 +150,8 @@ object StateChannelBinaryOutboxStorage {
   )(
     implicit hasher: io.constellationnetwork.security.Hasher[F]
   ): F[StateChannelBinaryOutboxStorage[F]] = {
+    val logger = Slf4jLogger.getLoggerFromName[F]("StateChannelBinaryOutboxStorage")
+
     def validate(entry: Entry): F[Entry] =
       if (entry.encodingVersion =!= CurrentEncodingVersion)
         UnsupportedEncodingVersion(entry.currencySnapshotOrdinal, entry.encodingVersion).raiseError[F, Entry]
@@ -376,26 +379,39 @@ object StateChannelBinaryOutboxStorage {
                   case _ =>
                     val ordered = entries.values.toList.sortBy(_.currencySnapshotOrdinal)
                     val firstPending = ordered.find(_.currencySnapshotOrdinal > currencyOrdinal)
+                    val missingCanonicalBridge = firstPending.exists(_.currencySnapshotOrdinal > currencyOrdinal.next)
                     val pendingIsAttached = firstPending.forall(entry =>
                       entry.currencySnapshotOrdinal === currencyOrdinal.next && entry.binary.value.lastSnapshotHash === binaryHash
                     )
                     val firstPendingHash = firstPending.fold(binaryHash)(_.binary.value.lastSnapshotHash)
 
-                    Async[F].raiseUnless(pendingIsAttached)(
-                      CanonicalTipMismatch(
-                        firstPending.fold(currencyOrdinal.next)(_.currencySnapshotOrdinal),
-                        binaryHash,
-                        firstPendingHash
-                      )
-                    ) >> {
-                      val confirmed = ordered
-                        .filter(entry =>
-                          entry.locallyCommitted &&
-                            (entry.currencySnapshotOrdinal < currencyOrdinal ||
-                              (entry.currencySnapshotOrdinal === currencyOrdinal && entry.binaryHash === binaryHash))
+                    // A downloaded validator intentionally discards its local publication copies. It can therefore have a valid pending
+                    // binary N+1 while its local GL0 view still confirms only N-1. The missing binary N may already be queued at GL0 and
+                    // will close the gap in a later Global snapshot. Keep the suffix pending until the canonical tip reaches N; then the
+                    // ordinary direct-parent or same-ordinal hash check below can prove it. A direct conflicting successor still fails.
+                    if (missingCanonicalBridge)
+                      logger
+                        .info(
+                          s"Waiting for canonical Currency bridge: canonicalTipOrdinal=${currencyOrdinal.show} " +
+                            s"firstPendingOrdinal=${firstPending.fold("none")(_.currencySnapshotOrdinal.show)}"
                         )
-                      confirmed.traverse_(delete).as(confirmed)
-                    }
+                        .as(List.empty[Entry])
+                    else
+                      Async[F].raiseUnless(pendingIsAttached)(
+                        CanonicalTipMismatch(
+                          firstPending.fold(currencyOrdinal.next)(_.currencySnapshotOrdinal),
+                          binaryHash,
+                          firstPendingHash
+                        )
+                      ) >> {
+                        val confirmed = ordered
+                          .filter(entry =>
+                            entry.locallyCommitted &&
+                              (entry.currencySnapshotOrdinal < currencyOrdinal ||
+                                (entry.currencySnapshotOrdinal === currencyOrdinal && entry.binaryHash === binaryHash))
+                          )
+                        confirmed.traverse_(delete).as(confirmed)
+                      }
                 }
               }
             }

@@ -41,6 +41,9 @@ sealed abstract class PeerDiscovery[F[_]: Async] private (
 
   def getPeers: F[Set[Peer]] = cache.get
 
+  def markAttemptsFinished(peerIds: Set[PeerId]): F[Unit] =
+    cache.update(_.filterNot(peer => peerIds.contains(peer.id)))
+
   def discoverFrom(peer: Peer): F[Set[Peer]] =
     for {
       peersQueue <- cache.updateAndGet(_ - peer)

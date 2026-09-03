@@ -79,6 +79,19 @@ object CurrencyL0App {
     */
   private[currency] def rollbackBootstrapFacilitators(nodeId: PeerId): List[PeerId] =
     List(nodeId)
+
+  private[currency] def selectLocalChainTip(
+    checkpoint: Option[ChainTip],
+    snapshot: Option[ChainTip]
+  ): Option[ChainTip] =
+    (checkpoint, snapshot) match {
+      case (None, value)                                                         => value
+      case (value, None)                                                         => value
+      case (Some(left), Some(right)) if left.ordinal > right.ordinal             => left.some
+      case (Some(left), Some(right)) if right.ordinal > left.ordinal             => right.some
+      case (Some(left), Some(right)) if left.snapshotHash === right.snapshotHash => left.some
+      case _                                                                     => none[ChainTip]
+    }
 }
 
 abstract class CurrencyL0App(
@@ -232,23 +245,23 @@ abstract class CurrencyL0App(
 
       // Chain tip getter used by IHave HTTP endpoint (EventGossipRoutes, passed to HttpApi at line 231).
       // Intentionally NOT passed to EventGossipDaemon -- fork detection is deferred for currency-l0.
-      // The combined-checkpoint store is the primary source, but it is only written on the production
-      // path, so a node that stays caught up by FOLLOWING/downloading (e.g. a 2nd metagraph-L0 node
-      // before it is promoted) has an empty checkpoint even while its currency chain head advances
-      // every round. Without an advertised tip the B2 admission gate never witnesses it as at-tip and
-      // never promotes it to facilitator -- a deadlock for the joining node. Fall back to the latest
-      // currency snapshot we hold so a caught-up follower becomes a witnessable admission candidate.
-      getLocalChainTip = storages.combinedCurrencySnapshotCheckpointStorage.getLatestCheckpointInfo.flatMap { info =>
-        if (info.hash =!= Hash.empty) ChainTip(info.ordinal, info.hash).some.pure[IO]
-        else
-          storages.snapshot.headSnapshot.flatMap {
-            _.flatTraverse { signed =>
-              hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
-                signed.toHashed[IO].map(hashed => ChainTip(signed.value.ordinal, hashed.hash).some)
-              }
+      // The periodic combined checkpoint can trail the signed Currency snapshot head by several
+      // rounds. Advertise the newer trustworthy local position so admission does not mistake a
+      // caught-up validator for a lagging one. Equal ordinals with different hashes are a local
+      // contradiction and fail closed instead of choosing one store silently.
+      getLocalChainTip = for {
+        checkpointInfo <- storages.combinedCurrencySnapshotCheckpointStorage.getLatestCheckpointInfo
+        checkpointTip =
+          if (checkpointInfo.hash =!= Hash.empty) ChainTip(checkpointInfo.ordinal, checkpointInfo.hash).some
+          else none[ChainTip]
+        snapshotTip <- storages.snapshot.headSnapshot.flatMap {
+          case None => none[ChainTip].pure[IO]
+          case Some(signed) =>
+            hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+              signed.toHashed[IO].map(hashed => ChainTip(signed.value.ordinal, hashed.hash).some)
             }
-          }
-      }
+        }
+      } yield CurrencyL0App.selectLocalChainTip(checkpointTip, snapshotTip)
 
       eventGossipDaemon <- {
         implicit val dtEncoder: CirceEncoder[DataTransaction] = DataTransactionCodecs.encoder(dataApplicationService)
