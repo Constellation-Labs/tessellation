@@ -30,21 +30,22 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
   def read(fileName: String): F[Option[A]] =
     readBytes(fileName).flatMap {
       _.flatTraverse { bytes =>
-        JsonSerializer[F].deserialize[A](bytes).flatMap { result =>
-          result.fold(
-            jsonErr =>
-              logger.warn(
-                s"Failed to deserialize $fileName - JSON error: ${jsonErr.getMessage}, using the fallback deserializer..."
-              ) >>
-                (deserializeFallback(bytes) match {
-                  case Right(value) => value.some.pure[F]
-                  case Left(fallbackErr) =>
-                    logger.warn(
-                      s"Failed to deserialize $fileName - Fallback error: ${fallbackErr.getMessage}"
-                    ) >> none[A].pure[F]
-                }),
-            value => value.some.pure[F]
-          )
+        def useFallback(jsonErr: Throwable): F[Option[A]] =
+          logger.warn(
+            s"Failed to deserialize $fileName - JSON error: ${jsonErr.getMessage}, using the fallback deserializer..."
+          ) >>
+            F.delay(deserializeFallback(bytes)).attempt.map(_.flatten).flatMap {
+              case Right(value) => value.some.pure[F]
+              case Left(fallbackErr) =>
+                logger.warn(
+                  s"Failed to deserialize $fileName - Fallback error: ${fallbackErr.getMessage}"
+                ) >> none[A].pure[F]
+            }
+
+        JsonSerializer[F].deserialize[A](bytes).attempt.flatMap {
+          case Right(Right(value)) => value.some.pure[F]
+          case Right(Left(error))  => useFallback(error)
+          case Left(error)         => useFallback(error)
         }
       }
     }
