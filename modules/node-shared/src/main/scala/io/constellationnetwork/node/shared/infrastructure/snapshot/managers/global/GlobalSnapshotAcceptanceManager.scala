@@ -980,7 +980,9 @@ object GlobalSnapshotAcceptanceManager {
               .generateTokenUnlocks(
                 initialData.existingStakes.expired,
                 acceptedGlobalTokenLocks,
-                globalActiveTokenLocksByRef
+                globalActiveTokenLocksByRef,
+                ordinal >= fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(environment),
+                epochProgress.some
               )
               .leftMap(error => SnapshotFailure.TokenUnlockGenerationFailed(error.toString))
               .liftTo[F]

@@ -834,6 +834,200 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       ) // Should have 2 unlocks
   }
 
+  test("generateTokenUnlocks - preserves duplicate legacy unlocks but emits one effective lock after activation") { res =>
+    implicit val (jsonHasher, sp, mptStore, js) = res
+    val acceptanceManager = TokenLockStateManager.make[IO](mptStore)
+
+    for {
+      kp <- KeyPairGenerator.makeKeyPair[IO]
+      otherKp <- KeyPairGenerator.makeKeyPair[IO]
+      source <- kp.getPublic.toId.toAddress
+      staleMapKey <- otherKp.getPublic.toId.toAddress
+      lock = TokenLock(
+        source,
+        TokenLockAmount(100L),
+        TokenLockFee(0L),
+        TokenLockReference.empty,
+        none,
+        none,
+        none
+      )
+      signedLock <- Signed.forAsyncHasher(lock, kp)
+      hashedLock <- signedLock.toHashed
+      separateLock = lock.copy(amount = TokenLockAmount(50L))
+      signedSeparateLock <- Signed.forAsyncHasher(separateLock, kp)
+      hashedSeparateLock <- signedSeparateLock.toHashed
+      stake1 = Signed(
+        UpdateDelegatedStake.Create(source, PeerId(Hex("01")), DelegatedStakeAmount(100L), DelegatedStakeFee(0L), Hash("old-1")),
+        testProofs
+      )
+      stake2 = Signed(
+        UpdateDelegatedStake.Create(source, PeerId(Hex("02")), DelegatedStakeAmount(100L), DelegatedStakeFee(0L), Hash("old-2")),
+        testProofs
+      )
+      stake3 = Signed(
+        UpdateDelegatedStake.Create(source, PeerId(Hex("03")), DelegatedStakeAmount(50L), DelegatedStakeFee(0L), Hash("old-3")),
+        testProofs
+      )
+      withdrawal1 = PendingDelegatedStakeWithdrawal(
+        stake1,
+        Amount(10L),
+        SnapshotOrdinal(1L),
+        EpochProgress(1L),
+        hashedLock.hash.some,
+        DelegatedStakeAmount(100L).some
+      )
+      withdrawal2 = PendingDelegatedStakeWithdrawal(
+        stake2,
+        Amount(20L),
+        SnapshotOrdinal(2L),
+        EpochProgress(2L),
+        hashedLock.hash.some,
+        DelegatedStakeAmount(100L).some
+      )
+      withdrawal3 = PendingDelegatedStakeWithdrawal(
+        stake3,
+        Amount(30L),
+        SnapshotOrdinal(3L),
+        EpochProgress(3L),
+        hashedSeparateLock.hash.some,
+        DelegatedStakeAmount(50L).some
+      )
+      expired = SortedMap(staleMapKey -> SortedSet(withdrawal1, withdrawal2, withdrawal3))
+      locksByRef = Map(hashedLock.hash -> signedLock, hashedSeparateLock.hash -> signedSeparateLock)
+      legacy = acceptanceManager.generateTokenUnlocks(expired, List.empty, locksByRef)
+      hardened = acceptanceManager.generateTokenUnlocks(
+        expired,
+        List.empty,
+        locksByRef,
+        enforceUniqueTokenLockRefs = true,
+        currentEpochProgress = EpochProgress(10L).some
+      )
+    } yield
+      expect.all(
+        legacy.toOption.flatMap(_.get(staleMapKey)).exists(_.size == 3),
+        hardened.toOption.flatMap(_.get(source)).exists(_.size == 2),
+        hardened.toOption.exists(!_.contains(staleMapKey)),
+        hardened.toOption.toList.flatMap(_.values).flatten.map(_.tokenLockRef).toSet == Set(hashedLock.hash, hashedSeparateLock.hash)
+      )
+  }
+
+  test("generateTokenUnlocks - deduplicates replacement and withdrawal and defers to natural expiry") { res =>
+    implicit val (jsonHasher, sp, mptStore, js) = res
+    val acceptanceManager = TokenLockStateManager.make[IO](mptStore)
+
+    for {
+      kp <- KeyPairGenerator.makeKeyPair[IO]
+      source <- kp.getPublic.toId.toAddress
+      active = TokenLock(
+        source,
+        TokenLockAmount(100L),
+        TokenLockFee(0L),
+        TokenLockReference.empty,
+        none,
+        none,
+        none
+      )
+      signedActive <- Signed.forAsyncHasher(active, kp)
+      hashedActive <- signedActive.toHashed
+      replacement = TokenLock(
+        source,
+        TokenLockAmount(200L),
+        TokenLockFee(0L),
+        TokenLockReference(TokenLockOrdinal(1L), hashedActive.hash),
+        none,
+        none,
+        hashedActive.hash.some
+      )
+      signedReplacement <- Signed.forAsyncHasher(replacement, kp)
+      stake = Signed(
+        UpdateDelegatedStake.Create(source, PeerId(Hex("01")), DelegatedStakeAmount(100L), DelegatedStakeFee(0L), hashedActive.hash),
+        testProofs
+      )
+      withdrawal = PendingDelegatedStakeWithdrawal(
+        stake,
+        Amount.empty,
+        SnapshotOrdinal(1L),
+        EpochProgress(1L),
+        hashedActive.hash.some,
+        DelegatedStakeAmount(100L).some
+      )
+      expired = SortedMap(source -> SortedSet(withdrawal))
+      combined = acceptanceManager.generateTokenUnlocks(
+        expired,
+        List(signedReplacement),
+        Map(hashedActive.hash -> signedActive),
+        enforceUniqueTokenLockRefs = true,
+        currentEpochProgress = EpochProgress(10L).some
+      )
+      naturallyExpiring = active.copy(unlockEpoch = EpochProgress(9L).some)
+      signedNaturallyExpiring <- Signed.forAsyncHasher(naturallyExpiring, kp)
+      naturallyExpiringHash <- signedNaturallyExpiring.toHashed
+      naturalWithdrawal = withdrawal.copy(currentTokenLockRef = naturallyExpiringHash.hash.some)
+      natural = acceptanceManager.generateTokenUnlocks(
+        SortedMap(source -> SortedSet(naturalWithdrawal)),
+        List.empty,
+        Map(naturallyExpiringHash.hash -> signedNaturallyExpiring),
+        enforceUniqueTokenLockRefs = true,
+        currentEpochProgress = EpochProgress(10L).some
+      )
+      naturalUnlocks = natural.toOption.getOrElse(Map.empty)
+      naturalBalanceResult = acceptanceManager.updateGlobalBalancesByTokenLocks(
+        EpochProgress(10L),
+        SortedMap(source -> Balance.empty),
+        SortedMap.empty,
+        SortedMap(source -> SortedSet(signedNaturallyExpiring)),
+        naturalUnlocks
+      )
+      naturalStateResult <- acceptanceManager.acceptTokenLocks(
+        EpochProgress(10L),
+        SortedMap.empty,
+        SortedMap(source -> SortedSet(signedNaturallyExpiring)),
+        naturalUnlocks
+      )
+    } yield
+      expect.all(
+        combined.toOption.flatMap(_.get(source)).exists(_.size == 1),
+        natural == Right(Map.empty),
+        naturalBalanceResult.toOption.flatMap(_._1.get(source)).contains(Balance(100L)),
+        naturalStateResult.fullState.isEmpty,
+        naturalStateResult.removedKeys == Set(source)
+      )
+  }
+
+  test("acceptTokenLocks - removes a withdrawal-only lock") { res =>
+    implicit val (jsonHasher, sp, mptStore, js) = res
+    val acceptanceManager = TokenLockStateManager.make[IO](mptStore)
+
+    for {
+      kp <- KeyPairGenerator.makeKeyPair[IO]
+      source <- kp.getPublic.toId.toAddress
+      lock = TokenLock(
+        source,
+        TokenLockAmount(100L),
+        TokenLockFee(0L),
+        TokenLockReference.empty,
+        none,
+        none,
+        none
+      )
+      signedLock <- Signed.forAsyncHasher(lock, kp)
+      hashedLock <- signedLock.toHashed
+      active = SortedMap(source -> SortedSet(signedLock))
+      unlocks = Map(source -> List(TokenUnlock(hashedLock.hash, lock.amount, lock.currencyId, source)))
+      result <- acceptanceManager.acceptTokenLocks(
+        EpochProgress(10L),
+        SortedMap.empty,
+        active,
+        unlocks
+      )
+    } yield
+      expect.all(
+        result.fullState.isEmpty,
+        result.removedKeys == Set(source)
+      )
+  }
+
   test("filterExpiredTokenLocks - should return empty map for empty input") { res =>
     val (_, _, mptStore, _) = res
     val acceptanceManager = TokenLockStateManager.make[IO](mptStore)

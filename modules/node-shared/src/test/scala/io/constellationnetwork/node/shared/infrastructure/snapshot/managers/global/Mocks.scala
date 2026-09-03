@@ -71,7 +71,8 @@ import io.circe.Json
 object Mocks {
 
   private[snapshot] def mkManager(
-    initialSnapshotInfo: Option[GlobalSnapshotInfo] = None
+    initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MaxValue
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -195,7 +196,10 @@ object Mocks {
     }
 
     val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None)
-    val updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](updateDelegatedStakeValidator)
+    val updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
+      updateDelegatedStakeValidator,
+      fixingDelegatedStakeDoubleWithdrawalOrdinal
+    )
 
     val mockUpdateNodeCollateralAcceptanceManager = new UpdateNodeCollateralAcceptanceManager[IO] {
       def accept(
@@ -281,7 +285,10 @@ object Mocks {
                       Map.empty,
                       Map.empty,
                       Map.empty,
-                      Map.empty
+                      Map.empty,
+                      fixingDelegatedStakeDoubleWithdrawal = Map(
+                        AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal
+                      )
                     ),
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,

@@ -90,7 +90,8 @@ object GlobalSnapshotConsensusFunctions {
     delegatedRewardsFullCommitteeOrdinal: SnapshotOrdinal,
     incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
     mptStore: MptStore[F, GlobalStateKey],
-    activeAdmissionPromoteThreshold: Int
+    activeAdmissionPromoteThreshold: Int,
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MaxValue
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
@@ -295,22 +296,46 @@ object GlobalSnapshotConsensusFunctions {
             case DelegateRewardsInput(udsar, psu, ep) =>
               val ordinal = lastArtifact.ordinal.next
               if (shouldUseDelegatedRewards(ordinal, ep)) {
-                rewardsService.delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu).map {
-                  delegatedRewardsResult =>
-                    if (ordinal > incrementalDelegatedStakingStartingOrdinal) {
-                      val updatedCreateDelegatedStakes = delegatedRewardsResult.updatedCreateDelegatedStakes.view.mapValues { records =>
-                        records.map { r =>
-                          r.copy(
-                            currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
-                            currentAmount = r.currentAmount.orElse(r.amount.some)
-                          )
-                        }
-                      }.to(SortedMap)
+                val rewardPartitionedRecords =
+                  psu.copy(expiredWithdrawalsDelegatedStaking =
+                    DelegatedRewardsDistributor.expiredWithdrawalsForRewards(
+                      psu.expiredWithdrawalsDelegatedStaking,
+                      ordinal,
+                      fixingDelegatedStakeDoubleWithdrawalOrdinal
+                    )
+                  )
+                val expiredWithdrawalCount = psu.expiredWithdrawalsDelegatedStaking.valuesIterator.map(_.size).sum
+                val normalizedWithdrawalCount = rewardPartitionedRecords.expiredWithdrawalsDelegatedStaking.valuesIterator.map(_.size).sum
+                val droppedDuplicateCount = expiredWithdrawalCount - normalizedWithdrawalCount
 
-                      delegatedRewardsResult.copy(updatedCreateDelegatedStakes = updatedCreateDelegatedStakes)
-                    } else {
-                      delegatedRewardsResult
-                    }
+                (logger
+                  .warn(
+                    s"[DELEG_STAKE_WITHDRAWAL_DEDUP] ordinal=${ordinal.show} " +
+                      s"dropped=$droppedDuplicateCount retained=$normalizedWithdrawalCount"
+                  )
+                  .whenA(droppedDuplicateCount > 0) *>
+                  rewardsService.delegatedRewards.distribute(
+                    snapshotContext,
+                    trigger,
+                    ep,
+                    faciltators,
+                    udsar,
+                    rewardPartitionedRecords
+                  )).map { delegatedRewardsResult =>
+                  if (ordinal > incrementalDelegatedStakingStartingOrdinal) {
+                    val updatedCreateDelegatedStakes = delegatedRewardsResult.updatedCreateDelegatedStakes.view.mapValues { records =>
+                      records.map { r =>
+                        r.copy(
+                          currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
+                          currentAmount = r.currentAmount.orElse(r.amount.some)
+                        )
+                      }
+                    }.to(SortedMap)
+
+                    delegatedRewardsResult.copy(updatedCreateDelegatedStakes = updatedCreateDelegatedStakes)
+                  } else {
+                    delegatedRewardsResult
+                  }
                 }
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)

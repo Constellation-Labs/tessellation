@@ -57,6 +57,76 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       NonEmptySet.one[SignatureProof](SignatureProof(nodeId.toId, Signature(Hex(Hash.empty.value))))
     )
 
+  test(
+    "expired withdrawal rewards preserve legacy records before activation and pay one maximum cumulative reward per effective lock at activation"
+  ) {
+    val activation = SnapshotOrdinal.unsafeApply(10L)
+    val sharedEffectiveRef = Hash("effective-lock")
+    val separateRef = Hash("separate-lock")
+    val stake1 = createSignedStake(address1, nodeId1, 1000L, Hash("original-1"))
+    val stake2 = createSignedStake(address1, nodeId2, 1000L, Hash("original-2"))
+    val stake3 = createSignedStake(address1, nodeId1, 500L, separateRef)
+    val malformedCrossSourceStake = createSignedStake(address2, nodeId2, 1000L, Hash("malformed-cross-source"))
+    val withdrawals = SortedMap(
+      // Deliberately use a stale map key: canonical reward ownership comes from the signed stake source.
+      address2 -> SortedSet(
+        PendingDelegatedStakeWithdrawal(
+          stake1,
+          Amount(50L),
+          SnapshotOrdinal(1L),
+          EpochProgress(1L),
+          sharedEffectiveRef.some,
+          DelegatedStakeAmount(1000L).some
+        ),
+        PendingDelegatedStakeWithdrawal(
+          stake2,
+          Amount(70L),
+          SnapshotOrdinal(2L),
+          EpochProgress(2L),
+          sharedEffectiveRef.some,
+          DelegatedStakeAmount(1000L).some
+        ),
+        PendingDelegatedStakeWithdrawal(
+          stake3,
+          Amount(30L),
+          SnapshotOrdinal(3L),
+          EpochProgress(3L),
+          separateRef.some,
+          DelegatedStakeAmount(500L).some
+        ),
+        // A lock hash binds one source. A conflicting source in malformed legacy state must not create a second payout group.
+        PendingDelegatedStakeWithdrawal(
+          malformedCrossSourceStake,
+          Amount(60L),
+          SnapshotOrdinal(4L),
+          EpochProgress(4L),
+          sharedEffectiveRef.some,
+          DelegatedStakeAmount(1000L).some
+        )
+      )
+    )
+
+    val before = DelegatedRewardsDistributor.expiredWithdrawalsForRewards(
+      withdrawals,
+      SnapshotOrdinal.unsafeApply(9L),
+      activation
+    )
+    val at = DelegatedRewardsDistributor.expiredWithdrawalsForRewards(
+      withdrawals,
+      activation,
+      activation
+    )
+    val selected = at.getOrElse(address1, SortedSet.empty[PendingDelegatedStakeWithdrawal]).toList
+
+    IO(
+      expect.same(withdrawals, before) &&
+        expect(!at.contains(address2)) &&
+        expect(selected.size == 2) &&
+        expect(selected.map(_.rewards.value.value).sum == 100L) &&
+        expect(selected.filter(_.tokenLockRef == sharedEffectiveRef).map(_.rewards.value.value) == List(70L))
+    )
+  }
+
   test("getUpdatedCreateDelegatedStakes should preserve balance and skip rewards issuance when updating existing delegation records") {
     val delegatorRewardsMap = SortedMap(
       nodeId1 -> SortedMap(address1 -> Amount(100L)),
