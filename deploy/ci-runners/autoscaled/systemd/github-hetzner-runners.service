@@ -1,0 +1,54 @@
+[Unit]
+Description=GitHub Actions autoscaler for tessellation E2E runners on Hetzner Cloud
+Documentation=https://github.com/testflows/TestFlows-GitHub-Hetzner-Runners/wiki
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=runners
+Group=runners
+
+# Tokens only — GITHUB_TOKEN, GITHUB_REPOSITORY, HETZNER_TOKEN. Mode 0600, owned
+# by root, readable by the runners group. config.yaml interpolates ${...} from here.
+EnvironmentFile=/etc/github-hetzner-runners/env
+
+ExecStart=/opt/github-hetzner-runners/venv/bin/github-hetzner-runners \
+    --config /etc/github-hetzner-runners/config.yaml
+
+# The autoscaler owns billable cloud resources, so never leave it dead: a crashed
+# controller cannot reap powered-off servers and they keep billing.
+Restart=always
+RestartSec=15
+
+# Give in-flight scale-down a chance to finish so we don't orphan servers.
+KillSignal=SIGINT
+TimeoutStopSec=120
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gh-hetzner-runners
+
+# --- Hardening ---------------------------------------------------------------
+# This process holds a Hetzner token that can create and destroy servers, and a
+# GitHub token that can register runners. Contain it accordingly.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# ProtectSystem=strict makes / read-only; these are the only paths it may write.
+ReadWritePaths=/var/log/github-hetzner-runners
+StateDirectory=github-hetzner-runners
+
+[Install]
+WantedBy=multi-user.target
