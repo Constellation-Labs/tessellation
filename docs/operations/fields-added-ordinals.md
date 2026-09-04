@@ -53,6 +53,7 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `sub-trie-roots` | 9999999 | 9999999 | 5880000 | 0 |
 | `delegated-rewards-full-committee` | 9999999 | 9999999 | 5880000 | 0 |
 | `fee-transaction-security` | 9999999 | 9999999 | 5880000 | 0 |
+| `fixing-data-application-fee-validation` | 6818000 | 9999999 | 5926000 | 0 |
 | `currency-snapshot-protocol-v1` | absent | absent | absent | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
@@ -170,6 +171,7 @@ Currency Snapshot ordinals never activate this platform rule. See
   - `sub-trie-roots.mainnet` and `.testnet` (`9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. IntegrationNet activated at `5880000` and requires matching Snapshot Streaming support for every current deployment. For a cold restart at checkpoint `N`, use `N + 1` only on a network that has not already crossed its selected gate.
   - `delegated-rewards-full-committee.<env>`: set the deploying environment to the first ordinal produced by the corrected jar. Below it, the historical evidence-score filter must remain available for replay.
   - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet is scheduled for `5880000`.
+  - `fixing-data-application-fee-validation.<env>`: set the deploying environment to a future parent Global ordinal reached only after every Currency L1 and ML0 node is upgraded. IntegrationNet is scheduled for `5926000`; its earlier `fee-transaction-security` boundary remains `5880000` so signed history continues to replay under the rules that produced it.
   - `currency-snapshot-protocol-v1.<env>`: set one future GLOBAL L0 ordinal only after every active Currency stack is upgraded. Active lineages transition their existing signed `version` to `1.0.0`; dormant lineages must upgrade before returning. See [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
   - `dust-sweeps` has no mainnet entry yet (`application.conf:286-292`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf:281-285`). Bump it up if the chain nears it before the coordinated cold restart completes.

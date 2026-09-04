@@ -152,6 +152,13 @@ placeholder. For each, decide the launch-checkpoint ordinal and set it in the ja
       `5880000`; Mainnet and Testnet remain at `9999999`. Every Currency L1 and ML0 node must run the
       new jar before IntegrationNet crosses the gate.
 
+- [ ] **`fixing-data-application-fee-validation`**. At/after this parent Global ordinal, every fee in a
+      data envelope is validated and invalid fees are handled without failing the entire Currency
+      snapshot. IntegrationNet is scheduled for `5926000`; Testnet remains at `9999999`, and Mainnet's
+      historical boundary remains `6818000`. Confirm every Currency L1 and ML0 node is upgraded before
+      IntegrationNet reaches the boundary. Do not move its already-crossed `fee-transaction-security`
+      boundary forward: doing so would reinterpret signed history from ordinal `5880000` onward.
+
 - [ ] **Sanity-check the historical gates** (`application.conf:211-258`). The migration gates above this
       block (`tessellation-3-migration`, `tessellation-301-migration`, `check-sync-global-snapshot-field`,
       `metagraph-sync-data`, the two `updated-last-sync-*`, `updating-combine-function-spend-actions`,

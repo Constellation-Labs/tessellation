@@ -65,6 +65,22 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     }
   }
 
+  test("schedules IntegrationNet data-application fee validation after fee security") {
+    IO {
+      ConfigSource.resources("application.conf").at("fields-added-ordinals").load[FieldsAddedOrdinals] match {
+        case Left(failures) =>
+          failure(failures.toList.mkString("\n"))
+        case Right(fieldsAddedOrdinals) =>
+          val integrationnet = AppEnvironment.Integrationnet
+          val feeSecurity = fieldsAddedOrdinals.feeTransactionSecurityFor(integrationnet)
+          val dataApplicationFeeValidation = fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(integrationnet)
+
+          expect.same(SnapshotOrdinal.unsafeApply(5926000L), dataApplicationFeeValidation) &&
+          expect(dataApplicationFeeValidation.value.value > feeSecurity.value.value)
+      }
+    }
+  }
+
   test("keeps fee transaction security disabled when an environment entry is absent") {
     val fieldsAddedOrdinals = FieldsAddedOrdinals(
       tessellation3Migration = Map.empty,
