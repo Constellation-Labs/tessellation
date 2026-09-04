@@ -326,6 +326,19 @@ object Main
 
   private[dag] def validateRecoverySeedRollbackHash(expected: Hash, got: Hash): Either[RecoverySeedRollbackHashMismatch, Unit] =
     Either.cond(expected === got, (), RecoverySeedRollbackHashMismatch(expected, got))
+
+  /** Snapshot-info roots that must survive the ordinary logarithmic cutoff so a restarted validator can authenticate certified lineage.
+    *
+    * A production-style ordinal-gated activation roots at `activation - 1`. The development active-from-genesis mode instead roots at the
+    * first incremental artifact: its state proof is derived from full genesis, but replay still needs the ordinal-1 artifact/context pair.
+    * A dormant (`Long.MaxValue`) deployment has no certified root to retain.
+    */
+  private[dag] def protectedCertifiedSnapshotInfoOrdinals(activationKey: Long): Set[SnapshotOrdinal] =
+    if (activationKey === Long.MaxValue) Set.empty
+    else if (CertifiedConsensusGenesis.isActiveFromGenesis(activationKey))
+      Set(CertifiedConsensusGenesis.FirstIncrementalOrdinal)
+    else Set(SnapshotOrdinal.unsafeApply(activationKey - 1L))
+
   private[dag] final case class RecentCoreReconstructionDiagnostic(
     source: String,
     entries: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]
@@ -379,11 +392,7 @@ object Main
       }).asResource
       certifiedConsensusActivationOrdinal = SnapshotOrdinal.unsafeApply(loadedConsensusConfig.certifiedConsensusActivationKey)
       protectedCertifiedSnapshotInfoOrdinals =
-        if (
-          loadedConsensusConfig.certifiedConsensusActivationKey === Long.MaxValue ||
-          CertifiedConsensusGenesis.isActiveFromGenesis(loadedConsensusConfig.certifiedConsensusActivationKey)
-        ) Set.empty[SnapshotOrdinal]
-        else Set(SnapshotOrdinal.unsafeApply(loadedConsensusConfig.certifiedConsensusActivationKey - 1L))
+        Main.protectedCertifiedSnapshotInfoOrdinals(loadedConsensusConfig.certifiedConsensusActivationKey)
       recoveryMaxFacilitatorCount = loadedConsensusConfig.facilitatorSelectionMax
       recoverySeedCommittee = method match {
         case m: RunRollback                 => m.recoverySeedCommittee
