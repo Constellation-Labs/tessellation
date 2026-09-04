@@ -107,14 +107,46 @@ object FeeTransactionValidator {
         .asInstanceOf[DataApplicationValidationError]
         .invalidNec[Unit]
 
+  /** The historical release/mainnet rule required every signer to name the source wallet. The later fee-transaction-security gate permits
+    * additional valid signers, but only after the source has also signed and every proof has passed cryptographic verification.
+    *
+    * Keeping this check inside the data-application validator guarantees that a fee accepted with a data update also passes the final
+    * Currency acceptance validator. Otherwise final acceptance can drop the fee after the application has already combined the update.
+    */
+  private def validateExclusiveSourceWalletProofs[F[_]: Async: SecurityProvider](
+    feeTransaction: Signed[FeeTransaction]
+  ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
+    feeTransaction.proofs.toNonEmptyList
+      .traverse(_.id.toAddress[F])
+      .map { proofAddresses =>
+        if (proofAddresses.forall(_ === feeTransaction.value.source)) ().validNec[DataApplicationValidationError]
+        else FeeTransactionNotSignedExclusivelyBySource.asInstanceOf[DataApplicationValidationError].invalidNec[Unit]
+      }
+
   // Acceptance applies every fee transaction in the envelope, so every one of them has to be validated here.
   // Walking the data updates instead reaches a fee transaction only through getByDataUpdate, which returns an
   // Option -- a fee transaction referencing no data update present in the envelope is skipped entirely and
   // reaches acceptance unchecked.
+  //
+  // Keep the existing three-argument SDK entry point source- and binary-compatible. Network validation uses
+  // validateAllFeeTransactionsWithSignerPolicy below so replay selects the policy from its signed Global ordinal.
   def validateAllFeeTransactions[F[_]: Async: JsonSerializer: SecurityProvider](
     dataTransactions: DataTransactions,
     balances: Map[Address, Balance],
     dataApplication: BaseDataApplicationService[F]
+  ): F[ValidatedNec[DataApplicationValidationError, Unit]] =
+    validateAllFeeTransactionsWithSignerPolicy(
+      dataTransactions,
+      balances,
+      dataApplication,
+      allowSourceAuthorizedCoSigners = true
+    )
+
+  private[validations] def validateAllFeeTransactionsWithSignerPolicy[F[_]: Async: JsonSerializer: SecurityProvider](
+    dataTransactions: DataTransactions,
+    balances: Map[Address, Balance],
+    dataApplication: BaseDataApplicationService[F],
+    allowSourceAuthorizedCoSigners: Boolean
   ): F[ValidatedNec[DataApplicationValidationError, Unit]] = {
     val feeTransactions = dataTransactions.collect {
       case Signed(feeTransaction: FeeTransaction, proofs) => Signed(feeTransaction, proofs)
@@ -135,10 +167,19 @@ object FeeTransactionValidator {
       feeTransactions.traverse { feeTransaction =>
         validateFeeTransactionSignatures(feeTransaction)
           .map(_.errorMap[DataApplicationValidationError](_ => InvalidFeeTransactionSignature).void)
-          .map(
-            _.productR(validateDifferentAddresses(feeTransaction))
-              .productR(validateFeeTransactionRefPresent(feeTransaction, hashes))
-          )
+          .flatMap { signatureValidation =>
+            val signerPolicyValidation =
+              if (signatureValidation.isInvalid || allowSourceAuthorizedCoSigners)
+                ().validNec[DataApplicationValidationError].pure[F]
+              else validateExclusiveSourceWalletProofs(feeTransaction)
+
+            signerPolicyValidation.map(
+              signatureValidation
+                .productR(_)
+                .productR(validateDifferentAddresses(feeTransaction))
+                .productR(validateFeeTransactionRefPresent(feeTransaction, hashes))
+            )
+          }
       }.map {
         _.foldLeft(().validNec[DataApplicationValidationError])(_.productR(_))
           .productR(validateSourcesHaveEnoughBalance(feeTransactions, balances))

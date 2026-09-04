@@ -9,7 +9,11 @@ import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdate
 import io.constellationnetwork.currency.dataApplication.Errors.MissingDataUpdateTransaction
 import io.constellationnetwork.currency.dataApplication.FeeTransaction.getByDataUpdate
 import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.validations.FeeTransactionValidator.{validateAllFeeTransactions, validateFeeTransaction}
+import io.constellationnetwork.currency.validations.FeeTransactionSignatureValidator.isEnabled
+import io.constellationnetwork.currency.validations.FeeTransactionValidator.{
+  validateAllFeeTransactionsWithSignerPolicy,
+  validateFeeTransaction
+}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
@@ -45,7 +49,12 @@ object DataTransactionsValidator {
             getByDataUpdate(dataTransactions, dataUpdate.value, dataApplication.serializeUpdate)
               .flatMap(maybeFeeTransaction => validateFee(feeValidationOrdinal)(dataUpdate, maybeFeeTransaction))
           }.map(_.reduce)
-          allFeeTransactionsValidation <- validateAllFeeTransactions(dataTransactions, balances, dataApplication)
+          allFeeTransactionsValidation <- validateAllFeeTransactionsWithSignerPolicy(
+            dataTransactions,
+            balances,
+            dataApplication,
+            allowSourceAuthorizedCoSigners = isEnabled(globalSnapshotOrdinal, feeTransactionSecurityActivationOrdinal)
+          )
         } yield perDataUpdateValidation.productR(allFeeTransactionsValidation)
 
       case Some(value) =>
