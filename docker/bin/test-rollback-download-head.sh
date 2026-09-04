@@ -344,8 +344,17 @@ wait_consensus_completion_after() {
 
   while [ "$(date +%s)" -lt "$deadline" ]; do
     logs=$(docker logs --since "$since" "$node" 2>&1 || true)
-    signed_completions=$(awk -v peer="$peer_prefix" \
-      'index($0, "event=ROUND_COMPLETED") && index($0, "signerIds=") && index($0, peer) { print }' <<<"$logs")
+    signed_completions=$(awk -v peer="$peer_prefix" '
+      index($0, "event=ROUND_COMPLETED") && match($0, /signerIds=[^ ]*/) {
+        signerIds = substr($0, RSTART + 10, RLENGTH - 10)
+        count = split(signerIds, signers, ",")
+        for (i = 1; i <= count; i++)
+          if (signers[i] == peer) {
+            print
+            break
+          }
+      }
+    ' <<<"$logs")
     if sed -n \
       -e 's/.*round=SnapshotOrdinal(\([0-9][0-9]*\)).*/\1/p' \
       -e 's/.*round=SnapshotOrdinal{value=\([0-9][0-9]*\)}.*/\1/p' <<<"$signed_completions" |
