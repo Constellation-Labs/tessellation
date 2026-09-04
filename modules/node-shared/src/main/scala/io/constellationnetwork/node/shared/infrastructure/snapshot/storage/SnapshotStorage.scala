@@ -4,7 +4,7 @@ import cats.Order._
 import cats.effect.std.{Mutex, Queue, Supervisor}
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
-import cats.{Applicative, MonadThrow}
+import cats.{Applicative, Eq, MonadThrow}
 
 import scala.concurrent.duration._
 
@@ -57,7 +57,7 @@ object SnapshotStorage {
     }
   }
 
-  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]: Eq](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
@@ -86,7 +86,7 @@ object SnapshotStorage {
         )
     }
 
-  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]: Eq](
     headRef: SignallingRef[F, Option[(Signed[S], Hasher[F], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
@@ -381,7 +381,10 @@ object SnapshotStorage {
                 )
               )
               persistedState <- snapshotInfoLocalFileSystemStorage.read(snapshot.ordinal)
-              _ <- MonadThrow[F].raiseUnless(persistedState.exists(java.util.Objects.equals(_, state)))(
+              // Snapshot contexts can contain byte arrays (for example metagraph data-application state).
+              // Case-class/Java equality compares those arrays by reference, which makes a correctly decoded
+              // disk value look different from the in-memory value. Use the schema's content-aware Eq.
+              _ <- MonadThrow[F].raiseUnless(persistedState.exists(_ === state))(
                 new IllegalStateException(s"Snapshot context exact disk readback failed ordinal=${snapshot.ordinal}")
               )
               _ <- reconcilePositiveCaches(hashed)

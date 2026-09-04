@@ -4,9 +4,10 @@ import cats.effect._
 import cats.effect.std.{Mutex, Queue, Supervisor}
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration._
 
+import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
@@ -15,9 +16,11 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.{GlobalStateProofSelector, SnapshotOrdinal, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 
 import better.files._
@@ -421,6 +424,55 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
           hiddenBeforePublication.isEmpty,
           visibleAfterPublication.contains(historical),
           publishedHead.contains((terminal, context))
+        )
+    }
+  }
+
+  test("validated head publication compares metagraph data-application context by byte content") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, _, snapshotInfoFiles, _, _, _, _, _) = built
+        (genesis, target) <- mkSnapshots
+        currencyKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+        currencySnapshot <- Signed.forAsyncHasher[IO, CurrencyIncrementalSnapshot](
+          CurrencyIncrementalSnapshot(
+            SnapshotOrdinal.MinIncrementalValue,
+            Height.MinValue,
+            SubHeight.MinValue,
+            Hash.empty,
+            SortedSet.empty,
+            SortedSet.empty,
+            SnapshotTips(SortedSet.empty, SortedSet.empty),
+            CurrencySnapshotStateProof(Hash.empty, Hash.empty, None, None, None, None, None, None, None),
+            EpochProgress.MinValue,
+            DataApplicationPart(Array[Byte](1, 2, 3), List(Array[Byte](4, 5, 6)), Hash.empty, None).some,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ),
+          currencyKeyPair
+        )
+        currencyInfo = CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None, None, None)
+        currencyEntry: Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)] =
+          Right((currencySnapshot, currencyInfo))
+        context = genesis.info.toGlobalSnapshotInfo.copy(
+          lastCurrencySnapshots = SortedMap(currencyKeyPair.getPublic.toAddress -> currencyEntry)
+        )
+        _ <- storage.setHeadForRecovery(target, context)
+        persistedContext <- snapshotInfoFiles.read(target.ordinal)
+        publishedHead <- storage.head
+      } yield
+        expect.all(
+          persistedContext.exists(_ === context),
+          publishedHead.exists { case (snapshot, state) => snapshot === target && state === context }
         )
     }
   }
