@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.domain.snapshot.programs
 import cats.effect.std.Random
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
-import cats.{Applicative, Parallel}
+import cats.{Applicative, Monad, Parallel}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -85,6 +85,33 @@ case class RollbackTargetNotCorroborated(
     with NoStackTrace
 
 object Download {
+
+  private[snapshot] def headPublicationDirection(
+    previous: Option[SnapshotOrdinal],
+    target: SnapshotOrdinal
+  ): String =
+    previous.fold("initial") { ordinal =>
+      if (target > ordinal) "forward"
+      else if (target === ordinal) "same_ordinal"
+      else "backward"
+    }
+
+  /** Serialize the terminal handoff shared by ordinary full download and bounded follower catch-up.
+    *
+    * Both callbacks receive the same immutable artifact/context references. If publication fails, the consensus callback is never
+    * evaluated; the enclosing download lifecycle retains ownership of reverting to WaitingForDownload and retrying. This is deliberately a
+    * small effect-order helper, not a second download harness or a new authority boundary.
+    */
+  private[snapshot] def publishValidatedHeadBeforeConsensus[F[_]: Monad, A, C](
+    artifact: A,
+    context: C,
+    publish: (A, C) => F[Unit],
+    afterPublication: (A, C) => F[Unit],
+    startConsensus: (A, C) => F[Unit]
+  ): F[Unit] =
+    publish(artifact, context) >>
+      afterPublication(artifact, context) >>
+      startConsensus(artifact, context)
 
   /** Run a long recovery operation with an inactivity watchdog rather than a total wall-clock deadline. Deep canonical replay is allowed to
     * take hours as long as ordinals continue moving; a fiber that makes no recorded progress for `maxIdle` is cancelled and retried by
@@ -506,6 +533,52 @@ object Download {
         _ <- Metrics[F].updateGauge("dag_global_snapshot_signature_count", snapshot.proofs.size.toDouble)
       } yield ()
 
+    /** Publish the exact terminal artifact/context selected by an already validated download before consensus can initialize from it.
+      *
+      * Full download may legitimately replace a higher local fork head with a lower canonical head after its validated cleanup. That move
+      * remains allowed and is made explicit through warning/metrics rather than blocked by a monotonicity guard.
+      */
+    private def handoffValidatedDownloadHead(
+      path: String,
+      observationLimit: ObservationLimit,
+      snapshot: Signed[GlobalIncrementalSnapshot],
+      context: GlobalSnapshotInfo,
+      isRecovery: Boolean
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      for {
+        previous <- globalSnapshotConsensusStorage.headSnapshot.map(_.map(_.ordinal))
+        direction = Download.headPublicationDirection(previous, snapshot.ordinal)
+        _ <- Applicative[F].whenA(direction === "backward") {
+          logger.warn(
+            s"[DownloadHeadPublication] Publishing validated lower canonical head: " +
+              s"path=$path previous=${previous.map(_.show).getOrElse("none")} target=${snapshot.ordinal.show}"
+          )
+        }
+        _ <- Download.publishValidatedHeadBeforeConsensus[F, Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo](
+          snapshot,
+          context,
+          (artifact, state) =>
+            hasherSelector.withCurrent { implicit hasher =>
+              globalSnapshotConsensusStorage.setHeadForRecovery(artifact, state)
+            },
+          (_, _) =>
+            Metrics[F].incrementCounter(
+              "dag_download_head_publication_total",
+              Seq(
+                Metrics.unsafeLabelName("path") -> path,
+                Metrics.unsafeLabelName("direction") -> direction
+              )
+            ),
+          (artifact, state) =>
+            consensus.manager.startFacilitatingAfterDownload(
+              observationLimit,
+              artifact,
+              state,
+              isRecovery = isRecovery
+            )
+        )
+      } yield ()
+
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       val guardedStart =
         recordDownloadPhase("full", "start_entered") >>
@@ -542,7 +615,13 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
           for {
-            _ <- consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
+            _ <- handoffValidatedDownloadHead(
+              path = "full",
+              observationLimit = observationLimit,
+              snapshot = snapshot,
+              context = context,
+              isRecovery = false
+            )
             _ <- recordDownloadPhase("full", "facilitate_enqueued")
           } yield ()
         }
@@ -793,13 +872,11 @@ object Download {
                     for {
                       observed <- observeWithLimit(result, snapshot.ordinal)
                       ((observedSnapshot, observedContext), observationLimit) = observed
-                      _ <- HasherSelector[F].withCurrent { implicit hasher =>
-                        globalSnapshotConsensusStorage.setHeadForRecovery(observedSnapshot, observedContext)
-                      }
-                      _ <- consensus.manager.startFacilitatingAfterDownload(
-                        observationLimit,
-                        observedSnapshot,
-                        observedContext,
+                      _ <- handoffValidatedDownloadHead(
+                        path = "follower_catch_up",
+                        observationLimit = observationLimit,
+                        snapshot = observedSnapshot,
+                        context = observedContext,
                         isRecovery = true
                       )
                       _ <- Metrics[F].incrementCounter(
@@ -1128,6 +1205,8 @@ object Download {
 
       convergingRecoveryCycle.flatMap { result =>
         val ((snapshot, context), observationLimit) = result
+        // The final tuple is returned by the last recoveryObserve iteration, which has already published this exact artifact/context to
+        // globalSnapshotConsensusStorage. Keep recovery's per-iteration publication boundary intact and initialize only after convergence.
         consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true) >>
           recordDownloadPhase("recovery", "facilitate_enqueued")
       }

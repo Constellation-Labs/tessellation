@@ -35,6 +35,13 @@ object DownloadSuite extends FunSuite {
   private def decide(tips: List[PeerTip]): SnapshotOrdinal =
     Download.chooseObservationLimit(localOrd, localHash, tips, observationOffset)
 
+  test("download head publication classifies initial, forward, same-ordinal, and backward movement") {
+    expect.same("initial", Download.headPublicationDirection(none, localOrd)) &&
+    expect.same("forward", Download.headPublicationDirection(prevOrd.some, localOrd)) &&
+    expect.same("same_ordinal", Download.headPublicationDirection(localOrd.some, localOrd)) &&
+    expect.same("backward", Download.headPublicationDirection(nextOrd.some, localOrd))
+  }
+
   test("first incremental checkpoint detection is relative to the configured full snapshot") {
     val publicCheckpoint = SnapshotOrdinal.unsafeApply(766717L)
 
