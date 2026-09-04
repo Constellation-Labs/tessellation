@@ -115,9 +115,9 @@ jobs:
           # and one validator restored from an older same-prefix snapshot. The healthy pair must
           # advance, the lagged validator must publish its exact downloaded head before consensus
           # initialization, become Ready, sign again, and converge on the same post-recovery hash.
-          # This test needs 2/3 finality while one member is deliberately offline; keep that quorum
-          # override scoped to this matrix row rather than weakening the other E2E jobs.
-          - { name: rollback-download-head,  tests: "rollback-download-head", extra-args: "--num-gl0=3 --num-gl1=0", quorum: "0.6666666666666666", timeout: 60 }
+          # The committed DAG-L0 development config uses 2/3 finality, which this scenario verifies
+          # by requiring the two healthy members to advance while the third is deliberately offline.
+          - { name: rollback-download-head,  tests: "rollback-download-head", extra-args: "--num-gl0=3 --num-gl1=0", timeout: 60 }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }
@@ -148,7 +148,6 @@ jobs:
       # Cadence when there ARE pending events (the flood): lowered so gl0 drains the chain faster without
       # spawning empty rounds when idle.
       CL_EVENT_TRIGGER_COOLDOWN: "5 seconds"
-      CL_QUORUM_THRESHOLD_FRACTION: ${{ matrix.test-group.quorum || '1.0' }}
 
     steps:
       - name: Checkout code

@@ -74,10 +74,6 @@ get_ordinal() {
     jq -r '.value.ordinal // empty' 2>/dev/null || true
 }
 
-get_metadata() {
-  curl -fsS --max-time 5 "$(node_url "$1")/global-snapshots/latest/metadata" 2>/dev/null || true
-}
-
 get_snapshot_hash() {
   local node=$1
   local ordinal=$2
@@ -300,7 +296,7 @@ wait_target_rejoin() {
   local since=$2
   local timeout=$3
   local deadline=$(( $(date +%s) + timeout ))
-  local state ordinal metadata metadata_ordinal metadata_hash artifact_hash logs metric
+  local state ordinal logs metric publication_ordinals publication_ordinal init_ordinals init_ordinal target_hash lead_hash
 
   while [ "$(date +%s)" -lt "$deadline" ]; do
     state=$(get_node_state "$TARGET_NODE")
@@ -309,18 +305,23 @@ wait_target_rejoin() {
     metric=$(curl -fsS --max-time 5 "$(node_url "$TARGET_NODE")/metrics" 2>/dev/null |
       awk '/^dag_download_head_publication_total\{.*path="full"/ { total += $NF } END { print total + 0 }' || true)
 
+    publication_ordinals=$(sed -n \
+      's/.*Publishing validated download\/recovery head ordinal=SnapshotOrdinal{value=\([0-9][0-9]*\)}.*/\1/p' <<<"$logs")
+    publication_ordinal=${publication_ordinals%%$'\n'*}
+    init_ordinals=$(sed -n \
+      -e 's/.*round=SnapshotOrdinal(\([0-9][0-9]*\)).*event=DOWNLOAD_INIT_START.*/\1/p' \
+      -e 's/.*round=SnapshotOrdinal{value=\([0-9][0-9]*\)}.*event=DOWNLOAD_INIT_START.*/\1/p' <<<"$logs")
+    init_ordinal=${init_ordinals%%$'\n'*}
+
     if [ "$state" = "Ready" ] && [ -n "$ordinal" ] && [ "$ordinal" -ge "$minimum" ] \
-      && grep -Fq 'event=DOWNLOAD_INIT_START' <<<"$logs" \
-      && { [ "${metric:-0}" -ge 1 ] || grep -Fq '[SnapshotStorage] Publishing validated download/recovery head' <<<"$logs"; }; then
-      metadata=$(get_metadata "$TARGET_NODE")
-      metadata_ordinal=$(jq -r '.ordinal // empty' <<<"$metadata" 2>/dev/null || true)
-      metadata_hash=$(jq -r '.hash // empty' <<<"$metadata" 2>/dev/null || true)
-      if [ -n "$metadata_ordinal" ] && [ -n "$metadata_hash" ]; then
-        artifact_hash=$(get_snapshot_hash "$TARGET_NODE" "$metadata_ordinal")
-        if [ "$artifact_hash" = "$metadata_hash" ]; then
-          printf '%s|%s\n' "$metadata_ordinal" "$metadata_hash"
-          return 0
-        fi
+      && [ "${metric:-0}" -ge 1 ] \
+      && [ -n "$publication_ordinal" ] && [ "$publication_ordinal" = "$init_ordinal" ] \
+      && [ "$publication_ordinal" -ge "$minimum" ]; then
+      target_hash=$(get_snapshot_hash "$TARGET_NODE" "$publication_ordinal")
+      lead_hash=$(get_snapshot_hash "$LEAD_NODE" "$publication_ordinal")
+      if [ -n "$target_hash" ] && [ "$target_hash" = "$lead_hash" ]; then
+        printf '%s|%s\n' "$publication_ordinal" "$target_hash"
+        return 0
       fi
     fi
 
@@ -336,14 +337,18 @@ wait_consensus_completion_after() {
   local ordinal=$3
   local timeout=$4
   local deadline=$(( $(date +%s) + timeout ))
-  local logs
+  local logs peer_prefix signed_completions
+
+  peer_prefix=$(peer_id_of "${node##gl0-}" | cut -c1-8)
+  [ -n "$peer_prefix" ] || return 1
 
   while [ "$(date +%s)" -lt "$deadline" ]; do
     logs=$(docker logs --since "$since" "$node" 2>&1 || true)
-    if grep -F 'event=CONSENSUS_FINISHED' <<<"$logs" |
-      sed -n \
-        -e 's/.*round=SnapshotOrdinal(\([0-9][0-9]*\)).*/\1/p' \
-        -e 's/.*round=SnapshotOrdinal{value=\([0-9][0-9]*\)}.*/\1/p' |
+    signed_completions=$(awk -v peer="$peer_prefix" \
+      'index($0, "event=ROUND_COMPLETED") && index($0, "signerIds=") && index($0, peer) { print }' <<<"$logs")
+    if sed -n \
+      -e 's/.*round=SnapshotOrdinal(\([0-9][0-9]*\)).*/\1/p' \
+      -e 's/.*round=SnapshotOrdinal{value=\([0-9][0-9]*\)}.*/\1/p' <<<"$signed_completions" |
       awk -v minimum="$ordinal" '$1 > minimum { found=1 } END { exit !found }'; then
       return 0
     fi
@@ -470,7 +475,7 @@ IFS='|' read -r downloaded_ordinal downloaded_hash <<<"$downloaded"
 echo "  Downloaded public head: ordinal=$downloaded_ordinal hash=${downloaded_hash:0:16}..."
 
 wait_consensus_completion_after "$TARGET_NODE" "$target_since" "$downloaded_ordinal" "$DOWNLOAD_TIMEOUT" ||
-  fail "$TARGET_NODE became Ready but did not complete a later consensus round"
+  fail "$TARGET_NODE became Ready but did not sign a later completed consensus round"
 
 echo "Phase 5: checking one exact post-join hash and continued production..."
 common=$(wait_all_ready_common "$downloaded_ordinal" "$DOWNLOAD_TIMEOUT" false) ||
