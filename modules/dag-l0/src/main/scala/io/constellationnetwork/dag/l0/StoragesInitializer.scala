@@ -42,7 +42,11 @@ object StoragesInitializer {
       _ <- lastNGlobalSnapshotStorage.setInitialFetchingGL0(
         hashedGlobalIncrementalSnapshot,
         globalSnapshotInfo,
-        none,
+        // A coordinated cold restart deliberately starts the rollback lead before
+        // validators are available. Reconstruct the declared recent lineage from
+        // the lead's canonical archive first and consult peers only for an exact
+        // local hash miss.
+        globalSnapshotStorage.asRight.some,
         Some((hash, ordinal) => download.fetchSnapshot(hash, ordinal))
       )
       _ <- Logger[F].info(s"Successfully initialized lastNGlobalSnapshot shared storage")
