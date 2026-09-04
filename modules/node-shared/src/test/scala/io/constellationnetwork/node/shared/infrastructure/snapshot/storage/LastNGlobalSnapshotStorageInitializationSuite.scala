@@ -10,6 +10,7 @@ import scala.collection.mutable.ListBuffer
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
+import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -112,6 +113,26 @@ object LastNGlobalSnapshotStorageInitializationSuite extends SimpleIOSuite {
       }
       .map(_._2)
 
+  private def archive(
+    getByOrdinal: SnapshotOrdinal => IO[Option[Signed[GlobalIncrementalSnapshot]]],
+    getByHash: Hash => IO[Option[Signed[GlobalIncrementalSnapshot]]]
+  ): SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
+    new SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+      private def unused[A]: IO[A] = IO.raiseError(new IllegalStateException("unexpected archive operation"))
+
+      def prepend(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo)(implicit hasher: Hasher[IO]): IO[Boolean] =
+        unused
+      def head: IO[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = unused
+      def headSnapshot: IO[Option[Signed[GlobalIncrementalSnapshot]]] = unused
+      def get(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] = getByOrdinal(ordinal)
+      def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[IO]): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = unused
+      def get(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] = getByHash(hash)
+      def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[IO]): IO[Option[Hash]] = unused
+      def setHeadForRecovery(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo)(
+        implicit hasher: Hasher[IO]
+      ): IO[Unit] = unused
+    }
+
   test("a failed required-window fetch leaves initialization retryable in the same process") {
     SecurityProvider.forAsync[IO].use { implicit securityProvider =>
       for {
@@ -148,7 +169,10 @@ object LastNGlobalSnapshotStorageInitializationSuite extends SimpleIOSuite {
         expect(first.isLeft) &&
           expect(afterFailure.isEmpty) &&
           expect(afterRetry.exists(_._1.hash === parent.hash)) &&
-          expect(retained.exists(_.ordinal === SnapshotOrdinal.unsafeApply(98L)))
+          expect.same(
+            (50L to 100L).iterator.map(SnapshotOrdinal.unsafeApply).toSet,
+            retained.map(_.ordinal).toSet
+          )
     }
   }
 
@@ -177,6 +201,122 @@ object LastNGlobalSnapshotStorageInitializationSuite extends SimpleIOSuite {
             Set(SnapshotOrdinal.unsafeApply(98L), SnapshotOrdinal.unsafeApply(99L), SnapshotOrdinal.unsafeApply(100L)),
             retained.map(_.ordinal).toSet
           )
+    }
+  }
+
+  test("a local rollback archive is resolved by child-declared hash before peer fallback") {
+    SecurityProvider.forAsync[IO].use { implicit securityProvider =>
+      for {
+        implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+        implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+        implicit0(hasherSelector: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(hasher)
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        snapshots <- chain(98L, 100L, keyPair)
+        byHash = snapshots.valuesIterator.map(snapshot => snapshot.hash -> snapshot.signed).toMap
+        hashRequests <- Ref.of[IO, List[Hash]](List.empty)
+        ordinalRequests <- Ref.of[IO, Int](0)
+        peerFallbacks <- Ref.of[IO, Int](0)
+        localArchive = archive(
+          _ => ordinalRequests.update(_ + 1) >> IO.raiseError(new IllegalStateException("ordinal lookup must not select lineage")),
+          hash => hashRequests.update(_ :+ hash) >> byHash.get(hash).pure[IO]
+        )
+        peerFallback = (_: Option[Hash], _: SnapshotOrdinal) =>
+          peerFallbacks.update(_ + 1) >> IO.raiseError[Signed[GlobalIncrementalSnapshot]](
+            new IllegalStateException("peer fallback must not be needed")
+          )
+        storage <- LastNGlobalSnapshotStorage.make[IO](LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(2)))
+        parent = snapshots(SnapshotOrdinal.unsafeApply(100L))
+        _ <- storage.setInitialFetchingGL0(parent, info, localArchive.asRight.some, peerFallback.some)
+        requestedHashes <- hashRequests.get
+        ordinalRequestCount <- ordinalRequests.get
+        fallbackCount <- peerFallbacks.get
+        retained <- storage.getLastN
+      } yield
+        expect.same(
+          List(
+            snapshots(SnapshotOrdinal.unsafeApply(99L)).hash,
+            snapshots(SnapshotOrdinal.unsafeApply(98L)).hash
+          ),
+          requestedHashes
+        ) &&
+          expect.same(0, ordinalRequestCount) &&
+          expect.same(0, fallbackCount) &&
+          expect.same(
+            Set(SnapshotOrdinal.unsafeApply(98L), SnapshotOrdinal.unsafeApply(99L), SnapshotOrdinal.unsafeApply(100L)),
+            retained.map(_.ordinal).toSet
+          )
+    }
+  }
+
+  test("a stale same-ordinal branch cannot block exact peer fallback") {
+    SecurityProvider.forAsync[IO].use { implicit securityProvider =>
+      for {
+        implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+        implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+        implicit0(hasherSelector: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(hasher)
+        canonicalKey <- KeyPairGenerator.makeKeyPair[IO]
+        staleKey <- KeyPairGenerator.makeKeyPair[IO]
+        canonical <- chain(99L, 100L, canonicalKey)
+        stale <- snapshot(SnapshotOrdinal.unsafeApply(99L), Hash.empty, staleKey)
+        ordinalRequests <- Ref.of[IO, Int](0)
+        peerRequests <- Ref.of[IO, List[(Option[Hash], SnapshotOrdinal)]](List.empty)
+        localArchive = archive(
+          _ => ordinalRequests.update(_ + 1).as(stale.signed.some),
+          _ => none[Signed[GlobalIncrementalSnapshot]].pure[IO]
+        )
+        peerFallback = (hash: Option[Hash], ordinal: SnapshotOrdinal) =>
+          peerRequests.update(_ :+ (hash -> ordinal)) >> canonical
+            .get(ordinal)
+            .liftTo[IO](new IllegalStateException(s"missing $ordinal"))
+            .map(_.signed)
+        storage <- LastNGlobalSnapshotStorage.make[IO](LastGlobalSnapshotsSyncConfig(NonNegLong(1L), PosInt(1)))
+        parent = canonical(SnapshotOrdinal.unsafeApply(100L))
+        _ <- storage.setInitialFetchingGL0(parent, info, localArchive.asRight.some, peerFallback.some)
+        ordinalRequestCount <- ordinalRequests.get
+        requested <- peerRequests.get
+        retained <- storage.getLastN
+      } yield
+        expect.same(0, ordinalRequestCount) &&
+          expect.same(List((parent.signed.value.lastSnapshotHash.some, SnapshotOrdinal.unsafeApply(99L))), requested) &&
+          expect(retained.exists(_.hash === canonical(SnapshotOrdinal.unsafeApply(99L)).hash)) &&
+          expect(!retained.exists(_.hash === stale.hash))
+    }
+  }
+
+  test("a readable invalid local hash result fails closed without peer substitution") {
+    SecurityProvider.forAsync[IO].use { implicit securityProvider =>
+      for {
+        implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+        implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+        implicit0(hasherSelector: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(hasher)
+        canonicalKey <- KeyPairGenerator.makeKeyPair[IO]
+        wrongKey <- KeyPairGenerator.makeKeyPair[IO]
+        canonical <- chain(99L, 100L, canonicalKey)
+        wrong <- snapshot(SnapshotOrdinal.unsafeApply(99L), Hash.empty, wrongKey)
+        peerFallbacks <- Ref.of[IO, Int](0)
+        localArchive = archive(
+          _ => none[Signed[GlobalIncrementalSnapshot]].pure[IO],
+          _ => wrong.signed.some.pure[IO]
+        )
+        peerFallback = (_: Option[Hash], _: SnapshotOrdinal) =>
+          peerFallbacks.update(_ + 1) >> canonical(SnapshotOrdinal.unsafeApply(99L)).signed.pure[IO]
+        storage <- LastNGlobalSnapshotStorage.make[IO](LastGlobalSnapshotsSyncConfig(NonNegLong(1L), PosInt(1)))
+        result <- storage
+          .setInitialFetchingGL0(
+            canonical(SnapshotOrdinal.unsafeApply(100L)),
+            info,
+            localArchive.asRight.some,
+            peerFallback.some
+          )
+          .attempt
+        fallbackCount <- peerFallbacks.get
+        combined <- storage.getCombined
+        retained <- storage.getLastN
+      } yield
+        expect(result.left.exists(_.getMessage.contains("hash mismatch"))) &&
+          expect.same(0, fallbackCount) &&
+          expect(combined.isEmpty) &&
+          expect(retained.isEmpty)
     }
   }
 
