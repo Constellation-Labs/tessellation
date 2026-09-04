@@ -23,8 +23,11 @@ trait SnapshotStorage[F[_], S <: Snapshot, State] {
   def get(hash: Hash): F[Option[Signed[S]]]
   def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hash]]
 
-  /** Reset head to the given snapshot for incremental recovery. Unlike prepend, this does not require sequential ordinals — it directly
-    * sets the head.
+  /** Publish an already validated download or recovery terminal pair as the visible head. Unlike `prepend`, this does not require
+    * sequential ordinals because full download may have already installed a canonical suffix directly on disk.
+    *
+    * This storage operation grants no branch-selection or rollback authority. Callers must validate and authorize the exact artifact and
+    * state before invoking it; filesystem-backed implementations make that pair durable and reconcile lookup caches before publication.
     */
   def setHeadForRecovery(snapshot: Signed[S], state: State)(implicit hasher: Hasher[F]): F[Unit]
 

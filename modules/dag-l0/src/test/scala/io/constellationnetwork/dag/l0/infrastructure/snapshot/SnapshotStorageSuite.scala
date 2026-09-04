@@ -62,7 +62,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       }
     }
 
-  def mkSeparatedStorage(
+  def mkInspectableStorage(
     tmpDir: File,
     persistenceMutex: Mutex[IO],
     protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
@@ -102,8 +102,28 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
             protectedSnapshotInfoOrdinals
           )
       }
-    } yield (storage, snapshotFileStorage, snapshotInfoFileStorage, checkpointStorage)
+    } yield
+      (
+        storage,
+        snapshotFileStorage,
+        snapshotInfoFileStorage,
+        checkpointStorage,
+        headRef,
+        ordinalCache,
+        hashCache,
+        notPersistedCache
+      )
   }
+
+  def mkSeparatedStorage(
+    tmpDir: File,
+    persistenceMutex: Mutex[IO],
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
+  )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) =
+    mkInspectableStorage(tmpDir, persistenceMutex, protectedSnapshotInfoOrdinals).map {
+      case (storage, snapshotFileStorage, snapshotInfoFileStorage, checkpointStorage, _, _, _, _) =>
+        (storage, snapshotFileStorage, snapshotInfoFileStorage, checkpointStorage)
+    }
 
   def mkStorageWithAcceptedHead(
     tmpDir: File,
@@ -367,6 +387,176 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
                   .and(expect.eql(persistedStateAfterRetry, acceptedState.some))
           }
       }
+    }
+  }
+
+  test("validated head publication exposes an externally installed suffix hidden by a cached miss") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, _) = built
+        (genesis, historical) <- mkSnapshots
+        historicalHash <- historical.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        terminal <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          historical.value.copy(
+            ordinal = historical.ordinal.next,
+            lastSnapshotHash = historicalHash
+          ),
+          keyPair
+        )
+        context = genesis.info.toGlobalSnapshotInfo
+        missingBeforeInstall <- storage.get(historical.ordinal)
+        _ <- snapshotFiles.write(historical)
+        hiddenBeforePublication <- storage.get(historical.ordinal)
+        _ <- storage.setHeadForRecovery(terminal, context)
+        visibleAfterPublication <- storage.get(historical.ordinal)
+        publishedHead <- storage.head
+      } yield
+        expect.all(
+          missingBeforeInstall.isEmpty,
+          hiddenBeforePublication.isEmpty,
+          visibleAfterPublication.contains(historical),
+          publishedHead.contains((terminal, context))
+        )
+    }
+  }
+
+  test("validated head publication leaves the visible head unchanged when snapshot-info persistence fails") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        built <- mkStorageWithFailingFirstSnapshotInfoWrite(tmpDir)
+        (storage, _, snapshotInfoFiles) = built
+        (genesis, snapshot) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        first <- storage.setHeadForRecovery(snapshot, context).attempt
+        headAfterFailure <- storage.head
+        contextAfterFailure <- snapshotInfoFiles.read(snapshot.ordinal)
+        _ <- storage.setHeadForRecovery(snapshot, context)
+        headAfterRetry <- storage.head
+      } yield
+        expect.all(
+          first.isLeft,
+          headAfterFailure.isEmpty,
+          contextAfterFailure.isEmpty,
+          headAfterRetry.contains((snapshot, context))
+        )
+    }
+  }
+
+  test("validated head publication rejects a different value occupying the target ordinal without changing the head") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, _, snapshotInfoFiles, _, _, _, _, _) = built
+        (genesis, original) <- mkSnapshots
+        originalContext = genesis.info.toGlobalSnapshotInfo
+        conflictingContext = originalContext.copy(
+          balances = SortedMap(
+            address.Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> balance.Balance(100L)
+          )
+        )
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        conflicting <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          original.value.copy(version = semver.SnapshotVersion("1.0.0")),
+          keyPair
+        )
+        _ <- storage.prepend(original, originalContext)
+        publication <- storage.setHeadForRecovery(conflicting, conflictingContext).attempt
+        headAfterFailure <- storage.head
+        cachedAtTarget <- storage.get(original.ordinal)
+        contextAfterFailure <- snapshotInfoFiles.read(original.ordinal)
+      } yield
+        expect.all(
+          publication.isLeft,
+          headAfterFailure.contains((original, originalContext)),
+          cachedAtTarget.contains(original),
+          contextAfterFailure.contains(originalContext)
+        )
+    }
+  }
+
+  test("validated lower-head publication evicts a deleted future suffix from positive caches") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, _) = built
+        (genesis, original) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        originalHash <- original.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        future <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          original.value.copy(
+            ordinal = original.ordinal.next,
+            lastSnapshotHash = originalHash
+          ),
+          keyPair
+        )
+        futureHash <- future.value.hash
+        _ <- storage.prepend(original, context)
+        _ <- storage.prepend(future, context)
+        _ <- snapshotFiles.delete(future.ordinal)
+        _ <- snapshotFiles.delete(futureHash)
+        cachedBeforePublication <- storage.get(future.ordinal)
+        _ <- storage.setHeadForRecovery(original, context)
+        byOrdinalAfterPublication <- storage.get(future.ordinal)
+        byHashAfterPublication <- storage.get(futureHash)
+        headAfterPublication <- storage.head
+      } yield
+        expect.all(
+          cachedBeforePublication.contains(future),
+          byOrdinalAfterPublication.isEmpty,
+          byHashAfterPublication.isEmpty,
+          headAfterPublication.contains((original, context))
+        )
+    }
+  }
+
+  test("validated head retry clears a stale not-persisted marker only after exact disk readback succeeds") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, notPersisted) = built
+        (genesis, target) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        occupying <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          target.value.copy(version = semver.SnapshotVersion("1.0.0")),
+          keyPair
+        )
+        occupyingHash <- occupying.value.hash
+        _ <- snapshotFiles.write(occupying)
+        _ <- notPersisted.update(_ + target.ordinal)
+        failed <- storage.setHeadForRecovery(target, context).attempt
+        markerAfterFailure <- notPersisted.get
+        headAfterFailure <- storage.head
+        _ <- snapshotFiles.delete(occupying.ordinal)
+        _ <- snapshotFiles.delete(occupyingHash)
+        _ <- storage.setHeadForRecovery(target, context)
+        markerAfterRetry <- notPersisted.get
+        headAfterRetry <- storage.head
+      } yield
+        expect.all(
+          failed.isLeft,
+          markerAfterFailure.contains(target.ordinal),
+          headAfterFailure.isEmpty,
+          !markerAfterRetry.contains(target.ordinal),
+          headAfterRetry.contains((target, context))
+        )
     }
   }
 
