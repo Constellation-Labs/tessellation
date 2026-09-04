@@ -60,7 +60,7 @@ jobs:
           DAG_L0_PORT_PREFIX: 90
           DAG_L1_PORT_PREFIX: 91
 
-      - name: Test Delegated Staking
+      - name: Test Delegated Staking and Double-Withdrawal Protection
         run: |
           cd .github/action_scripts/delegated_staking
           node delegated-staking.js 90 91 testDelegatedStaking

@@ -17,6 +17,7 @@ const {
   parseSharedArgs,
   PRIVATE_KEYS,
   withRetry,
+  createAndConnectAccount,
   createNetworkConfig,
   logWorkflow,
 } = require('../shared')
@@ -728,6 +729,221 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
   logWorkflow.info('---- End testWithdrawDelegatedStake ----')
 }
 
+const getAlternateGlobalL0Url = (globalL0Url) => {
+  const alternate = new URL(globalL0Url)
+  alternate.port = `${Number(alternate.port) + 10}`
+  return alternate.toString().replace(/\/$/, '')
+}
+
+const waitForNextSnapshot = async (urls) => {
+  const initialSnapshot = await fetchSnapshot(urls, 'latest')
+  const initialOrdinal = initialSnapshot.value.ordinal
+
+  return withRetry(
+    async () => {
+      const latestSnapshot = await fetchSnapshot(urls, 'latest')
+      if (latestSnapshot.value.ordinal <= initialOrdinal) {
+        throw new Error(`Waiting for an ordinal after ${initialOrdinal}`)
+      }
+      return latestSnapshot.value.ordinal
+    },
+    {
+      name: 'waitForNextSnapshotBeforeDoubleWithdrawalRace',
+      maxAttempts: 60,
+      interval: 1000,
+      handleError: () => {},
+    },
+  )
+}
+
+const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
+  logWorkflow.info('---- Start testDoubleWithdrawalProtection ----')
+
+  const primaryAccount = createAndConnectAccount(PRIVATE_KEYS.key3, {
+    l0Url: urls.globalL0Url,
+    l1Url: urls.dagL1Url,
+  })
+  const secondaryAccount = createAndConnectAccount(PRIVATE_KEYS.key3, {
+    l0Url: getAlternateGlobalL0Url(urls.globalL0Url),
+    l1Url: urls.dagL1Url,
+  })
+  const lockAmount = 500000000001
+  const initialBalance = dagToDatum(await primaryAccount.getBalance())
+  const lockHash = await createTokenLock(primaryAccount, urls, lockAmount)
+  const balanceAfterLock = initialBalance - lockAmount
+
+  const originalStakeHash = await createDelegatedStake(
+    primaryAccount,
+    lockHash,
+    lockAmount,
+    nodeIds[0],
+  )
+
+  await withRetry(
+    async () => {
+      const state = await getAccountDelegatedStakes(
+        urls,
+        primaryAccount.address,
+      )
+      const originalStake = state.activeDelegatedStakes.find(
+        (stake) => stake.hash === originalStakeHash,
+      )
+      if (!originalStake) throw new Error('Original race stake is not active')
+      return originalStake
+    },
+    {
+      name: 'waitForOriginalDoubleWithdrawalStake',
+      maxAttempts: 30,
+      interval: 1000,
+      handleError: () => {},
+    },
+  )
+
+  await waitForNextSnapshot(urls)
+
+  // Submit the replacement and withdrawal through different gL0 nodes in the
+  // same fresh-round window. Consensus must never materialize both S2 and W1.
+  const [replacementResult, withdrawalResult] = await Promise.allSettled([
+    createDelegatedStake(
+      primaryAccount,
+      lockHash,
+      lockAmount,
+      nodeIds[1],
+    ),
+    withdrawDelegatedStake(secondaryAccount, originalStakeHash),
+  ])
+
+  if (
+    replacementResult.status !== 'fulfilled' ||
+    withdrawalResult.status !== 'fulfilled'
+  ) {
+    throw new Error(
+      `Failed to stage both double-withdrawal race requests: replacement=${replacementResult.status}, withdrawal=${withdrawalResult.status}`,
+    )
+  }
+
+  const replacementStakeHash = replacementResult.value
+
+  const raceOutcome = await withRetry(
+    async () => {
+      const state = await getAccountDelegatedStakes(
+        urls,
+        primaryAccount.address,
+      )
+      const activeForLock = state.activeDelegatedStakes.filter(
+        (stake) => stake.tokenLockRef === lockHash,
+      )
+      const pendingForLock = state.pendingWithdrawals.filter(
+        (stake) => stake.tokenLockRef === lockHash,
+      )
+
+      if (activeForLock.length > 1 || pendingForLock.length > 1) {
+        throw new Error(
+          `Multiple stake records reference race lock ${lockHash}: active=${activeForLock.length}, pending=${pendingForLock.length}`,
+        )
+      }
+      if (activeForLock.length === 1 && pendingForLock.length === 1) {
+        throw new Error(
+          `Consensus-breaking state detected for ${lockHash}: an active stake and pending withdrawal share one lock`,
+        )
+      }
+
+      const replacementIsActive =
+        replacementStakeHash &&
+        activeForLock.some((stake) => stake.hash === replacementStakeHash)
+      const originalIsPending = pendingForLock.some(
+        (stake) => stake.hash === originalStakeHash,
+      )
+
+      if (!replacementIsActive && !originalIsPending) {
+        throw new Error('Double-withdrawal race has not reached a terminal state')
+      }
+
+      return { replacementIsActive, pendingForLock }
+    },
+    {
+      name: 'assertDoubleWithdrawalRaceIsSafe',
+      maxAttempts: 30,
+      interval: 1000,
+      handleError: (err, attempt) => {
+        if (attempt === 30) throw err
+      },
+    },
+  )
+
+  if (raceOutcome.replacementIsActive) {
+    await withdrawDelegatedStake(primaryAccount, replacementStakeHash)
+  }
+
+  const pendingWithdrawal = await withRetry(
+    async () => {
+      const state = await getAccountDelegatedStakes(
+        urls,
+        primaryAccount.address,
+      )
+      const activeForLock = state.activeDelegatedStakes.filter(
+        (stake) => stake.tokenLockRef === lockHash,
+      )
+      const pendingForLock = state.pendingWithdrawals.filter(
+        (stake) => stake.tokenLockRef === lockHash,
+      )
+
+      if (activeForLock.length !== 0 || pendingForLock.length !== 1) {
+        throw new Error(
+          `Expected one withdrawal for ${lockHash}, got active=${activeForLock.length}, pending=${pendingForLock.length}`,
+        )
+      }
+
+      return pendingForLock[0]
+    },
+    {
+      name: 'assertExactlyOnePendingWithdrawalForTokenLock',
+      maxAttempts: 30,
+      interval: 1000,
+      handleError: (err, attempt) => {
+        if (attempt === 30) throw err
+      },
+    },
+  )
+
+  const expectedBalanceAfterUnlock =
+    balanceAfterLock + pendingWithdrawal.totalBalance
+
+  return async () => {
+    await withRetry(
+      async () => {
+        const state = await getAccountDelegatedStakes(
+          urls,
+          primaryAccount.address,
+        )
+        const activeForLock = state.activeDelegatedStakes.filter(
+          (stake) => stake.tokenLockRef === lockHash,
+        )
+        const pendingForLock = state.pendingWithdrawals.filter(
+          (stake) => stake.tokenLockRef === lockHash,
+        )
+
+        if (activeForLock.length !== 0 || pendingForLock.length !== 0) {
+          throw new Error(`Withdrawal for ${lockHash} has not resolved`)
+        }
+
+        await assertBalanceChange(primaryAccount, expectedBalanceAfterUnlock)
+      },
+      {
+        name: 'assertDoubleWithdrawalCreditsPrincipalOnce',
+        maxAttempts: 36,
+        interval: 10 * 1000,
+        handleError: (err, attempt) => {
+          if (attempt === 36) throw err
+        },
+      },
+    )
+
+    logWorkflow.info('Double-withdrawal race credited principal exactly once')
+    logWorkflow.info('---- End testDoubleWithdrawalProtection ----')
+  }
+}
+
 const testDelegatedStaking = async (urls) => {
   const account = setupDag4Account(urls)
   account.loginPrivateKey(PRIVATE_KEYS.key4)
@@ -735,6 +951,12 @@ const testDelegatedStaking = async (urls) => {
   await testCreateNodeParameters(urls)
 
   const nodeParams = await getNodeParams(urls)
+
+  const finishDoubleWithdrawalProtectionTest =
+    await beginDoubleWithdrawalProtectionTest(urls, [
+      nodeParams[0].peerId,
+      nodeParams[1].peerId,
+    ])
 
   const [stakeHash] = await testCreateDelegatedStake(urls, account, [
     nodeParams[0].peerId,
@@ -749,6 +971,7 @@ const testDelegatedStaking = async (urls) => {
   )
 
   await testWithdrawDelegatedStake(urls, account, updatedStakeHash)
+  await finishDoubleWithdrawalProtectionTest()
 }
 
 const executeWorkflowByType = async (workflowType) => {
