@@ -111,6 +111,13 @@ jobs:
           # 30 min default would have killed it regardless).
           # The previous note here blocked on PR #1485, which was closed without ever merging.
           # - { name: fork-recovery,          tests: "fork-recovery", extra-args: "--num-gl0=5", runner: "Ubuntu-22-64-core", timeout: 60 }
+          # Exercises the production cold-restart topology: one rollback lead, one warm validator,
+          # and one validator restored from an older same-prefix snapshot. The healthy pair must
+          # advance, the lagged validator must publish its exact downloaded head before consensus
+          # initialization, become Ready, sign again, and converge on the same post-recovery hash.
+          # This test needs 2/3 finality while one member is deliberately offline; keep that quorum
+          # override scoped to this matrix row rather than weakening the other E2E jobs.
+          - { name: rollback-download-head,  tests: "rollback-download-head", extra-args: "--num-gl0=3 --num-gl1=0", quorum: "0.6666666666666666", timeout: 60 }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
           - { name: token-locks,            tests: "token-locks" }
@@ -141,7 +148,7 @@ jobs:
       # Cadence when there ARE pending events (the flood): lowered so gl0 drains the chain faster without
       # spawning empty rounds when idle.
       CL_EVENT_TRIGGER_COOLDOWN: "5 seconds"
-      CL_QUORUM_THRESHOLD_FRACTION: "1.0"
+      CL_QUORUM_THRESHOLD_FRACTION: ${{ matrix.test-group.quorum || '1.0' }}
 
     steps:
       - name: Checkout code
@@ -243,7 +250,7 @@ jobs:
           docker logs "snapshot-streaming-postgres" > "runner-logs/snapshot-streaming-postgres.log" 2>&1 || echo "No snapshot-streaming-postgres container"
 
           # Collect node log directories (mounted volumes). Covers indices beyond the default 3
-          # so multi-node rigs (committee-rewards, fork-recovery) upload their late joiners' logs,
+          # so multi-node rigs (committee-rewards, fork-recovery, rollback-download-head) upload their late joiners' logs,
           # which are exactly the ones needed to diagnose an admission-timing failure.
           for i in 0 1 2 3 4 5 6 7 8 9; do
             cp -r "nodes/$i/gl0-logs" "runner-logs/node-$i-gl0-logs" 2>/dev/null || true
