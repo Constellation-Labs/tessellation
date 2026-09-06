@@ -134,7 +134,9 @@ Stages proceed in order, with exceptions only for emergency maintenance or requi
 
 ### 1. Merge to Develop
 
-Requires PR approval only. Does not deploy code anywhere manually. Breaking changes should ideally be documented as part of the merged commits using conventional commit format, but documentation can be deferred to later stages.
+Requires PR approval only. Does not deploy code anywhere manually. Breaking changes must carry
+their compatibility classification, required ADR/schema package, and conventional-commit marker in
+the merged work. Only non-blocking release-note polish may be deferred to a later release stage.
 
 ### 2. Testnet Release
 

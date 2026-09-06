@@ -18,6 +18,10 @@ historical compatibility boundary when old artifacts would otherwise re-derive d
 Missing `FieldsAddedOrdinals` threshold mappings are disabled, never active from genesis; an
 explicit `0` is required for active-from-genesis behavior.
 
+Before adding or renumbering an ADR, inspect `docs/adr/` on the latest target branch, choose the
+next unused four-digit number, and recheck after the final rebase. If another change claimed the
+number first, renumber the newer proposed ADR and update every reference before merge.
+
 When classification is uncertain, treat the change as schema/wire-impacting until the exact signed
 and persisted surfaces and external consumers have been audited. Do not implement or approve an
 unplanned schema change as an incidental part of a behavioral fix.

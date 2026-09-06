@@ -452,6 +452,10 @@ sbt "dagL0/test"             # Single module
 ## Build & Deploy
 
 ### Local Development
+
+The canonical `just`/Docker E2E lifecycle, artifact paths, staged-JAR provenance checks, and cleanup
+matrix are documented in [`docker/README.md`](../docker/README.md).
+
 ```bash
 sbt compile                  # Compile all
 sbt runLinter                # Format + lint

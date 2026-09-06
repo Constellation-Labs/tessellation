@@ -108,6 +108,11 @@ golden fixture changes, the PR is not runtime-only until that difference is expl
 
 A class-3 change blocks merge until the PR or a linked ADR records:
 
+Every numbered item must be completed or marked not applicable with evidence. For example, an
+internal P2P message can require wire-version and mixed-version analysis without changing Snapshot
+Streaming, the SDK, or metagraph schemas; the review record must say why those consumers are not
+affected rather than inventing unnecessary work for them.
+
 1. the explicit human approval to change schema and why a runtime-only or stable-schema solution is
    insufficient;
 2. the exact types, fields, codecs, canonical ordering, hash/signature preimages, persistence, and

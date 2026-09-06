@@ -1,6 +1,6 @@
 ## Consensus compatibility
 
-<!-- Read docs/adr/0034-consensus-schema-change-governance.md for consensus-adjacent changes. -->
+<!-- Read docs/adr/0034-consensus-schema-change-governance.md for consensus-adjacent changes. Select exactly one classification. -->
 
 - [ ] Not consensus-adjacent
 - [ ] Runtime-only behavior; encodings/hash rules and historical replay are unchanged
