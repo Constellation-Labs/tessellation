@@ -15,6 +15,8 @@ encodings, hash/signature construction, persisted history, replay semantics, Sna
 Block Explorer, public APIs, SDKs, or metagraph artifacts automatically compatible. Schema/wire
 changes require an explicit design and rollout decision; replay/state-transition changes require a
 historical compatibility boundary when old artifacts would otherwise re-derive differently.
+Missing `FieldsAddedOrdinals` threshold mappings are disabled, never active from genesis; an
+explicit `0` is required for active-from-genesis behavior.
 
 When classification is uncertain, treat the change as schema/wire-impacting until the exact signed
 and persisted surfaces and external consumers have been audited. Do not implement or approve an

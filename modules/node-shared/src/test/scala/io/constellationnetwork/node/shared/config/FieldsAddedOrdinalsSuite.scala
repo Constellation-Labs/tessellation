@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.config
 
 import cats.effect.IO
+import cats.syntax.eq._
 
 import scala.collection.immutable.SortedMap
 
@@ -65,7 +66,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     }
   }
 
-  test("keeps fee transaction security disabled when an environment entry is absent") {
+  test("keeps every threshold gate disabled when an environment entry is absent") {
     val fieldsAddedOrdinals = FieldsAddedOrdinals(
       tessellation3Migration = Map.empty,
       tessellation301Migration = Map.empty,
@@ -80,12 +81,41 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       feeTransactionSecurity = Map.empty
     )
 
-    IO(
-      expect.same(
-        SnapshotOrdinal.MaxValue,
-        fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet)
-      )
+    val thresholdGates = List(
+      fieldsAddedOrdinals.tessellation3Migration,
+      fieldsAddedOrdinals.tessellation301Migration,
+      fieldsAddedOrdinals.checkSyncGlobalSnapshotField,
+      fieldsAddedOrdinals.metagraphSyncData,
+      fieldsAddedOrdinals.updatedLastSyncGlobalOrder,
+      fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus,
+      fieldsAddedOrdinals.updatingCombineFunctionSpendActions,
+      fieldsAddedOrdinals.fixingAllowSpendExpiration,
+      fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation,
+      fieldsAddedOrdinals.setSumFix,
+      fieldsAddedOrdinals.scFeeBalanceFromContext,
+      fieldsAddedOrdinals.subTrieRoots,
+      fieldsAddedOrdinals.delegatedRewardsFullCommittee,
+      fieldsAddedOrdinals.feeTransactionSecurity,
+      fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow,
+      fieldsAddedOrdinals.currencySnapshotProtocolV1,
+      fieldsAddedOrdinals.fixingDataApplicationFeeValidation,
+      fieldsAddedOrdinals.fixingAllowSpendDestinationCredit,
+      fieldsAddedOrdinals.preventingAllowSpendResurrection,
+      fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration
     )
+
+    IO {
+      expect(
+        thresholdGates.forall(
+          fieldsAddedOrdinals.resolveWithDisabledDefault(_, AppEnvironment.Mainnet) === SnapshotOrdinal.MaxValue
+        )
+      ) &&
+      expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet)) &&
+      expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Mainnet)) &&
+      expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(AppEnvironment.Mainnet)) &&
+      expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(AppEnvironment.Mainnet)) &&
+      expect(fieldsAddedOrdinals.dustSweeps.get(AppEnvironment.Mainnet).isEmpty)
+    }
   }
 
   test("Currency snapshot protocol v1 is enabled for dev and fails closed for every public environment") {

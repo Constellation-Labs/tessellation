@@ -106,7 +106,13 @@ The preferred mechanism for introducing breaking changes. Gives node operators a
 - **Epoch-based flags** (preferred) - Enable breaking behavior at a specific approximate point in time. Epoch is a vector clock that loosely approximates actual time.
 - **Ordinal-based flags** - Should be avoided when possible, as ordinals cannot accurately proxy for time over longer periods, but may be necessary due to technical constraints.
 
-Configuration lives in `modules/node-shared/src/main/resources/application.conf`. The current primary ordinal-gate surface is the `fields-added-ordinals` block, a `Map[AppEnvironment, SnapshotOrdinal]` family plus the `dust-sweeps` `Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`. Live sub-keys include `sc-fee-balance-from-context`, `dust-sweeps`, `set-sum-fix`, `fixing-allow-spend-and-token-lock-validation`, `sub-trie-roots`, `delegated-rewards-full-committee`, `fee-transaction-security`, and the historical migration gates. Older keys like `last-legacy-state-proof-ordinal` and `incremental-delegated-staking-starting-ordinal` still exist but are no longer where new gates land.
+Configuration lives in `modules/node-shared/src/main/resources/application.conf`. The current primary ordinal-gate surface is the `fields-added-ordinals` block, a `Map[AppEnvironment, SnapshotOrdinal]` family plus the `dust-sweeps` `Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`. Live sub-keys include `sc-fee-balance-from-context`, `dust-sweeps`, `set-sum-fix`, `fixing-allow-spend-and-token-lock-validation`, `sub-trie-roots`, `delegated-rewards-full-committee`, `fee-transaction-security`, `currency-snapshot-protocol-v1`, `fixing-fee-transaction-balance-overflow`, `fixing-data-application-fee-validation`, `fixing-allow-spend-destination-credit`, `preventing-allow-spend-resurrection`, `fixing-global-allow-spend-expiration`, and the historical migration gates. Older keys like `last-legacy-state-proof-ordinal` and `incremental-delegated-staking-starting-ordinal` still exist but are no longer where new gates land.
+
+Every `FieldsAddedOrdinals` threshold map follows one missing-value contract: an absent environment
+resolves to `SnapshotOrdinal.MaxValue` and is disabled. Active-from-genesis behavior requires an
+explicit `0`. Exact-key maps such as `dust-sweeps` are disabled naturally when no environment/key
+entry exists. Each gate must separately document its ordinal/epoch domain and comparator; do not
+infer `>=` when a historical replay boundary intentionally uses `>`.
 
 Several `fields-added-ordinals` gates require the deploy-time rule that **the chain must cross the gate ordinal only after the new jar is live cluster-wide** (a too-early crossing on the old jar misses the gated behaviour; for the dust sweep, a missed sweep is not re-attempted until a rollback re-crosses the ordinal). See the gate-setting checklist in [`v4-launch-runbook.md`](v4-launch-runbook.md).
 

@@ -648,28 +648,28 @@ object GlobalSnapshotAcceptanceManager {
       ] = {
         implicit val hasher: Hasher[F] = HasherSelector[F].getForOrdinal(ordinal)
 
-        val tessellation3MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation3Migration
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val tessellation3MigrationStartingOrdinal =
+          fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.tessellation3Migration, environment)
 
-        val tessellation301MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation301Migration
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val tessellation301MigrationStartingOrdinal =
+          fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.tessellation301Migration, environment)
 
-        val metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val metagraphSyncDataStartingOrdinal =
+          fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.metagraphSyncData, environment)
 
-        val preventingAllowSpendResurrectionOrdinal = fieldsAddedOrdinals.preventingAllowSpendResurrection
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val preventingAllowSpendResurrectionOrdinal =
+          fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.preventingAllowSpendResurrection, environment)
 
         // Below the activation ordinal the retired-reference ledger is neither read nor written, so signed history
         // replays byte-identically: the new GlobalSnapshotInfo field stays None and JsonSerializer drops nulls.
         val preventAllowSpendResurrection = ordinal > preventingAllowSpendResurrectionOrdinal
 
-        val fixingGlobalAllowSpendExpirationOrdinal = fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration
-          .getOrElse(environment, SnapshotOrdinal.MaxValue)
+        val fixingGlobalAllowSpendExpirationOrdinal =
+          fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration, environment)
         val suppressSpentExpiredAllowSpends = ordinal >= fixingGlobalAllowSpendExpirationOrdinal
 
-        val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val fixingAllowSpendAndTokenLockValidation =
+          fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation, environment)
 
         loggerBundle.app.withOrdinal(ordinal) {
           for {

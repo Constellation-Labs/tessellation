@@ -87,8 +87,16 @@ golden fixture changes, the PR is not runtime-only until that difference is expl
 
 - Select behavior from artifact-carried ordinal/epoch context, never directly from
   `AppEnvironment` inside consensus logic.
-- Public environment mappings fail closed while unset. Choose and announce a strictly future
-  activation only after the release and consumer plan is approved.
+- Every missing `FieldsAddedOrdinals` threshold mapping resolves to the disabled
+  `SnapshotOrdinal.MaxValue` sentinel. Active-from-genesis behavior requires an explicit `0`.
+  Any future exception requires an explicit per-gate rationale, source comment, and regression
+  test rather than an ad hoc fallback at one consumer.
+- Record the gate's ordinal/epoch domain, exact comparator (`>=`, `>`, or exact-key), missing/default
+  semantics, and whether the resolved value is included in `deterministicConfigHash`.
+- For new behavior, choose and announce a strictly future activation only after the release and
+  consumer plan is approved. A replay correction may instead pin the exact historical cutover at
+  which the corrected behavior already entered signed history, but only with retained chain/release
+  evidence for that boundary.
 - Preserve the old derivation below the boundary. Never move an already-crossed gate forward or
   reinterpret the signed interval behind it.
 - Use the same selector in producer, validator, follower, download/recovery, and external

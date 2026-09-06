@@ -81,17 +81,27 @@ object types {
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
+
+    /** Resolve a threshold gate for one environment. A missing mapping must retain the historical path rather than silently enabling new
+      * behavior from genesis. Exact-key gates such as `dustSweeps` use absence as their natural disabled state instead.
+      */
+    private[constellationnetwork] def resolveWithDisabledDefault(
+      ordinals: Map[AppEnvironment, SnapshotOrdinal],
+      environment: AppEnvironment
+    ): SnapshotOrdinal =
+      ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      resolveWithDisabledDefault(feeTransactionSecurity, environment)
 
     def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
-      currencySnapshotProtocolV1.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      resolveWithDisabledDefault(currencySnapshotProtocolV1, environment)
 
     def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
-      fixingDataApplicationFeeValidation.getOrElse(environment, SnapshotOrdinal.MinValue)
+      resolveWithDisabledDefault(fixingDataApplicationFeeValidation, environment)
 
     def fixingAllowSpendDestinationCreditFor(environment: AppEnvironment): SnapshotOrdinal =
-      fixingAllowSpendDestinationCredit.getOrElse(environment, SnapshotOrdinal.MinValue)
+      resolveWithDisabledDefault(fixingAllowSpendDestinationCredit, environment)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).

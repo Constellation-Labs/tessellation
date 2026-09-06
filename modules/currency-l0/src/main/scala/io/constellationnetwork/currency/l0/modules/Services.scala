@@ -169,7 +169,10 @@ object Services {
         .pure[F]
 
       creator = CurrencySnapshotCreator.make[F](
-        sharedCfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+        sharedCfg.fieldsAddedOrdinals.resolveWithDisabledDefault(
+          sharedCfg.fieldsAddedOrdinals.tessellation3Migration,
+          sharedCfg.environment
+        ),
         sharedServices.currencySnapshotAcceptanceManager,
         dataApplicationAcceptanceManager,
         cfg.snapshotSize,
@@ -183,8 +186,7 @@ object Services {
         signedValidator,
         maybeRewards,
         maybeDataApplication,
-        sharedCfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
-          .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue)
+        sharedCfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(sharedCfg.environment)
       )
 
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)

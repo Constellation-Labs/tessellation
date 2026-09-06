@@ -14,6 +14,8 @@ outcomes—to change together. It does not make signed encodings, hash/signature
 persisted history, replay semantics, Snapshot Streaming, Block Explorer, SDK, or metagraph changes
 compatible. Do not implement an unapproved schema change as part of a behavioral fix. If impact is
 uncertain, treat it as schema/wire until the signed, persisted, and external surfaces are audited.
+Missing `FieldsAddedOrdinals` threshold mappings are disabled; active-from-genesis behavior must use
+an explicit `0`.
 
 ## Project Overview
 

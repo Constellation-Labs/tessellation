@@ -14,3 +14,5 @@ Affected signed/persisted types, hashes, proofs, or historical behavior:
 Snapshot Streaming, Block Explorer, SDK, and metagraph impact:
 
 Activation/replay tests and external artifact versions:
+
+Activation domain, comparator, missing/default behavior, and historical-boundary evidence:

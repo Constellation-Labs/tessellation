@@ -5,11 +5,11 @@
 
 ## Summary
 
-Snapshots are signed. Once an ordinal is finalized, its artifact bytes are fixed forever, and any node that replays history (a fresh sync, a rollback, a cold restart) MUST re-derive byte-identical state or it forks. This makes shipping a fix to deterministic behavior hazardous: the new code path would change the bytes of already-signed history. `FieldsAddedOrdinals` is the primitive that resolves this. It is a record of per-environment **activation ordinals** (`config/types.scala:27-48`): each new or changed deterministic behavior is gated so that history strictly below its ordinal re-derives on the OLD path (byte-identical to what was signed), while at and after the ordinal the new behavior applies. The decision is always `ordinal >= gate`, **never** a branch on `AppEnvironment`. The values are HOCON literals packaged into the assembly jar and have no environment-variable overrides. They must be identical across the cluster and finalized before assembly. Most remain outside `deterministicConfigHash`; the Currency snapshot protocol-v1 gate is explicitly copied into each L0's effective hash because it changes cross-layer artifact derivation. A config fence detects disagreement, but it cannot make a unanimously wrong activation ordinal safe.
+Snapshots are signed. Once an ordinal is finalized, its artifact bytes are fixed forever, and any node that replays history (a fresh sync, a rollback, a cold restart) MUST re-derive byte-identical state or it forks. This makes shipping a fix to deterministic behavior hazardous: the new code path would change the bytes of already-signed history. `FieldsAddedOrdinals` is the primitive that resolves this. It is a record of per-environment **activation ordinals** (`config/types.scala:29-104`): each new or changed deterministic behavior is gated so that history on the legacy side of its boundary re-derives on the OLD path (byte-identical to what was signed), while the new behavior applies on the other side. Most threshold gates use `ordinal >= gate`; a small number deliberately use `>` because the named ordinal is the last legacy observation, and dust sweeps use exact-key equality. Consensus code selects the configured ordinal for its environment and must never branch behavior directly on `AppEnvironment`. The values are HOCON literals packaged into the assembly jar and have no environment-variable overrides. They must be identical across the cluster and finalized before assembly. Most remain outside `deterministicConfigHash`; the Currency snapshot protocol-v1 gate is explicitly copied into each L0's effective hash because it changes cross-layer artifact derivation. A config fence detects disagreement, but it cannot make a unanimously wrong activation ordinal safe.
 
 ## Mechanism
 
-`FieldsAddedOrdinals` is a flat record of maps, one per gated behavior (`config/types.scala:27-49`):
+`FieldsAddedOrdinals` is a flat record of maps, one per gated behavior (`config/types.scala:29-104`):
 
 ```scala
 case class FieldsAddedOrdinals(
@@ -27,20 +27,25 @@ case class FieldsAddedOrdinals(
   subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
   currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
+  fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
 )
 ```
 
-Each gate is loaded from the `fields-added-ordinals` HOCON block (`application.conf:210-293`). Resolution is always the same shape: pick the entry for the running environment, then compare the snapshot ordinal against it. Two value conventions appear:
+Each gate is loaded from the `fields-added-ordinals` HOCON block (`application.conf:210-395`). Resolution first picks the entry for the running environment. Two value conventions appear:
 
-- A **threshold gate** (`Map[AppEnvironment, SnapshotOrdinal]`): the behavior is gated by `ordinal >= gate`. Absent-environment resolution **fails closed** to `SnapshotOrdinal.MaxValue` (e.g. `scFeeBalanceFromContext.getOrElse(environment, SnapshotOrdinal.MaxValue)` at `GlobalSnapshotConsensus.scala:152` and `SharedServices.scala:195`): the `ordinal >= gate` check never fires, so an unset environment keeps the OLD path rather than silently activating the new one from genesis. Set an env entry to `0` to turn the new path on from genesis (as testnet does), or to a future launch ordinal to switch over at that ordinal. A high placeholder such as `9999999` does the same as the fail-closed default explicitly: it keeps the OLD path live until replaced with the real launch ordinal.
+- A **threshold gate** (`Map[AppEnvironment, SnapshotOrdinal]`): every in-repository consumer resolves an absent environment through `resolveWithDisabledDefault` to `SnapshotOrdinal.MaxValue`. The threshold can therefore never be crossed in ordinary operation, and an incomplete configuration retains the OLD path rather than silently enabling new behavior from genesis. Set an explicit environment entry to `0` to activate from genesis, to a future ordinal for a new coordinated behavior change, or to the exact evidence-backed historical cutover when the gate exists to reproduce behavior already present in signed history. Each gate must document whether its comparison is `>=` or `>`; changing that comparator changes the replay boundary. A finite placeholder such as `9999999` is not the same as the missing-map sentinel: it remains deliberately dormant only until the chain reaches that value.
 - An **exact-key gate** (`dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`): the behavior fires only at exactly the keyed ordinal (`dustSweeps.get(env).flatMap(_.get(ordinal))`), once, and never replays.
 
-`feeTransactionSecurity` follows the replay-safe missing-environment default:
-`SnapshotOrdinal.MaxValue`. Missing configuration therefore retains the historical path rather
-than applying stricter validation retroactively to signed history. The shipped configuration
-contains an explicit entry for every environment.
+Missing means disabled uniformly across every `FieldsAddedOrdinals` threshold map. There is no
+in-tree threshold-gate exception. Any future exception requires an explicit per-gate rationale,
+source comment, and regression test; it must not be introduced by an ad hoc `MinValue` fallback at
+one consumer. Exact-key maps remain naturally disabled when the environment/key is absent.
 
 Per-environment activation ordinals differ because the same fix crosses different points of different chains. The behavior itself is identical code on every network; only WHEN it activates is per-environment. Examples from `application.conf:210-293`:
 
@@ -54,9 +59,17 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `delegated-rewards-full-committee` | 9999999 | 9999999 | 5880000 | 0 |
 | `fee-transaction-security` | 9999999 | 9999999 | 5880000 | 0 |
 | `currency-snapshot-protocol-v1` | absent | absent | absent | 0 |
+| `fixing-fee-transaction-balance-overflow` | 6814499 | 3255000 | 5905000 | 0 |
+| `fixing-data-application-fee-validation` | 6818000 | 9999999 | 9999999 | 0 |
+| `fixing-allow-spend-destination-credit` | 6818000 | 9999999 | 9999999 | 0 |
+| `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 9999999 | 0 |
+| `fixing-global-allow-spend-expiration` | 6828500 | 9999999 | 9999999 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
-A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
+A `9999999` entry is a not-yet-activated placeholder only while the chain remains below it. A `0`
+entry means the new path is active from genesis on that environment. An absent threshold mapping
+resolves to `SnapshotOrdinal.MaxValue` and is the repository's disabled convention; an absent
+exact-key sweep means no sweep is scheduled.
 
 ## Reward gates: three values with different jobs
 
