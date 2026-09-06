@@ -30,6 +30,7 @@ Before performing a release or merging a PR with breaking changes, ensure you ha
 - Release Process (internal runbook)
 - [Tessellation GitHub Releases](https://github.com/Constellation-Labs/tessellation/releases)
 - [Conventional Commits](https://www.conventionalcommits.org/) (see also [`docs/adr/0015-conventional-commits.md`](../adr/0015-conventional-commits.md))
+- [Consensus schema change governance](../adr/0034-consensus-schema-change-governance.md)
 
 ## Mandatory pre-stop evidence and monitoring gate
 
@@ -79,6 +80,16 @@ actions. See
 [Global L0 trusted recovery seed committee](../operations/global-l0-recovery-seed-committee.md).
 
 ## Functionality Definitions
+
+### Consensus Compatibility Classification
+
+A coordinated cold restart lets the complete fleet adopt new runtime behavior together, but is not
+evidence that signed history or external consumers remain compatible. Every consensus-adjacent PR
+must classify itself as runtime-only, replay/state-transition with stable schema, or schema/wire.
+The latter two require the compatibility and rollout evidence in
+[ADR-0034](../adr/0034-consensus-schema-change-governance.md). Schema changes are frozen once the
+release candidate and dependent Snapshot Streaming/SDK/metagraph artifacts or announcements are
+finalized; changing them requires a newly reviewed release package.
 
 ### Release Artifacts Construction
 

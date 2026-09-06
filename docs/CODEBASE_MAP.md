@@ -63,8 +63,9 @@ The detailed, code-accurate references for the rewritten subsystems live under `
 - [fields-added-ordinals.md](operations/fields-added-ordinals.md) - ordinal-gating, the no-env-gating principle, GSI dust sweep
 - [consensus-config-reference.md](operations/consensus-config-reference.md) - operator config knobs + `CL_` overrides
 - [v4-launch-runbook.md](release/v4-launch-runbook.md) - coordinated cold restart + gate-ordinal checklist
+- [ADR-0034](adr/0034-consensus-schema-change-governance.md) - mandatory runtime/replay/schema classification and cross-consumer schema-change package
 
-**Decisions**: [docs/adr/](adr/) (ADRs 0001-0015; 0005/0006 are superseded by the tier/committee rewrite).
+**Decisions**: [docs/adr/](adr/) (0005/0006 are superseded by the tier/committee rewrite).
 
 ## Directory Structure
 

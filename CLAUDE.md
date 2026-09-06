@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Consensus Schema Governance
+
+Before changing consensus, snapshot construction/acceptance, hashing, serialization, state proofs,
+persistence, P2P messages, or SDK-visible types, read
+[`docs/adr/0034-consensus-schema-change-governance.md`](docs/adr/0034-consensus-schema-change-governance.md).
+
+Every affected PR must classify itself as runtime-only, replay/state-transition, or schema/wire.
+A coordinated full-cluster cold restart allows runtime behavior—and therefore future consensus
+outcomes—to change together. It does not make signed encodings, hash/signature construction,
+persisted history, replay semantics, Snapshot Streaming, Block Explorer, SDK, or metagraph changes
+compatible. Do not implement an unapproved schema change as part of a behavioral fix. If impact is
+uncertain, treat it as schema/wire until the signed, persisted, and external surfaces are audited.
+
 ## Project Overview
 
 Tessellation is the Constellation Network Node Software - a DAG (Directed Acyclic Graph) based distributed ledger with Layer 0 (L0) and Layer 1 (L1) validators. Written in Scala 2.13, designed for Kubernetes deployment.
