@@ -31,6 +31,8 @@ class EvidenceTests(unittest.TestCase):
             root = Path(directory)
             (root / "events.json").write_text(json.dumps(events))
             for name, rows in (("samples.jsonl", samples), ("reward-observations.jsonl", rewards)):
+                if rows is None:
+                    continue
                 (root / name).write_text("".join(json.dumps(row)+"\n" for row in rows))
             return module.analyze(root)
 
@@ -48,6 +50,13 @@ class EvidenceTests(unittest.TestCase):
         report = self.analyze(data)
         self.assertEqual(report["captured_reward_total_atomic"], 100)
         self.assertEqual([p["timed_epoch_increase"] for p in report["progress"]], [3]*3)
+
+    def test_absent_optional_reward_capture_is_not_zero_rewards(self):
+        events, samples, _ = fixture("fixed")
+        report = self.analyze((events, samples, None))
+        self.assertFalse(report["reward_capture_available"])
+        self.assertIsNone(report["captured_reward_total_atomic"])
+        self.assertIsNone(report["evidence_sha256"]["reward-observations.jsonl"])
 
     def test_observed_value_conflict_fails(self):
         data = fixture("fixed")
@@ -78,6 +87,29 @@ class EvidenceTests(unittest.TestCase):
         data = fixture("stock")
         for tip in data[1][-1]["tips"]:
             tip.update(ordinal=10, epoch=21, digest="hash-10")
+        with self.assertRaises(ValueError):
+            self.analyze(data)
+
+    def restored_fixture(self):
+        data = fixture("fixed")
+        data[0][4]["time"] = 311
+        data[0].insert(5, dict(kind="post_restoration_baseline", time=312, ordinal=12))
+        data[0][6].update(restoration_baseline=12,
+                          tips=[dict(ordinal=15, digest="same") for _ in range(3)])
+        return data
+
+    def test_stronger_recovery_gate_requires_recorded_post_restore_baseline(self):
+        self.assertTrue(self.analyze(self.restored_fixture())["post_restoration_rounds_qualified"])
+
+    def test_recovery_baseline_before_restoration_fails(self):
+        data = self.restored_fixture()
+        data[0][5]["time"] = 309
+        with self.assertRaises(ValueError):
+            self.analyze(data)
+
+    def test_recovery_third_observer_conflict_fails(self):
+        data = self.restored_fixture()
+        data[0][6]["tips"][2]["digest"] = "different"
         with self.assertRaises(ValueError):
             self.analyze(data)
 

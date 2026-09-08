@@ -1,0 +1,45 @@
+{
+  "mode": "stock",
+  "jar_sha256": "9a5726027b962f3a8271d77c37e9c11c66d10a5a960da44d06c283b2a523ed5d",
+  "peer_gossip_workers": 2,
+  "fault_seconds": 210.14852285385132,
+  "progress": [
+    {
+      "node": 0,
+      "start_ordinal": 9,
+      "end_ordinal": 9,
+      "timed_epoch_increase": 0
+    },
+    {
+      "node": 1,
+      "start_ordinal": 9,
+      "end_ordinal": 9,
+      "timed_epoch_increase": 0
+    },
+    {
+      "node": 2,
+      "start_ordinal": 9,
+      "end_ordinal": 9,
+      "timed_epoch_increase": 0
+    }
+  ],
+  "snapshot_value_conflicts": [],
+  "reward_capture_available": false,
+  "captured_reward_snapshots": null,
+  "captured_reward_total_atomic": null,
+  "captured_rewards_by_ordinal": {},
+  "affected_round_seconds_by_observer": [
+    null,
+    null,
+    null
+  ],
+  "recovery_gate_required_advances": 3,
+  "recovery_gate_anchor": "affected_ordinal",
+  "post_restoration_rounds_qualified": false,
+  "checks_passed": true,
+  "evidence_sha256": {
+    "events.json": "2972d19bb18c4f33b024574d2697fbeb170698050c4abd16405fc2f301f460ee",
+    "samples.jsonl": "832a16c0b3e4d552ef60f1b0da04531e4ebc53e88df9221425a64788ae47f0a3",
+    "reward-observations.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

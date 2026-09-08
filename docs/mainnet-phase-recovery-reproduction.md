@@ -1,7 +1,9 @@
 # Mainnet successive-phase recovery reproduction
 
-Status: stock-code research tests. This branch contains no production behavior change.
-It is separate from the optional cadence scheduler and is not a Mainnet incident fix.
+Status: historical stock-code reproduction record. The research revisions described
+here changed no production behavior. The subsequent gossip response-deadline fix
+is documented separately in [the response-lifetime report](mainnet-gossip-response-deadline.md).
+This stock reproduction is not itself a Mainnet incident fix.
 
 ## Observed problem
 
@@ -28,7 +30,8 @@ as their first introduction. The manager, updater, unlock implementation, and
 ## Baseline and isolation
 
 - Production source: v3.5.30, commit `9b1f826db65d56d1736a298fd18c842e0c93f5d6`.
-- All modifications are tests or documentation, not production code/configuration.
+- All modifications in the stock research revisions were tests or documentation,
+  not production code/configuration.
 - Research branch: `research/mainnet-phase-recovery`.
 - No public validators, keys, transactions, or network writes are used by tests.
 - No signatures or signed artifacts are manufactured. The manager test's artifact

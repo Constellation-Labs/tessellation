@@ -1,0 +1,4 @@
+modules/shared/target/streams/test/test/_global/streams/out:[info] Passed: Total 132, Failed 0, Errors 0, Passed 132
+modules/node-shared/target/streams/test/test/_global/streams/out:[info] Passed: Total 295, Failed 0, Errors 0, Passed 295
+modules/currency-l0/target/streams/test/test/_global/streams/out:[info] Passed: Total 41, Failed 0, Errors 0, Passed 41
+modules/dag-l0/target/streams/test/test/_global/streams/out:[info] Passed: Total 93, Failed 0, Errors 0, Passed 93, Ignored 2
