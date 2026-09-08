@@ -24,6 +24,19 @@ import fs2.io.file.Path
 
 object types {
 
+  /** Resolves an ordinal threshold for one environment. Missing configuration must preserve the historical path instead of enabling changed
+    * deterministic behavior from genesis.
+    *
+    * Exact-key schedules such as `FieldsAddedOrdinals.dustSweeps` do not use this resolver: absence is already their disabled state.
+    */
+  private[config] object SnapshotOrdinalGate {
+    def resolveOrDisabled(
+      ordinals: Map[AppEnvironment, SnapshotOrdinal],
+      environment: AppEnvironment
+    ): SnapshotOrdinal =
+      ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
+  }
+
   // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
   // Fields share similar map types, so reordering them without updating that reader can miswire gates.
   case class FieldsAddedOrdinals(
@@ -82,26 +95,68 @@ object types {
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
-    /** Resolve a threshold gate for one environment. A missing mapping must retain the historical path rather than silently enabling new
-      * behavior from genesis. Exact-key gates such as `dustSweeps` use absence as their natural disabled state instead.
-      */
-    private[constellationnetwork] def resolveWithDisabledDefault(
-      ordinals: Map[AppEnvironment, SnapshotOrdinal],
-      environment: AppEnvironment
-    ): SnapshotOrdinal =
-      ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
+    def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(tessellation3Migration, environment)
+
+    def tessellation301MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(tessellation301Migration, environment)
+
+    def checkSyncGlobalSnapshotFieldFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(checkSyncGlobalSnapshotField, environment)
+
+    def metagraphSyncDataFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(metagraphSyncData, environment)
+
+    def updatedLastSyncGlobalOrderFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(updatedLastSyncGlobalOrder, environment)
+
+    def updatedLastSyncGlobalFromPeersInConsensusFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(updatedLastSyncGlobalFromPeersInConsensus, environment)
+
+    def updatingCombineFunctionSpendActionsFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(updatingCombineFunctionSpendActions, environment)
+
+    def fixingAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendExpiration, environment)
+
+    def fixingAllowSpendAndTokenLockValidationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendAndTokenLockValidation, environment)
+
+    def setSumFixFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(setSumFix, environment)
+
+    def scFeeBalanceFromContextFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(scFeeBalanceFromContext, environment)
+
+    def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(subTrieRoots, environment)
+
+    def delegatedRewardsFullCommitteeFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(delegatedRewardsFullCommittee, environment)
 
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      resolveWithDisabledDefault(feeTransactionSecurity, environment)
+      SnapshotOrdinalGate.resolveOrDisabled(feeTransactionSecurity, environment)
+
+    def fixingFeeTransactionBalanceOverflowFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingFeeTransactionBalanceOverflow, environment)
+
+    def dustSweepFor(environment: AppEnvironment, ordinal: SnapshotOrdinal): Option[DustSweep] =
+      dustSweeps.get(environment).flatMap(_.get(ordinal))
 
     def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
-      resolveWithDisabledDefault(currencySnapshotProtocolV1, environment)
+      SnapshotOrdinalGate.resolveOrDisabled(currencySnapshotProtocolV1, environment)
 
     def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
-      resolveWithDisabledDefault(fixingDataApplicationFeeValidation, environment)
+      SnapshotOrdinalGate.resolveOrDisabled(fixingDataApplicationFeeValidation, environment)
 
     def fixingAllowSpendDestinationCreditFor(environment: AppEnvironment): SnapshotOrdinal =
-      resolveWithDisabledDefault(fixingAllowSpendDestinationCredit, environment)
+      SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendDestinationCredit, environment)
+
+    def preventingAllowSpendResurrectionFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(preventingAllowSpendResurrection, environment)
+
+    def fixingGlobalAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingGlobalAllowSpendExpiration, environment)
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
@@ -205,7 +260,10 @@ object types {
     mptSnapshotInfoPath: Path,
     snapshotServingConfig: Option[SnapshotServingConfig] = None,
     localHealthMonitor: LocalHealthMonitorConfig = LocalHealthMonitorConfig.default
-  )
+  ) {
+    def incrementalDelegatedStakingStartingOrdinalFor: SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(incrementalDelegatedStakingStartingOrdinal, environment)
+  }
 
   case class SharedTrustConfig(
     storage: TrustStorageConfig

@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.{Proof, ProofEntry}
@@ -50,10 +49,6 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
   implicit val stateProofSelector: GlobalStateProofSelector =
     GlobalStateProofSelector(SnapshotOrdinal.unsafeApply(Long.MaxValue))
 
-  private val testEnv: AppEnvironment = AppEnvironment.Dev
-  private val sweepOrdinal: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(1000L)
-  private val otherOrdinal: SnapshotOrdinal = SnapshotOrdinal.unsafeApply(999L)
-
   // Distinct test addresses (DAG-prefixed refined literals).
   private val dust1 = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
   private val dust2 = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWC")
@@ -66,11 +61,9 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
 
   private def bal(v: Long): Balance = Balance(NonNegLong.unsafeFrom(v))
 
-  private def burnSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] =
-    Map(testEnv -> SortedMap(sweepOrdinal -> DustSweep(threshold, none)))
+  private val burnSweep: DustSweep = DustSweep(threshold, none)
 
-  private def treasurySweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] =
-    Map(testEnv -> SortedMap(sweepOrdinal -> DustSweep(threshold, treasury.some)))
+  private val treasurySweep: DustSweep = DustSweep(threshold, treasury.some)
 
   // A non-empty lastTxRef (a "has sent" sender): ordinal 1, non-empty hash.
   private val nonEmptyTxRef: TransactionReference =
@@ -120,8 +113,8 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
     )
     val pre = gsiWith(balances)
 
-    val (sweptA, didA) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, treasurySweeps)
-    val (sweptB, didB) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, treasurySweeps)
+    val (sweptA, didA) = GlobalSnapshotDustSweep.applyDustSweep(pre, treasurySweep.some)
+    val (sweptB, didB) = GlobalSnapshotDustSweep.applyDustSweep(pre, treasurySweep.some)
 
     for {
       rootA <- sweptA.allStateEntries[IO].buildMpt
@@ -281,7 +274,7 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
       activeDelegatedStakes = Some(SortedMap(dust1 -> SortedSet(stakeRecord)))
     )
 
-    val (swept, did) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, burnSweeps)
+    val (swept, did) = GlobalSnapshotDustSweep.applyDustSweep(pre, burnSweep.some)
 
     IO {
       expect.all(
@@ -312,8 +305,8 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
     val supplyBefore = balances.values.foldLeft(0L)(_ + _.value.value)
     val sweptSum = 3L * dustValue
 
-    val (burned, didBurn) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, burnSweeps)
-    val (swept, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, treasurySweeps)
+    val (burned, didBurn) = GlobalSnapshotDustSweep.applyDustSweep(pre, burnSweep.some)
+    val (swept, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(pre, treasurySweep.some)
 
     val burnedSupply = burned.balances.values.foldLeft(0L)(_ + _.value.value)
     val treasurySupply = swept.balances.values.foldLeft(0L)(_ + _.value.value)
@@ -335,23 +328,17 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
 
   // --- Test 5: off-ordinal no-op (returns (gsi,false), byte-identical) ------------------------
 
-  test("off-ordinal no-op: applyDustSweep at a non-sweep ordinal returns (gsi, false) unchanged") { _ =>
+  test("absent resolved sweep is a reference-identical no-op") { _ =>
     val balances = SortedMap(dust1 -> bal(dustValue), dust2 -> bal(dustValue), whale -> bal(50_000_000L))
     val pre = gsiWith(balances)
 
-    val (resOther, didOther) = GlobalSnapshotDustSweep.applyDustSweep(pre, otherOrdinal, testEnv, burnSweeps)
-    val (resEnv, didEnv) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, AppEnvironment.Mainnet, burnSweeps)
-    val (resEmpty, didEmpty) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, Map.empty)
+    val (result, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(pre, none)
 
     IO {
       expect.all(
-        !didOther,
-        !didEnv,
-        !didEmpty,
+        !didSweep,
         // reference-identical input on the no-op path
-        resOther eq pre,
-        resEnv eq pre,
-        resEmpty eq pre
+        result eq pre
       )
     }
   }
@@ -368,7 +355,7 @@ object GlobalSnapshotDustSweepSuite extends MutableIOSuite {
       lastTxRefs = SortedMap(dust1 -> nonEmptyTxRef, dust3 -> TransactionReference.empty)
     )
 
-    val (swept, did) = GlobalSnapshotDustSweep.applyDustSweep(pre, sweepOrdinal, testEnv, burnSweeps)
+    val (swept, did) = GlobalSnapshotDustSweep.applyDustSweep(pre, burnSweep.some)
 
     IO {
       expect.all(

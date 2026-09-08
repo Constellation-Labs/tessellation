@@ -16,6 +16,7 @@ import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage._
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import io.constellationnetwork.dag.l1.domain.transaction._
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Mainnet}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
@@ -81,6 +82,27 @@ import weaver.SimpleIOSuite
 
 object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
+
+  private val devActivation: Map[AppEnvironment, SnapshotOrdinal] = Map(Dev -> SnapshotOrdinal.MinValue)
+
+  /** Snapshot reconciliation tests operate on post-migration state. The relevant gates are explicit so missing configuration remains
+    * unambiguously disabled.
+    */
+  private val postMigrationFieldsAddedOrdinals = FieldsAddedOrdinals(
+    tessellation3Migration = devActivation,
+    tessellation301Migration = devActivation,
+    checkSyncGlobalSnapshotField = devActivation,
+    metagraphSyncData = devActivation,
+    updatedLastSyncGlobalOrder = devActivation,
+    updatedLastSyncGlobalFromPeersInConsensus = devActivation,
+    updatingCombineFunctionSpendActions = devActivation,
+    fixingAllowSpendExpiration = devActivation,
+    fixingAllowSpendAndTokenLockValidation = devActivation,
+    setSumFix = devActivation,
+    fixingDataApplicationFeeValidation = devActivation,
+    fixingAllowSpendDestinationCredit = devActivation,
+    preventingAllowSpendResurrection = devActivation
+  )
 
   type TestResources = (
     SnapshotProcessor[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -184,18 +206,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
                 CurrencySnapshotAcceptanceManager
                   .make(
-                    FieldsAddedOrdinals(
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty
-                    ),
+                    postMigrationFieldsAddedOrdinals,
                     Dev,
                     LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
                     BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -259,18 +270,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               globalSnapshotAcceptanceManager = {
                 implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
                 GlobalSnapshotAcceptanceManager.make(
-                  FieldsAddedOrdinals(
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty,
-                    Map.empty
-                  ),
+                  postMigrationFieldsAddedOrdinals,
                   MetagraphsSyncConfig(PosInt(100)),
                   Dev,
                   BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
@@ -283,19 +283,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       currencySnapshotContextFns,
                       feeCalculator,
                       mptStore,
-                      FieldsAddedOrdinals(
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        Map.empty,
-                        scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
-                      ),
+                      postMigrationFieldsAddedOrdinals.copy(scFeeBalanceFromContext = devActivation),
                       Dev
                     ),
                   updateNodeParametersAcceptanceManager,

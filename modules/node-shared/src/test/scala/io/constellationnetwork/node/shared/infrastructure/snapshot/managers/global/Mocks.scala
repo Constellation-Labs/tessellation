@@ -70,6 +70,27 @@ import io.circe.Json
 
 object Mocks {
 
+  private val devActivation: Map[AppEnvironment, SnapshotOrdinal] = Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue)
+
+  /** The acceptance-manager tests exercise behavior after the historical migration gates. Those gates are explicit so an empty map keeps
+    * its production meaning: disabled.
+    */
+  private val postMigrationFieldsAddedOrdinals = FieldsAddedOrdinals(
+    tessellation3Migration = devActivation,
+    tessellation301Migration = devActivation,
+    checkSyncGlobalSnapshotField = devActivation,
+    metagraphSyncData = devActivation,
+    updatedLastSyncGlobalOrder = devActivation,
+    updatedLastSyncGlobalFromPeersInConsensus = devActivation,
+    updatingCombineFunctionSpendActions = devActivation,
+    fixingAllowSpendExpiration = devActivation,
+    fixingAllowSpendAndTokenLockValidation = devActivation,
+    setSumFix = devActivation,
+    fixingDataApplicationFeeValidation = devActivation,
+    fixingAllowSpendDestinationCredit = devActivation,
+    preventingAllowSpendResurrection = devActivation
+  )
+
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
@@ -271,18 +292,7 @@ object Mocks {
               initialSnapshotInfo.traverse_(info => mptStore.syncFromGlobalSnapshotInfo(info, SnapshotOrdinal.MinValue)) >>
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
-                    FieldsAddedOrdinals(
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty
-                    ),
+                    postMigrationFieldsAddedOrdinals,
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,
                     blockAcceptanceManager = mockBlockAcceptanceManager,

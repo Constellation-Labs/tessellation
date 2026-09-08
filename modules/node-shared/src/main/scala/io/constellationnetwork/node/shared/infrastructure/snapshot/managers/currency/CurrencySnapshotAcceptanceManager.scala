@@ -200,23 +200,23 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     metagraphId = lastSnapshotContext.address
 
     checkSyncGlobalSnapshotField =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.checkSyncGlobalSnapshotField, environment)
+      fieldsAddedOrdinals.checkSyncGlobalSnapshotFieldFor(environment)
     tessellation3MigrationStartingOrdinal =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.tessellation3Migration, environment)
+      fieldsAddedOrdinals.tessellation3MigrationFor(environment)
     metagraphSyncDataStartingOrdinal =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.metagraphSyncData, environment)
+      fieldsAddedOrdinals.metagraphSyncDataFor(environment)
     updatedLastSyncGlobalOrder =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.updatedLastSyncGlobalOrder, environment)
+      fieldsAddedOrdinals.updatedLastSyncGlobalOrderFor(environment)
     updatedLastSyncGlobalFromPeersInConsensus =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus, environment)
+      fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensusFor(environment)
     updatingCombineFunctionSpendActions =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.updatingCombineFunctionSpendActions, environment)
+      fieldsAddedOrdinals.updatingCombineFunctionSpendActionsFor(environment)
     fixingAllowSpendExpiration =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.fixingAllowSpendExpiration, environment)
+      fieldsAddedOrdinals.fixingAllowSpendExpirationFor(environment)
     fixingAllowSpendAndTokenLockValidation =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation, environment)
+      fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidationFor(environment)
     preventingAllowSpendResurrection =
-      fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.preventingAllowSpendResurrection, environment)
+      fieldsAddedOrdinals.preventingAllowSpendResurrectionFor(environment)
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
       blocksForAcceptance,
@@ -262,7 +262,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       updatedBalancesByRewards,
       feeTransactionsForAcceptance,
       maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >
-        fieldsAddedOrdinals.resolveWithDisabledDefault(fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow, environment)
+        fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflowFor(environment)
     )
 
     callerSharedArtifacts = sharedArtifactsForAcceptance

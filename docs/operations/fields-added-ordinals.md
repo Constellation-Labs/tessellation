@@ -39,13 +39,21 @@ case class FieldsAddedOrdinals(
 
 Each gate is loaded from the `fields-added-ordinals` HOCON block (`application.conf:210-395`). Resolution first picks the entry for the running environment. Two value conventions appear:
 
-- A **threshold gate** (`Map[AppEnvironment, SnapshotOrdinal]`): every in-repository consumer resolves an absent environment through `resolveWithDisabledDefault` to `SnapshotOrdinal.MaxValue`. The threshold can therefore never be crossed in ordinary operation, and an incomplete configuration retains the OLD path rather than silently enabling new behavior from genesis. Set an explicit environment entry to `0` to activate from genesis, to a future ordinal for a new coordinated behavior change, or to the exact evidence-backed historical cutover when the gate exists to reproduce behavior already present in signed history. Each gate must document whether its comparison is `>=` or `>`; changing that comparator changes the replay boundary. A finite placeholder such as `9999999` is not the same as the missing-map sentinel: it remains deliberately dormant only until the chain reaches that value.
+- A **threshold gate** (`Map[AppEnvironment, SnapshotOrdinal]`): every in-repository consumer calls the gate's named `...For(environment)` accessor. Those accessors share one private config-layer resolver that maps an absent environment to `SnapshotOrdinal.MaxValue`; callers do not read the raw map or choose a fallback. The threshold can therefore never be crossed in ordinary operation, and an incomplete configuration retains the OLD path rather than silently enabling new behavior from genesis. Set an explicit environment entry to `0` to activate from genesis, to a future ordinal for a new coordinated behavior change, or to the exact evidence-backed historical cutover when the gate exists to reproduce behavior already present in signed history. Each gate must document whether its comparison is `>=` or `>`; changing that comparator changes the replay boundary. A finite placeholder such as `9999999` is not the same as the missing-map sentinel: it remains deliberately dormant only until the chain reaches that value.
 - An **exact-key gate** (`dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`): the behavior fires only at exactly the keyed ordinal (`dustSweeps.get(env).flatMap(_.get(ordinal))`), once, and never replays.
 
 Missing means disabled uniformly across every `FieldsAddedOrdinals` threshold map. There is no
 in-tree threshold-gate exception. Any future exception requires an explicit per-gate rationale,
-source comment, and regression test; it must not be introduced by an ad hoc `MinValue` fallback at
-one consumer. Exact-key maps remain naturally disabled when the environment/key is absent.
+source comment, and regression test; it must not be introduced by reading a raw map or choosing a
+fallback at one consumer. Exact-key maps use their named exact-key accessor and remain naturally
+disabled when the environment/key is absent.
+
+The older top-level `incremental-delegated-staking-starting-ordinal` map is not part of
+`FieldsAddedOrdinals`, but it follows the same missing-means-disabled policy through
+`SharedConfig.incrementalDelegatedStakingStartingOrdinalFor`. Its comparison is `ordinal > gate`,
+so an absent environment resolves to `SnapshotOrdinal.MaxValue`. All shipped environments have an
+explicit historical value; this fallback only prevents an incomplete config from enabling the
+record transformation at genesis.
 
 Per-environment activation ordinals differ because the same fix crosses different points of different chains. The behavior itself is identical code on every network; only WHEN it activates is per-environment. Examples from `application.conf:210-293`:
 

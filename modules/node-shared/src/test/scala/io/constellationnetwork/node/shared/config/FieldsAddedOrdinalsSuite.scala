@@ -9,11 +9,25 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.{DustSweep, FieldsAddedOrdinals}
 import io.constellationnetwork.node.shared.ext.pureconfig._
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.balance.Balance
 
 import pureconfig.ConfigSource
 import weaver.SimpleIOSuite
 
 object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
+
+  private val disabledFieldsAddedOrdinals = FieldsAddedOrdinals(
+    tessellation3Migration = Map.empty,
+    tessellation301Migration = Map.empty,
+    checkSyncGlobalSnapshotField = Map.empty,
+    metagraphSyncData = Map.empty,
+    updatedLastSyncGlobalOrder = Map.empty,
+    updatedLastSyncGlobalFromPeersInConsensus = Map.empty,
+    updatingCombineFunctionSpendActions = Map.empty,
+    fixingAllowSpendExpiration = Map.empty,
+    fixingAllowSpendAndTokenLockValidation = Map.empty,
+    setSumFix = Map.empty
+  )
 
   test("loads an explicit fee transaction security activation for every environment") {
     IO {
@@ -67,54 +81,52 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
   }
 
   test("keeps every threshold gate disabled when an environment entry is absent") {
-    val fieldsAddedOrdinals = FieldsAddedOrdinals(
-      tessellation3Migration = Map.empty,
-      tessellation301Migration = Map.empty,
-      checkSyncGlobalSnapshotField = Map.empty,
-      metagraphSyncData = Map.empty,
-      updatedLastSyncGlobalOrder = Map.empty,
-      updatedLastSyncGlobalFromPeersInConsensus = Map.empty,
-      updatingCombineFunctionSpendActions = Map.empty,
-      fixingAllowSpendExpiration = Map.empty,
-      fixingAllowSpendAndTokenLockValidation = Map.empty,
-      setSumFix = Map.empty,
-      feeTransactionSecurity = Map.empty
-    )
+    val fieldsAddedOrdinals = disabledFieldsAddedOrdinals
 
-    val thresholdGates = List(
-      fieldsAddedOrdinals.tessellation3Migration,
-      fieldsAddedOrdinals.tessellation301Migration,
-      fieldsAddedOrdinals.checkSyncGlobalSnapshotField,
-      fieldsAddedOrdinals.metagraphSyncData,
-      fieldsAddedOrdinals.updatedLastSyncGlobalOrder,
-      fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus,
-      fieldsAddedOrdinals.updatingCombineFunctionSpendActions,
-      fieldsAddedOrdinals.fixingAllowSpendExpiration,
-      fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation,
-      fieldsAddedOrdinals.setSumFix,
-      fieldsAddedOrdinals.scFeeBalanceFromContext,
-      fieldsAddedOrdinals.subTrieRoots,
-      fieldsAddedOrdinals.delegatedRewardsFullCommittee,
-      fieldsAddedOrdinals.feeTransactionSecurity,
-      fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow,
-      fieldsAddedOrdinals.currencySnapshotProtocolV1,
-      fieldsAddedOrdinals.fixingDataApplicationFeeValidation,
-      fieldsAddedOrdinals.fixingAllowSpendDestinationCredit,
-      fieldsAddedOrdinals.preventingAllowSpendResurrection,
-      fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration
+    val mainnetThresholds = List(
+      fieldsAddedOrdinals.tessellation3MigrationFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.tessellation301MigrationFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.checkSyncGlobalSnapshotFieldFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.metagraphSyncDataFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.updatedLastSyncGlobalOrderFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensusFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.updatingCombineFunctionSpendActionsFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingAllowSpendExpirationFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidationFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.setSumFixFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.scFeeBalanceFromContextFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.subTrieRootsFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.delegatedRewardsFullCommitteeFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflowFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.preventingAllowSpendResurrectionFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingGlobalAllowSpendExpirationFor(AppEnvironment.Mainnet)
     )
 
     IO {
-      expect(
-        thresholdGates.forall(
-          fieldsAddedOrdinals.resolveWithDisabledDefault(_, AppEnvironment.Mainnet) === SnapshotOrdinal.MaxValue
-        )
-      ) &&
+      expect(mainnetThresholds.forall(_ === SnapshotOrdinal.MaxValue)) &&
       expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.feeTransactionSecurityFor(AppEnvironment.Mainnet)) &&
       expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Mainnet)) &&
       expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(AppEnvironment.Mainnet)) &&
       expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(AppEnvironment.Mainnet)) &&
-      expect(fieldsAddedOrdinals.dustSweeps.get(AppEnvironment.Mainnet).isEmpty)
+      expect(fieldsAddedOrdinals.dustSweepFor(AppEnvironment.Mainnet, SnapshotOrdinal.MinValue).isEmpty)
+    }
+  }
+
+  test("resolves an exact-key dust sweep only for its configured environment and ordinal") {
+    val activationOrdinal = SnapshotOrdinal.unsafeApply(1000L)
+    val sweep = DustSweep(Balance.empty, None)
+    val fieldsAddedOrdinals = disabledFieldsAddedOrdinals.copy(
+      dustSweeps = Map(AppEnvironment.Dev -> SortedMap(activationOrdinal -> sweep))
+    )
+
+    IO {
+      expect.same(Some(sweep), fieldsAddedOrdinals.dustSweepFor(AppEnvironment.Dev, activationOrdinal)) &&
+      expect(fieldsAddedOrdinals.dustSweepFor(AppEnvironment.Dev, SnapshotOrdinal.unsafeApply(999L)).isEmpty) &&
+      expect(fieldsAddedOrdinals.dustSweepFor(AppEnvironment.Mainnet, activationOrdinal).isEmpty)
     }
   }
 

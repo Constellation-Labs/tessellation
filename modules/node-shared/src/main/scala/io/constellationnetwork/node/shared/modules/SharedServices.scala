@@ -154,10 +154,7 @@ object SharedServices {
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
         CurrencySnapshotCreator.make[F](
-          cfg.fieldsAddedOrdinals.resolveWithDisabledDefault(
-            cfg.fieldsAddedOrdinals.tessellation3Migration,
-            cfg.environment
-          ),
+          cfg.fieldsAddedOrdinals.tessellation3MigrationFor(cfg.environment),
           currencySnapshotAcceptanceManager,
           None,
           cfg.snapshotSize,
@@ -214,10 +211,10 @@ object SharedServices {
         globalSnapshotAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
-        cfg.fieldsAddedOrdinals.resolveWithDisabledDefault(cfg.fieldsAddedOrdinals.tessellation3Migration, cfg.environment),
-        cfg.fieldsAddedOrdinals.resolveWithDisabledDefault(cfg.fieldsAddedOrdinals.setSumFix, cfg.environment),
+        cfg.fieldsAddedOrdinals.tessellation3MigrationFor(cfg.environment),
+        cfg.fieldsAddedOrdinals.setSumFixFor(cfg.environment),
         storages.mptStore,
-        cfg.incrementalDelegatedStakingStartingOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.incrementalDelegatedStakingStartingOrdinalFor,
         cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(cfg.environment)
       )
     } yield

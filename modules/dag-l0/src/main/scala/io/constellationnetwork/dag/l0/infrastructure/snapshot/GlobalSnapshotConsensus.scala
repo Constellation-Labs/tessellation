@@ -256,20 +256,10 @@ object GlobalSnapshotConsensus {
           UpdateNodeParametersCutter.make(effectiveConsensusConfig.eventCutter.maxUpdateNodeParametersSize),
           appConfig.environment,
           DefaultDelegatedRewardsConfigProvider,
-          sharedCfg.fieldsAddedOrdinals.resolveWithDisabledDefault(
-            sharedCfg.fieldsAddedOrdinals.tessellation3Migration,
-            sharedCfg.environment
-          ),
-          sharedCfg.fieldsAddedOrdinals.resolveWithDisabledDefault(
-            sharedCfg.fieldsAddedOrdinals.setSumFix,
-            sharedCfg.environment
-          ),
-          sharedCfg.fieldsAddedOrdinals.resolveWithDisabledDefault(
-            sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommittee,
-            sharedCfg.environment
-          ),
-          sharedCfg.incrementalDelegatedStakingStartingOrdinal
-            .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+          sharedCfg.fieldsAddedOrdinals.tessellation3MigrationFor(sharedCfg.environment),
+          sharedCfg.fieldsAddedOrdinals.setSumFixFor(sharedCfg.environment),
+          sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommitteeFor(sharedCfg.environment),
+          sharedCfg.incrementalDelegatedStakingStartingOrdinalFor,
           mptStore,
           effectiveConsensusConfig.activeAdmissionPromoteThreshold
         )
