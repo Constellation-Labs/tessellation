@@ -1,30 +1,27 @@
 const {dag4} = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
-const { z } = require('zod');
+const fs = require('node:fs');
+const path = require('node:path');
 const { compress } = require("brotli");
 const {parseSharedArgs} = require('../shared');
 
-const CliArgsSchema = z.object({
-    privateKey: z.string()
-        .min(1, "Private key cannot be empty"),
-});
+const { readIdentity } = require('../shared/data-test-identity');
+const { hasExpectedUsage, getBalances, balanceOf, hasExpectedFeeTransfer } = require('../shared/data-test-assertions');
+axios.defaults.timeout = 10000;
+axios.defaults.maxRedirects = 0;
 
 const createConfig = () => {
     const args = process.argv.slice(2);
 
-    if (args.length < 6) {
+    if (args.length !== 5 || !args.every(arg => /^\d{1,3}$/.test(arg) && Number(`${arg}00`) > 0 && Number(`${arg}00`) <= 65535)) {
         throw new Error(
-            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix> <private-key>"
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>; set CI_TEST_KEY_FILE"
         );
     }
 
     const sharedArgs = parseSharedArgs(args.slice(0, 5));
-    const [privateKey] = args.slice(5);
-
-    const specificArgs = CliArgsSchema.parse({ privateKey });
-
-    return { ...sharedArgs, ...specificArgs };
+    return { ...sharedArgs, privateKey: readIdentity(process.env.CI_TEST_KEY_FILE) };
 };
 
 const sleep = (ms) => {
@@ -97,7 +94,8 @@ const getEstimateFeeResponse = async (metagraphL1DataUrl, update) => {
 const sendDataTransactionsUsingUrls = async (
     globalL0Url,
     metagraphL1DataUrl,
-    privateKey
+    privateKey,
+    metagraphId
 ) => {
     const account = dag4.createAccount(privateKey);
 
@@ -116,6 +114,11 @@ const sendDataTransactionsUsingUrls = async (
     const dataUpdateProof = await generateProof(dataUpdate, privateKey, account);
 
     const estimateFeeResponse = await getEstimateFeeResponse(metagraphL1DataUrl, dataUpdate)
+    if (!Number.isSafeInteger(estimateFeeResponse.fee) || estimateFeeResponse.fee <= 0 ||
+        estimateFeeResponse.address === account.address) {
+        throw new Error('Expected a positive fee payable to a different address');
+    }
+    const before = await getInitialBalances(globalL0Url, metagraphId, account.address, estimateFeeResponse.fee);
     const feeTransaction = {
         amount: estimateFeeResponse.fee,
         dataUpdateRef: estimateFeeResponse.updateHash,
@@ -143,10 +146,10 @@ const sendDataTransactionsUsingUrls = async (
         const response = await axios.post(`${metagraphL1DataUrl}/data`, body);
         console.log(`Response: ${JSON.stringify(response.data)}`);
     } catch (e) {
-        console.log('Error sending transaction', e);
+        throw new Error(`Fee-bearing data submission failed: ${e.message}`);
     }
 
-    return [account.address, estimateFeeResponse];
+    return [account.address, estimateFeeResponse, before];
 };
 
 const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
@@ -156,7 +159,7 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
             const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`);
             const responseData = response.data;
 
-            if (Object.keys(responseData).length > 0) {
+            if (hasExpectedUsage(responseData, address)) {
                 console.log(`Transaction processed successfully. Response: ${JSON.stringify(responseData)}`);
                 return;
             }
@@ -174,17 +177,28 @@ const checkDataTransactionInMetagraphL0 = async (metagraphL0Url, address) => {
     }
 }
 
-const checkFeeTransactionInGlobalL0 = async (globalL0Url, feeWallet) => {
+const getInitialBalances = async (globalL0Url, metagraphId, source, fee) => {
+    for (let attempt = 1; attempt <= 60; attempt++) {
+        try {
+            const response = await axios.get(`${globalL0Url}/global-snapshots/latest/combined`);
+            const balances = getBalances(response.data, metagraphId);
+            if (balanceOf(balances, source) >= fee) return balances;
+        } catch (error) {
+            console.log(`Waiting for funded metagraph snapshot: ${error.message}`);
+        }
+        if (attempt < 60) await sleep(1000);
+    }
+    throw new Error('Throwaway identity funding not visible in Global L0');
+};
+
+const checkFeeTransactionInGlobalL0 = async (globalL0Url, metagraphId, before, source, feeWallet, fee) => {
     const maxAttempts = 60
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
             const response = await axios.get(`${globalL0Url}/global-snapshots/latest/combined`);
-            const [_, globalSnapshotInfo] = response.data;
-
-            const firstSnapshotKey = Object.keys(globalSnapshotInfo.lastCurrencySnapshots)[0];
-            const metagraphSnapshotBalances = globalSnapshotInfo.lastCurrencySnapshots[firstSnapshotKey].Right[1].balances;
-            if (Object.keys(metagraphSnapshotBalances).length > 0 && metagraphSnapshotBalances[feeWallet] > 0) {
-                console.log(`Fee transaction processed successfully. Response: ${JSON.stringify(metagraphSnapshotBalances)}`);
+            const metagraphSnapshotBalances = getBalances(response.data, metagraphId);
+            if (hasExpectedFeeTransfer(before, metagraphSnapshotBalances, source, feeWallet, fee)) {
+                console.log(`Fee verified in Global L0: source debit = destination credit = ${fee}`);
                 return;
             }
 
@@ -208,11 +222,17 @@ const sendDataTransaction = async () => {
     const globalL0Url = `http://localhost:${dagL0PortPrefix}00`;
     const metagraphL0Url = `http://localhost:${metagraphL0PortPrefix}00`;
     const metagraphL1DataUrl = `http://localhost:${dataL1PortPrefix}00`;
+    const metagraphId = fs.readFileSync(path.resolve(__dirname,
+        '../../code/metagraphs/project-template-metagraph/metagraph-l0/genesis-node/genesis.address'), 'utf8').trim();
+    if (!/^DAG[0-9][1-9A-HJ-NP-Za-km-z]+$/.test(metagraphId)) throw new Error('Invalid local metagraph ID');
 
-    const [address, estimateFeeResponse] = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
+    const [address, estimateFeeResponse, before] = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey, metagraphId);
 
     await checkDataTransactionInMetagraphL0(metagraphL0Url, address);
-    await checkFeeTransactionInGlobalL0(globalL0Url, estimateFeeResponse.address);
+    await checkFeeTransactionInGlobalL0(globalL0Url, metagraphId, before, address, estimateFeeResponse.address, estimateFeeResponse.fee);
 };
 
-sendDataTransaction();
+sendDataTransaction().catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+});

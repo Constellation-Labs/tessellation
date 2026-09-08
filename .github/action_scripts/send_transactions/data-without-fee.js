@@ -1,29 +1,23 @@
 const { dag4 } = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
-const { z } = require('zod');
 const { parseSharedArgs } = require('../shared');
-
-const CliArgsSchema = z.object({
-    privateKey: z.string()
-        .min(1, "Private key cannot be empty"),
-});
+const { readIdentity } = require('../shared/data-test-identity');
+const { hasExpectedUsage } = require('../shared/data-test-assertions');
+axios.defaults.timeout = 10000;
+axios.defaults.maxRedirects = 0;
 
 const createConfig = () => {
     const args = process.argv.slice(2);
 
-    if (args.length < 6) {
+    if (args.length !== 5 || !args.every(arg => /^\d{1,3}$/.test(arg) && Number(`${arg}00`) > 0 && Number(`${arg}00`) <= 65535)) {
         throw new Error(
-            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix> <private-key>"
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>; set CI_TEST_KEY_FILE"
         );
     }
 
     const sharedArgs = parseSharedArgs(args.slice(0, 5));
-    const [privateKey] = args.slice(5);
-
-    const specificArgs = CliArgsSchema.parse({ privateKey });
-
-    return { ...sharedArgs, ...specificArgs };
+    return { ...sharedArgs, privateKey: readIdentity(process.env.CI_TEST_KEY_FILE) };
 };
 
 const sleep = (ms) => {
@@ -89,7 +83,7 @@ const sendDataTransactionsUsingUrls = async (
         const response = await axios.post(`${metagraphL1DataUrl}/data`, body);
         console.log(`Response: ${JSON.stringify(response.data)}`);
     } catch (e) {
-        console.log('Error sending transaction', e);
+        throw new Error(`Data submission failed: ${e.message}`);
     }
     return account.address;
 };
@@ -109,7 +103,7 @@ const sendDataTransaction = async () => {
             const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`);
             const responseData = response.data;
 
-            if (Object.keys(responseData).length > 0) {
+            if (hasExpectedUsage(responseData, address)) {
                 console.log(`Transaction processed successfully. Response: ${JSON.stringify(responseData)}`);
                 return;
             }
@@ -127,4 +121,7 @@ const sendDataTransaction = async () => {
     }
 };
 
-sendDataTransaction();
+sendDataTransaction().catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+});
