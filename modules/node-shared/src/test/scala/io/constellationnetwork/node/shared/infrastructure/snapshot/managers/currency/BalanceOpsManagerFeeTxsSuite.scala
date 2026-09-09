@@ -1,10 +1,17 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency
 
-import cats.data.NonEmptySet
+import cats.data.{NonEmptyList, NonEmptySet}
+import cats.effect.IO
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
+import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
+import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator.{
+  FeeTransactionValidationErrorOr,
+  SameSourceAndDestinationAddress
+}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.BalanceOpsManager.applyFeeTransactions
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -173,5 +180,84 @@ object BalanceOpsManagerFeeTxsSuite extends SimpleIOSuite with Checkers {
 
         expect.eql(totalSupply(before), totalSupply(after))
     }
+  }
+
+  /** Rejects transactions whose source and destination match, which is enough to exercise both selection modes without a SecurityProvider:
+    * the real validator's verdicts are also a pure function of the transaction.
+    */
+  private val stubValidator: FeeTransactionValidator[IO] = new FeeTransactionValidator[IO] {
+    private def verdict(tx: Signed[FeeTransaction]): FeeTransactionValidationErrorOr[Signed[FeeTransaction]] =
+      if (tx.value.source =!= tx.value.destination) tx.validNec
+      else SameSourceAndDestinationAddress(tx.value.source).invalidNec
+
+    def validate(
+      signedTransaction: Signed[FeeTransaction],
+      enforceWalletAuthorization: Boolean
+    ): IO[FeeTransactionValidationErrorOr[Signed[FeeTransaction]]] = verdict(signedTransaction).pure[IO]
+
+    def validate(
+      signedTransactions: NonEmptyList[Signed[FeeTransaction]],
+      enforceWalletAuthorization: Boolean
+    ): IO[FeeTransactionValidationErrorOr[NonEmptyList[Signed[FeeTransaction]]]] =
+      signedTransactions.traverse(verdict).pure[IO]
+  }
+
+  private val balanceOps = new BalanceOpsManager[IO](stubValidator)
+
+  private val validTx = feeTx(payer, payeeA, 10L, 1)
+  private val otherValidTx = feeTx(payer, payeeB, 20L, 2)
+  private val selfPayingTx = feeTx(payer, payer, 30L, 3)
+
+  test("at or above the activation ordinal, an invalid fee transaction is dropped and the rest are applied") {
+    // One invalid entry must not decide the fate of the whole set: the valid transactions alongside it are
+    // still applied, and only the invalid one is left out.
+    val txs = SortedSet(validTx, otherValidTx, selfPayingTx)
+
+    balanceOps.validateFeeTxs(txs.some, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true).map { result =>
+      expect.all(
+        result.contains(SortedSet(validTx, otherValidTx)),
+        result.forall(!_.contains(selfPayingTx))
+      )
+    }
+  }
+
+  test("at or above the activation ordinal, an all-invalid set yields an empty set rather than raising") {
+    balanceOps
+      .validateFeeTxs(SortedSet(selfPayingTx).some, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true)
+      .attempt
+      .map(result => expect(result == Right(Some(SortedSet.empty[Signed[FeeTransaction]]))))
+  }
+
+  test("at or above the activation ordinal, an all-valid set is returned unchanged") {
+    val txs = SortedSet(validTx, otherValidTx)
+
+    balanceOps
+      .validateFeeTxs(txs.some, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true)
+      .map(result => expect(result.contains(txs)))
+  }
+
+  test("below the activation ordinal, an invalid fee transaction still raises") {
+    // Deliberate: selecting per transaction changes which artifact the same events produce, and below the
+    // gate the data application layer applies its earlier rules, so a mixed fleet would disagree during a
+    // rolling upgrade.
+    balanceOps
+      .validateFeeTxs(SortedSet(validTx, selfPayingTx).some, enforceWalletAuthorization = false, atOrAboveActivationOrdinal = false)
+      .attempt
+      .map(result => expect(result.isLeft))
+  }
+
+  test("below the activation ordinal, an all-valid set is returned unchanged") {
+    val txs = SortedSet(validTx, otherValidTx)
+
+    balanceOps
+      .validateFeeTxs(txs.some, enforceWalletAuthorization = false, atOrAboveActivationOrdinal = false)
+      .map(result => expect(result.contains(txs)))
+  }
+
+  test("no fee transactions is a no-op in both modes") {
+    for {
+      above <- balanceOps.validateFeeTxs(none, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true)
+      below <- balanceOps.validateFeeTxs(none, enforceWalletAuthorization = false, atOrAboveActivationOrdinal = false)
+    } yield expect.all(above.isEmpty, below.isEmpty)
   }
 }
