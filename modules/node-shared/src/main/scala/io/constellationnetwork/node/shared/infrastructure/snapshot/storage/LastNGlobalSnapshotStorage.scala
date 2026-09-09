@@ -206,7 +206,10 @@ object LastNGlobalSnapshotStorage {
 
               case Right(globalSnapshotStorage) =>
                 for {
-                  maybeSnapshot <- globalSnapshotStorage.get(snapshotOrdinal)
+                  // The validated child, not an ordinal index, selects its parent.
+                  // An abandoned same-ordinal branch must neither become authority
+                  // nor prevent exact peer fallback when the declared hash is absent.
+                  maybeSnapshot <- globalSnapshotStorage.get(expectedHash)
                   result <- maybeSnapshot match {
                     case Some(snapshot) =>
                       snapshot.some.pure[F]

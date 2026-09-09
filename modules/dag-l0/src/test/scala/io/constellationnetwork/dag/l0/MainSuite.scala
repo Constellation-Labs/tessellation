@@ -122,6 +122,19 @@ object MainSuite extends SimpleIOSuite {
     expect(Main.validateRecoverySeedPublicDiscoverability(root, futureActivation).isRight)
   }
 
+  pureTest("certified replay retains the exact root snapshot info for every activation mode") {
+    val root = CertifiedConsensusGenesis.FirstIncrementalOrdinal
+    val futureActivation = 2000L
+
+    expect.same(Set.empty[SnapshotOrdinal], Main.protectedCertifiedSnapshotInfoOrdinals(Long.MaxValue)) &&
+    expect.same(Set(root), Main.protectedCertifiedSnapshotInfoOrdinals(SnapshotOrdinal.MinValue.value.value)) &&
+    expect.same(Set(root), Main.protectedCertifiedSnapshotInfoOrdinals(root.value.value)) &&
+    expect.same(
+      Set(SnapshotOrdinal.unsafeApply(futureActivation - 1L)),
+      Main.protectedCertifiedSnapshotInfoOrdinals(futureActivation)
+    )
+  }
+
   pureTest("an unsigned recovery seed is bound to the same independent checkpoint comparison") {
     expect(Main.validateRecoverySeedAnchorCompatibility(recoveryAnchor, None).isRight) &&
     expect(Main.validateRecoverySeedAnchorCompatibility(recoveryAnchor, Some(recoveryAnchor)).isRight) &&

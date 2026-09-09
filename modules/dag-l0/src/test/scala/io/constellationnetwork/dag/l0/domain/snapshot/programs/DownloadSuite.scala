@@ -4,6 +4,11 @@ import cats.syntax.option._
 
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.Download.PeerTip
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotStorage.{
+  SnapshotContextReadbackFailure,
+  SnapshotIndexReadbackFailure,
+  SnapshotOrdinalCollision
+}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
 
@@ -34,6 +39,24 @@ object DownloadSuite extends FunSuite {
 
   private def decide(tips: List[PeerTip]): SnapshotOrdinal =
     Download.chooseObservationLimit(localOrd, localHash, tips, observationOffset)
+
+  test("download head publication classifies initial, forward, same-ordinal, and backward movement") {
+    expect.same("initial", Download.headPublicationDirection(none, localOrd)) &&
+    expect.same("forward", Download.headPublicationDirection(prevOrd.some, localOrd)) &&
+    expect.same("same_ordinal", Download.headPublicationDirection(localOrd.some, localOrd)) &&
+    expect.same("backward", Download.headPublicationDirection(nextOrd.some, localOrd))
+  }
+
+  test("download head publication classifies collision, index, context, and other failures separately") {
+    val collision = SnapshotOrdinalCollision(localOrd, localHash, altHashSameOrd)
+    val indexReadback = SnapshotIndexReadbackFailure(localOrd, localHash)
+    val contextReadback = SnapshotContextReadbackFailure(localOrd)
+
+    expect.same("target_ordinal_collision", Download.headPublicationFailureReason(collision)) &&
+    expect.same("snapshot_index_readback", Download.headPublicationFailureReason(indexReadback)) &&
+    expect.same("context_readback", Download.headPublicationFailureReason(contextReadback)) &&
+    expect.same("other", Download.headPublicationFailureReason(new RuntimeException("other")))
+  }
 
   test("first incremental checkpoint detection is relative to the configured full snapshot") {
     val publicCheckpoint = SnapshotOrdinal.unsafeApply(766717L)
