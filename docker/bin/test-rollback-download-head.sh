@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Controlled GL0 cold-restart and validator-download qualification.
+# Controlled GL0 cold-restart and forward validator-download qualification.
 #
-# This is an ordinary Just/Docker E2E payload. It exercises the production
-# topology: one run-rollback lead starts while every validator is stopped, then
-# validators start as run-validator. One validator's real data directory is
-# restored to an earlier, previously finalized head so its rejoin must traverse
-# the ordinary full-download path.
+# This ordinary Just/Docker E2E validates rollback-lead initialization,
+# restoration of a lagged validator to an earlier finalized checkpoint, forward
+# full download from that checkpoint, and durable head publication before
+# consensus resumes. It does not exercise a validator replacing its current
+# public head with a lower ordinal or prove the backward-publication branch.
 #
 # Usage: bash docker/bin/test-rollback-download-head.sh [gl0_port_prefix]
 
@@ -395,7 +395,7 @@ restore_target_data() {
 }
 
 echo "================================================"
-echo "Rollback-lead / full-download head qualification"
+echo "Rollback-lead / forward full-download head qualification"
 echo "================================================"
 echo "  lead:       $LEAD_NODE (run-rollback)"
 echo "  warm peer:  $WARM_NODE (run-validator)"
@@ -413,6 +413,8 @@ done
 
 {
   echo "run_id=$RUN_ID"
+  echo "coverage=rollback-lead initialization; lagged-validator checkpoint restoration; forward full download; durable head publication before consensus"
+  echo "not_covered=backward publication from a higher current public head"
   echo "git_head=$(git -C "$PROJECT_ROOT" rev-parse HEAD)"
   echo "gl0_jar_sha256=$(sha256sum "${PROJECT_ROOT}/docker/jars/gl0.jar" | awk '{print $1}')"
   for index in $(seq 0 $((EXPECTED_GL0_NODES - 1))); do
@@ -479,7 +481,7 @@ echo "  Lead/warm aligned: ordinal=$warm_ordinal hash=${warm_hash:0:16}..."
 target_since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 compose_up "$TARGET_INDEX"
 downloaded=$(wait_target_rejoin "$rollback_ordinal" "$target_since" "$DOWNLOAD_TIMEOUT") ||
-  fail "$TARGET_NODE did not complete ordinary full download and publish its exact head"
+  fail "$TARGET_NODE did not complete ordinary full download and publish its target ordinal/hash"
 IFS='|' read -r downloaded_ordinal downloaded_hash <<<"$downloaded"
 echo "  Downloaded public head: ordinal=$downloaded_ordinal hash=${downloaded_hash:0:16}..."
 
@@ -513,8 +515,9 @@ IFS='|' read -r final_ordinal final_hash <<<"$continued"
 capture_evidence success
 echo
 echo "================================================"
-echo "PASS: rollback lead and downloaded-head lifecycle"
+echo "PASS: rollback lead and forward downloaded-head lifecycle"
 echo "================================================"
-echo "Lead initialized Last-N alone at $rollback_ordinal; $TARGET_NODE downloaded from retained $lagged_ordinal,"
-echo "published exact head $downloaded_ordinal, became Ready, completed consensus, matched all peers at"
+echo "Lead initialized Last-N alone at $rollback_ordinal; $TARGET_NODE restored finalized checkpoint $lagged_ordinal,"
+echo "downloaded forward, durably published target ordinal/hash $downloaded_ordinal/$downloaded_hash before consensus resumed, and matched all peers at"
 echo "$common_ordinal/$common_hash, and the cluster continued through $final_ordinal."
+echo "This scenario does not exercise replacement of a current public head with a lower ordinal."

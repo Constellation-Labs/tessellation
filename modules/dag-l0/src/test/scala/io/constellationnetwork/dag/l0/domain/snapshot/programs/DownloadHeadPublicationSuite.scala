@@ -10,7 +10,7 @@ object DownloadHeadPublicationSuite extends SimpleIOSuite {
   private final case class TerminalContext(id: String)
   private final case class Step(name: String, artifact: TerminalArtifact, context: TerminalContext)
 
-  test("validated terminal publication precedes metrics and consensus initialization with one exact pair") {
+  test("validated terminal publication precedes metrics and consensus initialization with one selected pair") {
     val terminalArtifact = TerminalArtifact("observed-T")
     val terminalContext = TerminalContext("context-T")
 
@@ -20,6 +20,7 @@ object DownloadHeadPublicationSuite extends SimpleIOSuite {
         terminalArtifact,
         terminalContext,
         (artifact, context) => steps.update(_ :+ Step("publish", artifact, context)),
+        _ => steps.update(_ :+ Step("publication-failure-metric", terminalArtifact, terminalContext)),
         (artifact, context) => steps.update(_ :+ Step("published-metric", artifact, context)),
         (artifact, context) => steps.update(_ :+ Step("consensus-init", artifact, context))
       )
@@ -35,7 +36,7 @@ object DownloadHeadPublicationSuite extends SimpleIOSuite {
       )
   }
 
-  test("terminal publication failure never evaluates metrics or consensus initialization") {
+  test("terminal publication failure emits only the failure metric and never starts consensus") {
     val terminalArtifact = TerminalArtifact("observed-T")
     val terminalContext = TerminalContext("context-T")
 
@@ -48,6 +49,7 @@ object DownloadHeadPublicationSuite extends SimpleIOSuite {
           (artifact, context) =>
             steps.update(_ :+ Step("publish", artifact, context)) >>
               IO.raiseError(new RuntimeException("injected publication failure")),
+          _ => steps.update(_ :+ Step("publication-failure-metric", terminalArtifact, terminalContext)),
           (artifact, context) => steps.update(_ :+ Step("published-metric", artifact, context)),
           (artifact, context) => steps.update(_ :+ Step("consensus-init", artifact, context))
         )
@@ -55,6 +57,12 @@ object DownloadHeadPublicationSuite extends SimpleIOSuite {
       observed <- steps.get
     } yield
       expect(result.isLeft) &&
-        expect.same(List(Step("publish", terminalArtifact, terminalContext)), observed)
+        expect.same(
+          List(
+            Step("publish", terminalArtifact, terminalContext),
+            Step("publication-failure-metric", terminalArtifact, terminalContext)
+          ),
+          observed
+        )
   }
 }

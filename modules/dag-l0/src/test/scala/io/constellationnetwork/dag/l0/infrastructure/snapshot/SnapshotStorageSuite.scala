@@ -68,7 +68,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   def mkInspectableStorage(
     tmpDir: File,
     persistenceMutex: Mutex[IO],
-    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty
+    protectedSnapshotInfoOrdinals: Set[SnapshotOrdinal] = Set.empty,
+    historicalReadFailure: Option[(SnapshotOrdinal, Throwable)] = None
   )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) = {
     val snapshotsPath = Path((tmpDir / "snapshots").pathAsString)
     val snapshotInfoPath = Path((tmpDir / "snapshot-info").pathAsString)
@@ -81,7 +82,20 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       notPersistedCache <- Ref.of[IO, Set[SnapshotOrdinal]](Set.empty)
       offloadQueue <- Queue.unbounded[IO, SnapshotOrdinal]
       snapshotInfoCutoffQueue <- Queue.unbounded[IO, SnapshotOrdinal]
-      snapshotFileStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](snapshotsPath)
+      snapshotFileStorage <- {
+        val storage = new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](snapshotsPath) {
+          def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+            K.deserialize[Signed[GlobalIncrementalSnapshotV1]](bytes).map(_.map(_.toGlobalIncrementalSnapshot))
+
+          override def read(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] =
+            historicalReadFailure.filter(_._1 === ordinal) match {
+              case Some((_, error)) => IO.raiseError(error)
+              case None             => super.read(ordinal)
+            }
+        }
+
+        storage.createDirectoryIfNotExists().rethrowT.as(storage)
+      }
       snapshotInfoFileStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](snapshotInfoPath)
       checkpointStorage <- CombinedSnapshotCheckpointFileSystemStorage
         .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](checkpointsPath)
@@ -216,6 +230,95 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
           )
       }
     } yield (storage, snapshotFileStorage, snapshotInfoFileStorage)
+  }
+
+  def mkStorageWithSnapshotIndexReadbackFailure(
+    tmpDir: File,
+    removeHashIndex: Boolean,
+    writeFailure: Option[Throwable] = None
+  )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) = {
+    val snapshotsPath = Path((tmpDir / "snapshots").pathAsString)
+    val snapshotInfoPath = Path((tmpDir / "snapshot-info").pathAsString)
+    val checkpointsPath = Path((tmpDir / "checkpoints").pathAsString)
+
+    for {
+      writeAttempts <- Ref.of[IO, Int](0)
+      ordinalReadAttempts <- Ref.of[IO, Int](0)
+      hashReadAttempts <- Ref.of[IO, Int](0)
+      snapshotFileStorage <- {
+        val storage = new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](snapshotsPath) {
+          def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+            K.deserialize[Signed[GlobalIncrementalSnapshotV1]](bytes).map(_.map(_.toGlobalIncrementalSnapshot))
+
+          override def write(snapshot: Signed[GlobalIncrementalSnapshot])(implicit hasher: Hasher[IO]): IO[Unit] =
+            writeAttempts.update(_ + 1) >>
+              super.write(snapshot)(hasher) >>
+              (if (removeHashIndex) hasher.hash(snapshot.value).flatMap(delete) else delete(snapshot.ordinal)) >>
+              writeFailure.traverse_(IO.raiseError[Unit])
+
+          override def read(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] =
+            ordinalReadAttempts.update(_ + 1) >> super.read(ordinal)
+
+          override def read(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] =
+            hashReadAttempts.update(_ + 1) >> super.read(hash)
+        }
+
+        storage.createDirectoryIfNotExists().rethrowT.as(storage)
+      }
+      snapshotInfoFileStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](snapshotInfoPath)
+      checkpointStorage <- CombinedSnapshotCheckpointFileSystemStorage
+        .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](checkpointsPath)
+      storage <- {
+        implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
+        io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotStorage
+          .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            snapshotFileStorage,
+            snapshotInfoFileStorage,
+            inMemoryCapacity = 5L,
+            SnapshotOrdinal.MinValue,
+            hs,
+            checkpointStorage
+          )
+      }
+    } yield (storage, writeAttempts, ordinalReadAttempts, hashReadAttempts)
+  }
+
+  def mkStorageWithContextReadbackFailure(
+    tmpDir: File,
+    persistedContext: GlobalSnapshotInfo
+  )(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) = {
+    val snapshotsPath = Path((tmpDir / "snapshots").pathAsString)
+    val snapshotInfoPath = Path((tmpDir / "snapshot-info").pathAsString)
+    val checkpointsPath = Path((tmpDir / "checkpoints").pathAsString)
+
+    for {
+      snapshotFileStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](snapshotsPath)
+      snapshotInfoFileStorage <- {
+        val storage = new SnapshotInfoLocalFileSystemStorage[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo](snapshotInfoPath) {
+          def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfo] =
+            K.deserialize[GlobalSnapshotInfoV2](bytes).map(_.toGlobalSnapshotInfo)
+
+          override def write(ordinal: SnapshotOrdinal, snapshotInfo: GlobalSnapshotInfo): IO[Unit] =
+            super.write(ordinal, persistedContext)
+        }
+
+        storage.createDirectoryIfNotExists().rethrowT.as(storage)
+      }
+      checkpointStorage <- CombinedSnapshotCheckpointFileSystemStorage
+        .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](checkpointsPath)
+      storage <- {
+        implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
+        io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotStorage
+          .make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            snapshotFileStorage,
+            snapshotInfoFileStorage,
+            inMemoryCapacity = 5L,
+            SnapshotOrdinal.MinValue,
+            hs,
+            checkpointStorage
+          )
+      }
+    } yield storage
   }
 
   def mkSnapshots(
@@ -528,7 +631,10 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
         contextAfterFailure <- snapshotInfoFiles.read(original.ordinal)
       } yield
         expect.all(
-          publication.isLeft,
+          publication match {
+            case Left(_: SnapshotStorage.SnapshotOrdinalCollision) => true
+            case _                                                 => false
+          },
           headAfterFailure.contains((original, originalContext)),
           cachedAtTarget.contains(original),
           contextAfterFailure.contains(originalContext)
@@ -536,7 +642,93 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("validated lower-head publication evicts a deleted future suffix from positive caches") { res =>
+  test("validated head publication classifies either missing snapshot index and leaves the visible head unchanged") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        ordinalIndexFixture <- mkStorageWithSnapshotIndexReadbackFailure(tmpDir / "missing-ordinal", removeHashIndex = false)
+        hashIndexFixture <- mkStorageWithSnapshotIndexReadbackFailure(tmpDir / "missing-hash", removeHashIndex = true)
+        (ordinalIndexStorage, _, _, _) = ordinalIndexFixture
+        (hashIndexStorage, _, _, _) = hashIndexFixture
+        (genesis, target) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        ordinalIndexPublication <- ordinalIndexStorage.setHeadForRecovery(target, context).attempt
+        hashIndexPublication <- hashIndexStorage.setHeadForRecovery(target, context).attempt
+        ordinalIndexHead <- ordinalIndexStorage.head
+        hashIndexHead <- hashIndexStorage.head
+      } yield
+        expect.all(
+          ordinalIndexPublication match {
+            case Left(_: SnapshotStorage.SnapshotIndexReadbackFailure) => true
+            case _                                                     => false
+          },
+          hashIndexPublication match {
+            case Left(_: SnapshotStorage.SnapshotIndexReadbackFailure) => true
+            case _                                                     => false
+          },
+          ordinalIndexHead.isEmpty,
+          hashIndexHead.isEmpty
+        )
+    }
+  }
+
+  test("validated head publication attempts one write and one readback proof while retaining the write failure") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      val writeFailure = new RuntimeException("injected snapshot write failure")
+
+      for {
+        fixture <- mkStorageWithSnapshotIndexReadbackFailure(tmpDir, removeHashIndex = false, writeFailure.some)
+        (storage, writeAttempts, ordinalReadAttempts, hashReadAttempts) = fixture
+        (genesis, target) <- mkSnapshots
+        publication <- storage.setHeadForRecovery(target, genesis.info.toGlobalSnapshotInfo).attempt
+        writes <- writeAttempts.get
+        ordinalReads <- ordinalReadAttempts.get
+        hashReads <- hashReadAttempts.get
+        headAfterFailure <- storage.head
+      } yield
+        expect.all(
+          publication match {
+            case Left(error: SnapshotStorage.SnapshotIndexReadbackFailure) =>
+              error.getSuppressed.toList.contains(writeFailure)
+            case _ => false
+          },
+          writes === 1,
+          ordinalReads === 1,
+          hashReads === 1,
+          headAfterFailure.isEmpty
+        )
+    }
+  }
+
+  test("validated head publication classifies a mismatched context readback and leaves the visible head unchanged") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        (genesis, target) <- mkSnapshots
+        suppliedContext = genesis.info.toGlobalSnapshotInfo.copy(
+          balances = SortedMap(
+            address.Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> balance.Balance(100L)
+          )
+        )
+        storage <- mkStorageWithContextReadbackFailure(tmpDir, GlobalSnapshotInfo.empty)
+        publication <- storage.setHeadForRecovery(target, suppliedContext).attempt
+        headAfterFailure <- storage.head
+      } yield
+        expect.all(
+          publication match {
+            case Left(_: SnapshotStorage.SnapshotContextReadbackFailure) => true
+            case _                                                       => false
+          },
+          headAfterFailure.isEmpty
+        )
+    }
+  }
+
+  test("validated lower-head publication treats an occupied same-value target as idempotent and evicts its cached future suffix") { res =>
     implicit val (supervisor, kryo, json, hasher, securityProvider) = res
 
     File.temporaryDirectory() { tmpDir =>
@@ -575,7 +767,258 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("validated head retry clears a stale not-persisted marker only after exact disk readback succeeds") { res =>
+  test("validated head publication retains a pending cached-only lower value") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, notPersisted) = built
+        (genesis, lower) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        lowerHash <- lower.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        target <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          lower.value.copy(
+            ordinal = lower.ordinal.next,
+            lastSnapshotHash = lowerHash
+          ),
+          keyPair
+        )
+        _ <- storage.prepend(lower, context)
+        _ <- snapshotFiles.delete(lower.ordinal)
+        _ <- snapshotFiles.delete(lowerHash)
+        _ <- notPersisted.update(_ + lower.ordinal)
+        _ <- storage.setHeadForRecovery(target, context)
+        cachedLower <- storage.get(lower.ordinal)
+        persistedOrdinal <- snapshotFiles.read(lower.ordinal)
+        persistedHash <- snapshotFiles.read(lowerHash)
+        pendingAfterPublication <- notPersisted.get
+        headAfterPublication <- storage.head
+      } yield
+        expect.all(
+          cachedLower.contains(lower),
+          persistedOrdinal.isEmpty,
+          persistedHash.isEmpty,
+          pendingAfterPublication.contains(lower.ordinal),
+          headAfterPublication.contains((target, context))
+        )
+    }
+  }
+
+  test("validated head publication clears a stale pending marker for a matching durable lower value") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, ordinalCache, hashCache, notPersisted) = built
+        (genesis, lower) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        lowerHash <- lower.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        target <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          lower.value.copy(
+            ordinal = lower.ordinal.next,
+            lastSnapshotHash = lowerHash
+          ),
+          keyPair
+        )
+        _ <- storage.prepend(lower, context)
+        _ <- notPersisted.update(_ + lower.ordinal)
+        persistedOrdinalBeforePublication <- snapshotFiles.read(lower.ordinal)
+        pendingBeforePublication <- notPersisted.get
+        _ <- storage.setHeadForRecovery(target, context)
+        cachedOrdinalAfterPublication <- ordinalCache(lower.ordinal).get
+        cachedHashAfterPublication <- hashCache(lowerHash).get
+        pendingAfterPublication <- notPersisted.get
+        headAfterPublication <- storage.head
+      } yield
+        expect.all(
+          persistedOrdinalBeforePublication.contains(lower),
+          pendingBeforePublication.contains(lower.ordinal),
+          cachedOrdinalAfterPublication.contains(lowerHash),
+          cachedHashAfterPublication.contains(lower),
+          !pendingAfterPublication.contains(lower.ordinal),
+          headAfterPublication.contains((target, context))
+        )
+    }
+  }
+
+  test("validated head publication retains a hash-durable lower value whose ordinal index is missing") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, notPersisted) = built
+        (genesis, lower) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        lowerHash <- lower.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        target <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          lower.value.copy(
+            ordinal = lower.ordinal.next,
+            lastSnapshotHash = lowerHash
+          ),
+          keyPair
+        )
+        _ <- storage.prepend(lower, context)
+        _ <- snapshotFiles.delete(lower.ordinal)
+        pendingBeforePublication <- notPersisted.get
+        _ <- storage.setHeadForRecovery(target, context)
+        cachedLower <- storage.get(lower.ordinal)
+        persistedOrdinal <- snapshotFiles.read(lower.ordinal)
+        persistedHash <- snapshotFiles.read(lowerHash)
+        pendingAfterPublication <- notPersisted.get
+        headAfterPublication <- storage.head
+      } yield
+        expect.all(
+          !pendingBeforePublication.contains(lower.ordinal),
+          cachedLower.contains(lower),
+          persistedOrdinal.isEmpty,
+          persistedHash.contains(lower),
+          !pendingAfterPublication.contains(lower.ordinal),
+          headAfterPublication.contains((target, context))
+        )
+    }
+  }
+
+  test("validated head publication evicts an unsupported missing lower value") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, notPersisted) = built
+        (genesis, lower) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        lowerHash <- lower.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        target <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          lower.value.copy(
+            ordinal = lower.ordinal.next,
+            lastSnapshotHash = lowerHash
+          ),
+          keyPair
+        )
+        _ <- storage.prepend(lower, context)
+        _ <- snapshotFiles.delete(lower.ordinal)
+        _ <- snapshotFiles.delete(lowerHash)
+        pendingBeforePublication <- notPersisted.get
+        _ <- storage.setHeadForRecovery(target, context)
+        byOrdinalAfterPublication <- storage.get(lower.ordinal)
+        byHashAfterPublication <- storage.get(lowerHash)
+        pendingAfterPublication <- notPersisted.get
+        headAfterPublication <- storage.head
+      } yield
+        expect.all(
+          !pendingBeforePublication.contains(lower.ordinal),
+          byOrdinalAfterPublication.isEmpty,
+          byHashAfterPublication.isEmpty,
+          !pendingAfterPublication.contains(lower.ordinal),
+          headAfterPublication.contains((target, context))
+        )
+    }
+  }
+
+  test("validated head publication propagates a typed lower-history read failure without changing the head") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        (genesis, lower) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        lowerHash <- lower.value.hash
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        target <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          lower.value.copy(
+            ordinal = lower.ordinal.next,
+            lastSnapshotHash = lowerHash
+          ),
+          keyPair
+        )
+        readFailure = new RuntimeException("injected lower-history read failure")
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex, historicalReadFailure = (lower.ordinal -> readFailure).some)
+        (storage, _, _, _, _, _, _, _) = built
+        _ <- storage.prepend(lower, context)
+        headBeforePublication <- storage.head
+        publication <- storage.setHeadForRecovery(target, context).attempt
+        headAfterFailure <- storage.head
+      } yield
+        expect.all(
+          headBeforePublication.contains((lower, context)),
+          publication match {
+            case Left(error: SnapshotStorage.SnapshotIndexReadbackFailure) =>
+              error.ordinal === lower.ordinal && error.expectedHash === lowerHash && (error.getCause eq readFailure)
+            case _ => false
+          },
+          headAfterFailure === headBeforePublication
+        )
+    }
+  }
+
+  test("validated head publication evicts a replaced lower fork and its stale pending marker") { res =>
+    implicit val (supervisor, kryo, json, hasher, securityProvider) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        mutex <- Mutex[IO]
+        built <- mkInspectableStorage(tmpDir, mutex)
+        (storage, snapshotFiles, _, _, _, _, _, notPersisted) = built
+        (genesis, canonicalBase) <- mkSnapshots
+        context = genesis.info.toGlobalSnapshotInfo
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        forkBase <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          canonicalBase.value.copy(version = semver.SnapshotVersion("1.0.0")),
+          keyPair
+        )
+        forkBaseHash <- forkBase.value.hash
+        forkTarget <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          forkBase.value.copy(
+            ordinal = forkBase.ordinal.next,
+            lastSnapshotHash = forkBaseHash
+          ),
+          keyPair
+        )
+        canonicalBaseHash <- canonicalBase.value.hash
+        canonicalTarget <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          canonicalBase.value.copy(
+            ordinal = canonicalBase.ordinal.next,
+            lastSnapshotHash = canonicalBaseHash
+          ),
+          keyPair
+        )
+        _ <- storage.prepend(forkBase, context)
+        _ <- storage.prepend(forkTarget, context)
+        _ <- snapshotFiles.replaceForRecovery(canonicalBase)
+        _ <- snapshotFiles.replaceForRecovery(canonicalTarget)
+        _ <- notPersisted.update(_ + forkBase.ordinal)
+        staleBeforePublication <- storage.get(canonicalBase.ordinal)
+        pendingBeforePublication <- notPersisted.get
+        _ <- storage.setHeadForRecovery(canonicalTarget, context)
+        baseAfterPublication <- storage.get(canonicalBase.ordinal)
+        forkHashAfterPublication <- storage.get(forkBaseHash)
+        pendingAfterPublication <- notPersisted.get
+        headAfterPublication <- storage.head
+      } yield
+        expect.all(
+          staleBeforePublication.contains(forkBase),
+          pendingBeforePublication.contains(forkBase.ordinal),
+          baseAfterPublication.contains(canonicalBase),
+          forkHashAfterPublication.isEmpty,
+          !pendingAfterPublication.contains(forkBase.ordinal),
+          headAfterPublication.contains((canonicalTarget, context))
+        )
+    }
+  }
+
+  test("validated head retry clears a stale not-persisted marker only after same-value disk readback succeeds") { res =>
     implicit val (supervisor, kryo, json, hasher, securityProvider) = res
 
     File.temporaryDirectory() { tmpDir =>

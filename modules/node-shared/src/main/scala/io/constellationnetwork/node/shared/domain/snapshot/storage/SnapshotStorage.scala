@@ -26,8 +26,10 @@ trait SnapshotStorage[F[_], S <: Snapshot, State] {
   /** Publish an already validated download or recovery terminal pair as the visible head. Unlike `prepend`, this does not require
     * sequential ordinals because full download may have already installed a canonical suffix directly on disk.
     *
-    * This storage operation grants no branch-selection or rollback authority. Callers must validate and authorize the exact artifact and
-    * state before invoking it; filesystem-backed implementations make that pair durable and reconcile lookup caches before publication.
+    * This storage operation grants no branch-selection or rollback authority. Callers must validate and authorize the target snapshot
+    * value/hash, semantically equal state, and persisted ancestry before invoking it. Filesystem-backed implementations make the target
+    * pair durable and reconcile positive caches against that validated persisted history before publication; they do not select a branch or
+    * repair lower files.
     */
   def setHeadForRecovery(snapshot: Signed[S], state: State)(implicit hasher: Hasher[F]): F[Unit]
 

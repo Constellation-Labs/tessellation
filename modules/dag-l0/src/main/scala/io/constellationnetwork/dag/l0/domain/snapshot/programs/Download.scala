@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l0.domain.snapshot.programs
 import cats.effect.std.Random
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
-import cats.{Applicative, Monad, Parallel}
+import cats.{Applicative, MonadThrow, Parallel}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -30,6 +30,11 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.RecoveryFallbackEligible
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.CombinedSnapshotCheckpointFileSystemStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotStorage.{
+  SnapshotContextReadbackFailure,
+  SnapshotIndexReadbackFailure,
+  SnapshotOrdinalCollision
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -96,20 +101,29 @@ object Download {
       else "backward"
     }
 
+  private[snapshot] def headPublicationFailureReason(error: Throwable): String =
+    error match {
+      case _: SnapshotOrdinalCollision       => "target_ordinal_collision"
+      case _: SnapshotIndexReadbackFailure   => "snapshot_index_readback"
+      case _: SnapshotContextReadbackFailure => "context_readback"
+      case _                                 => "other"
+    }
+
   /** Serialize the terminal handoff shared by ordinary full download and bounded follower catch-up.
     *
-    * Both callbacks receive the same immutable artifact/context references. If publication fails, the consensus callback is never
-    * evaluated; the enclosing download lifecycle retains ownership of reverting to WaitingForDownload and retrying. This is deliberately a
-    * small effect-order helper, not a second download harness or a new authority boundary.
+    * Each artifact/context callback receives the same immutable references. If publication fails, the success-metric and consensus
+    * callbacks are never evaluated; the enclosing download lifecycle retains ownership of reverting to WaitingForDownload and retrying.
+    * This is deliberately a small effect-order helper, not a second download harness or a new authority boundary.
     */
-  private[snapshot] def publishValidatedHeadBeforeConsensus[F[_]: Monad, A, C](
+  private[snapshot] def publishValidatedHeadBeforeConsensus[F[_]: MonadThrow, A, C](
     artifact: A,
     context: C,
     publish: (A, C) => F[Unit],
+    onPublicationFailure: Throwable => F[Unit],
     afterPublication: (A, C) => F[Unit],
     startConsensus: (A, C) => F[Unit]
   ): F[Unit] =
-    publish(artifact, context) >>
+    publish(artifact, context).onError { case error => onPublicationFailure(error) } >>
       afterPublication(artifact, context) >>
       startConsensus(artifact, context)
 
@@ -533,10 +547,70 @@ object Download {
         _ <- Metrics[F].updateGauge("dag_global_snapshot_signature_count", snapshot.proofs.size.toDouble)
       } yield ()
 
-    /** Publish the exact terminal artifact/context selected by an already validated download before consensus can initialize from it.
+    private def recordHeadPublicationFailure(
+      path: String,
+      direction: String,
+      previous: Option[SnapshotOrdinal],
+      target: SnapshotOrdinal,
+      error: Throwable
+    ): F[Unit] = {
+      val reason = Download.headPublicationFailureReason(error)
+      val logContext = Map(
+        "path" -> path,
+        "direction" -> direction,
+        "previous_ordinal" -> previous.map(_.value.value.toString).getOrElse("none"),
+        "target_ordinal" -> target.value.value.toString,
+        "reason" -> reason
+      )
+
+      logger.error(logContext, error)("[DownloadHeadPublication] Publication failed") >>
+        Metrics[F].incrementCounter(
+          "dag_download_head_publication_failure_total",
+          Seq(
+            Metrics.unsafeLabelName("path") -> path,
+            Metrics.unsafeLabelName("direction") -> direction,
+            Metrics.unsafeLabelName("reason") -> reason
+          )
+        )
+    }
+
+    private def recordHeadPublicationSuccess(path: String, direction: String): F[Unit] =
+      Metrics[F].incrementCounter(
+        "dag_download_head_publication_total",
+        Seq(
+          Metrics.unsafeLabelName("path") -> path,
+          Metrics.unsafeLabelName("direction") -> direction
+        )
+      )
+
+    private def publishRecoveryDownloadHead(
+      snapshot: Signed[GlobalIncrementalSnapshot],
+      context: GlobalSnapshotInfo
+    )(implicit hasherSelector: HasherSelector[F]): F[Unit] =
+      for {
+        previous <- globalSnapshotConsensusStorage.headSnapshot.map(_.map(_.ordinal))
+        direction = Download.headPublicationDirection(previous, snapshot.ordinal)
+        _ <- Applicative[F].whenA(direction === "backward") {
+          logger.warn(
+            s"[DownloadHeadPublication] Publishing validated lower canonical head: " +
+              s"path=recovery previous=${previous.map(_.show).getOrElse("none")} target=${snapshot.ordinal.show}"
+          )
+        }
+        _ <- hasherSelector.withCurrent { implicit hasher =>
+          globalSnapshotConsensusStorage.setHeadForRecovery(snapshot, context)
+        }.onError {
+          case error =>
+            recordHeadPublicationFailure("recovery", direction, previous, snapshot.ordinal, error)
+        }
+        _ <- recordHeadPublicationSuccess("recovery", direction)
+      } yield ()
+
+    /** Publish the terminal snapshot value and context selected by an already validated download before consensus can initialize from it.
       *
-      * Full download may legitimately replace a higher local fork head with a lower canonical head after its validated cleanup. That move
-      * remains allowed and is made explicit through warning/metrics rather than blocked by a monotonicity guard.
+      * A lower head may be published only when the target ordinal is absent or already contains the same canonical snapshot value/hash, the
+      * caller has validated the target and its persisted ancestry, and storage has reconciled its positive caches against that validated
+      * history. A different value at the target ordinal remains a collision: this handoff does not select a branch, replace suffix files,
+      * or repair lower files.
       */
     private def handoffValidatedDownloadHead(
       path: String,
@@ -561,14 +635,8 @@ object Download {
             hasherSelector.withCurrent { implicit hasher =>
               globalSnapshotConsensusStorage.setHeadForRecovery(artifact, state)
             },
-          (_, _) =>
-            Metrics[F].incrementCounter(
-              "dag_download_head_publication_total",
-              Seq(
-                Metrics.unsafeLabelName("path") -> path,
-                Metrics.unsafeLabelName("direction") -> direction
-              )
-            ),
+          error => recordHeadPublicationFailure(path, direction, previous, snapshot.ordinal, error),
+          (_, _) => recordHeadPublicationSuccess(path, direction),
           (artifact, state) =>
             consensus.manager.startFacilitatingAfterDownload(
               observationLimit,
@@ -1040,9 +1108,7 @@ object Download {
           hashedSnapshot <- hasherSelector.withCurrent(implicit hs => lastSnapshot.toHashed)
           _ <- lastNGlobalSnapshotStorage.setForRecovery(hashedSnapshot, lastContext)
           _ <- lastGlobalSnapshotStorage.setForRecovery(hashedSnapshot, lastContext)
-          _ <- hasherSelector.withCurrent { implicit hs =>
-            globalSnapshotConsensusStorage.setHeadForRecovery(lastSnapshot, lastContext)
-          }
+          _ <- publishRecoveryDownloadHead(lastSnapshot, lastContext)
           // Sync MptStore to match the downloaded snapshot's state. During network isolation,
           // the MPT may have accumulated stale mutations (from abandoned rounds that partially
           // mutated state before savepoint restore, or from ordinals computed against a
@@ -1100,9 +1166,7 @@ object Download {
           (observedResult, observationLimit) = observeResult
           (observedSnapshot, observedContext) = observedResult
           // Sync consensus SnapshotStorage head to observed tip so prepend works on the next round
-          _ <- hasherSelector.withCurrent { implicit hs =>
-            globalSnapshotConsensusStorage.setHeadForRecovery(observedSnapshot, observedContext)
-          }
+          _ <- publishRecoveryDownloadHead(observedSnapshot, observedContext)
           _ <- logger.info(
             s"[RecoveryDownload] Consensus head synced to ordinal ${observedSnapshot.ordinal.show}, observationLimit=${observationLimit.show}, mode=$observeMode"
           )
@@ -1205,8 +1269,9 @@ object Download {
 
       convergingRecoveryCycle.flatMap { result =>
         val ((snapshot, context), observationLimit) = result
-        // The final tuple is returned by the last recoveryObserve iteration, which has already published this exact artifact/context to
-        // globalSnapshotConsensusStorage. Keep recovery's per-iteration publication boundary intact and initialize only after convergence.
+        // The final tuple is returned by the last recoveryObserve iteration, which has already published this snapshot value and
+        // semantically equal context to globalSnapshotConsensusStorage. Keep recovery's per-iteration publication boundary intact and
+        // initialize only after convergence.
         consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context, isRecovery = true) >>
           recordDownloadPhase("recovery", "facilitate_enqueued")
       }
