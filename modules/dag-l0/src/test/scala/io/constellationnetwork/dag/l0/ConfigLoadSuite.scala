@@ -99,6 +99,23 @@ object ConfigLoadSuite extends SimpleIOSuite {
     }
   }
 
+  test("the packaged Testnet config activates certified consensus at the halt ordinal") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val resolved = SnapshotConfig.resolveEffectiveConsensusConfig(cfg.snapshot, AppEnvironment.Testnet)
+
+      resolved.fold(
+        error => failure(error.getMessage),
+        // 3276854 is the ordinal testnet's Global L0 halted at, and the activation is deliberately
+        // AT that anchor, not after it: validateRecoverySeedActivationSpacing accepts `anchor >=
+        // activation` or `activation - anchor >= 3`, so 3276855/3276856 would be REJECTED for a
+        // recovery seed anchored here. Absent map entry would silently resolve to Long.MaxValue and
+        // leave CertifiedRoundCommitteeProjector -- hence the fixed admission path -- switched off,
+        // which is the state that let the Core controller contract to 2 signers. Guard the value.
+        effective => expect.same(3276854L, effective.certifiedConsensusActivationKey)
+      )
+    }
+  }
+
   test("resolver rejects an invalid controller range before the node can join") {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       val invalid = cfg.snapshot.copy(
