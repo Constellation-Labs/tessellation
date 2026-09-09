@@ -32,11 +32,12 @@ object DownloadInactivityWatchdogSuite extends SimpleIOSuite {
   // gl0 sat at ordinal 3271071 while the cluster tip was 3276854 -- 5,783 snapshots behind. The full
   // download path fetched at ~4.4 snapshots/s, so a complete catch-up needs ~22 minutes of
   // continuous work, well past its 10-minute budget. Because that path used a fixed
-  // `timeoutTo(start, downloadStartMaxDuration, ...)` instead of this watchdog, every attempt was
-  // cancelled mid-fetch, discarded its batch, and was retried identically
-  // (`Download attempt 2, isRecovery=false`) for over ten days without the head advancing a single
-  // ordinal. Both cases below assert the property the fix depends on: the budget must bound
-  // IDLENESS, not total elapsed time.
+  // `timeoutTo(start, downloadStartMaxDuration, ...)` instead of this watchdog, each attempt was
+  // cancelled mid-walk and the next one re-walked the same ground: ~2,600 snapshots fetched per
+  // attempt for ~265 net persisted ordinals. Progress was retained across attempts (3271071 ->
+  // 3272926 over 7 of them), so the cap cost throughput rather than correctness. Both cases below
+  // assert the property that removes the waste: the budget must bound IDLENESS, not total elapsed
+  // time.
   //
   // SCOPE: these exercise the watchdog combinator against that profile, NOT the full path's wiring
   // to it -- `Download.make` takes ~15 collaborators and DownloadSuite has no harness for it, so

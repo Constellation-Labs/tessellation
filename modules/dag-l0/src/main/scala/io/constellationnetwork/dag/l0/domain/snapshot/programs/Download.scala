@@ -439,17 +439,24 @@ object Download {
     // Outer watchdog for the full Download.start path, measured as INACTIVITY rather than total
     // elapsed time (the same treatment the recovery path already gets -- see `guardedBody`).
     //
-    // A fixed total budget silently bricks any node whose catch-up legitimately takes longer than
-    // it: observed on testnet gl0, which sat at ordinal 3271071 while the cluster tip was 3276854.
-    // Each attempt fetched ~2,600 of the 5,783 missing snapshots at ~4.4/s, hit the 10-minute wall,
-    // discarded the batch, and retried identically -- for over ten days. The escalation this comment
-    // used to promise does not occur: the daemon logged `Download attempt 2, isRecovery=false`, so a
-    // timed-out full attempt is retried as a full attempt and never reaches the progress-aware
-    // recovery path. Measuring inactivity keeps the same hung-fiber protection (a genuinely stuck
-    // fetch/validateChain/MPT build still raises DownloadStartTimedOut, returns the FSM to
-    // WaitingForDownload and lets the daemon schedule a fresh attempt) while letting an advancing
-    // download run as long as it keeps advancing. Every walk_back/validateChain ordinal refreshes
-    // the deadline via the onProgress callback threaded into `startWithProgress`.
+    // A fixed total budget makes a long catch-up wasteful rather than impossible, and this is an
+    // EFFICIENCY fix, not a correctness one. Measured on testnet gl0, 5,783 snapshots behind
+    // (local 3271071, cluster tip 3276854): each 10-minute attempt fetched ~2,600 snapshots but
+    // only netted ~265 persisted ordinals, because the cap truncates the run mid-walk and the next
+    // attempt re-walks the same ground. Progress IS retained across attempts -- the node advanced
+    // 3271071 -> 3272926 over 7 attempts -- so the head does converge, at roughly a tenth of the
+    // achievable rate. Measuring inactivity instead lets one attempt carry the whole catch-up.
+    //
+    // Note the separate reason that node had sat still for ten days beforehand: on the release it
+    // was running, `DownloadStartTimedOut` lacked the `RecoveryFallbackEligible` marker, so
+    // `shouldSwitchToRecovery` in DownloadDaemon was always false and the daemon neither escalated
+    // to the progress-aware recovery path nor made headway on the full one. That marker is the
+    // actual unwedge; this change only removes the repeated re-walk.
+    //
+    // Hung-fiber protection is unchanged in kind: a genuinely stuck fetch/validateChain/MPT build
+    // still raises DownloadStartTimedOut, returns the FSM to WaitingForDownload and lets the daemon
+    // schedule a fresh attempt. Every walk_back/validateChain ordinal refreshes the deadline via the
+    // onProgress callback threaded into `startWithProgress`.
     val downloadStartMaxDuration: FiniteDuration = 10.minutes
 
     // Upper bound on the iterations validateChain spends searching for a valid persisted
