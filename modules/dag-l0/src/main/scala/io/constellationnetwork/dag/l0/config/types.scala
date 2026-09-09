@@ -17,7 +17,8 @@ object types {
     snapshot: SnapshotConfig,
     stateChannel: StateChannelConfig,
     peerDiscovery: PeerDiscoveryConfig,
-    incremental: IncrementalConfig
+    incremental: IncrementalConfig,
+    recovery: RecoveryConfig = RecoveryConfig()
   )
 
   case class AppConfig(
@@ -27,6 +28,7 @@ object types {
     stateChannel: StateChannelConfig,
     peerDiscovery: PeerDiscoveryConfig,
     incremental: IncrementalConfig,
+    recovery: RecoveryConfig,
     shared: SharedConfig
   ) {
     val environment = shared.environment
@@ -38,6 +40,14 @@ object types {
 
   case class IncrementalConfig(
     lastFullGlobalSnapshotOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+  )
+
+  /** Optional seedlist-signed recovery checkpoint. When `checkpointPath` is set, the recovery download path follows only the chain passing
+    * through the verified checkpoint's `(ordinal, hash)` -- the fork-safety anchor for recovery (see `RecoveryCheckpoint`). Inert (None) by
+    * default.
+    */
+  case class RecoveryConfig(
+    checkpointPath: Option[String] = None
   )
 
   case class StateChannelConfig(

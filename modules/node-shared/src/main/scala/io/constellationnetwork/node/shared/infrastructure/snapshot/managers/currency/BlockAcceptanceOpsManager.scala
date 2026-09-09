@@ -104,7 +104,8 @@ class BlockAcceptanceOpsManager[F[_]: Async: Parallel](
     shouldPerformMetagraphSpecificValidations: Boolean,
     lastUnsyncGlobalSnapshotOrdinal: SnapshotOrdinal,
     fixingAllowSpendAndTokenLockValidation: SnapshotOrdinal,
-    lastSyncGlobalSnapshotEpochProgress: EpochProgress
+    lastSyncGlobalSnapshotEpochProgress: EpochProgress,
+    creditDestination: Boolean
   )(implicit hasher: Hasher[F]): F[AllowSpendBlockAcceptanceResult] = {
     val context = AllowSpendBlockAcceptanceContext.fromStaticData(
       lastSnapshotContext.snapshotInfo.balances,
@@ -124,7 +125,8 @@ class BlockAcceptanceOpsManager[F[_]: Async: Parallel](
       context,
       snapshotOrdinal,
       shouldPerformMetagraphSpecificValidations,
-      maybeEpochProgress
+      maybeEpochProgress,
+      creditDestination
     )
   }
 

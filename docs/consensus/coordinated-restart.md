@@ -32,9 +32,9 @@ The intent flows on the consensus path the same way Facility / Proposal flow tod
 | coordinator(s)   |                               +-----------------+
 | (configured by   |                                       |
 |  peer-id in HOCON|                                       | adopts
-|  + jar-hash trust|                                       v
-|  domain)         |                              +-----------------+
-+------------------+                              | restart phase   |
+|  allowlist)      |                                      v
++------------------+                              +-----------------+
+                                                  | restart phase   |
                                                   | machine:        |
                                                   |  - quiesce      |
                                                   |  - idle         |
@@ -48,7 +48,9 @@ The intent flows on the consensus path the same way Facility / Proposal flow tod
 Configured by `coordinatorPeerIds: List[PeerId]` in HOCON. A `ClusterIntent` rumor is accepted only when:
 
 1. The rumor envelope signer is in `coordinatorPeerIds`.
-2. The jar hash on the signing peer matches the cluster's current `consensusConfigHash` family (no cross-version coordinators).
+2. The signing peer has already passed the normal release-version and `consensusConfigHash`
+   connection fences (no cross-version coordinators). The advertised jar hash is not an enforced
+   handshake fence.
 3. The intent is `Normal` (informational, anyone can send) OR the signer is in the coordinator allowlist.
 
 Coordinator set MUST be `>= 2` so a single compromised coordinator can't unilaterally shut down the cluster. `RestartGroup` proposals require quorum among coordinators, like a multi-sig.

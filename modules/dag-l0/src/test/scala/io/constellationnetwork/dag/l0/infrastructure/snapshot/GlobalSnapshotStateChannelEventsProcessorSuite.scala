@@ -2,11 +2,11 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
 
-import cats.Parallel
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
 import cats.effect.{Async, IO, Resource}
 import cats.syntax.all._
+import cats.{Functor, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -21,8 +21,10 @@ import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcce
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
+import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.CurrencySnapshotAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.HistoricalGlobalSnapshotResolver.OutsideRetainedWindow
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.{
   GlobalSnapshotStateChannelAcceptanceManager,
   GlobalSnapshotStateChannelEventsProcessor
@@ -54,6 +56,7 @@ import fs2.concurrent.SignallingRef
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
+  private implicit val metrics: Metrics[IO] = NoOpMetrics.make
 
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
 
@@ -120,7 +123,19 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+        FieldsAddedOrdinals(
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map(Dev -> SnapshotOrdinal.MinValue)
+        ),
         Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -145,7 +160,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           validationErrorStorage
         )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
+        .make[IO](creator, validators.signedValidator, None, None, SnapshotOrdinal.MinValue)
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
         mptProducer,
@@ -165,7 +180,27 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       }
       feeCalculator = FeeCalculator.make(SortedMap.empty)
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, feeCalculator, mptStore, SnapshotOrdinal.MinValue)
+        .make[IO](
+          validator,
+          manager,
+          currencySnapshotContextFns,
+          feeCalculator,
+          mptStore,
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
+        )
     } yield processor
   }
 
@@ -264,6 +299,145 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   }
 
+  test("a stale legacy root is returned and a deterministic sibling can be accepted") { res =>
+    implicit val (ks, h, j, sp) = res
+
+    val emptyCurrencyInfo =
+      CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None, None, None)
+    val badOrdinal = SnapshotOrdinal.unsafeApply(2L)
+    val goodOrdinal = SnapshotOrdinal.unsafeApply(3L)
+
+    def currencySnapshot(ordinal: SnapshotOrdinal, keyPair: KeyPair): IO[Signed[CurrencyIncrementalSnapshot]] = {
+      val value = CurrencyIncrementalSnapshot(
+        ordinal,
+        Height.MinValue,
+        SubHeight.MinValue,
+        Hash.empty,
+        SortedSet.empty,
+        SortedSet.empty,
+        SnapshotTips(SortedSet.empty, SortedSet.empty),
+        CurrencySnapshotStateProof(Hash.empty, Hash.empty, None, None, None, None, None, None, None),
+        EpochProgress.MinValue,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None
+      )
+      forAsyncHasher(value, keyPair)
+    }
+
+    def binary(
+      snapshot: Signed[CurrencyIncrementalSnapshot],
+      parent: Hash,
+      keyPair: KeyPair
+    ): IO[Signed[StateChannelSnapshotBinary]] =
+      j.serialize(snapshot).flatMap(bytes => forAsyncHasher(StateChannelSnapshotBinary(parent, bytes, SnapshotFee.MinValue), keyPair))
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+      lastCurrency <- currencySnapshot(SnapshotOrdinal.unsafeApply(1L), keyPair)
+      badCurrency <- currencySnapshot(badOrdinal, keyPair)
+      goodCurrency <- currencySnapshot(goodOrdinal, keyPair)
+      parentHash <- Random.scalaUtilRandom[IO].flatMap(_.nextString(32)).map(Hash(_))
+      badBinary <- binary(badCurrency, parentHash, keyPair)
+      goodBinary <- binary(goodCurrency, parentHash, keyPair)
+      validator = new StateChannelValidator[IO] {
+        def validate(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, snapshotFeesInfo: SnapshotFeesInfo)(
+          implicit hasher: Hasher[IO]
+        ) = output.validNec.pure[IO]
+        def validateHistorical(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, snapshotFeesInfo: SnapshotFeesInfo)(
+          implicit hasher: Hasher[IO]
+        ) = output.validNec.pure[IO]
+      }
+      contextFns = new CurrencySnapshotContextFunctions[IO] {
+        private def create(
+          context: CurrencySnapshotContext,
+          signedArtifact: Signed[CurrencyIncrementalSnapshot]
+        ): IO[CurrencySnapshotContext] =
+          if (signedArtifact.ordinal === badOrdinal)
+            OutsideRetainedWindow(
+              io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.HistoricalGlobalSnapshotResolver.SyncTarget,
+              SnapshotOrdinal.unsafeApply(10L),
+              SnapshotOrdinal.unsafeApply(50L),
+              SnapshotOrdinal.unsafeApply(100L)
+            ).raiseError[IO, CurrencySnapshotContext]
+          else context.pure[IO]
+
+        def createContext(
+          context: CurrencySnapshotContext,
+          lastArtifact: Signed[CurrencyIncrementalSnapshot],
+          signedArtifact: Signed[CurrencyIncrementalSnapshot],
+          getGlobalSnapshotByOrdinal: SnapshotOrdinal => IO[Option[Hashed[GlobalIncrementalSnapshot]]]
+        )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotContext] = create(context, signedArtifact)
+
+        def createHistoricalContext(
+          context: CurrencySnapshotContext,
+          lastArtifact: Signed[CurrencyIncrementalSnapshot],
+          signedArtifact: Signed[CurrencyIncrementalSnapshot],
+          getGlobalSnapshotByOrdinal: SnapshotOrdinal => IO[Option[Hashed[GlobalIncrementalSnapshot]]]
+        )(implicit hasher: Hasher[IO]): IO[CurrencySnapshotContext] = create(context, signedArtifact)
+      }
+      manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
+        def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
+          implicit hasher: Hasher[IO]
+        ) = IO.pure((SortedMap(address -> NonEmptyList.one(badBinary)), Set.empty[StateChannelOutput]))
+
+        override def acceptBranches(
+          ordinal: SnapshotOrdinal,
+          lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+          events: List[StateChannelOutput]
+        )(implicit hasher: Hasher[IO], functor: Functor[IO]) =
+          IO.pure(
+            (
+              SortedMap(address -> NonEmptyList.of(NonEmptyList.one(badBinary), NonEmptyList.one(goodBinary))),
+              Set.empty[StateChannelOutput]
+            )
+          )
+      }
+      mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
+      mptStore <- MptStore.make[IO, GlobalStateKey](mptProducer, GlobalStateKey.toHex[IO])
+      processor = GlobalSnapshotStateChannelEventsProcessor.make[IO](
+        validator,
+        manager,
+        contextFns,
+        FeeCalculator.make(SortedMap.empty),
+        mptStore,
+        FieldsAddedOrdinals(
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+        ),
+        Dev
+      )
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> parentHash)).copy(
+        lastCurrencySnapshots = SortedMap(address -> Right((lastCurrency, emptyCurrencyInfo)))
+      )
+      result <- processor.process(
+        SnapshotOrdinal.unsafeApply(100L),
+        snapshotInfo,
+        List(StateChannelOutput(address, badBinary), StateChannelOutput(address, goodBinary)),
+        StateChannelValidationType.Full,
+        _ => none[Hashed[GlobalIncrementalSnapshot]].pure[IO]
+      )
+    } yield
+      expect.same(NonEmptyList.one(goodBinary), result.accepted(address)) &&
+        expect(result.returned.contains(StateChannelOutput(address, badBinary))) &&
+        expect(!result.returned.contains(StateChannelOutput(address, goodBinary)))
+  }
+
   def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None)(
     implicit S: SecurityProvider[IO],
     H: Hasher[IO],
@@ -319,6 +493,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       None,
       None,
       None,
+      Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),

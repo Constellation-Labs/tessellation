@@ -130,6 +130,7 @@ object GlobalStateFieldId {
   case object NodeCollateralWithdrawals extends GlobalStateFieldId { def toInt: Int = 16 }
   case object PriceState extends GlobalStateFieldId { def toInt: Int = 17 }
   case object MetagraphSyncData extends GlobalStateFieldId { def toInt: Int = 18 }
+  case object RetiredAllowSpendRefs extends GlobalStateFieldId { def toInt: Int = 19 }
 
   implicit val ordering: Ordering[GlobalStateFieldId] = Ordering.by(_.toInt)
   implicit val show: Show[GlobalStateFieldId] = Show.show(_.toInt.toString)
@@ -159,6 +160,7 @@ object GlobalStateFieldId {
     case 16 => Some(NodeCollateralWithdrawals)
     case 17 => Some(PriceState)
     case 18 => Some(MetagraphSyncData)
+    case 19 => Some(RetiredAllowSpendRefs)
     case _  => None
   }
 }

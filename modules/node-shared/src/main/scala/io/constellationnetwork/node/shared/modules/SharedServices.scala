@@ -71,6 +71,7 @@ object SharedServices {
     seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Option[A]],
     versionHash: Hash,
+    consensusConfigHash: Option[Hash],
     metagraphVersionHash: Hash,
     jarHash: Hash,
     collateral: CollateralConfig,
@@ -126,6 +127,7 @@ object SharedServices {
           environment,
           allowanceList,
           metagraphId,
+          consensusConfigHash = consensusConfigHash,
           consensusHealth = Some(consensusHealthRef.get),
           lastStateEntryAt = Some(stateEntryAtRef.get)
         )
@@ -144,13 +146,13 @@ object SharedServices {
         validators.feeTransactionValidator,
         validators.globalSnapshotSyncValidator,
         storages.lastNGlobalSnapshot,
-        storages.lastGlobalSnapshot
+        storages.lastGlobalSnapshot,
+        Some(Metrics[F])
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
-        cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         CurrencySnapshotCreator.make[F](
           cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
           currencySnapshotAcceptanceManager,
@@ -161,7 +163,9 @@ object SharedServices {
         ),
         validators.signedValidator,
         None,
-        None
+        None,
+        cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit
+          .getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
         currencySnapshotValidator
@@ -190,9 +194,8 @@ object SharedServices {
             currencySnapshotContextFns,
             feeCalculator,
             storages.mptStore,
-            // Fail closed: an unset env defaults to MaxValue so the new context-balance path stays OFF
-            // (the gate never fires) rather than activating from genesis and diverging replay.
-            cfg.fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue)
+            cfg.fieldsAddedOrdinals,
+            cfg.environment
           ),
         updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,
@@ -212,7 +215,8 @@ object SharedServices {
         cfg.fieldsAddedOrdinals.tessellation3Migration.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         cfg.fieldsAddedOrdinals.setSumFix.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         storages.mptStore,
-        cfg.incrementalDelegatedStakingStartingOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
+        cfg.incrementalDelegatedStakingStartingOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
+        cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCredit.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)
       )
     } yield
       new SharedServices[F, A](

@@ -1,0 +1,61 @@
+# Atomic replace: flush all nftables state, then redefine. The whole
+# nft -f invocation is one netlink transaction.
+flush ruleset
+
+table inet firewall {
+    set allow_v4 {
+        type ipv4_addr
+        flags interval
+        elements = { @ALLOW@ }
+    }
+
+    # Per-destination-IP byte/packet counters for outbound public + P2P.
+    # The exporter scrapes these to break down egress by remote IP.
+    set pub_out_dst {
+        type ipv4_addr
+        flags dynamic
+        counter
+    }
+    set p2p_out_dst {
+        type ipv4_addr
+        flags dynamic
+        counter
+    }
+
+    counter pub_traffic   { }
+    counter p2p_traffic   { }
+    counter bytes_dropped { }
+    counter pub_out       { }
+    counter p2p_out       { }
+
+    # Input chain: observation only, no filtering. Connection-level
+    # limits are intentionally absent — keep-alive makes them ineffective.
+    chain input {
+        type filter hook input priority 0; policy accept;
+        tcp dport { @PUBLIC_PORTS@ } counter name pub_traffic accept
+        tcp dport { @P2P_PORTS@ }    counter name p2p_traffic accept
+    }
+
+    # Output chain: per-destination-IP byte-rate cap on outbound traffic
+    # from public ports. Counts both rate-passed and allowlisted outbound
+    # so total egress is observable.
+    chain output {
+        type filter hook output priority 0; policy accept;
+
+        # Rate cap only applies to non-allowlisted destinations on
+        # public ports. Drops counted in bytes_dropped.
+        tcp sport { @PUBLIC_PORTS@ } ip daddr != @allow_v4 \
+            meter byterate { ip daddr limit rate over @PUBLIC_BYTE_RATE@ } \
+            counter name bytes_dropped drop
+
+        # Count + accept all successfully-egressed public-port traffic
+        # (both allowlisted and rate-passed). Update per-destination set
+        # so the exporter can break down egress by remote IP.
+        tcp sport { @PUBLIC_PORTS@ } update @pub_out_dst { ip daddr } \
+            counter name pub_out accept
+
+        # Count + accept P2P outbound (no rate cap on P2P).
+        tcp sport { @P2P_PORTS@ } update @p2p_out_dst { ip daddr } \
+            counter name p2p_out accept
+    }
+}

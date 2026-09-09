@@ -29,6 +29,7 @@ object SharedPrograms {
     seedlist: Option[Set[SeedlistEntry]],
     nodeId: PeerId,
     versionHash: Hash,
+    consensusConfigHash: Option[Hash],
     metagraphVersionHash: Hash,
     allowanceList: Option[Set[AllowanceListEntry]],
     metagraphId: Option[Address]
@@ -52,7 +53,8 @@ object SharedPrograms {
           metagraphVersionHash,
           pd,
           allowanceList,
-          metagraphId
+          metagraphId,
+          consensusConfigHash
         )
       }
     } yield new SharedPrograms[F, A](pd, joining) {}

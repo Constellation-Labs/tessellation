@@ -142,16 +142,21 @@ it loads the stored certificate and calls `applyCertifiedTimeoutCertificate`
 (`state/StateTransitions.scala:725`).
 
 Apply **re-runs** `TimeoutCertificateBuilder.build` against the freshly recomputed
-quorum and witness pool, so an apply never trusts the stored certificate blindly. If it
-still validates, the transition:
+quorum and witness pool, so an apply never trusts the stored certificate blindly. The
+current implementation also rereads the local timeout-vote cache when evaluating the
+certified shrink. That is a known follow-up risk: HotStuff-style view-change effects
+should be certificate-determined, so the shrink authority should come from the stored /
+proposal-carried certificate votes rather than node-local gossip state. If the
+certificate still validates, the transition:
 
 1. Optionally **certified-shrinks** the round-local active set. The shrink is evaluated
    on every certified timeout via `ActiveFacilitatorAdmission.fromCertifiedTimeout`,
    which retains the TC voters down to a floor of `q`
    (`state/StateTransitions.scala:786-798`). When a shrink applies, `state.facilitators`
    and `state.coreFacilitators` are reduced to the retained set so a reserve can replace
-   missing Core peers round-locally without reading local gossip state and without
-   changing the committed committee.
+   missing Core peers round-locally without changing the committed committee. Until the
+   A3 follow-up lands, this path should be treated as a liveness mechanism whose
+   determinism depends on aligning the shrink input with certificate-carried votes.
 2. Selects the new leader deterministically over the (possibly shrunken) pool:
    `facilitatorSelector.selectLeader(leaderPool, state.entropy, toView)`.
 3. Atomically advances the round under a `condModifyState` guard that only fires when

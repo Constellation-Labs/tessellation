@@ -1,4 +1,4 @@
--- Pre-create tables with 3-day retention for the nightly cluster.
+-- Pre-create tables without TTL — logs are kept indefinitely.
 -- Nodes use CREATE TABLE IF NOT EXISTS, so they will reuse these tables.
 
 CREATE TABLE IF NOT EXISTS nightly_logs (
@@ -9,8 +9,7 @@ CREATE TABLE IF NOT EXISTS nightly_logs (
     data JSON
 ) ENGINE = MergeTree()
 PARTITION BY (network_id, toYYYYMM(timestamp))
-ORDER BY (node_id, timestamp)
-TTL toDateTime(timestamp) + INTERVAL 3 DAY;
+ORDER BY (node_id, timestamp);
 
 CREATE TABLE IF NOT EXISTS nightly_logs_consensus (
     timestamp DateTime64(3),
@@ -23,5 +22,10 @@ CREATE TABLE IF NOT EXISTS nightly_logs_consensus (
     INDEX idx_event_type event_type TYPE set(20) GRANULARITY 1
 ) ENGINE = MergeTree()
 PARTITION BY (network_id, toYYYYMM(timestamp))
-ORDER BY (node_id, ordinal, timestamp)
-TTL toDateTime(timestamp) + INTERVAL 3 DAY;
+ORDER BY (node_id, ordinal, timestamp);
+
+-- NOTE: TTL removal is done in deploy-monitoring.sh as a best-effort step, NOT here.
+-- `ALTER TABLE ... REMOVE TTL` errors (code 36) on a table that has no TTL, which would
+-- abort this entire init script (clickhouse-client multiquery stops on first error) and
+-- leave the deploy half-applied. Tables above are created without TTL, so there's nothing
+-- to remove on a fresh cluster anyway.

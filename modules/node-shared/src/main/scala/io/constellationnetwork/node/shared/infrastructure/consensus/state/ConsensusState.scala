@@ -241,7 +241,11 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // Defaulted to 0 so all pre-alpha.90 construction sites continue to compile; the dag-l0 and
   // currency-l0 state creators populate it.
   initialViewNumber: Int = 0,
-  entropy: Hash
+  entropy: Hash,
+  // V35 freezes both round-start voter universes for the entire key. Shared state-machine
+  // code uses this flag to disable every legacy in-round denominator mutation without
+  // depending on a layer-specific key representation.
+  certifiedConsensusActive: Boolean = false
 )
 
 object ConsensusState {

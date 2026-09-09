@@ -17,6 +17,24 @@ import io.constellationnetwork.schema.peer.PeerId
   */
 object ReadmissionMaintenance {
 
+  /** Every map entry is a probation member, including an entry whose countdown has reached zero.
+    *
+    * The countdown is timing/observability state; map membership is the authority. Keeping this definition here prevents emission, proposal
+    * validation, state creation, and certificate selection from independently reintroducing the former `> 0` auto-clear bug.
+    */
+  def probationPeers(readmissionCountdown: scala.collection.Map[PeerId, Int]): Set[PeerId] =
+    readmissionCountdown.keySet.toSet
+
+  /** Encode map membership through the existing integer field in the node-local operational sidecar.
+    *
+    * `PerPeerOperationalRecord.readmissionCountdown` predates sticky zero and has no separate presence bit. Persisting a live zero as zero
+    * makes startup's sparse-map reconstruction indistinguishable from "not on probation". A value of one is therefore the persistence
+    * sentinel for a live zero entry; after restart the normal maintenance step returns it to zero. This does not enter signed artifact
+    * peerHistory, whose `perPeer` map is intentionally empty.
+    */
+  def persistenceValue(readmissionCountdown: scala.collection.Map[PeerId, Int], peerId: PeerId): Int =
+    readmissionCountdown.get(peerId).fold(0)(countdown => math.max(1, countdown))
+
   /** Apply one round of probation maintenance.
     *
     *   1. Decrement every active counter by 1, clamped at 0. 2. Seed entries for peers in `justUnpenalized` at `probationRounds` (only if

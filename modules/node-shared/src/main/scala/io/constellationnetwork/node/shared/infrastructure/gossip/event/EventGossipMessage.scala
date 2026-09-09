@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.gossip.event
 
+import java.nio.charset.StandardCharsets
+
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -7,10 +9,32 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import io.circe.Encoder
+import io.circe.syntax._
 
 /** Messages for event gossip protocol (libp2p Gossipsub-inspired).
   */
 sealed trait EventGossipMessage
+
+object EventGossipBounds {
+  val MaxIWantRequestHashes: Int = 128
+  val MaxIWantResponseEvents: Int = 16
+
+  /** Currency snapshot construction is capped at 512,000 bytes. Keep enough room for one maximal event plus its signed JSON envelope while
+    * retaining a hard aggregate response bound. The separate 20 MiB GL0 event-cutter budget is an aggregate GL0 proposal limit, not the
+    * Currency state-channel binary limit.
+    */
+  val MaxIWantResponseBytes: Int = 4 * 1024 * 1024
+
+  def encodedResponseBytes[Event: Encoder](events: List[(Hash, Signed[Event])]): Int =
+    IWantResponse(events).asJson.noSpaces.getBytes(StandardCharsets.UTF_8).length
+
+  def isPullable[Event: Encoder](hash: Hash, event: Signed[Event]): Boolean =
+    isPullableWithin(hash, event, MaxIWantResponseBytes)
+
+  private[node] def isPullableWithin[Event: Encoder](hash: Hash, event: Signed[Event], maxBytes: Int): Boolean =
+    encodedResponseBytes(List(hash -> event)) <= maxBytes
+}
 
 /** Chain tip metadata for fork recovery detection.
   *

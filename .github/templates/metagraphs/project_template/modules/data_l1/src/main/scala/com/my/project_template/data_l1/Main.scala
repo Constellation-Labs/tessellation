@@ -33,8 +33,8 @@ object Main
       "currency-data_l1",
       "currency data L1 node",
       ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
-      tessellationVersion = TessellationVersion.unsafeFrom("1.0.0"),
-      metagraphVersion = MetagraphVersion.unsafeFrom("1.0.0")
+      tessellationVersion = TessellationVersion.unsafeFrom(com.my.project_template.data_l1.BuildInfo.tessellationVersion),
+      metagraphVersion = MetagraphVersion.unsafeFrom(com.my.project_template.data_l1.BuildInfo.metagraphVersion)
     ) {
 
   private def makeBaseDataApplicationL1Service: BaseDataApplicationL1Service[IO] = BaseDataApplicationL1Service(

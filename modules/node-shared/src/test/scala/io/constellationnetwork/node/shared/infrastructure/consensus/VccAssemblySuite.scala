@@ -38,7 +38,7 @@ object DoubleSignRaceSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
         case Right(newLock) => (newLock.some, Right(newLock))
         case Left(reason)   => (maybeLock, Left(reason))
       }
@@ -115,7 +115,7 @@ object VccLateArrivalSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
         case Right(newLock) => (newLock.some, Right(newLock))
         case Left(reason)   => (maybeLock, Left(reason))
       }
@@ -289,7 +289,7 @@ object RecoveryClearsLocksSuite extends SimpleIOSuite {
   ): IO[Either[VoteRejection, VoteLock]] =
     voteLocksR(key).modify { maybeLock =>
       val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc) match {
+      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
         case Right(newLock) => (newLock.some, Right(newLock))
         case Left(reason)   => (maybeLock, Left(reason))
       }

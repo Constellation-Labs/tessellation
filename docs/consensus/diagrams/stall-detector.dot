@@ -56,7 +56,7 @@ digraph StallDetector {
     // Early view change (no stall counted)
     CheckEarlyViewChange [shape=diamond, label="Leader Unresponsive\n+ proposal phase\n+ roundElapsed ≥ 5s\nOR self recently\nrecovered + leader?"];
     CheckEarlyViewChange -> EarlyViewChange [label="yes"];
-    EarlyViewChange [label="ViewChangeManager.\nperformViewChange()\n→ emit VCV (gossip)\n→ CheckViewChangeAssembly", style="rounded,filled", fillcolor="orange"];
+    EarlyViewChange [label="ViewChangeManager.\nperformViewChange()\n→ emit VCV + TimeoutVote\n→ CheckViewChangeAssembly\n→ CheckTimeoutCertificateAssembly", style="rounded,filled", fillcolor="orange"];
     EarlyViewChange -> Retransmit;
     CheckEarlyViewChange -> CheckStall [label="no"];
 
@@ -93,12 +93,12 @@ digraph StallDetector {
 
     EvictEmit [label="EvictionVoter.emitEvictionVote\n+ CheckEvictionAssembly\n(targets via selectEvictionTargets,\ncapped at committee - minQuorum)", style="rounded,filled", fillcolor="lightcoral"];
     EvictEmit -> ViewChange;
-    ViewChange [label="ViewChangeManager.\nperformViewChange()", style="rounded,filled", fillcolor="orange"];
+    ViewChange [label="ViewChangeManager.\nperformViewChange()\n→ VCV + TimeoutVote", style="rounded,filled", fillcolor="orange"];
     ViewChange -> Retransmit;
 
     CheckProposalPhase [shape=diamond, label="Proposal\nPhase?"];
     CheckProposalPhase -> ProposalViewChange [label="yes"];
-    ProposalViewChange [label="ViewChangeManager.\nperformViewChange()\n(leader stall, all declared)", style="rounded,filled", fillcolor="orange"];
+    ProposalViewChange [label="ViewChangeManager.\nperformViewChange()\n(leader stall, quorum declared)\n→ VCV + TimeoutVote", style="rounded,filled", fillcolor="orange"];
     ProposalViewChange -> Retransmit;
     CheckProposalPhase -> CountStall [label="no"];
     CountStall [label="Count toward abandon"];

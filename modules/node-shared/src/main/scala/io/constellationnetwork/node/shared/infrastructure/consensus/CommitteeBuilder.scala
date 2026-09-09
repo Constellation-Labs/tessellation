@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 
 /** Deterministic derivation of the three v19 committees from a flat candidate set, the carried-forward per-peer tier map, AND the
@@ -13,19 +12,18 @@ import io.constellationnetwork.schema.peer.PeerId
   *   - '''Core''' (Tier 2): full facilitators. The CERT quorum (B1 / B2 / VCC builders) is gated on Core: `q = ceil(coreFacilitators.size *
   *     quorumThresholdFraction)`. Core peers also form the leader pool (only Core peers are eligible to lead a round).
   *   - '''Tier1''': witness-eligible (B1/B2/VCC witness pool). Tier 1 peers DO sign each round's `signedMajorityArtifact` and earn rewards
-  *     proportionally. They cannot lead, and they do NOT count toward the cert quorum denominator -- a Tier 1 peer being silent cannot
-  *     wedge a B1/B2/VCC certificate. The SNAPSHOT finalization threshold is a separate, more permissive `(roundStartFacilitators.size / 2)
-  *     + 1` computed over Core + Tier 1; safety in finalization is enforced via VoteLock + VCC, not by tightening the threshold.
+  *     proportionally. They cannot lead, and they do NOT count toward the normal liveness denominator -- a Tier 1 peer being silent cannot
+  *     wedge leader rotation. Snapshot finalization is a separate gate: outside bootstrap it is clamped to the frozen round-start committee
+  *     floor, so a cluster-minority Core can rotate leaders but cannot finalize a divergent snapshot.
   *   - '''Witness''' (Tier 0): observation only. Open membership; peers fall here only via explicit eviction outside this builder. In
   *     practice the v19 tier-transition path never writes Witness; this tier is reserved for future explicit-eviction policy.
   *
   * ==Reward and signer pool==
   *
-  * Delegated rewards (the mainnet mechanism) follow the round COMMITTEE, not the signer subset: the consensus facilitator set
-  * (`roundStartFacilitators` = Core + Tier 1 + Witness) is threaded to the distributor as `lastFacilitators` in
-  * `GlobalSnapshotConsensusFunctions` (built from the current-round facilitators, explicitly not `lastArtifact.proofs`). Every committee
-  * member earns an equal share; there is no Core-vs-Tier-1 stratification in today's reward math. The legacy classic-rewards path still
-  * keys off `lastArtifact.proofs` (= signers), but mainnet runs delegated.
+  * Delegated validator rewards follow the frozen round-start signing committee, not the signer subset. In the current tier-transition path
+  * this is Core + Tier 1; Witness remains observation-only and is not seated. At/after the full-committee reward gate every seated Core and
+  * Tier-1 member earns an equal share, with no Core-vs-Tier-1 stratification. Historical replay below that gate retains its legacy
+  * evidence-score recipient filter. The legacy classic-rewards path still keys off `lastArtifact.proofs`.
   *
   * ==Tier assignment rule==
   *
@@ -50,8 +48,8 @@ import io.constellationnetwork.schema.peer.PeerId
   *
   * The floor is consensus-critical: divergent values across operators would derive divergent Core committees and silently fork the cluster.
   * `coreCommitteeSize` is keyed by `AppEnvironment`, resolved to a flat `Option[Int]` at the consensus construction site, and (as of v20)
-  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at
-  * handshake by the config hash, in addition to the jar hash already gating the peer connection. `minObservations` and `minRatio` reuse the
+  * IS folded into `deterministicConfigHash` (treated as the dev default `3` when absent). Mismatched values are therefore rejected at L0
+  * join handshake by the config hash, in addition to the independent advertised-version hash. `minObservations` and `minRatio` reuse the
   * existing `minParticipationObservations` / `minParticipationRatio` config knobs.
   *
   * ==Chronic-core replacement ladder==
@@ -90,9 +88,9 @@ object CommitteeBuilder {
     * The cert quorum is computed FROM the Core size (`max(1, ceil(size * quorumThresholdFraction))`, see `QuorumPolicy`), so every size is
     * arithmetically quorum-viable; 2 is the smallest committee where leader rotation and mutual attestation are meaningful (the
     * `minLeaderPoolSize` rationale: with a single peer, `viewNumber % 1 = 0` makes view change a no-op). Hence `max(2, quorum-viable)` = 2.
-    * Compiled-in constant, jar-hash gated.
+    * Compiled-in constant, release-version gated by coordinated deployment.
     */
-  val MinViableCoreSize: Int = 2
+  val MinViableCoreSize: Int = CommitteeViability.MinimumCoordinatedCommitteeSize
 
   /** Final per-committee classification result. `core`, `tier1`, `witness` partition `candidates` exactly: every peer in `candidates` lands
     * in exactly one of the three.
@@ -155,6 +153,7 @@ object CommitteeBuilder {
     minObservations: Int,
     minRatio: Double,
     nonCorePeers: Set[PeerId] = Set.empty,
+    forcedTier1Peers: Set[PeerId] = Set.empty,
     chronicMisses: Map[PeerId, Int] = Map.empty,
     activeScores: Map[PeerId, Int] = Map.empty
   ): Committees = {
@@ -172,7 +171,8 @@ object CommitteeBuilder {
       hasSufficientHistory(pid).exists(_ >= minRatio)
 
     val effectiveTier: PeerId => Int = pid =>
-      if (nonCorePeers.contains(pid))
+      if (forcedTier1Peers.contains(pid)) Tier1
+      else if (nonCorePeers.contains(pid))
         priorTiers.get(pid).filter(_ == Witness).getOrElse(Tier1)
       else if (isQualityDegraded(pid)) Tier1
       else
@@ -198,7 +198,7 @@ object CommitteeBuilder {
     // non-chronic Tier 1 reserves outside the probation set. Chronic peers are
     // categorically barred from BOTH mechanisms -- this is the fix for the floor
     // re-promoting dead peers into the quorum denominator.
-    val corePromotablePool = rawTier1.filterNot(pid => isChronic(pid) || nonCorePeers.contains(pid))
+    val corePromotablePool = rawTier1.filterNot(pid => isChronic(pid) || nonCorePeers.contains(pid) || forcedTier1Peers.contains(pid))
 
     // Step 2, REPLACE: one-for-one swap for each excluded Core member, highest
     // evidence score first, PeerId lex tie-break. Evidence-derived scores only --
@@ -241,7 +241,7 @@ object CommitteeBuilder {
     val healthySize = healthyCore.size + replacements.size + promoted.size
     val readmitTarget = math.min(MinViableCoreSize, math.max(coreFloor, rawCore.size))
     val readmitted = (chronicCore ++ rawTier1.filter(isChronic))
-      .filterNot(nonCorePeers.contains)
+      .filterNot(pid => nonCorePeers.contains(pid) || forcedTier1Peers.contains(pid))
       .sortBy(pid => (chronicMisses.getOrElse(pid, Int.MaxValue), pid.value.value))
       .take(math.max(0, readmitTarget - healthySize))
     val readmittedSet = readmitted.toSet
@@ -256,8 +256,10 @@ object CommitteeBuilder {
     val splitTier1 = candidates.filterNot(pid => finalCoreSet.contains(pid) || rawWitnessSet.contains(pid))
     val splitWitness: List[PeerId] = rawWitness
 
-    // Reward follows committee membership (delegated rewards pay the round committee, not the
-    // signer subset), so Tier-1 and Witness are just the post-split sets -- no reward rotation.
+    // At/after the full-committee gate, delegated validator rewards follow signing-committee
+    // membership (Core + Tier 1), not the signer subset. Historical replay below the gate retains
+    // its legacy recipient filter. Witness remains observation-only and non-earning. There is no
+    // Tier-1 reward rotation.
     val (finalTier1, finalWitness) = (splitTier1, splitWitness)
 
     // Stamp the effective tier on every classified peer for the round's persisted view.

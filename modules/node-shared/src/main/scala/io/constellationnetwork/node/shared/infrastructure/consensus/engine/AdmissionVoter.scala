@@ -7,9 +7,13 @@ import io.constellationnetwork.schema.peer.PeerId
 
 /** Emits (signs, stores locally, gossips) an `AdmissionVote` on behalf of this node (B2).
   *
-  * Mirror of [[EvictionVoter]] — this node votes that `target` (previously removed from the committee) is currently observed at tip and
-  * should be re-admitted. The generic engine-level emission-gate logic (peer is in the current round's `readmissionCountdown`, has been
-  * observed sending a Facility this round, per-round cap) lives in the caller.
+  * Mirror of [[EvictionVoter]]. The caller keeps two evidence lanes distinct:
+  *   - open expansion requires the proposal-carried nominee to return the exact parent from a fresh direct probe and to have sent a
+  *     Facility bound to the voter's current round;
+  *   - penalty/probation recovery requires its configured streak of fresh exact-parent responses, but cannot require a Facility because a
+  *     peer is deliberately prevented from facilitating until its certificate clears probation.
+  *
+  * Per-round budgets and local evidence govern vote emission only; a quorum-certified `AdmissionCertificate` is membership authority.
   */
 trait AdmissionVoter[F[_], Key] {
   def emitAdmissionVote(

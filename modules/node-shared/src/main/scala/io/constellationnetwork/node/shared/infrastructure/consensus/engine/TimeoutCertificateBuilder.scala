@@ -48,11 +48,10 @@ object TimeoutCertificateBuilder {
       val matchingByView = votes.values
         .filter(signed => signed.value.fromView == fromView && signed.value.toView == toView && signed.value.reason == reason)
         .toList
-      val bySigner: Map[PeerId, Signed[TimeoutVote]] =
-        matchingByView.groupBy(_.proofs.head.id.toPeerId).view.mapValues(_.head).toMap
-      val poolSigners: Map[PeerId, Signed[TimeoutVote]] = bySigner.filter {
-        case (signer, _) => witnessPool.contains(signer)
-      }
+      // Group-by-signer, divergent-QC detection, and per-signer representative selection are shared
+      // verbatim with ViewChangeCertificateBuilder (see CertVoteAggregation for the full contract).
+      val (poolSigners, divergent) =
+        CertVoteAggregation.poolSignersAndDivergence(matchingByView, witnessPool)(_.highestKnownQc)
 
       if (wrongLastSnapshotHash.nonEmpty)
         Left(CertBuildError.LastSnapshotHashMismatch(wrongLastSnapshotHash.size))
@@ -60,19 +59,15 @@ object TimeoutCertificateBuilder {
         Left(CertBuildError.ReasonMismatch(wrongReason.size))
       else if (poolSigners.size < quorumSize)
         Left(CertBuildError.UnderQuorum(poolSigners.size, quorumSize))
+      else if (divergent)
+        Left(CertBuildError.DivergentQcs)
       else {
         val matchingSigned = poolSigners.values.toList
-        val qcs = matchingSigned.flatMap(_.value.highestKnownQc)
-        val divergent = qcs.groupBy(_.view).exists { case (_, qcsAtView) => qcsAtView.map(_.proposalHash).toSet.size > 1 }
-        if (divergent)
-          Left(CertBuildError.DivergentQcs)
-        else {
-          val sortedSet: SortedSet[Signed[TimeoutVote]] = SortedSet.empty[Signed[TimeoutVote]] ++ matchingSigned
-          NonEmptySet
-            .fromSet(sortedSet)
-            .toRight(CertBuildError.EmptyVotesAfterFilter)
-            .map(nes => TimeoutCertificate(fromView, toView, facilitatorsHash, lastSnapshotHash, reason, nes))
-        }
+        val sortedSet: SortedSet[Signed[TimeoutVote]] = SortedSet.empty[Signed[TimeoutVote]] ++ matchingSigned
+        NonEmptySet
+          .fromSet(sortedSet)
+          .toRight(CertBuildError.EmptyVotesAfterFilter)
+          .map(nes => TimeoutCertificate(fromView, toView, facilitatorsHash, lastSnapshotHash, reason, nes))
       }
     }
   }

@@ -273,7 +273,12 @@ object MptStore {
                    // Build (not getCurrentRootHash) so pending inserts/removes are applied before reading the
                    // root -- getCurrentRootHash returns the last-built trie root and would miss pending mutations,
                    // letting a stale state pass the check. A Left build is treated as a mismatch (force resync).
-                   build(ordinal).flatMap { built =>
+                   // M3: hold the mutation lock around this verification build so it cannot read a trie that a
+                   // concurrent syncFull/sync/update is midway through mutating (a torn read would yield a bogus
+                   // root and either mask a real divergence or force a spurious resync). The lock is released
+                   // before the flatMap continuation, so the resync branch's syncFull takes it fresh -- no
+                   // re-entrant deadlock against the non-reentrant Semaphore.
+                   withLock(build(ordinal)).flatMap { built =>
                      val currentRoot = built.toOption.map(_.rootHash.value)
                      if (currentRoot.contains(expected))
                        logger.debug(s"[MptStore] Skipping sync, already synced at ordinal $ordinal (root verified)")

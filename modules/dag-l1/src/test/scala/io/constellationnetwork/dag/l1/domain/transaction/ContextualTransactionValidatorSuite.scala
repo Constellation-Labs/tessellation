@@ -290,6 +290,37 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       )
   }
 
+  // Regression (TX-07): a higher-fee override must NOT be double-counted with the WaitingTx it replaces. The override
+  // and the replaced tx share an ordinal; with the old `>` filter the replaced tx stayed in the validation context, so
+  // the rate-limit cap was charged for BOTH and the override was wrongly rejected as TransactionLimited. With the `>=`
+  // fix only the override is counted, so it validates. Fails on a revert to `>`.
+  test("fee-bump override is not double-counted against the rate limit (TX-07)") { res =>
+    implicit val (hasher, sp, ks, js) = res
+    implicit val kryoHasher: SignedHasher[IO] = SignedHasher(Hasher.forKryo[IO])
+    implicit val proofsHasher: ProofsHasher[IO] = ProofsHasher(Hasher.forJson[IO])
+    for {
+      kp <- KeyPairGenerator.makeKeyPair
+      majorityTx <- genTransaction(kp, TransactionReference.empty, TransactionFee.zero).flatMap(_.toHashedHybrid)
+      majorityTxRef = TransactionReference.of(majorityTx)
+      conflictingTx <- genTransaction(kp, majorityTxRef, TransactionFee(1L)).flatMap(_.toHashedHybrid)
+      conflictingTxRef = TransactionReference.of(conflictingTx)
+      txs = SortedMap(
+        majorityTxRef.ordinal -> MajorityTx(majorityTxRef, SnapshotOrdinal.MinValue),
+        conflictingTxRef.ordinal -> WaitingTx(conflictingTx)
+      )
+      // 2x baseBalance => the cap comfortably admits ONE below-min-fee tx but not two; the second (the double-counted
+      // replaced tx under `>`) blows the cap.
+      balance = Balance(200000000L)
+      lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
+      validator = ContextualTransactionValidator.make(config, None)
+      overrideTx <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashedHybrid)
+      result = validator.validate(
+        overrideTx,
+        TransactionValidatorContext(txs.some, balance, TransactionReference.empty, lastSnapshotOrdinal)
+      )
+    } yield expect.eql(true, result.isValid)
+  }
+
   test("Transaction does not override existing non-waiting transaction") { res =>
     implicit val (hasher, sp, ks, js) = res
     for {

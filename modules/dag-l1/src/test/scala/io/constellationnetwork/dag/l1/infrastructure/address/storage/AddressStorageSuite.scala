@@ -73,4 +73,28 @@ object AddressStorageSuite extends SimpleIOSuite with Checkers {
         } yield expect.same(get, Balance.empty)
     }
   }
+
+  // Regression (A1): replaceAll publishes the majority balance map in ONE atomic set, replacing the whole map and
+  // dropping any address not present in it. This is the crash-/race-safe replacement for `clean >> updateBalances`,
+  // whose two-op form let a concurrent updateBalances(delta) leak a stray balance past the clean. Unlike
+  // updateBalances (which MERGES), replaceAll must NOT retain a pre-existing address that is absent from the new map.
+  test("replaceAll replaces the entire balance map, dropping addresses absent from it") {
+    val gen = for {
+      address1 <- addressGen
+      address2 <- addressGen
+      balance1 <- balanceGen
+      balance2 <- balanceGen
+    } yield (address1, address2, balance1, balance2)
+
+    forall(gen) {
+      case (address1, address2, balance1, balance2) =>
+        for {
+          ref <- Ref.of[IO, Map[Address, Balance]](Map(address1 -> balance1))
+          storage = AddressStorage.make[IO](ref)
+          _ <- storage.replaceAll(Map(address2 -> balance2))
+          get1 <- storage.getBalance(address1)
+          get2 <- storage.getBalance(address2)
+        } yield expect.all(get2 === balance2, address1 === address2 || get1 === Balance.empty)
+    }
+  }
 }

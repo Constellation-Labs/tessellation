@@ -40,6 +40,7 @@ const {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
+  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,
@@ -122,6 +123,38 @@ const createTokenLockExpectError = async (account, urls, lockAmount, replaceRef,
     return true
   }
 }
+
+/**
+ * Create a REPLACEMENT token lock, tolerating the dag-L1's MPT trailing the global L0.
+ *
+ * A dag-L1 validates token-lock replacements against its own MPT, which it syncs from
+ * global snapshots on a ~10s loop while GL0 finalizes ordinals ~20s apart, so the L1
+ * steadily trails GL0 by ~1 ordinal. Immediately after a lock is confirmed in GL0 state,
+ * posting its replacement can race ahead of the L1's MPT and be rejected at admission
+ * with NothingToReplace. The parent lock IS in global state -- this is pure propagation
+ * lag -- so retry across ordinal progressions until the L1 catches up. (testReplaceSameAmount
+ * / testReplaceLessAmount already apply this on their expected-error path; the success
+ * paths need the same tolerance.)
+ */
+const createReplacementTokenLock = (account, urls, lockAmount, replaceRef, replaceBalance) =>
+  withRetryOrdinal(
+    async () => {
+      try {
+        return await createTokenLock(account, urls, lockAmount, replaceRef, replaceBalance)
+      } catch (e) {
+        if (e.message && e.message.includes('NothingToReplace')) {
+          logWorkflow.info('Replacement parent not yet in L1 MPT, waiting for ordinal progression...')
+        }
+        throw e
+      }
+    },
+    {
+      globalL0Url: urls.globalL0Url,
+      name: 'createReplacementTokenLock',
+      maxOrdinalMisses: 10,
+      maxStalledChecks: 30,
+    },
+  )
 
 /**
  * Test 1: Replace with same amount (should fail)
@@ -276,7 +309,7 @@ const testReplaceMinimumIncrease = async (urls, account, existingLockHash, exist
 
   const minIncrease = existingAmount + 1 // Minimum valid increase
   
-  const newLockHash = await createTokenLock(account, urls, minIncrease, existingLockHash, existingAmount)
+  const newLockHash = await createReplacementTokenLock(account, urls, minIncrease, existingLockHash, existingAmount)
   logWorkflow.info(`Created replacement with +1 datum: ${newLockHash}`)
 
   // Verify delegated stake updated using ordinal-aware retry
@@ -322,7 +355,7 @@ const testMultipleSequentialReplacements = async (urls, account, currentLockHash
     logWorkflow.info(`Sequential replacement ${i}: ${amount} -> ${newAmount}`)
     logWorkflow.info(`  Replacing lock: ${lockHash.substring(0, 16)}...`)
 
-    const newLockHash = await createTokenLock(account, urls, newAmount, lockHash, amount)
+    const newLockHash = await createReplacementTokenLock(account, urls, newAmount, lockHash, amount)
     logWorkflow.info(`  Created replacement ${i}: ${newLockHash.substring(0, 16)}...`)
 
     // Verify delegated stake updated using ordinal-aware retry
@@ -416,10 +449,7 @@ const testReplaceWhileInWithdrawal = async (urls, account, nodeId) => {
   // - Token lock may still be active (replacement succeeds)
   // - Token lock may be removed (NothingToReplace)
   const activeTokenLocks = await getActiveTokenLocks(urls, account.address)
-  const isLockActive = activeTokenLocks.some(lock => {
-    // Compare by amount since we don't have direct hash access
-    return lock.amount === lockAmount
-  })
+  const isLockActive = activeTokenLocks.some(lock => lock.hash === lockHash)
   logWorkflow.info(`Token lock active status after withdrawal: ${isLockActive}`)
 
   const newAmount = lockAmount + 100000000000 // +1000 DAG
@@ -486,13 +516,13 @@ const setupNodeParameters = async (urls) => {
     privateKeyString: privateKeyString1,
     nodeId: nodeId1,
     account: account1,
-  } = extractKeysAndAccount('../../code/hypergraph/dag-l0/genesis-node/id_ecdsa.hex')
+  } = extractKeysAndAccount(resolveNodeKeyPath('genesis-node', 0))
 
   const {
     privateKeyString: privateKeyString2,
     nodeId: nodeId2,
     account: account2,
-  } = extractKeysAndAccount('../../code/hypergraph/dag-l0/validator-1/id_ecdsa.hex')
+  } = extractKeysAndAccount(resolveNodeKeyPath('validator-1', 1))
 
   // Set up node 1 params
   const ur1 = await postNodeParamsNodeId(

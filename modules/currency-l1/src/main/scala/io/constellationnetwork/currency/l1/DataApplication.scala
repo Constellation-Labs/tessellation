@@ -23,7 +23,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
@@ -33,6 +33,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object DataApplication {
   def run[F[_]: Async: Random: Hasher: JsonSerializer: SecurityProvider: L1NodeContext](
     dataConsensusCfg: DataConsensusConfig,
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -105,6 +106,7 @@ object DataApplication {
         Engine
           .fsm(
             dataConsensusCfg,
+            feeTransactionSecurityActivationOrdinal,
             dataApplicationService,
             clusterStorage,
             lastGlobalSnapshot,

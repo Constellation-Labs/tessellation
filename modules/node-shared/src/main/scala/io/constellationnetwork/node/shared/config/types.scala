@@ -24,6 +24,8 @@ import fs2.io.file.Path
 
 object types {
 
+  // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
+  // Fields share similar map types, so reordering them without updating that reader can miswire gates.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
@@ -37,15 +39,60 @@ object types {
     setSumFix: Map[AppEnvironment, SnapshotOrdinal],
     // Ordinal-gated balance source for state-channel fee affordability (commit dd6e83a19). At/after this ordinal the fee
     // check reads the metagraph owner's balance from the deterministic accept() context (lastGlobalSnapshotInfo.balances);
-    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. testnet is
-    // 0 (the fix is already live there); the mainnet entry is a placeholder to set to the coordinated launch ordinal.
+    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. Per-env
+    // activation ordinals live in the `fields-added-ordinals` HOCON (see docs/operations/fields-added-ordinals.md): testnet
+    // activates at its v4.0.0->alpha.0 cutover ordinal, dev at 0 (genesis-fresh), mainnet/integrationnet are placeholders.
     scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
+    // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.
+    subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
+    // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
+    delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
+    feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, acceptFeeTxs applies fee transactions through checked Balance arithmetic. Below it, the
+    // original wrapping fold is replayed so already-signed history re-derives byte-identically -- the fix changes what a
+    // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
+    fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
-    // the `fields-added-ordinals.dust-sweeps` HOCON block, so the jar hash plus the environment is the determinism fence (the
-    // conf is packaged into the assembly jar and peers only connect to matching jar hashes). Default empty: an environment with
-    // no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
-    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
-  )
+    // the `fields-added-ordinals.dust-sweeps` HOCON block. This runtime configuration is not covered by the join-time
+    // `versionHash`, which hashes the advertised version string (or `CL_VERSION_HASH`), so operators must deploy one reviewed value
+    // per environment. Default empty: an environment with no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
+    dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
+    // Appended to preserve positional source compatibility for existing SDK consumers.
+    // At/after this GLOBAL L0 ordinal a Currency snapshot lineage may transition from
+    // snapshot protocol 0.0.1 to 1.0.0. The signed CurrencySnapshot.version then keeps
+    // historical replay self-describing. Public environments stay absent until the
+    // coordinated v35 rollout; dev activates from genesis so CI exercises the new path.
+    currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal every fee transaction in a data envelope is validated, and a data block whose
+    // fees cannot be applied is rejected. Deliberately NOT feeTransactionSecurity: that gate is already open on
+    // integrationnet at 5880000, so widening what it controls would change how signed history there replays.
+    fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
+    // destination is credited only when a SpendAction consumes the allowance.
+    fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // Above this global ordinal the global layer keeps a record of every allow-spend reference it has retired and
+    // refuses to re-add those references to activeAllowSpends, even when a metagraph's own lagging
+    // info.activeAllowSpends still reports them (PROT-1691).
+    preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, an expired global AllowSpend consumed in the same snapshot is settled once
+    // instead of also being refunded to its source. The separate gate preserves already-signed history.
+    fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+  ) {
+    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
+      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
+    def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
+      currencySnapshotProtocolV1.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
+    def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
+      fixingDataApplicationFeeValidation.getOrElse(environment, SnapshotOrdinal.MinValue)
+
+    def fixingAllowSpendDestinationCreditFor(environment: AppEnvironment): SnapshotOrdinal =
+      fixingAllowSpendDestinationCredit.getOrElse(environment, SnapshotOrdinal.MinValue)
+  }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
     *
@@ -210,6 +257,11 @@ object types {
     lockDuration: FiniteDuration,
     eventCutter: EventCutterConfig,
     maxFacilitatorCount: Option[PosInt] = None,
+    // Environment-resolved cap consumed by FacilitatorSelector. This is deliberately distinct
+    // from maxFacilitatorCount above, whose scalar value also serves legacy controller sizing.
+    // Populated only by SnapshotConfig.resolveEffectiveConsensusConfig
+    // so the join/Facility fingerprint binds the cap actually used by the selector.
+    facilitatorSelectionMax: Option[Int] = None,
     reStallTimeout: Option[FiniteDuration] = None,
     noProgressTimeout: Option[FiniteDuration] = None,
     maxStallCycles: Int = 3,
@@ -240,9 +292,10 @@ object types {
     // committee, to collect late-arriving Tier 1 signatures before finalizing. Distinct from
     // `signatureGracePeriod` (which covers the Core-incomplete case): once every Core member has
     // signed, liveness no longer needs the full window, but we still want Tier 1 signatures to
-    // land in `signedArtifact.proofs` so rewards are not collapsed onto Core (the alpha.153
-    // regression where finalizing the INSTANT Core completed dropped every Tier 1 reward). The
-    // bounded wait trades a few ms of finalization latency for reward fairness. Timing-only:
+    // land in `signedArtifact.proofs` and participation evidence (the alpha.153 regression where
+    // finalizing the INSTANT Core completed dropped every Tier 1 proof). Delegated rewards follow
+    // frozen committee membership, not proofs. The bounded wait trades a few ms of finalization
+    // latency for evidence completeness. Timing-only:
     // NOT included in `deterministicConfigHash`, for the SAME reason as `signatureGracePeriod` --
     // the canonical `snapshotHash` is the agreed ARTIFACT hash, not the signed-artifact hash, so
     // two nodes with different grace periods still produce the same downstream snapshotHash; this
@@ -309,25 +362,28 @@ object types {
     // cleanup. The v22 demotion hysteresis does NOT use it -- it uses the compiled-in
     // `TierTransitions.DemotionConsecutiveMisses` constant instead.
     //
-    // `activeFacilitatorFloor` is still read by the rollback/ready-participation gates. All three
-    // are consensus-critical (in `deterministicConfigHash`) so divergent operator values are
-    // rejected at handshake.
+    // `activeFacilitatorFloor` is the emergency bypass threshold for active admission and is also
+    // read by the rollback/ready-participation gates. Admission score gating remains enabled at
+    // and above this floor; below it the full selected pool is admitted for bootstrap/collapse
+    // recovery. All three values are consensus-critical (in `deterministicConfigHash`) so
+    // divergent operator values are rejected at handshake.
     tighteningWindow: Int = 10,
     minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
-    // Deterministic active-facilitator expansion. Recent signers are preferred, but when
-    // the recent-signer pool is below this target the StateCreator admits additional selected
-    // facilitators ranked by consensus-agreed peerQuality and stable peer id. This is a target,
-    // not a cap: if more recent signers exist, they remain active up to activeFacilitatorMax.
-    // Consensus-critical because it changes the active facilitator set.
+    // Deterministic GL0 controller target. Recent signers are preferred; additional selected peers
+    // are ranked by consensus-agreed peerQuality and stable peer id. It classifies Core eligibility
+    // and does not cap retained Tier-1 signing membership. Currency L0's local synchronous engine
+    // does not consume the controller policy; the field remains in its join fingerprint only for
+    // release/config compatibility.
     activeFacilitatorTarget: Option[Int] = None,
-    // Hard cap for deterministic active-facilitator admission. None preserves the legacy
-    // maxFacilitatorCount-selected pool size; testnet sets this lower to avoid re-opening the
-    // full selected denominator while still letting healthy community peers prove themselves.
+    // Hard cap for the deterministic GL0 controller cohort. It caps Core classification, not the
+    // broad signing/reward committee. Currency L0's local synchronous engine does not consume it.
+    // None preserves the selected-pool size.
     activeFacilitatorMax: Option[Int] = None,
-    // v27 consensus peer controller: bounded integral score used for active role
-    // admission. All fields below are consensus-critical because they change which
-    // peers can enter the rewards-affecting active set from the same parent state.
+    // v27 consensus peer controller: bounded integral score used for role classification.
+    // All fields below are consensus-critical for GL0 because they change Core/tier derivation
+    // from the same parent state. Currency L0 retains them only in the configuration fingerprint;
+    // its flat synchronous committee does not use this controller.
     activeAdmissionPromoteThreshold: Int = 100,
     activeAdmissionRetainThreshold: Int = 70,
     activeAdmissionDemoteThreshold: Int = 40,
@@ -342,16 +398,11 @@ object types {
     activeAdmissionPassiveDecay: Int = 1,
     activeAdmissionMaxExpansionPerRound: Int = 1,
     activeAdmissionExpansionIntervalRounds: Int = 1,
-    // Bounded probation re-entry lane: minimum number of probation (below-promote-threshold,
-    // "rehabilitating") peers admitted to the active set per round EVEN WHEN the per-round
-    // expansion budget (`activeAdmissionMaxExpansionPerRound`) is exhausted. Fixes the structural
-    // catch-22 where peers that dropped out of the recent-signer pool during an outage could never
-    // re-enter the signing set to rebuild their score, because the only re-entry path was throttled
-    // to ~1/round shared with promoted expansion. Decoupled from `activeAdmissionMaxExpansionPerRound`
-    // so a mass return after a cluster-wide outage drains in a bounded number of rounds; capped by
-    // the active-set max (`activeFacilitatorMax`/`coreCommitteeSize`) inside the admission function so
-    // it never overflows the signing set. Probation peers are non-quorum-bearing (routed to
-    // `nonCorePeers` in `CommitteeBuilder`), so widening the lane cannot affect quorum feasibility.
+    // Bounded probation lane: minimum number of below-promote-threshold peers retained in the
+    // controller cohort even when the per-round expansion budget is exhausted. A peer that signs
+    // the latest round keeps classifier priority until it reaches the retain band; missing ends
+    // that priority. On Global L0 it does not delete the peer's separate Tier-1 signing lease.
+    // Probation peers are non-Core (routed to `nonCorePeers` in `CommitteeBuilder`).
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
     // pattern); default 0 leaves the lane inert. Consensus-critical: it changes the active committee
@@ -359,16 +410,17 @@ object types {
     // and divergent operator values handshake-reject.
     activeAdmissionMinProbationReentrySlots: Int = 0,
     // Recent-signer pool lookback depth (in ordinals): how far back a peer may have last signed and
-    // still hold a sticky, score-gated active seat instead of churning through the volatile
+    // still hold sticky, score-gated controller priority instead of churning through the volatile
     // expansion/reserve fill. Decoupled from the demotion hysteresis (which stays at
     // `TierTransitions.DemotionConsecutiveMisses` = 3 and independently keeps non-recent signers out
-    // of Core), so widening this only changes active-set eligibility, never the quorum-bearing Core.
+    // of Core). On Global L0 this does not cap the separate Tier-1 signing lease; Currency L0
+    // retains its active-set interpretation.
     // Env-resolved at the consensus construction site from
     // `SnapshotConfig.activeAdmissionRecentSignerWindow.get(env)` (the coreCommitteeSize pattern),
     // floored to DemotionConsecutiveMisses. Default 3 preserves the pre-change lookback; testnet
     // widens to the full persisted `recentSigners` window (`tighteningWindow`). Consensus-critical:
-    // it changes the active committee -> roundStartFacilitators -> facilitatorsHash, so it is folded
-    // into `deterministicConfigHash` and divergent operator values handshake-reject.
+    // it changes deterministic tier/controller derivation, so it is folded into
+    // `deterministicConfigHash` and divergent operator values handshake-reject.
     activeAdmissionRecentSignerWindow: Int = 3,
     // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
     // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
@@ -376,7 +428,7 @@ object types {
     // Stage 4 (v32) activates the read side: `penaltyUntil` joins the eligibility filtering
     // in both StateCreators, so divergent operator values would change committee derivation.
     // Consensus-critical: included in `deterministicConfigHash` since v32 so divergent values
-    // are rejected at the Facility handshake instead of silently forking.
+    // are rejected by the L0 join fence; Facility comparison remains a post-join diagnostic.
     penaltyDurationOrdinals: Int = 100,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
@@ -496,8 +548,10 @@ object types {
     // abandonment timing — divergent values here would cause nodes to make view transitions at different moments.
     bootstrapDeclarationTimeoutMultiplier: Double = 2.0,
     // Local-only LIVENESS/TIMING knob (NOT a safety knob) for B2 admission voting. A probation
-    // peer must be observed at the committed tip on this many consecutive StallDetector monitor
-    // ticks before this node will emit an AdmissionVote. Prevents premature re-admission of
+    // peer must be observed at the committed tip on this many consecutive local observations
+    // before this node will emit an AdmissionVote. Global L0 rate-limits its fresh direct
+    // observations; layers using the legacy cached-mesh lane may still observe on monitor ticks.
+    // Prevents premature re-admission of
     // peers whose recovery download transiently presents the committed tip but that are not yet
     // stably participating.
     //
@@ -509,8 +563,8 @@ object types {
     // consequence, not a safety one.
     //
     // Values <= 0 are clamped to 1 at the read-site in StallDetector. Default 2 means two
-    // consecutive monitor ticks (~500ms-1s of sustained at-tip correctness at typical polling
-    // intervals).
+    // consecutive observations. The effective wall-clock span is determined by the layer's
+    // evidence transport cadence.
     b2AdmissionAtTipStreak: Int = 2,
     // Local-only: number of rounds after a successful `initFromDownload` during which this node
     // refuses to lead, immediately self-deferring into a view change if elected.
@@ -654,7 +708,8 @@ object types {
     //     and demotes Degraded peers to tier 1 / Critical peers to tier 2. v14 nodes do not
     //     populate `observedSelfHealth` (default empty), so a mixed v14/v15 cluster would compute
     //     different leaders on rounds following a v15-led proposal -- bumping anchors the
-    //     required cold-restart fence. Jar hash already refuses v14<->v15 peer connections.
+    //     required cold-restart fence. Distinct advertised versions (or `CL_VERSION_HASH`
+    //     values) refuse v14<->v15 peer connections; the advertised jar hash is metadata.
     //   v16: Hard quality-score floor on leader candidacy.
     //     Adds `peerViewChanges: SortedMap[PeerId, Long]` to GlobalConsensusOutcome and
     //     CurrencyConsensusOutcome (additive, defaulted to empty so pre-v16 outcomes decode
@@ -669,8 +724,8 @@ object types {
     //     change rate were tier 1 and `sorted[viewNumber % size]` kept walking through them.
     //     v15 nodes have neither the per-peer view-change credit nor the score-based filter,
     //     so a mixed v15/v16 cluster would compute different leaders the moment any peer has
-    //     `viewChangesCaused > 0`. Cold restart required; jar hash gates v15<->v16 peer
-    //     connection.
+    //     `viewChangesCaused > 0`. Cold restart required; distinct advertised versions (or
+    //     `CL_VERSION_HASH` values) gate v15<->v16 peer connection.
     //   v17: Exact-fraction supermajority quorum. The previous
     //     `quorum-threshold-fraction = 0.67` was a decimal approximation of 2/3 that rounded
     //     up unfavorably for N divisible by 3: `ceil(N * 0.67)` gave 5 for N=6 instead of the
@@ -688,7 +743,8 @@ object types {
     //     JVM hang), not byzantine, and the wedge under crash faults is far more damaging
     //     than the theoretical f=2 tolerance we lose. quorumThresholdFraction is in
     //     deterministicConfigHash so a v16-config and v17-config cluster reject each other at
-    //     handshake; jar hash also enforces. Currency-l0 unaffected (defaults to 1.0
+    //     L0 joining; Facility comparison remains diagnostic. The independent `versionHash`
+    //     separately fences differently advertised software versions. Currency-l0 is unaffected (defaults to 1.0
     //     unanimity, applies to small metagraph clusters where unanimity is preferred).
     //   v18: Active-set tightening via the recentSigners window. Adds an Option-wrapped
     //     `recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]]` to
@@ -734,8 +790,8 @@ object types {
     //     of these fields and would derive different committee composition (no
     //     peerTiers), different quorum denominator (Core vs full roundStart), and
     //     no recentRoundEndTimes entries; mixed v18/v19 cluster is unsafe. Cold
-    //     restart required across the cluster; jar hash gates v18 <-> v19 peer
-    //     connection at handshake.
+    //     restart required across the cluster; distinct advertised versions (or
+    //     `CL_VERSION_HASH` values) gate v18 <-> v19 peer connection at join.
     //   - v20: `coreCommitteeSize` is now part of `deterministicConfigHash` so a
     //     cluster with divergent Core size values handshake-rejects rather than
     //     silently forking on divergent Core committee derivation. The env-resolved
@@ -744,8 +800,8 @@ object types {
     //     `SnapshotConfig.coreCommitteeSize.get(env)`) and folded into the hash.
     //     v19 nodes lacked the field in the hash and would compute different hashes
     //     for the same Core size config; mixed v19/v20 clusters cannot form.
-    //     Cold restart required across the cluster; jar hash gates v19 <-> v20 peer
-    //     connection at handshake.
+    //     Cold restart required across the cluster; distinct advertised versions (or
+    //     `CL_VERSION_HASH` values) gate v19 <-> v20 peer connection at join.
     //     v20 additionally stamps `ConsensusState.initialViewNumber: Int` at round
     //     construction, frozen for the lifetime of the round. Validator-side
     //     `validateProposalVcc` (via the shared `ProposalVccValidator.validate`
@@ -762,13 +818,13 @@ object types {
     //     the latter is the alpha.90 issue 2 stale-VCC view-mismatch gate.
     //     v21: `viewInterval` raised 30s -> 60s (deploy unit A). Pure value change; it
     //     alters `deterministicConfigHash` (viewIntervalMs is folded in below), so the
-    //     real cross-cluster gate is the config-hash + jar-hash mismatch at handshake.
-    //     This version bump is an audit anchor only, not the gate.
+    //     cross-version fences are the L0 join-time `deterministicConfigHash` and independent
+    //     advertised-version `versionHash`. Facility comparison remains diagnostic. This schema-version bump remains an audit anchor.
     //     v22: testnet Core committee floor 3 -> 2 plus sustained-silence demotion
     //     hysteresis (deploy unit B; a Core peer is demoted only after it is absent from
     //     the most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, not on a
-    //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so
-    //     the config-hash + jar-hash are the gate; v22 is the audit anchor for B.
+    //     single missed signature). `coreCommitteeSize` is in `deterministicConfigHash`, so the
+    //     independent config-hash and advertised-version join fences are the gate; v22 is the audit anchor for B.
     //     v23: leader selection also narrows the Core leader pool to peers present in the
     //     most-recent `TierTransitions.DemotionConsecutiveMisses` signer sets, when that
     //     leaves at least `minLeaderPoolSize` candidates. Deterministic: `recentSigners`
@@ -783,8 +839,8 @@ object types {
     //     view>seed proposals; followers validate TC-carried proposals (view linkage, quorum,
     //     parent/facilitator hash, witness pool, divergent + carry-forward highest-QC). `Proposal`
     //     gains `timeoutCertificate: Option[TimeoutCertificate]` -- a wire change, so deploy as a
-    //     coordinated cold L0 restart. As always the jar/config-hash mismatch at handshake is the
-    //     real gate; this bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
+    //     coordinated cold L0 restart. Both the advertised-version `versionHash` and
+    //     `deterministicConfigHash` gate L0 joining; Facility comparison remains diagnostic. This bump is the audit anchor. Not yet: certified shrink/yield, TC gossip
     //     rehydration.
     //     v26: active-facilitator expansion. The recent-signer-only admission filter now keeps
     //     recent signers first, then fills toward `activeFacilitatorTarget` with deterministic
@@ -819,8 +875,8 @@ object types {
     //     `deterministicConfigHash`. Signed-bytes shape changed: peerHistory reinstated with
     //     an evidence-only payload (perPeer empty, recentRoundEndTimes omitted,
     //     controllerEvidence + penaltyUntil signed), so deploy as a coordinated cold L0
-    //     restart. As always the jar/config-hash mismatch at handshake is the real gate; this
-    //     bump is the audit anchor.
+    //     restart. Both the advertised-version `versionHash` and `deterministicConfigHash`
+    //     gate L0 joining; Facility comparison remains diagnostic. This bump is the audit anchor.
     //     v33: escalating quorum-denominator shrink (QuorumDenominatorShrink). After
     //     `quorumShrinkActivationViews` viewInterval units of silence since the parent
     //     outcome closed, the REQUIRED quorum for phase/VCC/TC feasibility at the stuck key
@@ -831,7 +887,30 @@ object types {
     //     touched. Targets the post-restart 3-of-6 mathematical wedge (ord 3150197 /
     //     task #123 / the Apr-29 deadlock class). `quorumShrinkActivationViews` enters
     //     `deterministicConfigHash`; default 0 keeps the rung disabled.
-    consensusSchemaVersion: Int = 33,
+    //     v34: Proposal carries an optional open-admission nominee used to converge
+    //     Core voters on one target. The accepted singleton is retained in the existing
+    //     Finished.candidates field. Proposal decoding is backward compatible, but the
+    //     signed rumor wire shape changes, so the schema anchor moves.
+    //     v35: Core certifies the complete, view-independent ProposalValue before the
+    //     frozen signing committee can finalize it. Prepare and commit signatures use
+    //     the existing Signed/Hasher infrastructure; Proposal/VCC/TC gain optional
+    //     certification fields. Activation is separately ordinal-gated so legacy
+    //     controller/evidence windows can be flushed at one deterministic boundary.
+    //     DAG incremental snapshots gain a trailing optional `certifiedLineage`.
+    //     Full snapshot shapes remain frozen. A future compact checkpoint is a standalone,
+    //     independently authorized manifest paired with an immutable combined incremental
+    //     checkpoint. Below activation drop-null encoding preserves legacy incremental JSON
+    //     bytes. Snapshot-info and state-proof schemas/calculation remain unchanged. Public
+    //     activation never crosses the retired Kryo boundary.
+    consensusSchemaVersion: Int = 35,
+    // DAG/Global-L0 activation key for v35 certified outcomes. Currency L0 deliberately
+    // remains on its flat synchronous protocol and never consults this key. SnapshotConfig
+    // resolves the current environment's value once at the GL0 consensus construction site.
+    //
+    // Long.MaxValue keeps the feature dormant when an environment has no configured
+    // activation. This value is consensus-critical and included in
+    // deterministicConfigHash; operators must deploy one identical value cluster-wide.
+    certifiedConsensusActivationKey: Long = Long.MaxValue,
     // Local-only RUNTIME knob: size of the dedicated work-stealing pool that runs the
     // ConsensusEventLoop main command-consume fiber. Pinning the FSM onto its own pool
     // isolates round-timing from HTTP serving load (a burst of snapshot fetches, even with
@@ -848,8 +927,7 @@ object types {
     // loop is single-threaded by construction; the pool size matters only for the fanned-out
     // round handlers that elect to shift back via `evalOn`.
     consensusDispatcherThreads: Int = 2,
-    // v20: env-resolved Core committee size, populated by the consensus construction site
-    // (GlobalSnapshotConsensus / CurrencySnapshotConsensus) from
+    // v20: env-resolved GL0 Core committee size, populated by GlobalSnapshotConsensus from
     // `SnapshotConfig.coreCommitteeSize.get(env).map(_.value).getOrElse(3)` BEFORE
     // `deterministicConfigHash` is read. Threading the env-resolved value through here lets
     // the hash include it without restructuring the HOCON layer or duplicating env resolution.
@@ -859,8 +937,8 @@ object types {
     // LIVENESS quorum threshold is computed against `coreFacilitators.value.size`; divergent
     // operator values would derive divergent Core committees and silently fork. Now in
     // `deterministicConfigHash` so a v19 (no-hash) and v20 (with-hash) cluster compute
-    // different hashes and reject each other at the Facility handshake. Jar hash also gates
-    // peer connection.
+    // different hashes and reject each other at L0 joining. Facility comparison remains diagnostic.
+    // The separate `versionHash` hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes.
     coreCommitteeSize: Option[Int] = None,
     // v33 quorum-denominator shrink rung (QuorumDenominatorShrink): number of `viewInterval`
     // units of wall silence since the parent outcome's `consensusEndTime` after which the
@@ -873,17 +951,32 @@ object types {
     // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
     // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
     // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
-    quorumShrinkActivationViews: Int = 0
+    quorumShrinkActivationViews: Int = 0,
+    // Cross-layer historical-dependency boundary. These values already decide Currency L0
+    // GlobalSnapshotSync target selection and protocol-v1 reset acceptance. They are copied from
+    // SharedConfig.lastGlobalSnapshotsSync at each L0 construction site so a misconfigured
+    // validator cannot join its local cluster with a different retained interval.
+    lastGlobalSnapshotSyncOffset: Long = 0L,
+    lastGlobalSnapshotsInMemory: Int = 0,
+    // Global-ordinal boundary at which Currency snapshot protocol 1.0.0 becomes
+    // legal. This is distinct from each L0's local v35 consensus-envelope key.
+    currencySnapshotProtocolV1ActivationOrdinal: Long = Long.MaxValue
   ) {
+
+    def certifiedConsensusActiveAt(key: Long): Boolean =
+      key >= certifiedConsensusActivationKey
+
+    def certifiedConsensusActivatesAt(key: Long): Boolean =
+      key == certifiedConsensusActivationKey
 
     /** Deterministic hash of consensus-critical config values.
       *
-      * All nodes in a consensus round MUST have the same config to produce the same results. This hash is included in Facility declarations
-      * so that config divergence is detected immediately during the CollectingFacilities phase, rather than causing mysterious forks
-      * downstream.
+      * All nodes in a consensus round MUST have the same config to produce the same results. L0 advertises this hash during joining and
+      * requires exact equality before peering. It is also included in Facility declarations as a post-join structured diagnostic.
       *
       * '''Consensus-critical fields''' (included in hash):
-      *   - `maxFacilitatorCount`: determines eligible facilitator list size and rendezvous hashing
+      *   - `maxFacilitatorCount`: legacy controller-sizing scalar
+      *   - `facilitatorSelectionMax`: environment-resolved live selector cap
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
       *   - `candidateDeferralRounds`: affects how long new candidates observe before facilitating
@@ -892,7 +985,7 @@ object types {
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
-      *   - `minParticipationRatio`: ratio below which a peer is excluded from the committee
+      *   - `minParticipationRatio`: ratio below which a peer is excluded from Core/leader eligibility
       *   - `leaderRotationMinRatioPct`: leader-rotation band threshold (tier 0 vs tier 1 inside the pool)
       *   - `hardLeaderQualityScorePct`: hard floor on the consensus-agreed quality score (peers below excluded from leader pool)
       *   - `minLeaderPoolSize`: fallback threshold when too few peers clear the hard floor
@@ -901,9 +994,11 @@ object types {
       *   - `tighteningWindow`: size of the rolling `recentSigners` window; as of v22 it feeds the tier-demotion hysteresis (LIVE)
       *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
       *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
-      *   - `activeFacilitatorFloor`: floor read by the rollback / ready-participation gates
-      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: active facilitator expansion and cap
+      *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
+      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: GL0 Core-controller expansion and cap; retained but behaviorally inert in
+      *     Currency L0's flat synchronous engine
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
+      *   - `maxRoundDuration`: v35 bounds the committed leader-proposed consensus end time; before v35 it was only a local watchdog
       *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
       *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
       *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
@@ -911,7 +1006,6 @@ object types {
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
       *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
-      *   - `maxRoundDuration`: safety net, not consensus logic
       *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
       *
       * '''qualityDecayThreshold reclassified.''' Previously documented as local-only and excluded from this hash. In reality it mutates the
@@ -926,6 +1020,7 @@ object types {
     lazy val deterministicConfigHash: Hash = {
       val configString =
         s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
+          s"facilitatorSelectionMax=${facilitatorSelectionMax.map(_.toString).getOrElse("none")}," +
           s"maxStallCycles=$maxStallCycles," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
           s"candidateDeferralRounds=$candidateDeferralRounds," +
@@ -954,6 +1049,10 @@ object types {
           // therefore the initial leader) under wall-clock progress; divergent operator values would
           // produce divergent leader selection from the same parent snapshot and silently fork.
           s"viewIntervalMs=${viewInterval.toMillis}," +
+          // v35: bounds the leader-proposed consensus end time. This was a local watchdog
+          // value before v35; once used by ProposalValue validation it must be identical
+          // cluster-wide and therefore belongs in the deterministic hash.
+          s"maxRoundDurationMs=${maxRoundDuration.map(_.toMillis)}," +
           // Active-set tightening: three parameters together determine the next-round
           // committee membership; divergent operator values would produce silently-
           // divergent facilitator sets and fork the cluster.
@@ -1005,6 +1104,12 @@ object types {
           // cert/phase acceptance quorum at a wedged key; divergent operator values would
           // make one node accept a shrunken VCC/TC that another rejects.
           s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
+          // v35: exact local snapshot key where certified outcome semantics and the
+          // canonical legacy-evidence reset begin.
+          s"certifiedConsensusActivationKey=$certifiedConsensusActivationKey," +
+          s"lastGlobalSnapshotSyncOffset=$lastGlobalSnapshotSyncOffset," +
+          s"lastGlobalSnapshotsInMemory=$lastGlobalSnapshotsInMemory," +
+          s"currencySnapshotProtocolV1ActivationOrdinal=$currencySnapshotProtocolV1ActivationOrdinal," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1116,19 +1221,24 @@ object types {
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     maxFacilitatorCount: Map[AppEnvironment, PosInt] = Map.empty,
+    // V35 DAG/Global-L0 certified-outcome activation, keyed by environment and interpreted
+    // in the Global snapshot-ordinal space. Currency L0 does not use certified outcomes.
+    // Absent means disabled.
+    certifiedConsensusActivationOrdinal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // v19 multi-committee minimum Core size, keyed by AppEnvironment. Targets observed
     // committee sizes: testnet ~14 peers -> Core 5, mainnet ~150 peers -> Core 15,
     // integrationnet ~10 peers -> Core 9, dev (single-node test rigs) -> Core 3.
     // Consensus-critical because the LIVENESS quorum threshold is computed against
     // `coreFacilitators.value.size`; divergent operator values would derive divergent
-    // Core committees and silently fork. The jar hash already gates peer connections.
+    // Core committees and silently fork. The separate join-time `versionHash` gates advertised
+    // software versions; it does not hash jar bytes or this runtime value.
     //
     // v20 update: the env-resolved value is now also folded into `ConsensusConfig.coreCommitteeSize`
     // at the consensus construction site, which in turn folds into `deterministicConfigHash`,
-    // so a Facility-time handshake refusal is the second line of defence against divergent
-    // operator values (in addition to the jar hash). The `Map[AppEnvironment, PosInt]` shape is
-    // preserved -- env resolution still happens at the construction site
-    // (GlobalSnapshotConsensus / CurrencySnapshotConsensus); only the resolved scalar is
+    // so the strict L0 config-hash join fence rejects divergent operator values. Facility
+    // comparison remains a post-join diagnostic. The advertised-version `versionHash` is a separate software fence.
+    // The `Map[AppEnvironment, PosInt]` shape is
+    // preserved -- env resolution still happens at the GL0 construction site; only the resolved scalar is
     // additionally threaded into the hash.
     coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
     // v33 quorum-denominator shrink activation threshold, keyed by AppEnvironment (the
@@ -1142,21 +1252,36 @@ object types {
     // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved scalar is threaded
     // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into
-    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that environment
-    // (resolved scalar 0). Testnet opts into a small value to drain a mass post-outage return of
-    // rehabilitating peers in a bounded number of rounds; mainnet/dev/integrationnet are absent on
-    // purpose. `Int` (not `PosInt`) so 0 is expressible as an explicit disable if ever needed,
-    // matching the resolved-scalar default.
+    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that
+    // environment (resolved scalar 0). Public GL0 environments configure one Core-sized cohort;
+    // responsive climbers retain bounded priority until they reach the retain band. `Int` (not
+    // `PosInt`) keeps 0 available as an explicit disable.
     activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
     // Recent-signer pool lookback depth (in ordinals), keyed by AppEnvironment (the coreCommitteeSize
     // pattern: env resolution happens once at the consensus construction site and the resolved scalar
     // is threaded into `ConsensusConfig.activeAdmissionRecentSignerWindow`, which folds into
     // `deterministicConfigHash`). Controls how long an intermittently-signing peer keeps a sticky
-    // active seat before churning through expansion/reserve. An absent env entry resolves to the
+    // controller classification before churning through expansion/reserve. An absent env entry resolves to the
     // DemotionConsecutiveMisses floor (3 = the pre-change lookback). Testnet widens to the full
     // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
-    // purpose -- widening is an active-set/reward-breadth change to opt into per environment.
+    // purpose. This does not cap a retained Tier-1 signing lease. Currency L0's synchronous
+    // engine does not consume the controller setting.
     activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
+    // Core-controller target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
+    // resolution happens once at the consensus construction site and the resolved value is threaded
+    // into `ConsensusConfig.activeFacilitatorTarget`, which folds into `deterministicConfigHash`).
+    // On Global L0 it sizes the score/recent-signer Core classification, not the broad
+    // signing/reward committee or certified open-admission lane. Currency L0's synchronous
+    // engine does not consume it. INVARIANT: must EXCEED `coreCommitteeSize` so the
+    // controller has classification headroom. Scaled 2c+1 in the conf files.
+    // Absent env entries preserve the ConsensusConfig scalar resolution.
+    activeFacilitatorTarget: Map[AppEnvironment, Int] = Map.empty,
+    // Core-controller cap, keyed by AppEnvironment (same pattern; folds into the hash via
+    // `ConsensusConfig.activeFacilitatorMax`). Bounds the sticky recent-signer classification and
+    // probation headroom. It does not cap retained Core + Tier-1 membership on Global L0;
+    // Currency L0's synchronous engine does not consume it. INVARIANT: must be >= the environment's
+    // `coreCommitteeSize`. Scaled 4c+1 from Core size.
+    activeFacilitatorMax: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,
@@ -1169,6 +1294,66 @@ object types {
     maxGlobalSnapshotsWithStateDeltasStored: PosLong,
     combinedSnapshotCheckpointPath: Path
   )
+
+  object SnapshotConfig {
+
+    /** Resolves every environment-shaped input that participates in consensus exactly once.
+      *
+      * Both the live consensus engine and the cluster join fence must hash this returned value. Keeping the resolution here prevents a
+      * configuration from passing the join handshake and then producing a different Facility fingerprint after consensus starts.
+      */
+    def resolveEffectiveConsensusConfig(
+      snapshot: SnapshotConfig,
+      environment: AppEnvironment
+    ): Either[IllegalArgumentException, ConsensusConfig] = {
+      val coreCommitteeSize = snapshot.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
+      val activeFacilitatorTarget = snapshot.activeFacilitatorTarget
+        .get(environment)
+        .orElse(snapshot.consensus.activeFacilitatorTarget)
+      val activeFacilitatorMax = snapshot.activeFacilitatorMax
+        .get(environment)
+        .orElse(snapshot.consensus.activeFacilitatorMax)
+      val certifiedConsensusActivationKey = snapshot.certifiedConsensusActivationOrdinal
+        .getOrElse(environment, SnapshotOrdinal.MaxValue)
+        .value
+        .value
+
+      val effective = snapshot.consensus.copy(
+        facilitatorSelectionMax = snapshot.maxFacilitatorCount.get(environment).map(_.value),
+        coreCommitteeSize = Some(coreCommitteeSize),
+        quorumShrinkActivationViews = snapshot.quorumShrinkActivationViews.get(environment).getOrElse(0),
+        certifiedConsensusActivationKey = certifiedConsensusActivationKey,
+        activeAdmissionMinProbationReentrySlots = snapshot.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0),
+        activeAdmissionRecentSignerWindow = math.max(3, snapshot.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3)),
+        activeFacilitatorTarget = activeFacilitatorTarget,
+        activeFacilitatorMax = activeFacilitatorMax
+      )
+
+      for {
+        _ <- Either.cond(
+          activeFacilitatorTarget.forall(_ > coreCommitteeSize),
+          (),
+          new IllegalArgumentException(
+            s"active-facilitator-target ($activeFacilitatorTarget) must exceed core-committee-size ($coreCommitteeSize)"
+          )
+        )
+        _ <- Either.cond(
+          activeFacilitatorMax.forall(_ >= coreCommitteeSize),
+          (),
+          new IllegalArgumentException(
+            s"active-facilitator-max ($activeFacilitatorMax) must be >= core-committee-size ($coreCommitteeSize)"
+          )
+        )
+        _ <- Either.cond(
+          !activeFacilitatorTarget.exists(target => activeFacilitatorMax.exists(maximum => target > maximum)),
+          (),
+          new IllegalArgumentException(
+            s"active-facilitator-target ($activeFacilitatorTarget) must not exceed active-facilitator-max ($activeFacilitatorMax)"
+          )
+        )
+      } yield effective
+    }
+  }
 
   case class HttpClientConfig(
     timeout: FiniteDuration,

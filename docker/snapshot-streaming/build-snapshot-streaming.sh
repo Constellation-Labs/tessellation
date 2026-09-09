@@ -76,8 +76,33 @@ else
     fi
   fi
 
+  # Snapshot Streaming re-derives Global state proofs, so its selector must honor the
+  # same per-sub-trie-root activation as GL0. Keep this patch separate from the API
+  # compatibility patch above: release branches can absorb those API edits at different
+  # times, but silently omitting a signed-proof era is never an acceptable fallback.
+  STATE_PROOF_PATCH_FILE="$SS_DIR/snapshot-streaming-state-proof.patch"
+  if [ -f "$STATE_PROOF_PATCH_FILE" ] && [ -s "$STATE_PROOF_PATCH_FILE" ]; then
+    cd "$BUILD_DIR"
+    if git apply --reverse --check "$STATE_PROOF_PATCH_FILE" 2>/dev/null; then
+      echo "Snapshot-streaming state-proof activation patch already applied upstream — skipping."
+    elif git apply --check "$STATE_PROOF_PATCH_FILE" 2>/dev/null; then
+      echo "Applying snapshot-streaming state-proof activation patch..."
+      git apply "$STATE_PROOF_PATCH_FILE"
+    else
+      echo "ERROR: snapshot-streaming state-proof activation patch is stale or only partially applied." >&2
+      echo "       Update the Snapshot Streaming branch or regenerate the patch; refusing an untested proof shape." >&2
+      exit 1
+    fi
+    cd "$SCRIPT_DIR"
+  else
+    echo "ERROR: required Snapshot Streaming state-proof compatibility patch is missing or empty." >&2
+    exit 1
+  fi
+
   cd "$BUILD_DIR"
-  sbt --error assembly
+  # Compile-time compatibility is insufficient for a proof-shape change. Run the
+  # Snapshot Streaming repository's own suites before producing the E2E artifact.
+  sbt --error test assembly
   # Try multiple JAR naming patterns (sbt-assembly varies by project config)
   JAR_PATH=$(ls -1tS target/scala-2.13/*-assembly*.jar 2>/dev/null | head -n1)
   if [ -z "$JAR_PATH" ]; then

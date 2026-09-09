@@ -22,9 +22,9 @@ import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegated
 import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
-import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{ConsensusLog, ControllerEvidenceDerivation}
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.RewardsInfoStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.GlobalSnapshotAcceptanceManager
@@ -33,6 +33,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
@@ -70,6 +71,12 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
+  private[snapshot] def delegatedRewardRecipients(facilitators: Set[PeerId]): List[PeerId] =
+    facilitators.toList.sorted
+
+  private[snapshot] def usesFullCommitteeRewards(ordinal: SnapshotOrdinal, activation: SnapshotOrdinal): Boolean =
+    ordinal >= activation
+
   def make[F[_]: Async: SecurityProvider: JsonSerializer: Metrics](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
@@ -80,8 +87,10 @@ object GlobalSnapshotConsensusFunctions {
     delegatedRewardsConfigProvider: DelegatedRewardsConfigProvider,
     v3MigrationOrdinal: SnapshotOrdinal,
     setSumFixOrdinal: SnapshotOrdinal,
+    delegatedRewardsFullCommitteeOrdinal: SnapshotOrdinal,
     incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    activeAdmissionPromoteThreshold: Int
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
@@ -112,7 +121,8 @@ object GlobalSnapshotConsensusFunctions {
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
@@ -161,7 +171,8 @@ object GlobalSnapshotConsensusFunctions {
         events,
         facilitators,
         getGlobalSnapshotByOrdinal,
-        peerHistory
+        peerHistory,
+        certifiedLineage
       )
 
       def check(result: F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])]) =
@@ -204,7 +215,8 @@ object GlobalSnapshotConsensusFunctions {
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
@@ -306,10 +318,7 @@ object GlobalSnapshotConsensusFunctions {
           }
       }
 
-      def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
-        case JsonHash => lastArtifactHasher.hash(lastArtifact.value)
-        case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
-      }
+      def getLastArtifactHash = GlobalSnapshotArtifactHasher.historicalHash(lastArtifact.value)(lastArtifactHasher)
 
       def balanceEventMetric(stage: String, eventType: String, count: Long): F[Unit] = {
         val tags = Seq(
@@ -415,15 +424,26 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        // Derive lastFacilitators from the current-round facilitators set rather than
-        // lastArtifact.proofs. Different nodes collect different numbers of signatures
-        // for the same snapshot (gossip is non-deterministic), so proofs.size varies
-        // per node. This causes divergent nodeOperatorRewards counts (and amounts)
-        // because the facilitator pool is split by facilitators.size. Using the
-        // current-round facilitators is deterministic: all nodes must receive all
-        // facility declarations before advancing from CollectingFacilities, so
-        // state.facilitators is identical across all consensus participants.
-        lastFacilitators <- facilitators.toList.sorted.traverse { peerId =>
+        // Derive lastFacilitators from the frozen round-start set rather than
+        // lastArtifact.proofs. Different nodes can collect different proof subsets for the same
+        // artifact, whereas the StateAdvancer passes `state.roundStartFacilitators`, which is
+        // never narrowed by node-local mid-round withdrawals.
+        // Below the correction gate, preserve the briefly-deployed evidence-score filter so
+        // historical snapshots replay byte-identically. At/after the gate, delegated rewards
+        // follow every member of the frozen signing committee; admission score affects Core and
+        // leader classification, not Tier-1 lease retention or payout eligibility.
+        rewardPeerIds =
+          if (usesFullCommitteeRewards(currentOrdinal, delegatedRewardsFullCommitteeOrdinal))
+            delegatedRewardRecipients(facilitators)
+          else
+            ControllerEvidenceDerivation
+              .legacyRewardQualifiedFacilitators(
+                SortedSet.from(facilitators),
+                peerHistory.flatMap(_.controllerEvidence),
+                activeAdmissionPromoteThreshold
+              )
+              .toList
+        lastFacilitators <- rewardPeerIds.traverse { peerId =>
           PeerId._Id.get(peerId).toAddress.map(_ -> peerId)
         }
         // Sort all event lists before passing to accept() to ensure deterministic ordering.
@@ -564,7 +584,8 @@ object GlobalSnapshotConsensusFunctions {
               lastDeprecatedTips,
               rewardsWithFacilitators(lastFacilitators),
               StateChannelValidationType.Full,
-              getGlobalSnapshotByOrdinal
+              getGlobalSnapshotByOrdinal,
+              AllowSpendBlockAcceptanceMode.live
             )
         acceptEndMs <- Async[F].monotonic.map(_.toMillis)
         balanceDiagnostics = {
@@ -743,7 +764,7 @@ object GlobalSnapshotConsensusFunctions {
           acceptedNnodeCollateralCreates.some,
           acceptedNnodeCollateralWithdrawals.some,
           peerHistory
-        )
+        ).copy(certifiedLineage = certifiedLineage)
         _ <- emitBalanceEventMetrics(
           "artifact",
           "dag_block" -> globalSnapshot.blocks.size.toLong,

@@ -2,6 +2,7 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 
 import cats.Parallel
 import cats.effect.Async
+import cats.effect.std.Mutex
 import cats.syntax.all._
 
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
@@ -38,7 +39,8 @@ object DAGSnapshotProcessor {
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     l0Service: GlobalL0Service[F],
     globalL0AlignmentStorage: GlobalL0AlignmentStorage[F],
-    mptStore: MptStore[F, GlobalStateKey]
+    mptStore: MptStore[F, GlobalStateKey],
+    storageMutationLock: Mutex[F]
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -86,7 +88,8 @@ object DAGSnapshotProcessor {
               tokenLockStorage,
               lastGlobalSnapshotStorage,
               addressStorage,
-              mptStore
+              mptStore,
+              storageMutationLock
             )
           )
 

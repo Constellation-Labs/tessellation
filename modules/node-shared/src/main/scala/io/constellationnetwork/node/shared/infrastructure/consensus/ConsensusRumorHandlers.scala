@@ -63,6 +63,10 @@ class ConsensusRumorHandlers[F[
   val timeoutVoteHandler: RumorHandler[F] =
     RumorHandlerWithQueue.peer[F, ConsensusPeerTimeoutVote[Key]](queue.offer)
 
+  /** V35 semantic prepare vote. */
+  val outcomeVoteHandler: RumorHandler[F] =
+    RumorHandlerWithQueue.peer[F, ConsensusPeerOutcomeVote[Key]](queue.offer)
+
   /** 11. EvictionVote (signed, routed via ConsensusPeerEvictionVote for the same per-vote Signed preservation rationale as ViewChangeVote).
     *
     * Without this registration, inbound ConsensusPeerEvictionVote rumors gossiped by other peers are silently dropped at the rumor-router

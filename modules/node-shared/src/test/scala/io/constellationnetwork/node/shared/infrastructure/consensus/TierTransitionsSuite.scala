@@ -188,6 +188,26 @@ object TierTransitionsSuite extends SimpleIOSuite {
     expect.same(SortedMap[PeerId, Int](a -> Witness), computeNextTiers(priorTiers, roundStart, w, roundCompleted = true))
   }
 
+  pureTest("the tier-aware overload persists the actual Core and Tier-1 round seats") {
+    val core = pid("core")
+    val existingTier1 = pid("tier1")
+    val newlyAdmittedTier1 = pid("new-tier1")
+    val priorTiers = SortedMap[PeerId, Int](core -> Core, existingTier1 -> Tier1)
+    val roundStart = Set(core, existingTier1, newlyAdmittedTier1)
+    val coreSet = Set(core)
+    val w = window(
+      10L -> roundStart,
+      11L -> roundStart,
+      12L -> roundStart
+    )
+
+    val next = computeNextTiers(priorTiers, roundStart, coreSet, w, roundCompleted = true)
+
+    expect.same(Some(Core), next.get(core)) &&
+    expect.same(Some(Tier1), next.get(existingTier1)) &&
+    expect.same(Some(Tier1), next.get(newlyAdmittedTier1))
+  }
+
   pureTest("DemotionConsecutiveMisses is the documented hysteresis depth") {
     // Guard: if someone tunes the constant, this test makes the change explicit in review.
     expect.same(3, DemotionConsecutiveMisses)

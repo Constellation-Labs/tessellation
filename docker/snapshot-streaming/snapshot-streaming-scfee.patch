@@ -1,0 +1,14 @@
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+index 9bc76dc..e6569e7 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+@@ -124,8 +124,7 @@ object TessellationServices {
+             stateChannelManager,
+             currencySnapshotContextFns,
+             feeCalculator,
+-            mptStore,
+-            configuration.fieldsAddedOrdinals.scFeeBalanceFromContext(env)
++            mptStore
+           )
+         val priceOracle = configuration.priceOracle.getOrElse(env, PriceOracleConfig.default)
+         val globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F] = GlobalSnapshotAcceptanceManager.make(

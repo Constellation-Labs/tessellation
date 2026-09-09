@@ -9,7 +9,7 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.SharedConfig
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.logger.LoggerBundle
@@ -42,6 +42,9 @@ trait NodeShared[F[_], A <: CliMethod] {
   val trustRatings: Option[PeerObservationAdjustmentUpdateBatch]
 
   val sharedConfig: SharedConfig
+  // Exact resolved value used to derive the join fingerprint. L0 consensus consumes this same
+  // object so a second configuration read cannot advertise one value and run another.
+  val effectiveConsensusConfig: Option[ConsensusConfig]
 
   val sharedResources: SharedResources[F]
   val sharedP2PClient: SharedP2PClient[F]

@@ -92,6 +92,30 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
   }
 
+  pureTest("v35 activation key is a deterministic-config fence and activates at the exact key") {
+    val first = baseConfig.copy(certifiedConsensusActivationKey = 100L)
+    val second = baseConfig.copy(certifiedConsensusActivationKey = 101L)
+
+    expect(first.deterministicConfigHash != second.deterministicConfigHash)
+      .and(expect(!first.certifiedConsensusActiveAt(99L)))
+      .and(expect(first.certifiedConsensusActivatesAt(100L)))
+      .and(expect(first.certifiedConsensusActiveAt(101L)))
+  }
+
+  pureTest("absent v35 activation remains dormant") {
+    expect
+      .same(Long.MaxValue, baseConfig.certifiedConsensusActivationKey)
+      .and(expect(!baseConfig.certifiedConsensusActiveAt(0L)))
+      .and(expect(!baseConfig.certifiedConsensusActivatesAt(0L)))
+  }
+
+  pureTest("maxRoundDuration joins the deterministic hash when it bounds certified end time") {
+    val short = baseConfig.copy(maxRoundDuration = Some(1.minute))
+    val long = baseConfig.copy(maxRoundDuration = Some(2.minutes))
+
+    expect(short.deterministicConfigHash != long.deterministicConfigHash)
+  }
+
   pureTest("tier1SignatureGracePeriod is NOT in deterministicConfigHash (timing-only, same as signatureGracePeriod)") {
     // Both grace periods are finalization-timing levers: the canonical snapshotHash is the agreed
     // ARTIFACT hash, not the signed-artifact hash, so divergent grace values produce the same
@@ -100,5 +124,37 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     val a = baseConfig.copy(tier1SignatureGracePeriod = 750.milliseconds, signatureGracePeriod = 3.seconds)
     val b = baseConfig.copy(tier1SignatureGracePeriod = 2.seconds, signatureGracePeriod = 9.seconds)
     expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+  }
+
+  pureTest("EventTrigger batching and cooldown are NOT in deterministicConfigHash (local scheduling only)") {
+    val oneAtATime = baseConfig.copy(eventTriggerThreshold = 1, eventTriggerCooldown = 5.seconds)
+    val batched = baseConfig.copy(eventTriggerThreshold = 9, eventTriggerCooldown = 43.seconds)
+
+    expect.same(oneAtATime.deterministicConfigHash, batched.deterministicConfigHash)
+  }
+
+  pureTest("the environment-resolved facilitator selector cap participates independently in the join hash") {
+    val a = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(1000))
+    val b = baseConfig.copy(maxFacilitatorCount = Some(PosInt(20)), facilitatorSelectionMax = Some(300))
+
+    expect(a.deterministicConfigHash != b.deterministicConfigHash) &&
+    expect.same(Some(PosInt(20)), a.maxFacilitatorCount)
+  }
+
+  pureTest("Currency/Global retained-window semantics participate in the deterministic join fence") {
+    val base = baseConfig.copy(lastGlobalSnapshotSyncOffset = 2L, lastGlobalSnapshotsInMemory = 50)
+    val differentOffset = base.copy(lastGlobalSnapshotSyncOffset = 3L)
+    val differentRetention = base.copy(lastGlobalSnapshotsInMemory = 51)
+
+    expect(base.deterministicConfigHash != differentOffset.deterministicConfigHash) &&
+    expect(base.deterministicConfigHash != differentRetention.deterministicConfigHash) &&
+    expect(differentOffset.deterministicConfigHash != differentRetention.deterministicConfigHash)
+  }
+
+  pureTest("Currency snapshot protocol v1 activation participates in the deterministic join fence") {
+    val dormant = baseConfig.copy(currencySnapshotProtocolV1ActivationOrdinal = Long.MaxValue)
+    val scheduled = baseConfig.copy(currencySnapshotProtocolV1ActivationOrdinal = 6000000L)
+
+    expect(dormant.deterministicConfigHash != scheduled.deterministicConfigHash)
   }
 }

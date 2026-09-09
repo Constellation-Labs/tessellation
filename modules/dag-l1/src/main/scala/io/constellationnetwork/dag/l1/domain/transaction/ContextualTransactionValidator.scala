@@ -124,9 +124,13 @@ object ContextualTransactionValidator {
         txs match {
           case Some(txs) =>
             resolveConflict(transaction, txs) match {
-              case noConflict @ NoConflict(_) => (noConflict, txs.some).asRight
+              case noConflict @ NoConflict(_)   => (noConflict, txs.some).asRight
               case canOverride @ CanOverride(_) =>
-                (canOverride, txs.filterNot { case (ordinal, _) => ordinal > transaction.ordinal }.some).asRight
+                // Drop the entry AT transaction.ordinal too (>=, not >): that stored WaitingTx is being REPLACED by
+                // this higher-fee transaction. Keeping it (the old `>`) left it in the validation context, so the
+                // balance and rate-limit checks double-counted the overridden tx's amount+fee and could wrongly
+                // reject a legitimate fee-bump with InsufficientBalance / TransactionLimited.
+                (canOverride, txs.filterNot { case (ordinal, _) => ordinal >= transaction.ordinal }.some).asRight
               case CannotOverride(_, existing, current) => Conflict(transaction.ordinal, existing.hash, current.hash).asLeft
             }
           case None => (NoConflict(transaction), none).asRight

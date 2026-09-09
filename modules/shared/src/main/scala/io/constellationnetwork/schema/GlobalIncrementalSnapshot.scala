@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -129,7 +130,11 @@ case class GlobalIncrementalSnapshot(
   // every validator -- determinism follows from the per-round outcome being
   // consensus-agreed.
   peerHistory: Option[ConsensusOperationalState] = None,
-  version: SnapshotVersion = SnapshotVersion("0.0.1")
+  version: SnapshotVersion = SnapshotVersion("0.0.1"),
+  // v35: the child carries the complete certificate for its public parent.
+  // Trailing/optional preserves pre-v35 decoding; certified validation, not the
+  // decoder, makes it mandatory after an independently trusted root.
+  certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {

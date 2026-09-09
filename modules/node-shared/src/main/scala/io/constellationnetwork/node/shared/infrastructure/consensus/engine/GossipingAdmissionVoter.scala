@@ -13,6 +13,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{AdmissionReason, AdmissionVote}
 import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusPeerAdmissionVote
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.HealthDerivedMembershipPolicy
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
@@ -34,6 +35,7 @@ class GossipingAdmissionVoter[F[
   gossip: Gossip[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   lastSnapshotHashOf: Outcome => Hash,
+  membershipPolicy: HealthDerivedMembershipPolicy,
   logger: SelfAwareStructuredLogger[F]
 ) extends AdmissionVoter[F, Key] {
 
@@ -60,7 +62,12 @@ class GossipingAdmissionVoter[F[
             val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
             val vote = AdmissionVote(target, reason, facilitatorsHash, lastSnapshotHash)
             vote.sign(keyPair).flatMap { signedVote =>
-              val targets = state.facilitators.value.toSet - selfId
+              val targets = MembershipVoteGossipRecipients.select(
+                selfId,
+                membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive),
+                state.facilitators.value.toSet,
+                state.roundStartFacilitators.value.toSet
+              )
               storage.addAdmissionVote(selfId, key, signedVote) >>
                 gossip.spreadDirect(ConsensusPeerAdmissionVote[Key](key, signedVote), targets) >>
                 ConsensusLog

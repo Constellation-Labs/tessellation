@@ -11,12 +11,11 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.{ProofsHasher, SignedHasher}
 
 import eu.timepit.refined.auto._
-import io.circe.shapes._
+import io.circe.Json
+import io.circe.syntax._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
-import shapeless._
-import shapeless.syntax.singleton._
 
 final case class TransactionRoutes[F[_]: Async](
   transactionFeeEstimator: Option[TransactionFeeEstimator[F]],
@@ -40,7 +39,12 @@ final case class TransactionRoutes[F[_]: Async](
           case Some(estimator) => estimator.estimate(hashedTransaction)
           case None            => TransactionFee.zero.pure[F]
         }
-        response <- Ok(("fee" ->> fee.value.value) :: HNil)
+        // Plain Json.obj instead of the shapeless singleton-record encoder
+        // (`("fee" ->> ...) :: HNil` with io.circe.shapes): the CI Build JARs job crashes the
+        // scalac 2.13.18 backend on the singleton-typed record it produces ("assertion failed:
+        // type R" / "ClassBType.info not yet assigned" while emitting this file). Identical
+        // JSON: {"fee": <long>}.
+        response <- Ok(Json.obj("fee" -> fee.value.value.asJson))
       } yield response
   }
 }

@@ -82,24 +82,51 @@ class AllowSpendStorage[F[_]: Async](
   def advanceMajorityRefs(refs: Map[Address, AllowSpendReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
     refs.toList.traverse_ {
       case (source, majorityTxRef) =>
-        allowSpendsR(source).modify[Either[MarkingAllowSpendReferenceAsMajorityError, Unit]] { maybeStored =>
-          val stored = maybeStored.getOrElse(SortedMap.empty[AllowSpendOrdinal, StoredAllowSpend])
+        allowSpendsR(source)
+          .modify[Either[MarkingAllowSpendReferenceAsMajorityError, Unit]] { maybeStored =>
+            val stored = maybeStored.getOrElse(SortedMap.empty[AllowSpendOrdinal, StoredAllowSpend])
 
-          if (stored.isEmpty && majorityTxRef === AllowSpendReference.empty) {
-            val updated = stored + (majorityTxRef.ordinal -> MajorityAllowSpend(majorityTxRef, snapshotOrdinal))
-            (updated.some, ().asRight)
-          } else {
-            stored.collectFirst { case (_, a @ AcceptedAllowSpend(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
-              val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
+            if (stored.isEmpty && majorityTxRef === AllowSpendReference.empty) {
+              val updated = stored + (majorityTxRef.ordinal -> MajorityAllowSpend(majorityTxRef, snapshotOrdinal))
+              (updated.some, ().asRight)
+            } else {
+              stored.collectFirst { case (_, a @ AcceptedAllowSpend(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
+                val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
 
-              remaining + (majorityTx.ordinal -> MajorityAllowSpend(AllowSpendReference.of(majorityTx), snapshotOrdinal))
-            } match {
-              case Some(updated) => (updated.some, ().asRight)
-              case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+                remaining + (majorityTx.ordinal -> MajorityAllowSpend(AllowSpendReference.of(majorityTx), snapshotOrdinal))
+              } match {
+                case Some(updated) => (updated.some, ().asRight)
+                // Idempotent re-mark: the ref is already stored as MajorityAllowSpend (advanced by a prior alignment).
+                case None if stored.exists { case (_, m: MajorityAllowSpend) => m.ref === majorityTxRef; case _ => false } =>
+                  (maybeStored, ().asRight)
+                case None =>
+                  (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+              }
             }
           }
-        }
+          .flatMap {
+            case Right(_) => Async[F].unit
+            // Surface the divergence (do not swallow the Left): a stale local-vs-majority allow-spend ref must escalate
+            // to a redownload, consistent with TransactionStorage.advanceMajorityRefs.
+            case Left(e) =>
+              logger.warn(s"advanceMajorityRefs could not mark majority allow-spend ref for source=${source.show}: ${e.getMessage}") >>
+                e.raiseError[F, Unit]
+          }
     }
+
+  /** Pure precondition check (no mutation) for `advanceMajorityRefs`; see TransactionStorage.majorityRefsViolations. */
+  def majorityRefsViolations(refs: Map[Address, AllowSpendReference]): F[List[String]] =
+    refs.toList.traverse {
+      case (source, majorityTxRef) =>
+        allowSpendsR(source).get.map { maybeStored =>
+          val stored = maybeStored.getOrElse(SortedMap.empty[AllowSpendOrdinal, StoredAllowSpend])
+          val ok =
+            (stored.isEmpty && majorityTxRef === AllowSpendReference.empty) ||
+              stored.exists { case (_, a: AcceptedAllowSpend) => a.ref === majorityTxRef; case _ => false } ||
+              stored.exists { case (_, m: MajorityAllowSpend) => m.ref === majorityTxRef; case _ => false }
+          if (ok) none[String] else s"allowSpend:${source.show}->${majorityTxRef.show}".some
+        }
+    }.map(_.flatten)
 
   def accept(hashedTx: Hashed[AllowSpend]): F[Unit] = {
     val parent = hashedTx.signed.value.parent

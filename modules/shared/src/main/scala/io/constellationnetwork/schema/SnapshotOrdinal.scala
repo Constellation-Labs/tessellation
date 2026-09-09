@@ -63,7 +63,8 @@ object SnapshotOrdinal {
 
   implicit val keyEncoder: KeyEncoder[SnapshotOrdinal] = KeyEncoder[Long].contramap(_.value.value)
 
-  implicit val keyDecoder: KeyDecoder[SnapshotOrdinal] = KeyDecoder[Long].map { v =>
-    NonNegLong.from(v).toOption.map(SnapshotOrdinal(_)).getOrElse(SnapshotOrdinal.MinValue)
-  }
+  // Fail closed: a malformed or negative map key yields None (decode failure) rather than silently
+  // collapsing onto ordinal 0 (MinValue), which would alias garbage/negative keys together.
+  implicit val keyDecoder: KeyDecoder[SnapshotOrdinal] =
+    KeyDecoder.instance(s => s.toLongOption.flatMap(NonNegLong.from(_).toOption).map(SnapshotOrdinal(_)))
 }

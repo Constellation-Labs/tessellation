@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# /etc/firewall/bin/firewall-mode <steady|emergency|open|reload|status>
+#
+# Atomic mode switching for the inet firewall table on Constellation
+# streaming nodes. Each mode renders its template under
+# /etc/firewall/modes/<mode>.nft, syntax-checks via `nft -c -f`, and
+# applies via `nft -f` (atomic netlink swap). The selected mode is
+# persisted to /etc/firewall/active-mode for boot reapplication.
+
+set -euo pipefail
+
+FW_DIR="${FW_DIR:-/etc/firewall}"
+RUN_DIR="${RUN_DIR:-/run/firewall}"
+
+mkdir -p "$RUN_DIR"
+
+usage() {
+  cat >&2 <<EOF
+usage: $0 <steady|emergency|open|reload|status>
+
+  steady     apply rate-limited mode (1/min per IP, conn cap 2)
+  emergency  drop all non-allowlisted public + P2P traffic
+  open       no limits; counters only
+  reload     re-apply the currently active mode (used by systemd at boot)
+  status     print the active mode (exit 0 if known, 3 if unset)
+EOF
+  exit 2
+}
+
+current_mode() {
+  if [ -r "$FW_DIR/active-mode" ]; then
+    cat "$FW_DIR/active-mode"
+  else
+    echo "unknown"
+  fi
+}
+
+apply_mode() {
+  local mode="$1"
+  local template="$FW_DIR/modes/${mode}.nft"
+  if [ ! -f "$template" ]; then
+    echo "no template for mode '$mode' at $template" >&2
+    exit 1
+  fi
+
+  local rendered="$RUN_DIR/active.nft.new"
+  "$FW_DIR/bin/render-rules.sh" "$mode" > "$rendered"
+
+  if ! nft -c -f "$rendered"; then
+    echo "syntax check failed for $rendered" >&2
+    exit 1
+  fi
+
+  nft -f "$rendered"
+  mv "$rendered" "$RUN_DIR/active.nft"
+
+  echo "$mode" > "$FW_DIR/active-mode.tmp"
+  mv "$FW_DIR/active-mode.tmp" "$FW_DIR/active-mode"
+
+  logger -t firewall-mode "applied mode=$mode"
+}
+
+case "${1:-}" in
+  steady|emergency|open)
+    apply_mode "$1"
+    echo "applied: $1"
+    ;;
+  reload)
+    cur="$(current_mode)"
+    if [ "$cur" = "unknown" ]; then
+      echo "active-mode missing; defaulting to emergency" >&2
+      logger -t firewall-mode "active-mode missing; defaulting to emergency"
+      cur="emergency"
+    fi
+    apply_mode "$cur"
+    echo "reloaded: $cur"
+    ;;
+  status)
+    cur="$(current_mode)"
+    echo "$cur"
+    case "$cur" in
+      steady|emergency|open) exit 0 ;;
+      *) exit 3 ;;
+    esac
+    ;;
+  *)
+    usage
+    ;;
+esac

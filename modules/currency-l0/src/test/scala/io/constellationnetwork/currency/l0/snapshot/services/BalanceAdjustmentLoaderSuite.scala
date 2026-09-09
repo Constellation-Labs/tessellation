@@ -2,7 +2,7 @@ package io.constellationnetwork.currency.l0.snapshot.services
 
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.BalanceAdjustmentLoader
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyBalanceAdjustments
@@ -10,6 +10,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.generators.addressGen
+import io.constellationnetwork.security.hash.Hash
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.scalacheck.{Arbitrary, Gen}
@@ -18,11 +19,19 @@ import weaver.scalacheck.Checkers
 
 object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
 
+  private val adjustmentReasonGen = Gen.oneOf(
+    "SpendTransactionNotApplied",
+    "SpendTransactionSourceNotApplied",
+    "SpendTransactionDestinationNotApplied",
+    "TokenUnlockBugDeduction",
+    "FeeTransactionBugDeduction"
+  )
+
   // Generator for JsonAdjustment
   val jsonAdjustmentIncreaseGen: Gen[BalanceAdjustmentLoader.JsonAdjustment] = for {
     address <- addressGen
     amount <- Gen.chooseNum(1L, 1000000L)
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
+    reason <- adjustmentReasonGen
     reference <- Gen.listOfN(Gen.chooseNum(1, 3).sample.getOrElse(1), Gen.alphaNumStr.filter(_.nonEmpty))
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
@@ -36,7 +45,7 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
   val jsonAdjustmentDecreaseGen: Gen[BalanceAdjustmentLoader.JsonAdjustment] = for {
     address <- addressGen
     amount <- Gen.chooseNum(1L, 1000000L)
-    reason <- Gen.alphaNumStr.filter(_.nonEmpty)
+    reason <- adjustmentReasonGen
     reference <- Gen.listOfN(Gen.chooseNum(1, 3).sample.getOrElse(1), Gen.alphaNumStr.filter(_.nonEmpty))
   } yield
     BalanceAdjustmentLoader.JsonAdjustment(
@@ -194,9 +203,9 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
       result match {
         case Right(adjustmentEntries) =>
           adjustmentEntries.get(jsonCurrencyAdj.currencyId) match {
-            case Some(adjustmentAtOrdinal) =>
+            case Some(adjustmentsAtOrdinal) =>
               val expectedOrdinal = jsonCurrencyAdj.snapshotOrdinal
-              expect(adjustmentAtOrdinal.snapshotOrdinal == expectedOrdinal)
+              expect(adjustmentsAtOrdinal.exists(_.snapshotOrdinal == expectedOrdinal))
             case None =>
               failure(s"Should have entry for currency ${jsonCurrencyAdj.currencyId}")
           }
@@ -251,6 +260,46 @@ object BalanceAdjustmentLoaderSuite extends SimpleIOSuite with Checkers {
           expect(error.contains("Missing required adjustments"))
         case Right(_) =>
           failure("Should have failed validation when required adjustments are missing")
+      }
+    }
+  }
+
+  test("exact matching compares metadata while legacy entries preserve historical tuple matching") {
+    forall(jsonAdjustmentIncreaseGen) { jsonAdj =>
+      val currencyId = jsonAdj.address
+      val ordinal = SnapshotOrdinal.unsafeApply(123L)
+      val exactJson = BalanceAdjustmentLoader.JsonCurrencyAdjustments(
+        currencyId,
+        ordinal,
+        List(jsonAdj),
+        enforceExactMatch = true.some
+      )
+      val legacyJson = exactJson.copy(enforceExactMatch = false.some)
+
+      val result = for {
+        authorized <- BalanceAdjustmentLoader.convertSingleBalanceAdjustment(jsonAdj)
+        exactEntry <- BalanceAdjustmentLoader
+          .convertToAdjustmentEntries(List(exactJson))
+          .flatMap(_.get(currencyId).flatMap(_.headOption).toRight("missing exact entry"))
+        legacyEntry <- BalanceAdjustmentLoader
+          .convertToAdjustmentEntries(List(legacyJson))
+          .flatMap(_.get(currencyId).flatMap(_.headOption).toRight("missing legacy entry"))
+      } yield {
+        val changedMetadata = authorized.copy(reference = SortedSet(Hash("different-reference")))
+        val balances = SortedMap.empty[Address, io.constellationnetwork.schema.balance.Balance]
+
+        (
+          exactEntry.exactMatchRequired,
+          exactEntry.balanceAdjustFunction(balances, Set(changedMetadata)),
+          legacyEntry.exactMatchRequired,
+          legacyEntry.balanceAdjustFunction(balances, Set(changedMetadata))
+        )
+      }
+
+      result match {
+        case Left(error) => failure(error)
+        case Right((exactRequired, exactResult, legacyRequired, legacyResult)) =>
+          expect.all(exactRequired, exactResult.isLeft, !legacyRequired, legacyResult.isRight)
       }
     }
   }

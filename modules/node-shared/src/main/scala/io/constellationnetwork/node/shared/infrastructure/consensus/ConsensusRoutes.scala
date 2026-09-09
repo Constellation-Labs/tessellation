@@ -35,10 +35,23 @@ class ConsensusRoutes[F[_]: Async: HasherSelector, Key: Order: Encoder: Decoder,
     case req @ POST -> Root / "specific" / "outcome" => // POST used instead of GET because `Key` can't be used be in path
       for {
         outcomeRequest <- req.as[GetConsensusOutcomeRequest[Key]]
-        result <- storage.getLastConsensusOutcome.flatMap {
+        live <- storage.getLastConsensusOutcome
+        // The live outcome is authoritative at its exact key. During an operator
+        // recovery seed the lead installs a synthetic selected committee at anchor N,
+        // while an old certified sidecar for N may still exist on disk. Serving that
+        // sidecar first would make validators install the superseded committee and the
+        // exact first-round alignment barrier could never open.
+        result <- live match {
           case Some(value) if _key.get(value) === outcomeRequest.key => Ok(value.some)
-          case Some(value) if _key.get(value) > outcomeRequest.key   => Conflict()
-          case _                                                     => Ok(none[GetConsensusOutcomeRequest[Key]])
+          // A typed sidecar is historical recovery evidence, never permission to
+          // advertise an outcome ahead of live consensus. This prevents retained
+          // pre-rollback N+1 files from bypassing a newly installed live anchor N.
+          case Some(value) if _key.get(value) < outcomeRequest.key => Ok(none[Outcome])
+          // Historical certified sidecars are local rollback/replay evidence only.
+          // They are never remote initialization authority: once live consensus is
+          // ahead, serving K would strand a validator in the superseded K+1 round.
+          case None    => Ok(none[Outcome])
+          case Some(_) => Conflict()
         }
       } yield result
     case req @ POST -> Root / "push-rumor" =>

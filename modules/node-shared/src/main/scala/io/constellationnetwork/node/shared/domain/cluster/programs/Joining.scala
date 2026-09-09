@@ -300,10 +300,11 @@ class Joining[
       allowanceListHash <- allowanceList.map(_.map(_.peerId)).hash
       _ <- Applicative[F].unlessA(registrationRequest.allowanceList === allowanceListHash)(AllowanceListDoesNotMatch.raiseError[F, Unit])
 
-      // Validate consensus config hash if both sides provide it (backward-compatible: skip during rolling upgrades)
-      configHashMismatch = (consensusConfigHash, registrationRequest.consensusConfigHash)
-        .mapN(_ =!= _)
-        .getOrElse(false)
+      // L0 advertises the hash of the exact effective configuration consumed by consensus. A
+      // missing value on only one side is also a mismatch: `versionHash` fences software releases,
+      // while this independent fence prevents equal-version peers with divergent runtime consensus
+      // settings from joining. Non-L0 layers advertise None on both sides.
+      configHashMismatch = !Joining.consensusConfigHashesMatch(consensusConfigHash, registrationRequest.consensusConfigHash)
       _ <- ConsensusConfigMismatch.raiseError[F, Unit].whenA(configHashMismatch)
 
     } yield ()
@@ -314,4 +315,14 @@ class Joining[
       isSignerCorrect = signed.proofs.forall(_.id == id)
       hasValidSignature <- signed.hasValidSignature
     } yield isSignedRequestConsistent && isSignerCorrect && hasValidSignature
+}
+
+object Joining {
+
+  /** Strict optional equality: `None` is compatible only with `None`.
+    *
+    * This keeps non-L0 layers compatible while making an advertised L0 fingerprint mandatory on both sides of an L0 join.
+    */
+  private[programs] def consensusConfigHashesMatch(local: Option[Hash], remote: Option[Hash]): Boolean =
+    local === remote
 }

@@ -28,6 +28,7 @@ class GossipingTimeoutVoter[F[
   gossip: Gossip[F],
   storage: ConsensusStorage[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind],
   lastSnapshotHashOf: Outcome => Hash,
+  configuredFraction: Double,
   logger: SelfAwareStructuredLogger[F]
 ) extends TimeoutVoter[F, Key] {
 
@@ -52,31 +53,86 @@ class GossipingTimeoutVoter[F[
           "toView" -> toView.toString
         )
       case Some(state) =>
-        HasherSelector[F].withCurrent { implicit hasher =>
-          state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
-            val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
-            val vote = TimeoutVote(fromView, toView, facilitatorsHash, lastSnapshotHash, highestKnownQc, reason)
-            vote.sign(keyPair).flatMap { signedVote =>
-              val targets = state.facilitators.value.toSet - selfId
-              storage.addTimeoutVote(selfId, key, fromView, toView, signedVote) >>
-                gossip.spreadDirect(ConsensusPeerTimeoutVote[Key](key, signedVote), targets) >>
-                ConsensusLog
-                  .info(
-                    logger,
-                    Category.Phase,
-                    key.toString,
-                    "n/a",
-                    LogEvent.ViewChange,
-                    "emitted" -> "timeout_vote",
-                    "fromView" -> fromView.toString,
-                    "toView" -> toView.toString,
-                    "reason" -> reason.toString,
-                    "qcPresent" -> highestKnownQc.isDefined.toString,
-                    "targets" -> targets.size.toString
-                  )
-                  .void
+        CertifiedConsensus
+          .pacemakerVoteTargets(
+            state.certifiedConsensusActive,
+            selfId,
+            state.roundStartFacilitators.value.toSet,
+            state.coreFacilitators.value.toSet,
+            state.facilitators.value.toSet
+          )
+          .fold(
+            ConsensusLog
+              .info(
+                logger,
+                Category.Phase,
+                key.toString,
+                "n/a",
+                LogEvent.ViewChange,
+                "skipped" -> "not_frozen_core",
+                "vote" -> "timeout",
+                "fromView" -> fromView.toString,
+                "toView" -> toView.toString
+              )
+              .void
+          ) { targets =>
+            HasherSelector[F].withCurrent { implicit hasher =>
+              state.roundStartFacilitators.value.hash.flatMap { facilitatorsHash =>
+                val lastSnapshotHash = lastSnapshotHashOf(state.lastOutcome)
+                storage.getCertifiedVoteLock(key).flatMap { certifiedLock =>
+                  CertifiedConsensus
+                    .verifyPersistedLockedQc[F](
+                      certifiedLock,
+                      state.roundStartFacilitators.value.toSet,
+                      state.coreFacilitators.value.toSet,
+                      configuredFraction
+                    )
+                    .flatMap {
+                      case Left(error) =>
+                        ConsensusLog.error(
+                          logger,
+                          Category.Phase,
+                          key.toString,
+                          "n/a",
+                          LogEvent.ViewChange,
+                          "skipped" -> "invalid_persisted_certified_qc",
+                          "vote" -> "timeout",
+                          "error" -> error
+                        )
+                      case Right(highestKnownCertifiedQc) =>
+                        val vote = TimeoutVote(
+                          fromView,
+                          toView,
+                          facilitatorsHash,
+                          lastSnapshotHash,
+                          highestKnownQc,
+                          reason,
+                          highestKnownCertifiedQc
+                        )
+                        vote.sign(keyPair).flatMap { signedVote =>
+                          storage.addTimeoutVote(selfId, key, fromView, toView, signedVote) >>
+                            gossip.spreadDirect(ConsensusPeerTimeoutVote[Key](key, signedVote), targets) >>
+                            ConsensusLog
+                              .info(
+                                logger,
+                                Category.Phase,
+                                key.toString,
+                                "n/a",
+                                LogEvent.ViewChange,
+                                "emitted" -> "timeout_vote",
+                                "fromView" -> fromView.toString,
+                                "toView" -> toView.toString,
+                                "reason" -> reason.toString,
+                                "qcPresent" -> highestKnownQc.isDefined.toString,
+                                "certifiedQcPresent" -> highestKnownCertifiedQc.isDefined.toString,
+                                "targets" -> targets.size.toString
+                              )
+                              .void
+                        }
+                    }
+                }
+              }
             }
           }
-        }
     }
 }

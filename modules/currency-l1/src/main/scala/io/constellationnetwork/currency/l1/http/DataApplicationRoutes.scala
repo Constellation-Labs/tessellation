@@ -19,7 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.routes.internal._
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
@@ -38,7 +38,8 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: JsonSerializer: Secu
   dataApplication: BaseDataApplicationL1Service[F],
   dataTransactionsQueue: ViewableQueue[F, DataTransactions],
   lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+  lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  feeTransactionSecurityActivationOrdinal: SnapshotOrdinal
 )(implicit S: Supervisor[F], nodeContext: L1NodeContext[F])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -61,7 +62,13 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: JsonSerializer: Secu
       case Some(ordinal) =>
         nodeContext.getLastCurrencySnapshotCombined.map(_.map { case (_, snapshotInfo) => snapshotInfo.balances }).flatMap {
           case Some(balances) =>
-            validateDataTransactionsL1(updates, dataApplication, balances, ordinal).flatMap {
+            validateDataTransactionsL1(
+              updates,
+              dataApplication,
+              balances,
+              ordinal,
+              feeTransactionSecurityActivationOrdinal
+            ).flatMap {
               case Valid(_)   => onValid
               case Invalid(e) => BadRequest(InvalidDataUpdate(e.toString).toApplicationError)
             }

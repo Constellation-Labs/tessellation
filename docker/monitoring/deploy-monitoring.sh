@@ -4,10 +4,18 @@
 # Deploys to the last node in REMOTE_NODES (n3).
 # ClickHouse runs on the same node — tessellation nodes connect via HTTP.
 #
+# Runs BEFORE the cluster deploy in nightly-deploy.yml so ClickHouse is listening
+# before tessellation nodes start. remote-deploy.sh is the sole writer of
+# ClickHouse config to tessellation node .env files.
+#
+# Behavior:
+#   - Always transfers/updates config files (Prometheus targets, dashboards, etc.)
+#   - Only starts Grafana/Prometheus/ClickHouse if they are NOT already running
+#
 # Expected env vars:
 #   REMOTE_NODES              - comma-separated SSH aliases (e.g. n0,n1,n2,n3)
 #   GRAFANA_ADMIN_PASSWORD    - Grafana admin password (default: admin)
-#   CLICKHOUSE_PASSWORD       - ClickHouse default user password (default: clickhouse)
+#   CLICKHOUSE_PASSWORD       - ClickHouse server password (default: clickhouse)
 
 set -e
 
@@ -15,8 +23,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REMOTE_DIR="/opt/monitoring"
 
 IFS=',' read -ra ALL_NODES <<< "$REMOTE_NODES"
-NODES=("${ALL_NODES[@]:0:3}")
-SERVER_NODE="${ALL_NODES[3]:-${ALL_NODES[2]}}"
+# Monitoring stack lives on the last host in REMOTE_NODES; the other hosts run
+# tessellation nodes that Prometheus scrapes.
+SERVER_NODE="${ALL_NODES[-1]}"
+NODES=("${ALL_NODES[@]:0:${#ALL_NODES[@]}-1}")
 
 # Resolve IPs from SSH config (same pattern as remote-deploy.sh)
 NODE_IPS=()
@@ -28,6 +38,7 @@ SERVER_IP=$(ssh -G "$SERVER_NODE" | awk '/^hostname / {print $2}')
 log() { printf "\033[34m[monitoring]\033[0m %s\n" "$*"; }
 
 CH_PASS="${CLICKHOUSE_PASSWORD:-clickhouse}"
+GF_PASS="${GRAFANA_ADMIN_PASSWORD:-admin}"
 
 log "Deploying to $SERVER_NODE ($SERVER_IP)"
 
@@ -41,6 +52,7 @@ scp -q "$SCRIPT_DIR/docker-compose.remote.yaml" "$SERVER_NODE:$REMOTE_DIR/docker
 scp -q "$SCRIPT_DIR/clickhouse/init.sql" \
        "$SCRIPT_DIR/clickhouse/enable_json.xml" \
        "$SERVER_NODE:$REMOTE_DIR/clickhouse/"
+# HTTPS is not used — ClickHouse serves HTTP-only on port 8123 (host networking)
 
 # --- Prometheus config with real IPs ---
 sed -e "s/\${NODE_IP_0}/${NODE_IPS[0]}/g" \
@@ -52,8 +64,9 @@ sed -e "s/\${NODE_IP_0}/${NODE_IPS[0]}/g" \
 # --- Grafana config ---
 scp -q "$SCRIPT_DIR/grafana/grafana.ini" "$SERVER_NODE:$REMOTE_DIR/grafana/grafana.ini"
 
-# Datasources: Prometheus + local ClickHouse (both on localhost via host networking)
-cat <<EOF | ssh "$SERVER_NODE" "cat > $REMOTE_DIR/grafana/provisioning/datasources/datasources.yaml"
+# Datasources — generated at deploy time so the ClickHouse password stays out of source control.
+# Grafana does not substitute env vars in provisioning YAML, so values must be written literally.
+ssh "$SERVER_NODE" "cat > $REMOTE_DIR/grafana/provisioning/datasources/datasources.yaml" <<EOF
 apiVersion: 1
 datasources:
   - name: prometheus
@@ -81,32 +94,27 @@ datasources:
       password: ${CH_PASS}
 EOF
 
-# Dashboards
+# Dashboards — ship the provisioning config and every *.json in the directory,
+# so adding a new dashboard file is all that's needed to deploy it.
 scp -q "$SCRIPT_DIR/grafana/provisioning/dashboards/dashboards.yaml" \
-       "$SCRIPT_DIR/grafana/provisioning/dashboards/tessellation.json" \
-       "$SCRIPT_DIR/grafana/provisioning/dashboards/jvm-micrometer.json" \
+       "$SCRIPT_DIR/grafana/provisioning/dashboards/"*.json \
        "$SERVER_NODE:$REMOTE_DIR/grafana/provisioning/dashboards/"
 
-# --- .env ---
+# --- .env (consumed by docker-compose.remote.yaml) ---
 ssh "$SERVER_NODE" "cat > $REMOTE_DIR/.env" <<EOF
-GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+GRAFANA_ADMIN_PASSWORD=${GF_PASS}
 CLICKHOUSE_PASSWORD=${CH_PASS}
 EOF
 
-# --- Start services ---
-log "Pulling images and starting services"
-ssh "$SERVER_NODE" "cd $REMOTE_DIR && docker compose pull -q && docker compose up -d"
-
-# --- Wait for ClickHouse to be ready ---
-log "Waiting for ClickHouse"
-ch_ready=false
-for i in $(seq 1 30); do
-  if ssh "$SERVER_NODE" "docker exec clickhouse clickhouse-client --password '$CH_PASS' -q 'SELECT 1'" >/dev/null 2>&1; then
-    log "  ClickHouse ready"
-    ch_ready=true
-    break
+# --- Check if monitoring services are already running ---
+ALL_RUNNING=true
+for svc in clickhouse prometheus grafana; do
+  if ssh "$SERVER_NODE" "docker inspect --format='{{.State.Running}}' $svc 2>/dev/null" | grep -q "true"; then
+    log "  $svc: running"
+  else
+    log "  $svc: not running"
+    ALL_RUNNING=false
   fi
-  sleep 2
 done
 
 if [ "$ALL_RUNNING" = "true" ]; then
@@ -150,10 +158,24 @@ fi
 # Prometheus scrapes these via the process-exporter job in prometheus.yaml.
 PE_IMAGE="ncabatoff/process-exporter:0.8.7"
 PE_REMOTE_DIR="/opt/process-exporter"
+# Regenerate the process-exporter config if it's not in the checkout, so a tree that
+# happens to omit this small static file (as a release-branch copy once did) can't
+# hard-fail the whole deploy. The committed file is authoritative when present.
+PE_CFG="$SCRIPT_DIR/process-exporter/process-exporter.yml"
+if [ ! -f "$PE_CFG" ]; then
+  log "process-exporter.yml missing from checkout — generating it"
+  mkdir -p "$(dirname "$PE_CFG")"
+  cat > "$PE_CFG" <<'PEYML'
+process_names:
+  - name: "{{.Comm}}"
+    cmdline:
+      - ".+"
+PEYML
+fi
 for h in "${NODES[@]}"; do
   log "Deploying process-exporter on $h"
   ssh "$h" "sudo mkdir -p $PE_REMOTE_DIR && sudo chown -R \$(id -un):\$(id -gn) $PE_REMOTE_DIR"
-  scp -q "$SCRIPT_DIR/process-exporter/process-exporter.yml" "$h:$PE_REMOTE_DIR/process-exporter.yml"
+  scp -q "$PE_CFG" "$h:$PE_REMOTE_DIR/process-exporter.yml"
   ssh "$h" "docker rm -f process-exporter >/dev/null 2>&1 || true; \
             docker run -d --name process-exporter --restart unless-stopped \
               --network host \
@@ -200,6 +222,3 @@ log "  Grafana:                  http://$SERVER_IP:3000"
 log "  ClickHouse:               $SERVER_IP:8123 (HTTP)"
 log "  process-exporter:         ${NODES[*]} on :9256"
 log "  network-process-exporter: ${NODES[*]} on :9435"
-log ""
-log "To enable ClickHouse logging on tessellation nodes, redeploy with:"
-log "  CLICKHOUSE_HOST=$SERVER_IP CLICKHOUSE_PORT=8123 CLICKHOUSE_PROTOCOL=http CLICKHOUSE_PASSWORD=<secret>"

@@ -17,6 +17,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
@@ -31,9 +32,28 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       CurrencySnapshotArtifact,
       CurrencySnapshotContext,
       ConsensusTrigger
-    ] {}
+    ] {
+  def createProposalArtifactWithDisposition(
+    lastKey: SnapshotOrdinal,
+    lastArtifact: Signed[CurrencySnapshotArtifact],
+    lastContext: CurrencySnapshotContext,
+    lastArtifactHasher: Hasher[F],
+    trigger: ConsensusTrigger,
+    events: Set[CurrencySnapshotEvent],
+    facilitators: Set[PeerId],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    peerHistory: Option[ConsensusOperationalState] = None
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotConsensusFunctions.ProposalArtifactResult]
+}
 
 object CurrencySnapshotConsensusFunctions {
+
+  final case class ProposalArtifactResult(
+    artifact: CurrencySnapshotArtifact,
+    context: CurrencySnapshotContext,
+    awaitingEvents: Set[CurrencySnapshotEvent],
+    rejectedEvents: Set[CurrencySnapshotEvent]
+  )
 
   def make[F[_]: Async: SecurityProvider](
     collateral: Amount,
@@ -60,7 +80,11 @@ object CurrencySnapshotConsensusFunctions {
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      // The generic GL0-facing interface still exposes certified lineage. The
+      // synchronous Currency adapter deliberately ignores it and never places
+      // certified evidence in a Currency artifact.
+      _certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
         .validateSnapshot(
@@ -69,7 +93,8 @@ object CurrencySnapshotConsensusFunctions {
           artifact,
           facilitators,
           getGlobalSnapshotByOrdinal,
-          peerHistory
+          peerHistory,
+          historicalDependencyResolution = false
         )
         .flatTap {
           case Invalid(errors) =>
@@ -87,8 +112,32 @@ object CurrencySnapshotConsensusFunctions {
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState] = None,
+      _certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
+    )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] =
+      createProposalArtifactWithDisposition(
+        lastKey,
+        lastArtifact,
+        lastContext,
+        lastArtifactHasher,
+        trigger,
+        events,
+        facilitators,
+        getGlobalSnapshotByOrdinal,
+        peerHistory
+      ).map(result => (result.artifact, result.context, result.awaitingEvents ++ result.rejectedEvents))
+
+    def createProposalArtifactWithDisposition(
+      lastKey: SnapshotOrdinal,
+      lastArtifact: Signed[CurrencySnapshotArtifact],
+      lastContext: CurrencySnapshotContext,
+      lastArtifactHasher: Hasher[F],
+      trigger: ConsensusTrigger,
+      events: Set[CurrencySnapshotEvent],
+      facilitators: Set[PeerId],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
       peerHistory: Option[ConsensusOperationalState] = None
-    )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
+    )(implicit hasher: Hasher[F]): F[ProposalArtifactResult] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
         case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
         case _                         => true
@@ -109,9 +158,10 @@ object CurrencySnapshotConsensusFunctions {
           getGlobalSnapshotByOrdinal,
           shouldPerformMetagraphSpecificValidations = true,
           maybeCustomArtifacts,
-          peerHistory
+          peerHistory,
+          historicalDependencyResolution = false
         )
-        .map(created => (created.artifact, created.context, created.awaitingEvents))
+        .map(created => ProposalArtifactResult(created.artifact, created.context, created.awaitingEvents, created.rejectedEvents))
     }
   }
 }

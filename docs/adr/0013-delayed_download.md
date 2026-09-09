@@ -2,9 +2,11 @@
 
 Date: 2023-04-19
 
+> **Superseded by ADR-0023 (Layered recovery / download fork-safety gate).** The delayed-observation timing described below predates the leader-based consensus and the v4.x recovery fork-safety gate. The body below is retained as historical context.
+
 ## Status
 
-Accepted
+Superseded
 
 ## Context
 

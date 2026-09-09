@@ -84,6 +84,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
       override def updateBalances(addressBalances: Map[Address, Balance]): IO[Unit] = IO.unit
 
+      override def replaceAll(addressBalances: Map[Address, Balance]): IO[Unit] = IO.unit
+
       override def clean: IO[Unit] = ???
 
     }

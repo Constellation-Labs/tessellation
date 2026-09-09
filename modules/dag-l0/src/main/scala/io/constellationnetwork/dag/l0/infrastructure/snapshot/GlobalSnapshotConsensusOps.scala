@@ -13,18 +13,18 @@ object GlobalSnapshotConsensusOps {
   def make: GlobalSnapshotConsensusOps = new GlobalSnapshotConsensusOps {
     def collectedKinds(status: GlobalSnapshotStatus): Set[GlobalConsensusKind] =
       status match {
-        case CollectingFacilities(_, _, _)            => Set.empty
-        case CollectingProposals(_, _, _, _, _, _, _) => Set(Facility)
-        case CollectingSignatures(_, _, _, _, _)      => Set(Facility, Proposal)
-        case Finished(_, _, _, _, _, _)               => Set(Facility, Proposal, Signature)
+        case _: CollectingFacilities => Set.empty
+        case _: CollectingProposals  => Set(Facility)
+        case _: CollectingSignatures => Set(Facility, Proposal)
+        case _: Finished             => Set(Facility, Proposal, Signature)
       }
 
     def maybeCollectingKind(status: GlobalSnapshotStatus): Option[GlobalConsensusKind] =
       status match {
-        case CollectingFacilities(_, _, _)            => Facility.some
-        case CollectingProposals(_, _, _, _, _, _, _) => Proposal.some
-        case CollectingSignatures(_, _, _, _, _)      => Signature.some
-        case Finished(_, _, _, _, _, _)               => none
+        case _: CollectingFacilities => Facility.some
+        case _: CollectingProposals  => Proposal.some
+        case _: CollectingSignatures => Signature.some
+        case _: Finished             => none
       }
 
     def kindGetter: GlobalConsensusKind => PeerDeclarations => Option[declaration.PeerDeclaration] = {
@@ -56,10 +56,10 @@ object GlobalSnapshotConsensusOps {
     }
 
     def freshCollectingFacilities(status: GlobalSnapshotStatus): Option[GlobalSnapshotStatus] = status match {
-      case CollectingFacilities(_, facHash, lastSnap)            => CollectingFacilities(none, facHash, lastSnap).some
-      case CollectingProposals(_, _, _, facHash, lastSnap, _, _) => CollectingFacilities(none, facHash, lastSnap).some
-      case CollectingSignatures(_, _, _, facHash, lastSnap)      => CollectingFacilities(none, facHash, lastSnap).some
-      case _: Finished                                           => none
+      case value: CollectingFacilities => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case value: CollectingProposals  => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case value: CollectingSignatures => CollectingFacilities(none, value.facilitatorsHash, value.lastSnapshotHash).some
+      case _: Finished                 => none
     }
   }
 }

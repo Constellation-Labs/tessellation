@@ -26,7 +26,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.round.RoundId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -89,6 +89,7 @@ object Engine {
 
   def fsm[F[_]: Async: Random: SecurityProvider: Hasher: JsonSerializer](
     dataConsensusCfg: DataConsensusConfig,
+    feeTransactionSecurityActivationOrdinal: SnapshotOrdinal,
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -326,13 +327,23 @@ object Engine {
           def combine(roundId: RoundId)(updates: List[DataTransactions]): F[Option[DataApplicationBlock]] =
             NonEmptyList.fromList(updates).traverse { allUpdates =>
               getHashes(allUpdates.toList, dataApplication.serializeUpdate).flatMap { hashesList =>
-                NonEmptyList
-                  .fromList(hashesList)
-                  .fold(
+                // Canonicalize bundle ordering across facilitators. Each facilitator merges updates from its own
+                // Set/Map (and prepends its OWN proposal first), so without a deterministic sort the resulting
+                // dataTransactionsHashes -- and therefore the block hash -- differs per node, the aggregated multisig
+                // fails to verify, and every round with >=2 contributing facilitators is cancelled. Sorting by the
+                // content-derived per-bundle hashes (already computed here) yields byte-identical blocks on every node.
+                // Delimiter-separated key: correct regardless of per-hash length (a delimiter-less concat could in
+                // theory be ambiguous across bundle/hash boundaries for a future variable-length hash).
+                val sortedByHash = allUpdates.toList
+                  .zip(hashesList)
+                  .sortBy { case (_, bundleHashes) => bundleHashes.toList.map(_.value).mkString(":") }
+
+                (NonEmptyList.fromList(sortedByHash.map(_._1)), NonEmptyList.fromList(sortedByHash.map(_._2))) match {
+                  case (Some(sortedUpdates), Some(sortedHashes)) =>
+                    DataApplicationBlock(roundId, sortedUpdates, sortedHashes).pure[F]
+                  case _ =>
                     new IllegalStateException("Could not find DataApplicationBlock hashes").raiseError[F, DataApplicationBlock]
-                  ) { hashes =>
-                    DataApplicationBlock(roundId, allUpdates, hashes).pure[F]
-                  }
+                }
               }
             }
 
@@ -348,15 +359,29 @@ object Engine {
 
             maybeBlock <- roundData
               .formBlock(
-                a => validateDataTransactionsL1(a, dataApplication, balances, gsOrdinal).map(_.toEither.leftMap(_.toString).as(a)),
+                a =>
+                  validateDataTransactionsL1(
+                    a,
+                    dataApplication,
+                    balances,
+                    gsOrdinal,
+                    feeTransactionSecurityActivationOrdinal
+                  ).map(_.toEither.leftMap(_.toString).as(a)),
                 combine
               )
 
             result <- maybeBlock match {
               case Some(block) =>
                 Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
-                  signedBlock.dataTransactions
-                    .traverse(validateDataTransactionsL1(_, dataApplication, balances, gsOrdinal))
+                  signedBlock.dataTransactions.traverse { dataTransactions =>
+                    validateDataTransactionsL1(
+                      dataTransactions,
+                      dataApplication,
+                      balances,
+                      gsOrdinal,
+                      feeTransactionSecurityActivationOrdinal
+                    )
+                  }
                     .map(_.forall(_.isValid))
                     .ifM(
                       processBlock(newState, proposal, signedBlock), {

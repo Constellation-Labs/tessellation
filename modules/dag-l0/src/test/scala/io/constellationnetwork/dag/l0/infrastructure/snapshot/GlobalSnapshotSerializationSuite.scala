@@ -17,9 +17,9 @@ import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import fs2.io.file.{Files, Path}
-import io.circe.Json
 import io.circe.jawn.CirceSupportParser
 import io.circe.syntax._
+import io.circe.{Json, Printer}
 import io.estatico.newtype.ops._
 import org.typelevel.jawn.Facade
 import org.typelevel.jawn.fs2._
@@ -102,6 +102,7 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
     */
   test("snapshot is successfully deserialized and serialized with json parser") { implicit res =>
     implicit val (hk) = res
+    val productionPrinter = Printer(dropNullValues = true, indent = "", sortKeys = true)
 
     for {
       storedJson <- getJsonFromClasspath(jsonFilename)
@@ -109,7 +110,7 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
       serializedJson = signedSnapshot.asJson
       hashCompare <- hk.compare(signedSnapshot.value, expectedHash)
 
-    } yield expect.eql(serializedJson, storedJson).and(expect(hashCompare))
+    } yield expect.eql(productionPrinter.print(serializedJson), productionPrinter.print(storedJson)).and(expect(hashCompare))
   }
 
   private def getJsonFromClasspath(name: String): F[Json] = {

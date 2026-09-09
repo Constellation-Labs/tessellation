@@ -1,15 +1,14 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.data.Validated.Valid
-import cats.data.{NonEmptyChain, Validated, ValidatedNec}
+import cats.data.{Validated, ValidatedNec}
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
+import io.constellationnetwork.currency.schema.CurrencySnapshotSemantics
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -17,7 +16,6 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -35,7 +33,8 @@ trait CurrencySnapshotValidator[F[_]] {
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: Signed[CurrencySnapshotArtifact],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    historicalDependencyResolution: Boolean = false
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
 
   def validateSnapshot(
@@ -44,42 +43,63 @@ trait CurrencySnapshotValidator[F[_]] {
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    historicalDependencyResolution: Boolean = false
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
 object CurrencySnapshotValidator {
 
+  /** Whether a re-created currency artifact matches the expected signed value.
+    *
+    * Legacy `0.0.1` preserves release/mainnet compatibility: `globalSyncView` came from live, time-varying GL0 sync state, so historical
+    * validation pins that one signed field before comparing the rest. Version `1.0.0` closes recreation over consensus-carried inputs and
+    * therefore requires every field, including `globalSyncView`, to rederive exactly.
+    */
+  def matchesExpected(recreated: CurrencyIncrementalSnapshot, expected: CurrencyIncrementalSnapshot): Boolean =
+    if (CurrencySnapshotSemantics.usesDeterministicHistory(expected.version)) recreated === expected
+    else recreated.focus(_.globalSyncView).replace(expected.globalSyncView) === expected
+
   def make[F[_]: Async: KryoSerializer: JsonSerializer](
-    globalSyncViewStartingOrdinal: SnapshotOrdinal,
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
-    maybeDataApplication: Option[BaseDataApplicationService[F]]
+    maybeDataApplication: Option[BaseDataApplicationService[F]],
+    fixingAllowSpendDestinationCredit: SnapshotOrdinal
   ): CurrencySnapshotValidator[F] = new CurrencySnapshotValidator[F] {
     def validateSignedSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: Signed[CurrencySnapshotArtifact],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      historicalDependencyResolution: Boolean = false
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
-      validateSigned(artifact).flatMap { signedV =>
-        val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
+      validateSigned(artifact).flatMap {
+        case Validated.Invalid(errors) =>
+          Async[F].pure[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]](
+            Validated.Invalid(errors)
+          )
+        case Validated.Valid(validatedArtifact) =>
+          val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
+          val historicalModes = AllowSpendBlockAcceptanceMode.currencyHistoricalRecreationModes(
+            lastArtifact.globalSyncView,
+            fixingAllowSpendDestinationCredit
+          )
 
-        validateSnapshot(
-          lastArtifact,
-          lastContext,
-          artifact,
-          facilitators,
-          getGlobalSnapshotByOrdinal,
-          // Chain-replay path: no live consensus state to consult, so re-feed the
-          // artifact's own claim as the recreation input. The signature-validation
-          // above already binds the value to the signing facilitators -- if it
-          // were tampered with, this would have failed first.
-          artifact.value.peerHistory
-        ).map { snapshotV =>
-          signedV.product(snapshotV.map { case (_, info) => info })
-        }
+          validateSnapshotWithModes(
+            lastArtifact,
+            lastContext,
+            artifact,
+            facilitators,
+            getGlobalSnapshotByOrdinal,
+            // Chain-replay path: no live consensus state to consult, so re-feed the
+            // artifact's own claim as the recreation input. The signature-validation
+            // above already binds the value to the signing facilitators -- if it
+            // were tampered with, this would have failed first.
+            artifact.value.peerHistory,
+            historicalDependencyResolution,
+            historicalModes
+          ).map(_.map { case (_, info) => (validatedArtifact, info) })
       }
 
     def validateSnapshot(
@@ -88,7 +108,29 @@ object CurrencySnapshotValidator {
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState] = None
+      peerHistory: Option[ConsensusOperationalState] = None,
+      historicalDependencyResolution: Boolean = false
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] =
+      validateSnapshotWithModes(
+        lastArtifact,
+        lastContext,
+        artifact,
+        facilitators,
+        getGlobalSnapshotByOrdinal,
+        peerHistory,
+        historicalDependencyResolution,
+        List(AllowSpendBlockAcceptanceMode.live)
+      )
+
+    private def validateSnapshotWithModes(
+      lastArtifact: Signed[CurrencySnapshotArtifact],
+      lastContext: CurrencySnapshotContext,
+      artifact: CurrencySnapshotArtifact,
+      facilitators: Set[PeerId],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      peerHistory: Option[ConsensusOperationalState],
+      historicalDependencyResolution: Boolean,
+      allowSpendRecreationModes: List[AllowSpendBlockAcceptanceMode]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(
         lastArtifact,
@@ -96,7 +138,9 @@ object CurrencySnapshotValidator {
         artifact,
         facilitators,
         getGlobalSnapshotByOrdinal,
-        peerHistory
+        peerHistory,
+        historicalDependencyResolution,
+        allowSpendRecreationModes
       )
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -120,6 +164,9 @@ object CurrencySnapshotValidator {
           case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
         })
 
+      // All current public-network production is JSON. This fallback remains
+      // solely for replaying pre-JSON historical snapshots; no new Currency
+      // functionality adds another Kryo encoding path.
       validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
     }
 
@@ -129,7 +176,9 @@ object CurrencySnapshotValidator {
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-      peerHistory: Option[ConsensusOperationalState]
+      peerHistory: Option[ConsensusOperationalState],
+      historicalDependencyResolution: Boolean,
+      allowSpendRecreationModes: List[AllowSpendBlockAcceptanceMode]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -164,7 +213,10 @@ object CurrencySnapshotValidator {
         }
       })
 
-      def recreateFn(trigger: ConsensusTrigger) =
+      def recreateFn(
+        trigger: ConsensusTrigger,
+        allowSpendBlockAcceptanceMode: AllowSpendBlockAcceptanceMode
+      ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
         mkEvents.flatMap { events =>
           def usingHasher = (lastArtifactHasher: Hasher[F]) =>
             currencySnapshotCreator
@@ -182,10 +234,14 @@ object CurrencySnapshotValidator {
                 getGlobalSnapshotByOrdinal,
                 shouldPerformMetagraphSpecificValidations = false,
                 Some((_: Signed[CurrencyIncrementalSnapshot]) => expected.artifacts),
-                peerHistory
+                peerHistory,
+                historicalDependencyResolution,
+                allowSpendBlockAcceptanceMode
               )
 
-          def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
+          def check(
+            result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
+          ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
             // Rewrite if implementation not provided
             result.map { creationResult =>
               maybeDataApplication match {
@@ -203,22 +259,41 @@ object CurrencySnapshotValidator {
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
               else creationResult
             }.map { creationResult =>
-              if (lastArtifact.ordinal.next < globalSyncViewStartingOrdinal)
-                creationResult.focus(_.artifact.globalSyncView).replace(expected.globalSyncView)
-              else
-                creationResult
-            }.map { creationResult =>
-              if (creationResult.artifact =!= expected)
-                SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
-              else
+              // Legacy replay pins globalSyncView; deterministic-history replay compares it exactly. The error reports the unmodified
+              // recreated artifact so any divergence remains fully visible downstream.
+              if (matchesExpected(creationResult.artifact, expected))
                 creationResult.validNec
+              else
+                SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
             }
 
           check(usingHasher(Hasher.forJson[F]))
         }
 
-      recreateFn(TimeTrigger).flatMap { tV =>
-        recreateFn(EventTrigger).map(_.orElse(tV))
+      def recreateWithModes(
+        trigger: ConsensusTrigger,
+        modes: List[AllowSpendBlockAcceptanceMode]
+      ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] =
+        modes match {
+          case Nil =>
+            new IllegalStateException("No allow-spend acceptance mode available for snapshot recreation")
+              .raiseError[F, CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]]
+          case mode :: remaining =>
+            recreateFn(trigger, mode).attempt.flatMap {
+              case Right(valid @ Validated.Valid(_)) =>
+                Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](valid)
+              case Right(invalid @ Validated.Invalid(_)) =>
+                if (remaining.nonEmpty) recreateWithModes(trigger, remaining)
+                else
+                  Async[F].pure[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](invalid)
+              case Left(error) =>
+                if (remaining.nonEmpty) recreateWithModes(trigger, remaining)
+                else error.raiseError[F, CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]]
+            }
+        }
+
+      recreateWithModes(TimeTrigger, allowSpendRecreationModes).flatMap { tV =>
+        recreateWithModes(EventTrigger, allowSpendRecreationModes).map(_.orElse(tV))
       }
     }
 

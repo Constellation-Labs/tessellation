@@ -74,6 +74,24 @@ object SignedValidatorSuite extends MutableIOSuite with Checkers {
     } yield expect.same(Validated.Valid(signedInput), result)
   }
 
+  test("semantic equality ignores proofs while authority equality binds the exact proof set") { res =>
+    implicit val (h, sp) = res
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      input = TestObject("same-value")
+      signedBy1 <- forAsyncHasher(input, keyPair1)
+      signedBy2 <- forAsyncHasher(input, keyPair2)
+    } yield
+      expect(Signed.eq[TestObject].eqv(signedBy1, signedBy2), "ordinary Signed equality must remain proof-insensitive") &&
+        expect(
+          !Signed.sameValueAndProofs(signedBy1, signedBy2),
+          "authority equality must reject a substituted proof set"
+        ) &&
+        expect(Signed.sameValueAndProofs(signedBy1, signedBy1), "authority equality must accept the exact signed value")
+  }
+
   test("should succeed when there is no seedlist provided") { res =>
     implicit val (h, sp) = res
 
@@ -179,5 +197,7 @@ object SignedValidatorSuite extends MutableIOSuite with Checkers {
 
   @derive(encoder)
   case class TestObject(value: String)
+
+  implicit val testObjectEq: cats.Eq[TestObject] = cats.Eq.fromUniversalEquals
 
 }

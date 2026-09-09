@@ -16,5 +16,10 @@ trait Download[F[_], S <: Snapshot] {
     */
   def recoveryDownload(implicit hasherSelector: HasherSelector[F]): F[Unit]
 
+  /** Bounded forward-only catch-up for a non-committee follower. The default deliberately delegates to the established recovery path so
+    * layers opt in only when they can preserve their application stores safely.
+    */
+  def followerCatchUp(implicit hasherSelector: HasherSelector[F]): F[Unit] = recoveryDownload
+
   def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[S]]
 }

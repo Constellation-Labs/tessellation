@@ -3,6 +3,7 @@ package io.constellationnetwork.node
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSyncView
 import io.constellationnetwork.ext.kryo._
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
@@ -71,6 +72,19 @@ package object shared {
       classOf[TimeoutCertificate] -> 544,
       classOf[ConsensusPeerTimeoutVote[_]] -> 545,
       TimeoutReason.NoProgress.getClass -> 546,
-      TimeoutReason.QuorumInfeasible.getClass -> 547
+      TimeoutReason.QuorumInfeasible.getClass -> 547,
+      classOf[ProposalValue] -> 548,
+      classOf[CertificationStatement] -> 549,
+      classOf[CertifiedProposalQC] -> 550,
+      classOf[CoreCommitQC] -> 551,
+      classOf[ConsensusPeerOutcomeVote[_]] -> 552,
+      CertificationPurpose.Prepare.getClass -> 553,
+      CertificationPurpose.Commit.getClass -> 554,
+      ConsensusDomain.DagL0.getClass -> 555,
+      // 556 retired before v35 activation with the abandoned Currency L0
+      // certified-consensus domain. Never reuse a historical registration ID.
+      classOf[CertifiedOutcome] -> 557,
+      classOf[TriggerStatement] -> 558,
+      TriggerStatementPurpose.Facility.getClass -> 559
     ).union(sharedKryoRegistrar)
 }

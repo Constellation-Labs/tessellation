@@ -9,9 +9,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.merkletree.Proof
+import io.constellationnetwork.schema.GlobalSnapshotInfo._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, PendingDelegatedStakeWithdrawal}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.MptStore
 import io.constellationnetwork.schema.mpt.PartitionNamespace.AddressNamespace
 import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralRecord, PendingNodeCollateralWithdrawal}
@@ -51,7 +53,9 @@ object GlobalStateConverter {
     activeNodeCollaterals: SortedMap[Address, SortedSet[NodeCollateralRecord]] = SortedMap.empty,
     nodeCollateralWithdrawals: SortedMap[Address, SortedSet[PendingNodeCollateralWithdrawal]] = SortedMap.empty,
     metagraphSyncData: SortedMap[Address, MetagraphSyncDataInfo] = SortedMap.empty,
+    retiredAllowSpendRefs: SortedMap[Option[Address], SortedMap[Address, SortedMap[Hash, EpochProgress]]] = SortedMap.empty,
     removedAllowSpendKeys: Set[(Option[Address], Address)] = Set.empty,
+    removedRetiredAllowSpendRefKeys: Set[(Option[Address], Address)] = Set.empty,
     removedTokenLockKeys: Set[Address] = Set.empty,
     removedTokenLockBalanceKeys: Set[Address] = Set.empty,
     removedDelegatedStakeKeys: Set[Address] = Set.empty,
@@ -132,6 +136,23 @@ object GlobalStateConverter {
       .getOrElse(Map.empty)
       .pure[F]
 
+  /** Same key shape as `convertActiveAllowSpends`: the retired-reference ledger is keyed by currency and then by the address the
+    * allow-spend belongs to, so an address's whole ledger is one MPT value.
+    */
+  private def convertRetiredAllowSpendRefs[F[_]: Sync](
+    dataOpt: Option[SortedMap[Option[Address], SortedMap[Address, SortedMap[Hash, EpochProgress]]]]
+  ): F[Map[GlobalStateKey, Json]] =
+    dataOpt
+      .map(_.toSeq.flatMap {
+        case (optAddr, innerMap) =>
+          innerMap.toSeq.map {
+            case (addr, refs) =>
+              GlobalStateKey.hypergraph(GlobalStateFieldId.RetiredAllowSpendRefs, optAddr, addr) -> refs.asJson
+          }
+      }.toMap)
+      .getOrElse(Map.empty)
+      .pure[F]
+
   private def convertTokenLockBalances[F[_]: Sync](
     dataOpt: Option[SortedMap[Address, SortedMap[Address, Balance]]]
   ): F[Map[GlobalStateKey, Json]] =
@@ -190,9 +211,10 @@ object GlobalStateConverter {
       convertOptionalHypergraph(
         if (acc.metagraphSyncData.nonEmpty) acc.metagraphSyncData.some else none,
         GlobalStateFieldId.MetagraphSyncData
-      )
-    ).parMapN { (m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15) =>
-      m1 ++ m2 ++ m3 ++ m4 ++ m5 ++ m6 ++ m7 ++ m8 ++ m9 ++ m10 ++ m11 ++ m12 ++ m13 ++ m14 ++ m15
+      ),
+      convertRetiredAllowSpendRefs(if (acc.retiredAllowSpendRefs.nonEmpty) acc.retiredAllowSpendRefs.some else none)
+    ).parMapN { (m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15, m16) =>
+      m1 ++ m2 ++ m3 ++ m4 ++ m5 ++ m6 ++ m7 ++ m8 ++ m9 ++ m10 ++ m11 ++ m12 ++ m13 ++ m14 ++ m15 ++ m16
     }
 
   def toAllStateKeyValuePairs[F[_]: Async: Parallel: Hasher: JsonSerializer](
@@ -215,10 +237,11 @@ object GlobalStateConverter {
       convertOptionalHypergraph(info.delegatedStakesWithdrawals, GlobalStateFieldId.DelegatedStakesWithdrawals),
       convertOptionalHypergraph(info.activeNodeCollaterals, GlobalStateFieldId.ActiveNodeCollaterals),
       convertOptionalHypergraph(info.nodeCollateralWithdrawals, GlobalStateFieldId.NodeCollateralWithdrawals),
-      convertOptionalHypergraph(info.metagraphSyncData, GlobalStateFieldId.MetagraphSyncData)
-    ).parMapN { (m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15) =>
+      convertOptionalHypergraph(info.metagraphSyncData, GlobalStateFieldId.MetagraphSyncData),
+      convertRetiredAllowSpendRefs(info.retiredAllowSpendRefs)
+    ).parMapN { (m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15, m16) =>
       // Merge all maps - O(n) instead of O(n log n) foldLeft
-      val allMaps = List(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15)
+      val allMaps = List(m1, m2, m3, m4, m5, m6, m7, m8, m9, m10, m11, m12, m13, m14, m15, m16)
       val expectedSize = allMaps.map(_.size).sum
       val merged = allMaps.foldLeft(Map.empty[GlobalStateKey, Json])(_ ++ _)
 
@@ -392,6 +415,10 @@ object GlobalStateConverter {
             case (metagraphIdOpt, address) =>
               GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveAllowSpends, metagraphIdOpt, address)
           }
+          val retiredAllowSpendRefKeys = acc.removedRetiredAllowSpendRefKeys.map {
+            case (metagraphIdOpt, address) =>
+              GlobalStateKey.hypergraph(GlobalStateFieldId.RetiredAllowSpendRefs, metagraphIdOpt, address)
+          }
           val tokenLockKeys = acc.removedTokenLockKeys.map { address =>
             GlobalStateKey.hypergraph(GlobalStateFieldId.ActiveTokenLocks, address)
           }
@@ -410,7 +437,7 @@ object GlobalStateConverter {
           val nodeCollateralWithdrawalKeys = acc.removedNodeCollateralWithdrawalKeys.map { address =>
             GlobalStateKey.hypergraph(GlobalStateFieldId.NodeCollateralWithdrawals, address)
           }
-          allowSpendKeys ++ tokenLockKeys ++ tokenLockBalanceKeys ++
+          allowSpendKeys ++ retiredAllowSpendRefKeys ++ tokenLockKeys ++ tokenLockBalanceKeys ++
             delegatedStakeKeys ++ delegatedStakeWithdrawalKeys ++
             nodeCollateralKeys ++ nodeCollateralWithdrawalKeys
         }

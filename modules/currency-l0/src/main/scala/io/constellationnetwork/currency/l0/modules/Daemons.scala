@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotEventsPublisherDaemon
 import io.constellationnetwork.currency.schema.CurrencyStateKey
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
@@ -35,6 +36,7 @@ object Daemons {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     eventGossipDaemon: EventGossipDaemon[F, CurrencySnapshotEvent, CurrencyStateKey],
     config: AppConfig,
+    effectiveConsensusConfig: ConsensusConfig,
     hasherSelector: HasherSelector[F],
     // SharedServices-owned state-entry timestamp Ref. NodeStateDaemon refreshes it on each
     // transition; Cluster.leave()'s dwell-time guard reads it.
@@ -63,7 +65,7 @@ object Daemons {
         eventGossipDaemon,
         services.consensus.triggerEventConsensus,
         services.consensus.storage.getLastConsensusOutcome.map(_.fold(0)(_.facilitators.value.size)),
-        config.snapshot.consensus
+        effectiveConsensusConfig
       ),
       Daemon.spawn(eventGossipDaemon.start),
       CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster)

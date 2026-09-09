@@ -17,6 +17,7 @@ import org.http4s.client.Client
   * Provides methods to:
   *   - Push events to peers
   *   - Get IHAVE announcements from peers
+  *   - Get chain-tip-only readiness metadata
   *   - Request events via IWANT
   *
   * @tparam Event
@@ -39,6 +40,18 @@ trait EventGossipClient[F[_], Event] {
     *   Set of event hashes the peer has
     */
   def getIHave: PeerResponse[F, IHave]
+
+  /** Check exactly the requested hashes, independent of the peer's bounded periodic IHAVE snapshot. Used by consensus availability
+    * barriers.
+    */
+  def getIHaveFor(request: IWantRequest): PeerResponse[F, IHave]
+
+  /** Get only the peer's current chain tip.
+    *
+    * This reuses the chain-tip payload already carried by [[IHave]] without serializing the potentially large event-hash set. It is
+    * intended for bounded readiness/recovery probes.
+    */
+  def getChainTip: PeerResponse[F, Option[ChainTip]]
 
   /** Request events by hash from a peer.
     *
@@ -65,6 +78,14 @@ object EventGossipClient {
 
       override def getIHave: PeerResponse[F, IHave] =
         PeerResponse[F, IHave]("events/ihave")(client, session)
+
+      override def getIHaveFor(request: IWantRequest): PeerResponse[F, IHave] =
+        PeerResponse[F, F, IHave]("events/ihave", POST)(client, session) { (req, c) =>
+          c.expect[IHave](req.withEntity(request))
+        }
+
+      override def getChainTip: PeerResponse[F, Option[ChainTip]] =
+        PeerResponse[F, Option[ChainTip]]("events/chain-tip")(client, session)
 
       override def requestEvents(iwant: IWantRequest): PeerResponse[F, IWantResponse[Event]] =
         PeerResponse[F, F, IWantResponse[Event]]("events/iwant", POST)(client, session) { (req, c) =>

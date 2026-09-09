@@ -51,6 +51,9 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
   echo "  fork-recovery            Fork recovery test (needs --num-gl0=5)"
+  echo "  committee-rewards        Full-committee delegated reward split"
+  echo "                           (needs --num-gl0=5 --num-gl0-early=3;"
+  echo "                            --gl0-late-delay=<seconds>, default 240, tunes the join stagger)"
   echo "  token-lock-replacement   Token lock replacement edge case tests"
   echo "  snapshot-streaming       Snapshot streaming indexer E2E test"
   echo ""
@@ -61,10 +64,11 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  allow-spends             Allow-spend tests"
   echo "  spend                    Spend transaction tests"
   echo "  data-without-fee         Data transaction tests (without fee, requires CI_PRIVATE_KEY)"
-  echo "  data-with-fee            Data transaction tests (with fee, requires CI_PRIVATE_KEY)"
+  echo "  data-with-fee            Data transaction tests (with fee)"
   echo ""
   echo "Usage: just test --test=dag-cluster --test=delegated-staking"
   echo "       just test --test=dag-cluster,rewards    (comma-separated)"
+  echo "       just test --skip-streaming              (run everything except the snapshot-streaming build+test)"
   exit 0
 fi
 
@@ -87,8 +91,17 @@ if [ -n "$SELECTED_TESTS" ] && [ -n "$METAGRAPH" ]; then
   fi
 fi
 
+# Whether to build + run the snapshot-streaming test. Skipped entirely when --skip-streaming is set
+# (avoids the heavyweight ss build + GitHub Packages auth for local metagraph iteration); otherwise
+# runs when no specific tests are selected or snapshot-streaming is among them.
+streaming_enabled() {
+  [ "$SKIP_STREAMING" = "true" ] && return 1
+  [ -z "$SELECTED_TESTS" ] && return 0
+  echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"
+}
+
 # snapshot-streaming build-from-source needs sdk/publishLocal
-if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+if streaming_enabled; then
   export PUBLISH=${PUBLISH:-true}
 fi
 
@@ -151,7 +164,7 @@ else
 
 
   # Build snapshot-streaming JAR (needed before BUILD_ONLY exit so `just build` produces it)
-  if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+  if streaming_enabled; then
     SS_DIR="$PROJECT_ROOT/docker/snapshot-streaming"
     source "$SS_DIR/build-snapshot-streaming.sh"
     cd "$PROJECT_ROOT"
@@ -344,7 +357,7 @@ else
 
 
   # --- Snapshot-streaming infrastructure ---
-  if [ -z "$SELECTED_TESTS" ] || echo "$SELECTED_TESTS" | tr ',' '\n' | grep -qx "snapshot-streaming"; then
+  if streaming_enabled; then
     echo "================================================"
     echo "Setting up snapshot-streaming infrastructure"
     echo "================================================"
@@ -366,10 +379,15 @@ else
     echo "Starting snapshot-streaming-postgres..."
     docker compose -f "$SS_DIR/docker-compose.yaml" up -d snapshot-streaming-postgres
 
-    # Wait for postgres healthy
+    # Wait for postgres healthy.
+    # Postgres' docker entrypoint starts a temporary unix-socket-only server during
+    # init, then shuts it down, then starts the real server listening on TCP.
+    # `pg_isready` (unix socket) and psql queries will both succeed against the
+    # init-phase server, then race with the shutdown window. Probe TCP instead —
+    # TCP is only enabled after init is fully complete.
     echo "Waiting for snapshot-streaming-postgres to be healthy..."
     for attempt in $(seq 1 60); do
-      if docker exec snapshot-streaming-postgres pg_isready -U snapshot_streaming >/dev/null 2>&1; then
+      if docker exec snapshot-streaming-postgres pg_isready -h 127.0.0.1 -U snapshot_streaming >/dev/null 2>&1; then
         echo "snapshot-streaming-postgres is ready"
         break
       fi
@@ -491,7 +509,7 @@ echo "------------------------------------------------"
 # Install dependencies
 cd $PROJECT_ROOT/.github/action_scripts
 echo "Installing Node.js dependencies..."
-npm i @stardust-collective/dag4 js-sha256 axios brotli zod elliptic
+npm ci
 
 if [ -z "$REMOTE_HOST" ] || [ "$REMOTE_HOST" = "http://localhost" ]; then
   sleep 10
@@ -504,11 +522,17 @@ verify_healthy
 show_time "Cluster became healthy"
 
 # ------------------------------------------------
-# Start background transaction sender (keeps EventTrigger flowing)
+# Start background transaction sender (keeps EventTrigger flowing for DAG/fork-recovery tests)
 # ------------------------------------------------
 TX_SENDER_JAR="$PROJECT_ROOT/docker/jars/tools.jar"
 TX_SENDER_CONF="$PROJECT_ROOT/docker/config/tx-sender.conf"
-if [ -f "$TX_SENDER_JAR" ] && [ -f "$TX_SENDER_CONF" ]; then
+# Metagraph suites submit their own traffic and some intentionally run for many TimeTrigger rounds.
+# Running the unrelated steady sender there lets its L1 parent chain advance faster than GL0 drains
+# it under new-intent batching, eventually tripping maxParentOrdinalGap and starving the suite's
+# own DAG transactions. Keep the sender scoped to the DAG tests it was introduced to exercise.
+if [ "${needs_metagraph:-false}" = "true" ]; then
+  echo "Skipping background tx-sender (selected metagraph tests provide their own traffic)"
+elif [ -f "$TX_SENDER_JAR" ] && [ -f "$TX_SENDER_CONF" ]; then
   echo "Starting background transaction sender..."
   docker rm -f tx-sender 2>/dev/null || true
   docker run -d --name tx-sender \
@@ -563,7 +587,37 @@ if should_run_test "fork-recovery"; then
   show_time "Fork recovery test completed"
 fi
 
-if should_run_test "snapshot-streaming"; then
+if should_run_test "committee-rewards"; then
+  echo "================================================"
+  echo "Running committee rewards test"
+  echo "================================================"
+  # This test needs a committee that mixes a promote-qualified peer with a chronic, non-promotable
+  # one -- the only state where the removed payout filter and current behavior differ. The
+  # staggered-join rig produces that reliably by keeping the committee churning: late joiners are
+  # admitted, are recorded as non-responders (their Facility reaches the leader late, so they never
+  # enter completedSigners and never gain score), go chronic, get dropped, and are re-admitted.
+  # NOTE the mechanism is churn, not a late joiner "climbing" to Core -- on a loaded box a late
+  # joiner's score never rises. See reference_completedsigners_is_responders.
+  #   just test --test=committee-rewards --num-gl0=5 --num-gl0-early=3
+  # A bare `just test` runs every registered test, so on a default 3-node run without the rig we
+  # skip rather than burn the retry budget and fail. When the test was asked for BY NAME the rig is
+  # a hard requirement and a missing one is an error, not a skip.
+  if [ "${NUM_GL0_NODES:-0}" -lt 5 ] || [ -z "${NUM_GL0_EARLY:-}" ] || [ "${NUM_GL0_EARLY}" -ge "${NUM_GL0_NODES:-0}" ]; then
+    msg="committee-rewards needs --num-gl0=5 --num-gl0-early=3 (got num-gl0=${NUM_GL0_NODES:-unset}, num-gl0-early=${NUM_GL0_EARLY:-unset})"
+    if [ -n "$SELECTED_TESTS" ]; then
+      echo "ERROR: $msg"
+      exit 1
+    fi
+    echo "SKIPPING: $msg"
+  else
+    cd $PROJECT_ROOT/.github/action_scripts
+    NUM_GL0_NODES=$NUM_GL0_NODES NUM_GL0_EARLY=$NUM_GL0_EARLY \
+      node committee_rewards.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX
+    show_time "Committee rewards test completed"
+  fi
+fi
+
+if streaming_enabled; then
   echo "================================================"
   echo "Running snapshot-streaming E2E test"
   echo "================================================"
@@ -574,17 +628,32 @@ if should_run_test "snapshot-streaming"; then
   docker rm -f tx-sender 2>/dev/null || true
   cd $PROJECT_ROOT
 
+  # Determine how to query postgres: local docker exec or remote SSH
+  if [ -n "$REMOTE_NODES" ]; then
+    IFS=',' read -ra _SS_NODES <<< "$REMOTE_NODES"
+    if [ "${#_SS_NODES[@]}" -ge 4 ]; then
+      SS_TEST_NODE="${_SS_NODES[3]}"
+      ss_psql() { ssh "$SS_TEST_NODE" "docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming $(printf '%q ' "$@")" 2>/dev/null; }
+      ss_logs() { ssh "$SS_TEST_NODE" "docker logs snapshot-streaming 2>&1 | tail -100"; }
+      echo "Testing snapshot-streaming on remote node: $SS_TEST_NODE"
+    else
+      ss_psql() { docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming "$@" 2>/dev/null; }
+      ss_logs() { docker logs snapshot-streaming 2>&1 | tail -100 || true; }
+    fi
+  else
+    ss_psql() { docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming "$@" 2>/dev/null; }
+    ss_logs() { docker logs snapshot-streaming 2>&1 | tail -100 || true; }
+  fi
+
   ss_test_passed=false
   echo "Waiting for snapshot-streaming to index snapshots..."
   for attempt in $(seq 1 120); do
-    count=$(docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -t -A -c \
-      "SELECT COUNT(*) FROM global_snapshots;" 2>/dev/null || echo "0")
+    count=$(ss_psql -t -A -c "SELECT COUNT(*) FROM global_snapshots;" || echo "0")
     count=$(echo "$count" | tr -d '[:space:]')
 
     if [ "$count" -ge 3 ]; then
       echo "snapshot-streaming indexed $count global snapshots"
-      max_ordinal=$(docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -t -A -c \
-        "SELECT MAX(ordinal) FROM global_snapshots;" 2>/dev/null || echo "0")
+      max_ordinal=$(ss_psql -t -A -c "SELECT MAX(ordinal) FROM global_snapshots;" || echo "0")
       max_ordinal=$(echo "$max_ordinal" | tr -d '[:space:]')
       echo "Max ordinal: $max_ordinal"
       if [ "$max_ordinal" -gt 0 ]; then
@@ -604,9 +673,9 @@ if should_run_test "snapshot-streaming"; then
   else
     echo "snapshot-streaming E2E test FAILED"
     echo "--- snapshot-streaming logs ---"
-    docker logs snapshot-streaming 2>&1 | tail -100 || true
+    ss_logs
     echo "--- postgres tables ---"
-    docker exec snapshot-streaming-postgres psql -U snapshot_streaming -d snapshot_streaming -c '\dt' || true
+    ss_psql -c '\dt' || true
     exit 1
   fi
   show_time "Snapshot-streaming E2E test completed"
@@ -617,6 +686,9 @@ fi
 # ------------------------------------------------
 
 if [ -n "$METAGRAPH" ]; then
+  # An unfiltered `just test` starts the sender for the DAG tests above. Do not carry that
+  # unrelated, unbounded source chain into the longer metagraph suites.
+  docker rm -f tx-sender 2>/dev/null || true
 
   if should_run_test "currency"; then
     echo "================================================"
@@ -670,28 +742,28 @@ if [ -n "$METAGRAPH" ]; then
     show_time "Spend transaction tests completed"
   fi
 
-  if [ -n "$CI_PRIVATE_KEY" ]; then
-    if should_run_test "data-without-fee"; then
+  if should_run_test "data-without-fee"; then
+    if [ -n "$CI_PRIVATE_KEY" ]; then
       echo "================================================"
       echo "Running data transaction tests (without fee)"
       echo "================================================"
       cd $PROJECT_ROOT/.github/action_scripts
       node send_transactions/data-without-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX $CI_PRIVATE_KEY
       show_time "Data transaction tests (without fee) completed"
+    else
+      echo "================================================"
+      echo "Skipping data transaction tests without fee (CI_PRIVATE_KEY not set)"
+      echo "================================================"
     fi
+  fi
 
-    if should_run_test "data-with-fee"; then
-      echo "================================================"
-      echo "Running data transaction tests (with fee)"
-      echo "================================================"
-      cd $PROJECT_ROOT/.github/action_scripts
-      node send_transactions/data-with-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX $CI_PRIVATE_KEY
-      show_time "Data transaction tests (with fee) completed"
-    fi
-  else
+  if should_run_test "data-with-fee"; then
     echo "================================================"
-    echo "Skipping data transaction tests (CI_PRIVATE_KEY not set)"
+    echo "Running data transaction tests (with fee)"
     echo "================================================"
+    cd $PROJECT_ROOT/.github/action_scripts
+    node send_transactions/data-with-fee.js $DAG_L0_PORT_PREFIX $DAG_L1_PORT_PREFIX $ML0_PORT_PREFIX $CL1_PORT_PREFIX $DL1_PORT_PREFIX
+    show_time "Data transaction tests (with fee) completed"
   fi
 
 else
@@ -705,7 +777,4 @@ echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
-
-
-
 

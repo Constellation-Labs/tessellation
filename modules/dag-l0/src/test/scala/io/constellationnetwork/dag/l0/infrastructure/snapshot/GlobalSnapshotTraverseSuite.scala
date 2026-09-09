@@ -339,7 +339,19 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+        FieldsAddedOrdinals(
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map.empty,
+          Map(Dev -> SnapshotOrdinal.MinValue)
+        ),
         Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
@@ -363,7 +375,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             validationErrorStorage
           )
       currencySnapshotValidator = CurrencySnapshotValidator
-        .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
+        .make[IO](currencySnapshotCreator, validators.signedValidator, None, None, SnapshotOrdinal.MinValue)
 
       mptProducer <- InMemoryMerklePatriciaProducer.make[IO]()
       mptStore <- MptStore.make[IO, GlobalStateKey](
@@ -381,7 +393,20 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           currencySnapshotContextFns,
           feeCalculator,
           mptStore,
-          SnapshotOrdinal.MinValue
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
+          Dev
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
@@ -395,7 +420,19 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty, Map.empty),
+          FieldsAddedOrdinals(
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map.empty,
+            Map(Dev -> SnapshotOrdinal.MinValue)
+          ),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           blockAcceptanceManager,
@@ -420,6 +457,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         SnapshotOrdinal.MinValue,
         SnapshotOrdinal.MinValue,
         mptStore,
+        SnapshotOrdinal.MinValue,
         SnapshotOrdinal.MinValue
       )
       lastNSnapshotStorage =

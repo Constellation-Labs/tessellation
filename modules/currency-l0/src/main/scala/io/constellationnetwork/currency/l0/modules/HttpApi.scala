@@ -9,14 +9,14 @@ import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes._
-import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutcome
-import io.constellationnetwork.currency.l0.snapshot.{CurrencySnapshotKey, DataTransactionCodecs}
+import io.constellationnetwork.currency.l0.snapshot.DataTransactionCodecs
+import io.constellationnetwork.currency.l0.snapshot.synchronous.CurrencyConsensusHttpRoutes
 import io.constellationnetwork.currency.schema.CurrencyStateKey
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
 import io.constellationnetwork.kernel._
-import io.constellationnetwork.node.shared.config.types.{HttpConfig, RouteRateLimiterConfig, SharedConfig}
+import io.constellationnetwork.node.shared.config.types.{HttpConfig, SharedConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes.{EventGossipRoutes, _}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.ChainTip
@@ -113,8 +113,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   queues: Queues[F],
   sharedConfig: SharedConfig,
   snapshotRoutes: SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  getLocalChainTip: Option[F[Option[ChainTip]]] = None,
-  maybeMarkSeen: Option[Hash => F[Unit]] = None
+  getLocalChainTip: Option[F[Option[ChainTip]]],
+  maybeMarkSeen: Option[Hash => F[Unit]]
 ) {
 
   private val clusterRoutes =
@@ -168,20 +168,13 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
 
   private val consensusInfoRoutes =
-    HasherSelector[F].withCurrent { implicit hasher =>
-      new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](
-        services.cluster,
-        services.consensus.storage,
-        selfId,
-        services.consensus.healthRef
-      )
-    }
+    new CurrencyConsensusHttpRoutes.Info[F](services.cluster, services.consensus.storage, selfId)
 
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
-  private val debugRoutes = DebugRoutes[F](
+  private val debugRoutes = new CurrencyConsensusHttpRoutes.Debug[F](
     storages.cluster,
-    services.consensus,
+    services.consensus.storage,
     services.gossip,
     services.session
   ).publicRoutes

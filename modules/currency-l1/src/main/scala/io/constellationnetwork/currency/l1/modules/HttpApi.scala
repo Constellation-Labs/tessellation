@@ -125,7 +125,8 @@ sealed abstract class HttpApi[
         da,
         queues.dataTransactions,
         sharedStorages.lastGlobalSnapshot,
-        storages.lastSnapshot
+        storages.lastSnapshot,
+        sharedConfig.fieldsAddedOrdinals.feeTransactionSecurityFor(sharedConfig.environment)
       )
     }
   }

@@ -34,6 +34,7 @@ case class GlobalSnapshotStateProofV1(
       None,
       None,
       None,
+      None,
       None
     )
 }
@@ -70,6 +71,7 @@ case class GlobalSnapshotStateProof(
   nodeCollateralWithdrawals: Option[Hash],
   priceState: Option[Hash],
   lastGlobalSnapshotsWithCurrency: Option[Hash],
+  retiredAllowSpendRefs: Option[Hash],
   mptRoot: Option[Hash]
 ) extends StateProof
 
@@ -92,10 +94,11 @@ object GlobalSnapshotStateProof {
       Option[Hash],
       Option[Hash],
       Option[Hash],
+      Option[Hash],
       Option[Hash]
     )
   ) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17) =>
-      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17)
+    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18) =>
+      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15, x16, x17, x18)
   }
 }

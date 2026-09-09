@@ -13,7 +13,7 @@ services:
       - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./clickhouse/enable_json.xml:/etc/clickhouse-server/users.d/enable_json.xml:ro
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --password $${CLICKHOUSE_PASSWORD:-clickhouse} --query 'SELECT 1'"]
+      test: ["CMD-SHELL", "clickhouse-client --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -30,7 +30,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yaml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=24h'
+      - '--storage.tsdb.retention.time=0'
       - '--web.listen-address=:9090'
 
   grafana:

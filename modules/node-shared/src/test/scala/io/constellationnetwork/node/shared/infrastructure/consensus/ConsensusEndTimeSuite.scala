@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import scala.concurrent.duration._
+
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.Candidates
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -137,5 +139,50 @@ object ConsensusEndTimeSuite extends SimpleIOSuite {
     val original = ConsensusEndTime.compute(List(a, b, c), parentEndTime = None)
     val shuffled = ConsensusEndTime.compute(List(c, a, b), parentEndTime = None)
     expect.same(original, shuffled).and(expect.same(Some(300L), original))
+  }
+
+  pureTest("v35 leader-proposed time is validated only against signed parent time and deterministic bounds") {
+    val result = ConsensusEndTime.validateProposed(
+      proposed = Some(1200L),
+      parentEndTime = Some(1000L),
+      committedView = 0L,
+      viewInterval = 10.seconds,
+      maxRoundDuration = Some(1.second)
+    )
+
+    expect.same(Right(()), result)
+  }
+
+  pureTest("v35 rejects a non-monotonic or above-bound leader-proposed time") {
+    val nonMonotonic = ConsensusEndTime.validateProposed(
+      proposed = Some(1000L),
+      parentEndTime = Some(1000L),
+      committedView = 0L,
+      viewInterval = 1.second,
+      maxRoundDuration = Some(1.second)
+    )
+    val aboveBound = ConsensusEndTime.validateProposed(
+      proposed = Some(2001L),
+      parentEndTime = Some(1000L),
+      committedView = 0L,
+      viewInterval = 1.second,
+      maxRoundDuration = Some(1.second)
+    )
+
+    expect
+      .same(Left("consensus_end_time_not_monotonic"), nonMonotonic)
+      .and(expect.same(Left("consensus_end_time_above_view_bound"), aboveBound))
+  }
+
+  pureTest("v35 committed views expand the deterministic end-time allowance") {
+    val result = ConsensusEndTime.validateProposed(
+      proposed = Some(3000L),
+      parentEndTime = Some(1000L),
+      committedView = 1L,
+      viewInterval = 1.second,
+      maxRoundDuration = Some(1.second)
+    )
+
+    expect.same(Right(()), result)
   }
 }

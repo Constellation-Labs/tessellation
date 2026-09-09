@@ -56,6 +56,21 @@ object RumorStorage {
   case object CounterTooLow extends AddResult
   case object GenerationTooLow extends AddResult
 
+  /** The origin's chain was restarted from the incoming rumor because the gap ahead of our head was provably unclosable. Treated as success
+    * by the daemon (the rumor is consumed), but reported distinctly so it can be logged: it means we permanently dropped a range of that
+    * peer's rumors.
+    */
+  case object ChainRestarted extends AddResult
+
+  /** True when `incoming` is so far ahead of our chain head that the intervening rumors cannot still exist anywhere.
+    *
+    * Every node retains at most `capacity` rumors per origin (`peerRumorsCapacity`), so once the gap exceeds that, even the origin itself
+    * has evicted counter `head + 1` and `peerRound`'s `PeerRumorInquiryRequest` can never make the chain consecutive again. Strictly
+    * greater-than, so a gap of exactly `capacity` -- still closable, the origin holds that range -- keeps waiting for the inquiry.
+    */
+  def isGapUnclosable(head: Counter, incoming: Counter, capacity: PosLong): Boolean =
+    incoming.value.value - head.value.value > capacity.value
+
   case class NonEmptyChainWrapper[A](chain: NonEmptyChain[A], size: PosLong)
 
   object NonEmptyChainWrapper {
@@ -175,6 +190,21 @@ object RumorStorage {
                   )
                 else if (headCounter.next > rumorCounter)
                   (wrapper, (CounterTooLow, unit))
+                else if (RumorStorage.isGapUnclosable(headCounter, rumorCounter, cfg.peerRumorsCapacity))
+                  // The missing range is wider than any node retains (peerRumorsCapacity per origin),
+                  // so peerRound's inquiry can never fetch counter head+1 from anyone -- the chain
+                  // would stay non-consecutive forever and EVERY subsequent rumor from this origin
+                  // would be silently dropped, including its NodeState and consensus declarations.
+                  // Observed as a permanent mute: a peer isolated longer than its own rumor buffer
+                  // returns, is still seated by consensus (committees derive from peerHistory, not
+                  // from gossip reachability), gets elected leader, and the chain wedges because no
+                  // follower can hear it. Restart the chain from this rumor instead. Safety is
+                  // unaffected -- rumors are signature-validated independently of chain position,
+                  // and the bound cannot be reached by transient reordering.
+                  (
+                    NonEmptyChainWrapper.one(rumor),
+                    (ChainRestarted, lastOrdinalsR.update(_.updated(rumor.origin, rumor.ordinal)))
+                  )
                 else
                   (wrapper, (CounterTooHigh, unit))
               else if (headGen < rumorGen)

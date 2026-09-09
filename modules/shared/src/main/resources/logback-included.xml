@@ -200,7 +200,7 @@
         <appender-ref ref="APP_JSON" />
     </root>
 
-    <logger name="io.constellationnetwork" level="DEBUG" />
+    <logger name="io.constellationnetwork" level="INFO" />
     <logger name="io.constellationnetwork.httpsigner" level="INFO" additivity="false" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />

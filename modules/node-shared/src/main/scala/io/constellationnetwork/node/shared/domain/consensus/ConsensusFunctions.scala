@@ -4,6 +4,7 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.schema.consensus.CertifiedLineageEvidenceV1
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{ConsensusOperationalState, GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
@@ -27,7 +28,10 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     artifact: Artifact,
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    // v35: exact leader-carried lineage envelope. Followers must pass the
+    // already-verified artifact field rather than reconstructing a local proof envelope.
+    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
@@ -39,7 +43,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     events: Set[Event],
     facilitators: Set[PeerId],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
-    peerHistory: Option[ConsensusOperationalState] = None
+    peerHistory: Option[ConsensusOperationalState] = None,
+    certifiedLineage: Option[CertifiedLineageEvidenceV1] = None
   )(implicit hasher: Hasher[F]): F[(Artifact, Context, Set[Event])]
 }
 

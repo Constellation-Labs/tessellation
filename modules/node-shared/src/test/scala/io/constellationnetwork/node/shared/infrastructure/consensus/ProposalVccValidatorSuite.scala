@@ -42,6 +42,7 @@ object ProposalVccValidatorSuite extends FunSuite {
   private val signerB = "bb" * 32
   private val signerC = "cc" * 32
   private val outOfPoolSigner = "dd" * 32
+  private val secondOutOfPoolSigner = "ee" * 32
   private val poolABC: Set[PeerId] = Set(signerPid(signerA), signerPid(signerB), signerPid(signerC))
 
   // Default config knobs -- match the production defaults so the suite reads as integration-relevant.
@@ -137,7 +138,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view3_proposal_missing_view_cert")),
+      result == Left(ProposalRejection("view3_proposal_missing_view_cert", ProposalRejection.Kind.MissingViewCert)),
       s"post-seed no-cert must be rejected, got $result"
     )
   }
@@ -164,7 +165,7 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(
-      result == Left(ProposalRejection("view1_proposal_missing_view_cert")),
+      result == Left(ProposalRejection("view1_proposal_missing_view_cert", ProposalRejection.Kind.MissingViewCert)),
       s"view-1 no-cert at initialView=0 must be rejected, got $result"
     )
   }
@@ -199,7 +200,8 @@ object ProposalVccValidatorSuite extends FunSuite {
       quorumThresholdFraction = quorum,
       minParticipationObservations = minObs
     )
-    val expected = ProposalRejection("vcc_view_mismatch vccFromView=0 vccToView=1 proposalView=2")
+    val expected =
+      ProposalRejection("vcc_view_mismatch vccFromView=0 vccToView=1 proposalView=2", ProposalRejection.Kind.VccViewMismatch)
     expect(result == Left(expected), s"stale 0->1 VCC on view-2 proposal must be rejected, got $result")
   }
 
@@ -229,6 +231,74 @@ object ProposalVccValidatorSuite extends FunSuite {
       minParticipationObservations = minObs
     )
     expect(result.isRight, s"matching VCC on view-2 proposal must be accepted, got $result")
+  }
+
+  test("v35 VCC requires the named BFT supermajority drawn only from frozen Core") {
+    val core = poolABC + signerPid(outOfPoolSigner)
+    val fullCommittee = core + signerPid(secondOutOfPoolSigner)
+    val matchingVcc = vcc(
+      fromView = 1L,
+      toView = 2L,
+      votes = NonEmptySet.of(
+        vote(1L, 2L, sigTag = signerA),
+        vote(1L, 2L, sigTag = signerB),
+        vote(1L, 2L, sigTag = signerC)
+      )
+    )
+
+    val result = ProposalVccValidator.validate(
+      proposalView = 2L,
+      proposalHash = proposalHash,
+      proposalVcc = Some(matchingVcc),
+      initialViewNumber = 0,
+      coreSize = core.size,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      eligibleFacilitators = fullCommittee,
+      roundStartFacilitators = fullCommittee,
+      peerQuality = Map.empty,
+      quorumThresholdFraction = 2.0 / 3.0,
+      minParticipationObservations = minObs,
+      certifiedCore = Some(core)
+    )
+
+    expect(result.isRight, s"three frozen-Core voters must satisfy the 3-of-4 v35 quorum, got $result")
+  }
+
+  test("v35 VCC cannot substitute a Tier-1 vote for a missing frozen-Core voter") {
+    val core = poolABC + signerPid(outOfPoolSigner)
+    val tier1 = signerPid(secondOutOfPoolSigner)
+    val fullCommittee = core + tier1
+    val mixedVcc = vcc(
+      fromView = 1L,
+      toView = 2L,
+      votes = NonEmptySet.of(
+        vote(1L, 2L, sigTag = signerA),
+        vote(1L, 2L, sigTag = signerB),
+        vote(1L, 2L, sigTag = secondOutOfPoolSigner)
+      )
+    )
+
+    val result = ProposalVccValidator.validate(
+      proposalView = 2L,
+      proposalHash = proposalHash,
+      proposalVcc = Some(mixedVcc),
+      initialViewNumber = 0,
+      coreSize = core.size,
+      facilitatorsHash = facHash,
+      lastSnapshotHash = lastSnap,
+      eligibleFacilitators = fullCommittee,
+      roundStartFacilitators = fullCommittee,
+      peerQuality = Map.empty,
+      quorumThresholdFraction = 2.0 / 3.0,
+      minParticipationObservations = minObs,
+      certifiedCore = Some(core)
+    )
+
+    expect(
+      result == Left(ProposalRejection("vcc_under_quorum votes=3 required=3")),
+      s"Tier-1 must not count toward the certified pacemaker quorum, got $result"
+    )
   }
 
   test("matching TimeoutCertificate: fromView=1 toView=2 on a view=2 proposal -- accepted") {

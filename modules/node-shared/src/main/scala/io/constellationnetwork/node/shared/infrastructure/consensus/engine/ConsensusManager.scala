@@ -6,7 +6,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
-import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand._
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.ConsensusCommand.{RollbackStartPolicy, _}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.security.signature.Signed
 
@@ -38,7 +38,11 @@ trait ConsensusManager[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
   def registerForConsensus(observationKey: Key): F[Unit]
   def resetForRecovery: F[Unit]
   def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context, isRecovery: Boolean = false): F[Unit]
-  def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome, deferFirstRound: Boolean = false): F[Unit]
+  def startFacilitatingAfterRollback(
+    lastKey: Key,
+    initialOutcome: Outcome,
+    startPolicy: RollbackStartPolicy = RollbackStartPolicy.Immediate
+  ): F[Unit]
   def withdrawFromConsensus: F[Unit]
 }
 
@@ -71,8 +75,12 @@ object ConsensusManager {
         ): F[Unit] =
           queue.offer(InitializeFromDownload(key, lastArtifact, lastContext, isRecovery))
 
-        def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome, deferFirstRound: Boolean = false): F[Unit] =
-          queue.offer(InitializeFromRollback(lastKey, initialOutcome, deferFirstRound))
+        def startFacilitatingAfterRollback(
+          lastKey: Key,
+          initialOutcome: Outcome,
+          startPolicy: RollbackStartPolicy = RollbackStartPolicy.Immediate
+        ): F[Unit] =
+          queue.offer(InitializeFromRollback(lastKey, initialOutcome, startPolicy))
 
         def withdrawFromConsensus: F[Unit] =
           queue.offer(WithdrawFromConsensus)

@@ -54,10 +54,9 @@ object PeerAuthMiddlewareLargeStreamSuite extends SimpleIOSuite {
   }
 
   test("plain latest-combined (non-stream) route does NOT match -- it's the cached small variant") {
-    // `/latest/combined` is the in-memory cached response, served as a single chunk via
-    // `Stream.chunk(fs2.Chunk.array(bytes))` from `CachedCombinedResponse`. The verifier already
-    // tolerates that single allocation; the heap-pressure regression came from the streaming
-    // variant which holds the bytes for the duration of the slow drain.
+    // `/latest/combined` is the in-memory cached response, served as a strict byte-array entity.
+    // The verifier already tolerates that single allocation; the heap-pressure regression came
+    // from the streaming variant which holds the bytes for the duration of the slow drain.
     IO.pure(
       expect(!PeerAuthMiddleware.isLargeStreamRoute(reqAt("/global-snapshots/latest/combined")))
     )

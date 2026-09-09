@@ -113,7 +113,8 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
         nodeCollateralWithdrawals = None,
         priceState = None,
         lastGlobalSnapshotsWithCurrency = None,
-        mptRoot = None
+        mptRoot = None,
+        retiredAllowSpendRefs = None
       ),
       allowSpendBlocks = Some(SortedSet.empty),
       tokenLockBlocks = Some(SortedSet.empty),
@@ -144,7 +145,8 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     for {
@@ -184,7 +186,8 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
         nodeCollateralWithdrawals = None,
         priceState = None,
         lastGlobalSnapshotsWithCurrency = None,
-        mptRoot = None
+        mptRoot = None,
+        retiredAllowSpendRefs = None
       ),
       allowSpendBlocks = Some(SortedSet.empty),
       tokenLockBlocks = Some(SortedSet.empty),
@@ -215,7 +218,8 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     for {
@@ -260,7 +264,8 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
         nodeCollateralWithdrawals = None,
         priceState = None,
         lastGlobalSnapshotsWithCurrency = None,
-        mptRoot = None
+        mptRoot = None,
+        retiredAllowSpendRefs = None
       ),
       allowSpendBlocks = Some(SortedSet.empty),
       tokenLockBlocks = Some(SortedSet.empty),
@@ -291,7 +296,8 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
       activeNodeCollaterals = None,
       nodeCollateralWithdrawals = None,
       priceState = None,
-      metagraphSyncData = None
+      metagraphSyncData = None,
+      retiredAllowSpendRefs = None
     )
 
     for {

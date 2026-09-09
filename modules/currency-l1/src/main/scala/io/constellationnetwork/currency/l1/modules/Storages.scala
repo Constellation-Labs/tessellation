@@ -1,7 +1,7 @@
 package io.constellationnetwork.currency.l1.modules
 
 import cats.effect.kernel.Async
-import cats.effect.std.Random
+import cats.effect.std.{Mutex, Random}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -70,6 +70,7 @@ object Storages {
       allowSpendBlockStorage <- AllowSpendBlockStorage.make[F]
       identifierStorage <- IdentifierStorage.make[F]
       globalL0AlignmentStorage <- GlobalL0AlignmentStorage.make[F]
+      mutationLock <- Mutex[F]
     } yield
       new Storages[F, P, S, SI] {
         val address = addressStorage
@@ -89,6 +90,7 @@ object Storages {
         val tokenLockBlock = tokenLockBlockStorage
         val identifier = identifierStorage
         val globalL0Alignment: GlobalL0AlignmentStorage[F] = globalL0AlignmentStorage
+        val storageMutationLock = mutationLock
       }
 }
 

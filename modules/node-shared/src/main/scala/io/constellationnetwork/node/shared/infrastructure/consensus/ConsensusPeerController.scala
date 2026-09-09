@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
@@ -22,9 +23,9 @@ object ConsensusPeerController {
     criticalPenalty: Int,
     passiveDecay: Int,
     maxExpansionPerRound: Int,
-    // Bounded probation re-entry lane (see ActiveFacilitatorAdmission.fromRecentSigners). Default
-    // 0 keeps the lane inert. Threaded from `ConsensusConfig.activeAdmissionMinProbationReentrySlots`
-    // at the StateCreator construction sites.
+    // Bounded sticky probation lane (see ActiveFacilitatorAdmission.fromRecentSigners). A peer
+    // that signed the latest round keeps competing for a non-Core seat while below retain.
+    // Default 0 keeps the lane inert.
     minProbationReentrySlots: Int = 0,
     // Recent-signer pool lookback depth (see ActiveFacilitatorAdmission.fromRecentSigners). Default
     // is the demotion-hysteresis constant (preserves the pre-change 3-ordinal lookback); threaded
@@ -81,18 +82,75 @@ object ConsensusPeerController {
     observedSelfHealth: SortedMap[PeerId, SelfHealthHint]
   )
 
+  final case class AdmissionSizing(
+    emergencyBypassFloor: Int,
+    targetActiveSize: Int,
+    maxActiveSize: Int
+  )
+
+  object AdmissionSizing {
+
+    /** Resolves the active-admission sizing policy once for both GL0 and currency L0.
+      *
+      * `emergencyBypassFloor` controls only the bootstrap/collapse escape hatch. It is deliberately distinct from the normal Core committee
+      * size and the active-set growth target.
+      */
+    def from(config: ConsensusConfig, coreCommitteeSize: Int, selectedSize: Int): AdmissionSizing =
+      AdmissionSizing(
+        // Floored to 1: a non-positive configured floor would arm the recent-signer gate with an
+        // EMPTY retained pool, sending every candidate through the (non-Core) probation lane and
+        // collapsing the committee to core=0 (the ColdStartRound5ReproSuite crash shape).
+        emergencyBypassFloor = math.max(1, config.activeFacilitatorFloor),
+        targetActiveSize = config.activeFacilitatorTarget.getOrElse(coreCommitteeSize),
+        maxActiveSize = config.activeFacilitatorMax
+          .getOrElse(config.maxFacilitatorCount.map(_.value).getOrElse(selectedSize))
+      )
+  }
+
   final case class AdmissionInput(
     selected: List[PeerId],
     recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
+    latestRoundStartFacilitators: Set[PeerId],
     peerQuality: Map[PeerId, (Int, Int)],
     activeScores: Map[PeerId, Int],
-    minActiveSize: Int,
-    targetActiveSize: Int,
-    maxActiveSize: Int,
+    sizing: AdmissionSizing,
     minParticipationObservations: Int,
     minParticipationRatio: Double,
     config: Config
   )
+
+  /** Separates signing-committee retention from Core eligibility.
+    *
+    * `ActiveFacilitatorAdmission` historically used its score/recent-signer result as the complete signing committee. That made a
+    * classification miss delete a validator seat and its reward eligibility, even though the tiered design already has Tier 1 for peers
+    * that should keep signing without entering the Core liveness denominator.
+    *
+    * A deterministically selected peer keeps its signing lease. Peers outside the controller's Core-eligible result, plus its explicit
+    * probation cohort, are forced to Tier 1 when `CommitteeBuilder` partitions the round. In particular, the controller's chronic-miss
+    * signal is derived from the leader's early Facility responder set, not from canonical snapshot-proof participation; it is therefore a
+    * valid Core/leader classification input but not authority to delete a signing/reward seat. Upstream collateral, withdrawal, penalty,
+    * probation, and certified-eviction rules still decide which peers reach `selected`. Witnesses are still removed by the builder; this
+    * helper does not turn a Witness into a signing peer.
+    */
+  final case class SigningMembership(
+    retained: List[PeerId],
+    nonCore: Set[PeerId]
+  )
+
+  def retainSelectedForSigning(
+    selected: List[PeerId],
+    classification: ActiveFacilitatorAdmission.Result
+  ): SigningMembership = {
+    val retained = selected.distinct
+    val retainedSet = retained.toSet
+    val coreEligible = classification.active.toSet.intersect(retainedSet)
+    val probation = classification.probationAdmitted.toSet.intersect(retainedSet)
+
+    SigningMembership(
+      retained = retained,
+      nonCore = (retainedSet -- coreEligible) ++ probation
+    )
+  }
 
   def advanceScores(
     prior: SortedMap[PeerId, Int],
@@ -131,11 +189,12 @@ object ConsensusPeerController {
     ActiveFacilitatorAdmission.fromRecentSigners(
       selected = input.selected,
       recentSigners = input.recentSigners,
+      latestRoundStartFacilitators = input.latestRoundStartFacilitators,
       peerQuality = input.peerQuality,
       activeScores = input.activeScores,
-      minActiveSize = input.minActiveSize,
-      targetActiveSize = input.targetActiveSize,
-      maxActiveSize = input.maxActiveSize,
+      minActiveSize = input.sizing.emergencyBypassFloor,
+      targetActiveSize = input.sizing.targetActiveSize,
+      maxActiveSize = input.sizing.maxActiveSize,
       minParticipationObservations = input.minParticipationObservations,
       minParticipationRatio = input.minParticipationRatio,
       promoteThreshold = c.promoteThreshold,
@@ -164,6 +223,23 @@ object ConsensusPeerController {
     val admitted = admittedPeers.toList.distinct.sorted.filterNot(parentSet.contains)
 
     parent ++ admitted
+  }
+
+  /** Derive the next-round signing roster across the legacy/v35 boundary.
+    *
+    * Legacy `removedFacilitators` is operational evidence carried beside the roster; rc.7 deliberately does not consume it as a new
+    * membership deletion. Only an eviction inside a certified v35 ProposalValue has N+1 authority. Encoding that distinction as `None`
+    * versus `Some` keeps pre-activation and certified Global L0 on one rule.
+    */
+  def applyNextRoundCertifiedMembership(
+    roundStartFacilitators: List[PeerId],
+    admittedPeers: Iterable[PeerId],
+    certifiedEvictedPeers: Option[Iterable[PeerId]]
+  ): List[PeerId] = {
+    val evicted = certifiedEvictedPeers.fold(Set.empty[PeerId])(_.toSet)
+    val retained = roundStartFacilitators.filterNot(evicted.contains)
+
+    applyCertifiedAdmissions(retained, admittedPeers)
   }
 
   private def selfHealthPenalty(hint: Option[SelfHealthHint], config: Config): Int =

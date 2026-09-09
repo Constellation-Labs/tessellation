@@ -5,11 +5,11 @@
 
 ## Summary
 
-Snapshots are signed. Once an ordinal is finalized, its artifact bytes are fixed forever, and any node that replays history (a fresh sync, a rollback, a cold restart) MUST re-derive byte-identical state or it forks. This makes shipping a fix to deterministic behavior hazardous: the new code path would change the bytes of already-signed history. `FieldsAddedOrdinals` is the primitive that resolves this. It is a record of per-environment **activation ordinals** (`config/types.scala:27-48`): each new or changed deterministic behavior is gated so that history strictly below its ordinal re-derives on the OLD path (byte-identical to what was signed), while at and after the ordinal the new behavior applies. The decision is always `ordinal >= gate`, **never** a branch on `AppEnvironment`. The values are compile-time HOCON literals packaged into the assembly jar, and peers only connect to peers running a matching jar hash, so the jar hash plus the environment is the determinism fence.
+Snapshots are signed. Once an ordinal is finalized, its artifact bytes are fixed forever, and any node that replays history (a fresh sync, a rollback, a cold restart) MUST re-derive byte-identical state or it forks. This makes shipping a fix to deterministic behavior hazardous: the new code path would change the bytes of already-signed history. `FieldsAddedOrdinals` is the primitive that resolves this. It is a record of per-environment **activation ordinals** (`config/types.scala:27-48`): each new or changed deterministic behavior is gated so that history strictly below its ordinal re-derives on the OLD path (byte-identical to what was signed), while at and after the ordinal the new behavior applies. The decision is always `ordinal >= gate`, **never** a branch on `AppEnvironment`. The values are HOCON literals packaged into the assembly jar and have no environment-variable overrides. They must be identical across the cluster and finalized before assembly. Most remain outside `deterministicConfigHash`; the Currency snapshot protocol-v1 gate is explicitly copied into each L0's effective hash because it changes cross-layer artifact derivation. A config fence detects disagreement, but it cannot make a unanimously wrong activation ordinal safe.
 
 ## Mechanism
 
-`FieldsAddedOrdinals` is a flat record of maps, one per gated behavior (`config/types.scala:27-48`):
+`FieldsAddedOrdinals` is a flat record of maps, one per gated behavior (`config/types.scala:27-49`):
 
 ```scala
 case class FieldsAddedOrdinals(
@@ -24,6 +24,10 @@ case class FieldsAddedOrdinals(
   fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
   setSumFix: Map[AppEnvironment, SnapshotOrdinal],
   scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty
 )
 ```
@@ -33,23 +37,54 @@ Each gate is loaded from the `fields-added-ordinals` HOCON block (`application.c
 - A **threshold gate** (`Map[AppEnvironment, SnapshotOrdinal]`): the behavior is gated by `ordinal >= gate`. Absent-environment resolution **fails closed** to `SnapshotOrdinal.MaxValue` (e.g. `scFeeBalanceFromContext.getOrElse(environment, SnapshotOrdinal.MaxValue)` at `GlobalSnapshotConsensus.scala:152` and `SharedServices.scala:195`): the `ordinal >= gate` check never fires, so an unset environment keeps the OLD path rather than silently activating the new one from genesis. Set an env entry to `0` to turn the new path on from genesis (as testnet does), or to a future launch ordinal to switch over at that ordinal. A high placeholder such as `9999999` does the same as the fail-closed default explicitly: it keeps the OLD path live until replaced with the real launch ordinal.
 - An **exact-key gate** (`dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`): the behavior fires only at exactly the keyed ordinal (`dustSweeps.get(env).flatMap(_.get(ordinal))`), once, and never replays.
 
+`feeTransactionSecurity` follows the replay-safe missing-environment default:
+`SnapshotOrdinal.MaxValue`. Missing configuration therefore retains the historical path rather
+than applying stricter validation retroactively to signed history. The shipped configuration
+contains an explicit entry for every environment.
+
 Per-environment activation ordinals differ because the same fix crosses different points of different chains. The behavior itself is identical code on every network; only WHEN it activates is per-environment. Examples from `application.conf:210-293`:
 
 | Gate | mainnet | testnet | integrationnet | dev |
 |------|---------|---------|----------------|-----|
 | `tessellation-3-migration` | 4409045 | 2497000 | 3330000 | 0 |
-| `fixing-allow-spend-and-token-lock-validation` | 5058096 | 9999999 | 9999999 | 0 |
-| `set-sum-fix` | 9999999 | 9999999 | 9999999 | 0 |
-| `sc-fee-balance-from-context` | 9999999 | 3101393 | 9999999 | 0 |
+| `fixing-allow-spend-and-token-lock-validation` | 5058096 | 9999999 | 5880000 | 0 |
+| `set-sum-fix` | 9999999 | 9999999 | 5880000 | 0 |
+| `sc-fee-balance-from-context` | 9999999 | 3101393 | 5880000 | 0 |
+| `sub-trie-roots` | 9999999 | 9999999 | 5880000 | 0 |
+| `delegated-rewards-full-committee` | 9999999 | 9999999 | 5880000 | 0 |
+| `fee-transaction-security` | 9999999 | 9999999 | 5880000 | 0 |
+| `currency-snapshot-protocol-v1` | absent | absent | 5923000 | 0 |
+| `fixing-fee-transaction-balance-overflow` | 6814499 | 3255000 | 5905000 | 0 |
+| `fixing-data-application-fee-validation` | 6818000 | 9999999 | 5923000 | 0 |
+| `fixing-allow-spend-destination-credit` | 6818000 | 9999999 | 5923000 | 0 |
+| `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 5923000 | 0 |
+| `fixing-global-allow-spend-expiration` | 6828500 | 9999999 | 5923000 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder: the chain has not reached it, so the OLD path is still live on that environment. A `0` entry means the new path is active from genesis on that environment. An absent environment (no map entry) means the behavior never activates there.
+
+## Reward gates: three values with different jobs
+
+Reward-path diagnosis requires an ordinal gate and an epoch gate. They must not be
+conflated with the later delegated-stake record gate:
+
+| Value | IntegrationNet | Comparison | Effect |
+|---|---:|---|---|
+| `fields-added-ordinals.tessellation-3-migration` | 3,330,000 | `ordinal >= gate` | Allows `DelegateRewardsInput` and the delegated snapshot fields |
+| Delegated emission `asOfEpoch` | 751,085 | `epochProgress >= asOfEpoch` | Completes the classic-to-delegated reward switch |
+| `fields-added-ordinals.delegated-rewards-full-committee` | 5,880,000 | `ordinal >= gate` | Switches delegated recipients from historical evidence filtering to every Core + Tier-1 member |
+| `incremental-delegated-staking-starting-ordinal` | 5,075,000 | `ordinal > gate` | Populates `currentTokenLockRef` and `currentAmount` on incremental delegated-stake records only |
+
+The delegated reward distributor runs only when the first two conditions hold. The
+third changes recipients within delegated rewards. The fourth does not select classic
+versus delegated rewards. See
+[Consensus reward recipients](../consensus/rewards.md).
 
 ## The no-env-gating principle
 
 The load-bearing rule:
 
-> New consensus functionality is ALWAYS present in the code for every network. You gate WHEN it activates by ordinal, never branch consensus behavior on `AppEnvironment`. Per-environment differences are a deployment concern: which config values are set, and which ordinal gates are armed per deploy. The jar hash is the cluster fence.
+> New consensus functionality is ALWAYS present in the code for every network. You gate WHEN it activates by ordinal, never branch consensus behavior on `AppEnvironment`. Per-environment differences belong in the shared per-environment ordinal map, finalized before assembly. The release version and consensus config hash fence incompatible peers, but neither verifies these ordinal values.
 
 Concretely, the read sites compare `ordinal >= gate`, never `if (environment == Mainnet)`. See `GlobalSnapshotStateChannelEventsProcessor.scala:325`:
 
@@ -64,15 +99,19 @@ A consensus knob that is testnet-only in HOCON (so mainnet silently falls to a n
 
 The same discipline applies to env-keyed consensus knobs that are not ordinal gates (for example `coreCommitteeSize`, `quorumShrinkActivationViews`, `rewardRotationEpochRounds`): they are resolved per environment at one construction point and folded into `deterministicConfigHash` (`types.scala:1019-1043`), so the per-environment value is part of the consensus contract, not a runtime branch.
 
-## Three fences operators must not conflate
+## Protocol and replay fences operators must not conflate
 
 | Mechanism | What it is | Replay-relevant? | Failure mode on divergence |
 |-----------|------------|------------------|----------------------------|
 | **FieldsAddedOrdinals** | per-env activation ordinals for deterministic behavior changes | **Yes** | a mismatched ordinal changes artifact bytes at the boundary -> fork |
-| **deterministicConfigHash** | a hash of dozens of consensus knobs (~48 folded fields) concatenated into one string (`types.scala:950-1044`, folded string ends at `:1043`) | No (it is a config FENCE, not signed into history) | a divergent value handshake-rejects the peer connection / fails the Facility `consensusConfigHash` check; it does NOT change replayed bytes |
-| **consensusSchemaVersion** | a single integer wire-version fence (`types.scala:830`, currently `33`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
+| **Tessellation and metagraph version hashes** | hashes of the reported release versions | No | a divergent value is rejected during the join handshake |
+| **deterministicConfigHash** | a hash of the exact consensus-critical projection resolved by `SnapshotConfig.resolveEffectiveConsensusConfig` | No (it is a config FENCE, not signed into history) | L0 requires presence and exact equality at join; Facility processing also reports a mismatch; it does NOT change replayed bytes |
+| **consensusSchemaVersion** | a single integer wire-version fence (currently `35`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
+| **certifiedConsensusActivationKey** | the environment-resolved v35 consensus behavior boundary, folded INTO `deterministicConfigHash` | Yes for active consensus behavior, but not a public snapshot field | a mismatched value fences at config/Facility checks; crossing the agreed key switches to the certified state machine and canonical legacy-window reset |
+| **currencySnapshotProtocolV1** | Global-ordinal authorization for the signed Currency snapshot `0.0.1 -> 1.0.0` semantics transition; its resolved value is copied into `ConsensusConfig` | **Yes** | divergent values are fenced at joining; crossing the agreed global key changes Currency artifact bytes and replay mode |
+| **RegistrationRequest.jar** | an advertised artifact hash stored as peer metadata | No | no protocol rejection: `Joining.validateHandshake` does not compare it |
 
-The distinction that matters for operators: `FieldsAddedOrdinals` is the ONLY one of the three that changes replayed history bytes. `deterministicConfigHash` and `consensusSchemaVersion` are connect-time fences that prevent mismatched nodes from joining at all; they are replay-irrelevant. Setting a wrong ordinal does not get caught at handshake. It forks the chain when the gate is crossed. That is why ordinal gates are the highest-stakes value to get right at deploy.
+The distinction that matters for operators: ordinal gates (`FieldsAddedOrdinals` and the per-L0 `certifiedConsensusActivationKey`) switch deterministic behavior at a replay key. Version hashes and `consensusSchemaVersion` are connection/declaration fences; `deterministicConfigHash` is now a hard L0 join fence over the exact resolved activation value and other consensus-critical settings, but it does not make a wrong cluster-wide ordinal safe. The advertised jar hash is not a fence. A unanimously wrong ordinal can pass config checks and still switch behavior at the wrong key, so ordinal gates remain the highest-stakes values to verify before assembly.
 
 ## Worked example: the ordinal-gated GSI dust sweep
 
@@ -107,27 +146,61 @@ The `DustSweep` config carries the threshold and the disposition (`config/types.
 
 ## Second example: scFeeBalanceFromContext
 
-`scFeeBalanceFromContext` (`config/types.scala:38-42`) is a threshold gate over the balance source used by the state-channel fee-affordability check. At and after the gate the check reads the metagraph owner's balance from the deterministic `accept()` context (`lastGlobalSnapshotInfo.balances`); below it from the pre-fix `mptStore.getBalance` path, so already-signed history re-derives byte-identically (`GlobalSnapshotStateChannelEventsProcessor.scala:325`). testnet is `3101393` -- the exact ordinal where testnet switched from the v4.0.0 `mptStore` build to the alpha.0 context build (it stalled at 3101392 on 2026-03-17 and resumed at 3101393 on 2026-04-02), so the v4.0.0 `mptStore` window below the gate replays correctly. mainnet and integrationnet are `9999999` placeholders (both still on the pre-context `mptStore` path -- 3.5.x and 4.0.0-rc respectively), to be set to each network's context-deploy ordinal at deploy (`application.conf:275-284`).
+`scFeeBalanceFromContext` (`config/types.scala:38-42`) is a threshold gate over the balance source used by the state-channel fee-affordability check. At and after the gate the check reads the metagraph owner's balance from the deterministic `accept()` context (`lastGlobalSnapshotInfo.balances`); below it from the pre-fix `mptStore.getBalance` path, so already-signed history re-derives byte-identically (`GlobalSnapshotStateChannelEventsProcessor.scala:325`). testnet is `3101393` -- the exact ordinal where testnet switched from the v4.0.0 `mptStore` build to the alpha.0 context build (it stalled at 3101392 on 2026-03-17 and resumed at 3101393 on 2026-04-02), so the v4.0.0 `mptStore` window below the gate replays correctly. IntegrationNet is scheduled for `5880000` with the other v4.1 gates. Mainnet retains the `9999999` placeholder until its own context-deploy ordinal is selected (`application.conf:275-284`).
+
+## Third example: subTrieRoots
+
+`subTrieRoots` (`config/types.scala:43-46`) is a threshold gate over the per-field MPT roots carried in `GlobalSnapshotStateProof`. Below the gate, MPT-format proofs keep the legacy shape: the overall `mptRoot` is present and the per-field proof slots remain empty. At and after the gate, those slots carry per-`GlobalStateFieldId` roots so a state-root mismatch can be localized to the divergent field (`GlobalSnapshotInfo.assembleMptProof`). This changes signed proof bytes, so each public network must retain `9999999` until a coordinated cold-restart ordinal and compatible Snapshot Streaming deployment are selected. IntegrationNet activated at `5880000`; do not move that gate forward, because replay of already-signed ordinals from `5880000` through the new gate would re-derive the old proof shape and fail validation. Moving it also cannot repair a stale indexer. `TessellationIOApp` resolves the environment entry once and passes it into `GlobalStateProofSelector`; absent environments fail closed to `SnapshotOrdinal.MaxValue`.
+
+Development activates this gate at ordinal `0` so CI exercises the signed proof shape. The Tessellation build applies the matching Snapshot Streaming compatibility patch: both SS entry points resolve the two-argument `GlobalStateProofSelector`, and proof validation reuses `GlobalSnapshotInfo.assembleMptProof` instead of constructing an mpt-root-only literal. This is compatibility evidence only; every public environment still requires a separately versioned, tested, and deployed Snapshot Streaming artifact before its gate is crossed (or before resuming from an already-post-gate checkpoint).
+
+## Fourth example: feeTransactionSecurity
+
+`feeTransactionSecurity` gates cryptographic authorization of metagraph data-update
+`FeeTransaction`s. At and after the gate, every proof must verify over the exact bytes produced by
+`FeeTransaction.serialize`, signer identities must be unique, the source wallet must participate,
+and no more than 16 proofs are accepted. Below the gate, replay retains the historical
+identity-only source check.
+
+L1 submission and consensus use the latest Global Snapshot ordinal. ML0 data-block acceptance and
+final snapshot acceptance use the parent Currency Snapshot's signed `globalSyncView.ordinal`.
+Currency Snapshot ordinals never activate this platform rule. See
+[ADR-0029](../adr/0029-fee-transaction-wallet-authorization.md).
 
 ## Operator checklist
 
 - Ordinal gates are **consensus-critical** and must match cluster-wide. They live in `application.conf` and are packaged into the assembly jar (compile-time literals), so changing one is itself a coordinated jar redeploy.
 - Before launch, replace every mainnet placeholder with the real coordinated launch ordinal:
-  - `sc-fee-balance-from-context.mainnet` and `.integrationnet` (both `9999999`, `application.conf:275-284`): set each to its context-deploy ordinal. testnet is already pinned to its real cutover (`3101393`). An unset env fails closed to the `mptStore` path.
+  - `sc-fee-balance-from-context.mainnet` (`9999999`, `application.conf:275-284`): set it to its context-deploy ordinal. testnet is pinned to its real cutover (`3101393`); IntegrationNet is scheduled for `5880000`. An unset env fails closed to the `mptStore` path.
+  - `sub-trie-roots.mainnet` and `.testnet` (`9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. IntegrationNet activated at `5880000` and requires matching Snapshot Streaming support for every current deployment. For a cold restart at checkpoint `N`, use `N + 1` only on a network that has not already crossed its selected gate.
+  - `delegated-rewards-full-committee.<env>`: set the deploying environment to the first ordinal produced by the corrected jar. Below it, the historical evidence-score filter must remain available for replay.
+  - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet is scheduled for `5880000`.
+  - `currency-snapshot-protocol-v1.<env>`: set one future GLOBAL L0 ordinal only after every active Currency stack is upgraded. IntegrationNet is scheduled for `5923000`. Active lineages transition their existing signed `version` to `1.0.0`; dormant lineages must upgrade before returning. See [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
+  - `fixing-data-application-fee-validation`, `fixing-allow-spend-destination-credit`,
+    `preventing-allow-spend-resurrection`, and `fixing-global-allow-spend-expiration`:
+    IntegrationNet is scheduled for `5923000`. Do not move
+    `fixing-fee-transaction-balance-overflow.integrationnet` from its historical
+    `5905000` replay boundary.
   - `dust-sweeps` has no mainnet entry yet (`application.conf:286-292`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf:281-285`). Bump it up if the chain nears it before the coordinated cold restart completes.
-- These gates do NOT participate in `deterministicConfigHash`, so a wrong ordinal is NOT caught at handshake. It forks the chain when the gate is crossed. Verify them by inspection before deploy.
+- Most historical gates do not participate in `deterministicConfigHash`. Currency snapshot protocol v1 is deliberately resolved into both DAG and Currency L0 effective consensus configs and therefore does. The advertised jar metadata hash is still not a substitute for either the release-version gate or this config fence. A unanimously wrong ordinal remains dangerous even when every node reports the same hash, so verify gates by inspection before assembly and deploy the identical artifact cluster-wide.
 
 ## Key code references
 
 | Concern | Location |
 |---------|----------|
-| `FieldsAddedOrdinals` record | `config/types.scala:27-48` |
-| `DustSweep` config | `config/types.scala:50-61` |
-| HOCON block | `application.conf:210-293` |
+| `FieldsAddedOrdinals` record | `config/types.scala` |
+| `DustSweep` config | `config/types.scala` |
+| HOCON block | `application.conf` |
 | Dust sweep transform | `GlobalSnapshotDustSweep.scala:16-150` |
 | Dust sweep acceptance wiring + `syncFull` | `GlobalSnapshotAcceptanceManager.scala:1086-1160` |
 | `scFeeBalanceFromContext` read site | `GlobalSnapshotStateChannelEventsProcessor.scala:325` |
 | `scFeeBalanceFromContext` resolution | `GlobalSnapshotConsensus.scala:150`, `SharedServices.scala:193` |
+| `subTrieRoots` proof assembly | `GlobalSnapshotInfo.scala:274-323` |
+| `subTrieRoots` selector wiring | `TessellationIOApp.scala:117-121`, `StateProofSelector.scala:33-41` |
+| `feeTransactionSecurity` signature validation | `FeeTransactionSignatureValidator.scala` |
+| `feeTransactionSecurity` ML0 final-acceptance gate | `CurrencySnapshotAcceptanceManager.scala` |
+| Currency snapshot protocol transition | `CurrencySnapshotSemantics.scala`, `CurrencySnapshotAcceptanceManager.scala` |
 | `deterministicConfigHash` folded string | `config/types.scala:950-1044` (folded string ends `:1043`) |
-| `consensusSchemaVersion` | `config/types.scala:830` |
+| `consensusSchemaVersion` | `config/types.scala` (`ConsensusConfig`) |
+| `certifiedConsensusActivationOrdinal` | `config/types.scala` (`SnapshotConfig`) |

@@ -46,6 +46,13 @@ trait NodeStorage[F[_]] {
 
   def isRecoveryDownload: F[Boolean]
 
+  /** Select the bounded forward-only follower catch-up path for the next download. Layers that do not implement a specialized path fall
+    * back to their ordinary recovery download.
+    */
+  def setFollowerCatchUpDownload: F[Unit]
+
+  def getDownloadMode: F[DownloadMode]
+
   /** When true, the node must have ≥2 facilitators to complete a consensus round. Set by RunValidator at startup — validators must never
     * produce solo snapshots because solo production from multiple validators creates divergent forks. RunRollback/RunGenesis nodes leave
     * this false so they can bootstrap solo.
@@ -54,4 +61,11 @@ trait NodeStorage[F[_]] {
 
   def isValidatorMode: F[Boolean]
 
+}
+
+sealed trait DownloadMode
+object DownloadMode {
+  case object Full extends DownloadMode
+  case object Recovery extends DownloadMode
+  case object FollowerCatchUp extends DownloadMode
 }

@@ -1,6 +1,7 @@
 const axios = require('axios')
 const elliptic = require('elliptic')
 const fs = require('fs')
+const path = require('path')
 
 const {
   sleep,
@@ -29,11 +30,19 @@ const dagToDatum = (dag) => {
   return Math.round(dag * 1e8)
 }
 
-// Resolve a node operator's key file. Mirrors the inline logic in delegated-staking.js:
-// in CI the keys are staged under code/hypergraph/dag-l0/<name>/id_ecdsa.hex; otherwise
-// the bundled keys/ fixtures are used (genesis-node.hex, validator-N-node.hex).
-const resolveNodeKeyPath = (name) => {
+// Resolve a node operator's key file across environments, in priority order:
+// 1. NODE_KEYS_DIR env var (set by the nightly E2E workflow); layout <dir>/<index>/id_ecdsa.hex.
+// 2. CI Euclid cluster keys staged under ../../code/hypergraph/dag-l0/<name>/id_ecdsa.hex.
+// 3. The bundled keys/ fixtures (genesis-node.hex, validator-N-node.hex) for local runs.
+const resolveNodeKeyPath = (name, index) => {
   const runEnv = process.env.RUN_ENV || 'ci'
+  const keysDir = process.env.NODE_KEYS_DIR
+  if (keysDir) {
+    const resolved = path.isAbsolute(keysDir)
+      ? keysDir
+      : path.resolve(__dirname, '../../..', keysDir)
+    return path.join(resolved, String(index), 'id_ecdsa.hex')
+  }
   if (runEnv === 'ci') {
     return `../../code/hypergraph/dag-l0/${name}/id_ecdsa.hex`
   }
@@ -42,7 +51,15 @@ const resolveNodeKeyPath = (name) => {
 }
 
 function getPrivateKeyAndNodeIdFromFile(filePath) {
-  const privateKeyHex = fs.readFileSync(filePath, 'utf8').trim()
+  let privateKeyHex
+  try {
+    privateKeyHex = fs.readFileSync(filePath, 'utf8').trim()
+  } catch (error) {
+    throw new Error(
+      `Unable to read node key file at "${filePath}" (resolved from cwd "${process.cwd()}"): ${error.message}. ` +
+        'Check NODE_KEYS_DIR / RUN_ENV and that the cluster keys were staged.',
+    )
+  }
 
   const privateKeyBuffer = Buffer.from(privateKeyHex, 'hex')
 
@@ -262,6 +279,14 @@ const createTokenLock = async (account, urls, lockAmount, replaceRef = null, rep
 
   if (!hash) {
     throw new Error('Failed to create TokenLock')
+  }
+
+  // Fresh locks: confirm GL0 inclusion ordinal-awarely before the wall-clock balance check below. A fresh lock
+  // can race the dag-L1 token-lock MPT (it trails GL0 by ~1 ordinal), so the balance only drops once the L1
+  // catches up; waiting on ordinal progress avoids a wall-clock timeout. Replacements change the active-lock
+  // hash (a /token-locks TOCTOU), so they rely on the replacement-retry / stake-ref path instead.
+  if (!replaceRef) {
+    await waitForTokenLockInclusion(urls, account.address, hash)
   }
 
   // The account may hold active delegated stakes that accrue reward credits during
@@ -494,6 +519,7 @@ module.exports = {
   checkBadRequest,
   dagToDatum,
   getPrivateKeyAndNodeIdFromFile,
+  resolveNodeKeyPath,
   postNodeParamsNodeId,
   createDelegatedStake,
   withdrawDelegatedStake,

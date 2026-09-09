@@ -152,7 +152,45 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
         }.flatMap(_.liftTo[F])
       }.void
 
-    addMajorityBlocks >>
+    // Precondition dry-run (all-or-nothing): verify EVERY block this call will touch is in the state its sub-step
+    // expects, BEFORE mutating anything. checkAlignment computed these sets from a snapshot of block state taken
+    // OUTSIDE the storage-mutation lock, so by the time this (locked) apply runs a concurrent acceptance may have
+    // moved a block; a sub-step would then raise mid-sequence, leaving block storage PARTIALLY reconciled with no
+    // rollback. Bailing here (mutating nothing) lets the caller retry/redownload from a clean state. The predicates
+    // mirror exactly the `modify` match arms of the sub-steps above.
+    def adjustPreconditionViolations(all: Map[ProofsHash, StoredBlock]): List[String] = {
+      def check(label: String, hashes: Set[ProofsHash])(expected: Option[StoredBlock] => Boolean): List[String] =
+        hashes.toList.collect { case h if !expected(all.get(h)) => s"$label[${h.show}]=${all.get(h).show}" }
+
+      val isAddable: Option[StoredBlock] => Boolean = {
+        case Some(_: WaitingBlock) | Some(_: PostponedBlock) | None => true
+        case _                                                      => false
+      }
+
+      check("toAdd", toAdd.map(_._1.proofsHash))(isAddable) ++
+        check("toMarkMajority", toMarkMajority.map(_._1)) { case Some(_: AcceptedBlock) => true; case _ => false } ++
+        check("acceptedToRemove", acceptedToRemove) { case Some(_: AcceptedBlock) => true; case _ => false } ++
+        check("obsoleteToRemove", obsoleteToRemove) {
+          case Some(_: WaitingBlock) | Some(_: PostponedBlock) => true; case _ => false
+        } ++
+        check("toReset", toReset) { case Some(_: AcceptedBlock) => true; case _ => false } ++
+        check("tipsToDeprecate", tipsToDeprecate) { case Some(MajorityBlock(_, _, Active)) => true; case _ => false } ++
+        check("tipsToRemove", tipsToRemove) { case Some(MajorityBlock(_, _, Deprecated)) => true; case _ => false } ++
+        check("activeTipsToAdd", activeTipsToAdd.map(_.block.hash))(isAddable) ++
+        check("deprecatedTipsToAdd", deprecatedTipsToAdd.map(_.hash))(isAddable) ++
+        check("postponedToWaiting", postponedToWaiting) { case Some(_: PostponedBlock) => true; case _ => false }
+    }
+
+    val checkPreconditions: F[Unit] =
+      blocks.toMap.flatMap { all =>
+        adjustPreconditionViolations(all) match {
+          case Nil        => ().pure[F]
+          case violations => Sync[F].raiseError[Unit](UnexpectedBlockStatesWhenAdjustingToMajority(violations))
+        }
+      }
+
+    checkPreconditions >>
+      addMajorityBlocks >>
       markMajorityBlocks >>
       removeAcceptedNonMajorityBlocks >>
       removeObsoleteBlocks >>
@@ -376,6 +414,12 @@ object BlockStorage {
 
     val errorMessage: String =
       s"Block to be added during majority update with hash: $hash not found in expected state! But got: $got"
+  }
+
+  case class UnexpectedBlockStatesWhenAdjustingToMajority(violations: List[String]) extends BlockMajorityUpdateError {
+
+    val errorMessage: String =
+      s"adjustToMajority preconditions not met (block state drifted since reconciliation), mutating nothing: ${violations.mkString("; ")}"
   }
 
   sealed trait TipUpdateError extends BlockStorageError

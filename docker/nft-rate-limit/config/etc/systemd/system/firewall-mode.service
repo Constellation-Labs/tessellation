@@ -1,0 +1,12 @@
+[Unit]
+Description=Apply active firewall mode (nftables) at boot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/etc/firewall/bin/firewall-mode reload
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

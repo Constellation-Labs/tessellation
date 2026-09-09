@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus.OutcomeVote
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
@@ -36,6 +37,12 @@ object message {
     */
   @derive(encoder, decoder)
   case class ConsensusPeerTimeoutVote[K](key: K, vote: Signed[TimeoutVote])
+
+  /** V35 prepare vote over the complete ProposalValue. OutcomeVote already carries its mandatory domain-separated inner signature; the
+    * peer-rumor envelope authenticates and rate-limits transport but is never substituted for semantic certification.
+    */
+  @derive(encoder, decoder)
+  case class ConsensusPeerOutcomeVote[K](key: K, vote: OutcomeVote)
 
   /** Signed per-peer eviction vote. Same wire-envelope rationale as [[ConsensusPeerVote]] — EvictionCertificate assembly requires the
     * individual [[Signed]] proof per vote to survive end-to-end so the certificate embedded in a later Proposal remains independently

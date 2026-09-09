@@ -211,7 +211,13 @@ const checkGlobalL0Node = async (config) => {
       const name = i === 0 ? 'Global L0 Genesis' : `Global L0 Validator ${i}`;
       infos.push({ name, baseUrl: `${host}:${port}` });
     }
-    await clusterCheck(infos, true, 'Global L0', numGL0, true, numGL0);
+    // Signatures expected on a snapshot: BFT quorum (2f+1), NOT unanimity. Global L0 consensus
+    // finalizes at a supermajority, so a snapshot signed by a quorum is correct -- requiring all
+    // numGL0 signatures makes this check flaky whenever a single node's signature lands after
+    // finalization (common under load). Override with EXPECTED_GL0_SIGNERS for strict checks.
+    const quorum = Math.floor((2 * numGL0) / 3) + 1;
+    const expectedSigners = parseInt(process.env.EXPECTED_GL0_SIGNERS || String(quorum), 10);
+    await clusterCheck(infos, true, 'Global L0', numGL0, true, expectedSigners);
   }
 };
 

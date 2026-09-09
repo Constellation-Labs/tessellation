@@ -1,6 +1,5 @@
 package io.constellationnetwork.currency.l0.snapshot.services
 
-import cats.Applicative
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
 import cats.syntax.all._
@@ -34,73 +33,61 @@ class BinaryPoster[F[_]: Async](
   private val sendRetries = 5
   private val allowedEmptyAllowanceList = List(Dev, Testnet, Integrationnet)
 
-  def post(
+  /** Decide whether THIS node should post `binary`.
+    *
+    *   - Honours the (unchanged) allowance gate: a node not permitted to send for this metagraph returns false.
+    *   - `force = true` (retry-mode escalation): every permitted node sends, guaranteeing the stalled binary reaches the global L0 even if
+    *     its deterministic owner is unavailable. The global L0 de-dups by hash.
+    *   - `force = false` (normal mode): only the deterministically-chosen, currently-alive owner sends.
+    */
+  def shouldSelfSend(
+    binary: Hashed[StateChannelSnapshotBinary],
+    alivePeers: Option[Set[PeerId]],
+    force: Boolean
+  ): F[Boolean] =
+    allowedPeersForSelection(binary).map {
+      case None => false // not permitted to send for this metagraph / environment
+      case Some(allowedPeers) =>
+        if (force) true
+        else {
+          val binarySigners = binary.signed.proofs.map(_.id.toPeerId).toList
+          val owner = PeerSelector.pickDeterministicPeer(binarySigners, allowedPeers, selfId, binary.lastSnapshotHash, alivePeers)
+          owner === selfId
+        }
+    }
+
+  /** Post the binary to a global L0 peer, with bounded retries. Marks the binary as transport-sent on success. */
+  def sendSelf(
     binary: Hashed[StateChannelSnapshotBinary],
     lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]]
-  ): F[Option[PeerId]] = {
+  ): F[Unit] =
+    performPost(binary, lastGlobalSnapshotSigners)
+
+  /** Returns Some(peers usable for deterministic selection) when this node is permitted to send, else None. Mirrors the previous
+    * allowance-gating semantics exactly.
+    */
+  private def allowedPeersForSelection(binary: Hashed[StateChannelSnapshotBinary]): F[Option[List[PeerId]]] = {
     val customPeersAllowed: List[PeerId] =
       customPeersAllowanceList.map(_.toList.map(_.peerId)).getOrElse(Nil)
 
-    checkAllowanceAndPost(binary, lastGlobalSnapshotSigners, customPeersAllowed)
-  }
-
-  private def checkAllowanceAndPost(
-    binary: Hashed[StateChannelSnapshotBinary],
-    lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]],
-    customPeersAllowed: List[PeerId]
-  ): F[Option[PeerId]] =
     stateChannelAllowanceLists match {
       case Some(allowanceLists) =>
-        identifierStorage.get.flatMap { metagraphId =>
+        identifierStorage.get.map { metagraphId =>
           allowanceLists.get(metagraphId) match {
             case Some(allowedPeers) =>
-              if (allowedPeers.contains(selfId)) {
-                pickPeerAndSend(binary, lastGlobalSnapshotSigners, customPeersAllowed.filter(allowedPeers.contains))
-              } else {
-                logger.info(s"[Queue] Self not in allowance list, skipping send") >>
-                  none[PeerId].pure
-              }
-            case None =>
-              handleEmptyAllowanceList(binary, lastGlobalSnapshotSigners, customPeersAllowed)
+              if (allowedPeers.contains(selfId)) customPeersAllowed.filter(allowedPeers.contains).some
+              else none
+            case None => emptyAllowancePeers(customPeersAllowed)
           }
         }
       case None =>
-        handleEmptyAllowanceList(binary, lastGlobalSnapshotSigners, customPeersAllowed)
-    }
-
-  private def handleEmptyAllowanceList(
-    binary: Hashed[StateChannelSnapshotBinary],
-    lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]],
-    customPeersAllowed: List[PeerId]
-  ): F[Option[PeerId]] =
-    if (allowedEmptyAllowanceList.contains(environment)) {
-      pickPeerAndSend(binary, lastGlobalSnapshotSigners, customPeersAllowed)
-    } else {
-      logger.info(s"[Queue] Empty allowance list not allowed in [$environment], skipping") >>
-        none[PeerId].pure
-    }
-
-  private def pickPeerAndSend(
-    binary: Hashed[StateChannelSnapshotBinary],
-    lastGlobalSnapshotSigners: Option[NonEmptySet[PeerId]],
-    allowedPeers: List[PeerId]
-  ): F[Option[PeerId]] = {
-    val binarySigners = binary.signed.proofs.map(_.id.toPeerId).toList
-    val peerToSendSnapshot = PeerSelector.pickDeterministicPeer(
-      binarySigners,
-      allowedPeers,
-      selfId,
-      binary.lastSnapshotHash
-    )
-
-    if (peerToSendSnapshot === selfId) {
-      logger.info(s"[Queue] Self selected to send binary ${binary.hash}") >>
-        performPost(binary, lastGlobalSnapshotSigners).as(peerToSendSnapshot.some)
-    } else {
-      logger.info(s"[Queue] Peer $peerToSendSnapshot selected to send binary ${binary.hash}") >>
-        peerToSendSnapshot.some.pure
+        emptyAllowancePeers(customPeersAllowed).pure[F]
     }
   }
+
+  private def emptyAllowancePeers(customPeersAllowed: List[PeerId]): Option[List[PeerId]] =
+    if (allowedEmptyAllowanceList.contains(environment)) customPeersAllowed.some
+    else none
 
   private def performPost(
     binary: Hashed[StateChannelSnapshotBinary],

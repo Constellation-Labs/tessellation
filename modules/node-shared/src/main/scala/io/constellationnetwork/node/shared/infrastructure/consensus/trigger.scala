@@ -1,15 +1,9 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import derevo.cats.{order, show}
-import derevo.circe.magnolia.{decoder, encoder}
-import derevo.derive
-
 object trigger {
-
-  @derive(order, show, encoder, decoder)
-  sealed trait ConsensusTrigger
-
-  case object EventTrigger extends ConsensusTrigger
-  case object TimeTrigger extends ConsensusTrigger
-
+  type ConsensusTrigger = io.constellationnetwork.schema.consensus.ConsensusTrigger
+  val EventTrigger: io.constellationnetwork.schema.consensus.EventTrigger.type =
+    io.constellationnetwork.schema.consensus.EventTrigger
+  val TimeTrigger: io.constellationnetwork.schema.consensus.TimeTrigger.type =
+    io.constellationnetwork.schema.consensus.TimeTrigger
 }

@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
+import scala.concurrent.duration.FiniteDuration
+
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 
 /** v19 phase 2 view-from-time anchor: pure helper for deriving the round's canonical `consensusEndTime` from the accepted Facility set.
@@ -32,6 +34,38 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
   *   docs/consensus/view-from-time-anchor.md
   */
 object ConsensusEndTime {
+
+  /** Validate a leader-proposed end-time without consulting a follower's wall clock.
+    *
+    * The view-derived allowance lets a legitimately long-stalled round catch its time anchor up, while `maxRoundDuration` provides the
+    * view-zero tolerance already used by the consensus watchdog. BigInt arithmetic makes overflow fail closed at `Long.MaxValue`.
+    */
+  def validateProposed(
+    proposed: Option[Long],
+    parentEndTime: Option[Long],
+    committedView: Long,
+    viewInterval: FiniteDuration,
+    maxRoundDuration: Option[FiniteDuration]
+  ): Either[String, Unit] =
+    proposed match {
+      case None                      => Right(())
+      case Some(value) if value < 0L => Left("consensus_end_time_negative")
+      case Some(value) =>
+        parentEndTime match {
+          case None         => Right(())
+          case Some(parent) =>
+            // Public L0 configs supply maxRoundDuration. The view interval is the deterministic,
+            // fail-closed fallback for focused tests and custom configs that omit it.
+            val baseAllowance = maxRoundDuration.getOrElse(viewInterval)
+            val allowedAdvance =
+              BigInt(baseAllowance.toMillis) + (BigInt(committedView.max(0L)) * BigInt(viewInterval.toMillis))
+            val upper = (BigInt(parent) + allowedAdvance).min(BigInt(Long.MaxValue))
+
+            if (value <= parent) Left("consensus_end_time_not_monotonic")
+            else if (BigInt(value) > upper) Left("consensus_end_time_above_view_bound")
+            else Right(())
+        }
+    }
 
   /** Compute the round's `consensusEndTime` from the accepted Facility set.
     *
