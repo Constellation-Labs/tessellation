@@ -10,6 +10,7 @@ import scala.collection.mutable.ListBuffer
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
+import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -149,6 +150,76 @@ object LastNGlobalSnapshotStorageInitializationSuite extends SimpleIOSuite {
           expect(afterFailure.isEmpty) &&
           expect(afterRetry.exists(_._1.hash === parent.hash)) &&
           expect(retained.exists(_.ordinal === SnapshotOrdinal.unsafeApply(98L)))
+    }
+  }
+
+  /** Minimal local SnapshotStorage exposing only `get(ordinal)`; anything else fails loudly so an unexpected call cannot pass silently.
+    */
+  private def localStorage(
+    byOrdinal: Map[SnapshotOrdinal, Signed[GlobalIncrementalSnapshot]]
+  ): SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
+    new SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+      private def unused[A](name: String): IO[A] =
+        IO.raiseError(new UnsupportedOperationException(s"localStorage.$name should not be called"))
+
+      def get(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] =
+        byOrdinal.get(ordinal).pure[IO]
+
+      def prepend(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo)(
+        implicit hasher: Hasher[IO]
+      ): IO[Boolean] = unused("prepend")
+      def head: IO[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = unused("head")
+      def headSnapshot: IO[Option[Signed[GlobalIncrementalSnapshot]]] = unused("headSnapshot")
+      def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[IO]): IO[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        unused("getHashed")
+      def get(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] = unused("get(hash)")
+      def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[IO]): IO[Option[Hash]] = unused("getHash")
+      def setHeadForRecovery(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo)(
+        implicit hasher: Hasher[IO]
+      ): IO[Unit] = unused("setHeadForRecovery")
+    }
+
+  // Locks the local-first contract that the dag-l0 rollback fix depends on.
+  //
+  // Background: StoragesInitializer passed `none` for the local-storage fetcher, so this walk went
+  // to the network for predecessors already on disk. On testnet gl0 every predecessor of the
+  // rollback target was present locally and it still fetched from peers; one failed fetch raised
+  // Download$CannotFetchSnapshot out of storage initialization and crash-looped the node 21 times
+  // against intact data.
+  //
+  // SCOPE: this pins the behaviour of `setInitialFetchingGL0` WHEN a storage is supplied -- so a
+  // future change to fetchSingleSnapshot cannot silently reintroduce network-first ordering. It
+  // does NOT verify that StoragesInitializer supplies it; that wiring is a one-line call-site
+  // argument covered by review, since constructing StoragesInitializer needs the full Storages /
+  // Programs graph. This test therefore passes both before and after that call-site change.
+  test("predecessors already in local storage are never fetched from the network") {
+    SecurityProvider.forAsync[IO].use { implicit securityProvider =>
+      for {
+        implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+        implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+        implicit0(hasherSelector: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(hasher)
+        keyPair <- KeyPairGenerator.makeKeyPair[IO]
+        snapshots <- chain(98L, 100L, keyPair)
+        storage <- LastNGlobalSnapshotStorage.make[IO](LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(2)))
+        parent = snapshots(SnapshotOrdinal.unsafeApply(100L))
+        fetched <- Ref.of[IO, Set[SnapshotOrdinal]](Set.empty)
+        fetch = (_: Option[Hash], ordinal: SnapshotOrdinal) =>
+          fetched.update(_ + ordinal) >>
+            snapshots.get(ordinal).liftTo[IO](new IllegalStateException(s"missing $ordinal")).map(_.signed)
+        local = localStorage(snapshots.map { case (ordinal, hashed) => ordinal -> hashed.signed })
+        _ <- storage.setInitialFetchingGL0(parent, info, local.asRight.some, fetch.some)
+        requested <- fetched.get
+        retained <- storage.getLastN
+      } yield
+        expect.same(Set.empty[SnapshotOrdinal], requested) &&
+          expect.same(
+            Set(
+              SnapshotOrdinal.unsafeApply(98L),
+              SnapshotOrdinal.unsafeApply(99L),
+              SnapshotOrdinal.unsafeApply(100L)
+            ),
+            retained.map(_.ordinal).toSet
+          )
     }
   }
 
