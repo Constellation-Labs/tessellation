@@ -293,15 +293,31 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ---------------------------------------------------------------------------
-  # Deploy the cluster ONLY after both images published successfully. Calls the
-  # reusable testnet-deploy workflow, pinned to the exact images just built
-  # (sha-<this commit>). Runs in this same workflow run, so the deploy can never
-  # race ahead of the release.
+  # DISABLED: a push to release/testnet no longer deploys. Run testnet-deploy.yml
+  # manually (workflow_dispatch, optionally with image_tag: sha-<commit>) once the
+  # cluster is in a state you intend to redeploy. Uncomment the job below to
+  # restore automatic deployment on every release.
+  #
+  # Why: the deploy is destructive by design -- "Chain-preserving down" stops gl0
+  # and gl1 on every node before bringing them back. For most of 2026-09-09 that
+  # was masked, because remote-stop.sh aborts when it cannot capture a rollback
+  # anchor from a live head, and the cluster was wedged with no node able to serve
+  # /global-snapshots/latest/ordinal. The moment one node was repaired enough to
+  # answer, an unrelated push tore down all three: the run then failed at the
+  # "Deploy" step, leaving every node without containers and the cluster down. A
+  # code push should not be able to do that, and an aborting safety guard is not a
+  # deployment policy.
+  #
+  # It previously read: deploy the cluster ONLY after both images published
+  # successfully, calling the reusable testnet-deploy workflow pinned to the exact
+  # images just built (sha-<this commit>), in this same run so the deploy could
+  # never race ahead of the release. Building and publishing images on push is
+  # unaffected -- only the deploy step is gated behind a human now.
   # ---------------------------------------------------------------------------
-  deploy:
-    name: Deploy testnet cluster
-    needs: [build-push-image, build-push-ss]
-    uses: ./.github/workflows/testnet-deploy.yml
-    with:
-      image_tag: sha-${{ github.sha }}
-    secrets: inherit
+  # deploy:
+  #   name: Deploy testnet cluster
+  #   needs: [build-push-image, build-push-ss]
+  #   uses: ./.github/workflows/testnet-deploy.yml
+  #   with:
+  #     image_tag: sha-${{ github.sha }}
+  #   secrets: inherit
