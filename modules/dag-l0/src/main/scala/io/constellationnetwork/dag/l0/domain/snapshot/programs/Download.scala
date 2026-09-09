@@ -436,12 +436,20 @@ object Download {
     val observationOffset = NonNegLong(1L)
     val fetchSnapshotDelayBetweenTrials = 10.seconds
 
-    // Outer watchdog for the full Download.start path. Picked generously:
-    // a fresh-join full download from genesis can take several minutes through validateChain +
-    // MPT trie build (~890k entries observed on testnet). Anything longer than this is a
-    // better fit for the progress-aware recovery path. Wraps `start` in timeoutTo so a timeout
-    // raises DownloadStartTimedOut, returns the FSM to WaitingForDownload, and statically selects
-    // recovery mode on the next daemon attempt.
+    // Outer watchdog for the full Download.start path, measured as INACTIVITY rather than total
+    // elapsed time (the same treatment the recovery path already gets -- see `guardedBody`).
+    //
+    // A fixed total budget silently bricks any node whose catch-up legitimately takes longer than
+    // it: observed on testnet gl0, which sat at ordinal 3271071 while the cluster tip was 3276854.
+    // Each attempt fetched ~2,600 of the 5,783 missing snapshots at ~4.4/s, hit the 10-minute wall,
+    // discarded the batch, and retried identically -- for over ten days. The escalation this comment
+    // used to promise does not occur: the daemon logged `Download attempt 2, isRecovery=false`, so a
+    // timed-out full attempt is retried as a full attempt and never reaches the progress-aware
+    // recovery path. Measuring inactivity keeps the same hung-fiber protection (a genuinely stuck
+    // fetch/validateChain/MPT build still raises DownloadStartTimedOut, returns the FSM to
+    // WaitingForDownload and lets the daemon schedule a fresh attempt) while letting an advancing
+    // download run as long as it keeps advancing. Every walk_back/validateChain ordinal refreshes
+    // the deadline via the onProgress callback threaded into `startWithProgress`.
     val downloadStartMaxDuration: FiniteDuration = 10.minutes
 
     // Upper bound on the iterations validateChain spends searching for a valid persisted
@@ -509,11 +517,16 @@ object Download {
     def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
       val guardedStart =
         recordDownloadPhase("full", "start_entered") >>
-          Async[F].timeoutTo(
-            start,
-            downloadStartMaxDuration,
-            DownloadStartTimedOut.raiseError[F, DownloadResult]
-          )
+          Download.withInactivityTimeout[F, DownloadResult](downloadStartMaxDuration, 30.seconds) { touch =>
+            startWithProgress { (phase, ordinal) =>
+              touch >>
+                Metrics[F].updateGauge("dag_download_full_progress_ordinal", ordinal.value.value.toDouble) >>
+                Metrics[F].incrementCounter(
+                  "dag_download_full_progress_total",
+                  Seq(Metrics.unsafeLabelName("phase") -> phase)
+                )
+            }
+          }
       val instrumentedStart = guardedStart
         .flatTap(_ => recordStartOutcome("full", DownloadOutcome.Success) >> recordDownloadPhase("full", "start_success"))
         .onError {
@@ -521,7 +534,9 @@ object Download {
             val outcome = classifyStartError(err)
             val maybeLog =
               if (outcome.isUnclassified) logUnclassifiedStartError(err) else Async[F].unit
-            maybeLog >> recordStartOutcome("full", outcome)
+            val timeoutMetric =
+              Metrics[F].incrementCounter("dag_download_full_inactivity_timeout_total").whenA(err == DownloadStartTimedOut)
+            maybeLog >> timeoutMetric >> recordStartOutcome("full", outcome)
         }
 
       def instrumentedObserve(result: DownloadResult): F[(DownloadResult, ObservationLimit)] =
@@ -1153,7 +1168,12 @@ object Download {
         }
     }
 
-    def start(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
+    def start(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] =
+      startWithProgress((_, _) => Applicative[F].unit)
+
+    def startWithProgress(
+      onProgress: (String, SnapshotOrdinal) => F[Unit]
+    )(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
 
       def getLatestMetadata: F[SnapshotMetadata] = {
         val retryPolicy = RetryPolicies.exponentialBackoff[F](1.second).join(RetryPolicies.limitRetries(5))
@@ -1207,7 +1227,7 @@ object Download {
                 .getOrElse(UnexpectedState.raiseError[F, DownloadResult])
             } else {
               for {
-                (snapshot, context) <- download(metadata.hash, metadata.ordinal, result)
+                (snapshot, context) <- downloadWithProgress(metadata.hash, metadata.ordinal, result, onProgress)
                 nextResult <- downloadLoop(snapshot.ordinal, (snapshot, context).some)
               } yield nextResult
             }
