@@ -95,7 +95,7 @@ jobs:
       fail-fast: false
       matrix:
         test-group:
-          - { name: dag-cluster,            tests: "dag-cluster" }
+          - { name: dag-cluster,            tests: "dag-cluster", extra-args: "--num-gl0=4" }
           - { name: delegated-staking,      tests: "delegated-staking" }
           - { name: token-lock-replacement, tests: "token-lock-replacement" }
           # DISABLED on a NODE bug, not a test bug. The Phase-1 gate was unsatisfiable and is now
@@ -115,8 +115,7 @@ jobs:
           # and one validator restored from an older same-prefix snapshot. The healthy pair must
           # advance, the lagged validator must publish its target ordinal/hash before consensus
           # initialization, become Ready, sign again, and converge on the same post-recovery hash.
-          # Restore the job-wide unanimous E2E baseline through the env fallback below. This test alone
-          # needs a per-row 2/3 override while one member is deliberately offline.
+          # Keep this scenario's 2/3 requirement explicit while one member is deliberately offline.
           - { name: rollback-download-head,  tests: "rollback-download-head", extra-args: "--num-gl0=3 --num-gl1=0", quorum: "0.6666666666666666", timeout: 60 }
           - { name: currency,               tests: "currency" }
           - { name: rewards,                tests: "rewards" }
@@ -148,7 +147,9 @@ jobs:
       # Cadence when there ARE pending events (the flood): lowered so gl0 drains the chain faster without
       # spawning empty rounds when idle.
       CL_EVENT_TRIGGER_COOLDOWN: "5 seconds"
-      CL_QUORUM_THRESHOLD_FRACTION: ${{ matrix.test-group.quorum || '1.0' }}
+      # GL0 uses 2/3 so current signers can support certified committee expansion.
+      # This pass-through is GL0-only; Currency L0 retains its own quorum setting.
+      CL_QUORUM_THRESHOLD_FRACTION: ${{ matrix.test-group.quorum || '0.6666666666666666' }}
 
     steps:
       - name: Checkout code
