@@ -99,19 +99,21 @@ object ConfigLoadSuite extends SimpleIOSuite {
     }
   }
 
-  test("the packaged Testnet config activates certified consensus at the halt ordinal") {
+  test("the packaged Testnet config activates certified consensus just above the recovery anchor") {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       val resolved = SnapshotConfig.resolveEffectiveConsensusConfig(cfg.snapshot, AppEnvironment.Testnet)
 
       resolved.fold(
         error => failure(error.getMessage),
-        // 3276854 is the ordinal testnet's Global L0 halted at, and the activation is deliberately
-        // AT that anchor, not after it: validateRecoverySeedActivationSpacing accepts `anchor >=
-        // activation` or `activation - anchor >= 3`, so 3276855/3276856 would be REJECTED for a
-        // recovery seed anchored here. Absent map entry would silently resolve to Long.MaxValue and
-        // leave CertifiedRoundCommitteeProjector -- hence the fixed admission path -- switched off,
-        // which is the state that let the Core controller contract to 2 signers. Guard the value.
-        effective => expect.same(3276854L, effective.certifiedConsensusActivationKey)
+        // 3271282 = the post-reorg tip 3271279 plus 3. The chain reorganized from 3276854 down to
+        // 3271279 on 2026-09-09, so the previous value named a nonexistent ordinal.
+        // validateRecoverySeedActivationSpacing accepts `anchor >= activation` or
+        // `activation - anchor >= 3`; anchor+3 takes the second arm (3271280/3271281 would be
+        // REJECTED) and keeps the anchor below activation so an unseeded rollback skips the sidecar
+        // read. An absent map entry would silently resolve to Long.MaxValue and leave
+        // CertifiedRoundCommitteeProjector -- hence the fixed admission path -- switched off, which
+        // is the state that let the Core controller contract to 2 signers. Guard the value.
+        effective => expect.same(3271282L, effective.certifiedConsensusActivationKey)
       )
     }
   }
