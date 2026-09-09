@@ -405,11 +405,11 @@ object SnapshotStorage {
               }
               .handleErrorWith(error => SnapshotIndexReadbackFailure(ordinal, cachedHash, error).raiseError[F, Option[Hash]])
 
-          /** Reconcile lower positive-cache entries with caller-validated persisted history without writing lower files or inferring a fork
-            * point. Any readable ordinal index settles its retry marker. A missing/undecodable ordinal retains its cached value and marker
-            * when persistence is pending, or retains only the cached value when its hash index still proves the same snapshot value/hash;
-            * otherwise both positive-cache entries and any stale retry marker are removed.
-            */
+          /* Reconcile lower positive-cache entries with caller-validated persisted history without writing lower files or inferring a fork
+           * point. Any readable ordinal index settles its retry marker. A missing/undecodable ordinal retains its cached value and marker
+           * when persistence is pending, or retains only the cached value when its hash index still proves the same snapshot value/hash;
+           * otherwise both positive-cache entries and any stale retry marker are removed.
+           */
           def reconcileValidatedHistoryCacheEntries: F[Unit] =
             for {
               cachedOrdinals <- ordinalCache.keys
@@ -444,10 +444,10 @@ object SnapshotStorage {
               _ <- notPersistedCache.update(_ -- (evictedOrdinals ++ ordinalBackedOrdinals))
             } yield ()
 
-          /** Remove only the abandoned target/future suffix from process-local positive caches. Lower entries are reconciled separately
-            * against the caller-validated persisted ancestry. Neither operation selects a branch, infers a fork point, or repairs lower
-            * files.
-            */
+          /* Remove only the abandoned target/future suffix from process-local positive caches. Lower entries are reconciled separately
+           * against the caller-validated persisted ancestry. Neither operation selects a branch, infers a fork point, or repairs lower
+           * files.
+           */
           def reconcilePublishedSuffixCaches(hashed: Hashed[S]): F[Unit] =
             for {
               cachedOrdinals <- ordinalCache.keys
