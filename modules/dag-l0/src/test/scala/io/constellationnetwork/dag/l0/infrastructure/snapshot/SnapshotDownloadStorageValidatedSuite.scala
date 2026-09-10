@@ -123,6 +123,98 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
     }
   }
 
+  List(false, true).foreach { copiedIndexes =>
+    test(s"cleanup retains inert hashes and validates only the requested anchor with copiedIndexes=$copiedIndexes") { res =>
+      implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
+      implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+      val hashSelect = new HashSelect {
+        def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+      }
+
+      File.temporaryDirectory() { root =>
+        def path(name: String): Path = Path((root / name).pathAsString)
+        val anchorOrdinal = SnapshotOrdinal.unsafeApply(10L)
+
+        for {
+          tmpStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+          persisted <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+          full <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+          infos <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info"))
+          kryoInfos <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+          checkpoints <- CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            path("checkpoints")
+          )
+          producer <- InMemoryMerklePatriciaProducer.make[IO]()
+          mptStore <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+          storage = SnapshotDownloadStorage.make[IO](tmpStorage, persisted, full, infos, kryoInfos, checkpoints, hashSelect, mptStore)
+          key <- KeyPairGenerator.makeKeyPair[IO]
+          genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+          info = genesis.info.toGlobalSnapshotInfo
+          base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
+          proof <- GlobalSnapshotInfo.stateProofBuilder[IO].buildProof(info, anchorOrdinal)
+          anchor <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = anchorOrdinal, stateProof = proof), key)
+          alternate <- Signed
+            .forAsyncHasher[IO, GlobalIncrementalSnapshot](anchor.value.copy(epochProgress = EpochProgress(NonNegLong(1L))), key)
+          future <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(40001L)), key)
+          orphan <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(40002L)), key)
+          anchorHash <- anchor.toHashed[IO].map(_.hash)
+          alternateHash <- alternate.toHashed[IO].map(_.hash)
+          futureHash <- future.toHashed[IO].map(_.hash)
+          orphanHash <- orphan.toHashed[IO].map(_.hash)
+          _ <- persisted.write(alternate) >> persisted.delete(alternate.ordinal) >> persisted.write(anchor)
+          _ <- persisted.write(future) >> persisted.write(orphan) >> persisted.delete(orphan.ordinal)
+          _ <- IO.blocking {
+            if (copiedIndexes) {
+              val ordinalFile = root / "persisted" / "ordinal" / persisted.ordinalPathGenerator.get(future.ordinal.value.value.toString)
+              val bytes = ordinalFile.byteArray
+              ordinalFile.delete()
+              ordinalFile.writeByteArray(bytes)
+            }
+          }
+          futureHashFile <- persisted.getPath(futureHash)
+          futureOrdinalFile = root / "persisted" / "ordinal" / persisted.ordinalPathGenerator.get(future.ordinal.value.value.toString)
+          indexesLinked <- IO.blocking(futureHashFile.isSameFileAs(futureOrdinalFile))
+          _ <- infos.write(anchor.ordinal, info) >> infos.write(future.ordinal, info) >> infos.write(orphan.ordinal, info)
+          _ <- checkpoints.replaceForRecovery(future.ordinal, future, info, futureHash)
+          _ <- storage.cleanupAbove(anchor.ordinal)
+          futureOrdinal <- persisted.read(future.ordinal)
+          futureObject <- persisted.read(futureHash)
+          movedFuture <- tmpStorage.read(futureHash)
+          keptOrphan <- persisted.read(orphanHash)
+          keptAlternate <- persisted.read(alternateHash)
+          indexesAbove <- persisted.findAbove(anchor.ordinal).compile.toList
+          futureInfo <- infos.read(future.ordinal)
+          orphanInfo <- infos.read(orphan.ordinal)
+          latestCheckpoint <- checkpoints.getLatestOrdinal
+          alternateUsable <- storage.ensurePersistedAnchor(alternateHash, anchor.ordinal)
+          anchorAfterConflict <- persisted.read(anchor.ordinal)
+          orphanUsableWithoutContext <- storage.ensurePersistedAnchor(orphanHash, orphan.ordinal)
+          // On-demand repair is still allowed for the hash reached through the selected lineage.
+          _ <- persisted.delete(anchor.ordinal)
+          repaired <- storage.ensurePersistedAnchor(anchorHash, anchor.ordinal)
+          validated <- storage.readCombinedValidated(anchor.ordinal)
+        } yield
+          expect.all(
+            indexesLinked == !copiedIndexes,
+            futureOrdinal.isEmpty,
+            futureObject.isEmpty,
+            movedFuture.contains(future),
+            keptOrphan.contains(orphan),
+            keptAlternate.contains(alternate),
+            indexesAbove.isEmpty,
+            futureInfo.isEmpty,
+            orphanInfo.isEmpty,
+            latestCheckpoint.isEmpty,
+            !alternateUsable,
+            anchorAfterConflict.contains(anchor),
+            !orphanUsableWithoutContext,
+            repaired,
+            validated.contains((anchor, info))
+          )
+      }
+    }
+  }
+
   test("first incremental genesis validation derives its state proof at the full-genesis ordinal") { implicit res =>
     implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)

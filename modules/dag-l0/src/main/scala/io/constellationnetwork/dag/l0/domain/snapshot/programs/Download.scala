@@ -87,17 +87,8 @@ case class RollbackTargetNotCorroborated(
 
 object Download {
 
-  /** Run a long recovery operation with an inactivity watchdog rather than a total wall-clock deadline. Deep canonical replay is allowed to
-    * take hours as long as ordinals continue moving; a fiber that makes no recorded progress for `maxIdle` is cancelled and retried by
-    * DownloadDaemon. This preserves the original hung-fiber protection without repeatedly cancelling healthy 10k-90k ordinal catch-up.
-    */
-  /** Keep an inactivity deadline alive across a long purely-local pass.
-    *
-    * The persisted-tree cleanup reports nothing until it finishes, so it contributes no progress to the stream [[withInactivityTimeout]]
-    * watches. On a store whose bodies are not hardlinked to their ordinal index the pass is long -- the `nlink == 1` skip in
-    * `cleanupOrphanHashIndexesAboveOrdinal` misses every unlinked body and decodes it instead -- and the deadline expired mid-pass. The
-    * daemon then restarted the same cleanup on every attempt, so the download could never begin. Beat for exactly the pass's duration,
-    * leaving the bound to cover genuinely stuck fetch/validateChain/replay work.
+  /** Keep the inactivity deadline alive during local ordinal-index and state cleanup, which does not report replay progress. The heartbeat
+    * is scoped to this operation so subsequent fetch/validation/replay stalls remain subject to the inactivity deadline.
     */
   private[snapshot] def withProgressHeartbeat[F[_]: Async, A](
     every: FiniteDuration,
@@ -105,6 +96,9 @@ object Download {
   )(fa: F[A]): F[A] =
     (Async[F].sleep(every) >> beat).foreverM[Unit].background.use(_ => fa)
 
+  /** Run recovery with an inactivity watchdog rather than a total wall-clock deadline. Deep canonical replay may take hours as long as
+    * progress continues; an operation with no recorded progress for `maxIdle` is cancelled and retried by DownloadDaemon.
+    */
   private[snapshot] def withInactivityTimeout[F[_]: Async, A](
     maxIdle: FiniteDuration,
     checkEvery: FiniteDuration

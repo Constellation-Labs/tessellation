@@ -270,10 +270,10 @@ object SnapshotDownloadStorage {
         val cleanupAboveOrdinal = persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp)
 
         // Bounded last-resort deletion if a concurrently recreated or malformed ordinal index
-        // survives the normal cleanup. The normal path already unlinks unreadable future ordinals,
-        // lazily removes valid future hashes, and quarantines unreadable hash-only content. This
-        // loop is therefore defense in depth for the ordinal namespace, not the primary orphan
-        // cleanup mechanism. A max-iteration cap prevents an infinite loop on permission errors.
+        // survives the normal cleanup. The normal path unlinks unreadable future ordinals and
+        // moves hashes identified by valid future ordinal indexes. Hash-only objects may remain;
+        // their presence does not establish canonicality. A max-iteration cap prevents an infinite
+        // loop on permission errors.
         val maxFallbackIterations = 3
 
         def fallbackDirectDelete: F[Long] =
@@ -311,13 +311,13 @@ object SnapshotDownloadStorage {
             .count
 
           // Always update the gauge so /metrics on a remote community peer can answer
-          // "how many files refused to clean up?" without log access. 0 on success.
+          // "how many snapshot ordinal indexes refused to clean up?" without log access. 0 on success.
           _ <- Metrics[F].updateGauge("dag_download_cleanup_remaining_files", remainingFiles.toDouble)
 
           _ <-
             if (remainingFiles > 0) {
               logger.warn(
-                s"[cleanupAbove] $remainingFiles files remain above ordinal=${ordinal.show} after standard cleanup; " +
+                s"[cleanupAbove] $remainingFiles snapshot ordinal indexes remain above ordinal=${ordinal.show} after standard cleanup; " +
                   s"attempting fallback direct deletion"
               ) >>
                 Metrics[F].incrementCounter("dag_download_cleanup_fallback_total", Seq.empty) >>
@@ -326,17 +326,13 @@ object SnapshotDownloadStorage {
                     if (stillRemaining > 0L)
                       Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(stillRemaining, ordinal))
                     else
-                      // Deleting an ordinal hardlink can expose its content path as nlink=1.
-                      // Run the lazy orphan pass once more so that valid future content moves
-                      // to tmp and unreadable content is quarantined before recovery continues.
-                      persistedStorage.cleanupAboveOrdinal(ordinal, movePersistedToTmp) >>
-                        logger.info(
-                          s"[cleanupAbove] fallback succeeded: removed $remainingFiles orphan ordinal hardlinks above ${ordinal.show}"
-                        )
+                      logger.info(
+                        s"[cleanupAbove] fallback succeeded: removed $remainingFiles snapshot ordinal indexes above ${ordinal.show}"
+                      )
                   }
                 }
             } else {
-              logger.info(s"Cleanup successful: No files remain above ordinal ${ordinal.show}")
+              logger.info(s"Cleanup successful: No snapshot ordinal indexes remain above ordinal ${ordinal.show}")
             }
         } yield ()
 
