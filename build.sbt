@@ -19,6 +19,10 @@ ThisBuild / developers := List(
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.scalafixRules
 
+// sbt-git (pulled in by sbt-ci-release) reads HEAD/branch through JGit by default, which cannot open
+// linked `git worktree` checkouts. Shell out to the git CLI for read-only operations instead.
+useReadableConsoleGit
+
 // ===== Unified Versioning System =====
 // See VERSIONING.md for complete documentation
 //
