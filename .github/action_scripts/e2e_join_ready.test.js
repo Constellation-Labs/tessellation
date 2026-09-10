@@ -21,8 +21,11 @@ async function fixture(t, options = {}) {
     const count = calls.filter((c) => c.url === req.url).length
     res.setHeader('Content-Type', 'application/json')
     if (req.url === '/node/state') {
+      if (options.hangState) return
       res.end(JSON.stringify(options.state ? options.state(count) : 'ReadyToJoin'))
     } else if (req.url === '/registration/request') {
+      if (options.hangSeed) return
+      if (options.seedStatus) res.statusCode = options.seedStatus
       res.end(JSON.stringify(options.registration ? options.registration(count) : registered()))
     } else if (req.url === '/cluster/join' && req.method === 'POST') {
       res.end()
@@ -108,7 +111,10 @@ for (const state of ['WaitingForObserving', 'Observing', 'WaitingForReady', 'Rea
 for (const [name, options, stage] of [
   ['non-ready local state', { state: () => 'StartingSession' }, 'local_state'],
   ['malformed local state', { state: () => ({ healthy: true }) }, 'local_state'],
+  ['unresponsive local state', { hangState: true }, 'local_state'],
   ['unresponsive CLI', { hangCli: true }, 'local_cli'],
+  ['unresponsive seed', { hangSeed: true }, 'seed_registration'],
+  ['failed seed HTTP response', { seedStatus: 503 }, 'seed_registration'],
   ['wrong seed identity', { registration: () => ({ ...registered(), id: 'wrong' }) }, 'seed_registration'],
   ['seed without a session', { registration: () => ({ ...registered(), session: null }) }, 'seed_registration'],
   ['seed without a cluster session', { registration: () => ({ ...registered(), clusterSession: null }) }, 'seed_registration'],
@@ -116,7 +122,8 @@ for (const [name, options, stage] of [
 ]) {
   test(`${name} fails within the budget without posting a join`, async (t) => {
     const { env, calls } = await fixture(t, options)
-    env.CL_DOCKER_JOIN_READY_TIMEOUT_SECONDS = '1'
+    // SECONDS has whole-second granularity; leave time for prerequisite probes.
+    env.CL_DOCKER_JOIN_READY_TIMEOUT_SECONDS = '2'
     await assert.rejects(join(t, env), (err) => {
       assert.equal(err.code, 1)
       assert.match(err.stderr, new RegExp(`waiting_for=${stage}`))
@@ -163,6 +170,18 @@ test('invalid readiness budget fails immediately', async (t) => {
   await assert.rejects(join(t, env), (err) => {
     assert.equal(err.code, 1)
     assert.match(err.stderr, /must be a positive integer/)
+    return true
+  })
+  assert.equal(calls.length, 0)
+})
+
+test('missing container port aborts without posting a join', async (t) => {
+  const { env, calls } = await fixture(t)
+  delete env.CL_PUBLIC_HTTP_PORT
+  await assert.rejects(join(t, env), (err) => {
+    assert.equal(err.code, 1)
+    assert.match(err.stderr, /CL_PUBLIC_HTTP_PORT/)
+    assert.match(err.stderr, /auto-join aborted/)
     return true
   })
   assert.equal(calls.length, 0)
