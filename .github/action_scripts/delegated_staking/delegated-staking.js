@@ -41,6 +41,8 @@ const {
   assertTokenUnlockInSnapshot,
 } = require('./lib')
 
+const { getSingleStakeForLock, withStakeRetry } = require('./stake-invariants')
+
 const throwUsage = () => {
   throw new Error(
     'Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <workflow-name>',
@@ -730,6 +732,8 @@ const testWithdrawDelegatedStake = async (urls, account, stakeHash) => {
 }
 
 const getAlternateGlobalL0Url = (globalL0Url) => {
+  // CI's dag_l0/dl0_cluster/action.yml exposes the next node at <prefix>10,
+  // while shared/network.js exposes the genesis node at <prefix>00.
   const alternate = new URL(globalL0Url)
   alternate.port = `${Number(alternate.port) + 10}`
   return alternate.toString().replace(/\/$/, '')
@@ -748,7 +752,7 @@ const waitForNextSnapshot = async (urls) => {
       return latestSnapshot.value.ordinal
     },
     {
-      name: 'waitForNextSnapshotBeforeDoubleWithdrawalRace',
+      name: 'waitForNextSnapshotBeforeConcurrentWithdrawal',
       maxAttempts: 60,
       interval: 1000,
       handleError: () => {},
@@ -756,8 +760,8 @@ const waitForNextSnapshot = async (urls) => {
   )
 }
 
-const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
-  logWorkflow.info('---- Start testDoubleWithdrawalProtection ----')
+const beginConcurrentWithdrawalTest = async (urls, nodeIds) => {
+  logWorkflow.info('---- Start testConcurrentWithdrawalSettlement ----')
 
   const primaryAccount = createAndConnectAccount(PRIVATE_KEYS.key3, {
     l0Url: urls.globalL0Url,
@@ -788,21 +792,23 @@ const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
       const originalStake = state.activeDelegatedStakes.find(
         (stake) => stake.hash === originalStakeHash,
       )
-      if (!originalStake) throw new Error('Original race stake is not active')
+      if (!originalStake) throw new Error('Original concurrent-test stake is not active')
       return originalStake
     },
     {
-      name: 'waitForOriginalDoubleWithdrawalStake',
+      name: 'waitForOriginalConcurrentWithdrawalStake',
       maxAttempts: 30,
       interval: 1000,
       handleError: () => {},
     },
   )
 
-  await waitForNextSnapshot(urls)
+  const submissionWindowOrdinal = await waitForNextSnapshot(urls)
 
-  // Submit the replacement and withdrawal through different gL0 nodes in the
-  // same fresh-round window. Consensus must never materialize both S2 and W1.
+  // Concurrent ingress submissions may be processed in different snapshots.
+  // This E2E checks observed state and settlement, not same-round co-processing.
+  // UpdateDelegatedStakeAcceptanceManagerSuite deterministically tests the same
+  // batch at A-1/A: the replacement wins and the original withdrawal is rejected.
   const [replacementResult, withdrawalResult] = await Promise.allSettled([
     createDelegatedStake(
       primaryAccount,
@@ -818,35 +824,25 @@ const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
     withdrawalResult.status !== 'fulfilled'
   ) {
     throw new Error(
-      `Failed to stage both double-withdrawal race requests: replacement=${replacementResult.status}, withdrawal=${withdrawalResult.status}`,
+      `Failed to submit concurrent requests to ${urls.globalL0Url} and ${getAlternateGlobalL0Url(urls.globalL0Url)}: replacement=${replacementResult.reason || replacementResult.status}, withdrawal=${withdrawalResult.reason || withdrawalResult.status}`,
     )
   }
 
   const replacementStakeHash = replacementResult.value
+  if (!replacementStakeHash || !withdrawalResult.value) {
+    throw new Error('Concurrent submissions must both return request hashes')
+  }
+  logWorkflow.info(
+    `Concurrent submissions after observed ordinal ${submissionWindowOrdinal}: replacement=${replacementStakeHash}, withdrawal=${withdrawalResult.value}; same-round processing is not established`,
+  )
 
-  const raceOutcome = await withRetry(
+  const outcome = await withStakeRetry(
     async () => {
       const state = await getAccountDelegatedStakes(
         urls,
         primaryAccount.address,
       )
-      const activeForLock = state.activeDelegatedStakes.filter(
-        (stake) => stake.tokenLockRef === lockHash,
-      )
-      const pendingForLock = state.pendingWithdrawals.filter(
-        (stake) => stake.tokenLockRef === lockHash,
-      )
-
-      if (activeForLock.length > 1 || pendingForLock.length > 1) {
-        throw new Error(
-          `Multiple stake records reference race lock ${lockHash}: active=${activeForLock.length}, pending=${pendingForLock.length}`,
-        )
-      }
-      if (activeForLock.length === 1 && pendingForLock.length === 1) {
-        throw new Error(
-          `Consensus-breaking state detected for ${lockHash}: an active stake and pending withdrawal share one lock`,
-        )
-      }
+      const { activeForLock, pendingForLock } = getSingleStakeForLock(state, lockHash)
 
       const replacementIsActive =
         replacementStakeHash &&
@@ -856,37 +852,31 @@ const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
       )
 
       if (!replacementIsActive && !originalIsPending) {
-        throw new Error('Double-withdrawal race has not reached a terminal state')
+        throw new Error('Concurrent submissions have not produced an observable outcome')
       }
 
-      return { replacementIsActive, pendingForLock }
+      return { replacementIsActive, activeForLock, pendingForLock }
     },
     {
-      name: 'assertDoubleWithdrawalRaceIsSafe',
+      name: 'waitForConcurrentWithdrawalOutcome',
       maxAttempts: 30,
       interval: 1000,
-      handleError: (err, attempt) => {
-        if (attempt === 30) throw err
-      },
     },
   )
 
-  if (raceOutcome.replacementIsActive) {
+  logWorkflow.info(`Observed concurrent-submission outcome: ${JSON.stringify(outcome)}`)
+
+  if (outcome.replacementIsActive) {
     await withdrawDelegatedStake(primaryAccount, replacementStakeHash)
   }
 
-  const pendingWithdrawal = await withRetry(
+  const pendingWithdrawal = await withStakeRetry(
     async () => {
       const state = await getAccountDelegatedStakes(
         urls,
         primaryAccount.address,
       )
-      const activeForLock = state.activeDelegatedStakes.filter(
-        (stake) => stake.tokenLockRef === lockHash,
-      )
-      const pendingForLock = state.pendingWithdrawals.filter(
-        (stake) => stake.tokenLockRef === lockHash,
-      )
+      const { activeForLock, pendingForLock } = getSingleStakeForLock(state, lockHash)
 
       if (activeForLock.length !== 0 || pendingForLock.length !== 1) {
         throw new Error(
@@ -900,9 +890,6 @@ const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
       name: 'assertExactlyOnePendingWithdrawalForTokenLock',
       maxAttempts: 30,
       interval: 1000,
-      handleError: (err, attempt) => {
-        if (attempt === 30) throw err
-      },
     },
   )
 
@@ -910,18 +897,13 @@ const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
     balanceAfterLock + pendingWithdrawal.totalBalance
 
   return async () => {
-    await withRetry(
+    await withStakeRetry(
       async () => {
         const state = await getAccountDelegatedStakes(
           urls,
           primaryAccount.address,
         )
-        const activeForLock = state.activeDelegatedStakes.filter(
-          (stake) => stake.tokenLockRef === lockHash,
-        )
-        const pendingForLock = state.pendingWithdrawals.filter(
-          (stake) => stake.tokenLockRef === lockHash,
-        )
+        const { activeForLock, pendingForLock } = getSingleStakeForLock(state, lockHash)
 
         if (activeForLock.length !== 0 || pendingForLock.length !== 0) {
           throw new Error(`Withdrawal for ${lockHash} has not resolved`)
@@ -930,17 +912,14 @@ const beginDoubleWithdrawalProtectionTest = async (urls, nodeIds) => {
         await assertBalanceChange(primaryAccount, expectedBalanceAfterUnlock)
       },
       {
-        name: 'assertDoubleWithdrawalCreditsPrincipalOnce',
+        name: 'assertConcurrentWithdrawalCreditsPrincipalOnce',
         maxAttempts: 36,
         interval: 10 * 1000,
-        handleError: (err, attempt) => {
-          if (attempt === 36) throw err
-        },
       },
     )
 
-    logWorkflow.info('Double-withdrawal race credited principal exactly once')
-    logWorkflow.info('---- End testDoubleWithdrawalProtection ----')
+    logWorkflow.info('Concurrent-withdrawal settlement credited principal exactly once')
+    logWorkflow.info('---- End testConcurrentWithdrawalSettlement ----')
   }
 }
 
@@ -952,26 +931,34 @@ const testDelegatedStaking = async (urls) => {
 
   const nodeParams = await getNodeParams(urls)
 
-  const finishDoubleWithdrawalProtectionTest =
-    await beginDoubleWithdrawalProtectionTest(urls, [
+  const finishConcurrentWithdrawalTest =
+    await beginConcurrentWithdrawalTest(urls, [
       nodeParams[0].peerId,
       nodeParams[1].peerId,
     ])
 
-  const [stakeHash] = await testCreateDelegatedStake(urls, account, [
-    nodeParams[0].peerId,
-    nodeParams[1].peerId,
+  // The accounts are independent. Observe settlement during the other flow and
+  // collect both results even when one fails, while overlapping the cooldown.
+  const results = await Promise.allSettled([
+    finishConcurrentWithdrawalTest(),
+    (async () => {
+      const [stakeHash] = await testCreateDelegatedStake(urls, account, [
+        nodeParams[0].peerId,
+        nodeParams[1].peerId,
+      ])
+      const updatedStakeHash = await testUpdateDelegatedStake(
+        urls,
+        account,
+        stakeHash,
+        nodeParams[2].peerId,
+      )
+      await testWithdrawDelegatedStake(urls, account, updatedStakeHash)
+    })(),
   ])
-
-  const updatedStakeHash = await testUpdateDelegatedStake(
-    urls,
-    account,
-    stakeHash,
-    nodeParams[2].peerId,
-  )
-
-  await testWithdrawDelegatedStake(urls, account, updatedStakeHash)
-  await finishDoubleWithdrawalProtectionTest()
+  const failures = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason)
+  if (failures.length) throw new AggregateError(failures, 'Delegated staking checks failed')
 }
 
 const executeWorkflowByType = async (workflowType) => {
