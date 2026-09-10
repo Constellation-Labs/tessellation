@@ -162,6 +162,92 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
+  test("write - retains a verified existing value and its proof envelope") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, original) = snapshots
+        key <- KeyPairGenerator.makeKeyPair[IO]
+        incoming <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](original.value, key)
+        _ <- storage.write(original) >> storage.delete(original.ordinal)
+        hashFile <- mkHashFile(tmpDir, original)
+        witness = tmpDir / "existing-inode"
+        _ <- IO.blocking(hashFile.linkTo(witness))
+        _ <- storage.write(incoming)
+        stored <- storage.read(original.ordinal)
+      } yield
+        expect.all(
+          original.proofs != incoming.proofs,
+          stored.contains(original),
+          mkOrdinalFile(tmpDir, original).isSameFileAs(witness)
+        )
+    }
+  }
+
+  List(false, true).foreach { wrongOrdinal =>
+    test(s"write - replaces a decodable body at the wrong hash path with wrongOrdinal=$wrongOrdinal") { res =>
+      implicit val (_, kryo, j, h, sp, gsps) = res
+
+      File.temporaryDirectory() { tmpDir =>
+        for {
+          storage <- mkLocalFileSystemStorage(tmpDir)
+          snapshots <- mkSnapshots
+          (_, expected) = snapshots
+          key <- KeyPairGenerator.makeKeyPair[IO]
+          wrong <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+            expected.value.copy(
+              ordinal = if (wrongOrdinal) SnapshotOrdinal.unsafeApply(40001L) else expected.ordinal,
+              epochProgress = EpochProgress(1L)
+            ),
+            key
+          )
+          hashFile <- mkHashFile(tmpDir, expected)
+          wrongBytes <- JsonSerializer[IO].serialize(wrong)
+          _ <- IO.blocking {
+            hashFile.parent.createDirectories()
+            hashFile.writeByteArray(wrongBytes)
+          }
+          _ <- storage.write(expected)
+          byOrdinal <- storage.read(expected.ordinal)
+          expectedHash <- expected.value.hash
+          byHash <- storage.read(expectedHash)
+        } yield expect.all(byOrdinal.contains(expected), byHash.contains(expected))
+      }
+    }
+  }
+
+  test("hash read I/O errors propagate through reads, anchor checks and reuse without changing either index") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, snapshot) = snapshots
+        hash <- snapshot.value.hash
+        _ <- storage.write(snapshot) >> storage.delete(snapshot.ordinal)
+        hashFile <- mkHashFile(tmpDir, snapshot)
+        before <- IO.blocking(hashFile.byteArray.toVector)
+        failing <- mkReadFailingStorage(tmpDir, "hash/")
+        read <- failing.read(hash).attempt
+        anchor <- failing.ensureOrdinalLink(hash, snapshot.ordinal).attempt
+        write <- failing.write(snapshot).attempt
+        after <- IO.blocking(hashFile.byteArray.toVector)
+        ordinalExists <- storage.exists(snapshot.ordinal)
+      } yield
+        expect.all(
+          read.swap.exists(_.isInstanceOf[IOException]),
+          anchor.swap.exists(_.isInstanceOf[IOException]),
+          write.swap.exists(_.isInstanceOf[IOException]),
+          before == after,
+          !ordinalExists
+        )
+    }
+  }
+
   test("write - create hash file and link ordinal file to it") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
 
@@ -788,10 +874,17 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
             (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
           )
           .attempt
-        // Existing decoders can either reject malformed bytes or raise; neither may authorize an anchor.
-        anchorStatus <- storage.ensureOrdinalLink(selectedHash, SnapshotOrdinal(1L)).attempt
+        anchorStatus <- storage.ensureOrdinalLink(selectedHash, SnapshotOrdinal(1L))
+        byHash <- storage.read(selectedHash)
         ordinalExists <- storage.exists(SnapshotOrdinal.unsafeApply(1L))
-      } yield expect.all(result.isRight, selectedHashFile.exists, !anchorStatus.exists(_.usable), !ordinalExists)
+      } yield
+        expect.all(
+          result.isRight,
+          selectedHashFile.exists,
+          anchorStatus == OrdinalLinkStatus.HashUnreadable,
+          byHash.isEmpty,
+          !ordinalExists
+        )
     }
   }
 
