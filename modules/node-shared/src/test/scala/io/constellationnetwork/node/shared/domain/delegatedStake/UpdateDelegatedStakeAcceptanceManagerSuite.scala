@@ -5,10 +5,12 @@ import java.security.KeyPair
 import cats.data.{NonEmptyChain, NonEmptySet}
 import cats.effect.IO
 import cats.effect.kernel.Resource
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidatorSuite.mkGlobalContext
@@ -278,6 +280,81 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         result.acceptedWithdrawals.isEmpty,
         result.notAcceptedWithdrawals == List((withdrawal, NonEmptyChain.of(AlreadyWithdrawn(tokenLockRef))))
       )
+  }
+
+  test("a fresh create on a normally bucketed pending lock is rejected before and after activation") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(3L)
+    val manager = UpdateDelegatedStakeAcceptanceManager.make[IO](
+      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+      activation
+    )
+
+    for {
+      previousNode <- KeyPairGenerator.makeKeyPair[IO]
+      ((lockRef, _), base) <- mkValidGlobalContext(kp, previousNode, kp)
+      withdrawn <- Signed.forAsyncHasher(testCreateDelegatedStake(previousNode, sourceAddress, 100L, lockRef), kp)
+      fresh <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 100L, lockRef), kp)
+      context = base.copy(delegatedStakesWithdrawals =
+        Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              PendingDelegatedStakeWithdrawal(withdrawn, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue)
+            )
+          )
+        )
+      )
+      results <- List(SnapshotOrdinal.unsafeApply(2L), activation, activation.next).traverse { ordinal =>
+        manager.accept(List(fresh), List.empty, context, EpochProgress.MinValue, ordinal)
+      }
+    } yield
+      expect(results.forall { result =>
+        result.acceptedCreates.isEmpty &&
+        result.notAcceptedCreates == List((fresh, NonEmptyChain.of(AlreadyWithdrawn(fresh.parent.hash))))
+      })
+  }
+
+  test("a pending lock in a malformed bucket blocks creates at activation without reserving their parent") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(3L)
+    val manager = UpdateDelegatedStakeAcceptanceManager.make[IO](
+      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+      activation
+    )
+
+    for {
+      previousNode <- KeyPairGenerator.makeKeyPair[IO]
+      ((pendingRef, availableRef), base) <- mkValidGlobalContext(kp, previousNode, kp)
+      otherAddress = previousNode.getPublic.toAddress
+      fresh <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 100L, pendingRef), kp)
+      available <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 200L, availableRef), kp)
+      checks <- List(kp, previousNode).traverse { pendingSigner =>
+        for {
+          withdrawn <- Signed.forAsyncHasher(
+            testCreateDelegatedStake(previousNode, pendingSigner.getPublic.toAddress, 100L, pendingRef),
+            pendingSigner
+          )
+          context = base.copy(delegatedStakesWithdrawals =
+            Some(
+              SortedMap(
+                otherAddress -> SortedSet(
+                  PendingDelegatedStakeWithdrawal(withdrawn, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue)
+                )
+              )
+            )
+          )
+          before <- manager.accept(List(fresh, available), List.empty, context, EpochProgress.MinValue, SnapshotOrdinal.unsafeApply(2L))
+          after <- List(activation, activation.next).traverse { ordinal =>
+            manager.accept(List(fresh, available), List.empty, context, EpochProgress.MinValue, ordinal)
+          }
+        } yield
+          expect.all(
+            before.acceptedCreates(sourceAddress).map(_._1) == List(fresh),
+            after.forall(_.acceptedCreates(sourceAddress).map(_._1) == List(available)),
+            after.forall(_.notAcceptedCreates == List((fresh, NonEmptyChain.of(AlreadyWithdrawn(fresh.parent.hash)))))
+          )
+      }
+    } yield checks.reduce(_ and _)
   }
 
   test("accepts at most one withdrawal for an effective token lock at activation") { res =>

@@ -72,6 +72,16 @@ object UpdateDelegatedStakeAcceptanceManager {
           if (isDoubleWithdrawalFixActive) creates.sorted else creates
         val withdrawalsForAcceptance =
           if (isDoubleWithdrawalFixActive) withdrawals.sorted else withdrawals
+        // The validator already checks the source bucket. Scan globally after activation to cover malformed legacy buckets
+        // and signed stake sources as well: a token-lock hash commits to its owner.
+        val pendingWithdrawalTokenLockRefs =
+          if (isDoubleWithdrawalFixActive)
+            lastSnapshotContext.delegatedStakesWithdrawals
+              .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
+              .valuesIterator
+              .flatMap(_.iterator.map(_.event.tokenLockRef))
+              .toSet
+          else Set.empty[Hash]
 
         for {
           createDelegatedStakeAcceptanceResult <- createsForAcceptance.foldLeftM[F, CreateDelegatedStakeAcceptanceResult](
@@ -80,7 +90,9 @@ object UpdateDelegatedStakeAcceptanceManager {
             validator.validateCreateDelegatedStake(signed, lastSnapshotContext).map { validated =>
               val (newAccepted, newRejected, accepted) = validated match {
                 case Valid(a) =>
-                  if (acc.parentRefsSeen(signed.parent)) {
+                  if (pendingWithdrawalTokenLockRefs(signed.tokenLockRef)) {
+                    (acc.accepted, (signed, NonEmptyChain.of(AlreadyWithdrawn(signed.parent.hash))) :: acc.rejected, false)
+                  } else if (acc.parentRefsSeen(signed.parent)) {
                     (acc.accepted, (signed, NonEmptyChain.of(DuplicatedParent(signed.parent))) :: acc.rejected, false)
                   } else if (acc.tokenLockRefsSeen(signed.tokenLockRef)) {
                     (acc.accepted, (signed, NonEmptyChain.of(DuplicatedTokenLock(signed.tokenLockRef))) :: acc.rejected, false)
@@ -102,14 +114,6 @@ object UpdateDelegatedStakeAcceptanceManager {
           acceptedCreateTokenLockRefs =
             if (isDoubleWithdrawalFixActive)
               createDelegatedStakeAcceptanceResult.accepted.iterator.map(c => (c.source, c.tokenLockRef)).toSet
-            else Set.empty[(Address, Hash)]
-          pendingWithdrawalTokenLockRefs =
-            if (isDoubleWithdrawalFixActive)
-              lastSnapshotContext.delegatedStakesWithdrawals
-                .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
-                .valuesIterator
-                .flatMap(_.iterator.map(w => (w.event.source, w.event.tokenLockRef)))
-                .toSet
             else Set.empty[(Address, Hash)]
           stakeTokenLockRefs <-
             if (isDoubleWithdrawalFixActive) {
@@ -145,7 +149,7 @@ object UpdateDelegatedStakeAcceptanceManager {
                         (acc.accepted, (signed, NonEmptyChain.of(InvalidStake(signed.stakeRef))) :: acc.rejected, none)
                       case Some(ownedTokenLockRef) if acceptedCreateTokenLockRefs(ownedTokenLockRef) =>
                         (acc.accepted, (signed, NonEmptyChain.of(AlreadyWithdrawn(signed.stakeRef))) :: acc.rejected, none)
-                      case Some(ownedTokenLockRef) if pendingWithdrawalTokenLockRefs(ownedTokenLockRef) =>
+                      case Some(ownedTokenLockRef) if pendingWithdrawalTokenLockRefs(ownedTokenLockRef._2) =>
                         (acc.accepted, (signed, NonEmptyChain.of(AlreadyWithdrawn(ownedTokenLockRef._2))) :: acc.rejected, none)
                       case _ if acc.stakeRefsSeen(signed.stakeRef) =>
                         (acc.accepted, (signed, NonEmptyChain.of(DuplicatedStake(signed.stakeRef))) :: acc.rejected, none)

@@ -42,7 +42,8 @@ case class DelegatedRewardsResult(
 case class PartitionedStakeUpdates(
   unexpiredCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
   unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+  withdrawalSettlement: Option[DelegatedStakeWithdrawalSettlement] = None
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
@@ -196,6 +197,8 @@ object DelegatedRewardsDistributor {
       .map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
       .map(_.filterNot(_._2.isEmpty))
 
+  // Current-round issuance includes rewards accrued to active stakes. Paying those accumulated rewards on withdrawal
+  // is settlement of that earlier issuance, so withdrawal payouts must not be counted a second time here.
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],
     nodeOperatorRewards: SortedSet[RewardTransaction],

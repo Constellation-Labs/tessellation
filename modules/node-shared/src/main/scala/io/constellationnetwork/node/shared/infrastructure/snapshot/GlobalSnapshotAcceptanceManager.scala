@@ -108,6 +108,20 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
+  private[snapshot] def acceptRewardTxs(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[RewardTransaction]
+  ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
+    txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
+      val (updatedBalances, acceptedTxs) = acc
+
+      updatedBalances
+        .getOrElse(tx.destination, Balance.empty)
+        .plus(tx.amount)
+        .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
+        .getOrElse(acc)
+    }
+
   private[snapshot] def generateDelegatedStakeTokenUnlocks(
     expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
     activeTokenLocksByRef: Map[Hash, Signed[TokenLock]],
@@ -209,9 +223,14 @@ object GlobalSnapshotAcceptanceManager {
       if (currentSnapshotOrdinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal)
         expiredWithdrawals.view.mapValues(_.toList.map(_.event.value.tokenLockRef).toSet).toMap
       else Map.empty[Address, Set[Hash]]
+    val processedWithdrawalRefs =
+      if (fixActive) expiredWithdrawals.valuesIterator.flatten.map(_.event.tokenLockRef).toSet
+      else Set.empty[Hash]
     val cleanedWithdrawals = updatedWithdrawals.map {
       case (address, withdrawals) =>
-        val processedRefs = processedWithdrawalRefsByAddress.getOrElse(address, Set.empty[Hash])
+        // A settled lock retires every pending copy, including copies with a later cooldown in another bucket.
+        val processedRefs =
+          if (fixActive) processedWithdrawalRefs else processedWithdrawalRefsByAddress.getOrElse(address, Set.empty[Hash])
         if (processedRefs.isEmpty) address -> withdrawals
         else address -> withdrawals.filterNot(w => processedRefs.contains(w.event.value.tokenLockRef))
     }.filter { case (_, withdrawals) => withdrawals.nonEmpty }
@@ -529,6 +548,35 @@ object GlobalSnapshotAcceptanceManager {
           expiredWithdrawalsDelegatedStaking
         ) = acceptDelegatedStakes(lastSnapshotContext, epochProgress)
 
+        globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
+          SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
+        )
+        globalActiveTokenLocksByRef <- globalActiveTokenLocks.values.toList.flatten.traverse { tokenLock =>
+          tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
+        }.map(_.toMap)
+        withdrawalSettlement <- Async[F].fromEither(
+          DelegatedStakeWithdrawalSettlement.prepare(
+            expiredWithdrawalsDelegatedStaking,
+            globalActiveTokenLocksByRef,
+            ordinal,
+            fixingDelegatedStakeDoubleWithdrawalOrdinal
+          )
+        )
+        _ <- withdrawalSettlement.traverse_ { settlement =>
+          logger
+            .warn(
+              s"[DELEG_STAKE_WITHDRAWAL_DEDUP] ordinal=${ordinal.show} " +
+                s"dropped=${settlement.duplicateCount} retained=${settlement.withdrawals.valuesIterator.map(_.size).sum}"
+            )
+            .whenA(settlement.duplicateCount > 0) *>
+            logger
+              .warn(
+                s"[DELEG_STAKE_WITHDRAWAL_ORPHAN] ordinal=${ordinal.show} count=${settlement.orphanCount} " +
+                  "Skipping reward and principal settlement for withdrawals without an active token lock"
+              )
+              .whenA(settlement.orphanCount > 0)
+        }
+
         DelegatedRewardsResult(
           delegatorRewardsMap,
           updatedCreateDelegatedStakes,
@@ -547,7 +595,8 @@ object GlobalSnapshotAcceptanceManager {
                 PartitionedStakeUpdates(
                   unexpiredCreateDelegatedStakes,
                   unexpiredWithdrawalsDelegatedStaking,
-                  expiredWithdrawalsDelegatedStaking
+                  expiredWithdrawalsDelegatedStaking,
+                  withdrawalSettlement
                 ),
                 epochProgress
               )
@@ -672,13 +721,6 @@ object GlobalSnapshotAcceptanceManager {
           None,
           SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
         )
-        globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
-          SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
-        )
-        globalActiveTokenLocksByRef <- globalActiveTokenLocks.values.toList.flatten.traverse { tokenLock =>
-          tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
-        }.map(_.toMap)
-
         globalLastAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.getOrElse(
           SortedMap.empty[Address, AllowSpendReference]
         )
@@ -734,15 +776,17 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         expiredWithdrawalsForUnlock =
-          if (ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal) {
-            expiredWithdrawalsDelegatedStaking.map {
-              case (address, withdrawals) =>
-                address -> withdrawals.filter(w => globalActiveTokenLocksByRef.contains(w.event.value.tokenLockRef))
-            }.filter { case (_, withdrawals) => withdrawals.nonEmpty }
-          } else expiredWithdrawalsDelegatedStaking
+          withdrawalSettlement.map(_.withdrawals).getOrElse {
+            if (ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal) {
+              expiredWithdrawalsDelegatedStaking.map {
+                case (address, withdrawals) =>
+                  address -> withdrawals.filter(w => globalActiveTokenLocksByRef.contains(w.event.value.tokenLockRef))
+              }.filter { case (_, withdrawals) => withdrawals.nonEmpty }
+            } else expiredWithdrawalsDelegatedStaking
+          }
 
         _ <-
-          if (ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal) {
+          if (withdrawalSettlement.isEmpty && ordinal >= removingProcessedDelegatedStakeWithdrawalsOrdinal) {
             val orphans = expiredWithdrawalsDelegatedStaking.flatMap {
               case (address, withdrawals) =>
                 withdrawals.toList.collect {
@@ -752,7 +796,8 @@ object GlobalSnapshotAcceptanceManager {
             }
             if (orphans.nonEmpty)
               logger.warn(
-                s"[ORDINAL=$ordinal] Skipping token unlock generation for orphan delegated stake withdrawals " +
+                s"[DELEG_STAKE_WITHDRAWAL_ORPHAN] ordinal=${ordinal.show} count=${orphans.size} " +
+                  "Skipping token unlock generation for orphan delegated stake withdrawals " +
                   s"(token lock already removed in a prior snapshot). Pairs: ${orphans.toList}"
               )
             else Async[F].unit
@@ -1309,20 +1354,6 @@ object GlobalSnapshotAcceptanceManager {
         )
       }
     }
-
-    private def acceptRewardTxs(
-      balances: SortedMap[Address, Balance],
-      txs: SortedSet[RewardTransaction]
-    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
-      txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
-        val (updatedBalances, acceptedTxs) = acc
-
-        updatedBalances
-          .getOrElse(tx.destination, Balance.empty)
-          .plus(tx.amount)
-          .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
-          .getOrElse(acc)
-      }
 
     private def acceptMetagraphSyncData(
       lastSnapshotContext: GlobalSnapshotInfo,
