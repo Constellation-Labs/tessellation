@@ -43,18 +43,25 @@ else
 
   # Apply compatibility patch if present (breaks circular dependency with tessellation)
   # Uses --check first to skip gracefully if already applied upstream.
-  # The patch adapts snapshot-streaming (release/testnet) to the tessellation v4.1.0 API:
-  #   - drops the obsolete tessellation3Migration arg from CurrencySnapshotValidator.make
-  #   - passes the whole FieldsAddedOrdinals + environment to GlobalSnapshotStateChannelEventsProcessor.make
-  #     (v4.1.0 resolves scFeeBalanceFromContext internally instead of taking a pre-resolved ordinal).
-  # release/testnet's SharedConfig already has forkInfoStorage removed; on a local tessellation
-  # that still carries forkInfoStorage (develop, feature branches),
-  # applying it leaves the constructor one arg short — detect and skip in that case.
+  # The patch adapts snapshot-streaming (release/testnet source) to DEVELOP's API:
+  #   - CurrencySnapshotValidator.make: develop has no leading globalSyncViewStartingOrdinal
+  #     param (4 args) while release/testnet has it (5 args) — the patch drops the first arg
+  #   - GlobalSnapshotStateChannelEventsProcessor.make: develop takes
+  #     (..., mptStore, fieldsAddedOrdinals, environment) (7 args) while release/testnet takes
+  #     (..., mptStore, scFeeBalanceFromContextOrdinal) (6 args) — the patch rewrites the tail
+  # So the patch must be applied ONLY when building against develop-API tessellation.
+  # snapshot-streaming's release/testnet source already matches release/testnet's API verbatim
+  # (verified: compiles + assembles clean against v4.1.0-alpha.173 unpatched) — applying the
+  # patch there manufactures the exact compile errors it was meant to prevent.
+  # Discriminator: release/testnet's CurrencySnapshotValidator.make has the
+  # globalSyncViewStartingOrdinal parameter; develop's does not. (The previous guard grepped
+  # types.scala for forkInfoStorage, which NO branch carries anymore — it was dead, so the
+  # develop-flavored patch was applied to release/testnet builds, breaking every nightly-deploy.)
   PATCH_FILE="$SS_DIR/snapshot-streaming.patch"
-  TYPES_FILE="$SCRIPT_DIR/../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/config/types.scala"
+  CSV_FILE="$SCRIPT_DIR/../../modules/node-shared/src/main/scala/io/constellationnetwork/node/shared/infrastructure/snapshot/CurrencySnapshotValidator.scala"
   if [ -f "$PATCH_FILE" ] && [ -s "$PATCH_FILE" ]; then
-    if [ -f "$TYPES_FILE" ] && grep -q "forkInfoStorage: ForkInfoStorageConfig" "$TYPES_FILE"; then
-      echo "Local SharedConfig still has forkInfoStorage — skipping snapshot-streaming patch"
+    if [ -f "$CSV_FILE" ] && grep -q "globalSyncViewStartingOrdinal" "$CSV_FILE"; then
+      echo "Local tessellation has the release/testnet v4.1.0 API (globalSyncViewStartingOrdinal) — snapshot-streaming source already matches; skipping patch"
     else
       cd "$BUILD_DIR"
       if git apply --reverse --check "$PATCH_FILE" 2>/dev/null; then
