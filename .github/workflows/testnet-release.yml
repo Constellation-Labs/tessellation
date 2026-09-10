@@ -26,7 +26,8 @@ jobs:
     # For workflow_run, only proceed if the release succeeded. push/dispatch always run.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     environment: testnet
-    # version is consumed by the image jobs below and by testnet-deploy.yml
+    # version is consumed by the image jobs below (it becomes the GHCR version tag that
+    # testnet-deploy.yml later resolves and deploys)
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
     steps:
@@ -303,9 +304,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # DISABLED: a push to release/testnet no longer deploys. Run testnet-deploy.yml
-  # manually (workflow_dispatch, optionally with image_tag: sha-<commit>) once the
-  # cluster is in a state you intend to redeploy. Uncomment the job below to
-  # restore automatic deployment on every release.
+  # manually (workflow_dispatch) once the cluster is in a state you intend to
+  # redeploy; its `version` input takes a release version and defaults to the latest
+  # published for both images. Uncomment the job below to restore automatic
+  # deployment on every release.
   #
   # Why: the deploy is destructive by design -- "Chain-preserving down" stops gl0
   # and gl1 on every node before bringing them back. For most of 2026-09-09 that
@@ -328,5 +330,5 @@ jobs:
   #   needs: [build-push-image, build-push-ss]
   #   uses: ./.github/workflows/testnet-deploy.yml
   #   with:
-  #     image_tag: sha-${{ github.sha }}
+  #     version: sha-${{ github.sha }}
   #   secrets: inherit
