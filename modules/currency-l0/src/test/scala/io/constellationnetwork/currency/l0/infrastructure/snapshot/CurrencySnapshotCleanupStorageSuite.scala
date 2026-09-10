@@ -122,4 +122,57 @@ object CurrencySnapshotCleanupStorageSuite extends MutableIOSuite {
         )
     }
   }
+  test("ordinary Currency persistence repairs a retained torn hash before publishing its ordinal") { res =>
+    implicit val (supervisor, kryo, json, hasher, security) = res
+    implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+
+    File.temporaryDirectory() { root =>
+      def path(name: String): Path = Path((root / name).pathAsString)
+
+      for {
+        snapshots <- CurrencyIncrementalSnapshotLocalFileSystemStorage.make[IO](path("snapshots"))
+        infos <- CurrencySnapshotInfoLocalFileSystemStorage.make[IO](path("info"))
+        checkpoints <- CombinedSnapshotCheckpointFileSystemStorage.make[IO, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          path("checkpoints")
+        )
+        storage <- SnapshotStorage.make[IO, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          snapshots,
+          infos,
+          NonNegLong(5L),
+          SnapshotOrdinal.MinValue,
+          selector,
+          checkpoints
+        )
+        key <- KeyPairGenerator.makeKeyPair[IO]
+        genesis <- Signed.forAsyncHasher[IO, CurrencySnapshot](CurrencySnapshot.mkGenesis(Map.empty, None, None), key)
+        hashedGenesis <- genesis.toHashed[IO]
+        base <- CurrencySnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis)
+        snapshot <- Signed.forAsyncHasher[IO, CurrencyIncrementalSnapshot](base, key)
+        hash <- snapshot.toHashed[IO].map(_.hash)
+        info = genesis.value.info.toCurrencySnapshotInfo
+        _ <- snapshots.write(snapshot) >> snapshots.delete(snapshot.ordinal)
+        hashFile <- snapshots.getPath(hash)
+        _ <- IO.blocking {
+          val bytes = hashFile.byteArray
+          hashFile.writeByteArray(bytes.take(bytes.length / 2))
+        }
+        before <- snapshots.ensureOrdinalLink(hash, snapshot.ordinal)
+        // StateChannelSnapshotService.persist uses this ordinary enqueue/persistence boundary.
+        installed <- ExactSnapshotStorage.prependExact(storage, snapshot, info)
+        after <- snapshots.ensureOrdinalLink(hash, snapshot.ordinal)
+        byOrdinal <- snapshots.read(snapshot.ordinal)
+        byHash <- snapshots.read(hash)
+        persistedInfo <- infos.read(snapshot.ordinal)
+      } yield
+        expect.all(
+          before == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.HashUnreadable,
+          installed,
+          after == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Linked,
+          byOrdinal.contains(snapshot),
+          byHash.contains(snapshot),
+          persistedInfo.contains(info)
+        )
+    }
+  }
+
 }
