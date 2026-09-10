@@ -77,4 +77,41 @@ object DownloadInactivityWatchdogSuite extends SimpleIOSuite {
       .executeEmbed(stalledMidway.attempt)
       .map(result => expect(result.swap.contains(Download.DownloadStartTimedOut)))
   }
+
+  // The initial cleanup pass reports nothing until it finishes, so on a store whose bodies are not
+  // hardlinked to their ordinal index it outlasts the idle budget and the download never begins:
+  // observed on testnet gl0, where 1,494,018 of 2,552,100 persisted bodies had nlink == 1 and were
+  // decoded rather than skipped, taking ~45 minutes against a 10-minute budget.
+  private val silentCleanup = 45.minutes
+
+  test("a silent local pass outlasting the budget survives while it heartbeats") {
+    val guarded = Download.withInactivityTimeout[IO, Int](10.minutes, 1.minute) { touch =>
+      Download.withProgressHeartbeat(15.seconds, touch)(IO.sleep(silentCleanup).as(7))
+    }
+
+    TestControl.executeEmbed(guarded).map(expect.same(7, _))
+  }
+
+  test("the same silent pass times out without a heartbeat") {
+    val guarded = Download.withInactivityTimeout[IO, Int](10.minutes, 1.minute) { _ =>
+      IO.sleep(silentCleanup).as(7)
+    }
+
+    TestControl
+      .executeEmbed(guarded.attempt)
+      .map(result => expect(result.swap.contains(Download.DownloadStartTimedOut)))
+  }
+
+  // The heartbeat must not outlive the pass it guards, or it would keep a genuinely wedged fetch
+  // alive for as long as the download ran -- removing the protection the budget exists to give.
+  test("the heartbeat ends with its pass, so a later stall still times out") {
+    val guarded = Download.withInactivityTimeout[IO, Unit](10.minutes, 1.minute) { touch =>
+      Download.withProgressHeartbeat(15.seconds, touch)(IO.sleep(silentCleanup)) >> IO.never[Unit]
+    }
+
+    TestControl
+      .executeEmbed(guarded.attempt)
+      .map(result => expect(result.swap.contains(Download.DownloadStartTimedOut)))
+  }
+
 }

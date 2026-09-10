@@ -1,6 +1,7 @@
 package io.constellationnetwork.dag.l0.domain.snapshot.programs
 
 import cats.effect.std.Random
+import cats.effect.syntax.spawn._
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 import cats.{Applicative, Parallel}
@@ -90,6 +91,20 @@ object Download {
     * take hours as long as ordinals continue moving; a fiber that makes no recorded progress for `maxIdle` is cancelled and retried by
     * DownloadDaemon. This preserves the original hung-fiber protection without repeatedly cancelling healthy 10k-90k ordinal catch-up.
     */
+  /** Keep an inactivity deadline alive across a long purely-local pass.
+    *
+    * The persisted-tree cleanup reports nothing until it finishes, so it contributes no progress to the stream [[withInactivityTimeout]]
+    * watches. On a store whose bodies are not hardlinked to their ordinal index the pass is long -- the `nlink == 1` skip in
+    * `cleanupOrphanHashIndexesAboveOrdinal` misses every unlinked body and decodes it instead -- and the deadline expired mid-pass. The
+    * daemon then restarted the same cleanup on every attempt, so the download could never begin. Beat for exactly the pass's duration,
+    * leaving the bound to cover genuinely stuck fetch/validateChain/replay work.
+    */
+  private[snapshot] def withProgressHeartbeat[F[_]: Async, A](
+    every: FiniteDuration,
+    beat: F[Unit]
+  )(fa: F[A]): F[A] =
+    (Async[F].sleep(every) >> beat).foreverM[Unit].background.use(_ => fa)
+
   private[snapshot] def withInactivityTimeout[F[_]: Async, A](
     maxIdle: FiniteDuration,
     checkEvery: FiniteDuration
@@ -458,6 +473,10 @@ object Download {
     // schedule a fresh attempt. Every walk_back/validateChain ordinal refreshes the deadline via the
     // onProgress callback threaded into `startWithProgress`.
     val downloadStartMaxDuration: FiniteDuration = 10.minutes
+
+    // Heartbeat cadence for local cleanup passes: well inside downloadStartMaxDuration and its 30s check interval, so a
+    // healthy pass always refreshes the deadline while a genuinely wedged one still trips it.
+    val cleanupHeartbeatInterval: FiniteDuration = 15.seconds
 
     // Upper bound on the iterations validateChain spends searching for a valid persisted
     // (snapshot, info) pair when the local state has drifted. Each iteration discards one
@@ -928,8 +947,10 @@ object Download {
               }
             }
             // Clean up snapshots above the network tip (e.g. from a minority fork).
-            _ <- snapshotStorage.cleanupAbove(metadata.ordinal)
-            _ <- combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
+            _ <- Download.withProgressHeartbeat(cleanupHeartbeatInterval, recordProgress("cleanup", metadata.ordinal))(
+              snapshotStorage.cleanupAbove(metadata.ordinal) >>
+                combinedSnapshotCheckpointFileSystemStorage.deleteAbove(metadata.ordinal)
+            )
             _ <- recordProgress("cleanup", metadata.ordinal)
             // Clear in-memory snapshot caches. During a network partition the node may have
             // produced minority-fork snapshots whose hashes differ from the canonical chain.
@@ -1222,7 +1243,10 @@ object Download {
       ): F[DownloadResult] =
         for {
           metadata <- getLatestMetadata
-          _ <- performInitialCleanup(metadata, result)
+          _ <- Download.withProgressHeartbeat(
+            cleanupHeartbeatInterval,
+            onProgress("initial_cleanup", metadata.ordinal)
+          )(performInitialCleanup(metadata, result))
           _ <- logDownloadInfo(startingPoint, metadata)
 
           batchSize = calculateBatchSize(metadata, startingPoint)
