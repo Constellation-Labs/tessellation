@@ -161,6 +161,22 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
           alternateHash <- alternate.toHashed[IO].map(_.hash)
           futureHash <- future.toHashed[IO].map(_.hash)
           orphanHash <- orphan.toHashed[IO].map(_.hash)
+          nextOrdinal = SnapshotOrdinal.unsafeApply(11L)
+          nextProof <- GlobalSnapshotInfo.stateProofBuilder[IO].buildProof(info, nextOrdinal)
+          next <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+            anchor.value.copy(ordinal = nextOrdinal, lastSnapshotHash = anchorHash, stateProof = nextProof),
+            key
+          )
+          nextHash <- next.toHashed[IO].map(_.hash)
+          _ <- persisted.write(next) >> persisted.delete(next.ordinal)
+          nextFile <- persisted.getPath(nextHash)
+          _ <- IO.blocking {
+            val bytes = nextFile.byteArray
+            nextFile.writeByteArray(bytes.take(bytes.length / 2))
+          }
+          // An older blind writer may already have linked the torn inode into the ordinal namespace.
+          _ <- persisted.link(next) >> infos.write(next.ordinal, info)
+          poisonedCombined <- storage.readCombined(next.ordinal)
           _ <- persisted.write(alternate) >> persisted.delete(alternate.ordinal) >> persisted.write(anchor)
           _ <- persisted.write(future) >> persisted.write(orphan) >> persisted.delete(orphan.ordinal)
           _ <- IO.blocking {
@@ -188,11 +204,22 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
           latestCheckpoint <- checkpoints.getLatestOrdinal
           alternateUsable <- storage.ensurePersistedAnchor(alternateHash, anchor.ordinal)
           anchorAfterConflict <- persisted.read(anchor.ordinal)
+          // A torn canonical N+1 must not abort walk-back; the preceding persisted anchor remains usable.
+          tornUsable <- storage.ensurePersistedAnchor(nextHash, next.ordinal)
+          tornOrdinalExists <- persisted.exists(next.ordinal)
+          precedingAnchorUsable <- storage.ensurePersistedAnchor(anchorHash, anchor.ordinal)
           orphanUsableWithoutContext <- storage.ensurePersistedAnchor(orphanHash, orphan.ordinal)
           // On-demand repair is still allowed for the hash reached through the selected lineage.
           _ <- persisted.delete(anchor.ordinal)
           repaired <- storage.ensurePersistedAnchor(anchorHash, anchor.ordinal)
           validated <- storage.readCombinedValidated(anchor.ordinal)
+          // An explicitly requested valid hash may get an ordinal link even when context is missing.
+          // Assert that side effect after all candidate checks, rather than hiding it in an earlier census.
+          indexesAfterCandidateChecks <- persisted.findAbove(anchor.ordinal).map(_.name).compile.toList
+          // Forward replay overwrites the unusable canonical hash using the existing staging path.
+          _ <- storage.writeTmp(next) >> storage.moveTmpToPersisted(next) >> infos.write(next.ordinal, info)
+          replayedUsable <- storage.ensurePersistedAnchor(nextHash, next.ordinal)
+          replayed <- storage.readCombinedValidated(next.ordinal)
         } yield
           expect.all(
             indexesLinked == !copiedIndexes,
@@ -207,9 +234,16 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
             latestCheckpoint.isEmpty,
             !alternateUsable,
             anchorAfterConflict.contains(anchor),
+            poisonedCombined.isEmpty,
+            !tornUsable,
+            !tornOrdinalExists,
+            precedingAnchorUsable,
             !orphanUsableWithoutContext,
+            indexesAfterCandidateChecks == List(orphan.ordinal.value.value.toString),
             repaired,
-            validated.contains((anchor, info))
+            validated.contains((anchor, info)),
+            replayedUsable,
+            replayed.contains((next, info))
           )
       }
     }
