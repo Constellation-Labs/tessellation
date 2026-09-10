@@ -41,6 +41,71 @@ STAGING="/tmp/remote-deploy"
 green() { printf "\033[32m%s\033[0m\n" "$*"; }
 log()   { printf "\033[34m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*"; }
 
+# Does node0 start a FRESH chain, or reconstruct an existing one? Decided in phase 3 and
+# read in phase 4, because the two differ by two orders of magnitude in startup time.
+NODE0_ROLLBACK=false
+
+# Poll until `probe` prints exactly "OK", bounded by a budget.
+#
+#   wait_until <label> <budget-s> <interval-s> <liveness-fn|""> <probe-fn> [args...]
+#
+# `liveness`, when given, is checked on every miss: if the container we are waiting on
+# has exited, the deploy fails immediately rather than burning the whole budget on
+# something that is never coming back. That distinction matters once budgets are sized
+# for a rollback -- without it, a crash-looping node would hold the deploy for 90
+# minutes and report the same error as a slow-but-healthy one.
+# Minutes once we are past a minute, seconds below that -- an overridden 45s budget
+# reporting "within 0m" reads like a bug.
+_dur() { if [ "$1" -ge 60 ]; then echo "$(( $1 / 60 ))m"; else echo "${1}s"; fi; }
+
+wait_until() {
+  local label="$1" budget="$2" interval="$3" liveness="$4"; shift 4
+  local started="$SECONDS" status=""
+  while [ $(( SECONDS - started )) -lt "$budget" ]; do
+    status="$("$@" 2>/dev/null || true)"
+    if [ "$status" = "OK" ]; then
+      green "  $label ready after $(_dur $(( SECONDS - started )))"
+      return 0
+    fi
+    if [ -n "$liveness" ] && ! "$liveness"; then
+      log "ERROR: $label — the container being waited on is not running (last status: ${status:-unknown})"
+      return 1
+    fi
+    printf "  %s: %s (%s/%s)\n" "$label" "${status:-pending}" \
+      "$(_dur $(( SECONDS - started )))" "$(_dur "$budget")"
+    sleep "$interval"
+  done
+  log "ERROR: $label did not become ready within $(_dur "$budget") (last status: ${status:-unknown})"
+  return 1
+}
+
+node0_state() {
+  ssh "$GENESIS_NODE" "curl -sf http://localhost:9000/node/info 2>/dev/null" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true
+}
+
+# Prints OK once node0 serves consensus. Any other state is echoed as progress, so the
+# log distinguishes "RollbackInProgress" (working) from "pending" (not answering yet).
+node0_ready_probe() {
+  local state; state="$(node0_state)"
+  if [ "$state" = "Ready" ]; then echo OK; else echo "${state:-pending}"; fi
+}
+
+# $1 = port on node0, $2 = expected peer count
+peer_count_probe() {
+  local count
+  count=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:$1/cluster/info 2>/dev/null" \
+    | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
+  if [ "$count" = "$2" ]; then echo OK; else echo "$count/$2"; fi
+}
+
+# $1 = ssh host, $2 = container
+container_running() {
+  [ "$(ssh "$1" "docker inspect -f '{{.State.Running}}' $2 2>/dev/null" || true)" = "true" ]
+}
+gl0_alive_node0() { container_running "$GENESIS_NODE" gl0; }
+gl1_alive_node0() { container_running "$GENESIS_NODE" gl1; }
+
 # --- Resolve IPs from SSH config ---
 NODE_IPS=()
 for h in "${NODES[@]}"; do
@@ -263,6 +328,7 @@ ENVEOF
     ROLLBACK_HASH=$(ssh "${NODES[0]}" "cat $DIR/.last-snapshot-hash 2>/dev/null" || echo "")
     if [ "$HAS_DATA" = "yes" ] && [ -n "$ROLLBACK_HASH" ]; then
       log "  Existing data detected, using rollback (hash: ${ROLLBACK_HASH:0:16}...)"
+      NODE0_ROLLBACK=true
       cat >> "$STAGING/node$i/.env" <<ENVEOF
 CL_DOCKER_GL0_GENESIS=true
 CL_DOCKER_GL0_JOIN=false
@@ -336,45 +402,52 @@ show_time "Transfer"
 
 # === Phase 4: Start cluster ===
 
+# Startup budgets. A genesis start mints a fresh chain and serves within seconds; a
+# rollback start reconstructs from the existing store, which means scanning the whole
+# content-addressed index. On a store whose hash/ <-> ordinal/ hardlinks did not survive
+# the copy that created it, the nlink==1 fast path is defeated and ~1.5M snapshot bodies
+# get decoded instead of stat()ed -- measured on the testnet cluster at ~38 minutes.
+#
+# The old code used one 5-minute budget for both, so it could never deploy a cluster with
+# existing data: it stopped every node, started node0 in rollback, gave up 5 minutes
+# later, and left the cluster down. Validators pay the same cost -- they join and then
+# DOWNLOAD, running the same scan -- so their budget scales too. GL1's store is ~330M
+# rather than ~168G, so it stays short.
+#
+# Override any of these from the environment when a store is known to be slower.
+if [ "$NODE0_ROLLBACK" = "true" ]; then
+  NODE0_READY_BUDGET="${NODE0_READY_BUDGET:-5400}"    # 90m
+  GL0_CLUSTER_BUDGET="${GL0_CLUSTER_BUDGET:-3600}"    # 60m
+  CLUSTER_POLL_INTERVAL="${CLUSTER_POLL_INTERVAL:-30}"
+else
+  NODE0_READY_BUDGET="${NODE0_READY_BUDGET:-300}"     # 5m
+  GL0_CLUSTER_BUDGET="${GL0_CLUSTER_BUDGET:-300}"     # 5m
+  CLUSTER_POLL_INTERVAL="${CLUSTER_POLL_INTERVAL:-10}"
+fi
+GL1_CLUSTER_BUDGET="${GL1_CLUSTER_BUDGET:-900}"       # 15m
+log "startup budgets: node0=$((NODE0_READY_BUDGET/60))m gl0-cluster=$((GL0_CLUSTER_BUDGET/60))m gl1-cluster=$((GL1_CLUSTER_BUDGET/60))m (node0 rollback=$NODE0_ROLLBACK)"
+
 # GL0 genesis
 log "Starting GL0 genesis on $GENESIS_NODE"
 ssh "$GENESIS_NODE" "cd $DIR && $COMPOSE --profile l0 up -d gl0" 2>&1 | grep -vE "variable is not set|Published ports"
-GL0_GENESIS_OK=false
-for i in $(seq 1 30); do
-  state=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9000/node/info 2>/dev/null" \
-    | python3 -c "import sys,json;print(json.load(sys.stdin).get('state',''))" 2>/dev/null || true)
-  [ "$state" = "Ready" ] && green "  GL0-0 ready" && GL0_GENESIS_OK=true && break
-  printf "  GL0-0: %s (%d/30)\n" "${state:-pending}" "$i"; sleep 10
-done
-[ "$GL0_GENESIS_OK" = "true" ] || { log "ERROR: GL0 genesis did not reach Ready within 5 minutes"; exit 1; }
+wait_until "GL0-0" "$NODE0_READY_BUDGET" "$CLUSTER_POLL_INTERVAL" gl0_alive_node0 \
+  node0_ready_probe || exit 1
 
 # GL0 validators
 log "Starting GL0 on validators"
 for h in "${VALIDATORS[@]}"; do
   ssh "$h" "cd $DIR && $COMPOSE --profile l0 up -d gl0" 2>&1 | grep -vE "variable is not set|Published ports"
 done
-GL0_CLUSTER_OK=false
-for i in $(seq 1 30); do
-  count=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9000/cluster/info 2>/dev/null" \
-    | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-  [ "$count" = "$NUM_NODES" ] && green "  GL0 cluster: $count/$NUM_NODES" && GL0_CLUSTER_OK=true && break
-  printf "  GL0: %s/%s (%d/30)\n" "$count" "$NUM_NODES" "$i"; sleep 10
-done
-[ "$GL0_CLUSTER_OK" = "true" ] || { log "ERROR: GL0 cluster did not form within 5 minutes"; exit 1; }
+wait_until "GL0 cluster" "$GL0_CLUSTER_BUDGET" "$CLUSTER_POLL_INTERVAL" gl0_alive_node0 \
+  peer_count_probe 9000 "$NUM_NODES" || exit 1
 
 # GL1 all nodes
 log "Starting GL1 on all nodes"
 for h in "${NODES[@]}"; do
   ssh "$h" "cd $DIR && $COMPOSE --profile l1 up -d gl1" 2>&1 | grep -vE "variable is not set|Published ports"
 done
-GL1_CLUSTER_OK=false
-for i in $(seq 1 30); do
-  count=$(ssh "$GENESIS_NODE" "curl -sf http://localhost:9010/cluster/info 2>/dev/null" \
-    | python3 -c "import sys,json;print(len(json.load(sys.stdin)))" 2>/dev/null || echo 0)
-  [ "$count" = "$NUM_NODES" ] && green "  GL1 cluster: $count/$NUM_NODES" && GL1_CLUSTER_OK=true && break
-  printf "  GL1: %s/%s (%d/30)\n" "$count" "$NUM_NODES" "$i"; sleep 10
-done
-[ "$GL1_CLUSTER_OK" = "true" ] || { log "ERROR: GL1 cluster did not form within 5 minutes"; exit 1; }
+wait_until "GL1 cluster" "$GL1_CLUSTER_BUDGET" "$CLUSTER_POLL_INTERVAL" gl1_alive_node0 \
+  peer_count_probe 9010 "$NUM_NODES" || exit 1
 
 show_time "Cluster startup"
 

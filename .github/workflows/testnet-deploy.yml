@@ -64,7 +64,11 @@ jobs:
   deploy:
     name: Deploy testnet cluster
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    # Must exceed the sum of the startup budgets in docker/bin/remote-deploy.sh, or the
+    # job is killed mid-deploy and we are back to a stopped cluster with no containers.
+    # Worst case for a rollback deploy: node0 90m + gl0 cluster 60m + gl1 15m, plus image
+    # pulls, config transfer and snapshot-streaming. 45m could not even cover node0.
+    timeout-minutes: 210
     environment: testnet
     steps:
       # Deploy tooling (deploy-cluster.sh, remote-deploy.sh, entrypoint, migrate scripts)
