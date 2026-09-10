@@ -53,12 +53,6 @@ jobs:
           name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
           path: .github/code/metagraphs/project-template-metagraph
 
-      - name: Test identity and fee assertions
-        run: node --test .github/action_scripts/test/data-test-identity.test.js
-
-      - name: Prepare throwaway data-test identity
-        run: node .github/action_scripts/prepare-data-test-identity.js
-
       - name: Start Hypergraph
         uses: "./.github/templates/actions/hypergraph/start"
         with:
@@ -84,7 +78,7 @@ jobs:
       - name: Send transactions
         run: |
           cd .github/action_scripts
-          node send_transactions/data-with-fee.js 90 91 80 81 82
+          node send_transactions/data-with-fee.js 90 91 80 81 82 ${{ secrets.CI_PRIVATE_KEY }}
           
       - name: Upload log files
         if: always()

@@ -43,13 +43,6 @@ object GossipClient {
     session: Session[F],
     gossipTimeoutsConfig: GossipTimeoutsConfig
   ): GossipClient[F] = {
-    // Resource.timeout bounds acquisition only. Bound each recurring query below as
-    // well: a peer that sends headers but never finishes its body must not retain
-    // a bounded gossip worker indefinitely. Timeout is an error (not a successful
-    // truncated stream); the existing runner releases the slot and health-checks
-    // the peer. Already emitted rumors still follow the normal validation path.
-    // Initialization does not occupy these workers; preserve its existing body
-    // lifetime until the one-shot initialization lifecycle is qualified separately.
     val timeoutClient: Client[F] = withTimeout(client, gossipTimeoutsConfig.client)
 
     new GossipClient[F] {
@@ -57,11 +50,19 @@ object GossipClient {
 
       def queryPeerRumors(request: PeerRumorInquiryRequest): PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
         PeerResponse("rumors/peer/query", POST)(timeoutClient, session) { (req, c) =>
-          c.stream(req.withEntity(request))
-            .flatMap { resp =>
-              resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
-            }
-            .timeout(gossipTimeoutsConfig.client)
+          // Bound acquisition and decoding, then release the response before emitting.
+          // Downstream hashing and queue backpressure must not consume the peer's deadline.
+          Stream
+            .eval(
+              c.stream(req.withEntity(request))
+                .flatMap { resp =>
+                  resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
+                }
+                .compile
+                .toList
+                .timeout(gossipTimeoutsConfig.client)
+            )
+            .flatMap(Stream.emits)
         }
 
       def getInitialPeerRumors: PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
@@ -73,16 +74,14 @@ object GossipClient {
 
       def getCommonRumorOffer: PeerResponse[F, CommonRumorOfferResponse] =
         PeerResponse("rumors/common/offer", GET)(timeoutClient, session) { (req, c) =>
-          c.expect[CommonRumorOfferResponse](req.withEmptyBody).timeout(gossipTimeoutsConfig.client)
+          c.expect[CommonRumorOfferResponse](req.withEmptyBody)
         }
 
       def queryCommonRumors(request: QueryCommonRumorsRequest): PeerResponse[Stream[F, *], Signed[CommonRumorRaw]] =
         PeerResponse("rumors/common/query", POST)(timeoutClient, session) { (req, c) =>
-          c.stream(req.withEntity(request))
-            .flatMap { resp =>
-              resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[CommonRumorRaw]].liftTo[F])
-            }
-            .timeout(gossipTimeoutsConfig.client)
+          c.stream(req.withEntity(request)).flatMap { resp =>
+            resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[CommonRumorRaw]].liftTo[F])
+          }
         }
 
       def getInitialCommonRumorHashes: PeerResponse[F, CommonRumorInitResponse] =
