@@ -50,15 +50,27 @@ abstract class SnapshotLocalFileSystemStorage[
     val ordinalName = toOrdinalName(snapshot.value)
 
     toHashName(snapshot.value).flatMap { hashName =>
+      def replaceBody: F[Unit] =
+        JsonSerializer[F].serialize(snapshot).flatMap(atomicReplace(hashName, _))
+
       (exists(ordinalName), exists(hashName)).flatMapN { (ordinalExists, hashExists) =>
         for {
           _ <- UnableToPersistSnapshot(ordinalName, hashName, hashExists).raiseError[F, Unit].whenA(ordinalExists)
-          _ <- hashExists
-            .pure[F]
-            .ifM(
-              logger.warn(s"Snapshot hash file $hashName exists but ordinal missing; linking to $ordinalName"),
-              write(hashName, snapshot)
-            )
+          _ <-
+            if (hashExists)
+              read(hashName).flatMap { existing =>
+                existing.filter(_.ordinal === snapshot.ordinal).traverse(value => toHashName(value.value)).flatMap {
+                  case Some(existingHashName) if existingHashName === hashName =>
+                    // Preserve ordinary same-value idempotency, including a different valid proof envelope.
+                    logger.warn(s"Verified snapshot hash file $hashName exists but ordinal missing; linking to $ordinalName")
+                  case _ =>
+                    // Existence alone is insufficient after a historical torn write. Replace the inode
+                    // atomically before publishing its ordinal link, leaving unrelated objects untouched.
+                    logger.warn(s"Replacing unreadable or mismatched snapshot hash file $hashName before linking to $ordinalName") >>
+                      replaceBody
+                }
+              }
+            else replaceBody
           _ <- link(hashName, ordinalName)
         } yield ()
       }
@@ -112,6 +124,12 @@ abstract class SnapshotLocalFileSystemStorage[
 
     CrashSafeAtomicFileWriter.make[F](parent).flatMap(_.write(target.getFileName.toString, bytes))
   }
+
+  /** Snapshot readers treat malformed bodies as absent so anchor search and replay can progress. Decode failures are contained after
+    * reading the bytes; filesystem errors still propagate and must never be treated as permission to overwrite an unreadable device.
+    */
+  override def read(fileName: String): F[Option[Signed[S]]] =
+    readRecoveryIndex(fileName)
 
   def read(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
     read(toOrdinalName(ordinal))
@@ -312,11 +330,8 @@ abstract class SnapshotLocalFileSystemStorage[
       include = file => file.name.toLongOption.exists(_ > ordinal.value.value)
     )
 
-  /** Read one recovery candidate while keeping disk I/O failures distinct from invalid bytes.
-    *
-    * `SerializableLocalFileSystemStorage.read` intentionally hides ordinary JSON/Kryo decode failures as `None`, but a legacy fallback
-    * decoder is allowed to throw. Cleanup must distinguish invalid bytes from EIO/EACCES/descriptor exhaustion; otherwise a transient
-    * filesystem fault could destructively remove valid history and still report cleanup success.
+  /** Decode a snapshot body without conflating malformed JSON/Brotli/Kryo input with a failed filesystem read. Both decoders may throw
+    * rather than return Left for torn bytes; only those in-memory decode failures become None. readBytes remains outside the handlers.
     */
   private def readRecoveryIndex(fileName: String): F[Option[Signed[S]]] =
     readBytes(fileName).flatMap {
