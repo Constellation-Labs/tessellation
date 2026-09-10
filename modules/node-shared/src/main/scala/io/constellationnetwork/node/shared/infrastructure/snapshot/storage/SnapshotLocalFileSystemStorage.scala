@@ -1,5 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
+import java.util.Arrays
+
 import cats.Applicative
 import cats.effect.Async
 import cats.syntax.all._
@@ -11,6 +13,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
+import io.constellationnetwork.node.shared.infrastructure.storage.CrashSafeAtomicFileWriter
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.snapshot.Snapshot
 import io.constellationnetwork.security.hash.Hash
@@ -63,6 +66,41 @@ abstract class SnapshotLocalFileSystemStorage[
     write(ordinalName, snapshot)
   }
 
+  /** Replace both persisted indexes with a validated recovery snapshot. Each index replacement is atomic; retry repairs a crash between the
+    * two replacements before the snapshot is used by consensus.
+    */
+  def replaceForRecovery(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] =
+    for {
+      bytes <- JsonSerializer[F].serialize(snapshot)
+      hashName <- toHashName(snapshot.value)
+      ordinalName = toOrdinalName(snapshot.value)
+      previousHashName <- read(snapshot.ordinal).flatMap(_.traverse(previous => toHashName(previous.value)))
+      _ <- atomicReplace(hashName, bytes)
+      _ <- previousHashName.filterNot(_ === hashName).traverse_(delete)
+      _ <- previousHashName.filterNot(_ === hashName).traverse_ { previous =>
+        exists(previous).flatMap(
+          Async[F].raiseWhen(_)(new IllegalStateException(s"Recovery abandoned-hash cleanup failed: $previous"))
+        )
+      }
+      _ <- atomicReplace(ordinalName, bytes)
+      hashBytes <- readBytes(hashName).flatMap(
+        _.liftTo[F](new IllegalStateException(s"Recovery hash index missing after replace: $hashName"))
+      )
+      ordinalBytes <- readBytes(ordinalName).flatMap(
+        _.liftTo[F](new IllegalStateException(s"Recovery ordinal index missing after replace: $ordinalName"))
+      )
+      _ <- Async[F].raiseUnless(Arrays.equals(bytes, hashBytes) && Arrays.equals(bytes, ordinalBytes))(
+        new IllegalStateException(s"Recovery snapshot exact disk readback failed ordinal=${snapshot.ordinal}")
+      )
+    } yield ()
+
+  private def atomicReplace(fileName: String, bytes: Array[Byte]): F[Unit] = {
+    val target = path.toNioPath.resolve(fileName)
+    val parent = Path.fromNioPath(target.getParent)
+
+    CrashSafeAtomicFileWriter.make[F](parent).flatMap(_.write(target.getFileName.toString, bytes))
+  }
+
   def read(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
     read(toOrdinalName(ordinal))
 
@@ -74,6 +112,62 @@ abstract class SnapshotLocalFileSystemStorage[
 
   def exists(hash: Hash): F[Boolean] =
     exists(toHashName(hash))
+
+  /** Verify the two persisted indexes and repair only a missing ordinal hardlink when the hash-indexed bytes decode and match exactly. */
+  def ensureOrdinalLink(expectedHash: Hash, expectedOrdinal: SnapshotOrdinal)(
+    implicit hasher: Hasher[F]
+  ): F[SnapshotLocalFileSystemStorage.OrdinalLinkStatus] = {
+    import SnapshotLocalFileSystemStorage.OrdinalLinkStatus
+
+    def identify(snapshot: Signed[S]): F[(SnapshotOrdinal, Hash)] =
+      snapshot.toHashed.map(hashed => (hashed.ordinal, hashed.hash))
+
+    def exact(snapshot: Signed[S]): F[Boolean] =
+      identify(snapshot).map { case (ordinal, hash) => ordinal === expectedOrdinal && hash === expectedHash }
+
+    read(expectedOrdinal).flatMap {
+      case Some(snapshot) =>
+        identify(snapshot).flatMap {
+          case (ordinal, hash) if ordinal === expectedOrdinal && hash === expectedHash =>
+            read(expectedHash).flatMap {
+              case Some(hashSnapshot) =>
+                identify(hashSnapshot).map {
+                  case (hashOrdinal, hashValue) if hashOrdinal === expectedOrdinal && hashValue === expectedHash =>
+                    OrdinalLinkStatus.Linked
+                  case (hashOrdinal, hashValue) => OrdinalLinkStatus.HashContentMismatch(hashOrdinal, hashValue)
+                }
+              case None =>
+                exists(expectedHash).map {
+                  case true  => OrdinalLinkStatus.HashUnreadable
+                  case false => OrdinalLinkStatus.HashIndexMissing
+                }
+            }
+          case (ordinal, hash) => OrdinalLinkStatus.OrdinalOccupied(ordinal, hash).pure[F].widen
+        }
+      case None =>
+        exists(expectedHash).ifM(
+          read(expectedHash).flatMap {
+            case Some(snapshot) =>
+              exact(snapshot).ifM(
+                write(snapshot).handleErrorWith {
+                  case _: UnableToPersistSnapshot => Applicative[F].unit
+                  case error                      => error.raiseError[F, Unit]
+                } >> read(expectedOrdinal).flatMap {
+                  case Some(relinked) =>
+                    exact(relinked).map {
+                      case true  => OrdinalLinkStatus.Repaired
+                      case false => OrdinalLinkStatus.RepairIncomplete
+                    }
+                  case None => OrdinalLinkStatus.RepairIncomplete.pure[F].widen
+                },
+                identify(snapshot).map { case (ordinal, hash) => OrdinalLinkStatus.HashContentMismatch(ordinal, hash) }
+              )
+            case None => OrdinalLinkStatus.HashUnreadable.pure[F].widen
+          },
+          OrdinalLinkStatus.Missing.pure[F].widen
+        )
+    }
+  }
 
   def delete(ordinal: SnapshotOrdinal): F[Unit] =
     delete(toOrdinalName(ordinal))
@@ -244,6 +338,21 @@ abstract class SnapshotLocalFileSystemStorage[
 }
 
 object SnapshotLocalFileSystemStorage {
+
+  sealed trait OrdinalLinkStatus {
+    def usable: Boolean = false
+  }
+
+  object OrdinalLinkStatus {
+    case object Linked extends OrdinalLinkStatus { override val usable: Boolean = true }
+    case object Repaired extends OrdinalLinkStatus { override val usable: Boolean = true }
+    case object Missing extends OrdinalLinkStatus
+    case object HashIndexMissing extends OrdinalLinkStatus
+    case object HashUnreadable extends OrdinalLinkStatus
+    case object RepairIncomplete extends OrdinalLinkStatus
+    final case class OrdinalOccupied(actualOrdinal: SnapshotOrdinal, actualHash: Hash) extends OrdinalLinkStatus
+    final case class HashContentMismatch(actualOrdinal: SnapshotOrdinal, actualHash: Hash) extends OrdinalLinkStatus
+  }
 
   case class UnableToPersistSnapshot(ordinalName: String, hashName: String, hashFileExists: Boolean) extends NoStackTrace {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."

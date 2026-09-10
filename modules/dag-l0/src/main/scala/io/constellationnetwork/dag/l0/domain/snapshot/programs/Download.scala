@@ -56,6 +56,7 @@ object Download {
     val minBatchSizeToStartObserving: Long = 1L
     val observationOffset = NonNegLong(4L)
     val fetchSnapshotDelayBetweenTrials = 10.seconds
+    private val maxPersistedSearchAttempts: Int = 200
 
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
@@ -276,8 +277,11 @@ object Download {
       go(Map.empty, hash, ordinal)
     }
 
-    def isSnapshotPersistedOrReachedGenesis(hash: Hash, ordinal: SnapshotOrdinal): F[Boolean] = {
-      def isSnapshotPersisted = snapshotStorage.isPersisted(hash)
+    def isSnapshotPersistedOrReachedGenesis(hash: Hash, ordinal: SnapshotOrdinal)(
+      implicit hasherSelector: HasherSelector[F]
+    ): F[Boolean] = {
+      def isSnapshotPersisted =
+        hasherSelector.forOrdinal(ordinal)(implicit hasher => snapshotStorage.ensurePersistedAnchor(hash, ordinal))
 
       def didReachGenesis = ordinal === lastFullGlobalSnapshotOrdinal
 
@@ -374,13 +378,37 @@ object Download {
       state
         .map(_.pure[F])
         .getOrElse {
+          def findHighestValidPersisted(
+            lte: SnapshotOrdinal,
+            attempts: Int
+          ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+            if (attempts <= 0) none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+            else
+              snapshotStorage.getHighestSnapshotInfoOrdinal(lte).flatMap {
+                case None => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+                case Some(ordinal) =>
+                  hasherSelector
+                    .forOrdinal(ordinal)(implicit hasher => snapshotStorage.readCombined(ordinal))
+                    .attempt
+                    .flatMap {
+                      case Right(Some(result)) => result.some.pure[F]
+                      case result =>
+                        val warning = result.swap.toOption
+                          .fold(logger.warn(s"Skipping unreadable persisted recovery anchor ordinal=${ordinal.show}"))(
+                            logger.warn(_)(s"Skipping invalid persisted recovery anchor ordinal=${ordinal.show}")
+                          )
+
+                        warning >>
+                          PartialPrevious[SnapshotOrdinal]
+                            .partialPrevious(ordinal)
+                            .map(findHighestValidPersisted(_, attempts - 1))
+                            .getOrElse(none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F])
+                    }
+              }
+
           startingOrdinal
-            .flatTraverse(ordinal => hasherSelector.forOrdinal(ordinal)(implicit hasher => snapshotStorage.readCombined(ordinal)))
-            .flatMap {
-              _.map(_.pure[F]).getOrElse(
-                getGenesisSnapshot(tmpMap)
-              )
-            }
+            .flatTraverse(findHighestValidPersisted(_, maxPersistedSearchAttempts))
+            .flatMap(_.fold(getGenesisSnapshot(tmpMap))(_.pure[F]))
         }
         .flatMap {
           case (s, c) =>
