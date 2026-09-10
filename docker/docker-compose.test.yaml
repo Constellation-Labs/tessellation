@@ -4,6 +4,8 @@ services:
     cap_add:
       - NET_ADMIN
     environment:
+      # Avoid quantizing JVM startup differences into ten-second join retries.
+      - CL_DOCKER_WAIT_FOR_JOIN_READY=${CL_DOCKER_WAIT_FOR_JOIN_READY:-true}
       # Test-only JVM thread-pool cap. Five sibling JVMs share the host (laptop or
       # CI runner). Without this cap each JVM sees the full host CPU count and
       # spins up matching FJP / Cats-Effect / GC pools, which thrash the scheduler
@@ -79,6 +81,8 @@ services:
           - gl0${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.1${CONTAINER_OFFSET:-0}
   gl1:
+    environment:
+      - CL_DOCKER_WAIT_FOR_JOIN_READY=${CL_DOCKER_WAIT_FOR_JOIN_READY:-true}
     # merge in an extra network just for tests
     networks:
       tessellation_common:

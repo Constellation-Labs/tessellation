@@ -164,6 +164,9 @@ jobs:
         shell: bash
         run: npm ci --prefix .github/action_scripts
 
+      - name: Test E2E join readiness
+        run: node --test .github/action_scripts/e2e_join_ready.test.js
+
       # Offline self-test of the committee-rewards assertions: runs the test script against a
       # synthetic snapshot window and requires it to PASS on correct behavior and FAIL on the
       # legacy evidence-score filter. ~2s, no docker, and deliberately placed before the cluster

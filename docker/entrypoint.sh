@@ -15,6 +15,14 @@ join_process() {
 EOF
   if [ "$CL_DOCKER_JOIN" = "true" ]; then
     sleep $JOIN_INITIAL_DELAY;
+    # Preserve deployment auto-join and deliberate late joins. Only test overlays
+    # enable this gate, after the configured initial delay and before join retries.
+    if [ "${CL_DOCKER_WAIT_FOR_JOIN_READY:-false}" = "true" ]; then
+      if ! bash "$(dirname "${BASH_SOURCE[0]}")/wait-for-join-ready.sh"; then
+        echo "ERROR: E2E auto-join aborted before sending a join request" >&2
+        return 1
+      fi
+    fi
     for i in $(seq 1 $JOIN_RETRIES); do
         echo "Joining cluster (attempt $i)"
         echo "Join id: $CL_DOCKER_JOIN_ID"
