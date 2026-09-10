@@ -133,7 +133,9 @@ object SharedServices {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
-        validators.updateDelegatedStakeValidator
+        validators.updateDelegatedStakeValidator,
+        cfg.fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawal
+          .getOrElse(cfg.environment, SnapshotOrdinal.unsafeApply(Long.MaxValue))
       )
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator
