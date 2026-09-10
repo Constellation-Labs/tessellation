@@ -27,6 +27,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, SnapshotMetadata}
 import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.HasherSelector
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -227,6 +228,26 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
     nodeStorage.getNodeState
       .map(validStateForSnapshotReturn)
       .ifM(action, serviceUnavailableNodeNotReady)
+
+  /** Hash-only objects may remain after cleanup. Serving requires an existing ordinal mapping to the same value; reads must never repair
+    * that mapping. Use the ordinal-selected hasher and compare content so copied indexes work without sharing an inode.
+    */
+  private def getIndexedSnapshot(hash: Hash): F[Option[Signed[S]]] =
+    snapshotStorage.get(hash).flatMap {
+      case None => none[Signed[S]].pure[F]
+      case Some(candidate) =>
+        hasherSelector.forOrdinal(candidate.ordinal) { implicit hasher =>
+          candidate.toHashed[F].flatMap { hashed =>
+            if (hashed.hash =!= hash) none[Signed[S]].pure[F]
+            else
+              snapshotStorage.get(candidate.ordinal).flatMap {
+                case Some(indexed) if indexed.ordinal === candidate.ordinal =>
+                  indexed.toHashed[F].map(value => Option.when(value.hash === hash)(indexed))
+                case _ => none[Signed[S]].pure[F]
+              }
+          }
+        }
+    }
 
   /** Route-scoped heavy-serve cap. Tries to acquire a permit on `heavyRouteConcurrency`; on saturation, returns 503 with a Retry-After
     * header without running `action`. On acquisition, the permit is attached to the response body's stream finalizer so it is released only
@@ -437,7 +458,7 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
         case req @ GET -> Root / HashVar(hash) =>
           whenNodeReady {
             resolveEncoder[F, Signed[S]](req) { implicit enc =>
-              snapshotStorage.get(hash).flatMap {
+              getIndexedSnapshot(hash).flatMap {
                 case Some(snapshot) => Ok(snapshot)
                 case _              => NotFound()
               }

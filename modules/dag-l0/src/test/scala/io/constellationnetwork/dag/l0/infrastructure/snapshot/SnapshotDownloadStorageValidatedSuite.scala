@@ -123,6 +123,99 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
     }
   }
 
+  List((11L, false), (12L, false), (11L, true)).foreach {
+    case (boundary, failOrdinalRead) =>
+      test(s"staging replay repairs a poisoned ordinal at or below boundary=$boundary with failOrdinalRead=$failOrdinalRead") { res =>
+        implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
+        implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+        val hashSelect = new HashSelect {
+          def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+        }
+        File.temporaryDirectory() { root =>
+          def path(name: String): Path = Path((root / name).pathAsString)
+          for {
+            tmp <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+            persisted <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+            full <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+            infos <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info"))
+            kryoInfos <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+            checkpoints <- CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+              path("checkpoints")
+            )
+            producer <- InMemoryMerklePatriciaProducer.make[IO]()
+            mpt <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+            key <- KeyPairGenerator.makeKeyPair[IO]
+            genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+            info = genesis.info.toGlobalSnapshotInfo
+            base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
+            ordinal = SnapshotOrdinal.unsafeApply(11L)
+            proof <- GlobalSnapshotInfo.stateProofBuilder[IO].buildProof(info, ordinal)
+            snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = ordinal, stateProof = proof), key)
+            hash <- snapshot.toHashed[IO].map(_.hash)
+            _ <- persisted.write(snapshot)
+            hashFile <- persisted.getPath(hash)
+            ordinalFile <- persisted.getPath("ordinal/" + persisted.ordinalPathGenerator.get("11"))
+            witness = root / "torn-inode-witness"
+            original <- IO.blocking(hashFile.byteArray.toVector)
+            _ <- IO.blocking {
+              hashFile.writeByteArray(original.take(original.size / 2).toArray)
+              hashFile.linkTo(witness)
+            }
+            // Repro C: neither at-tip nor older poison is removed by cleanup above the network tip.
+            _ <- persisted.cleanupAboveOrdinal(SnapshotOrdinal.unsafeApply(boundary), (h, o) => persisted.delete(h) >> persisted.delete(o))
+            stillPoisoned <- persisted.read(ordinal)
+            ordinalSurvived <- persisted.exists(ordinal)
+            target =
+              if (failOrdinalRead) new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](path("persisted")) {
+                def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+                  Left(new IllegalArgumentException("unused fallback"))
+                override def readBytes(name: String): IO[Option[Array[Byte]]] =
+                  if (name.startsWith("ordinal/")) IO.raiseError(new java.io.IOException("simulated ordinal I/O failure"))
+                  else super.readBytes(name)
+              }
+              else persisted
+            storage = SnapshotDownloadStorage.make[IO](tmp, target, full, infos, kryoInfos, checkpoints, hashSelect, mpt)
+            _ <- storage.writeTmp(snapshot)
+            result <- storage.moveTmpToPersisted(snapshot).attempt
+            byHash <- persisted.read(hash)
+            byOrdinal <- persisted.read(ordinal)
+            status <- persisted.ensureOrdinalLink(hash, ordinal)
+            linked <- IO.blocking(ordinalFile.isSameFileAs(hashFile))
+            oldInode <- IO.blocking(ordinalFile.isSameFileAs(witness))
+            witnessBytes <- IO.blocking(witness.byteArray.toVector)
+            tmpRetained <- tmp.exists(ordinal)
+            _ <- infos.write(ordinal, info)
+            validated <- if (failOrdinalRead) IO.pure(None) else storage.readCombinedValidated(ordinal)
+          } yield
+            expect
+              .all(stillPoisoned.isEmpty, ordinalSurvived, witnessBytes == original.take(original.size / 2))
+              .and(
+                if (failOrdinalRead)
+                  expect.all(
+                    result.swap.exists(_.isInstanceOf[java.io.IOException]),
+                    byHash.isEmpty,
+                    byOrdinal.isEmpty,
+                    status == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.HashUnreadable,
+                    linked,
+                    oldInode,
+                    tmpRetained
+                  )
+                else
+                  expect.all(
+                    result.isRight,
+                    byHash.contains(snapshot),
+                    byOrdinal.contains(snapshot),
+                    status == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Linked,
+                    linked,
+                    !oldInode,
+                    !tmpRetained,
+                    validated.contains((snapshot, info))
+                  )
+              )
+        }
+      }
+  }
+
   List(false, true).foreach { copiedIndexes =>
     test(s"cleanup retains inert hashes and validates only the requested anchor with copiedIndexes=$copiedIndexes") { res =>
       implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res

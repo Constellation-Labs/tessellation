@@ -242,7 +242,13 @@ object SnapshotDownloadStorage {
 
       def moveTmpToPersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] =
         HasherSelector[F].withCurrent { implicit hasher =>
-          persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
+          // Replay may encounter an unreadable ordinal at or below the cleanup boundary. Replacing
+          // its hash alone leaves that ordinal on the old torn inode; remove only the unreadable
+          // ordinal before linking the validated replay body. Filesystem read failures still raise.
+          persistedStorage.read(snapshot.ordinal).flatMap {
+            case None => persistedStorage.exists(snapshot.ordinal).flatMap(persistedStorage.delete(snapshot.ordinal).whenA)
+            case _    => Async[F].unit
+          } >> persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
         }
 
       def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] = fullGlobalSnapshotStorage.read(ordinal)
