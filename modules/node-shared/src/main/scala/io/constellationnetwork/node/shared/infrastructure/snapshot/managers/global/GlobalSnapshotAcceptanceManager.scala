@@ -648,28 +648,28 @@ object GlobalSnapshotAcceptanceManager {
       ] = {
         implicit val hasher: Hasher[F] = HasherSelector[F].getForOrdinal(ordinal)
 
-        val tessellation3MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation3Migration
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val tessellation3MigrationStartingOrdinal =
+          fieldsAddedOrdinals.tessellation3MigrationFor(environment)
 
-        val tessellation301MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation301Migration
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val tessellation301MigrationStartingOrdinal =
+          fieldsAddedOrdinals.tessellation301MigrationFor(environment)
 
-        val metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val metagraphSyncDataStartingOrdinal =
+          fieldsAddedOrdinals.metagraphSyncDataFor(environment)
 
-        val preventingAllowSpendResurrectionOrdinal = fieldsAddedOrdinals.preventingAllowSpendResurrection
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val preventingAllowSpendResurrectionOrdinal =
+          fieldsAddedOrdinals.preventingAllowSpendResurrectionFor(environment)
 
         // Below the activation ordinal the retired-reference ledger is neither read nor written, so signed history
         // replays byte-identically: the new GlobalSnapshotInfo field stays None and JsonSerializer drops nulls.
         val preventAllowSpendResurrection = ordinal > preventingAllowSpendResurrectionOrdinal
 
-        val fixingGlobalAllowSpendExpirationOrdinal = fieldsAddedOrdinals.fixingGlobalAllowSpendExpiration
-          .getOrElse(environment, SnapshotOrdinal.MaxValue)
+        val fixingGlobalAllowSpendExpirationOrdinal =
+          fieldsAddedOrdinals.fixingGlobalAllowSpendExpirationFor(environment)
         val suppressSpentExpiredAllowSpends = ordinal >= fixingGlobalAllowSpendExpirationOrdinal
 
-        val fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
-          .getOrElse(environment, SnapshotOrdinal.MinValue)
+        val fixingAllowSpendAndTokenLockValidation =
+          fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidationFor(environment)
 
         loggerBundle.app.withOrdinal(ordinal) {
           for {
@@ -1148,7 +1148,8 @@ object GlobalSnapshotAcceptanceManager {
             // Applied to the fully-built GSI BEFORE the MPT sync and proof so that the returned GSI, the MPT-sync input,
             // and buildProof all derive from the SAME swept state (sweptGsi == gsi2). Off the sweep ordinal this is a no-op
             // (didSweep = false) and gsi2 is the same value as gsi, so the normal incremental MPT path is unchanged.
-            (sweptGsi, didSweep) = GlobalSnapshotDustSweep.applyDustSweep(gsi, ordinal, environment, fieldsAddedOrdinals.dustSweeps)
+            (sweptGsi, didSweep) =
+              GlobalSnapshotDustSweep.applyDustSweep(gsi, fieldsAddedOrdinals.dustSweepFor(environment, ordinal))
 
             _ <- loggerBundle.app
               .info(

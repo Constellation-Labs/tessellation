@@ -30,6 +30,7 @@ Before performing a release or merging a PR with breaking changes, ensure you ha
 - Release Process (internal runbook)
 - [Tessellation GitHub Releases](https://github.com/Constellation-Labs/tessellation/releases)
 - [Conventional Commits](https://www.conventionalcommits.org/) (see also [`docs/adr/0015-conventional-commits.md`](../adr/0015-conventional-commits.md))
+- [Consensus schema change governance](../adr/0034-consensus-schema-change-governance.md)
 
 ## Mandatory pre-stop evidence and monitoring gate
 
@@ -80,6 +81,16 @@ actions. See
 
 ## Functionality Definitions
 
+### Consensus Compatibility Classification
+
+A coordinated cold restart lets the complete fleet adopt new runtime behavior together, but is not
+evidence that signed history or external consumers remain compatible. Every consensus-adjacent PR
+must classify itself as runtime-only, replay/state-transition with stable schema, or schema/wire.
+The latter two require the compatibility and rollout evidence in
+[ADR-0034](../adr/0034-consensus-schema-change-governance.md). Schema changes are frozen once the
+release candidate and dependent Snapshot Streaming/SDK/metagraph artifacts or announcements are
+finalized; changing them requires a newly reviewed release package.
+
 ### Release Artifacts Construction
 
 CI-driven process creating binaries, JARs, and libraries (Maven/Sonatype). This is the first step of a release, producing artifacts coordinated with a specific software version. See `.github/workflows/release.yml` and `project/TessellationCiRelease.scala`.
@@ -95,7 +106,13 @@ The preferred mechanism for introducing breaking changes. Gives node operators a
 - **Epoch-based flags** (preferred) - Enable breaking behavior at a specific approximate point in time. Epoch is a vector clock that loosely approximates actual time.
 - **Ordinal-based flags** - Should be avoided when possible, as ordinals cannot accurately proxy for time over longer periods, but may be necessary due to technical constraints.
 
-Configuration lives in `modules/node-shared/src/main/resources/application.conf`. The current primary ordinal-gate surface is the `fields-added-ordinals` block, a `Map[AppEnvironment, SnapshotOrdinal]` family plus the `dust-sweeps` `Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`. Live sub-keys include `sc-fee-balance-from-context`, `dust-sweeps`, `set-sum-fix`, `fixing-allow-spend-and-token-lock-validation`, `sub-trie-roots`, `delegated-rewards-full-committee`, `fee-transaction-security`, and the historical migration gates. Older keys like `last-legacy-state-proof-ordinal` and `incremental-delegated-staking-starting-ordinal` still exist but are no longer where new gates land.
+Configuration lives in `modules/node-shared/src/main/resources/application.conf`. The current primary ordinal-gate surface is the `fields-added-ordinals` block, a `Map[AppEnvironment, SnapshotOrdinal]` family plus the `dust-sweeps` `Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]`. Live sub-keys include `sc-fee-balance-from-context`, `dust-sweeps`, `set-sum-fix`, `fixing-allow-spend-and-token-lock-validation`, `sub-trie-roots`, `delegated-rewards-full-committee`, `fee-transaction-security`, `currency-snapshot-protocol-v1`, `fixing-fee-transaction-balance-overflow`, `fixing-data-application-fee-validation`, `fixing-allow-spend-destination-credit`, `preventing-allow-spend-resurrection`, `fixing-global-allow-spend-expiration`, and the historical migration gates. Older keys like `last-legacy-state-proof-ordinal` and `incremental-delegated-staking-starting-ordinal` still exist but are no longer where new gates land.
+
+Every `FieldsAddedOrdinals` threshold map follows one missing-value contract: an absent environment
+resolves to `SnapshotOrdinal.MaxValue` and is disabled. Active-from-genesis behavior requires an
+explicit `0`. Exact-key maps such as `dust-sweeps` are disabled naturally when no environment/key
+entry exists. Each gate must separately document its ordinal/epoch domain and comparator; do not
+infer `>=` when a historical replay boundary intentionally uses `>`.
 
 Several `fields-added-ordinals` gates require the deploy-time rule that **the chain must cross the gate ordinal only after the new jar is live cluster-wide** (a too-early crossing on the old jar misses the gated behaviour; for the dust sweep, a missed sweep is not re-attempted until a rollback re-crosses the ordinal). See the gate-setting checklist in [`v4-launch-runbook.md`](v4-launch-runbook.md).
 
@@ -117,7 +134,9 @@ Stages proceed in order, with exceptions only for emergency maintenance or requi
 
 ### 1. Merge to Develop
 
-Requires PR approval only. Does not deploy code anywhere manually. Breaking changes should ideally be documented as part of the merged commits using conventional commit format, but documentation can be deferred to later stages.
+Requires PR approval only. Does not deploy code anywhere manually. Breaking changes must carry
+their compatibility classification, required ADR/schema package, and conventional-commit marker in
+the merged work. Only non-blocking release-note polish may be deferred to a later release stage.
 
 ### 2. Testnet Release
 

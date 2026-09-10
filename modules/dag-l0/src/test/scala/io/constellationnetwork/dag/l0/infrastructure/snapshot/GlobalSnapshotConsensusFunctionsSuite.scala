@@ -25,8 +25,8 @@ import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.{DelegatedRewardsConfigProvider, FieldsAddedOrdinalsFixtures}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -363,18 +363,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     GlobalSnapshotAcceptanceManager
       .make[IO](
-        FieldsAddedOrdinals(
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty
-        ),
+        FieldsAddedOrdinalsFixtures.current,
         MetagraphsSyncConfig(PosInt(100)),
         Dev,
         bam,

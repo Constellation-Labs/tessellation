@@ -119,13 +119,13 @@ abstract class TessellationIOApp[A <: CliMethod](
 
         val _hashSelect = new HashSelect {
           def select(ordinal: SnapshotOrdinal): HashLogic =
-            if (ordinal <= cfg.lastKryoHashOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)) KryoHash else JsonHash
+            if (ordinal <= cfg.lastKryoHashOrdinalFor(cfg.environment)) KryoHash else JsonHash
         }
 
         implicit val _globalStateProofSelector: GlobalStateProofSelector =
           GlobalStateProofSelector(
-            cfg.lastLegacyStateProofOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue),
-            cfg.fieldsAddedOrdinals.subTrieRoots.getOrElse(cfg.environment, SnapshotOrdinal.MaxValue)
+            cfg.lastLegacyStateProofOrdinalFor(cfg.environment),
+            cfg.fieldsAddedOrdinals.subTrieRootsFor(cfg.environment)
           )
 
         implicit val _currencyStateProofSelector: CurrencyStateProofSelector =

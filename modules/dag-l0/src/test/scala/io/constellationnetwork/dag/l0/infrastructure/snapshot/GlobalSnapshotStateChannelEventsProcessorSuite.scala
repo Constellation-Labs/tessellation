@@ -15,6 +15,7 @@ import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.FieldsAddedOrdinalsFixtures
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.statechannel._
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
@@ -123,19 +124,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        FieldsAddedOrdinals(
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map(Dev -> SnapshotOrdinal.MinValue)
-        ),
+        FieldsAddedOrdinalsFixtures.current,
         Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -186,19 +175,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           currencySnapshotContextFns,
           feeCalculator,
           mptStore,
-          FieldsAddedOrdinals(
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
-          ),
+          FieldsAddedOrdinalsFixtures.current,
           Dev
         )
     } yield processor
@@ -407,19 +384,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         contextFns,
         FeeCalculator.make(SortedMap.empty),
         mptStore,
-        FieldsAddedOrdinals(
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
-        ),
+        FieldsAddedOrdinalsFixtures.current,
         Dev
       )
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap(address -> parentHash)).copy(

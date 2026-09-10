@@ -119,16 +119,7 @@ abstract class CurrencyL0App(
       val appConfig = method.appConfig(reader, sharedConfig)
       SnapshotConfig
         .resolveEffectiveConsensusConfig(appConfig.snapshot, appConfig.environment)
-        .map(
-          _.copy(
-            lastGlobalSnapshotSyncOffset = sharedConfig.lastGlobalSnapshotsSync.syncOffset.value,
-            lastGlobalSnapshotsInMemory = sharedConfig.lastGlobalSnapshotsSync.maxLastGlobalSnapshotsInMemory.value,
-            currencySnapshotProtocolV1ActivationOrdinal = sharedConfig.fieldsAddedOrdinals
-              .currencySnapshotProtocolV1For(appConfig.environment)
-              .value
-              .value
-          )
-        )
+        .map(_.withSharedConfig(sharedConfig))
         .liftTo[IO]
         .map(_.some)
     }

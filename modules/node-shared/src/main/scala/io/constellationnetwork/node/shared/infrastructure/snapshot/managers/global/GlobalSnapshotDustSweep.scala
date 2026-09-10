@@ -4,12 +4,11 @@ import cats.syntax.eq._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.DustSweep
+import io.constellationnetwork.schema.GlobalSnapshotInfo
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.transaction.TransactionReference
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 
 import eu.timepit.refined.types.numeric.NonNegLong
 
@@ -22,13 +21,14 @@ import eu.timepit.refined.types.numeric.NonNegLong
   * '''This is consensus-critical.''' Every honest node MUST compute the identical swept `GlobalSnapshotInfo` and the identical MPT state
   * root at the sweep ordinal, or the cluster forks. The transform is a pure function of the GSI map contents at a fixed ordinal (sorted
   * maps, commutative datum sum), so every node at the sweep ordinal computes the identical pruned GSI and root. The gating, threshold, and
-  * burn-vs-treasury choice come from the per-environment compile-time `dustSweeps` config literal (NOT HOCON): the advertised release plus
-  * the environment is the determinism fence.
+  * burn-vs-treasury choice come from the per-environment `dustSweeps` HOCON packaged into the assembly. Both L0 consensus config hashes
+  * include the resolved schedule, thresholds, and destinations; the separate version check rejects different software versions. Deploy one
+  * reviewed configuration through the normal full-cluster cold restart. Matching hashes do not prove a shared value is correct.
   *
   * Safety gates (an address is swept only if ALL hold):
   *
-  *   1. ORDINAL GATE: the sweep fires only when `dustSweeps.get(env).flatMap(_.get(ordinal))` returns a `DustSweep` (exact-key lookup). An
-  *      entry fires exactly once at its ordinal and never replays; an absent environment never sweeps.
+  *   1. ORDINAL GATE: `FieldsAddedOrdinals.dustSweepFor` passes a `DustSweep` only at an exact configured environment/ordinal key. An entry
+  *      fires at its ordinal during production or historical replay; an absent environment never sweeps.
   *
   * 2. DUST THRESHOLD: only an address with `balance.value <= threshold.value` is eligible.
   *
@@ -126,18 +126,15 @@ object GlobalSnapshotDustSweep {
 
   /** Apply the ordinal-gated dust sweep as a post-construction transform.
     *
-    * Returns `(gsi, false)` unchanged for any ordinal/environment outside the gate (the normal path: one map lookup returning `None`). At
-    * exactly a configured sweep ordinal it partitions `balances` by the dust threshold, the empty-ref gate, the exclusion set, and the
-    * collection-address guard, credits the collected sum to the treasury (or burns it), prunes the swept addresses' `lastTxRefs`, and
-    * returns `(swept gsi, true)`.
+    * Returns `(gsi, false)` unchanged when the resolved sweep is absent. For a configured sweep it partitions `balances` by the dust
+    * threshold, the empty-ref gate, the exclusion set, and the collection-address guard, credits the collected sum to the treasury (or
+    * burns it), prunes the swept addresses' `lastTxRefs`, and returns `(swept gsi, true)`.
     */
   def applyDustSweep(
     gsi: GlobalSnapshotInfo,
-    ordinal: SnapshotOrdinal,
-    env: AppEnvironment,
-    sweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]
+    sweep: Option[DustSweep]
   ): (GlobalSnapshotInfo, Boolean) =
-    sweeps.get(env).flatMap(_.get(ordinal)) match {
+    sweep match {
       case None => (gsi, false) // normal path, ~free
       case Some(DustSweep(threshold, collection)) =>
         val protectedAddrs = addressesWithNonBalanceState(gsi) // single union Set[Address]

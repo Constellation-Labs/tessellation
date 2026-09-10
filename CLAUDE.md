@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Consensus Schema Governance
+
+Before changing consensus, snapshot construction/acceptance, hashing, serialization, state proofs,
+persistence, P2P messages, or SDK-visible types, read
+[`docs/adr/0034-consensus-schema-change-governance.md`](docs/adr/0034-consensus-schema-change-governance.md).
+
+Every affected PR must classify itself as runtime-only, replay/state-transition, or schema/wire.
+A coordinated full-cluster cold restart allows runtime behavior—and therefore future consensus
+outcomes—to change together. It does not make signed encodings, hash/signature construction,
+persisted history, replay semantics, Snapshot Streaming, Block Explorer, SDK, or metagraph changes
+compatible. Do not implement an unapproved schema change as part of a behavioral fix. If impact is
+uncertain, treat it as schema/wire until the signed, persisted, and external surfaces are audited.
+Missing `FieldsAddedOrdinals` threshold mappings are disabled; active-from-genesis behavior must use
+an explicit `0`.
+
+Before adding or renumbering an ADR, inspect `docs/adr/` on the latest target branch, choose the
+next unused four-digit number, and recheck after the final rebase. If another change claimed the
+number first, renumber the newer proposed ADR and update every reference before merge.
+
 ## Project Overview
 
 Tessellation is the Constellation Network Node Software - a DAG (Directed Acyclic Graph) based distributed ledger with Layer 0 (L0) and Layer 1 (L1) validators. Written in Scala 2.13, designed for Kubernetes deployment.
@@ -24,6 +43,16 @@ sbt dagL1/assembly
 
 ## Docker-based Development
 
+The canonical local Just/Docker lifecycle, output locations, JAR provenance checks, and cleanup
+matrix are in [`docker/README.md`](docker/README.md). Read it before starting or cleaning an E2E
+run. Diagnose a still-running failed cluster with
+[`docs/operations/local-e2e-cluster-investigation.md`](docs/operations/local-e2e-cluster-investigation.md),
+then use [`.claude/commands/debug-e2e-logs.md`](.claude/commands/debug-e2e-logs.md) for persisted-log
+analysis. Do not create a parallel test harness for behavior already covered by `just`.
+
+Any change to `justfile`, the runner/assembly/cleanup scripts under `docker/bin/`, output paths, or
+CI artifact collection must update `docker/README.md` in the same change.
+
 ```bash
 just test                 # Full test suite with Docker
 just test --skip-assembly # Skip compilation, reuse JARs
@@ -31,6 +60,10 @@ just up                   # Start test environment
 just down                 # Teardown environment
 just check                # Lint + format check + tests
 ```
+
+`--skip-assembly` trusts the existing `docker/jars/` bytes without comparing them to Git HEAD.
+Verify the JAR manifest and digest before using it. A new ordinary run replaces `nodes/`, so capture
+the prior run's logs first.
 
 ## Code Quality
 

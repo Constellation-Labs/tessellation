@@ -21,7 +21,8 @@ up *extra_args:
 	@just _check_deps
 	@bash docker/bin/compose-runner.sh --up {{ extra_args }}
 
-# Destroy test environment. Use --remote=n0,n1,n2 for remote nodes, --clean to wipe data.
+# Destroy the local test environment while preserving host-mounted nodes/ data and logs.
+# For remote nodes, --clean additionally wipes remote data; it has no extra local effect.
 down *extra_args:
 	@bash docker/bin/compose-runner-down.sh {{ extra_args }}
 

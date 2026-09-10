@@ -1,5 +1,11 @@
 # N. Brief decision title
 
+<!--
+Before assigning N, inspect docs/adr/ on the latest target branch and use the next unused
+four-digit number. Recheck after the final rebase. If another change claimed the number first,
+renumber the newer proposed ADR and update every reference before merge.
+-->
+
 Date: yyyy-mm-dd
 
 ## Status

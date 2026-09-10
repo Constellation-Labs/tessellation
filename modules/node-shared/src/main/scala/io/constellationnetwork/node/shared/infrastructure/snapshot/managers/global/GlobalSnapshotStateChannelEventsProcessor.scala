@@ -90,7 +90,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
       // ordinal. Fail closed: an unset env defaults to MaxValue so the context-balance path stays OFF
       // (the gate never fires) rather than activating from genesis and diverging replay.
       private val scFeeBalanceFromContextOrdinal: SnapshotOrdinal =
-        fieldsAddedOrdinals.scFeeBalanceFromContext.getOrElse(environment, SnapshotOrdinal.MaxValue)
+        fieldsAddedOrdinals.scFeeBalanceFromContextFor(environment)
 
       def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
         JsonSerializer[F].deserialize[A](binary.value.content).map(_.toOption)
