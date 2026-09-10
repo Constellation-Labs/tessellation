@@ -78,10 +78,9 @@ object DownloadInactivityWatchdogSuite extends SimpleIOSuite {
       .map(result => expect(result.swap.contains(Download.DownloadStartTimedOut)))
   }
 
-  // The initial cleanup pass reports nothing until it finishes, so on a store whose bodies are not
-  // hardlinked to their ordinal index it outlasts the idle budget and the download never begins:
-  // observed on testnet gl0, where 1,494,018 of 2,552,100 persisted bodies had nlink == 1 and were
-  // decoded rather than skipped, taking ~45 minutes against a 10-minute budget.
+  // Model a silent local operation longer than the idle budget. The former hash-tree sweep
+  // exposed this case on testnet. The sweep is gone, but the heartbeat must remain scoped to
+  // local cleanup and must not mask a later stalled fetch.
   private val silentCleanup = 45.minutes
 
   test("a silent local pass outlasting the budget survives while it heartbeats") {

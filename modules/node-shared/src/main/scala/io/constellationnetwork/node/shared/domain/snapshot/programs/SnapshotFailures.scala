@@ -15,7 +15,7 @@ object SnapshotFailure {
 
   final case class CleanupIncomplete(remaining: Long, ordinal: SnapshotOrdinal)
       extends SnapshotFailure(
-        s"Cleanup incomplete: $remaining files still remain above ordinal ${ordinal.show}"
+        s"Cleanup incomplete: $remaining snapshot ordinal indexes still remain above ordinal ${ordinal.show}"
       )
 
   sealed abstract class BalanceArithmeticError(category: String, cause: String)

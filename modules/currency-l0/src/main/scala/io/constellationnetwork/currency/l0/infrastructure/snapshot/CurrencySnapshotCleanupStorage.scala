@@ -32,8 +32,7 @@ object CurrencySnapshotCleanupStorage {
         // Remove the content-addressed path first. Both indexes are hardlinks,
         // so the ordinal still owns readable bytes if the process dies between
         // deletes and a retry can rediscover/recompute the same hash. Deleting
-        // the ordinal first can strand a remotely servable future hash with no
-        // ordinal index by which recovery can identify it.
+        // the ordinal first would lose the known cleanup target on retry.
         persistedStorage.delete(hash) >>
           persistedStorage.delete(ordinal)
 
@@ -72,10 +71,10 @@ object CurrencySnapshotCleanupStorage {
             .count
             .flatMap { remainingFiles =>
               if (remainingFiles > 0) {
-                logger.error(s"Cleanup incomplete: $remainingFiles files still remain above ordinal ${ordinal.show}") >>
+                logger.error(s"Cleanup incomplete: $remainingFiles snapshot ordinal indexes still remain above ordinal ${ordinal.show}") >>
                   Async[F].raiseError[Unit](SnapshotFailure.CleanupIncomplete(remainingFiles, ordinal))
               } else {
-                logger.info(s"Cleanup successful: No files remain above ordinal ${ordinal.show}") >> ().pure
+                logger.info(s"Cleanup successful: No snapshot ordinal indexes remain above ordinal ${ordinal.show}") >> ().pure
               }
             }
 
