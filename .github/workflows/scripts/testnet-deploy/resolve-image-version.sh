@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 #
-# Resolve the GHCR image tag a testnet deploy should use, and prove it is pullable
-# BEFORE anything touches the cluster.
+# Decide WHICH version a testnet deploy should use. Whether that version is actually
+# deployable is a separate question, answered by verify-images.sh -- keeping the two
+# apart means there is exactly one gate, with one error message, for both the explicit
+# and the default path.
 #
 #   usage: resolve-image-version.sh [<version>]
 #
-# The deploy pins ONE tag for BOTH images: docker/bin/remote-deploy.sh builds
-# "$CL_DOCKER_CORE_IMAGE:$TESSELLATION_DOCKER_VERSION" (line 30) and
-# "$CL_DOCKER_SS_IMAGE:$TESSELLATION_DOCKER_VERSION" (line 628) from the same
-# variable. So a tag is only usable when it is published for tessellation AND for
-# snapshot-streaming, and both are checked here -- the deploy's first act is a
-# chain-preserving `just down`, so learning about a missing image afterwards leaves
-# the cluster stopped with nothing to bring it back up.
+#   <version>    -> echoed back unchanged. Any tag is allowed, not just a release
+#                   version: `sha-<commit>` pins one specific build.
+#   no argument  -> the highest release version published to GHCR for BOTH the
+#                   tessellation and snapshot-streaming images. Both, because the deploy
+#                   pins one tag for both (docker/bin/remote-deploy.sh lines 30 and 628),
+#                   so a version that only published half a release is not a candidate.
 #
-#   no argument  -> the highest semver release version published for both packages.
-#   <version>    -> that exact tag, verified present in both. Any tag works, not
-#                   just a release version: `sha-<commit>` pins a specific build.
+# Ordering is by semver precedence, NOT the order the registry lists tags in -- the OCI
+# spec does not fix that order, so relying on it would silently pick the wrong version
+# the day GHCR changes it.
 #
-# Prints the resolved tag on stdout; diagnostics go to stderr. Both packages are
-# public, so GHCR is read anonymously with no token -- run it locally to see what a
+# Prints the resolved tag on stdout, diagnostics on stderr. GHCR is read anonymously
+# (both packages are public): no token needed, so this runs locally to preview what a
 # default dispatch would deploy.
 #
 set -euo pipefail
@@ -28,9 +29,13 @@ ORG="${GHCR_ORG:-constellation-labs}"
 CORE_PKG="${CORE_PKG:-tessellation}"
 SS_PKG="${SS_PKG:-snapshot-streaming}"
 
-# Newline-separated tag list for one GHCR package, via the registry v2 API. We do not
-# trust the ORDER it comes back in (the OCI spec does not fix it) -- ordering is done
-# by semver below.
+# An explicit version needs no lookup at all; verify-images.sh is what proves it exists.
+if [ -n "$REQUESTED" ]; then
+  echo "$REQUESTED"
+  exit 0
+fi
+
+# Newline-separated tag list for one GHCR package, via the registry v2 API.
 tags_for() {
   local repo="$ORG/$1"
   local token
@@ -47,28 +52,15 @@ tags_for() {
 CORE_TAGS="$(tags_for "$CORE_PKG")"
 SS_TAGS="$(tags_for "$SS_PKG")"
 
-REQUESTED="$REQUESTED" CORE_TAGS="$CORE_TAGS" SS_TAGS="$SS_TAGS" \
-CORE_PKG="$CORE_PKG" SS_PKG="$SS_PKG" ORG="$ORG" python3 - <<'PY'
+CORE_TAGS="$CORE_TAGS" SS_TAGS="$SS_TAGS" CORE_PKG="$CORE_PKG" SS_PKG="$SS_PKG" ORG="$ORG" \
+python3 - <<'PY'
 import os
 import re
 import sys
 
-requested = os.environ["REQUESTED"].strip()
+core = set(os.environ["CORE_TAGS"].split())
+ss = set(os.environ["SS_TAGS"].split())
 core_pkg, ss_pkg, org = os.environ["CORE_PKG"], os.environ["SS_PKG"], os.environ["ORG"]
-packages = ((core_pkg, set(os.environ["CORE_TAGS"].split())), (ss_pkg, set(os.environ["SS_TAGS"].split())))
-
-if requested:
-    absent = [pkg for pkg, tags in packages if requested not in tags]
-    if absent:
-        sys.exit(
-            f"error: tag '{requested}' is not published for: "
-            + ", ".join(f"ghcr.io/{org}/{p}" for p in absent)
-            + ".\n       The deploy pins one tag for both images, so the pull would fail after the "
-            "cluster is already stopped.\n       Pick a version present in both, or leave the input "
-            "blank to take the latest."
-        )
-    print(requested)
-    raise SystemExit(0)
 
 # X.Y.Z with an optional prerelease -- excludes `testnet`, `latest` and `sha-<commit>`,
 # none of which name a release.
@@ -88,8 +80,7 @@ def precedence(tag):
     return (int(major), int(minor), int(patch), 0, parts)
 
 
-shared = packages[0][1] & packages[1][1]
-candidates = sorted((tag for tag in shared if SEMVER.match(tag)), key=precedence)
+candidates = sorted((tag for tag in core & ss if SEMVER.match(tag)), key=precedence)
 if not candidates:
     sys.exit(
         f"error: no release version is published for both ghcr.io/{org}/{core_pkg} and "

@@ -14,8 +14,9 @@ name: Testnet Deploy
 #   workflow_call     — retained only so the DISABLED block in testnet-release.yml still
 #                       works if auto-deploy is ever restored. Nothing calls it today.
 #
-# Either way the version is resolved and proved pullable BEFORE the cluster is touched, by
-# .github/workflows/scripts/testnet-deploy/resolve-image-version.sh.
+# Either way, before the cluster is touched:
+#   scripts/testnet-deploy/resolve-image-version.sh  picks the version
+#   scripts/testnet-deploy/verify-images.sh          proves both images exist at it
 #
 # The deploy is CHAIN-PRESERVING: `just down` WITHOUT --clean saves node0's rollback
 # hash, then deploy-cluster.sh redeploys and the entrypoint auto-detects rollback. It
@@ -77,11 +78,9 @@ jobs:
       - name: Install just
         run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
-      # Resolve to a CONCRETE version and prove it is pullable for BOTH the node and
-      # snapshot-streaming images before anything below stops the cluster. A blank input
-      # used to fall through to the moving :testnet tag, which meant the run never recorded
-      # what it actually shipped and two nodes could pull different builds if a release
-      # landed mid-deploy.
+      # Pick a CONCRETE version. A blank input used to fall through to the moving
+      # :testnet tag, which meant the run never recorded what it actually shipped and
+      # nodes could land on different builds if a release published mid-deploy.
       - name: Resolve release version
         id: version
         env:
@@ -90,11 +89,29 @@ jobs:
           TAG="$(bash .github/workflows/scripts/testnet-deploy/resolve-image-version.sh "$REQUESTED_VERSION")"
           echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
           if [ -n "$REQUESTED_VERSION" ]; then
-            echo "Deploying requested version \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Deploying requested version \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Deploying \`$TAG\` — latest version published for both images (no version requested)" \
-              >> "$GITHUB_STEP_SUMMARY"
+            echo "### Deploying \`$TAG\` — latest version published for both images" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      # The gate. Both images must exist AND carry a linux/amd64 image at this tag before
+      # the cluster is touched: they are published by two independent jobs
+      # (build-push-image, build-push-ss), the deploy pins one tag for both, and both are
+      # pulled only AFTER the chain-preserving `down` below -- the core image partway
+      # through the deploy, the snapshot-streaming image later still, implicitly by
+      # `compose up`. A half-published release used to surface there, with every node
+      # already stopped. It fails here instead, with nothing touched.
+      - name: Verify both images are published
+        env:
+          TAG: ${{ steps.version.outputs.TAG }}
+        run: |
+          # No pipe into tee: a `bash -e` step does not set pipefail, so piping would let
+          # the script's failure be masked by tee's exit 0.
+          bash .github/workflows/scripts/testnet-deploy/verify-images.sh "$TAG" > /tmp/verified-images.md
+          {
+            echo "Verified images:"
+            cat /tmp/verified-images.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate configuration
         run: |
