@@ -516,24 +516,29 @@ object GlobalDelegatedRewardsDistributor {
 
         withdrawalRewardTxs <-
           calculateWithdrawalRewardTransactions(
-            partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
-              case (address, withdrawals) =>
-                withdrawals.toList.mapFilter { withdrawal =>
-                  Option.when(withdrawal.rewards.value > Balance.empty.value) {
-                    address -> withdrawal.rewards.value.value
+            partitionedRecords.withdrawalSettlement.map(_.rewardsByAddress.toMap).getOrElse {
+              // Historical replay only. Activated settlement uses checked Amount arithmetic.
+              partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
+                case (address, withdrawals) =>
+                  withdrawals.toList.mapFilter { withdrawal =>
+                    Option.when(withdrawal.rewards.value > Balance.empty.value) {
+                      address -> withdrawal.rewards.value.value
+                    }
                   }
-                }
+              }
+                // A single address can have several delegated-stake positions whose withdrawals
+                // expire in the same snapshot. Sum their rewards per address so every position is
+                // paid out; the previous `.toMap` kept only the last entry and silently dropped
+                // the rewards of the other positions.
+                .groupMapReduce { case (address, _) => address } { case (_, reward) => reward }(_ + _).view
+                .mapValues(total => Amount(NonNegLong.unsafeFrom(total)))
+                .toMap
             }
-              // A single address can have several delegated-stake positions whose withdrawals
-              // expire in the same snapshot. Sum their rewards per address so every position is
-              // paid out; the previous `.toMap` kept only the last entry and silently dropped
-              // the rewards of the other positions.
-              .groupMapReduce { case (address, _) => address } { case (_, reward) => reward }(_ + _).view
-              .mapValues(total => Amount(NonNegLong.unsafeFrom(total)))
-              .toMap
           )
 
-        totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(
+        totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
+                                 DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
+                               else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
           reservedAddressRewards,
           nodeOperatorRewardsTxs,
           delegatorRewardsMap

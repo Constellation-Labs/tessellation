@@ -8,6 +8,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedStakeWithdrawalSettlement
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.TokenLockStateManager.UnlockMode
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -36,6 +38,19 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
   implicit val globalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal(NonNegLong(Long.MaxValue)))
 
   type Res = (Hasher[IO], SecurityProvider[IO], MptStore[IO, GlobalStateKey], JsonSerializer[IO])
+
+  private def uniqueMode(
+    expired: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+    locks: Map[Hash, Signed[TokenLock]],
+    epoch: EpochProgress = EpochProgress(10L)
+  ): UnlockMode = UnlockMode.Unique(
+    epoch,
+    DelegatedStakeWithdrawalSettlement
+      .prepare(expired, SortedMap.empty, locks, SnapshotOrdinal.MinValue, SnapshotOrdinal.MinValue)
+      .toOption
+      .flatten
+      .get
+  )
 
   // Test data
   val testSignature = signature.Signature(Hex(""))
@@ -588,7 +603,9 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
     val acceptanceManager = TokenLockStateManager.make[IO](mptStore)
 
     for {
-      result <- acceptanceManager.generateTokenUnlocks(SortedMap.empty, List.empty, Map.empty).pure[IO]
+      result <- acceptanceManager
+        .generateTokenUnlocks(SortedMap.empty, List.empty, Map.empty, uniqueMode(SortedMap.empty, Map.empty))
+        .pure[IO]
     } yield expect(result.isRight && result.toOption.get.isEmpty)
   }
 
@@ -637,7 +654,14 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
 
       globalActiveTokenLocksByRef = Map(Hash("tokenLockRef") -> signedActiveTokenLock)
 
-      result <- acceptanceManager.generateTokenUnlocks(expiredWithdrawals, List.empty, globalActiveTokenLocksByRef).pure[IO]
+      result <- acceptanceManager
+        .generateTokenUnlocks(
+          expiredWithdrawals,
+          List.empty,
+          globalActiveTokenLocksByRef,
+          uniqueMode(expiredWithdrawals, globalActiveTokenLocksByRef)
+        )
+        .pure[IO]
     } yield expect.eql(Right(Map(testAddress -> List(TokenUnlock(Hash("tokenLockRef"), TokenLockAmount(100L), none, testAddress)))), result)
   }
 
@@ -681,7 +705,12 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       globalActiveTokenLocksByRef = Map(hashedExistingTokenLock.hash -> signedExistingTokenLock)
 
       result <- acceptanceManager
-        .generateTokenUnlocks(SortedMap.empty, List(signedReplacementTokenLock), globalActiveTokenLocksByRef)
+        .generateTokenUnlocks(
+          SortedMap.empty,
+          List(signedReplacementTokenLock),
+          globalActiveTokenLocksByRef,
+          uniqueMode(SortedMap.empty, globalActiveTokenLocksByRef)
+        )
         .pure[IO]
     } yield
       expect.eql(
@@ -722,11 +751,13 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
 
       globalActiveTokenLocksByRef = Map.empty[Hash, Signed[TokenLock]] // Empty map, missing token lock
 
-      result <- acceptanceManager.generateTokenUnlocks(expiredWithdrawals, List.empty, globalActiveTokenLocksByRef).pure[IO]
+      result <- acceptanceManager
+        .generateTokenUnlocks(expiredWithdrawals, List.empty, globalActiveTokenLocksByRef, UnlockMode.Legacy)
+        .pure[IO]
     } yield expect(result.isLeft)
   }
 
-  test("generateTokenUnlocks - should combine expired withdrawals and replacement unlocks") { res =>
+  test("generateTokenUnlocks - combines withdrawals and replacements in effective-ref order") { res =>
     implicit val (jsonHasher, sp, mptStore, js) = res
     val acceptanceManager = TokenLockStateManager.make[IO](mptStore)
 
@@ -808,7 +839,12 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
 
       result <- acceptanceManager
-        .generateTokenUnlocks(expiredWithdrawals, List(signedReplacementTokenLock), globalActiveTokenLocksByRef)
+        .generateTokenUnlocks(
+          expiredWithdrawals,
+          List(signedReplacementTokenLock),
+          globalActiveTokenLocksByRef,
+          uniqueMode(expiredWithdrawals, globalActiveTokenLocksByRef)
+        )
         .pure[IO]
     } yield
       expect(
@@ -828,10 +864,10 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
                   none,
                   testAddress
                 )
-              )
+              ).sortBy(_.tokenLockRef.value)
           )
         ) == result
-      ) // Should have 2 unlocks
+      ) // Both distinct unlocks survive, in canonical hash order rather than random signing order.
   }
 
   test("generateTokenUnlocks - preserves duplicate legacy unlocks but emits one effective lock after activation") { res =>
@@ -895,13 +931,12 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
       )
       expired = SortedMap(staleMapKey -> SortedSet(withdrawal1, withdrawal2, withdrawal3))
       locksByRef = Map(hashedLock.hash -> signedLock, hashedSeparateLock.hash -> signedSeparateLock)
-      legacy = acceptanceManager.generateTokenUnlocks(expired, List.empty, locksByRef)
+      legacy = acceptanceManager.generateTokenUnlocks(expired, List.empty, locksByRef, UnlockMode.Legacy)
       hardened = acceptanceManager.generateTokenUnlocks(
         expired,
         List.empty,
         locksByRef,
-        enforceUniqueTokenLockRefs = true,
-        currentEpochProgress = EpochProgress(10L).some
+        mode = uniqueMode(expired, locksByRef)
       )
     } yield
       expect.all(
@@ -957,8 +992,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         expired,
         List(signedReplacement),
         Map(hashedActive.hash -> signedActive),
-        enforceUniqueTokenLockRefs = true,
-        currentEpochProgress = EpochProgress(10L).some
+        mode = uniqueMode(expired, Map(hashedActive.hash -> signedActive))
       )
       naturallyExpiring = active.copy(unlockEpoch = EpochProgress(9L).some)
       signedNaturallyExpiring <- Signed.forAsyncHasher(naturallyExpiring, kp)
@@ -968,8 +1002,7 @@ object TokenLockStateManagerSuite extends MutableIOSuite with Checkers {
         SortedMap(source -> SortedSet(naturalWithdrawal)),
         List.empty,
         Map(naturallyExpiringHash.hash -> signedNaturallyExpiring),
-        enforceUniqueTokenLockRefs = true,
-        currentEpochProgress = EpochProgress(10L).some
+        mode = uniqueMode(SortedMap(source -> SortedSet(naturalWithdrawal)), Map(naturallyExpiringHash.hash -> signedNaturallyExpiring))
       )
       naturalUnlocks = natural.toOption.getOrElse(Map.empty)
       naturalBalanceResult = acceptanceManager.updateGlobalBalancesByTokenLocks(

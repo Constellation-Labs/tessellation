@@ -136,11 +136,12 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       )
   }
 
-  test("should handle withdrawals with expiration") { res =>
+  test("should expire due withdrawals while retaining a different unexpired lock") { res =>
     implicit val (h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
 
       // Create token lock
       tokenLock <- mkTokenLock(keyPair, TokenLockAmount(100L), replaceTokenLockRef = None)
@@ -149,9 +150,14 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create delegated stake event
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, hashedTokenLock)
 
+      // Use distinct locks: later copies of the same settled lock are now retired together.
+      recentTokenLock <- mkTokenLock(keyPair, TokenLockAmount(200L), replaceTokenLockRef = None)
+      recentHashedTokenLock <- recentTokenLock.toHashed
+      recentDelegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, recentHashedTokenLock)
+
       // Create withdrawals with different epochs
       recentWithdrawal = PendingDelegatedStakeWithdrawal(
-        event = delegatedStakeEvent,
+        event = recentDelegatedStakeEvent,
         rewards = Amount(10L),
         acceptedOrdinal = SnapshotOrdinal(1L),
         createdAt = EpochProgress(8L), // Recent, should not expire
@@ -174,7 +180,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       )
 
       existingTokenLocks = SortedMap(
-        address1 -> SortedSet(tokenLock)
+        address1 -> SortedSet(tokenLock, recentTokenLock)
       )
 
       lastSnapshotContext = mkGlobalSnapshotInfo(
@@ -209,7 +215,8 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       expect.all(
         newSnapshotInfo.delegatedStakesWithdrawals.isDefined,
         newSnapshotInfo.delegatedStakesWithdrawals.get.contains(address1),
-        newSnapshotInfo.delegatedStakesWithdrawals.get(address1) == SortedSet(recentWithdrawal) // Only recent withdrawal should remain
+        newSnapshotInfo.delegatedStakesWithdrawals.get.get(address1).contains(SortedSet(recentWithdrawal)),
+        newSnapshotInfo.activeTokenLocks.get.get(address1).contains(SortedSet(recentTokenLock))
       )
   }
 

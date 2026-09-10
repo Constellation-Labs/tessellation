@@ -63,7 +63,7 @@ object UpdateDelegatedStakeAcceptanceManager {
 
   def make[F[_]: Async: SecurityProvider](
     validator: UpdateDelegatedStakeValidator[F],
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MaxValue
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal
   ) =
     new UpdateDelegatedStakeAcceptanceManager[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](getClass)
@@ -73,12 +73,16 @@ object UpdateDelegatedStakeAcceptanceManager {
         signed: Signed[UpdateDelegatedStake.Create],
         validated: UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]],
         acceptedTokenLocks: List[Signed[TokenLock]],
+        pendingWithdrawalTokenLockRefs: Set[Hash],
         isDoubleWithdrawalFixActive: Boolean
       ): CreateDelegatedStakeAcceptanceResult = {
         def reject(error: UpdateDelegatedStakeValidationError) =
           (acc.accepted, (signed, NonEmptyChain.of(error)) :: acc.rejected)
 
         val (newAccepted, newRejected, wasAccepted) = validated match {
+          case Valid(_) if isDoubleWithdrawalFixActive && pendingWithdrawalTokenLockRefs(signed.tokenLockRef) =>
+            val (accepted, rejected) = reject(AlreadyWithdrawn(signed.tokenLockRef))
+            (accepted, rejected, false)
           case Valid(_) if acc.parentRefsSeen(signed.parent) =>
             val (accepted, rejected) = reject(DuplicatedParent(signed.parent))
             (accepted, rejected, false)
@@ -181,6 +185,10 @@ object UpdateDelegatedStakeAcceptanceManager {
         acceptedTokenLocks: List[Signed[TokenLock]]
       )(implicit hasher: Hasher[F]): F[UpdateDelegatedStakeAcceptanceResult] = {
         val isDoubleWithdrawalFixActive = currentSnapshotOrdinal >= fixingDelegatedStakeDoubleWithdrawalOrdinal
+        val pendingWithdrawalTokenLockRefs =
+          if (isDoubleWithdrawalFixActive)
+            lastSnapshotContext.delegatedStakesWithdrawals.toList.flatMap(_.valuesIterator.flatten.map(_.tokenLockRef)).toSet
+          else Set.empty[Hash]
 
         for {
           hashedExistingDelegatedStakes <- lastSnapshotContext.activeDelegatedStakes
@@ -203,20 +211,11 @@ object UpdateDelegatedStakeAcceptanceManager {
           createResult <- sortedCreates.foldLeftM(CreateDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>
             validator
               .validateCreateDelegatedStake(signed, lastSnapshotContext)
-              .map(processCreateValidation(acc, signed, _, acceptedTokenLocks, isDoubleWithdrawalFixActive))
+              .map(processCreateValidation(acc, signed, _, acceptedTokenLocks, pendingWithdrawalTokenLockRefs, isDoubleWithdrawalFixActive))
           }
 
           acceptedCreateTokenLockRefs =
             if (isDoubleWithdrawalFixActive) createResult.accepted.iterator.map(_.tokenLockRef).toSet
-            else Set.empty[Hash]
-
-          pendingWithdrawalTokenLockRefs =
-            if (isDoubleWithdrawalFixActive)
-              lastSnapshotContext.delegatedStakesWithdrawals
-                .getOrElse(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])
-                .valuesIterator
-                .flatMap(_.iterator.map(_.tokenLockRef))
-                .toSet
             else Set.empty[Hash]
 
           withdrawResult <- sortedWithdrawals.foldLeftM(WithdrawDelegatedStakeAcceptanceResult.empty) { (acc, signed) =>

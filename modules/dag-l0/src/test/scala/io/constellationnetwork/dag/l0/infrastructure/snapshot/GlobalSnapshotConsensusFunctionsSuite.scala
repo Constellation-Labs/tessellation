@@ -255,7 +255,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   def updateDelegatedStakeAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
     val validator =
       UpdateDelegatedStakeValidator.make(signedValidator, None)
-    UpdateDelegatedStakeAcceptanceManager.make(validator)
+    UpdateDelegatedStakeAcceptanceManager.make(validator, SnapshotOrdinal.MinValue)
   }
 
   def updateNodeCollateralAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
@@ -373,7 +373,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           Map.empty,
           Map.empty,
           Map.empty,
-          Map.empty
+          Map.empty,
+          fixingDelegatedStakeDoubleWithdrawal = Map(Dev -> SnapshotOrdinal.MinValue)
         ),
         MetagraphsSyncConfig(PosInt(100)),
         Dev,

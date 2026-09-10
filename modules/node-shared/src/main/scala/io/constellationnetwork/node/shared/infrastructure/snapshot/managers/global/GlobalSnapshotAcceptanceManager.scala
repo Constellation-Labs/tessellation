@@ -324,6 +324,7 @@ object GlobalSnapshotAcceptanceManager {
         acceptedTransactions: SortedSet[Signed[Transaction]],
         delegatedStakeAcceptanceResult: UpdateDelegatedStakeAcceptanceResult,
         unexpiredStakes: PartitionedRecords[SortedSet[DelegatedStakeRecord], SortedSet[PendingDelegatedStakeWithdrawal]],
+        withdrawalSettlement: Option[DelegatedStakeWithdrawalSettlement],
         calculateRewardsFn: RewardsInput => F[DelegatedRewardsResult]
       ): F[DelegatedRewardsResult] = {
         val unexpiredCreateDelegatedStakes = unexpiredStakes.existing
@@ -339,7 +340,8 @@ object GlobalSnapshotAcceptanceManager {
               PartitionedStakeUpdates(
                 unexpiredCreateDelegatedStakes,
                 unexpiredWithdrawalsDelegatedStaking,
-                expiredWithdrawalsDelegatedStaking
+                expiredWithdrawalsDelegatedStaking,
+                withdrawalSettlement
               ),
               epochProgress
             )
@@ -775,6 +777,46 @@ object GlobalSnapshotAcceptanceManager {
               case (address, nel) => nel.last.toHashed.map(address -> _.hash)
             }.map(_.toSortedMap)
 
+            globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
+              SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
+            )
+
+            allTokenLocks: List[Signed[TokenLock]] = globalActiveTokenLocks.values.toList.flatten
+            globalActiveTokenLocksByRef <-
+              if (allTokenLocks.isEmpty) {
+                Async[F].pure(Map.empty[Hash, Signed[TokenLock]])
+              } else {
+                Stream
+                  .emits(allTokenLocks)
+                  .covary[F]
+                  .chunkN(100)
+                  .parEvalMap(10) { chunk =>
+                    Async[F].cede *> chunk.toList.traverse { tokenLock =>
+                      tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
+                    } <* Async[F].cede
+                  }
+                  .compile
+                  .toList
+                  .flatMap(results => Async[F].cede.as(results.flatten.toMap))
+              }
+
+            withdrawalSettlement <- Async[F].fromEither(
+              DelegatedStakeWithdrawalSettlement.prepare(
+                initialData.existingStakes.expired,
+                initialData.existingStakes.unexpired,
+                globalActiveTokenLocksByRef,
+                ordinal,
+                fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(environment)
+              )
+            )
+            _ <- withdrawalSettlement.traverse_ { settlement =>
+              loggerBundle.app
+                .warn(
+                  s"[DELEG_STAKE_WITHDRAWAL_DEDUP] ordinal=${ordinal.show} dropped=${settlement.duplicateCount} retained=${settlement.withdrawalsByRef.size}"
+                )
+                .whenA(settlement.duplicateCount > 0)
+            }
+
             DelegatedRewardsResult(
               delegatorRewardsMap,
               updatedCreateDelegatedStakes,
@@ -790,6 +832,7 @@ object GlobalSnapshotAcceptanceManager {
               acceptedTransactions,
               initialData.delegatedResult,
               initialData.existingStakes,
+              withdrawalSettlement,
               calculateRewardsFn
             )
 
@@ -800,9 +843,19 @@ object GlobalSnapshotAcceptanceManager {
                 s"updatedDelegStakes=${updatedCreateDelegatedStakes.size} updatedDelegWithdrawals=${updatedWithdrawDelegatedStakes.size}"
             )
 
-            (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) = rewardAcceptanceManager.acceptRewardTxs(
-              updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-              withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+            (updatedBalancesByRewards, acceptedRewardTxs, rewardBalancesDelta) <- Async[F].fromEither(
+              if (withdrawalSettlement.isDefined)
+                RewardAcceptanceManager.acceptRewardTxsChecked(
+                  updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+                  withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+                )
+              else
+                Right(
+                  rewardAcceptanceManager.acceptRewardTxs(
+                    updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+                    withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+                  )
+                )
             )
 
             globalBalances = SortedMap(none[Address] -> updatedBalancesByRewards)
@@ -883,28 +936,6 @@ object GlobalSnapshotAcceptanceManager {
               None,
               SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
             )
-            globalActiveTokenLocks = lastSnapshotContext.activeTokenLocks.getOrElse(
-              SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]
-            )
-
-            allTokenLocks: List[Signed[TokenLock]] = globalActiveTokenLocks.values.toList.flatten
-            globalActiveTokenLocksByRef <-
-              if (allTokenLocks.isEmpty) {
-                Async[F].pure(Map.empty[Hash, Signed[TokenLock]])
-              } else {
-                Stream
-                  .emits(allTokenLocks)
-                  .covary[F]
-                  .chunkN(100)
-                  .parEvalMap(10) { chunk =>
-                    Async[F].cede *> chunk.toList.traverse { tokenLock =>
-                      tokenLock.toHashed.map(hashed => hashed.hash -> tokenLock)
-                    } <* Async[F].cede
-                  }
-                  .compile
-                  .toList
-                  .flatMap(results => Async[F].cede.as(results.flatten.toMap))
-              }
 
             globalLastAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.getOrElse(
               SortedMap.empty[Address, AllowSpendReference]
@@ -981,8 +1012,9 @@ object GlobalSnapshotAcceptanceManager {
                 initialData.existingStakes.expired,
                 acceptedGlobalTokenLocks,
                 globalActiveTokenLocksByRef,
-                ordinal >= fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(environment),
-                epochProgress.some
+                withdrawalSettlement.fold[TokenLockStateManager.UnlockMode](TokenLockStateManager.UnlockMode.Legacy)(
+                  TokenLockStateManager.UnlockMode.Unique(epochProgress, _)
+                )
               )
               .leftMap(error => SnapshotFailure.TokenUnlockGenerationFailed(error.toString))
               .liftTo[F]

@@ -410,7 +410,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
-        validators.updateDelegatedStakeValidator
+        validators.updateDelegatedStakeValidator,
+        SnapshotOrdinal.MinValue
       )
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator
@@ -431,7 +432,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             Map.empty,
             Map.empty,
             Map.empty,
-            Map(Dev -> SnapshotOrdinal.MinValue)
+            Map(Dev -> SnapshotOrdinal.MinValue),
+            fixingDelegatedStakeDoubleWithdrawal = Map(Dev -> SnapshotOrdinal.MinValue)
           ),
           MetagraphsSyncConfig(PosInt(100)),
           Dev,

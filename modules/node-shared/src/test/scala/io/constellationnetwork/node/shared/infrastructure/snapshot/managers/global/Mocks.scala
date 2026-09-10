@@ -72,7 +72,7 @@ object Mocks {
 
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MaxValue
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -990,17 +990,21 @@ object Mocks {
 
           withdrawalRewardTxs <-
             calculateWithdrawalRewardTransactions(
-              partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
-                case (address, withdrawals) =>
-                  withdrawals.toList.mapFilter { withdrawal =>
-                    Option.when(withdrawal.rewards.value > Balance.empty.value) {
-                      (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
+              partitionedRecords.withdrawalSettlement.map(_.rewardsByAddress.toMap).getOrElse {
+                partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
+                  case (address, withdrawals) =>
+                    withdrawals.toList.mapFilter { withdrawal =>
+                      Option.when(withdrawal.rewards.value > Balance.empty.value) {
+                        (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
+                      }
                     }
-                  }
-              }.toMap
+                }.toMap
+              }
             )
 
-          totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(
+          totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
+                                   DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
+                                 else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
             reservedAddressRewards,
             nodeOperatorRewardsTxs,
             delegatorRewardsMap

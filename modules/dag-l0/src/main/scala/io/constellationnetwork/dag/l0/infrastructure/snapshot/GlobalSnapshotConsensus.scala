@@ -265,8 +265,7 @@ object GlobalSnapshotConsensus {
           sharedCfg.incrementalDelegatedStakingStartingOrdinal
             .getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
           mptStore,
-          effectiveConsensusConfig.activeAdmissionPromoteThreshold,
-          sharedCfg.fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(sharedCfg.environment)
+          effectiveConsensusConfig.activeAdmissionPromoteThreshold
         )
 
       facilitatorSelector = FacilitatorSelector.make(

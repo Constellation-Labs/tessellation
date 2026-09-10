@@ -18,12 +18,15 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -48,7 +51,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject stakes with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -96,7 +100,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject withdrawals with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -143,7 +148,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should accept withdrawals with different parents") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -508,6 +514,112 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         result.acceptedWithdrawals.isEmpty,
         result.notAcceptedWithdrawals.map(_._2.head) == List(InvalidStake(Hash("missing-stake")))
       )
+  }
+
+  test("a fresh create on a normally bucketed pending lock is rejected before and after activation") { res =>
+    implicit val (js, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(3L)
+
+    for {
+      previousNode <- KeyPairGenerator.makeKeyPair[IO]
+      ((lockRef, _), base) <- mkValidGlobalContext(kp, previousNode, kp)
+      withdrawn <- Signed.forAsyncHasher(testCreateDelegatedStake(previousNode, sourceAddress, 100L, lockRef), kp)
+      fresh <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 100L, lockRef), kp)
+      context = base.copy(delegatedStakesWithdrawals =
+        Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              PendingDelegatedStakeWithdrawal(withdrawn, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue)
+            )
+          )
+        )
+      )
+      results <- List(false, true).flatTraverse { useMpt =>
+        pendingCreateManager(context, activation, useMpt).flatMap { manager =>
+          List(SnapshotOrdinal.unsafeApply(2L), activation, SnapshotOrdinal.unsafeApply(4L)).traverse { ordinal =>
+            manager.accept(List(fresh), List.empty, context, EpochProgress.MinValue, ordinal, List.empty)
+          }
+        }
+      }
+    } yield
+      expect(results.forall { result =>
+        result.acceptedCreates.isEmpty &&
+        result.notAcceptedCreates == List((fresh, NonEmptyChain.of(AlreadyWithdrawn(fresh.parent.hash))))
+      })
+  }
+
+  test("a pending lock in a malformed bucket blocks creates at activation without reserving their parent") { res =>
+    implicit val (js, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(3L)
+
+    for {
+      previousNode <- KeyPairGenerator.makeKeyPair[IO]
+      ((pendingRef, availableRef), base) <- mkValidGlobalContext(kp, previousNode, kp)
+      otherAddress = previousNode.getPublic.toAddress
+      fresh <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 100L, pendingRef), kp)
+      available <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 200L, availableRef), kp)
+      checks <- List(kp, previousNode).flatTraverse { pendingSigner =>
+        List(false, true).traverse { useMpt =>
+          for {
+            withdrawn <- Signed.forAsyncHasher(
+              testCreateDelegatedStake(previousNode, pendingSigner.getPublic.toAddress, 100L, Hash("old-lock")),
+              pendingSigner
+            )
+            context = base.copy(delegatedStakesWithdrawals =
+              Some(
+                SortedMap(
+                  otherAddress -> SortedSet(
+                    PendingDelegatedStakeWithdrawal(
+                      withdrawn,
+                      Amount.empty,
+                      SnapshotOrdinal.MinValue,
+                      EpochProgress.MinValue,
+                      Some(pendingRef)
+                    )
+                  )
+                )
+              )
+            )
+            manager <- pendingCreateManager(context, activation, useMpt)
+            before <- manager.accept(
+              List(fresh, available),
+              List.empty,
+              context,
+              EpochProgress.MinValue,
+              SnapshotOrdinal.unsafeApply(2L),
+              List.empty
+            )
+            after <- List(activation, SnapshotOrdinal.unsafeApply(4L)).traverse { ordinal =>
+              manager.accept(List(fresh, available), List.empty, context, EpochProgress.MinValue, ordinal, List.empty)
+            }
+          } yield
+            expect.all(
+              before.acceptedCreates(sourceAddress).map(_._1) == List(fresh),
+              after.forall(_.acceptedCreates(sourceAddress).map(_._1) == List(available)),
+              after.forall(_.notAcceptedCreates == List((fresh, NonEmptyChain.of(AlreadyWithdrawn(pendingRef)))))
+            )
+        }
+      }
+    } yield checks.reduce(_ and _)
+  }
+
+  private def pendingCreateManager(
+    context: io.constellationnetwork.schema.GlobalSnapshotInfo,
+    activation: SnapshotOrdinal,
+    useMpt: Boolean
+  )(implicit js: JsonSerializer[IO], h: Hasher[IO], sp: SecurityProvider[IO]): IO[UpdateDelegatedStakeAcceptanceManager[IO]] = {
+    implicit val selector: io.constellationnetwork.schema.GlobalStateProofSelector =
+      io.constellationnetwork.schema.GlobalStateProofSelector(SnapshotOrdinal.MaxValue)
+    val validator =
+      if (!useMpt)
+        IO.pure(UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      else
+        for {
+          producer <- InMemoryMerklePatriciaProducer.make[IO]()
+          store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+          _ <- store.syncFromGlobalSnapshotInfo(context, SnapshotOrdinal.MinValue)
+        } yield UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, store)
+    validator.map(UpdateDelegatedStakeAcceptanceManager.make[IO](_, activation))
   }
 
   def testCreateDelegatedStake(

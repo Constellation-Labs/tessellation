@@ -42,7 +42,8 @@ case class DelegatedRewardsResult(
 case class PartitionedStakeUpdates(
   unexpiredCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
   unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+  withdrawalSettlement: Option[DelegatedStakeWithdrawalSettlement] = None
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
@@ -63,42 +64,7 @@ trait DelegatedRewardsDistributor[F[_]] {
 
 object DelegatedRewardsDistributor {
 
-  /** Selects one reward-bearing withdrawal for each effective token lock.
-    *
-    * Legacy duplicate pending records can represent successive states of the same stake lineage and therefore carry overlapping cumulative
-    * rewards. The greatest reward is the most complete entitlement known for that lock. Ties are resolved by the record's canonical
-    * ordering; only the reward amount is consumed downstream.
-    */
-  private[constellationnetwork] def deduplicateExpiredWithdrawalsByTokenLock(
-    expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
-  ): SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = {
-    val canonicalOrder = implicitly[Ordering[PendingDelegatedStakeWithdrawal]]
-
-    expiredWithdrawals.valuesIterator.flatten.toList
-      // A token-lock hash commits to its source. Group globally by the effective reference so even malformed legacy state cannot pay the
-      // same lock once under each conflicting source key.
-      .groupBy(_.tokenLockRef)
-      .valuesIterator
-      .map(
-        _.reduceLeft { (left, right) =>
-          val rewardComparison = java.lang.Long.compare(left.rewards.value.value, right.rewards.value.value)
-          if (rewardComparison > 0 || rewardComparison == 0 && canonicalOrder.lteq(left, right)) left else right
-        }
-      )
-      .toList
-      .groupBy(_.event.source)
-      .view
-      .mapValues(SortedSet.from(_))
-      .to(SortedMap)
-  }
-
-  private[constellationnetwork] def expiredWithdrawalsForRewards(
-    expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-    currentOrdinal: SnapshotOrdinal,
-    activationOrdinal: SnapshotOrdinal
-  ): SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] =
-    if (currentOrdinal < activationOrdinal) expiredWithdrawals
-    else deduplicateExpiredWithdrawalsByTokenLock(expiredWithdrawals)
+  // Withdrawal normalization is prepared once by acceptance, in DelegatedStakeWithdrawalSettlement.
 
   /** Identifies which stakes are being modified (have matching tokenLockRef in both existing records and acceptedCreates). Returns a Set of
     * (Address, TokenLockRef) tuples representing the modified stakes.
@@ -244,7 +210,21 @@ object DelegatedRewardsDistributor {
         }
     }.map(records => SortedMap.from(records))
       .map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+      .map(pending => partitionedRecords.withdrawalSettlement.fold(pending)(_.removeSettled(pending)))
       .map(_.filterNot(_._2.isEmpty))
+
+  /** Settled withdrawal rewards were counted at accrual, not again as current-round issuance. */
+  def sumMintedAmountChecked[F[_]: Async](
+    reservedAddressRewards: SortedSet[RewardTransaction],
+    nodeOperatorRewards: SortedSet[RewardTransaction],
+    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]]
+  ): F[Amount] =
+    Async[F].fromEither(
+      (reservedAddressRewards.toList.map(tx => Amount(tx.amount.value)) ++
+        nodeOperatorRewards.toList.map(tx => Amount(tx.amount.value)) ++
+        delegatorRewardsMap.valuesIterator.flatMap(_.valuesIterator).toList)
+        .foldM(Amount.empty)(_.plus(_))
+    )
 
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],

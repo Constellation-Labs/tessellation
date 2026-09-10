@@ -81,8 +81,9 @@ object types {
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, delegated-stake withdrawal acceptance prevents two stake records from scheduling
-    // the same effective token lock for unlock, and token-unlock generation emits at most one unlock per lock across
-    // withdrawals and replacements. Public environments remain absent until a coordinated activation.
+    // the same effective token lock for unlock. Shared settlement pays lock-owned rewards with checked arithmetic,
+    // retires all settled pending copies and deduplicates withdrawal/replacement principal. Natural expiry suppresses
+    // generated unlocks to prevent double balance credit. Public environments remain absent until coordinated activation.
     fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =

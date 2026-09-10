@@ -6,6 +6,8 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
+import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedStakeWithdrawalSettlement
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.TokenLockStateManager.UnlockMode
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.TokenUnlock
@@ -75,12 +77,17 @@ trait TokenLockStateManager[F[_]] {
     expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
     acceptedTokenLocks: List[Signed[TokenLock]],
     globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]],
-    enforceUniqueTokenLockRefs: Boolean = false,
-    currentEpochProgress: Option[EpochProgress] = None
+    mode: UnlockMode
   ): Either[String, Map[Address, List[TokenUnlock]]]
 }
 
 object TokenLockStateManager {
+
+  sealed trait UnlockMode
+  object UnlockMode {
+    case object Legacy extends UnlockMode
+    final case class Unique(epochProgress: EpochProgress, settlement: DelegatedStakeWithdrawalSettlement) extends UnlockMode
+  }
 
   def make[F[_]: Async](mptStore: MptStore[F, GlobalStateKey]): TokenLockStateManager[F] = new TokenLockStateManager[F] {
 
@@ -309,8 +316,7 @@ object TokenLockStateManager {
       expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
       acceptedTokenLocks: List[Signed[TokenLock]],
       globalActiveTokenLocksByRef: Map[Hash, Signed[TokenLock]],
-      enforceUniqueTokenLockRefs: Boolean,
-      currentEpochProgress: Option[EpochProgress]
+      mode: UnlockMode
     ): Either[String, Map[Address, List[TokenUnlock]]] = {
 
       val increasedTokenLockUnlocks = acceptedTokenLocks
@@ -351,43 +357,39 @@ object TokenLockStateManager {
           }.map(tokenUnlocks => address -> tokenUnlocks)
       }.map(_.toMap)
 
-      if (!enforceUniqueTokenLockRefs)
-        for {
-          withdrawalUnlocks <- expiredWithdrawalUnlocks
-          replacedUnlocks <- increasedTokenLockUnlocks
-        } yield {
-          val allAddresses = withdrawalUnlocks.keySet ++ replacedUnlocks.keySet
-          allAddresses.map { address =>
-            val withdrawalList = withdrawalUnlocks.getOrElse(address, List.empty)
-            val replacedList = replacedUnlocks.getOrElse(address, List.empty)
-            address -> (withdrawalList ++ replacedList)
-          }.toMap
-        }
-      else {
-        val effectiveTokenLockRefs =
-          (expiredWithdrawals.valuesIterator.flatMap(_.iterator.map(_.tokenLockRef)).toList ++
-            acceptedTokenLocks.flatMap(_.replaceTokenLockRef)).distinct.sortBy(_.value)
-
-        currentEpochProgress
-          .toRight("Current epoch progress is required when enforcing unique token lock unlocks")
-          .flatMap { epochProgress =>
-            effectiveTokenLockRefs.traverse { tokenLockRef =>
-              globalActiveTokenLocksByRef
-                .get(tokenLockRef)
-                .toRight(s"Token lock not found for ref: $tokenLockRef")
-                .map { activeTokenLock =>
-                  Option.unless(activeTokenLock.unlockEpoch.exists(_ < epochProgress)) {
-                    activeTokenLock.source -> TokenUnlock(
-                      tokenLockRef,
-                      activeTokenLock.amount,
-                      activeTokenLock.currencyId,
-                      activeTokenLock.source
-                    )
-                  }
-                }
-            }
-              .map(_.flatten.groupBy(_._1).view.mapValues(_.map(_._2)).toMap)
+      mode match {
+        case UnlockMode.Legacy =>
+          for {
+            withdrawalUnlocks <- expiredWithdrawalUnlocks
+            replacedUnlocks <- increasedTokenLockUnlocks
+          } yield {
+            val allAddresses = withdrawalUnlocks.keySet ++ replacedUnlocks.keySet
+            allAddresses.map { address =>
+              val withdrawalList = withdrawalUnlocks.getOrElse(address, List.empty)
+              val replacedList = replacedUnlocks.getOrElse(address, List.empty)
+              address -> (withdrawalList ++ replacedList)
+            }.toMap
           }
+        case UnlockMode.Unique(epochProgress, settlement) =>
+          val effectiveTokenLockRefs =
+            (settlement.withdrawalsByRef.keys.toList ++ acceptedTokenLocks.flatMap(_.replaceTokenLockRef)).distinct.sortBy(_.value)
+
+          effectiveTokenLockRefs.traverse { tokenLockRef =>
+            globalActiveTokenLocksByRef
+              .get(tokenLockRef)
+              .toRight(s"Token lock not found for ref: $tokenLockRef")
+              .map { activeTokenLock =>
+                Option.unless(activeTokenLock.unlockEpoch.exists(_ < epochProgress)) {
+                  activeTokenLock.source -> TokenUnlock(
+                    tokenLockRef,
+                    activeTokenLock.amount,
+                    activeTokenLock.currencyId,
+                    activeTokenLock.source
+                  )
+                }
+              }
+          }
+            .map(_.flatten.groupBy(_._1).view.mapValues(_.map(_._2)).toMap)
       }
     }
   }
