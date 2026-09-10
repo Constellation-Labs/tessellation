@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.storage.PathGenerator
@@ -23,6 +24,7 @@ import io.constellationnetwork.storage.PathGenerator._
 import better.files._
 import eu.timepit.refined.auto._
 import fs2.io.file.Path
+import io.circe.Encoder
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -835,6 +837,66 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
         finalOrdinal <- storage.read(future.ordinal)
         finalHash <- storage.read(futureHash)
       } yield expect.all(first.isLeft, afterCut.nonEmpty, finalOrdinal.isEmpty, finalHash.isEmpty)
+    }
+  }
+
+  test("cleanupAboveOrdinal neither fails nor discards orphans whose ordinal selects an unhashable hasher") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    // Mirrors production. `last-kryo-hash-ordinal` routes ordinals at or below the boundary to the Kryo hasher, and
+    // the Kryo registrar carries GlobalIncrementalSnapshotV1 rather than the current snapshot class -- so hashing
+    // those raises `Class is not registered`. Every other test in this suite pins the JSON hasher via
+    // forSyncAlwaysCurrent, which is why an unguarded verification could abort a real rollback undetected.
+    val unhashable: Hasher[IO] = new Hasher[IO] {
+      private def unregistered[A]: IO[A] = IO.raiseError(
+        new IllegalArgumentException("Class is not registered: io.constellationnetwork.schema.GlobalIncrementalSnapshot")
+      )
+      def hash[A: Encoder](data: A): IO[Hash] = unregistered
+      def hashBytes(bytes: Array[Byte]): IO[Hash] = unregistered
+      def compare[A: Encoder](data: A, expectedHash: Hash): IO[Boolean] = unregistered
+      def getLogic(ordinal: SnapshotOrdinal): HashLogic = KryoHash
+      def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): IO[Hash] = unregistered
+    }
+
+    val boundary = SnapshotOrdinal.unsafeApply(50000L)
+    implicit val selector: HasherSelector[IO] = HasherSelector.forSync(
+      h,
+      unhashable,
+      new HashSelect {
+        def select(ordinal: SnapshotOrdinal): HashLogic = if (ordinal <= boundary) KryoHash else JsonHash
+      }
+    )
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, base) = snapshots
+        mkOrphan = (ord: Long) =>
+          for {
+            key <- KeyPairGenerator.makeKeyPair[IO]
+            signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+              base.value.copy(ordinal = SnapshotOrdinal.unsafeApply(ord)),
+              key
+            )
+            hash <- signed.value.hash
+            _ <- storage.write(signed)
+            _ <- storage.delete(signed.ordinal)
+          } yield hash
+        // below the anchor and unhashable: never a removal candidate, so it must not even be verified
+        belowAnchor <- mkOrphan(100L)
+        // above the anchor but unhashable: a removal candidate we cannot check, so it must be left intact
+        aboveAnchorUnhashable <- mkOrphan(40001L)
+        // above the anchor and hashable: the ordinary case, still removed
+        aboveAnchorHashable <- mkOrphan(50001L)
+        _ <- storage.cleanupAboveOrdinal(
+          SnapshotOrdinal.unsafeApply(40000L),
+          (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
+        )
+        keptBelow <- storage.read(belowAnchor)
+        keptUnhashable <- storage.read(aboveAnchorUnhashable)
+        removed <- storage.read(aboveAnchorHashable)
+      } yield expect.all(keptBelow.nonEmpty, keptUnhashable.nonEmpty, removed.isEmpty)
     }
   }
 

@@ -467,22 +467,46 @@ abstract class SnapshotLocalFileSystemStorage[
               else
                 readRecoveryIndex(toHashName(hash)).flatMap {
                   case Some(snapshot) =>
-                    HasherSelector[F]
-                      .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                        snapshot.toHashed.map(_.hash)
-                      }
-                      .flatMap {
-                        case actualHash if actualHash =!= hash =>
-                          quarantineUnreadableHashIndex(file, s"content_hash_mismatch:${actualHash.value}")
-                        case _
-                            if snapshot.ordinal > ordinal ||
-                              (snapshot.ordinal === ordinal && retainedAnchorHash.exists(_ =!= hash)) =>
-                          movePersistedToTmp(hash, snapshot.ordinal).handleErrorWith {
-                            case _: NoSuchFileException => Async[F].unit
-                            case error                  => error.raiseError[F, Unit]
-                          }
-                        case _ => Async[F].unit
-                      }
+                    // Decide the ACTION before hashing. Only entries the recovered head would otherwise expose are
+                    // removal candidates, so hashing anything else buys nothing -- and at or below
+                    // `last-kryo-hash-ordinal` it is not even possible: the Kryo registrar carries
+                    // `GlobalIncrementalSnapshotV1`, never the current snapshot class, so the ordinal-selected hasher
+                    // raises `Class is not registered` and an unguarded verification aborts the whole recovery. Those
+                    // entries are orphans at or below the anchor and cannot reach the recovered lineage, so they are
+                    // left exactly as found.
+                    val isRemovalCandidate =
+                      snapshot.ordinal > ordinal ||
+                        (snapshot.ordinal === ordinal && retainedAnchorHash.exists(_ =!= hash))
+
+                    if (!isRemovalCandidate) Async[F].unit
+                    else
+                      HasherSelector[F]
+                        .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                          snapshot.toHashed.map(_.hash)
+                        }
+                        .map(_.some)
+                        .recoverWith {
+                          // Unverifiable is not the same as invalid: a hasher that cannot represent this snapshot at
+                          // all tells us nothing about the bytes. Never quarantine on that signal -- it would discard
+                          // valid history -- and never propagate it, which would fail recovery outright.
+                          case error: IllegalArgumentException =>
+                            logger
+                              .warn(error)(
+                                s"Cannot verify orphan hash index hash=${hash.value} ordinal=${snapshot.ordinal.show}; " +
+                                  "leaving the bytes in place because they could not be checked"
+                              )
+                              .as(none[Hash])
+                        }
+                        .flatMap {
+                          case None => Async[F].unit
+                          case Some(actualHash) if actualHash =!= hash =>
+                            quarantineUnreadableHashIndex(file, s"content_hash_mismatch:${actualHash.value}")
+                          case Some(_) =>
+                            movePersistedToTmp(hash, snapshot.ordinal).handleErrorWith {
+                              case _: NoSuchFileException => Async[F].unit
+                              case error                  => error.raiseError[F, Unit]
+                            }
+                        }
                   case None => quarantineUnreadableHashIndex(file, "deserialization_failed")
                 }
             }
