@@ -89,7 +89,7 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
     unexpired: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = SortedMap.empty
   )(implicit hasher: Hasher[IO]): IO[Result] =
     for {
-      settlement <- IO.fromEither(DelegatedStakeWithdrawalSettlement.prepare(expired, locks, ordinal, activation))
+      settlement <- IO.fromEither(DelegatedStakeWithdrawalSettlement.prepare(expired, unexpired, locks, ordinal, activation))
       partitioned = PartitionedStakeUpdates(SortedMap.empty, unexpired, expired, settlement)
       rewards <- GlobalDelegatedRewardsDistributor
         .make[IO](AppEnvironment.Dev, DefaultDelegatedRewardsConfigProvider.getConfig())
@@ -101,7 +101,10 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
           noEvents,
           partitioned
         )
-      (rewardBalances, acceptedRewards) = GlobalSnapshotAcceptanceManager.acceptRewardTxs(balances, rewards.withdrawalRewardTxs)
+      (rewardBalances, acceptedRewards) <- IO.fromEither(
+        if (settlement.isDefined) GlobalSnapshotAcceptanceManager.acceptRewardTxsChecked(balances, rewards.withdrawalRewardTxs)
+        else Right(GlobalSnapshotAcceptanceManager.acceptRewardTxs(balances, rewards.withdrawalRewardTxs))
+      )
       _ <- IO.raiseWhen(acceptedRewards != rewards.withdrawalRewardTxs)(new RuntimeException("Reward transaction was not applied"))
       forUnlock = settlement
         .map(_.withdrawals)
@@ -230,7 +233,7 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
         at.transition.balances == initialBalances,
         at.transition.generatedArtifacts.isEmpty,
         at.transition.pendingWithdrawals == SortedMap(third -> SortedSet(retained)),
-        at.settlement.exists(s => s.orphanCount == 1 && s.duplicateCount == 0)
+        at.settlement.exists(s => s.orphanCount == 2 && s.duplicateCount == 0)
       )
   }
 
@@ -255,7 +258,7 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
     for {
       hashed <- lock.toHashed
       raw = SortedMap(owner -> SortedSet(withdrawal(hashed.hash, 20L)), other -> SortedSet(withdrawal(hashed.hash, 30L, 2L)))
-      unexpired = SortedMap(third -> SortedSet(withdrawal(hashed.hash, 30L, 9L)))
+      unexpired = SortedMap(third -> SortedSet(withdrawal(hashed.hash, 90L, 9L)))
       before <- settle(raw, Map(hashed.hash -> lock), SnapshotOrdinal.unsafeApply(9L), unexpired = unexpired)
       at <- settle(raw, Map(hashed.hash -> lock), unexpired = unexpired)
       next <- settle(unexpired, Map.empty, activation.next, at.transition.balances)
@@ -263,7 +266,7 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
       expect.all(
         before.transition.pendingWithdrawals == unexpired,
         at.transition.pendingWithdrawals.isEmpty,
-        at.rewards.withdrawalRewardTxs == SortedSet(reward(owner, 30L)),
+        at.rewards.withdrawalRewardTxs == SortedSet(reward(owner, 90L)),
         next.rewards.withdrawalRewardTxs.isEmpty,
         next.transition.balances == at.transition.balances,
         next.transition.generatedArtifacts.isEmpty
@@ -313,9 +316,9 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
         other -> SortedSet(withdrawal(h1.hash, Long.MaxValue, 2L))
       )
       distinct = SortedMap(owner -> SortedSet(withdrawal(h1.hash, Long.MaxValue), withdrawal(h2.hash, 1L, 2L)))
-      normalized = DelegatedStakeWithdrawalSettlement.prepare(duplicate, locks, activation, activation)
-      overflow = DelegatedStakeWithdrawalSettlement.prepare(distinct, locks, activation, activation)
-      legacy = DelegatedStakeWithdrawalSettlement.prepare(distinct, locks, SnapshotOrdinal.unsafeApply(9L), activation)
+      normalized = DelegatedStakeWithdrawalSettlement.prepare(duplicate, SortedMap.empty, locks, activation, activation)
+      overflow = DelegatedStakeWithdrawalSettlement.prepare(distinct, SortedMap.empty, locks, activation, activation)
+      legacy = DelegatedStakeWithdrawalSettlement.prepare(distinct, SortedMap.empty, locks, SnapshotOrdinal.unsafeApply(9L), activation)
     } yield
       expect.all(
         normalized.exists(_.exists(_.rewardsByAddress == SortedMap(owner -> amount(Long.MaxValue)))),
@@ -323,4 +326,47 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
         legacy == Right(None)
       )
   }
+  test("checked withdrawal sums reject negative and positive-wrap overflow and accept the exact bound") { implicit hasher =>
+    val a = tokenLock()
+    val b = tokenLock(2000L)
+    val c = tokenLock(3000L)
+    for {
+      ha <- a.toHashed
+      hb <- b.toHashed
+      hc <- c.toHashed
+      locks = Map(ha.hash -> a, hb.hash -> b, hc.hash -> c)
+      atBound = SortedMap(owner -> SortedSet(withdrawal(ha.hash, Long.MaxValue - 1L), withdrawal(hb.hash, 1L, 2L)))
+      positiveWrap = SortedMap(
+        owner -> SortedSet(withdrawal(ha.hash, Long.MaxValue), withdrawal(hb.hash, Long.MaxValue, 2L), withdrawal(hc.hash, 3L, 3L))
+      )
+      exact = DelegatedStakeWithdrawalSettlement.prepare(atBound, SortedMap.empty, locks, activation, activation)
+      overflow = DelegatedStakeWithdrawalSettlement.prepare(positiveWrap, SortedMap.empty, locks, activation, activation)
+    } yield
+      expect.all(
+        exact.exists(_.exists(_.rewardsByAddress(owner) == amount(Long.MaxValue))),
+        overflow == Left(AmountOverflow)
+      )
+  }
+
+  test("destination balance overflow fails before principal release or pending cleanup") { implicit hasher =>
+    val lock = tokenLock()
+    for {
+      hashed <- lock.toHashed
+      result <- settle(
+        SortedMap(owner -> SortedSet(withdrawal(hashed.hash, 1L))),
+        Map(hashed.hash -> lock),
+        balances = initialBalances.updated(owner, balance(Long.MaxValue))
+      ).attempt
+    } yield expect(result == Left(AmountOverflow))
+  }
+
+  test("checked issuance totals reject overflow even when unchecked addition would wrap positive") { _ =>
+    val positiveWrap = SortedSet(reward(owner, Long.MaxValue), reward(other, Long.MaxValue), reward(third, 3L))
+    for {
+      exact <- DelegatedRewardsDistributor
+        .sumMintedAmountChecked[IO](SortedSet(reward(owner, Long.MaxValue)), SortedSet.empty, SortedMap.empty)
+      overflow <- DelegatedRewardsDistributor.sumMintedAmountChecked[IO](positiveWrap, SortedSet.empty, SortedMap.empty).attempt
+    } yield expect.all(exact == amount(Long.MaxValue), overflow == Left(AmountOverflow))
+  }
+
 }

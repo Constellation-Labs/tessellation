@@ -108,6 +108,18 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
+  private[snapshot] def acceptRewardTxsChecked(
+    balances: SortedMap[Address, Balance],
+    txs: SortedSet[RewardTransaction]
+  ): Either[BalanceArithmeticError, (SortedMap[Address, Balance], SortedSet[RewardTransaction])] =
+    txs.toList.foldM((balances, SortedSet.empty[RewardTransaction])) {
+      case ((updated, accepted), tx) =>
+        updated
+          .getOrElse(tx.destination, Balance.empty)
+          .plus(tx.amount)
+          .map(balance => (updated.updated(tx.destination, balance), accepted + tx))
+    }
+
   private[snapshot] def acceptRewardTxs(
     balances: SortedMap[Address, Balance],
     txs: SortedSet[RewardTransaction]
@@ -557,6 +569,7 @@ object GlobalSnapshotAcceptanceManager {
         withdrawalSettlement <- Async[F].fromEither(
           DelegatedStakeWithdrawalSettlement.prepare(
             expiredWithdrawalsDelegatedStaking,
+            unexpiredWithdrawalsDelegatedStaking,
             globalActiveTokenLocksByRef,
             ordinal,
             fixingDelegatedStakeDoubleWithdrawalOrdinal
@@ -603,9 +616,19 @@ object GlobalSnapshotAcceptanceManager {
             )
           }
 
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-          withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+        (updatedBalancesByRewards, acceptedRewardTxs) <- Async[F].fromEither(
+          if (withdrawalSettlement.isDefined)
+            acceptRewardTxsChecked(
+              updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+              withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+            )
+          else
+            Right(
+              acceptRewardTxs(
+                updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
+                withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
+              )
+            )
         )
 
         currencyBalances = currencySnapshots.toList.map {

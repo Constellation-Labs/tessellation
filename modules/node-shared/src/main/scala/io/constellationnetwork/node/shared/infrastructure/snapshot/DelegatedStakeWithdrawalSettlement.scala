@@ -13,7 +13,8 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 /** Ephemeral settlement shared by reward payout and principal unlocking; this is not part of the snapshot encoding. The original expired
-  * map must still be used for pending-state cleanup in every original address bucket.
+  * map must still be used for pending-state cleanup in every original address bucket. See
+  * docs/operations/delegated-stake-settlement-audit.md for the required pre-activation lineage audit and the maximum-entitlement policy.
   */
 case class DelegatedStakeWithdrawalSettlement(
   withdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
@@ -26,6 +27,7 @@ object DelegatedStakeWithdrawalSettlement {
 
   def prepare(
     expiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+    unexpiredWithdrawals: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
     activeTokenLocksByRef: Map[Hash, Signed[TokenLock]],
     ordinal: SnapshotOrdinal,
     activationOrdinal: SnapshotOrdinal
@@ -33,14 +35,19 @@ object DelegatedStakeWithdrawalSettlement {
     if (ordinal < activationOrdinal) Right(None)
     else {
       val canonicalOrder = implicitly[Ordering[PendingDelegatedStakeWithdrawal]]
-      val records = expiredWithdrawals.valuesIterator.flatten.toList
+      val dueRefs = expiredWithdrawals.valuesIterator.flatten.map(_.event.tokenLockRef).toSet
+      // Payout selection and cleanup must cover the same family, including later-cooldown copies.
+      val records = (expiredWithdrawals.valuesIterator.flatten ++ unexpiredWithdrawals.valuesIterator.flatten)
+        .filter(w => dueRefs(w.event.tokenLockRef))
+        .toList
       val (eligible, orphans) = records.partition(w => activeTokenLocksByRef.contains(w.event.tokenLockRef))
       val selected = eligible
         .groupBy(_.event.tokenLockRef)
         .valuesIterator
         .map(
           _.reduceLeft { (left, right) =>
-            // Successive legacy records carry overlapping cumulative rewards, so summing duplicates would pay twice.
+            // Max is the policy for audited overlapping cumulative lineage, not proof of arbitrary corrupt entitlements.
+            // An ordinal/hash-pinned lineage audit is required before public activation; duplicates are never added together.
             val rewardComparison = java.lang.Long.compare(left.rewards.value.value, right.rewards.value.value)
             val recordComparison = canonicalOrder.compare(left, right)
             // Pending-record ordering omits acceptedOrdinal; complete the tie-break for records from different buckets.

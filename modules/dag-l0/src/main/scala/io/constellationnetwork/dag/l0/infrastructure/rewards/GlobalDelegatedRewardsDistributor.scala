@@ -521,7 +521,9 @@ object GlobalDelegatedRewardsDistributor {
             }
           )
 
-        totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(
+        totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
+                                 DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
+                               else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
           reservedAddressRewards,
           nodeOperatorRewardsTxs,
           delegatorRewardsMap

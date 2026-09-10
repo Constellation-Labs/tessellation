@@ -199,6 +199,18 @@ object DelegatedRewardsDistributor {
 
   // Current-round issuance includes rewards accrued to active stakes. Paying those accumulated rewards on withdrawal
   // is settlement of that earlier issuance, so withdrawal payouts must not be counted a second time here.
+  def sumMintedAmountChecked[F[_]: Async](
+    reservedAddressRewards: SortedSet[RewardTransaction],
+    nodeOperatorRewards: SortedSet[RewardTransaction],
+    delegatorRewardsMap: SortedMap[PeerId, Map[Address, Amount]]
+  ): F[Amount] =
+    Async[F].fromEither(
+      (reservedAddressRewards.toList.map(tx => Amount(tx.amount.value)) ++
+        nodeOperatorRewards.toList.map(tx => Amount(tx.amount.value)) ++
+        delegatorRewardsMap.valuesIterator.flatMap(_.valuesIterator).toList)
+        .foldM(Amount.empty)(_.plus(_))
+    )
+
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],
     nodeOperatorRewards: SortedSet[RewardTransaction],
