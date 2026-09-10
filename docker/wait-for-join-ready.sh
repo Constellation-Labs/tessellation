@@ -27,10 +27,12 @@ while ((SECONDS < deadline)); do
   waiting_for=local_state
   if state=$(probe --fail "$local_url/node/state") &&
     jq -e '. == "ReadyToJoin"' <<< "$state" >/dev/null 2>&1; then
+    ((SECONDS < deadline)) || break
     waiting_for=local_cli
     # GET / may return 404: that is enough to prove the loopback CLI is listening.
     # /node/state above, not this socket probe, establishes the application state.
     if probe --output /dev/null "$cli_url/"; then
+      ((SECONDS < deadline)) || break
       waiting_for=seed_registration
       # This existing, unauthenticated P2P bootstrap route requires an active session.
       # Match NodeState.inCluster, not Ready: waiting for a fully formed committee
