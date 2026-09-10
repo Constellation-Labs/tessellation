@@ -174,7 +174,8 @@ object SharedServices {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
-        validators.updateDelegatedStakeValidator
+        validators.updateDelegatedStakeValidator,
+        cfg.fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(cfg.environment)
       )
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator

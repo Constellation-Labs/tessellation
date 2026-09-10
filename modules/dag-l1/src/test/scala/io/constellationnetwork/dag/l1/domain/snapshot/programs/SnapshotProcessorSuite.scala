@@ -242,7 +242,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               feeCalculator = FeeCalculator.make(SortedMap.empty)
               updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
               updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager
-                .make(validators.updateDelegatedStakeValidator)
+                .make(validators.updateDelegatedStakeValidator, SnapshotOrdinal.MinValue)
               updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager
                 .make(validators.updateNodeCollateralValidator)
               priceStateUpdater = PriceStateUpdater.make(Dev, DefaultDelegatedRewardsConfigProvider)
@@ -269,7 +269,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     Map.empty,
                     Map.empty,
                     Map.empty,
-                    Map.empty
+                    Map.empty,
+                    fixingDelegatedStakeDoubleWithdrawal = Map(Dev -> SnapshotOrdinal.MinValue)
                   ),
                   MetagraphsSyncConfig(PosInt(100)),
                   Dev,

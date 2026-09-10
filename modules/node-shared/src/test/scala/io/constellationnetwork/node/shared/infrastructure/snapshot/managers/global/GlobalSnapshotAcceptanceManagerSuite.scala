@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.AllowSpendBlo
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.Mocks._
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.TokenUnlock
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -135,11 +136,12 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       )
   }
 
-  test("should handle withdrawals with expiration") { res =>
+  test("should expire due withdrawals while retaining a different unexpired lock") { res =>
     implicit val (h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair.getPublic.toAddress
 
       // Create token lock
       tokenLock <- mkTokenLock(keyPair, TokenLockAmount(100L), replaceTokenLockRef = None)
@@ -148,9 +150,14 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       // Create delegated stake event
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, hashedTokenLock)
 
+      // Use distinct locks: later copies of the same settled lock are now retired together.
+      recentTokenLock <- mkTokenLock(keyPair, TokenLockAmount(200L), replaceTokenLockRef = None)
+      recentHashedTokenLock <- recentTokenLock.toHashed
+      recentDelegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, recentHashedTokenLock)
+
       // Create withdrawals with different epochs
       recentWithdrawal = PendingDelegatedStakeWithdrawal(
-        event = delegatedStakeEvent,
+        event = recentDelegatedStakeEvent,
         rewards = Amount(10L),
         acceptedOrdinal = SnapshotOrdinal(1L),
         createdAt = EpochProgress(8L), // Recent, should not expire
@@ -173,7 +180,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       )
 
       existingTokenLocks = SortedMap(
-        address1 -> SortedSet(tokenLock)
+        address1 -> SortedSet(tokenLock, recentTokenLock)
       )
 
       lastSnapshotContext = mkGlobalSnapshotInfo(
@@ -208,7 +215,8 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       expect.all(
         newSnapshotInfo.delegatedStakesWithdrawals.isDefined,
         newSnapshotInfo.delegatedStakesWithdrawals.get.contains(address1),
-        newSnapshotInfo.delegatedStakesWithdrawals.get(address1) == SortedSet(recentWithdrawal) // Only recent withdrawal should remain
+        newSnapshotInfo.delegatedStakesWithdrawals.get.get(address1).contains(SortedSet(recentWithdrawal)),
+        newSnapshotInfo.activeTokenLocks.get.get(address1).contains(SortedSet(recentTokenLock))
       )
   }
 
@@ -933,7 +941,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       )
   }
 
-  test("should handle delegated stake creation in first snapshot, withdrawal in second, and token lock replacement in third") { res =>
+  test("a due withdrawal rolls from a replaced token lock at R and settles exactly once at R+1") { res =>
     implicit val (h, sp) = res
 
     for {
@@ -975,7 +983,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
       delegatedStakeEvent <- mkDelegatedStakeCreate(keyPair, nodeId, hashedOriginalTokenLock)
       hashedDelegatedStakeEvent <- delegatedStakeEvent.toHashed
 
-      manager <- mkManager(initialSnapshotInfo.some)
+      manager <- mkManager(initialSnapshotInfo.some, SnapshotOrdinal.MinValue)
       result1 <- manager.accept(
         ordinal = SnapshotOrdinal(1L),
         epochProgress = EpochProgress(5L),
@@ -1025,7 +1033,7 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
 
       (_, _, _, _, _, _, _, _, snapshotWithWithdrawal, _, _, _, _, _) = result2
 
-      // Third snapshot: try to replace the token lock (should fail because original is no longer active)
+      // At R the withdrawal is already due, while the still-active original token lock is replaced.
       replacementTokenLock <- mkTokenLock(
         keyPair,
         TokenLockAmount(300L),
@@ -1035,7 +1043,6 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
 
       tokenLockBlock <- mkTokenLockBlock(List(replacementTokenLock))
 
-      // This should fail because the original token lock is no longer active after withdrawal
       result3 <- manager
         .accept(
           ordinal = SnapshotOrdinal(3L),
@@ -1057,7 +1064,32 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
           getGlobalSnapshotByOrdinal = _ => None.pure[IO],
           allowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
         )
-      (_, _, _, _, _, _, _, _, finalSnapshotInfo, _, _, _, _, _) = result3
+      (_, _, tokenLockResultAtR, _, _, _, _, _, snapshotAtR, _, _, _, artifactsAtR, _) = result3
+      unlocksAtR = artifactsAtR.collect { case unlock: TokenUnlock => unlock }
+
+      // At R+1 the rewritten NEW reference is now in the last-active set, so the carried withdrawal can settle.
+      result4 <- manager.accept(
+        ordinal = SnapshotOrdinal(4L),
+        epochProgress = EpochProgress(16L),
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List.empty,
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = snapshotAtR,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = delegatedRewardsFunction(snapshotAtR),
+        validationType = StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => None.pure[IO],
+        allowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
+      )
+      (_, _, _, _, _, _, _, _, snapshotAtRPlus1, _, _, _, artifactsAtRPlus1, _) = result4
+      unlocksAtRPlus1 = artifactsAtRPlus1.collect { case unlock: TokenUnlock => unlock }
     } yield
       expect.all(
         // First snapshot should have created the delegated stake
@@ -1082,21 +1114,34 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
         !snapshotWithWithdrawal.activeDelegatedStakes.get.contains(address1),
         snapshotWithWithdrawal.activeTokenLocks.get.get(address1) == SortedSet(originalTokenLock).some,
 
-        // The withdrawal should still be in pending withdrawals but updated for the replaced token lock
-        finalSnapshotInfo.delegatedStakesWithdrawals.isDefined,
-        finalSnapshotInfo.delegatedStakesWithdrawals.get.contains(address1),
-        finalSnapshotInfo.delegatedStakesWithdrawals.get.get(address1).map(_.toList.map(_.tokenLockRef)) == List(
+        // R unlocks OLD, installs NEW, and carries the already-due withdrawal under NEW for one round.
+        tokenLockResultAtR.accepted == List(tokenLockBlock),
+        unlocksAtR.toList.map(_.tokenLockRef) == List(hashedOriginalTokenLock.hash),
+        artifactsAtR.size == 1,
+        snapshotAtR.delegatedStakesWithdrawals.isDefined,
+        snapshotAtR.delegatedStakesWithdrawals.get.contains(address1),
+        snapshotAtR.delegatedStakesWithdrawals.get.get(address1).map(_.toList.map(_.tokenLockRef)) == List(
           hashedReplacementTokenLock.hash
         ).some,
-        finalSnapshotInfo.delegatedStakesWithdrawals.get.get(address1).map(_.toList.map(_.amount.value.value)) == List(
+        snapshotAtR.delegatedStakesWithdrawals.get.get(address1).map(_.toList.map(_.amount.value.value)) == List(
           replacementTokenLock.amount.value.value
         ).some,
+        !snapshotAtR.activeDelegatedStakes.get.contains(address1),
+        snapshotAtR.activeTokenLocks.get.get(address1) == SortedSet(replacementTokenLock).some,
+        snapshotAtR.balances(address1).value.value ==
+          snapshotWithWithdrawal
+            .balances(address1)
+            .value
+            .value + originalTokenLock.amount.value.value - replacementTokenLock.amount.value.value,
 
-        // The delegated stake should still not be active
-        !finalSnapshotInfo.activeDelegatedStakes.get.contains(address1),
-
-        // The token lock should be replaced
-        finalSnapshotInfo.activeTokenLocks.get.get(address1) == SortedSet(replacementTokenLock).some
+        // R+1 emits only NEW, credits its full principal, removes the lock, and cleans the pending withdrawal.
+        unlocksAtRPlus1.toList.map(_.tokenLockRef) == List(hashedReplacementTokenLock.hash),
+        artifactsAtRPlus1.size == 1,
+        snapshotAtRPlus1.balances(address1).value.value ==
+          snapshotAtR.balances(address1).value.value + replacementTokenLock.amount.value.value,
+        !snapshotAtRPlus1.activeTokenLocks.get.contains(address1),
+        !snapshotAtRPlus1.delegatedStakesWithdrawals.get.contains(address1),
+        !snapshotAtRPlus1.activeDelegatedStakes.get.contains(address1)
       )
   }
 

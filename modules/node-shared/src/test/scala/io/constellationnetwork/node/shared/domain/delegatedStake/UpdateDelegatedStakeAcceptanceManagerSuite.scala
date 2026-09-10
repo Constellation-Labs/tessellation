@@ -5,28 +5,28 @@ import java.security.KeyPair
 import cats.data.{NonEmptyChain, NonEmptySet}
 import cats.effect.IO
 import cats.effect.kernel.Resource
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.{
-  DuplicatedParent,
-  DuplicatedStake,
-  InvalidParent
-}
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidatorSuite.mkGlobalContext
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -51,7 +51,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject stakes with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -99,7 +100,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should reject withdrawals with the same parent") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -146,7 +148,8 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
   test("should accept withdrawals with different parents") { res =>
     implicit val (_, h, sp, kp, sourceAddress) = res
     val acceptanceManager =
-      UpdateDelegatedStakeAcceptanceManager.make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      UpdateDelegatedStakeAcceptanceManager
+        .make[IO](UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None), SnapshotOrdinal.MinValue)
     for {
       kp1 <- KeyPairGenerator.makeKeyPair[IO]
       kp2 <- KeyPairGenerator.makeKeyPair[IO]
@@ -187,6 +190,436 @@ object UpdateDelegatedStakeAcceptanceManagerSuite extends MutableIOSuite {
         res.notAcceptedWithdrawals.isEmpty
       )
     }
+  }
+
+  test("preserves create-withdraw legacy behavior before activation and makes create win at activation using the effective lock ref") {
+    res =>
+      implicit val (_, h, sp, kp, sourceAddress) = res
+      val activation = SnapshotOrdinal.unsafeApply(10L)
+      val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
+        UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+        activation
+      )
+
+      for {
+        newNodeKp <- KeyPairGenerator.makeKeyPair[IO]
+        oldNodeKp <- KeyPairGenerator.makeKeyPair[IO]
+        ((originalLockRef, replacementLockRef), baseContext) <- mkValidGlobalContext(kp, newNodeKp, kp)
+        existing <- Signed.forAsyncHasher(testCreateDelegatedStake(oldNodeKp, sourceAddress, 100L, originalLockRef), kp)
+        existingRef <- DelegatedStakeReference.of(existing)
+        existingRecord = DelegatedStakeRecord(
+          existing,
+          SnapshotOrdinal.MinValue,
+          Amount.empty,
+          replacementLockRef.some,
+          DelegatedStakeAmount(NonNegLong.unsafeFrom(200L)).some
+        )
+        context = baseContext.copy(activeDelegatedStakes = SortedMap(sourceAddress -> SortedSet(existingRecord)).some)
+        replacementCreate <- Signed.forAsyncHasher(
+          testCreateDelegatedStake(newNodeKp, sourceAddress, 200L, replacementLockRef, existingRef),
+          kp
+        )
+        withdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, existingRef.hash), kp)
+        beforeActivation <- acceptanceManager.accept(
+          List(replacementCreate),
+          List(withdrawal),
+          context,
+          EpochProgress.MinValue,
+          SnapshotOrdinal.unsafeApply(9L),
+          List.empty
+        )
+        atActivation <- acceptanceManager.accept(
+          List(replacementCreate),
+          List(withdrawal),
+          context,
+          EpochProgress.MinValue,
+          activation,
+          List.empty
+        )
+      } yield
+        expect.all(
+          beforeActivation.acceptedCreates.values.flatten.size == 1,
+          beforeActivation.acceptedWithdrawals.values.flatten.size == 1,
+          beforeActivation.notAcceptedWithdrawals.isEmpty,
+          atActivation.acceptedCreates.values.flatten.size == 1,
+          atActivation.acceptedWithdrawals.isEmpty,
+          atActivation.notAcceptedWithdrawals.map(_._2.head) == List(DuplicatedTokenLock(replacementLockRef))
+        )
+  }
+
+  test("accepts at most one withdrawal for different stake refs sharing an effective token lock") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
+      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+      SnapshotOrdinal.MinValue
+    )
+
+    for {
+      node1 <- KeyPairGenerator.makeKeyPair[IO]
+      node2 <- KeyPairGenerator.makeKeyPair[IO]
+      ((lockRef1, lockRef2), baseContext) <- mkValidGlobalContext(kp, node1, kp)
+      stake1 <- Signed.forAsyncHasher(testCreateDelegatedStake(node1, sourceAddress, 100L, lockRef1), kp)
+      stake2 <- Signed.forAsyncHasher(testCreateDelegatedStake(node2, sourceAddress, 200L, lockRef2), kp)
+      stakeRef1 <- DelegatedStakeReference.of(stake1)
+      stakeRef2 <- DelegatedStakeReference.of(stake2)
+      context = baseContext.copy(activeDelegatedStakes =
+        SortedMap(
+          sourceAddress -> SortedSet(
+            DelegatedStakeRecord(
+              stake1,
+              SnapshotOrdinal.MinValue,
+              Amount.empty,
+              lockRef2.some,
+              DelegatedStakeAmount(NonNegLong.unsafeFrom(200L)).some
+            ),
+            DelegatedStakeRecord(
+              stake2,
+              SnapshotOrdinal.unsafeApply(1L),
+              Amount.empty,
+              lockRef2.some,
+              DelegatedStakeAmount(NonNegLong.unsafeFrom(200L)).some
+            )
+          )
+        ).some
+      )
+      withdrawal1 <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, stakeRef1.hash), kp)
+      withdrawal2 <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, stakeRef2.hash), kp)
+      result <- acceptanceManager.accept(
+        List.empty,
+        List(withdrawal1, withdrawal2),
+        context,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.MinValue,
+        List.empty
+      )
+      reversedResult <- acceptanceManager.accept(
+        List.empty,
+        List(withdrawal2, withdrawal1),
+        context,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.MinValue,
+        List.empty
+      )
+    } yield
+      expect.all(
+        result.acceptedWithdrawals.values.flatten.size == 1,
+        result.notAcceptedWithdrawals.size == 1,
+        result.notAcceptedWithdrawals.head._2.head == DuplicatedTokenLock(lockRef2),
+        result.acceptedWithdrawals == reversedResult.acceptedWithdrawals,
+        result.notAcceptedWithdrawals == reversedResult.notAcceptedWithdrawals
+      )
+  }
+
+  test("rejects a withdrawal whose effective token lock is already pending") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
+      UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None),
+      SnapshotOrdinal.MinValue
+    )
+
+    for {
+      node1 <- KeyPairGenerator.makeKeyPair[IO]
+      node2 <- KeyPairGenerator.makeKeyPair[IO]
+      ((lockRef1, lockRef2), baseContext) <- mkValidGlobalContext(kp, node1, kp)
+      activeStake <- Signed.forAsyncHasher(testCreateDelegatedStake(node1, sourceAddress, 100L, lockRef1), kp)
+      pendingStake <- Signed.forAsyncHasher(testCreateDelegatedStake(node2, sourceAddress, 200L, lockRef2), kp)
+      activeStakeRef <- DelegatedStakeReference.of(activeStake)
+      activeRecord = DelegatedStakeRecord(activeStake, SnapshotOrdinal.MinValue, Amount.empty, lockRef2.some, None)
+      pendingRecord = PendingDelegatedStakeWithdrawal(
+        pendingStake,
+        Amount(NonNegLong.unsafeFrom(50L)),
+        SnapshotOrdinal.MinValue,
+        EpochProgress.MinValue,
+        lockRef2.some,
+        None
+      )
+      context = baseContext.copy(
+        activeDelegatedStakes = SortedMap(sourceAddress -> SortedSet(activeRecord)).some,
+        delegatedStakesWithdrawals = SortedMap(sourceAddress -> SortedSet(pendingRecord)).some
+      )
+      withdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, activeStakeRef.hash), kp)
+      result <- acceptanceManager.accept(
+        List.empty,
+        List(withdrawal),
+        context,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.MinValue,
+        List.empty
+      )
+    } yield
+      expect.all(
+        result.acceptedWithdrawals.isEmpty,
+        result.notAcceptedWithdrawals.map(_._2.head) == List(AlreadyWithdrawn(lockRef2))
+      )
+  }
+
+  test("an invalid canonical-first create does not reserve its parent or token lock after activation") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(10L)
+
+    def validatorRejecting(
+      invalid: Signed[UpdateDelegatedStake.Create]
+    ): UpdateDelegatedStakeValidator[IO] = new UpdateDelegatedStakeValidator[IO] {
+      def validateCreateDelegatedStake(
+        signed: Signed[UpdateDelegatedStake.Create],
+        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+      ): IO[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
+        if (signed == invalid) InvalidParent(signed.parent).invalidNec.pure[IO]
+        else signed.validNec.pure[IO]
+
+      def validateWithdrawDelegatedStake(
+        signed: Signed[UpdateDelegatedStake.Withdraw],
+        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+      ): IO[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] = signed.validNec.pure[IO]
+    }
+
+    for {
+      node <- KeyPairGenerator.makeKeyPair[IO]
+      create1 <- Signed.forAsyncHasher(testCreateDelegatedStake(node, sourceAddress, 100L, Hash("shared-lock")), kp)
+      create2 = Signed(
+        create1.value,
+        NonEmptySet.one(
+          SignatureProof(create1.proofs.head.id, Signature(Hex(Hash.empty.value.dropRight(2) + "01")))
+        )
+      )
+      canonical = List(create1, create2).sorted(Signed.order[UpdateDelegatedStake.Create].toOrdering)
+      legacyCanonical = List(create1, create2).sortBy(_.show)
+      acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](validatorRejecting(canonical.head), activation)
+      legacyAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](validatorRejecting(legacyCanonical.head), activation)
+      reverseResult <- acceptanceManager.accept(
+        canonical.reverse,
+        List.empty,
+        io.constellationnetwork.schema.GlobalSnapshotInfo.empty,
+        EpochProgress.MinValue,
+        activation,
+        List.empty
+      )
+      forwardResult <- acceptanceManager.accept(
+        canonical,
+        List.empty,
+        io.constellationnetwork.schema.GlobalSnapshotInfo.empty,
+        EpochProgress.MinValue,
+        activation,
+        List.empty
+      )
+      legacyResult <- legacyAcceptanceManager.accept(
+        legacyCanonical,
+        List.empty,
+        io.constellationnetwork.schema.GlobalSnapshotInfo.empty,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.unsafeApply(9L),
+        List.empty
+      )
+    } yield
+      expect.all(
+        reverseResult.acceptedCreates.values.flatten.map(_._1).toList == List(canonical.last),
+        reverseResult.notAcceptedCreates.map(_._1) == List(canonical.head),
+        reverseResult.notAcceptedCreates.head._2.head == InvalidParent(create1.parent),
+        reverseResult == forwardResult,
+        legacyResult.acceptedCreates.isEmpty,
+        legacyResult.notAcceptedCreates.size == 2,
+        legacyResult.notAcceptedCreates.exists(_._2.head == DuplicatedParent(create1.parent))
+      )
+  }
+
+  test("an invalid canonical-first withdrawal does not reserve its stake or effective token lock") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+
+    for {
+      node1 <- KeyPairGenerator.makeKeyPair[IO]
+      ((lockRef1, _), baseContext) <- mkValidGlobalContext(kp, node1, kp)
+      stake1 <- Signed.forAsyncHasher(testCreateDelegatedStake(node1, sourceAddress, 100L, lockRef1), kp)
+      stakeRef1 <- DelegatedStakeReference.of(stake1)
+      context = baseContext.copy(activeDelegatedStakes =
+        SortedMap(
+          sourceAddress -> SortedSet(
+            DelegatedStakeRecord(stake1, SnapshotOrdinal.MinValue, Amount.empty, None, None)
+          )
+        ).some
+      )
+      withdrawal1 <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, stakeRef1.hash), kp)
+      withdrawal2 = Signed(
+        withdrawal1.value,
+        NonEmptySet.one(
+          SignatureProof(withdrawal1.proofs.head.id, Signature(Hex(Hash.empty.value.dropRight(2) + "01")))
+        )
+      )
+      canonical = List(withdrawal1, withdrawal2).sorted(Signed.order[UpdateDelegatedStake.Withdraw].toOrdering)
+      validator = new UpdateDelegatedStakeValidator[IO] {
+        def validateCreateDelegatedStake(
+          signed: Signed[UpdateDelegatedStake.Create],
+          lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+        ): IO[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] = signed.validNec.pure[IO]
+
+        def validateWithdrawDelegatedStake(
+          signed: Signed[UpdateDelegatedStake.Withdraw],
+          lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+        ): IO[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] =
+          if (signed == canonical.head) InvalidStake(signed.stakeRef).invalidNec.pure[IO]
+          else signed.validNec.pure[IO]
+      }
+      acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](validator, SnapshotOrdinal.MinValue)
+      result <- acceptanceManager.accept(
+        List.empty,
+        canonical.reverse,
+        context,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.MinValue,
+        List.empty
+      )
+      forwardResult <- acceptanceManager.accept(
+        List.empty,
+        canonical,
+        context,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.MinValue,
+        List.empty
+      )
+    } yield
+      expect.all(
+        result.acceptedWithdrawals.values.flatten.map(_._1).toList == List(canonical.last),
+        result.notAcceptedWithdrawals.map(_._1) == List(canonical.head),
+        result.notAcceptedWithdrawals.head._2.head == InvalidStake(canonical.head.stakeRef),
+        result == forwardResult
+      )
+  }
+
+  test("fails closed after activation when validator and GSI disagree about the withdrawn stake") { res =>
+    implicit val (_, h, sp, kp, sourceAddress) = res
+    val acceptingValidator = new UpdateDelegatedStakeValidator[IO] {
+      def validateCreateDelegatedStake(
+        signed: Signed[UpdateDelegatedStake.Create],
+        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+      ) = signed.validNec.pure[IO]
+
+      def validateWithdrawDelegatedStake(
+        signed: Signed[UpdateDelegatedStake.Withdraw],
+        lastContext: io.constellationnetwork.schema.GlobalSnapshotInfo
+      ) = signed.validNec.pure[IO]
+    }
+    val acceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](acceptingValidator, SnapshotOrdinal.MinValue)
+
+    for {
+      withdrawal <- Signed.forAsyncHasher(testWithdrawDelegatedStake(sourceAddress, Hash("missing-stake")), kp)
+      result <- acceptanceManager.accept(
+        List.empty,
+        List(withdrawal),
+        io.constellationnetwork.schema.GlobalSnapshotInfo.empty,
+        EpochProgress.MinValue,
+        SnapshotOrdinal.MinValue,
+        List.empty
+      )
+    } yield
+      expect.all(
+        result.acceptedWithdrawals.isEmpty,
+        result.notAcceptedWithdrawals.map(_._2.head) == List(InvalidStake(Hash("missing-stake")))
+      )
+  }
+
+  test("a fresh create on a normally bucketed pending lock is rejected before and after activation") { res =>
+    implicit val (js, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(3L)
+
+    for {
+      previousNode <- KeyPairGenerator.makeKeyPair[IO]
+      ((lockRef, _), base) <- mkValidGlobalContext(kp, previousNode, kp)
+      withdrawn <- Signed.forAsyncHasher(testCreateDelegatedStake(previousNode, sourceAddress, 100L, lockRef), kp)
+      fresh <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 100L, lockRef), kp)
+      context = base.copy(delegatedStakesWithdrawals =
+        Some(
+          SortedMap(
+            sourceAddress -> SortedSet(
+              PendingDelegatedStakeWithdrawal(withdrawn, Amount.empty, SnapshotOrdinal.MinValue, EpochProgress.MinValue)
+            )
+          )
+        )
+      )
+      results <- List(false, true).flatTraverse { useMpt =>
+        pendingCreateManager(context, activation, useMpt).flatMap { manager =>
+          List(SnapshotOrdinal.unsafeApply(2L), activation, SnapshotOrdinal.unsafeApply(4L)).traverse { ordinal =>
+            manager.accept(List(fresh), List.empty, context, EpochProgress.MinValue, ordinal, List.empty)
+          }
+        }
+      }
+    } yield
+      expect(results.forall { result =>
+        result.acceptedCreates.isEmpty &&
+        result.notAcceptedCreates == List((fresh, NonEmptyChain.of(AlreadyWithdrawn(fresh.parent.hash))))
+      })
+  }
+
+  test("a pending lock in a malformed bucket blocks creates at activation without reserving their parent") { res =>
+    implicit val (js, h, sp, kp, sourceAddress) = res
+    val activation = SnapshotOrdinal.unsafeApply(3L)
+
+    for {
+      previousNode <- KeyPairGenerator.makeKeyPair[IO]
+      ((pendingRef, availableRef), base) <- mkValidGlobalContext(kp, previousNode, kp)
+      otherAddress = previousNode.getPublic.toAddress
+      fresh <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 100L, pendingRef), kp)
+      available <- Signed.forAsyncHasher(testCreateDelegatedStake(kp, sourceAddress, 200L, availableRef), kp)
+      checks <- List(kp, previousNode).flatTraverse { pendingSigner =>
+        List(false, true).traverse { useMpt =>
+          for {
+            withdrawn <- Signed.forAsyncHasher(
+              testCreateDelegatedStake(previousNode, pendingSigner.getPublic.toAddress, 100L, Hash("old-lock")),
+              pendingSigner
+            )
+            context = base.copy(delegatedStakesWithdrawals =
+              Some(
+                SortedMap(
+                  otherAddress -> SortedSet(
+                    PendingDelegatedStakeWithdrawal(
+                      withdrawn,
+                      Amount.empty,
+                      SnapshotOrdinal.MinValue,
+                      EpochProgress.MinValue,
+                      Some(pendingRef)
+                    )
+                  )
+                )
+              )
+            )
+            manager <- pendingCreateManager(context, activation, useMpt)
+            before <- manager.accept(
+              List(fresh, available),
+              List.empty,
+              context,
+              EpochProgress.MinValue,
+              SnapshotOrdinal.unsafeApply(2L),
+              List.empty
+            )
+            after <- List(activation, SnapshotOrdinal.unsafeApply(4L)).traverse { ordinal =>
+              manager.accept(List(fresh, available), List.empty, context, EpochProgress.MinValue, ordinal, List.empty)
+            }
+          } yield
+            expect.all(
+              before.acceptedCreates(sourceAddress).map(_._1) == List(fresh),
+              after.forall(_.acceptedCreates(sourceAddress).map(_._1) == List(available)),
+              after.forall(_.notAcceptedCreates == List((fresh, NonEmptyChain.of(AlreadyWithdrawn(pendingRef)))))
+            )
+        }
+      }
+    } yield checks.reduce(_ and _)
+  }
+
+  private def pendingCreateManager(
+    context: io.constellationnetwork.schema.GlobalSnapshotInfo,
+    activation: SnapshotOrdinal,
+    useMpt: Boolean
+  )(implicit js: JsonSerializer[IO], h: Hasher[IO], sp: SecurityProvider[IO]): IO[UpdateDelegatedStakeAcceptanceManager[IO]] = {
+    implicit val selector: io.constellationnetwork.schema.GlobalStateProofSelector =
+      io.constellationnetwork.schema.GlobalStateProofSelector(SnapshotOrdinal.MaxValue)
+    val validator =
+      if (!useMpt)
+        IO.pure(UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None))
+      else
+        for {
+          producer <- InMemoryMerklePatriciaProducer.make[IO]()
+          store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+          _ <- store.syncFromGlobalSnapshotInfo(context, SnapshotOrdinal.MinValue)
+        } yield UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, store)
+    validator.map(UpdateDelegatedStakeAcceptanceManager.make[IO](_, activation))
   }
 
   def testCreateDelegatedStake(

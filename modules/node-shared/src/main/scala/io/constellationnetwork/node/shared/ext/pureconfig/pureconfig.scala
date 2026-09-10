@@ -69,7 +69,7 @@ package object pureconfig {
   implicit val envToOrdinalToDustSweepReader: ConfigReader[Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
   implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
-    ConfigReader.forProduct21(
+    ConfigReader.forProduct22(
       "tessellation-3-migration",
       "tessellation-301-migration",
       "check-sync-global-snapshot-field",
@@ -90,6 +90,7 @@ package object pureconfig {
       "fixing-data-application-fee-validation",
       "fixing-allow-spend-destination-credit",
       "preventing-allow-spend-resurrection",
-      "fixing-global-allow-spend-expiration"
+      "fixing-global-allow-spend-expiration",
+      "fixing-delegated-stake-double-withdrawal"
     )(FieldsAddedOrdinals.apply)
 }

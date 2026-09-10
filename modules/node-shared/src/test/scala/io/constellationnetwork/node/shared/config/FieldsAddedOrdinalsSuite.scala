@@ -102,6 +102,32 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     }
   }
 
+  test("delegated stake double-withdrawal hardening is enabled for dev and fails closed for public environments") {
+    IO {
+      ConfigSource.resources("application.conf").at("fields-added-ordinals").load[FieldsAddedOrdinals] match {
+        case Left(failures) =>
+          failure(failures.toList.mkString("\n"))
+        case Right(fieldsAddedOrdinals) =>
+          expect.same(
+            SnapshotOrdinal.MinValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Dev)
+          ) &&
+          expect.same(
+            SnapshotOrdinal.MaxValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Integrationnet)
+          ) &&
+          expect.same(
+            SnapshotOrdinal.MaxValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Testnet)
+          ) &&
+          expect.same(
+            SnapshotOrdinal.MaxValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet)
+          )
+      }
+    }
+  }
+
   test("the protocol-v1 gate preserves the latest develop positional constructor") {
     val ordinals = Map.empty[AppEnvironment, SnapshotOrdinal]
     val legacyShape = FieldsAddedOrdinals(

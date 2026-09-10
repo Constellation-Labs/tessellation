@@ -295,8 +295,17 @@ object GlobalSnapshotConsensusFunctions {
             case DelegateRewardsInput(udsar, psu, ep) =>
               val ordinal = lastArtifact.ordinal.next
               if (shouldUseDelegatedRewards(ordinal, ep)) {
-                rewardsService.delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu).map {
-                  delegatedRewardsResult =>
+                // Acceptance prepares one gated settlement before this callback; do not normalize rewards independently.
+                rewardsService.delegatedRewards
+                  .distribute(
+                    snapshotContext,
+                    trigger,
+                    ep,
+                    faciltators,
+                    udsar,
+                    psu
+                  )
+                  .map { delegatedRewardsResult =>
                     if (ordinal > incrementalDelegatedStakingStartingOrdinal) {
                       val updatedCreateDelegatedStakes = delegatedRewardsResult.updatedCreateDelegatedStakes.view.mapValues { records =>
                         records.map { r =>
@@ -311,7 +320,7 @@ object GlobalSnapshotConsensusFunctions {
                     } else {
                       delegatedRewardsResult
                     }
-                }
+                  }
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
               }
