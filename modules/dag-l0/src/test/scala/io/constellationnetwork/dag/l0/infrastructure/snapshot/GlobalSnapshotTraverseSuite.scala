@@ -15,8 +15,8 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, FieldsAddedOrdinalsFixtures}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
@@ -339,19 +339,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       lastGlobalSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
 
       currencySnapshotAcceptanceManager <- CurrencySnapshotAcceptanceManager.make(
-        FieldsAddedOrdinals(
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map.empty,
-          Map(Dev -> SnapshotOrdinal.MinValue)
-        ),
+        FieldsAddedOrdinalsFixtures.current,
         Dev,
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
@@ -393,19 +381,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           currencySnapshotContextFns,
           feeCalculator,
           mptStore,
-          FieldsAddedOrdinals(
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            scFeeBalanceFromContext = Map(Dev -> SnapshotOrdinal.MinValue)
-          ),
+          FieldsAddedOrdinalsFixtures.current,
           Dev
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
@@ -420,19 +396,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
-          FieldsAddedOrdinals(
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty,
-            Map(Dev -> SnapshotOrdinal.MinValue)
-          ),
+          FieldsAddedOrdinalsFixtures.current,
           MetagraphsSyncConfig(PosInt(100)),
           Dev,
           blockAcceptanceManager,

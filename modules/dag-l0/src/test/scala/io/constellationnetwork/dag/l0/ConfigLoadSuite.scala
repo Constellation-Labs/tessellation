@@ -29,7 +29,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
 
   // Mirror of TessellationIOApp.loadConfigAs with Main.configFiles = List("dag-l0.conf"). Held in
   // sync by hand (configFiles is protected) -- it is a stable single-element list.
-  private val source: ConfigSource =
+  private val source =
     List("dag-l0.conf").foldRight(ConfigSource.default) { (file, acc) =>
       ConfigSource.resources(file).withFallback(acc)
     }
@@ -109,4 +109,31 @@ object ConfigLoadSuite extends SimpleIOSuite {
       expect(SnapshotConfig.resolveEffectiveConsensusConfig(invalid, AppEnvironment.Integrationnet).isLeft)
     }
   }
+  AppEnvironment.values.foreach { environment =>
+    test(s"${environment.entryName}: the named L0 config retains all shared activation values") {
+      for {
+        shared <- source.loadF[IO, SharedConfigReader]()
+        defaults <- ConfigSource.resources("application.conf").withFallback(source).loadF[IO, SharedConfigReader]()
+        app <- source.loadF[IO, AppConfigReader]()
+      } yield
+        SnapshotConfig
+          .resolveEffectiveConsensusConfig(app.snapshot, environment)
+          .fold(
+            error => failure(error.getMessage),
+            resolved => {
+              val effective = resolved.withSharedConfig(shared, environment)
+              expect.same(Some(defaults.ordinalConfigHashFor(environment)), effective.ordinalConfigHash) &&
+              expect.same(
+                resolved.withSharedConfig(defaults, environment).deterministicConfigHash,
+                effective.deterministicConfigHash
+              ) &&
+              expect.same(
+                shared.fieldsAddedOrdinals.currencySnapshotProtocolV1For(environment).value.value,
+                effective.currencySnapshotProtocolV1ActivationOrdinal
+              )
+            }
+          )
+    }
+  }
+
 }

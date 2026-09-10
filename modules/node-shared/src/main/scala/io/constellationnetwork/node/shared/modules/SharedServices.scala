@@ -214,7 +214,7 @@ object SharedServices {
         cfg.fieldsAddedOrdinals.tessellation3MigrationFor(cfg.environment),
         cfg.fieldsAddedOrdinals.setSumFixFor(cfg.environment),
         storages.mptStore,
-        cfg.incrementalDelegatedStakingStartingOrdinalFor,
+        cfg.incrementalDelegatedStakingStartingOrdinalFor(cfg.environment),
         cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(cfg.environment)
       )
     } yield

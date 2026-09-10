@@ -10,7 +10,8 @@ Proposed
 
 Tessellation public networks adopt one software version through a coordinated full-cluster cold
 restart. That operating model lets every validator change runtime consensus behavior together and
-avoids mixed-version state machines. It does not erase or rewrite already signed history, and it
+does not support mixed-version operation. Joining rejects different advertised versions; every
+deployment uses a full cold restart. It does not erase or rewrite already signed history, and it
 does not update Snapshot Streaming, Block Explorer, metagraph binaries, SDK consumers, or archived
 artifacts.
 
@@ -89,8 +90,15 @@ golden fixture changes, the PR is not runtime-only until that difference is expl
   `AppEnvironment` inside consensus logic.
 - Every missing `FieldsAddedOrdinals` threshold mapping resolves to the disabled
   `SnapshotOrdinal.MaxValue` sentinel. Active-from-genesis behavior requires an explicit `0`.
-  Any future exception requires an explicit per-gate rationale, source comment, and regression
-  test rather than an ad hoc fallback at one consumer.
+  Required historical cutovers must be explicit; retaining pre-fix behavior is not universally
+  safe for a fresh network. Ordinary tests select current behavior explicitly; historical tests
+  declare the boundary they exercise. Any future exception requires an explicit per-gate
+  rationale, source comment, and regression test rather than an ad hoc fallback at one consumer.
+- Distinguish first-active thresholds from last-legacy boundaries and exact-key events.
+  `lastKryoHashOrdinal` retains its existing `MinValue` default (`<=` is Kryo, `>` is JSON);
+  `lastLegacyStateProofOrdinal` retains `MaxValue`. Do not normalize those defaults merely to
+  match `FieldsAddedOrdinals`. Exact-key dust sweeps execute at their configured ordinal during
+  production or replay and do nothing at other ordinals.
 - Record the gate's ordinal/epoch domain, exact comparator (`>=`, `>`, or exact-key), missing/default
   semantics, and whether the resolved value is included in `deterministicConfigHash`.
 - For new behavior, choose and announce a strictly future activation only after the release and
@@ -104,12 +112,28 @@ golden fixture changes, the PR is not runtime-only until that difference is expl
 - Test `A-1`, `A`, and `A+1`, restart and rollback across `A`, and long-range replay beginning
   before `A`. Include state-root/hash assertions, not only successful decoding.
 
+### Activation configuration and deployment checks
+
+Both L0 applications resolve the shared activation configuration into the same effective config
+used for joining and consensus. `deterministicConfigHash` includes every `FieldsAddedOrdinals`
+threshold, the complete dust-sweep schedule, and the shared hashing, state-proof, and incremental
+staking boundaries. It compares settings among nodes running the same software version; release
+version checks separately reject different versions. Changes to this configuration fingerprint
+ship through the normal full-cluster cold restart. They do not require mixed-version operation.
+
+Named layer configurations fall back to shared `application.conf`. Packaged HOCON is configuration,
+not an immutable code literal. Review the resolved values and retain the packaged-config regression
+table; matching hashes cannot detect a historically wrong value deployed identically everywhere.
+Snapshot Streaming has a separate build/deployment and does not acquire alignment merely because
+node join checks pass. Its SDK/config update follows the node update on `develop` and remains a
+consumer qualification requirement before deployment.
+
 ### Required schema-change package
 
 A class-3 change blocks merge until the PR or a linked ADR records:
 
 Every numbered item must be completed or marked not applicable with evidence. For example, an
-internal P2P message can require wire-version and mixed-version analysis without changing Snapshot
+internal P2P message can require wire-version and version-rejection checks without changing Snapshot
 Streaming, the SDK, or metagraph schemas; the review record must say why those consumers are not
 affected rather than inventing unnecessary work for them.
 

@@ -21,13 +21,14 @@ import eu.timepit.refined.types.numeric.NonNegLong
   * '''This is consensus-critical.''' Every honest node MUST compute the identical swept `GlobalSnapshotInfo` and the identical MPT state
   * root at the sweep ordinal, or the cluster forks. The transform is a pure function of the GSI map contents at a fixed ordinal (sorted
   * maps, commutative datum sum), so every node at the sweep ordinal computes the identical pruned GSI and root. The gating, threshold, and
-  * burn-vs-treasury choice come from the per-environment `dustSweeps` HOCON packaged into the assembly: the advertised release plus the
-  * environment is the determinism fence.
+  * burn-vs-treasury choice come from the per-environment `dustSweeps` HOCON packaged into the assembly. Both L0 consensus config hashes
+  * include the resolved schedule, thresholds, and destinations; the separate version check rejects different software versions. Deploy one
+  * reviewed configuration through the normal full-cluster cold restart. Matching hashes do not prove a shared value is correct.
   *
   * Safety gates (an address is swept only if ALL hold):
   *
   *   1. ORDINAL GATE: `FieldsAddedOrdinals.dustSweepFor` passes a `DustSweep` only at an exact configured environment/ordinal key. An entry
-  *      fires exactly once at its ordinal and never replays; an absent environment never sweeps.
+  *      fires at its ordinal during production or historical replay; an absent environment never sweeps.
   *
   * 2. DUST THRESHOLD: only an address with `balance.value <= threshold.value` is eligible.
   *

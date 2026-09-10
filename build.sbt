@@ -455,7 +455,7 @@ lazy val rosetta = (project in file("modules/rosetta"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared % "compile->compile;test->test", nodeShared, testShared % Test)
+  .dependsOn(kernel, shared % "compile->compile;test->test", nodeShared % "compile->compile;test->test", testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
@@ -591,7 +591,7 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
   )
 
 lazy val currencyL1 = (project in file("modules/currency-l1"))
-  .dependsOn(dagL1, shared % "compile->compile;test->test", testShared % Test, nodeShared)
+  .dependsOn(dagL1, shared % "compile->compile;test->test", testShared % Test, nodeShared % "compile->compile;test->test")
   .settings(
     name := "tessellation-currency-l1",
     Defaults.itSettings,

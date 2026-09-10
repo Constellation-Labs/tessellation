@@ -17,6 +17,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.FieldsAddedOrdinalsFixtures
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -69,27 +70,6 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import io.circe.Json
 
 object Mocks {
-
-  private val devActivation: Map[AppEnvironment, SnapshotOrdinal] = Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue)
-
-  /** The acceptance-manager tests exercise behavior after the historical migration gates. Those gates are explicit so an empty map keeps
-    * its production meaning: disabled.
-    */
-  private val postMigrationFieldsAddedOrdinals = FieldsAddedOrdinals(
-    tessellation3Migration = devActivation,
-    tessellation301Migration = devActivation,
-    checkSyncGlobalSnapshotField = devActivation,
-    metagraphSyncData = devActivation,
-    updatedLastSyncGlobalOrder = devActivation,
-    updatedLastSyncGlobalFromPeersInConsensus = devActivation,
-    updatingCombineFunctionSpendActions = devActivation,
-    fixingAllowSpendExpiration = devActivation,
-    fixingAllowSpendAndTokenLockValidation = devActivation,
-    setSumFix = devActivation,
-    fixingDataApplicationFeeValidation = devActivation,
-    fixingAllowSpendDestinationCredit = devActivation,
-    preventingAllowSpendResurrection = devActivation
-  )
 
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None
@@ -292,7 +272,7 @@ object Mocks {
               initialSnapshotInfo.traverse_(info => mptStore.syncFromGlobalSnapshotInfo(info, SnapshotOrdinal.MinValue)) >>
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
-                    postMigrationFieldsAddedOrdinals,
+                    FieldsAddedOrdinalsFixtures.current,
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,
                     blockAcceptanceManager = mockBlockAcceptanceManager,

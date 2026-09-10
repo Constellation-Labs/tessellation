@@ -22,8 +22,8 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, FieldsAddedOrdinalsFixtures}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.globalAlignment.GlobalL0AlignmentStorage
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
@@ -82,27 +82,6 @@ import weaver.SimpleIOSuite
 
 object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
-
-  private val devActivation: Map[AppEnvironment, SnapshotOrdinal] = Map(Dev -> SnapshotOrdinal.MinValue)
-
-  /** Snapshot reconciliation tests operate on post-migration state. The relevant gates are explicit so missing configuration remains
-    * unambiguously disabled.
-    */
-  private val postMigrationFieldsAddedOrdinals = FieldsAddedOrdinals(
-    tessellation3Migration = devActivation,
-    tessellation301Migration = devActivation,
-    checkSyncGlobalSnapshotField = devActivation,
-    metagraphSyncData = devActivation,
-    updatedLastSyncGlobalOrder = devActivation,
-    updatedLastSyncGlobalFromPeersInConsensus = devActivation,
-    updatingCombineFunctionSpendActions = devActivation,
-    fixingAllowSpendExpiration = devActivation,
-    fixingAllowSpendAndTokenLockValidation = devActivation,
-    setSumFix = devActivation,
-    fixingDataApplicationFeeValidation = devActivation,
-    fixingAllowSpendDestinationCredit = devActivation,
-    preventingAllowSpendResurrection = devActivation
-  )
 
   type TestResources = (
     SnapshotProcessor[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -206,7 +185,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
                 CurrencySnapshotAcceptanceManager
                   .make(
-                    postMigrationFieldsAddedOrdinals,
+                    FieldsAddedOrdinalsFixtures.current,
                     Dev,
                     LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
                     BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -270,7 +249,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               globalSnapshotAcceptanceManager = {
                 implicit val testGlobalStateProofSelector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MinValue)
                 GlobalSnapshotAcceptanceManager.make(
-                  postMigrationFieldsAddedOrdinals,
+                  FieldsAddedOrdinalsFixtures.current,
                   MetagraphsSyncConfig(PosInt(100)),
                   Dev,
                   BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
@@ -283,7 +262,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                       currencySnapshotContextFns,
                       feeCalculator,
                       mptStore,
-                      postMigrationFieldsAddedOrdinals.copy(scFeeBalanceFromContext = devActivation),
+                      FieldsAddedOrdinalsFixtures.current,
                       Dev
                     ),
                   updateNodeParametersAcceptanceManager,

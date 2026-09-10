@@ -18,6 +18,7 @@ import io.constellationnetwork.schema.priceOracle.TokenPair
 import io.constellationnetwork.schema.priceOracle.TokenPair.DAG_USD
 import io.constellationnetwork.schema.transaction.TransactionFee
 import io.constellationnetwork.schema.{NonNegFraction, SnapshotOrdinal}
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 
 import _root_.pureconfig.ConvertHelpers.catchReadError
@@ -35,6 +36,7 @@ package object pureconfig {
   implicit val balanceReader: ConfigReader[Balance] = ConfigReader[NonNegLong].map(Balance(_))
   implicit val transactionFeeReader: ConfigReader[TransactionFee] = ConfigReader[NonNegLong].map(TransactionFee(_))
   implicit val peerIdReader: ConfigReader[PeerId] = ConfigReader[String].map(Hex(_)).map(PeerId(_))
+  implicit val hashReader: ConfigReader[Hash] = ConfigReader[String].map(Hash(_))
   implicit val ordinalReader: ConfigReader[SnapshotOrdinal] = ConfigReader[NonNegLong].map(SnapshotOrdinal(_))
   implicit val epochProgressReader: ConfigReader[EpochProgress] = ConfigReader[NonNegLong].map(EpochProgress(_))
   implicit val environmentToOrdinalMapReader: ConfigReader[Map[AppEnvironment, SnapshotOrdinal]] =

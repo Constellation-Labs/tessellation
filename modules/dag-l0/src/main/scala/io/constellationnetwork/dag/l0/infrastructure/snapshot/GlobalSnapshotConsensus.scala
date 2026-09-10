@@ -259,7 +259,7 @@ object GlobalSnapshotConsensus {
           sharedCfg.fieldsAddedOrdinals.tessellation3MigrationFor(sharedCfg.environment),
           sharedCfg.fieldsAddedOrdinals.setSumFixFor(sharedCfg.environment),
           sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommitteeFor(sharedCfg.environment),
-          sharedCfg.incrementalDelegatedStakingStartingOrdinalFor,
+          sharedCfg.incrementalDelegatedStakingStartingOrdinalFor(sharedCfg.environment),
           mptStore,
           effectiveConsensusConfig.activeAdmissionPromoteThreshold
         )
