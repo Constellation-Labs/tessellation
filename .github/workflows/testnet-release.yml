@@ -5,6 +5,15 @@ on:
 
 name: Testnet release
 
+# Releases must not overlap. The version comes from `commit-and-tag-version`, which reads the
+# tags that exist at the moment it runs, so two pushes landing close together both compute the
+# same next prerelease and the second `git push origin v$VERSION` is rejected as a duplicate
+# tag -- failing the release after a full test+assembly cycle. Queue rather than cancel so every
+# pushed commit still gets its own release; the later run then sees the earlier tag and bumps.
+concurrency:
+  group: testnet-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
   pull-requests: write
