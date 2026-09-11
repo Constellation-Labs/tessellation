@@ -44,12 +44,6 @@ abstract class SnapshotLocalFileSystemStorage[
   val ordinalPathGenerator = PathGenerator.forOrdinal(ordinalChunkSize)
   val maxParallelFileOperations = 4
 
-  /** Slack applied to the anchor timestamp when deciding whether an orphan candidate is old enough to skip. Only ever makes the filter more
-    * conservative -- an extra hour of candidates gets inspected rather than skipped -- so clock skew and coarse filesystem timestamp
-    * granularity cannot cause a real torn write to be missed.
-    */
-  val orphanScanRecencyMarginMillis: Long = 3600000L
-
   override val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
   def write(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] = {
@@ -328,21 +322,6 @@ abstract class SnapshotLocalFileSystemStorage[
     * only class whose body recovery needs to decode. On filesystems without the Unix attribute we conservatively return `None` and inspect
     * the body, preserving correctness at the cost of the old scan behavior.
     */
-  /** Modification time in epoch millis, or None when the filesystem will not report it. */
-  private def lastModifiedMillis(file: File): F[Option[Long]] =
-    Async[F]
-      .blocking(JFiles.getLastModifiedTime(file.path, LinkOption.NOFOLLOW_LINKS).toMillis.some)
-      .handleError(_ => none[Long])
-
-  /** When the anchor's own ordinal index entry was written.
-    *
-    * Used as the recency reference for the orphan scan: a snapshot whose ordinal is ABOVE the anchor cannot have been written before the
-    * anchor itself, so a hash body materially older than this is provably not part of the discarded suffix. None means "no reference
-    * available", which disables the optimisation and restores the exhaustive scan.
-    */
-  private def anchorWriteTime(ordinal: SnapshotOrdinal): F[Option[Long]] =
-    getPath(toOrdinalName(ordinal)).flatMap(lastModifiedMillis).handleError(_ => none[Long])
-
   private def hardLinkCount(file: File): F[Option[Long]] =
     Async[F].blocking {
       JFiles.getAttribute(file.path, "unix:nlink", LinkOption.NOFOLLOW_LINKS) match {
@@ -470,91 +449,70 @@ abstract class SnapshotLocalFileSystemStorage[
     retainedAnchorHash: Option[Hash],
     movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
   )(implicit hs: HasherSelector[F]): F[Unit] =
-    anchorWriteTime(ordinal).flatMap { anchorMillis =>
-      val recencyCutoff = anchorMillis.map(_ - orphanScanRecencyMarginMillis)
+    streamHashIndexes.flatMap(
+      _.parEvalMapUnordered(maxParallelFileOperations) { file =>
+        hardLinkCount(file).flatMap {
+          case Some(count) if count > 1L || count === 0L => Async[F].unit
+          case _ =>
+            val hash = Hash(file.name)
 
-      // A candidate materially older than the anchor cannot belong to the discarded suffix, so it
-      // never has to be decoded. This is what keeps the pass affordable when the `nlink` fast path
-      // is unavailable: a store copied without `rsync -H` (or `tar` hardlink handling) has intact
-      // CONTENT but nlink==1 everywhere, so ~58% of entries look like torn writes. Measured on the
-      // testnet cluster: those bodies carry 2023-2024 mtimes while the anchor was minutes old, and
-      // decoding them cost 89 minutes, 39M read syscalls and 46 GB read to delete nothing.
-      //
-      // Degrades safely in both directions. No readable anchor timestamp, or a copy that reset
-      // every mtime to the copy time, leaves candidates looking no older than the anchor -- so they
-      // are all inspected exactly as before: slower, but never less correct.
-      def tooOldToBeSuffix(file: File): F[Boolean] =
-        recencyCutoff.fold(false.pure[F])(cutoff => lastModifiedMillis(file).map(_.exists(_ < cutoff)))
+            getPath(hash).flatMap { expectedFile =>
+              val expectedPath = expectedFile.path.toAbsolutePath.normalize()
+              val actualPath = file.path.toAbsolutePath.normalize()
 
-      streamHashIndexes.flatMap(
-        _.parEvalMapUnordered(maxParallelFileOperations) { file =>
-          hardLinkCount(file).flatMap {
-            case Some(count) if count > 1L || count === 0L => Async[F].unit
-            case _ =>
-              val hash = Hash(file.name)
+              if (actualPath != expectedPath)
+                quarantineUnreadableHashIndex(file, "misplaced_hash_index")
+              else if (retainedAnchorHash.contains(hash))
+                Async[F].unit
+              else
+                readRecoveryIndex(toHashName(hash)).flatMap {
+                  case Some(snapshot) =>
+                    // Decide the ACTION before hashing. Only entries the recovered head would otherwise expose are
+                    // removal candidates, so hashing anything else buys nothing -- and at or below
+                    // `last-kryo-hash-ordinal` it is not even possible: the Kryo registrar carries
+                    // `GlobalIncrementalSnapshotV1`, never the current snapshot class, so the ordinal-selected hasher
+                    // raises `Class is not registered` and an unguarded verification aborts the whole recovery. Those
+                    // entries are orphans at or below the anchor and cannot reach the recovered lineage, so they are
+                    // left exactly as found.
+                    val isRemovalCandidate =
+                      snapshot.ordinal > ordinal ||
+                        (snapshot.ordinal === ordinal && retainedAnchorHash.exists(_ =!= hash))
 
-              getPath(hash).flatMap { expectedFile =>
-                val expectedPath = expectedFile.path.toAbsolutePath.normalize()
-                val actualPath = file.path.toAbsolutePath.normalize()
-
-                if (actualPath != expectedPath)
-                  quarantineUnreadableHashIndex(file, "misplaced_hash_index")
-                else if (retainedAnchorHash.contains(hash))
-                  Async[F].unit
-                else
-                  tooOldToBeSuffix(file).flatMap { olderThanAnchor =>
-                    if (olderThanAnchor) Async[F].unit
+                    if (!isRemovalCandidate) Async[F].unit
                     else
-                      readRecoveryIndex(toHashName(hash)).flatMap {
-                        case Some(snapshot) =>
-                          // Decide the ACTION before hashing. Only entries the recovered head would otherwise expose are
-                          // removal candidates, so hashing anything else buys nothing -- and at or below
-                          // `last-kryo-hash-ordinal` it is not even possible: the Kryo registrar carries
-                          // `GlobalIncrementalSnapshotV1`, never the current snapshot class, so the ordinal-selected hasher
-                          // raises `Class is not registered` and an unguarded verification aborts the whole recovery. Those
-                          // entries are orphans at or below the anchor and cannot reach the recovered lineage, so they are
-                          // left exactly as found.
-                          val isRemovalCandidate =
-                            snapshot.ordinal > ordinal ||
-                              (snapshot.ordinal === ordinal && retainedAnchorHash.exists(_ =!= hash))
-
-                          if (!isRemovalCandidate) Async[F].unit
-                          else
-                            HasherSelector[F]
-                              .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                                snapshot.toHashed.map(_.hash)
-                              }
-                              .map(_.some)
-                              .recoverWith {
-                                // Unverifiable is not the same as invalid: a hasher that cannot represent this snapshot at
-                                // all tells us nothing about the bytes. Never quarantine on that signal -- it would discard
-                                // valid history -- and never propagate it, which would fail recovery outright.
-                                case error: IllegalArgumentException =>
-                                  logger
-                                    .warn(error)(
-                                      s"Cannot verify orphan hash index hash=${hash.value} ordinal=${snapshot.ordinal.show}; " +
-                                        "leaving the bytes in place because they could not be checked"
-                                    )
-                                    .as(none[Hash])
-                              }
-                              .flatMap {
-                                case None => Async[F].unit
-                                case Some(actualHash) if actualHash =!= hash =>
-                                  quarantineUnreadableHashIndex(file, s"content_hash_mismatch:${actualHash.value}")
-                                case Some(_) =>
-                                  movePersistedToTmp(hash, snapshot.ordinal).handleErrorWith {
-                                    case _: NoSuchFileException => Async[F].unit
-                                    case error                  => error.raiseError[F, Unit]
-                                  }
-                              }
-                        case None => quarantineUnreadableHashIndex(file, "deserialization_failed")
-                      }
-                  }
-              }
-          }
-        }.compile.drain
-      )
-    }
+                      HasherSelector[F]
+                        .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                          snapshot.toHashed.map(_.hash)
+                        }
+                        .map(_.some)
+                        .recoverWith {
+                          // Unverifiable is not the same as invalid: a hasher that cannot represent this snapshot at
+                          // all tells us nothing about the bytes. Never quarantine on that signal -- it would discard
+                          // valid history -- and never propagate it, which would fail recovery outright.
+                          case error: IllegalArgumentException =>
+                            logger
+                              .warn(error)(
+                                s"Cannot verify orphan hash index hash=${hash.value} ordinal=${snapshot.ordinal.show}; " +
+                                  "leaving the bytes in place because they could not be checked"
+                              )
+                              .as(none[Hash])
+                        }
+                        .flatMap {
+                          case None => Async[F].unit
+                          case Some(actualHash) if actualHash =!= hash =>
+                            quarantineUnreadableHashIndex(file, s"content_hash_mismatch:${actualHash.value}")
+                          case Some(_) =>
+                            movePersistedToTmp(hash, snapshot.ordinal).handleErrorWith {
+                              case _: NoSuchFileException => Async[F].unit
+                              case error                  => error.raiseError[F, Unit]
+                            }
+                        }
+                  case None => quarantineUnreadableHashIndex(file, "deserialization_failed")
+                }
+            }
+        }
+      }.compile.drain
+    )
 
   def processFileChunk(
     chunk: Stream[F, File],
