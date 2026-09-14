@@ -45,6 +45,12 @@
 #   SEEDLIST_FILE        ship this real seedlist instead of generating from cluster ids
 #   SNAPSHOT_STORED_PATH set CL_SNAPSHOT_STORED_PATH (tn layout: data/incremental_snapshot);
 #                        only for data rsynced with that layout — breaks fresh genesis
+#   GL0_RECOVERY_SEED_COMMITTEE
+#                        one-shot CL_GL0_RECOVERY_SEED_COMMITTEE for the nodes: the
+#                        comma-separated gl0 PeerIds a rollback/download start-up may
+#                        trust as its anchor committee. Unset = not written at all, and
+#                        since .env is regenerated each run, a seed clears itself on the
+#                        next deploy that omits it — which is the intended lifetime.
 #   The deploy bind-mounts this branch's docker/entrypoint.sh over the image's baked
 #   copy (see remote-deploy.sh), so the rollback-first guard + JVM-override logic apply
 #   regardless of which branch built the image — no release-branch entrypoint PR needed.

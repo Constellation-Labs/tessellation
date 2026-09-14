@@ -257,6 +257,18 @@ CL_DOCKER_JAVA_OPTS=$NODE_JAVA_OPTS"
 [ -n "$NODE_GL1_JAVA_OPTS" ] && ENV_PROFILE_BLOCK="$ENV_PROFILE_BLOCK
 CL_DOCKER_GL1_JAVA_OPTS=$NODE_GL1_JAVA_OPTS"
 
+# One-shot operator recovery seed. CL_GL0_RECOVERY_SEED_COMMITTEE is a comma-separated
+# list of canonical gl0 PeerIds (Gl0RecoverySeedCommittee.parse) that seeds the anchor
+# committee a rollback/download start-up is allowed to trust. Only dag-l0 reads it; gl1
+# inherits it from the shared .env and ignores it.
+#
+# It is deliberately NOT sticky: the deploy regenerates .env from scratch every run, so
+# a deploy that does not pass it clears it. That matters — a seed left set converts any
+# later download failure into an unbounded retry of the identical InitializeFromDownload
+# command instead of falling back to WaitingForDownload (observed on testnet 2026-09-11).
+[ -n "$GL0_RECOVERY_SEED_COMMITTEE" ] && ENV_PROFILE_BLOCK="$ENV_PROFILE_BLOCK
+CL_GL0_RECOVERY_SEED_COMMITTEE=$GL0_RECOVERY_SEED_COMMITTEE"
+
 cp "$PROJECT_ROOT/docker/docker-compose.yaml" "$STAGING/docker-compose.yaml"
 # The entrypoint is bind-mounted over the image's baked copy so the guard/JVM logic
 # always matches THIS tooling (which writes the .env the entrypoint interprets) —

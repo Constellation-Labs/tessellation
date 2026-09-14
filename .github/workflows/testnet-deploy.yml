@@ -22,6 +22,13 @@ name: Testnet Deploy
 # hash, then deploy-cluster.sh redeploys and the entrypoint auto-detects rollback. It
 # never wipes chain data. See deploy/deploy-cluster.sh + docker/bin/remote-deploy.sh.
 #
+# The optional `recovery_seed_committee` input is a one-shot operator recovery seed: the
+# gl0 PeerIds a rollback/download start-up is allowed to trust as its anchor committee.
+# It is written into each node's .env as CL_GL0_RECOVERY_SEED_COMMITTEE and, because the
+# deploy regenerates .env every run, it CLEARS ITSELF on the next deploy that omits it.
+# Leave it blank unless the cutover needs a seeded committee — a seed left in place turns
+# any later download failure into an unbounded retry loop.
+#
 # Node keys are NOT needed here: the cluster nodes already hold their real key.p12
 # (placed during migration). The deploy runs with PRESET_KEYS=true, deriving each
 # node's peer id from its on-node key and never shipping/overwriting key material.
@@ -48,10 +55,20 @@ on:
         type: string
         required: false
         default: ""
+      recovery_seed_committee:
+        description: "One-shot CL_GL0_RECOVERY_SEED_COMMITTEE: comma-separated gl0 PeerIds; blank = none"
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       version:
         description: "Release version to deploy, e.g. 4.1.0-alpha.180 (blank = latest published for both images)"
+        type: string
+        required: false
+        default: ""
+      recovery_seed_committee:
+        description: "One-shot CL_GL0_RECOVERY_SEED_COMMITTEE: comma-separated gl0 PeerIds; blank = none"
         type: string
         required: false
         default: ""
@@ -117,6 +134,29 @@ jobs:
             cat /tmp/verified-images.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # A malformed seed fails closed in dag-l0 -- but only at JVM start-up, which is
+      # AFTER every node has been stopped. Reject it here instead, alongside the image
+      # gate, while the cluster is still untouched.
+      - name: Validate recovery-seed committee
+        if: inputs.recovery_seed_committee != ''
+        env:
+          SEED: ${{ inputs.recovery_seed_committee }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          entries = [e.strip() for e in os.environ["SEED"].split(",")]
+          bad = [e for e in entries if not re.fullmatch(r"[0-9a-f]{128}", e)]
+          dupes = sorted({e for e in entries if entries.count(e) > 1})
+          if bad:
+              sys.exit(f"::error::PeerIds must be 128 lowercase hex chars; invalid={bad}")
+          if dupes:
+              sys.exit(f"::error::duplicate PeerIds={dupes}")
+          # Gl0RecoverySeedCommittee.MinimumRecoveryCommitteeSize
+          if len(entries) < 3:
+              sys.exit(f"::error::recovery committee has {len(entries)} member(s), minimum is 3")
+          print(f"recovery seed: {len(entries)} PeerIds — " + ", ".join(e[:8] for e in entries))
+          PY
+
       - name: Validate configuration
         run: |
           [ -n "${{ vars.TESTNET_HOSTS }}" ] || { echo "::error::TESTNET_HOSTS variable not set"; exit 1; }
@@ -175,6 +215,9 @@ jobs:
           # this SS runs the image default (-Xmx1g), too small for full-chain ingestion.
           SS_JAVA_OPTS: "-Xms16g -Xmx16g -XX:+UseZGC -XX:+ZGenerational -XX:ZAllocationSpikeTolerance=5 -XX:ZCollectionInterval=10 -XX:ConcGCThreads=4 -XX:ParallelGCThreads=8 -XX:+UseStringDeduplication -XX:+HeapDumpOnOutOfMemoryError -XX:+ExitOnOutOfMemoryError"
           SKIP_TX_SENDER: "true"
+          # One-shot recovery seed (blank = not written to .env at all). remote-deploy.sh
+          # turns this into CL_GL0_RECOVERY_SEED_COMMITTEE in each node's .env.
+          GL0_RECOVERY_SEED_COMMITTEE: ${{ inputs.recovery_seed_committee }}
           # snapshot-streaming DB: external AWS RDS reached through a persistent SSH tunnel
           # on the SS node (bastion -> RDS). The tunnel binds 127.0.0.1:5433 and SS connects
           # there; SS_DB_URL supplies only user/pass/db, SS_DB_TUNNEL_TARGET is the RDS
