@@ -85,11 +85,28 @@ object GlobalSnapshotDelegatedStakeUnlockSuite extends SimpleIOSuite {
       activationOrdinal,
       activationOrdinal
     )
+    // A malformed legacy map may split the same lock's withdrawals across keys.
+    // Deduplication must be global, and only the active lock determines its owner.
+    val crossBucketWithdrawals = SortedMap(
+      tokenLockOwner -> SortedSet(expiredWithdrawals(incorrectWithdrawalBucket).head),
+      incorrectWithdrawalBucket -> SortedSet(expiredWithdrawals(incorrectWithdrawalBucket).last)
+    )
+    def crossBucketUnlocks(ordinal: Long) = GlobalSnapshotAcceptanceManager.generateDelegatedStakeTokenUnlocks(
+      crossBucketWithdrawals,
+      Map(tokenLockRef -> activeTokenLock),
+      SnapshotOrdinal.unsafeApply(ordinal),
+      activationOrdinal
+    )
 
     IO(
       expect.all(
         before == Right(Map(incorrectWithdrawalBucket -> List(expectedUnlock, expectedUnlock))),
         at == Right(Map(tokenLockOwner -> List(expectedUnlock))),
+        crossBucketUnlocks(9L) == Right(
+          Map(tokenLockOwner -> List(expectedUnlock), incorrectWithdrawalBucket -> List(expectedUnlock))
+        ),
+        crossBucketUnlocks(10L) == Right(Map(tokenLockOwner -> List(expectedUnlock))),
+        crossBucketUnlocks(11L) == Right(Map(tokenLockOwner -> List(expectedUnlock))),
         GlobalSnapshotAcceptanceManager
           .excludeNaturallyExpiredDelegatedStakeUnlocks(
             at.toOption.get,
@@ -125,7 +142,7 @@ object GlobalSnapshotDelegatedStakeUnlockSuite extends SimpleIOSuite {
     )
   }
 
-  test("the wired transition finalizes duplicate pending withdrawals exactly once at activation") {
+  test("the wired transition finalizes duplicate withdrawals across address buckets exactly once at activation") {
     JsonSerializer.forSync[IO].flatMap { implicit serializer =>
       implicit val hasher: Hasher[IO] = Hasher.forJson[IO]
       val owner = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
@@ -163,8 +180,10 @@ object GlobalSnapshotDelegatedStakeUnlockSuite extends SimpleIOSuite {
           proof
         )
         duplicatePending = SortedMap(
+          owner -> SortedSet(
+            PendingDelegatedStakeWithdrawal(firstStake, Amount.empty, SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L))
+          ),
           staleBucket -> SortedSet(
-            PendingDelegatedStakeWithdrawal(firstStake, Amount.empty, SnapshotOrdinal.unsafeApply(1L), EpochProgress(1L)),
             PendingDelegatedStakeWithdrawal(secondStake, Amount.empty, SnapshotOrdinal.unsafeApply(2L), EpochProgress(2L))
           )
         )
@@ -184,7 +203,7 @@ object GlobalSnapshotDelegatedStakeUnlockSuite extends SimpleIOSuite {
             activationOrdinal,
             activationOrdinal,
             SnapshotOrdinal.MinValue,
-            SortedMap(owner -> startingBalance),
+            SortedMap(owner -> startingBalance, staleBucket -> startingBalance),
             SortedMap.empty,
             SortedMap(owner -> SortedSet(activeTokenLock)),
             Map(tokenLockRef -> activeTokenLock),
@@ -198,7 +217,10 @@ object GlobalSnapshotDelegatedStakeUnlockSuite extends SimpleIOSuite {
       } yield
         expect.all(
           transition.generatedTokenUnlocks == Map(owner -> List(expectedUnlock)),
-          transition.balances.get(owner).contains(Balance(NonNegLong.unsafeFrom(startingBalance.value.value + amount.value.value))),
+          transition.balances == SortedMap(
+            owner -> Balance(NonNegLong.unsafeFrom(startingBalance.value.value + amount.value.value)),
+            staleBucket -> startingBalance
+          ),
           transition.activeTokenLocks.isEmpty,
           transition.pendingWithdrawals.isEmpty,
           artifacts == SortedSet[SharedArtifact](expectedUnlock)
