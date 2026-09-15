@@ -199,24 +199,24 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     initialAllowSpendRef <- AllowSpendReference.emptyCurrency(lastSnapshotContext.address)
     metagraphId = lastSnapshotContext.address
 
-    checkSyncGlobalSnapshotField = fieldsAddedOrdinals.checkSyncGlobalSnapshotField
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    tessellation3MigrationStartingOrdinal = fieldsAddedOrdinals.tessellation3Migration
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    metagraphSyncDataStartingOrdinal = fieldsAddedOrdinals.metagraphSyncData
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    updatedLastSyncGlobalOrder = fieldsAddedOrdinals.updatedLastSyncGlobalOrder
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    updatedLastSyncGlobalFromPeersInConsensus = fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensus
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    updatingCombineFunctionSpendActions = fieldsAddedOrdinals.updatingCombineFunctionSpendActions
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    fixingAllowSpendExpiration = fieldsAddedOrdinals.fixingAllowSpendExpiration
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    fixingAllowSpendAndTokenLockValidation = fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidation
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
-    preventingAllowSpendResurrection = fieldsAddedOrdinals.preventingAllowSpendResurrection
-      .getOrElse(environment, SnapshotOrdinal.MinValue)
+    checkSyncGlobalSnapshotField =
+      fieldsAddedOrdinals.checkSyncGlobalSnapshotFieldFor(environment)
+    tessellation3MigrationStartingOrdinal =
+      fieldsAddedOrdinals.tessellation3MigrationFor(environment)
+    metagraphSyncDataStartingOrdinal =
+      fieldsAddedOrdinals.metagraphSyncDataFor(environment)
+    updatedLastSyncGlobalOrder =
+      fieldsAddedOrdinals.updatedLastSyncGlobalOrderFor(environment)
+    updatedLastSyncGlobalFromPeersInConsensus =
+      fieldsAddedOrdinals.updatedLastSyncGlobalFromPeersInConsensusFor(environment)
+    updatingCombineFunctionSpendActions =
+      fieldsAddedOrdinals.updatingCombineFunctionSpendActionsFor(environment)
+    fixingAllowSpendExpiration =
+      fieldsAddedOrdinals.fixingAllowSpendExpirationFor(environment)
+    fixingAllowSpendAndTokenLockValidation =
+      fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidationFor(environment)
+    preventingAllowSpendResurrection =
+      fieldsAddedOrdinals.preventingAllowSpendResurrectionFor(environment)
 
     acceptanceBlocksResult <- blockOps.acceptBlocks(
       blocksForAcceptance,
@@ -262,7 +262,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       updatedBalancesByRewards,
       feeTransactionsForAcceptance,
       maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >
-        fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflow.getOrElse(environment, SnapshotOrdinal.MaxValue)
+        fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflowFor(environment)
     )
 
     callerSharedArtifacts = sharedArtifactsForAcceptance

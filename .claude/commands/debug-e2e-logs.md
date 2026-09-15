@@ -6,6 +6,12 @@ description: "Diagnose an E2E fork-recovery failure from persisted per-node logs
 
 Use this slash command when the user reports an E2E test failure — fork-recovery, consensus stall, committee divergence, pre-isolation sync timeout, etc. It codifies the procedure documented in `reference_e2e_log_analysis.md`. Do not jump to fixes or blame a recent commit without running this procedure first.
 
+Read `docker/README.md` first for the canonical Just lifecycle, artifact locations, staged-JAR
+provenance checks, and cleanup matrix. Use
+`docs/operations/local-e2e-cluster-investigation.md` before teardown when the failed cluster is
+still queryable. This command is the persisted-log analysis companion, not a replacement E2E
+harness.
+
 ## Inputs
 
 - **$ARGUMENTS** (optional): free-text notes from the user about the failure (which node stuck, which ordinal, what test output showed, which commit to investigate). If empty, use the most recent prior user message as context.
@@ -17,7 +23,11 @@ ls -la /home/scas/git/tessellation/nodes/0/gl0-logs/
 wc -l /home/scas/git/tessellation/nodes/*/gl0-logs/gl0-run.log
 ```
 
-If logs aren't present (no `nodes/<N>/gl0-logs/gl0-run.log`), tell the user the E2E teardown wiped them and propose adding `docker logs gl0-N > ... .log` capture to `docker/bin/test-fork-recovery.sh`. Stop.
+If logs aren't present (no `nodes/<N>/gl0-logs/gl0-run.log`), do not assume ordinary Docker teardown
+removed them: `just down` and `--cleanup` preserve host-mounted logs. Check whether another run,
+`just clean-data`, or `just clean-configs` replaced the `nodes/` tree, and whether CI uploaded a
+`runner-logs/` artifact. If no evidence remains, report the exact gap before proposing changes.
+Stop.
 
 If logs are present, continue.
 

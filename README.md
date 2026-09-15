@@ -32,6 +32,9 @@ Written in Scala 2.13.
 
 ### Development with Docker (Recommended)
 
+See [docker/README.md](docker/README.md) for the canonical local E2E lifecycle, artifact locations,
+staged-JAR provenance checks, and exact cleanup semantics.
+
 ```bash
 just test              # Full test suite
 just test --skip-assembly  # Skip compilation, reuse JARs

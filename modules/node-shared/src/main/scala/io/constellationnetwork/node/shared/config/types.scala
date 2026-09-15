@@ -24,6 +24,19 @@ import fs2.io.file.Path
 
 object types {
 
+  /** Resolves a first-active threshold for one environment. Missing configuration does not enable the new behavior. Required historical
+    * cutovers must be configured explicitly: retaining the old path is not a claim that pre-fix behavior is safe for a new network.
+    *
+    * Exact-key schedules such as `FieldsAddedOrdinals.dustSweeps` do not use this resolver: absence is already their disabled state.
+    */
+  private[config] object SnapshotOrdinalGate {
+    def resolveOrDisabled(
+      ordinals: Map[AppEnvironment, SnapshotOrdinal],
+      environment: AppEnvironment
+    ): SnapshotOrdinal =
+      ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
+  }
+
   // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
   // Fields share similar map types, so reordering them without updating that reader can miswire gates.
   case class FieldsAddedOrdinals(
@@ -56,9 +69,9 @@ object types {
     // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
     fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // Ordinal-gated GSI dust sweeps (state deflation), per environment, keyed by the ordinal each sweep fires at. Loaded from
-    // the `fields-added-ordinals.dust-sweeps` HOCON block. This runtime configuration is not covered by the join-time
-    // `versionHash`, which hashes the advertised version string (or `CL_VERSION_HASH`), so operators must deploy one reviewed value
-    // per environment. Default empty: an environment with no entry never sweeps. See `DustSweep` and `GlobalSnapshotDustSweep`.
+    // the `fields-added-ordinals.dust-sweeps` HOCON block. Both L0 config hashes bind the resolved schedule, threshold, and destination;
+    // the separate `versionHash` checks the advertised software version. Default empty: no entry means no sweep.
+    // See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
     // Appended to preserve positional source compatibility for existing SDK consumers.
     // At/after this GLOBAL L0 ordinal a Currency snapshot lineage may transition from
@@ -81,17 +94,94 @@ object types {
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
+
+    def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(tessellation3Migration, environment)
+
+    def tessellation301MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(tessellation301Migration, environment)
+
+    def checkSyncGlobalSnapshotFieldFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(checkSyncGlobalSnapshotField, environment)
+
+    def metagraphSyncDataFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(metagraphSyncData, environment)
+
+    def updatedLastSyncGlobalOrderFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(updatedLastSyncGlobalOrder, environment)
+
+    def updatedLastSyncGlobalFromPeersInConsensusFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(updatedLastSyncGlobalFromPeersInConsensus, environment)
+
+    def updatingCombineFunctionSpendActionsFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(updatingCombineFunctionSpendActions, environment)
+
+    def fixingAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendExpiration, environment)
+
+    def fixingAllowSpendAndTokenLockValidationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendAndTokenLockValidation, environment)
+
+    def setSumFixFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(setSumFix, environment)
+
+    def scFeeBalanceFromContextFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(scFeeBalanceFromContext, environment)
+
+    def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(subTrieRoots, environment)
+
+    def delegatedRewardsFullCommitteeFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(delegatedRewardsFullCommittee, environment)
+
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      feeTransactionSecurity.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      SnapshotOrdinalGate.resolveOrDisabled(feeTransactionSecurity, environment)
+
+    def fixingFeeTransactionBalanceOverflowFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingFeeTransactionBalanceOverflow, environment)
+
+    def dustSweepFor(environment: AppEnvironment, ordinal: SnapshotOrdinal): Option[DustSweep] =
+      dustSweeps.get(environment).flatMap(_.get(ordinal))
 
     def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
-      currencySnapshotProtocolV1.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      SnapshotOrdinalGate.resolveOrDisabled(currencySnapshotProtocolV1, environment)
 
     def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
-      fixingDataApplicationFeeValidation.getOrElse(environment, SnapshotOrdinal.MinValue)
+      SnapshotOrdinalGate.resolveOrDisabled(fixingDataApplicationFeeValidation, environment)
 
     def fixingAllowSpendDestinationCreditFor(environment: AppEnvironment): SnapshotOrdinal =
-      fixingAllowSpendDestinationCredit.getOrElse(environment, SnapshotOrdinal.MinValue)
+      SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendDestinationCredit, environment)
+
+    def preventingAllowSpendResurrectionFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(preventingAllowSpendResurrection, environment)
+
+    def fixingGlobalAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingGlobalAllowSpendExpiration, environment)
+
+    /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
+    def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
+      SortedMap(
+        "tessellation3Migration" -> tessellation3MigrationFor(environment),
+        "tessellation301Migration" -> tessellation301MigrationFor(environment),
+        "checkSyncGlobalSnapshotField" -> checkSyncGlobalSnapshotFieldFor(environment),
+        "metagraphSyncData" -> metagraphSyncDataFor(environment),
+        "updatedLastSyncGlobalOrder" -> updatedLastSyncGlobalOrderFor(environment),
+        "updatedLastSyncGlobalFromPeersInConsensus" -> updatedLastSyncGlobalFromPeersInConsensusFor(environment),
+        "updatingCombineFunctionSpendActions" -> updatingCombineFunctionSpendActionsFor(environment),
+        "fixingAllowSpendExpiration" -> fixingAllowSpendExpirationFor(environment),
+        "fixingAllowSpendAndTokenLockValidation" -> fixingAllowSpendAndTokenLockValidationFor(environment),
+        "setSumFix" -> setSumFixFor(environment),
+        "scFeeBalanceFromContext" -> scFeeBalanceFromContextFor(environment),
+        "subTrieRoots" -> subTrieRootsFor(environment),
+        "delegatedRewardsFullCommittee" -> delegatedRewardsFullCommitteeFor(environment),
+        "feeTransactionSecurity" -> feeTransactionSecurityFor(environment),
+        "fixingFeeTransactionBalanceOverflow" -> fixingFeeTransactionBalanceOverflowFor(environment),
+        "currencySnapshotProtocolV1" -> currencySnapshotProtocolV1For(environment),
+        "fixingDataApplicationFeeValidation" -> fixingDataApplicationFeeValidationFor(environment),
+        "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
+        "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
+        "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment)
+      )
   }
 
   /** A single ordinal-gated GSI dust sweep (state deflation).
@@ -140,6 +230,45 @@ object types {
     val default: LocalHealthMonitorConfig = LocalHealthMonitorConfig()
   }
 
+  /** Shared by the loaded configuration and its runtime projection. Only the selected environment enters the hash. */
+  trait SnapshotOrdinalConfig {
+    def lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
+    def fieldsAddedOrdinals: FieldsAddedOrdinals
+    def lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+    def lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+    def incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+
+    // These are last-legacy boundaries, not first-active thresholds. Preserve their existing defaults.
+    def lastKryoHashOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
+      lastKryoHashOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
+
+    def lastLegacyStateProofOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
+      lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MaxValue)
+
+    def incrementalDelegatedStakingStartingOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(incrementalDelegatedStakingStartingOrdinal, environment)
+
+    def ordinalConfigHashFor(environment: AppEnvironment): Hash = {
+      val thresholds = fieldsAddedOrdinals
+        .resolvedThresholdsFor(environment)
+        .updated("lastKryoHashOrdinal", lastKryoHashOrdinalFor(environment))
+        .updated("lastLegacyStateProofOrdinal", lastLegacyStateProofOrdinalFor(environment))
+        .updated("incrementalDelegatedStakingStartingOrdinal", incrementalDelegatedStakingStartingOrdinalFor(environment))
+      val thresholdValues = thresholds.iterator.map { case (name, ordinal) => s"$name=${ordinal.value.value}" }.mkString(",")
+      // Bind the whole schedule, including burn/credit disposition. SortedMap fixes ordering;
+      // field names and validated addresses cannot contain the separators used here.
+      val sweeps = fieldsAddedOrdinals.dustSweeps
+        .getOrElse(environment, SortedMap.empty[SnapshotOrdinal, DustSweep])
+        .iterator
+        .map {
+          case (ordinal, sweep) =>
+            s"${ordinal.value.value}:${sweep.threshold.value.value}:${sweep.collectionAddress.fold("burn")(_.value.value)}"
+        }
+        .mkString(",")
+      Hash.fromBytes(s"$thresholdValues;dustSweeps=[$sweeps]".getBytes("UTF-8"))
+    }
+  }
+
   case class SharedConfigReader(
     gossip: GossipConfig,
     leavingDelay: FiniteDuration,
@@ -164,7 +293,7 @@ object types {
     snapshotBinarySenderTimeouts: SnapshotBinarySenderTimeoutsConfig,
     clickHouseConfig: ClickHouseAppConfig,
     snapshotServing: Option[SnapshotServingConfig] = None
-  )
+  ) extends SnapshotOrdinalConfig
 
   case class SharedConfig(
     environment: AppEnvironment,
@@ -195,7 +324,7 @@ object types {
     mptSnapshotInfoPath: Path,
     snapshotServingConfig: Option[SnapshotServingConfig] = None,
     localHealthMonitor: LocalHealthMonitorConfig = LocalHealthMonitorConfig.default
-  )
+  ) extends SnapshotOrdinalConfig
 
   case class SharedTrustConfig(
     storage: TrustStorageConfig
@@ -960,8 +1089,24 @@ object types {
     lastGlobalSnapshotsInMemory: Int = 0,
     // Global-ordinal boundary at which Currency snapshot protocol 1.0.0 becomes
     // legal. This is distinct from each L0's local v35 consensus-envelope key.
-    currencySnapshotProtocolV1ActivationOrdinal: Long = Long.MaxValue
+    currencySnapshotProtocolV1ActivationOrdinal: Long = Long.MaxValue,
+    // Resolved shared activation thresholds and dust-sweep schedule. Populated from the same
+    // SharedConfig used by snapshot consumers, before both joining and consensus construction.
+    ordinalConfigHash: Option[Hash] = None
   ) {
+    def withSharedConfig(sharedConfig: SharedConfig): ConsensusConfig =
+      withSharedConfig(sharedConfig, sharedConfig.environment)
+
+    def withSharedConfig(sharedConfig: SnapshotOrdinalConfig, environment: AppEnvironment): ConsensusConfig =
+      copy(
+        lastGlobalSnapshotSyncOffset = sharedConfig.lastGlobalSnapshotsSync.syncOffset.value,
+        lastGlobalSnapshotsInMemory = sharedConfig.lastGlobalSnapshotsSync.maxLastGlobalSnapshotsInMemory.value,
+        currencySnapshotProtocolV1ActivationOrdinal = sharedConfig.fieldsAddedOrdinals
+          .currencySnapshotProtocolV1For(environment)
+          .value
+          .value,
+        ordinalConfigHash = Some(sharedConfig.ordinalConfigHashFor(environment))
+      )
 
     def certifiedConsensusActiveAt(key: Long): Boolean =
       key >= certifiedConsensusActivationKey
@@ -1110,6 +1255,7 @@ object types {
           s"lastGlobalSnapshotSyncOffset=$lastGlobalSnapshotSyncOffset," +
           s"lastGlobalSnapshotsInMemory=$lastGlobalSnapshotsInMemory," +
           s"currencySnapshotProtocolV1ActivationOrdinal=$currencySnapshotProtocolV1ActivationOrdinal," +
+          s"ordinalConfigHash=${ordinalConfigHash.fold("unresolved")(_.value)}," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
