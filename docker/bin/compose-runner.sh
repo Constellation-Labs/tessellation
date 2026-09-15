@@ -51,6 +51,7 @@ if [ "$LIST_TESTS" = "true" ]; then
   echo "  dag-cluster              DAG cluster check"
   echo "  delegated-staking        Delegated staking tests"
   echo "  fork-recovery            Fork recovery test (needs --num-gl0=5)"
+  echo "  rollback-download-head   Rollback-lead-first cold restart and lagged-validator download"
   echo "  committee-rewards        Full-committee delegated reward split"
   echo "                           (needs --num-gl0=5 --num-gl0-early=3;"
   echo "                            --gl0-late-delay=<seconds>, default 240, tunes the join stagger)"
@@ -583,6 +584,15 @@ if should_run_test "fork-recovery"; then
   show_time "Fork recovery test completed"
 fi
 
+if should_run_test "rollback-download-head"; then
+  echo "================================================"
+  echo "Running rollback-download-head test"
+  echo "================================================"
+  cd $PROJECT_ROOT
+  bash docker/bin/test-rollback-download-head.sh $DAG_L0_PORT_PREFIX
+  show_time "Rollback download-head test completed"
+fi
+
 if should_run_test "committee-rewards"; then
   echo "================================================"
   echo "Running committee rewards test"
@@ -773,4 +783,3 @@ echo "End-to-end tests completed"
 echo "------------------------------------------------"
 
 cd $PROJECT_ROOT
-

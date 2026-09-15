@@ -4,9 +4,10 @@ import cats.Order._
 import cats.effect.std.{Mutex, Queue, Supervisor}
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
-import cats.{Applicative, MonadThrow}
+import cats.{Applicative, Eq, MonadThrow}
 
 import scala.concurrent.duration._
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
@@ -31,6 +32,33 @@ import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotStorage {
+
+  sealed abstract class HeadPublicationFailure(message: String, cause: Throwable = null)
+      extends RuntimeException(message, cause)
+      with NoStackTrace
+
+  final case class SnapshotOrdinalCollision(
+    ordinal: SnapshotOrdinal,
+    expectedHash: Hash,
+    actualHash: Hash
+  ) extends HeadPublicationFailure(
+        s"Snapshot ordinal is occupied by a different value. ordinal=$ordinal expected=$expectedHash actual=$actualHash"
+      )
+
+  final case class SnapshotIndexReadbackFailure(
+    ordinal: SnapshotOrdinal,
+    expectedHash: Hash,
+    cause: Throwable = null
+  ) extends HeadPublicationFailure(
+        s"Snapshot is not durably readable from both indexes. hash=$expectedHash ordinal=$ordinal",
+        cause
+      )
+
+  final case class SnapshotContextReadbackFailure(ordinal: SnapshotOrdinal, cause: Throwable = null)
+      extends HeadPublicationFailure(
+        s"Persisted snapshot context is not semantically equal to the supplied context. ordinal=$ordinal",
+        cause
+      )
 
   /** Scaffeine cache for negative ordinal lookups. Caches ordinals confirmed absent from filesystem to avoid repeated stat() calls from
     * community nodes requesting pruned snapshots. Short TTL (30s) ensures new snapshots become visible quickly.
@@ -57,7 +85,7 @@ object SnapshotStorage {
     }
   }
 
-  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]: Eq](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
@@ -86,7 +114,7 @@ object SnapshotStorage {
         )
     }
 
-  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]: Eq](
     headRef: SignallingRef[F, Option[(Signed[S], Hasher[F], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
@@ -188,33 +216,87 @@ object SnapshotStorage {
         }
         .void
 
-    def enqueue(snapshot: Signed[S], snapshotInfo: C)(implicit hasher: Hasher[F]) =
-      persistenceMutex.lock.surround {
-        snapshot.value.hash.flatMap { hash =>
+    def enqueueUnlocked(
+      snapshot: Signed[S],
+      snapshotInfo: C,
+      populatePositiveCachesBeforePersistence: Boolean,
+      requireSnapshotValueReadback: Boolean
+    )(implicit hasher: Hasher[F]): F[Hash] =
+      snapshot.value.hash.flatMap { hash =>
+        def proveSnapshotValuePersistence: F[Unit] =
+          for {
+            ordinalValue <- snapshotLocalFileSystemStorage
+              .read(snapshot.ordinal)
+              .flatMap(_.traverse(_.toHashed))
+              .handleErrorWith(error => SnapshotIndexReadbackFailure(snapshot.ordinal, hash, error).raiseError[F, Option[Hashed[S]]])
+            _ <- ordinalValue.collect {
+              case actual if actual.hash =!= hash =>
+                SnapshotOrdinalCollision(snapshot.ordinal, hash, actual.hash)
+            }.traverse_(MonadThrow[F].raiseError[Unit])
+            hashValue <- snapshotLocalFileSystemStorage
+              .read(hash)
+              .flatMap(_.traverse(_.toHashed))
+              .handleErrorWith(error => SnapshotIndexReadbackFailure(snapshot.ordinal, hash, error).raiseError[F, Option[Hashed[S]]])
+            _ <- MonadThrow[F].raiseUnless(
+              ordinalValue.exists(_.hash === hash) && hashValue.exists(_.hash === hash)
+            )(SnapshotIndexReadbackFailure(snapshot.ordinal, hash))
+          } yield ()
+
+        val populatePositiveCaches = Applicative[F].whenA(populatePositiveCachesBeforePersistence) {
           hashCache(hash).set(snapshot.some) >>
-            ordinalCache(snapshot.ordinal).set(hash.some) >>
-            snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
+            ordinalCache(snapshot.ordinal).set(hash.some)
+        }
+
+        val persistSnapshot =
+          if (requireSnapshotValueReadback)
+            for {
+              writeResult <- snapshotLocalFileSystemStorage.write(snapshot).attempt
+              readbackResult <- proveSnapshotValuePersistence.attempt
+              _ <- (writeResult, readbackResult) match {
+                case (Left(writeError), Left(readbackError)) =>
+                  Async[F].delay(readbackError.addSuppressed(writeError)) >> readbackError.raiseError[F, Unit]
+                case (Right(_), Left(readbackError)) => readbackError.raiseError[F, Unit]
+                case (Left(_), Right(_)) =>
+                  logger.info(s"Snapshot is already saved on disk. hash=$hash ordinal=${snapshot.ordinal}")
+                case (Right(_), Right(_)) => Applicative[F].unit
+              }
+            } yield ()
+          else
+            snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { error =>
               snapshotExists(snapshot).ifM(
                 logger.info(s"Snapshot is already saved on disk. hash=$hash ordinal=${snapshot.ordinal}"),
-                logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
+                logger.error(error)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
                   notPersistedCache.update(current => current + snapshot.ordinal)
               )
-            } >>
-            snapshotInfoLocalFileSystemStorage
-              .write(snapshot.ordinal, snapshotInfo)
-              .handleErrorWith { error =>
-                logger.error(error)(s"Failed writing required snapshot info to disk! ordinal=${snapshot.ordinal}") >>
-                  error.raiseError[F, Unit]
-              }
-              .flatMap { _ =>
-                snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
-                  snapshot.ordinal
-                    .partialPreviousN(inMemoryCapacity)
-                    .fold(Applicative[F].unit)(offloadQueue.offer) >>
-                  combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
-              }
-        }
+            }
+
+        populatePositiveCaches >>
+          persistSnapshot >>
+          snapshotInfoLocalFileSystemStorage
+            .write(snapshot.ordinal, snapshotInfo)
+            .handleErrorWith { error =>
+              logger.error(error)(s"Failed writing required snapshot info to disk! ordinal=${snapshot.ordinal}") >>
+                error.raiseError[F, Unit]
+            }
+            .flatMap { _ =>
+              snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
+                snapshot.ordinal
+                  .partialPreviousN(inMemoryCapacity)
+                  .fold(Applicative[F].unit)(offloadQueue.offer) >>
+                combinedSnapshotCheckpointFileSystemStorage.tryWrite(snapshot.ordinal, snapshot, snapshotInfo, hash)
+            }
+            .as(hash)
       }
+
+    def enqueue(snapshot: Signed[S], snapshotInfo: C)(implicit hasher: Hasher[F]): F[Unit] =
+      persistenceMutex.lock.surround(
+        enqueueUnlocked(
+          snapshot,
+          snapshotInfo,
+          populatePositiveCachesBeforePersistence = true,
+          requireSnapshotValueReadback = false
+        ).void
+      )
 
     def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =
       snapshot.toHashed
@@ -301,10 +383,128 @@ object SnapshotStorage {
             _.traverse(_.toHashed.map(_.hash))
           }
 
-        def setHeadForRecovery(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] =
-          logger.info(s"[SnapshotStorage] Recovery: setting head to ordinal=${snapshot.ordinal.show}") >>
-            enqueue(snapshot, state) >>
-            headRef.set((snapshot, hasher, state).some).void
+        /** Publish an already validated download/recovery terminal pair as the public storage head.
+          *
+          * A lower head may be published only when the target ordinal is absent or already contains the same canonical snapshot value/hash,
+          * and the caller has validated that target and its persisted ancestry. Storage reconciles positive caches against that validated
+          * persisted history before publication. The method rejects a different snapshot occupying the target ordinal; it does not select a
+          * branch, replace a suffix, or repair lower files. Publication is serialized with ordinary persistence and becomes visible only
+          * after both target snapshot indexes and the semantically equal context are durable and all process-local lookup caches agree with
+          * the new head.
+          */
+        def setHeadForRecovery(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] = {
+
+          def readHistoricalHash(
+            ordinal: SnapshotOrdinal,
+            cachedHash: Hash,
+            read: F[Option[Signed[S]]]
+          ): F[Option[Hash]] =
+            hasherSelector
+              .forOrdinal(ordinal) { historicalHasher =>
+                read.flatMap(_.traverse(value => historicalHasher.hash(value.value)))
+              }
+              .handleErrorWith(error => SnapshotIndexReadbackFailure(ordinal, cachedHash, error).raiseError[F, Option[Hash]])
+
+          /* Reconcile lower positive-cache entries with caller-validated persisted history without writing lower files or inferring a fork
+           * point. Any readable ordinal index settles its retry marker. A missing/undecodable ordinal retains its cached value and marker
+           * when persistence is pending, or retains only the cached value when its hash index still proves the same snapshot value/hash;
+           * otherwise both positive-cache entries and any stale retry marker are removed.
+           */
+          def reconcileValidatedHistoryCacheEntries: F[Unit] =
+            for {
+              cachedOrdinals <- ordinalCache.keys
+              pendingOrdinals <- notPersistedCache.get
+              reconciliationEntries <- cachedOrdinals.toList.filter(_ < snapshot.ordinal).flatTraverse { ordinal =>
+                ordinalCache(ordinal).get.flatMap {
+                  case Some(cachedHash) =>
+                    readHistoricalHash(ordinal, cachedHash, snapshotLocalFileSystemStorage.read(ordinal)).flatMap {
+                      case Some(persistedHash) =>
+                        (persistedHash =!= cachedHash, true).pure[F]
+                      case None if pendingOrdinals.contains(ordinal) =>
+                        (false, false).pure[F]
+                      case None =>
+                        readHistoricalHash(ordinal, cachedHash, snapshotLocalFileSystemStorage.read(cachedHash))
+                          .map(hash => (!hash.contains(cachedHash), false))
+                    }.map {
+                      case (evict, ordinalIndexReadable) => List((ordinal, cachedHash, evict, ordinalIndexReadable))
+                    }
+                  case None => List.empty[(SnapshotOrdinal, Hash, Boolean, Boolean)].pure[F]
+                }
+              }
+              evictedEntries = reconciliationEntries.collect {
+                case (ordinal, cachedHash, true, _) => ordinal -> cachedHash
+              }
+              evictedOrdinals = evictedEntries.map(_._1).toSet
+              ordinalBackedOrdinals = reconciliationEntries.collect {
+                case (ordinal, _, _, true) => ordinal
+              }.toSet
+              _ <- evictedEntries.traverse_ {
+                case (ordinal, hash) => ordinalCache(ordinal).set(none) >> hashCache(hash).set(none)
+              }
+              _ <- notPersistedCache.update(_ -- (evictedOrdinals ++ ordinalBackedOrdinals))
+            } yield ()
+
+          /* Remove only the abandoned target/future suffix from process-local positive caches. Lower entries are reconciled separately
+           * against the caller-validated persisted ancestry. Neither operation selects a branch, infers a fork point, or repairs lower
+           * files.
+           */
+          def reconcilePublishedSuffixCaches(hashed: Hashed[S]): F[Unit] =
+            for {
+              cachedOrdinals <- ordinalCache.keys
+              cachedOrdinalValues <- cachedOrdinals.toList.traverse { ordinal =>
+                ordinalCache(ordinal).get.map(ordinal -> _)
+              }
+              cachedHashes <- hashCache.keys
+              staleOrdinalValues = cachedOrdinalValues.collect {
+                case (ordinal, Some(hash)) if ordinal > snapshot.ordinal || (ordinal === snapshot.ordinal && hash =!= hashed.hash) =>
+                  ordinal -> hash
+              }
+              staleOrdinals = staleOrdinalValues.map(_._1).toSet
+              staleHashesFromOrdinals = staleOrdinalValues.map(_._2).toSet
+              staleHashesFromValues <- cachedHashes.toList.filterA { hash =>
+                hashCache(hash).get.map(
+                  _.exists(cached => cached.ordinal > snapshot.ordinal || (cached.ordinal === snapshot.ordinal && hash =!= hashed.hash))
+                )
+              }
+              staleHashes = staleHashesFromOrdinals ++ staleHashesFromValues
+              _ <- staleOrdinals.toList.traverse_(ordinal => ordinalCache(ordinal).set(none))
+              _ <- staleHashes.toList.traverse_(hash => hashCache(hash).set(none))
+              _ <- hashCache(hashed.hash).set(snapshot.some)
+              _ <- ordinalCache(snapshot.ordinal).set(hashed.hash.some)
+            } yield ()
+
+          persistenceMutex.lock.surround {
+            for {
+              _ <- logger.info(s"[SnapshotStorage] Publishing validated download/recovery head ordinal=${snapshot.ordinal.show}")
+              hash <- enqueueUnlocked(
+                snapshot,
+                state,
+                populatePositiveCachesBeforePersistence = false,
+                requireSnapshotValueReadback = true
+              )
+              hashed <- snapshot.toHashed
+              _ <- MonadThrow[F].raiseUnless(hash === hashed.hash)(
+                new IllegalStateException(
+                  s"Published snapshot hash changed during persistence ordinal=${snapshot.ordinal} expected=${hashed.hash} actual=$hash"
+                )
+              )
+              persistedState <- snapshotInfoLocalFileSystemStorage.read(snapshot.ordinal).handleErrorWith { error =>
+                SnapshotContextReadbackFailure(snapshot.ordinal, error).raiseError[F, Option[C]]
+              }
+              // Snapshot contexts can contain byte arrays (for example metagraph data-application state).
+              // Case-class/Java equality compares those arrays by reference, which makes a correctly decoded
+              // disk value look different from the in-memory value. Use the schema's content-aware Eq.
+              _ <- MonadThrow[F].raiseUnless(persistedState.exists(_ === state))(
+                SnapshotContextReadbackFailure(snapshot.ordinal)
+              )
+              _ <- reconcileValidatedHistoryCacheEntries
+              _ <- reconcilePublishedSuffixCaches(hashed)
+              _ <- notPersistedCache.update(_.filter(_ < snapshot.ordinal))
+              _ <- Async[F].delay(negativeCache.invalidateAll())
+              _ <- headRef.set((snapshot, hasher, state).some).void
+            } yield ()
+          }
+        }
 
         private def replaceExactRecoveryHead(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Unit] =
           snapshot.toHashed.flatMap { hashed =>
