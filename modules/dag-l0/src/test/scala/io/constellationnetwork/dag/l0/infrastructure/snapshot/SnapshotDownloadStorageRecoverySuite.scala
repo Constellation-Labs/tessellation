@@ -70,7 +70,7 @@ object SnapshotDownloadStorageRecoverySuite extends MutableIOSuite {
       snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](incremental, keyPair)
     } yield snapshot
 
-  test("getHighestSnapshotInfoOrdinal skips a damaged highest file") { res =>
+  test("getHighestSnapshotInfoOrdinal preserves a damaged persisted-state marker") { res =>
     implicit val (kryoSerializer, jsonSerializer, hasher, _) = res
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
 
@@ -84,7 +84,7 @@ object SnapshotDownloadStorageRecoverySuite extends MutableIOSuite {
         _ <- storages.info.write(higher, GlobalSnapshotInfo.empty)
         _ <- IO.blocking((root / "info" / higher.value.value.toString).writeByteArray(Array[Byte](1, 2, 3)))
         selected <- storages.download.getHighestSnapshotInfoOrdinal(higher)
-      } yield expect.same(Some(lower), selected)
+      } yield expect.same(Some(higher), selected)
     }
   }
 
