@@ -15,7 +15,13 @@ on:
         type: string
         description: 'snapshot-streaming branch to build from'
         required: false
-        default: 'release/mainnet'
+        # MUST match the `||` fallback used further down, which is what the
+        # pull_request path gets (inputs.* is empty there). They disagreed until
+        # 2026-09-16: this defaulted to release/mainnet while the fallback was
+        # release/testnet, so every PR passed while a manual "Run workflow" with
+        # default inputs failed the build at "snapshot-streaming state-proof
+        # activation patch is stale or only partially applied".
+        default: 'release/testnet'
       block_explorer_branch:
         type: string
         description: 'block_explorer branch for DB migrations'
