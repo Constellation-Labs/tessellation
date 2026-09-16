@@ -71,8 +71,16 @@ set -x
 ignoreip = 127.0.0.1/8 ::1 $CTRL_IP
 CONF
         systemctl restart fail2ban || true
+        # `systemctl restart` returns before the daemon is listening, so calling
+        # the client straight away fails with "Failed to access socket path".
+        # Harmless (nothing to unban on a clean run) but it prints an error on
+        # every single provision, which trains people to ignore the log.
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            fail2ban-client ping >/dev/null 2>&1 && break
+            sleep 1
+        done
         # Clear anything banned before the allowlist existed.
-        fail2ban-client unban --all || true
+        fail2ban-client unban --all >/dev/null 2>&1 || true
     else
         echo "WARNING: could not determine controller IP; fail2ban may ban it" >&2
     fi
@@ -112,8 +120,16 @@ SYSCTL
     #
     # The harness opens many short-lived connections between containers, so the
     # ephemeral port range is widened and TIME_WAIT reuse enabled.
-    cat > /etc/sysctl.d/99-ci-runner.conf <<'SYSCTL'
-vm.max_map_count = 262144
+    # Take the HIGHER of our floor and whatever the image already set. The
+    # Hetzner docker-ce image ships vm.max_map_count=1048576, and writing a flat
+    # 262144 here silently LOWERS it -- still 4x what ~15 JVMs need, so nothing
+    # breaks, but quietly undoing a deliberate image default is the kind of thing
+    # that bites much later.
+    want_mmc=262144
+    cur_mmc=$(sysctl -n vm.max_map_count 2>/dev/null || echo 0)
+    [ "$cur_mmc" -gt "$want_mmc" ] && want_mmc="$cur_mmc"
+    cat > /etc/sysctl.d/99-ci-runner.conf <<SYSCTL
+vm.max_map_count = $want_mmc
 fs.file-max = 2097152
 fs.inotify.max_user_instances = 8192
 fs.inotify.max_user_watches = 524288
