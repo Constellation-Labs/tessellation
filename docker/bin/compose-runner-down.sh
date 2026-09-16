@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Dispatcher for `just down`. Routes to local cleanup or remote stop.
+# --clean is consumed only by remote-stop.sh; local teardown preserves nodes/ bind mounts.
 
 set -e
 

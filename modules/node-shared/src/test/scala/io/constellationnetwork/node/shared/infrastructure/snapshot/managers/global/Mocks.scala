@@ -17,6 +17,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.FieldsAddedOrdinalsFixtures
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -275,20 +276,8 @@ object Mocks {
               initialSnapshotInfo.traverse_(info => mptStore.syncFromGlobalSnapshotInfo(info, SnapshotOrdinal.MinValue)) >>
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
-                    FieldsAddedOrdinals(
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      Map.empty,
-                      fixingDelegatedStakeDoubleWithdrawal = Map(
-                        AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal
-                      )
+                    FieldsAddedOrdinalsFixtures.current.copy(
+                      fixingDelegatedStakeDoubleWithdrawal = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal)
                     ),
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,

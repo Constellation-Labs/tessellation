@@ -56,6 +56,18 @@ git push -u origin 747-update-contrib
 
 ## Coding Standards
 
+### Architecture decisions and consensus compatibility
+
+Use [`docs/adr/TEMPLATE.md`](docs/adr/TEMPLATE.md) for new architecture decisions. Before assigning
+an ADR number, inspect `docs/adr/` on the latest target branch, use the next unused four-digit
+number, and recheck after the final rebase. Renumber the newer proposed ADR if another change
+claimed the number first.
+
+Consensus-adjacent changes must follow
+[`ADR-0034`](docs/adr/0034-consensus-schema-change-governance.md) and select exactly one compatibility
+classification in the pull-request template. A coordinated cold restart does not by itself make
+signed history or external schemas compatible.
+
 ### Public-network protocol baseline
 
 IntegrationNet, Testnet, and Mainnet have all permanently crossed the historical Kryo-to-JSON

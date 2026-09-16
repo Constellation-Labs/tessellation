@@ -1,10 +1,11 @@
 # Interrogating a live local E2E cluster
 
-Companion to the log-analysis procedure (memory `reference_e2e_log_analysis` / the `debug-e2e-logs`
-skill). That one covers **reading the persisted per-node logs** after a run -- where they live, the
-peer-id rotation trap, and the parallel-subagent method. This one covers **querying the cluster
-while it is still running**, which is a different and usually faster route to a root cause. Neither
-restates the other.
+Companion to the canonical [local Docker/E2E workflow](../../docker/README.md) and the log-analysis
+procedure (memory `reference_e2e_log_analysis` / the `debug-e2e-logs` command). The workflow covers
+build inputs, artifact locations, and exact cleanup semantics. The log procedure covers **reading
+the persisted per-node logs** after a run, including the peer-id rotation trap. This document covers
+**querying the cluster while it is still running**, which is a different and usually faster route
+to a root cause.
 
 Written from the `committee-rewards` diagnosis on 2026-07-30, where the test's own criteria -- not
 the node -- were wrong, and only live queries could show it.
@@ -20,8 +21,20 @@ docker ps --format '{{.Names}}\t{{.Status}}'
 curl -s localhost:9000/global-snapshots/latest | jq '.value.ordinal, .value.epochProgress'
 ```
 
-Do **not** run `just down` until you are finished. When done: `just down --clean` (also wipes
-`nodes/*/data`).
+Do **not** run `just down` until you have captured any needed `docker logs`. When done, use:
+
+```bash
+just down
+```
+
+This removes the scoped containers, named volumes, and network but preserves the host-mounted
+`nodes/` data and application logs. If those are no longer needed, run `just clean-data` afterward
+to remove only layer data/logs, or `just clean-configs` to remove the entire generated node tree.
+Both destructive node-cleanup commands require the containers to be stopped first.
+
+Do not rely on `just down --clean` locally: `--clean` only changes remote teardown behavior. Also
+do not start another ordinary `just test` until the evidence is captured; the next run deletes and
+recreates `nodes/` by default.
 
 ## Port map
 

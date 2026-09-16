@@ -101,6 +101,8 @@ for arg in "$@"; do
       export CL_DOCKER_BIND_INTERFACE=""
       ;;
     --clean-assembly)
+      # Legacy parsed flag. CLEAN_ASSEMBLY is not currently consumed by assembly.sh;
+      # docker/README.md documents the explicit clean-room procedure instead.
       export CLEAN_ASSEMBLY=true
       ;;
     --do-exit)
