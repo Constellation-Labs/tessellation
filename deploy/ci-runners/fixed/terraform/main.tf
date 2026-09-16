@@ -8,7 +8,7 @@ terraform {
   #   terraform { backend "local" {} }
   # to run without AWS credentials.
   backend "s3" {
-    bucket = "tessellation-nightly"
+    bucket = "ci-terraform-150340915792-us-west-1-an"
     key    = "ci-runners-fixed/terraform.tfstate"
     region = "us-west-1"
   }
