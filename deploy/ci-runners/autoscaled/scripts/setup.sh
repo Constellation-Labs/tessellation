@@ -49,6 +49,36 @@ set -x
 # tessellation additions
 # ---------------------------------------------------------------------------
 {
+    echo "Never let fail2ban ban the controller"
+    # The block above installs AND STARTS fail2ban. fail2ban then reads the
+    # EXISTING auth.log, which already contains every SSH attempt the controller
+    # made while this box was booting -- wait_ssh (server.py:106) retries every
+    # 5s from the moment the server is created, and anything before sshd has the
+    # key loaded is a failed auth. Five of those inside 10 minutes is the default
+    # sshd jail threshold, so fail2ban's first act can be to ban the controller
+    # MID-PROVISIONING: this script dies partway, the runner never registers, and
+    # the server is reaped as a zombie. Silent, and it repeats for every job.
+    # Observed 2026-09-16 on first deploy.
+    #
+    # The controller is the one host that must never be banned here, and it is
+    # exactly the host on the other end of this SSH session.
+    CTRL_IP="${SSH_CLIENT%% *}"
+    [ -n "$CTRL_IP" ] || CTRL_IP="${SSH_CONNECTION%% *}"
+    if [ -n "$CTRL_IP" ]; then
+        mkdir -p /etc/fail2ban/jail.d
+        cat > /etc/fail2ban/jail.d/00-controller-allowlist.conf <<CONF
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 $CTRL_IP
+CONF
+        systemctl restart fail2ban || true
+        # Clear anything banned before the allowlist existed.
+        fail2ban-client unban --all || true
+    else
+        echo "WARNING: could not determine controller IP; fail2ban may ban it" >&2
+    fi
+}
+
+{
     echo "Provision swap (OOM backstop)"
     # Hetzner cloud images ship with NO swap. Measured peak for one E2E job is
     # 29.7 GB of 31.3 GB (95%), with ~10% of samples above 90%. Without swap the

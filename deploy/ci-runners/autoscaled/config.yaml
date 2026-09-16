@@ -32,9 +32,23 @@ config:
   # Only act on jobs carrying this label. Deliberately NOT the default
   # `self-hosted`: gating on our own label means an unrelated `self-hosted` job
   # can never silently spend money in this project.
+  # ONE label only. This is an AND, not an OR: job_matches_labels()
+  # (scale_up.py:569) requires EVERY entry here to be present on the job, and
+  # filtered_run_jobs() silently skips any job that misses one. Listing both
+  # tessellation-e2e and tessellation-e2e-large meant a job had to carry both at
+  # once -- which nothing does -- so no job ever matched and the fleet created no
+  # runners at all, with no error logged anywhere. Verified the hard way
+  # 2026-09-16: a queued smoke job sat for 5+ minutes against an otherwise
+  # healthy controller.
+  #
+  # Consequence: tessellation-e2e-large jobs are NOT served while this says
+  # tessellation-e2e. That is fine today -- cpx62 is already the largest shared
+  # instance, so the meta_label below resolves to the same box, and the only
+  # workflow entry that used it (fork-recovery) is commented out. To serve both,
+  # the wide workflow must request BOTH labels in runs-on, e.g.
+  # `runs-on: [tessellation-e2e, tessellation-e2e-large]`.
   with_label:
     - "tessellation-e2e"
-    - "tessellation-e2e-large"
 
   # `tessellation-e2e` in a workflow's `runs-on` expands to the labels below,
   # which is how the server type / image / location get chosen. Keeping this
@@ -155,9 +169,25 @@ config:
   # `runner:` override, so it lands here like the rest, and committee-rewards was
   # added since.)
   #
-  # 8 is deliberately BELOW the 11 needed for a single wave, because 8 runners +
-  # 1 controller = 9 servers, which fits under the ~10-server limit a fresh
-  # Hetzner project ships with. That means no support ticket before first use.
+  # 8 is deliberately BELOW the count needed for a single wave, and it is sized to
+  # the SHARED project this fleet runs in -- there is only one Hetzner project
+  # here, holding the nightly boxes, ci-runner-1, ci-builder-1 and roman-ai.
+  #
+  # That co-tenancy is safe. The autoscaler can only see its own servers: both
+  # servers.get_all() calls in the package pass
+  # label_selector="github-hetzner-runner=active" (scale_down.py:414,
+  # scale_up.py:1502), and the single server.delete() call site
+  # (scale_down.py:113) is fed from that list. GitHub-side it only touches
+  # runners whose name starts with "github-hetzner-runner-", so ci-runner-1 is
+  # never deregistered.
+  #
+  # Capacity VERIFIED 2026-09-16 rather than assumed: 9 cpx62 were created
+  # simultaneously on top of the 7 existing servers -- 16 servers and 220 shared
+  # cores -- with no refusal, then deleted. Peak here is 7 existing + 8 runners
+  # (128 cores) + 1 cpx22 controller (2 cores) = 16 servers / 206 cores, inside
+  # that. No support ticket needed. Note the headroom is thin: adding another
+  # permanent server to this project eats into it, so re-probe before raising
+  # max_runners.
   #
   # The wall-clock cost of stopping at 8 is small, because the makespan is floored
   # by the LONGEST SINGLE JOB, not by the job count: measured jobs run 3m41s to

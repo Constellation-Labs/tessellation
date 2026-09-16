@@ -31,6 +31,50 @@ RUNNER_PKG_VERSION="${RUNNER_PKG_VERSION:-}"
 die() { echo "ERROR: $*" >&2; exit 1; }
 log() { echo "==> $*"; }
 
+# Wait for the controller to accept SSH, WITHOUT tripping fail2ban.
+#
+# controller-init.tpl installs and enables fail2ban. Its default sshd jail bans
+# an IP after maxretry=5 failed AUTHENTICATIONS within findtime=10m, for
+# bantime=10m. sshd starts listening well before cloud-init finishes creating
+# the `admin` user, so a naive "retry every few seconds until it works" loop
+# produces a burst of genuine auth failures and bans the operator from their own
+# new box -- observed 2026-09-16, ~40 attempts in 200s.
+#
+# So: poll the PORT fast (a TCP connect logs no auth failure and cannot ban
+# anyone), then give cloud-init a grace period, then attempt real auth at
+# intervals wider than findtime/maxretry (600/5 = 120s). Four attempts at 150s
+# stays strictly under the threshold even in the worst case.
+wait_for_ssh() {
+  local host="$1" i
+
+  log "Waiting for TCP 22 on ${host} (no auth yet -- cannot trip fail2ban)"
+  for i in $(seq 1 60); do
+    if nc -z -G 3 "$host" 22 2>/dev/null || nc -z -w 3 "$host" 22 2>/dev/null; then
+      break
+    fi
+    sleep 5
+  done
+
+  # sshd answers before cloud-init has created `admin`. Authenticating during
+  # that window is exactly what gets you banned, so wait it out first.
+  log "Port open; allowing 90s for cloud-init to finish creating the admin user"
+  sleep 90
+
+  for i in 1 2 3 4; do
+    if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes \
+         "${SSH_USER}@${host}" true 2>/dev/null; then
+      log "SSH ready"
+      return 0
+    fi
+    [ "$i" -lt 4 ] && { log "not ready (attempt $i/4); waiting 150s -- deliberately slow, see comment"; sleep 150; }
+  done
+
+  die "cannot SSH to ${SSH_USER}@${host} after ~10 min.
+  If this box was reachable a moment ago, you are probably fail2ban-banned:
+  check with 'ssh root@${host} fail2ban-client status sshd' from an allowed IP,
+  or just wait out the 10 minute bantime. Do NOT retry in a tight loop."
+}
+
 # --- remote/local dispatch ---------------------------------------------------
 if [ "${1:-}" != "--local" ]; then
   TARGET="${1:-}"
@@ -40,10 +84,22 @@ if [ "${1:-}" != "--local" ]; then
     [ -n "${!v:-}" ] || die "$v must be set in the environment"
   done
 
+  wait_for_ssh "$TARGET"
+
   log "Shipping ci-runners/ to ${SSH_USER}@${TARGET}"
   ssh "${SSH_USER}@${TARGET}" 'rm -rf ~/ci-runners && mkdir -p ~/ci-runners'
   # -r not -a: don't try to preserve local ownership onto the remote box.
-  scp -q -r "$SCRIPT_DIR"/* "${SSH_USER}@${TARGET}:~/ci-runners/"
+  #
+  # EXPLICIT paths, not a glob: "$SCRIPT_DIR"/* also matches terraform/, which
+  # carries .terraform/ provider binaries (~24 MB), ci.auto.tfvars, and -- with a
+  # local backend -- terraform state. None of that belongs on the controller, and
+  # the glob turns a ~40 KB copy into a 24 MB one over a link to Helsinki.
+  scp -q -r \
+    "$SCRIPT_DIR/config.yaml" \
+    "$SCRIPT_DIR/systemd" \
+    "$SCRIPT_DIR/scripts" \
+    "$SCRIPT_DIR/bootstrap-controller.sh" \
+    "${SSH_USER}@${TARGET}:~/ci-runners/"
 
   log "Running bootstrap on the controller"
   # Tokens travel over the SSH channel as env vars, not as argv.
@@ -133,12 +189,40 @@ if [ ! -f /etc/github-hetzner-runners/runner_key ]; then
   $SUDO ssh-keygen -t ed25519 -N '' -C 'tessellation-ci-runner-debug' \
     -f /etc/github-hetzner-runners/runner_key
 fi
-# Private key readable by the service group (not world): the autoscaler needs it
-# for SSH-based operations such as recycle-without-rebuild and its `ssh`
-# subcommand. Operators must use sudo to read it — see README.
-$SUDO chown root:runners /etc/github-hetzner-runners/runner_key
-$SUDO chmod 0640 /etc/github-hetzner-runners/runner_key
+# 0600 and owned by the SERVICE USER, not 0640 root:runners.
+#
+# OpenSSH refuses any private key whose mode has group or other bits set --
+# "Permissions 0640 for '...' are too open" -- regardless of who owns it, since
+# it tests (perm & 077) != 0. A group-readable key is therefore not a slightly
+# looser key, it is an unusable one: the autoscaler creates a server, then can
+# never SSH in to run setup.sh, so the runner never registers and the server is
+# reaped as a zombie after max_server_ready_time. Silent, and it repeats for
+# every job forever. Observed 2026-09-16 on first deploy.
+#
+# Operators read it with sudo, which is unaffected by the mode.
+$SUDO chown runners:runners /etc/github-hetzner-runners/runner_key
+$SUDO chmod 0600 /etc/github-hetzner-runners/runner_key
 $SUDO chmod 0644 /etc/github-hetzner-runners/runner_key.pub
+
+# Make that key the service user's DEFAULT ssh identity.
+#
+# server.py:133 builds every connection as
+#   ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" root@<ip>
+# with NO -i, so it uses whatever identity the invoking user has. Generating the
+# key under /etc and pointing config.ssh_key at the .pub is not enough: the
+# private half is never on the `runners` user's identity path, so every
+# connection to a freshly created runner fails with no usable error, the runner
+# never registers, and the server is reaped as a zombie. Observed 2026-09-16.
+$SUDO install -d -m 0700 -o runners -g runners /var/lib/runners/.ssh
+$SUDO tee /var/lib/runners/.ssh/config >/dev/null <<'SSHCFG'
+Host *
+  IdentityFile /etc/github-hetzner-runners/runner_key
+  IdentitiesOnly yes
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+SSHCFG
+$SUDO chown runners:runners /var/lib/runners/.ssh/config
+$SUDO chmod 0600 /var/lib/runners/.ssh/config
 
 log "Preparing the log directory"
 $SUDO mkdir -p /var/log/github-hetzner-runners
