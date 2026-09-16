@@ -1,0 +1,16 @@
+diff --git a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+index 80bee59..b249562 100644
+--- a/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
++++ b/src/main/scala/org/constellation/snapshotstreaming/TessellationServices.scala
+@@ -116,7 +116,10 @@ object TessellationServices {
+       }
+ 
+       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make[F](validators.updateNodeParametersValidator)
+-      updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[F](validators.updateDelegatedStakeValidator)
++      updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[F](
++        validators.updateDelegatedStakeValidator,
++        configuration.fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(env)
++      )
+       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make[F](validators.updateNodeCollateralValidator)
+       noDbLogger <- Slf4jLoggerBundle.makeUnsafe
+       globalSnapshotContextService = hasherSelector.withCurrent { implicit hasher => {
