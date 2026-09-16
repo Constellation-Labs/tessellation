@@ -3,7 +3,8 @@
 Self-hosted GitHub Actions runners for the E2E matrix in
 [`.github/workflows/e2e-just-test.yml`](../../.github/workflows/e2e-just-test.yml),
 replacing the GitHub-hosted `Ubuntu-22-64-core` larger runner
-(**$0.162/min ≈ $2,000/mo** for 9 jobs per PR run).
+(**$0.162/min ≈ $2,000/mo**). That baseline was measured when the matrix was 9
+groups; it is **11** today, so every saving quoted here is conservative.
 
 Two interchangeable implementations ship here. **Both register runners under the
 same label, `tessellation-e2e`**, so the workflow does not care which one is
@@ -41,8 +42,8 @@ UI, so no classic PAT has to be minted at all. See
 [`fixed/README.md`](fixed/README.md#option-a--no-pat-ui-copied-registration-tokens).
 
 The honest limitation of `fixed/`: per-core price is flat across the CCX line, so
-always-on cloud **only saves money by accepting queueing**. At full 9-way
-concurrency it costs ~58% *more* than GitHub (measured job durations make 3
+always-on cloud **only saves money by accepting queueing**. At full 11-way
+concurrency it costs ~93% *more* than GitHub (measured job durations make 4
 runners roughly match today's wall-clock, which is better than first estimated). See
 [`fixed/README.md`](fixed/README.md#the-honest-trade-off) for the full table.
 
@@ -69,7 +70,9 @@ chronic-non-signer classification, and the "wedge profile" fork-recovery flake.
 
 A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
 3 `dl1` + support), each JVM defaulting to `-Xmx8g` with
-`-XX:ActiveProcessorCount=8`. The whole 9-group matrix is **~70 min of work**.
+`-XX:ActiveProcessorCount=8`. The matrix is **11 groups**, all on the
+`tessellation-e2e` label, totalling **~105 min of work**. (The ~70 min in the
+measurements below was the 9-group matrix as it stood then.)
 
 Validated end-to-end twice on a single `ccx33` runner:
 
@@ -126,6 +129,7 @@ setting up before the first live run either way.
   at [`deploy/terraform`](../terraform), separate state. Both stacks here use
   their own state keys (`ci-runners-autoscaled/`, `ci-runners-fixed/`) so nothing
   collides.
-- **The `build` job** and the `snapshot-streaming` E2E group — both stay on
-  GitHub-hosted `ubuntu-22.04` runners, which are cheap and unaffected by this
-  migration.
+- **The `build` job** — stays on a GitHub-hosted `ubuntu-22.04` runner, which is
+  cheap and unaffected by this migration. The `snapshot-streaming` E2E group used
+  to as well, but it carries no `runner:` override in the workflow, so it now
+  lands on `tessellation-e2e` like every other group.

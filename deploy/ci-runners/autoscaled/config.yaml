@@ -70,7 +70,7 @@ config:
   # docker-compose.test.yaml).
   #
   # Prices below are hel1, pulled from the Hetzner API for this account (net ==
-  # gross). Monthly totals assume ~540 job-servers/mo (9 E2E jobs x ~60 runs) at
+  # gross). Monthly totals assume ~660 job-servers/mo (11 E2E jobs x ~60 runs) at
   # ~1.22 billed hours each — Hetzner rounds every partial hour UP to a full
   # calendar hour, so a 4-18 min job usually costs 1-2 h. Add the EUR 22.99/mo
   # controller.
@@ -130,8 +130,8 @@ config:
   # heap-tuned or pinned to a dedicated box.
   #
   # Cost at cpx62, same ~540 job-servers/mo x ~1.22 billed hours:
-  #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 184/mo incl. controller  (90%)
-  #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 367/mo incl. controller  (80%)
+  #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 220/mo incl. controller  (88%)
+  #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 443/mo incl. controller  (76%)
   # against the ~EUR 1852/mo GitHub Ubuntu-22-64-core baseline.
   default_server_type: cpx62
   default_image: "x86:app:docker-ce"

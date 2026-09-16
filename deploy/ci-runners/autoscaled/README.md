@@ -28,21 +28,22 @@ classification, and the "wedge profile" fork-recovery flake.
 
 ## Cost model
 
-Baseline: 9 E2E jobs per run on `Ubuntu-22-64-core` at **$0.162/min** ≈ **$2,000/mo**
-(the 10th group, `snapshot-streaming`, already runs on a GitHub-hosted
-`ubuntu-22.04` runner and is unchanged).
+Baseline: `Ubuntu-22-64-core` at **$0.162/min** ≈ **$2,000/mo**. That figure was
+measured when the matrix was 9 groups; it is **11** today (`snapshot-streaming`
+and `committee-rewards` both land on `tessellation-e2e` — neither has a `runner:`
+override), so the real baseline is higher and the savings below are conservative.
 
 Hetzner `hel1` prices below are from the Cloud API for this account. Monthly
-figures assume ~540 job-servers/mo (9 jobs × ~60 runs) at **~1.22 billed hours
-each** — Hetzner rounds every partial hour **up** to a full calendar hour, and
-measured jobs run 3m41s–18m29s. Plus the €22.99/mo controller.
+figures assume ~660 job-servers/mo (**11 jobs** × ~60 runs) at **~1.22 billed
+hours each** — Hetzner rounds every partial hour **up** to a full calendar hour,
+and measured jobs run 3m41s–18m29s. Plus the €22.99/mo controller.
 
 | Server type | vCPU | Cores / RAM | €/h | Est. €/mo | Saving |
 |---|---|---|---|---|---|
-| **`cpx62`** | **shared** | **16c / 32 GB** | **0.2452** | **~184** | **~90%** — the default |
-| `ccx33` | dedicated | 8c / 32 GB | 0.2612 | ~195 | REJECTED — OOM + 503, see [../README.md](../README.md#sizing-applies-to-both--measured) |
-| `ccx43` | dedicated | 16c / 64 GB | 0.5216 | ~353 | ~81% — the memory-safe choice, **not orderable** (see below) |
-| `ccx53` | dedicated | 32c / 128 GB | 1.0088 | ~683 | ~63% — not orderable |
+| **`cpx62`** | **shared** | **16c / 32 GB** | **0.2452** | **~220** | **~88%** — the default |
+| `ccx33` | dedicated | 8c / 32 GB | 0.2612 | ~233 | REJECTED — OOM + 503, see [../README.md](../README.md#sizing-applies-to-both--measured) |
+| `ccx43` | dedicated | 16c / 64 GB | 0.5216 | ~443 | ~76% — the memory-safe choice, **not orderable** (see below) |
+| `ccx53` | dedicated | 32c / 128 GB | 1.0088 | ~835 | ~55% — not orderable |
 
 **`cpx62` is the default because no CCX is orderable in this account.** The
 Hetzner dedicated-core limit here is 8 and `ci-runner-1` (a `ccx33`) consumes all
@@ -215,5 +216,5 @@ free -m; nproc; uptime          # peak RSS, and load vs core count
   no runner servers is correct even while nine are running.
 - **The hypergraph cluster** (`testnet-*`, `nightly*`) — separate Hetzner project,
   separate Terraform stack at [`deploy/terraform`](../terraform), separate state.
-- **The `build` job** and the `snapshot-streaming` E2E group — both remain on
+- **The `build` job** — remains on
   GitHub-hosted `ubuntu-22.04` runners, which are cheap and unaffected.

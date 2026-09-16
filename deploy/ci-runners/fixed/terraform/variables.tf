@@ -18,14 +18,15 @@ variable "location" {
 variable "runner_count" {
   description = <<-EOT
     Number of always-on runner servers. ONE RUNNER PER SERVER, so this IS the E2E
-    concurrency limit: the 9-job matrix runs in ceil(9 / runner_count) waves.
+    concurrency limit: the 11-job matrix runs in ceil(11 / runner_count) waves.
 
     This is the cost-vs-feedback-time dial. At hel1 ccx43 (EUR 325.49/mo each),
     measured against the ~$2000/mo (~EUR 1852) GitHub baseline:
 
-      3 runners  3 waves  ~75 min PR   EUR   976/mo   47% saving   <- default
-      5 runners  2 waves  ~50 min PR   EUR  1627/mo   12% saving
-      9 runners  1 wave   ~25 min PR   EUR  2929/mo   58% MORE EXPENSIVE
+      3 runners  4 waves  ~100 min PR  EUR   976/mo   47% saving   <- default
+      5 runners  3 waves  ~75 min PR   EUR  1627/mo   12% saving
+      9 runners  2 waves  ~50 min PR   EUR  2929/mo   58% MORE EXPENSIVE
+     11 runners  1 wave   ~25 min PR   EUR  3580/mo   93% MORE EXPENSIVE
 
     Per-core price is flat across CCX sizes, so there is no economy of scale:
     always-on cloud only saves money by accepting queueing. If you need full
@@ -36,7 +37,7 @@ variable "runner_count" {
 
   validation {
     condition     = var.runner_count >= 1 && var.runner_count <= 12
-    error_message = "runner_count must be between 1 and 12; above 9 buys nothing (the matrix is 9 jobs)."
+    error_message = "runner_count must be between 1 and 12; above 11 buys nothing (the matrix is 11 jobs)."
   }
 }
 
