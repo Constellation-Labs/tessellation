@@ -129,7 +129,8 @@ for i in "${!HOSTS[@]}"; do
   ssh "${SSH_USER}@${HOST}" '
     sudo install -m 0755 -o runner -g runner /tmp/job-started.sh   /opt/actions-hooks/job-started.sh
     sudo install -m 0755 -o runner -g runner /tmp/job-completed.sh /opt/actions-hooks/job-completed.sh
-    rm -f /tmp/job-started.sh /tmp/job-completed.sh'
+    sudo install -m 0644 -o runner -g runner /tmp/lib-harness.sh   /opt/actions-hooks/lib-harness.sh
+    rm -f /tmp/job-started.sh /tmp/job-completed.sh /tmp/lib-harness.sh'
 
   log "[$NAME] installing + registering the runner"
   # Tokens travel as env vars over the SSH channel, never in argv.
