@@ -46,7 +46,7 @@ config:
   meta_label:
     tessellation-e2e:
       - "self-hosted"
-      - "type-ccx43"
+      - "type-cpx62"
       - "image-x86-app-docker-ce"
       - "in-hel1"
     # For test groups that run a wider topology than the 3-gl0 default — today
@@ -54,9 +54,13 @@ config:
     # Currently unused: the fork-recovery matrix entry is commented out in
     # e2e-just-test.yml pending PR #1485. Kept defined so re-enabling it is a
     # one-line workflow change.
+    # NOTE: cpx62 is already the LARGEST shared instance Hetzner sells in hel1
+    # (16c/32 GB); there is no shared step up from it. So "large" is currently
+    # the same box as the normal label. A genuinely wider topology needs the
+    # dedicated-core quota raised and a ccx53 — see the sizing note below.
     tessellation-e2e-large:
       - "self-hosted"
-      - "type-ccx53"
+      - "type-cpx62"
       - "image-x86-app-docker-ce"
       - "in-hel1"
 
@@ -91,27 +95,91 @@ config:
   # swap backstop so an overshoot degrades to paging instead of killing the runner
   # process; bake the equivalent into any snapshot image used here.
   #
-  # CCX (dedicated vCPU) not CPX (shared): this suite is timing-sensitive and
-  # docker-compose.test.yaml documents at length how shared-CPU contention
-  # produces multi-second JVM pauses and spurious consensus failures. Do not
-  # move to CPX to save money.
-  default_server_type: ccx43
+  # WHY cpx62 (SHARED vCPU) — reversed 2026-09-16, deliberately.
+  #
+  # This file used to default to ccx43 and told you never to use CPX, citing
+  # docker-compose.test.yaml on shared-CPU contention. That citation does not
+  # support the claim: the comment there is about OUR OWN 15 sibling JVMs each
+  # sizing their FJP/GC pools to the full host CPU count — an in-guest effect,
+  # already capped by -XX:ActiveProcessorCount=8, and identical on dedicated
+  # cores. It says nothing about hypervisor steal. Measured steal on the four
+  # CPX boxes in this account: 0.000% since boot, over 20-25 weeks.
+  #
+  # Two facts decide it:
+  #
+  #  1. CCX IS NOT ORDERABLE. This account's dedicated-core limit is 8 and
+  #     ci-runner-1 (ccx33) consumes all of it. A real POST /servers for ccx33
+  #     AND for ccx13 (2 cores) both return HTTP 403 resource_limit_exceeded,
+  #     "dedicated core limit exceeded". Until Hetzner support raises that,
+  #     every ccx* value in this file is unbuyable at any budget.
+  #
+  #  2. cpx62 STRICTLY DOMINATES the runner we use today. ci-runner-1 is a
+  #     ccx33: 8 cores / 32 GB. cpx62 is 16 cores / 32 GB. Same RAM, double the
+  #     cores. The measured ccx33 CPU failure was load 15.42 on 8 cores (193%),
+  #     which starved GL0's /global-snapshots/latest/combined into HTTP 503 and
+  #     failed `spend`; the same load on 16 cores is 96%, where ccx43 measured
+  #     fine. So this is an upgrade over current CI, not a downgrade.
+  #
+  # WHAT IT DOES NOT FIX: memory. 32 GB is the binding constraint and cpx62 does
+  # not move it — the shared line simply stops there (cpx62 and cax41 are both
+  # 32 GB, and cax41 is ARM, which our x86 node images rule out). Peak was
+  # 29.7 GB of 31.3 GB. scripts/setup.sh therefore provisions a 16 GB swap
+  # backstop on every server, which converts an OOM kill into a slow job. Expect
+  # the heaviest 15-container groups to be tight until per-group peak RSS is
+  # measured (only dag-cluster is, at 5.8 GB) and the heavy ones are either
+  # heap-tuned or pinned to a dedicated box.
+  #
+  # Cost at cpx62, same ~540 job-servers/mo x ~1.22 billed hours:
+  #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 184/mo incl. controller  (90%)
+  #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 367/mo incl. controller  (80%)
+  # against the ~EUR 1852/mo GitHub Ubuntu-22-64-core baseline.
+  default_server_type: cpx62
   default_image: "x86:app:docker-ce"
+
+  # Custom server scripts. This REPLACES the package's scripts directory wholesale
+  # — get_setup_script()/get_startup_script() in scale_up.py raise if a file is
+  # missing rather than falling back — so bootstrap-controller.sh copies the
+  # installed package's scripts dir here first and then overlays our setup.sh.
+  # That way startup-x64.sh always tracks the installed package version and the
+  # only file we maintain is the one we actually changed.
+  scripts: "/etc/github-hetzner-runners/scripts"
   default_location: hel1
 
   # ---------------------------------------------------------------------------
   # Concurrency
   # ---------------------------------------------------------------------------
-  # The E2E matrix is 9 jobs on this label (the 10th, snapshot-streaming, stays on
-  # a GitHub-hosted ubuntu-22.04 runner). 12 leaves headroom for a second PR
-  # starting while one is mid-run.
+  # The E2E matrix is ELEVEN jobs on this label -- dag-cluster, delegated-staking,
+  # token-lock-replacement, currency, rewards, token-locks, allow-spends, spend,
+  # data-with-fee, snapshot-streaming, committee-rewards. (Earlier revisions of
+  # this file said 9 and claimed snapshot-streaming stays GitHub-hosted; it has no
+  # `runner:` override, so it lands here like the rest, and committee-rewards was
+  # added since.)
   #
-  # NOTE: a Hetzner Cloud project ships with a server limit of ~10. Raise it via
-  # support BEFORE relying on this number, or scale-up silently caps. See README.
-  max_runners: 12
+  # 8 is deliberately BELOW the 11 needed for a single wave, because 8 runners +
+  # 1 controller = 9 servers, which fits under the ~10-server limit a fresh
+  # Hetzner project ships with. That means no support ticket before first use.
+  #
+  # The wall-clock cost of stopping at 8 is small, because the makespan is floored
+  # by the LONGEST SINGLE JOB, not by the job count: measured jobs run 3m41s to
+  # 18m29s against 30/45 min timeouts, so ~105 min of total work across 11 jobs.
+  # 11 runners finish in ~20 min (one wave, bounded by the longest job); 8 runners
+  # finish in ~22-27 min, since the 3 queued jobs start as soon as the quickest of
+  # the first 8 frees a slot. Going 1 -> 8 captures nearly all of the ~105 min ->
+  # ~25 min win; 8 -> 12 buys the last ~5 min and costs a support ticket.
+  #
+  # Cost is UNCHANGED by this number. Billing is per job-server-hour, and the same
+  # 11 jobs run either way -- max_runners caps concurrency, not spend. A job that
+  # waits in the queue has no server and bills nothing.
+  #
+  # Raise to 12 (and request a project limit of >= 30) if the extra ~5 min of PR
+  # feedback is worth it. See README.
+  max_runners: 8
 
-  # Stop one PR from consuming the whole fleet and starving every other PR.
-  max_runners_in_workflow_run: 10
+  # Let one PR use the whole fleet. With 11 jobs against 8 runners any single PR
+  # already saturates it, so a lower cap here would only split that PR's own
+  # matrix into more waves without helping a second PR meaningfully. Drop this to
+  # ~6 if PR-vs-PR fairness matters more than one PR finishing fast.
+  max_runners_in_workflow_run: 8
 
   # ---------------------------------------------------------------------------
   # Lifecycle

@@ -94,6 +94,25 @@ log "Installing config + scripts to /etc/github-hetzner-runners"
 $SUDO mkdir -p /etc/github-hetzner-runners
 $SUDO install -m 0644 ~/ci-runners/config.yaml /etc/github-hetzner-runners/config.yaml
 
+# config.scripts points at a directory that REPLACES the package's own scripts
+# directory wholesale: scale_up.py's get_setup_script()/get_startup_script()
+# raise if a file is missing there rather than falling back to the package
+# defaults. Rather than vendor copies of every script (and silently pin the
+# actions-runner version baked into startup-x64.sh), take the installed
+# package's directory as the base and overlay only the file we actually change.
+# Rebuilt from scratch on every run, so a package upgrade is picked up and stale
+# files cannot linger.
+log "Building the runner scripts directory (package defaults + our setup.sh)"
+PKG_SCRIPTS="$(/opt/github-hetzner-runners/venv/bin/python -c \
+  'import os, testflows.github.hetzner.runners.scripts as s; print(os.path.dirname(s.__file__))')"
+[ -d "$PKG_SCRIPTS" ] || die "could not locate the package scripts directory"
+$SUDO rm -rf /etc/github-hetzner-runners/scripts
+$SUDO mkdir -p /etc/github-hetzner-runners/scripts
+$SUDO cp "$PKG_SCRIPTS"/*.sh /etc/github-hetzner-runners/scripts/
+$SUDO install -m 0644 ~/ci-runners/scripts/setup.sh \
+  /etc/github-hetzner-runners/scripts/setup.sh
+log "  scripts dir: $(ls /etc/github-hetzner-runners/scripts | tr '\n' ' ')"
+
 log "Writing the token env file (mode 0600)"
 # Written via a root-only temp file then moved, so the tokens are never briefly
 # world-readable on disk.

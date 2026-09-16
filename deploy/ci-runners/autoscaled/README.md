@@ -37,15 +37,37 @@ figures assume ~540 job-servers/mo (9 jobs × ~60 runs) at **~1.22 billed hours
 each** — Hetzner rounds every partial hour **up** to a full calendar hour, and
 measured jobs run 3m41s–18m29s. Plus the €22.99/mo controller.
 
-| Server type | Cores / RAM | €/h | Est. €/mo | Saving |
-|---|---|---|---|---|
-| `ccx33` | 8c / 32 GB | 0.2612 | ~195 | **REJECTED** — OOM + 503, see [../README.md](../README.md#sizing-applies-to-both--measured) |
-| **`ccx43`** | **16c / 64 GB** | **0.5216** | **~353** | **~81%** |
-| `ccx53` | 32c / 128 GB | 1.0088 | ~683 | ~63% |
+| Server type | vCPU | Cores / RAM | €/h | Est. €/mo | Saving |
+|---|---|---|---|---|---|
+| **`cpx62`** | **shared** | **16c / 32 GB** | **0.2452** | **~184** | **~90%** — the default |
+| `ccx33` | dedicated | 8c / 32 GB | 0.2612 | ~195 | REJECTED — OOM + 503, see [../README.md](../README.md#sizing-applies-to-both--measured) |
+| `ccx43` | dedicated | 16c / 64 GB | 0.5216 | ~353 | ~81% — the memory-safe choice, **not orderable** (see below) |
+| `ccx53` | dedicated | 32c / 128 GB | 1.0088 | ~683 | ~63% — not orderable |
 
-`ccx43` is the default and the measured floor. Sizing is the dominant cost
-variable, but it is now settled by data rather than estimation — see
-[Right-sizing](#right-sizing).
+**`cpx62` is the default because no CCX is orderable in this account.** The
+Hetzner dedicated-core limit here is 8 and `ci-runner-1` (a `ccx33`) consumes all
+of it: a real `POST /servers` for `ccx33` *and* for `ccx13` — 2 cores — both
+return HTTP 403 `resource_limit_exceeded`, "dedicated core limit exceeded"
+(verified 2026-09-16). Deleting shared servers frees none of that quota; the two
+are counted separately. Every `ccx*` row above is unbuyable until Hetzner support
+raises the limit.
+
+That is not purely a compromise. `cpx62` **strictly dominates the runner E2E runs
+on today**: `ci-runner-1` is a `ccx33` at 8c/32 GB, `cpx62` is 16c/32 GB — same
+memory, twice the cores, and the one measured CPU failure was load 15.42 on 8
+cores (193%), which is 96% on 16. The shared-vCPU objection that used to be in
+`config.yaml` cited `docker-compose.test.yaml`, but that comment is about our own
+15 sibling JVMs oversizing their thread pools — already capped by
+`-XX:ActiveProcessorCount=8`, and equally true on dedicated cores. Measured steal
+across the four CPX boxes in this account is **0.000% since boot** over 20-25
+weeks.
+
+What `cpx62` does **not** fix is memory: 32 GB is the binding constraint and the
+shared line stops there (`cpx62` and `cax41` are both 32 GB; `cax41` is ARM, which
+the x86 node images rule out). `scripts/setup.sh` therefore provisions a 16 GB
+swap backstop on every server so an overshoot pages instead of killing the runner
+agent. Expect the heaviest 15-container groups to stay tight until per-group peak
+RSS is measured — only `dag-cluster` is, at 5.8 GB. See [Right-sizing](#right-sizing).
 
 Why the duty-cycle argument favours ephemeral over always-on hardware: real
 demand is ~198 job-hours/month. An always-on 3-box fleet supplies 2,190
