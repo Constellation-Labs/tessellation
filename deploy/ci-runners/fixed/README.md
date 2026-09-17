@@ -26,7 +26,7 @@ essentially flat across the CCX line (~€20/core/mo at every size), so there is
 economy of scale to exploit — buying full 11-way concurrency means buying 11 boxes.
 
 One runner per server (see [below](#why-one-runner-per-server)), so
-**concurrency = `runner_count`**. The matrix is **11 groups** totalling
+**concurrency = `runner_count`**. The matrix is **12 groups** totalling
 **~105 min of work** — the ~70 min in [Measured](#measured-2026-07-31--08-03) was
 the 9-group matrix as it stood then — so wall-clock is roughly
 `105 / runner_count` minutes, floored by the longest single job (~20 min).

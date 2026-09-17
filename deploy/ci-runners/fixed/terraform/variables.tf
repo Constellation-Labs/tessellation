@@ -18,7 +18,7 @@ variable "location" {
 variable "runner_count" {
   description = <<-EOT
     Number of always-on runner servers. ONE RUNNER PER SERVER, so this IS the E2E
-    concurrency limit: the 11-job matrix runs in ceil(11 / runner_count) waves.
+    concurrency limit: the 12-job matrix runs in ceil(12 / runner_count) waves.
 
     This is the cost-vs-feedback-time dial. At hel1 ccx43 (EUR 325.49/mo each),
     measured against the ~$2000/mo (~EUR 1852) GitHub baseline:
@@ -37,7 +37,7 @@ variable "runner_count" {
 
   validation {
     condition     = var.runner_count >= 1 && var.runner_count <= 12
-    error_message = "runner_count must be between 1 and 12; above 11 buys nothing (the matrix is 11 jobs)."
+    error_message = "runner_count must be between 1 and 12; above 12 buys nothing (the matrix is 12 jobs)."
   }
 }
 

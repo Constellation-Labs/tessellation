@@ -34,16 +34,16 @@ and `committee-rewards` both land on `tessellation-e2e` — neither has a `runne
 override), so the real baseline is higher and the savings below are conservative.
 
 Hetzner `hel1` prices below are from the Cloud API for this account. Monthly
-figures assume ~660 job-servers/mo (**11 jobs** × ~60 runs) at **~1.22 billed
+figures assume ~720 job-servers/mo (**12 jobs** × ~60 runs) at **~1.22 billed
 hours each** — Hetzner rounds every partial hour **up** to a full calendar hour,
 and measured jobs run 3m41s–18m29s. Plus the €22.99/mo controller.
 
 | Server type | vCPU | Cores / RAM | €/h | Est. €/mo | Saving |
 |---|---|---|---|---|---|
-| **`cpx62`** | **shared** | **16c / 32 GB** | **0.2452** | **~220** | **~88%** — the default |
-| `ccx33` | dedicated | 8c / 32 GB | 0.2612 | ~233 | REJECTED — OOM + 503, see [../README.md](../README.md#sizing-applies-to-both--measured) |
-| `ccx43` | dedicated | 16c / 64 GB | 0.5216 | ~443 | ~76% — the memory-safe choice, **not orderable** (see below) |
-| `ccx53` | dedicated | 32c / 128 GB | 1.0088 | ~835 | ~55% — not orderable |
+| **`cpx62`** | **shared** | **16c / 32 GB** | **0.2452** | **~238** | **~87%** — the default |
+| `ccx33` | dedicated | 8c / 32 GB | 0.2612 | ~252 | superseded — same RAM, half the cores |
+| `ccx43` | dedicated | 16c / 64 GB | 0.5216 | ~481 | ~74% — over-provisioned, **not orderable** (see below) |
+| `ccx53` | dedicated | 32c / 128 GB | 1.0088 | ~909 | ~51% — not orderable |
 
 **`cpx62` is the default because no CCX is orderable in this account.** The
 Hetzner dedicated-core limit here is 8 and `ci-runner-1` (a `ccx33`) consumes all

@@ -42,8 +42,8 @@ provider "hcloud" {
 # Docker daemon per runner in its own network namespace (privileged DinD) — see
 # the README for that trade-off.
 #
-# CONSEQUENCE: concurrency == runner_count. The 11-job E2E matrix runs in
-# ceil(11 / runner_count) waves, so runner_count is a direct
+# CONSEQUENCE: concurrency == runner_count. The 12-job E2E matrix runs in
+# ceil(12 / runner_count) waves, so runner_count is a direct
 # cost-vs-PR-feedback-time dial. See README for the table.
 # ---------------------------------------------------------------------------
 

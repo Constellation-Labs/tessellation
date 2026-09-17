@@ -70,7 +70,7 @@ chronic-non-signer classification, and the "wedge profile" fork-recovery flake.
 
 A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
 3 `dl1` + support), each JVM defaulting to `-Xmx8g` with
-`-XX:ActiveProcessorCount=8`. The matrix is **11 groups**, all on the
+`-XX:ActiveProcessorCount=8`. The matrix is **12 groups**, all on the
 `tessellation-e2e` label.
 
 ### Per-group peak RSS on a 32 GB box (2026-09-17)
@@ -92,6 +92,12 @@ inferred from container count and heap defaults.
 | `delegated-staking` | 7,341 MB | 23% | 0 | 8.0 min |
 | `snapshot-streaming` | 5,869 MB | 19% | 0 | 6.2 min |
 | `data-with-fee` | — | — | — | 6.2 min |
+| `rollback-download-head` | — | — | — | 9.1 min † |
+
+† `rollback-download-head` landed on develop after this fleet run, so it has no
+peak-RSS sample yet; the timing is from `ci-runner-1`. It runs `--num-gl0=3
+--num-gl1=0`, a narrower topology than the groups above it, so it is unlikely to
+move the 24 GB ceiling.
 
 **The ceiling is 24 GB (77%), and swap was never touched by any group.** Total
 work is 121 min; makespan on 8 runners ~24 min, against ~105 min serial on one.
@@ -140,7 +146,7 @@ load at ~96% rather than 193%.
 |---|---|---|---|
 | vCPU | **shared** | dedicated | dedicated |
 | €/h · €/mo | **0.2452 · 152.99** | 0.2612 · 162.99 | 0.5216 · 325.49 |
-| autoscaled, 11 groups | **~€220 (88%)** | ~€233 (87%) | ~€443 (76%) |
+| autoscaled, 12 groups | **~€238 (87%)** | ~€252 (86%) | ~€481 (74%) |
 | verdict | **recommended — measured** | superseded | over-provisioned |
 
 **`cpx62` is the recommendation, on measurement.** It carries the whole matrix at

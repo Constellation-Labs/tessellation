@@ -84,7 +84,7 @@ config:
   # docker-compose.test.yaml).
   #
   # Prices below are hel1, pulled from the Hetzner API for this account (net ==
-  # gross). Monthly totals assume ~660 job-servers/mo (11 E2E jobs x ~60 runs) at
+  # gross). Monthly totals assume ~720 job-servers/mo (12 E2E jobs x ~60 runs) at
   # ~1.22 billed hours each — Hetzner rounds every partial hour UP to a full
   # calendar hour, so a 4-18 min job usually costs 1-2 h. Add the EUR 22.99/mo
   # controller.
@@ -145,8 +145,8 @@ config:
   # heap-tuned or pinned to a dedicated box.
   #
   # Cost at cpx62, same ~540 job-servers/mo x ~1.22 billed hours:
-  #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 220/mo incl. controller  (88%)
-  #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 443/mo incl. controller  (76%)
+  #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 238/mo incl. controller  (87%)
+  #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 481/mo incl. controller  (74%)
   # against the ~EUR 1852/mo GitHub Ubuntu-22-64-core baseline.
   default_server_type: cpx62
   default_image: "x86:app:docker-ce"
@@ -192,21 +192,21 @@ config:
   #
   # The wall-clock cost of stopping at 8 is small, because the makespan is floored
   # by the LONGEST SINGLE JOB, not by the job count: measured jobs run 3m41s to
-  # 18m29s against 30/45 min timeouts, so ~105 min of total work across 11 jobs.
+  # 24m18s against 30/45/60 min timeouts, so ~130 min of total work across 12 jobs.
   # 11 runners finish in ~20 min (one wave, bounded by the longest job); 8 runners
   # finish in ~22-27 min, since the 3 queued jobs start as soon as the quickest of
   # the first 8 frees a slot. Going 1 -> 8 captures nearly all of the ~105 min ->
   # ~25 min win; 8 -> 12 buys the last ~5 min and costs a support ticket.
   #
   # Cost is UNCHANGED by this number. Billing is per job-server-hour, and the same
-  # 11 jobs run either way -- max_runners caps concurrency, not spend. A job that
+  # 12 jobs run either way -- max_runners caps concurrency, not spend. A job that
   # waits in the queue has no server and bills nothing.
   #
   # Raise to 12 (and request a project limit of >= 30) if the extra ~5 min of PR
   # feedback is worth it. See README.
   max_runners: 8
 
-  # Let one PR use the whole fleet. With 11 jobs against 8 runners any single PR
+  # Let one PR use the whole fleet. With 12 jobs against 8 runners any single PR
   # already saturates it, so a lower cap here would only split that PR's own
   # matrix into more waves without helping a second PR meaningfully. Drop this to
   # ~6 if PR-vs-PR fairness matters more than one PR finishing fast.
