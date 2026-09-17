@@ -239,12 +239,13 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
       case None => none[Signed[S]].pure[F]
       case Some(candidate) =>
         hasherSelector.forOrdinal(candidate.ordinal) { implicit hasher =>
-          candidate.toHashed[F].flatMap { hashed =>
-            if (hashed.hash =!= hash) none[Signed[S]].pure[F]
+          hasher.hash(candidate.value).flatMap { candidateHash =>
+            if (candidateHash =!= hash) none[Signed[S]].pure[F]
             else
               snapshotStorage.get(candidate.ordinal).flatMap {
                 case Some(indexed) if indexed.ordinal === candidate.ordinal =>
-                  indexed.toHashed[F].map(value => Option.when(value.hash === hash)(indexed))
+                  if (indexed eq candidate) indexed.some.pure[F]
+                  else hasher.hash(indexed.value).map(indexedHash => Option.when(indexedHash === hash)(indexed))
                 case _ => none[Signed[S]].pure[F]
               }
           }

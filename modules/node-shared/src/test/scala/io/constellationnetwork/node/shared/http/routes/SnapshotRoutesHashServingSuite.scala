@@ -3,7 +3,7 @@ package io.constellationnetwork.node.shared.http.routes
 import java.io.IOException
 
 import cats.effect.std.Supervisor
-import cats.effect.{IO, Resource}
+import cats.effect.{IO, Ref, Resource}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -30,6 +30,7 @@ import better.files.File
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
+import io.circe.Encoder
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import weaver.MutableIOSuite
@@ -238,16 +239,31 @@ object SnapshotRoutesHashServingSuite extends MutableIOSuite {
     implicit val (supervisor, kryo, json, hasher, security) = res
     File.temporaryDirectory() { root =>
       for {
+        snapshotHashCalls <- Ref.of[IO, Int](0)
+        countingHasher = new Hasher[IO] {
+          def hash[A: Encoder](data: A): IO[Hash] =
+            (data match {
+              case _: GlobalIncrementalSnapshot => snapshotHashCalls.update(_ + 1)
+              case _                            => IO.unit
+            }) >> hasher.hash(data)
+
+          def hashBytes(bytes: Array[Byte]): IO[Hash] = hasher.hashBytes(bytes)
+          def compare[A: Encoder](data: A, expectedHash: Hash): IO[Boolean] = hasher.compare(data, expectedHash)
+          def getLogic(ordinal: SnapshotOrdinal): HashLogic = hasher.getLogic(ordinal)
+          def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): IO[Hash] = hasher.prefixedHash(data, prefix)
+        }
         files <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path((root / "snapshots").pathAsString))
         s <- snapshot
         hash <- s.value.hash
-        built <- routes(root, files, HasherSelector.forSyncAlwaysCurrent(hasher))
+        built <- routes(root, files, HasherSelector.forSyncAlwaysCurrent(countingHasher))
         (api, storage) = built
         _ <- storage.prepend(s, GlobalSnapshotInfo.empty)
         // The accepted ordinal mapping and body are authoritative in memory even before offload.
         _ <- files.delete(s.ordinal) >> files.delete(hash)
+        _ <- snapshotHashCalls.set(0)
         responses <- fetchBoth(api, hash)
-      } yield expect(clue(responses).forall(_ == ((Status.Ok, s.some))))
+        calls <- snapshotHashCalls.get
+      } yield expect.all(clue(responses).forall(_ == ((Status.Ok, s.some))), calls == 2)
     }
   }
 
