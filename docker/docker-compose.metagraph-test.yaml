@@ -1,6 +1,7 @@
 services:
   ml0:
     environment:
+      - CL_DOCKER_WAIT_FOR_JOIN_READY=${CL_DOCKER_WAIT_FOR_JOIN_READY:-true}
       # Match gl0's test override (docker-compose.test.yaml:46,51). The metagraph L0
       # serves /snapshots/latest/combined on host port 9200, and E2E harnesses poll
       # it from a single host IP at sub-second intervals, tripping the production
@@ -21,6 +22,8 @@ services:
           - ml0${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.3${CONTAINER_OFFSET:-0}
   cl1:
+    environment:
+      - CL_DOCKER_WAIT_FOR_JOIN_READY=${CL_DOCKER_WAIT_FOR_JOIN_READY:-true}
     # merge in an extra network just for tests
     networks:
       tessellation_common:
@@ -28,6 +31,8 @@ services:
           - cl1${CONTAINER_NAME_SUFFIX:-}
         ipv4_address: ${NET_PREFIX}.4${CONTAINER_OFFSET:-0}
   dl1:
+    environment:
+      - CL_DOCKER_WAIT_FOR_JOIN_READY=${CL_DOCKER_WAIT_FOR_JOIN_READY:-true}
     # merge in an extra network just for tests
     networks:
       tessellation_common:

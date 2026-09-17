@@ -51,6 +51,22 @@ The supported automatic teardown option is `--cleanup`. The formerly documented
 `--clean-assembly` is currently parsed by `set-env.sh` but not consumed by the assembly runner. It
 does not run `sbt clean` and must not be relied upon. Use the explicit cleanup procedure below.
 
+## E2E join readiness
+
+The test Compose overlays enable a preflight for auto-joining GL0, GL1, ML0, CL1 and DL1 nodes.
+After each node's existing initial join delay, it polls once per second until the local node is
+`ReadyToJoin`, its CLI is listening, and the configured seed serves an active, in-cluster
+registration. This avoids a connection refused during JVM startup adding a full ten-second
+join retry delay. It does not synchronize consensus clocks, require signing seats, or replace
+the JVM's handshake validation. Deliberate late joins and non-joining genesis/rollback leads
+are unchanged. Non-test Compose deployments keep the existing auto-join path.
+
+Readiness has a 120-second budget, separate from the intentional initial delay. On timeout,
+the join worker logs the blocked stage and returns failure without posting a join request;
+the JVM remains available for diagnostics and the existing E2E health checks detect failed joins.
+For comparison runs, export `CL_DOCKER_WAIT_FOR_JOIN_READY=false` to use the old test path.
+Run the offline regression with `node --test .github/action_scripts/e2e_join_ready.test.js`.
+
 ## Lifecycle and evidence preservation
 
 A local `just test` or `just up` performs these operations before starting the cluster:

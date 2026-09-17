@@ -18,6 +18,7 @@ COPY docker/jars/dl1.jar /tessellation/jars/dl1.jar
 COPY docker/jars/cl1.jar /tessellation/jars/cl1.jar
 
 COPY docker/entrypoint.sh /tessellation/entrypoint.sh
+COPY docker/wait-for-join-ready.sh /tessellation/wait-for-join-ready.sh
 COPY docker/internal-health-check.sh /tessellation/internal-health-check.sh
 COPY docker/health-check-inner.sh /tessellation/health-check-inner.sh
 RUN chmod +x /tessellation/entrypoint.sh
