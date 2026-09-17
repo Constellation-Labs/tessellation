@@ -55,9 +55,16 @@ variable "runner_server_type" {
     measured. Stepping down to ccx33 takes 3 runners from EUR 976 to EUR 489/mo,
     so measure peak RSS on the first green run (see README).
 
-    CCX (dedicated vCPU) not CPX (shared): docker-compose.test.yaml documents at
-    length how shared-CPU contention produces multi-second JVM pauses and
-    spurious consensus failures. Do not move to CPX to save money.
+    CCX vs CPX: this used to say "dedicated not shared, do not move to CPX to
+    save money", citing docker-compose.test.yaml. That citation does not support
+    the claim -- the comment there is about our own 15 sibling JVMs sizing their
+    thread pools to the host CPU count, already capped by
+    -XX:ActiveProcessorCount=8 and equally true on dedicated cores. Measured
+    2026-09-17 on shared vCPU under a full 12/12 green matrix: 0.0000% steal,
+    peak load 2.74/16 cores. cpx62 (16c/32 GB, EUR 152.99) carries the whole
+    matrix -- and is the ONLY option here, since this account's dedicated-core
+    quota is 8 and ci-runner-1 consumes all of it, so every ccx* value below
+    returns resource_limit_exceeded. See ../../README.md#sizing.
   EOT
   type        = string
   default     = "ccx43"

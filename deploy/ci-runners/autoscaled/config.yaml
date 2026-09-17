@@ -137,7 +137,8 @@ config:
   # WHAT IT DOES NOT FIX: memory. 32 GB is the binding constraint and cpx62 does
   # not move it — the shared line simply stops there (cpx62 and cax41 are both
   # 32 GB, and cax41 is ARM, which our x86 node images rule out). Peak was
-  # 29.7 GB of 31.3 GB. scripts/setup.sh therefore provisions a 16 GB swap
+  # 24 GB of 31.3 GB (77%), measured across a 12/12 green matrix on 2026-09-17,
+  # with swap untouched by every group. scripts/setup.sh still provisions a 16 GB swap
   # backstop on every server, which converts an OOM kill into a slow job. Expect
   # the heaviest 15-container groups to be tight until per-group peak RSS is
   # measured (only dag-cluster is, at 5.8 GB) and the heavy ones are either

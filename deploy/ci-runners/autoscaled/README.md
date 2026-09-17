@@ -170,7 +170,8 @@ A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
 `-XX:ActiveProcessorCount=8`.
 
 Measured on the fork 2026-07-31 → 08-03, all 11 jobs green: **peak 26.7 GB RAM,
-peak load 15.42, 7% disk**, jobs 3m41s–18m29s. `ccx43` is the measured floor — see
+peak load 15.42, 7% disk**, jobs 3m41s–18m29s. SUPERSEDED by the per-group
+measurements of 2026-09-17 (ceiling 24 GB / 77%, swap untouched) — see
 [../README.md](../README.md#sizing-applies-to-both--measured) for why `ccx33` is
 rejected.
 

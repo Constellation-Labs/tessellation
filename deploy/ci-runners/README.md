@@ -71,50 +71,92 @@ chronic-non-signer classification, and the "wedge profile" fork-recovery flake.
 A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
 3 `dl1` + support), each JVM defaulting to `-Xmx8g` with
 `-XX:ActiveProcessorCount=8`. The matrix is **11 groups**, all on the
-`tessellation-e2e` label, totalling **~105 min of work**. (The ~70 min in the
-measurements below was the 9-group matrix as it stood then.)
+`tessellation-e2e` label.
 
-Validated end-to-end twice on a single `ccx33` runner:
+### Per-group peak RSS on a 32 GB box (2026-09-17)
+
+Sampled every 30 s across a **12/12 green** matrix on the on-demand `cpx62`
+fleet. This is the number that should drive sizing; everything before it was
+inferred from container count and heap defaults.
+
+| group | peak RSS | of 31.3 GB | swap | wall clock |
+|---|---|---|---|---|
+| `allow-spends` | 23,998 MB | **77%** | 0 | 24.3 min |
+| `spend` | 23,969 MB | **77%** | 0 | 20.1 min |
+| `currency` | 21,511 MB | 69% | 0 | 10.3 min |
+| `token-locks` | 20,328 MB | 65% | 0 | 9.1 min |
+| `rewards` | 12,501 MB | 40% | 0 | 5.5 min |
+| `committee-rewards` | 10,198 MB | 33% | 0 | 15.2 min |
+| `token-lock-replacement` | 8,018 MB | 26% | 0 | 9.1 min |
+| `dag-cluster` | 7,420 MB | 24% | 0 | 7.0 min |
+| `delegated-staking` | 7,341 MB | 23% | 0 | 8.0 min |
+| `snapshot-streaming` | 5,869 MB | 19% | 0 | 6.2 min |
+| `data-with-fee` | — | — | — | 6.2 min |
+
+**The ceiling is 24 GB (77%), and swap was never touched by any group.** Total
+work is 121 min; makespan on 8 runners ~24 min, against ~105 min serial on one.
+
+Two things follow. **32 GB is sufficient with ~7 GB spare**, so the 16 GB
+swapfile is insurance rather than something the box runs on. And **container
+count does not predict memory**: `committee-rewards` runs the widest topology
+(5 `gl0` + 3 `gl1`) at only 33%, while the nominally ordinary `allow-spends` and
+`spend` are the heaviest. The old `ccx43` default was inferred from container
+count in exactly that way.
+
+CPU is not a constraint either: sampled load **2.74 on 16 cores (17%)** mid-`spend`,
+and **0.0000% steal** on shared vCPU under real E2E load.
+
+### History — why this supersedes the earlier figures
+
+Validated twice on a single `ccx33` before the fleet existed:
 
 - **fork, 2026-07-31 → 08-03** — all 11 jobs passed; peak 26.7 GB, load 15.42
-- **`Constellation-Labs/tessellation`, 2026-08-21** — **all 12 jobs passed**
-  (10 E2E groups on Hetzner, ~66 min sequential); peak **29.7 GB (95%)**, load
-  12.01, 10% of active samples above 90% memory
+- **`Constellation-Labs/tessellation`, 2026-08-21** — all 12 jobs passed
+  (10 E2E groups, ~66 min sequential); peak **29.7 GB (95%)**, load 12.01
 
-The second run passed `allow-spends` and `spend` — the two that had failed
-earlier — which shows the `ccx33` is *marginal* rather than broken. It is still
-rejected: a fleet that clears 95% memory on luck is a flake source.
+Those runs rejected `ccx33` on two grounds, and `ccx43` (16c/**64 GB**) was
+recommended as the floor:
 
-| | `ccx33` (8c/32 GB) | **`ccx43` (16c/64 GB)** | `ccx53` (32c/128 GB) |
-|---|---|---|---|
-| €/h · €/mo | 0.2612 · 162.99 | 0.5216 · 325.49 | 1.0088 · 629.49 |
-| autoscaled | ~€195 (89%) | **~€353 (81%)** | ~€683 (63%) |
-| fixed, 3 runners | €489 (74%) | **€976 (47%)** | €1,888 (−2%) |
-| verdict | **REJECTED** | **recommended** | more margin, half the saving |
-
-**`ccx33` is rejected on evidence, not caution.** It passed once, then failed
-twice in two distinct ways on repeat runs:
-
-- **Memory** — p90 99%, peak 100% of 32 GB, with no swap at the time. The kernel
-  OOM-killed the Actions runner agent itself during `allow-spends`; the unit went
-  `failed` and the remaining 8 jobs queued forever. Cloud-init now provisions a
-  16 GB swapfile so this degrades to paging instead of a kill — but a box that
-  needs swap to survive is still undersized.
-- **CPU** — peak load 15.42/8 cores (193%); 16% of samples over 1.0/core. GL0's
-  `/global-snapshots/latest/combined` returned **HTTP 503** under the contention and
+- **Memory** — p90 99%, peak 100% of 32 GB, **no swap at the time**. The kernel
+  OOM-killed the Actions runner agent during `allow-spends`; the unit went
+  `failed` and the remaining 8 jobs queued forever.
+- **CPU** — peak load 15.42/8 cores (193%); GL0's
+  `/global-snapshots/latest/combined` returned **HTTP 503** under contention and
   `spend` failed.
 
-On `ccx43` those peaks become ~42% memory and ~96% load, with only 0.7% of samples
-above load 16. Memory is the harder constraint, which is why the runners now carry
-a 16 GB swap backstop (`vm.swappiness=10`) — it converts an OOM kill into a slow
-job, without making a smaller box the right choice.
+The 2026-09-17 data does not reproduce the memory half. `allow-spends` peaks at
+24 GB, not 29.7 GB, and nothing came near 90%. The likely difference is that
+those runs had **no swapfile**, so the kernel had nowhere to go and the reported
+"peak" reflects a box already in trouble; the 15-container topology and heap
+defaults are otherwise unchanged. Run-to-run variance is ~10% (run 1 of the same
+matrix put `spend` at 26.4 GB / 84%), which does not span the gap on its own.
 
-Prices are `hel1`, from the Hetzner Cloud API for this account (net == gross). CCX
-(dedicated vCPU) throughout — **not** CPX (shared); see the timing fragility note
-above.
+The CPU half was real and is simply fixed by core count: 16 cores puts the same
+load at ~96% rather than 193%.
 
-> **Quota:** `ccx43` is 16 dedicated cores. A default Hetzner project allows 8, so
-> creating one returns `resource_limit_exceeded` until you request an increase.
+### Server types
+
+| | `cpx62` (16c/32 GB) | `ccx33` (8c/32 GB) | `ccx43` (16c/64 GB) |
+|---|---|---|---|
+| vCPU | **shared** | dedicated | dedicated |
+| €/h · €/mo | **0.2452 · 152.99** | 0.2612 · 162.99 | 0.5216 · 325.49 |
+| autoscaled, 11 groups | **~€220 (88%)** | ~€233 (87%) | ~€443 (76%) |
+| verdict | **recommended — measured** | superseded | over-provisioned |
+
+**`cpx62` is the recommendation, on measurement.** It carries the whole matrix at
+77% peak memory with swap untouched, and 17% CPU. `ccx43`'s 64 GB was sized for a
+29.7 GB peak that does not reproduce, at twice the price. `ccx33` is the same
+32 GB but half the cores, which is the half that genuinely failed.
+
+Savings are against the ~$2,000/mo (~€1,852) `Ubuntu-22-64-core` baseline, itself
+measured when the matrix was 9 groups, so they are conservative. Prices are
+`hel1` from the Hetzner Cloud API for this account (net == gross).
+
+> **Quota:** every `ccx*` row above is **unbuyable in this account**. The
+> dedicated-core limit is 8 and `ci-runner-1` consumes all of it — a real
+> `POST /servers` for `ccx33` *and* for `ccx13` (2 cores) both return HTTP 403
+> `resource_limit_exceeded`. Deleting shared servers frees none of that quota.
+> `cpx62` is shared vCPU and needs no increase.
 
 ## Rollback
 
