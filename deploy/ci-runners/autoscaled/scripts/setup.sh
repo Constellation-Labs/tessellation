@@ -87,6 +87,43 @@ CONF
 }
 
 {
+    echo "Hosted-runner parity: /usr/local/bin and hostedtoolcache"
+    # These are the two places GitHub's hosted images differ from a stock Ubuntu
+    # box in ways the workflow silently depends on. Both were already solved in
+    # the fixed variant (terraform/templates/runner-init.tpl:78-89); the
+    # autoscaled path never got the same treatment, so the first real E2E run on
+    # this fleet failed EVERY group in 30 seconds at "Install just" with
+    #   cp: cannot create regular file '/usr/local/bin/just': Permission denied
+    #
+    # e2e-just-test.yml:63 installs just with
+    #   curl ... | bash -s -- --to /usr/local/bin
+    # and NO sudo, because on a hosted runner the unprivileged user can write
+    # there. Group-write rather than chown, so root stays the owner.
+    chown root:ubuntu /usr/local/bin
+    chmod 2775 /usr/local/bin
+
+    # actions/setup-java and setup-node install here. startup-x64.sh creates it
+    # too, but it runs AFTER this script, and pre-creating it costs nothing.
+    install -d -m 0775 -o ubuntu -g ubuntu /opt/hostedtoolcache
+}
+
+{
+    echo "Pre-install nvm for the runner user"
+    # docker/bin/install_dependencies.sh gates its Node.js setup on
+    # `[ -d "$HOME/.nvm" ]` (check_node) -- it does NOT look for node on PATH.
+    # Hosted images ship nvm so that check short-circuits; on a bare box it does
+    # not, and `just _check_deps` installs nvm + node mid-job on every single
+    # run. Pre-installing restores parity and keeps that cost out of each job.
+    sudo -u ubuntu bash -c '
+      export NVM_DIR="$HOME/.nvm"
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+      . "$NVM_DIR/nvm.sh"
+      nvm install 18
+      nvm alias default 18
+    '
+}
+
+{
     echo "Provision swap (OOM backstop)"
     # Hetzner cloud images ship with NO swap. Measured peak for one E2E job is
     # 29.7 GB of 31.3 GB (95%), with ~10% of samples above 90%. Without swap the
