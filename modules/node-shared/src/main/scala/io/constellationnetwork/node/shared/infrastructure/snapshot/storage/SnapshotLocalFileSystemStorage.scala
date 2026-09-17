@@ -337,13 +337,22 @@ abstract class SnapshotLocalFileSystemStorage[
     readBytes(fileName).flatMap {
       case None => none[Signed[S]].pure[F]
       case Some(bytes) =>
+        def useFallback(jsonError: Throwable): F[Option[Signed[S]]] =
+          Async[F].delay(deserializeFallback(bytes)).attempt.flatMap {
+            case Right(Right(snapshot))     => snapshot.some.pure[F]
+            case Left(fallbackError)        => warnUnreadable(jsonError, fallbackError)
+            case Right(Left(fallbackError)) => warnUnreadable(jsonError, fallbackError)
+          }
+
+        def warnUnreadable(jsonError: Throwable, fallbackError: Throwable): F[Option[Signed[S]]] =
+          logger.warn(fallbackError)(
+            s"Failed to deserialize snapshot file $fileName with both decoders; JSON error: ${jsonError.getMessage}"
+          ) >> none[Signed[S]].pure[F]
+
         JsonSerializer[F].deserialize[Signed[S]](bytes).attempt.flatMap {
           case Right(Right(snapshot)) => snapshot.some.pure[F]
-          case _ =>
-            Async[F].delay(deserializeFallback(bytes)).attempt.map {
-              case Right(Right(snapshot)) => snapshot.some
-              case _                      => none[Signed[S]]
-            }
+          case Left(jsonError)        => useFallback(jsonError)
+          case Right(Left(jsonError)) => useFallback(jsonError)
         }
     }
 

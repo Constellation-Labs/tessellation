@@ -6,6 +6,8 @@ import cats.effect.std.Supervisor
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
+import scala.jdk.CollectionConverters._
+
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.kryo._
@@ -22,9 +24,13 @@ import io.constellationnetwork.storage.PathGenerator
 import io.constellationnetwork.storage.PathGenerator._
 
 import better.files._
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Level, Logger}
+import ch.qos.logback.core.read.ListAppender
 import eu.timepit.refined.auto._
 import fs2.io.file.Path
 import io.circe.Encoder
+import org.slf4j.LoggerFactory
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -245,6 +251,46 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
           before == after,
           !ordinalExists
         )
+    }
+  }
+
+  test("read warns once only when both snapshot decoders fail") { res =>
+    implicit val (_, _, json, hasher, security, stateProofSelector) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        snapshots <- mkSnapshots
+        (_, expected) = snapshots
+        legacyBytes = Array[Byte](1, 2, 3)
+        corruptBytes = Array[Byte](4, 5, 6)
+        storage = new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)) {
+          def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+            if (bytes.sameElements(legacyBytes)) Right(expected)
+            else Left(new IllegalArgumentException("simulated fallback decode failure"))
+        }
+        _ <- storage.createDirectoryIfNotExists().rethrowT
+        _ <- storage.write("legacy", legacyBytes) >> storage.write("corrupt", corruptBytes)
+        backend = LoggerFactory.getLogger(storage.getClass).asInstanceOf[Logger]
+        originalLevel = backend.getLevel
+        appender = new ListAppender[ILoggingEvent]
+        resultsAndWarnings <- Resource
+          .make(
+            IO {
+              appender.setContext(backend.getLoggerContext)
+              appender.start()
+              backend.setLevel(Level.WARN)
+              backend.addAppender(appender)
+            }
+          )(_ => IO { backend.detachAppender(appender); backend.setLevel(originalLevel); appender.stop() })
+          .use { _ =>
+            for {
+              legacy <- storage.read("legacy")
+              corrupt <- storage.read("corrupt")
+              warnings <- IO(appender.list.asScala.toList.map(_.getFormattedMessage))
+            } yield (legacy, corrupt, warnings)
+          }
+        (legacy, corrupt, warnings) = resultsAndWarnings
+      } yield expect.all(legacy.contains(expected), corrupt.isEmpty, warnings.size == 1, warnings.headOption.exists(_.contains("corrupt")))
     }
   }
 
