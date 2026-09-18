@@ -130,7 +130,8 @@ object types {
 
   case class GossipTimeoutsConfig(
     routes: FiniteDuration,
-    client: FiniteDuration
+    client: FiniteDuration,
+    response: FiniteDuration
   )
 
   case class GossipConfig(
