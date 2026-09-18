@@ -48,7 +48,18 @@ object SnapshotDownloadStorage {
 
       def deletePersisted(ordinal: SnapshotOrdinal): F[Unit] = persistedStorage.delete(ordinal)
 
-      def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
+      private def hasSnapshotInfo(ordinal: SnapshotOrdinal): F[Boolean] =
+        hashSelect.select(ordinal) match {
+          case JsonHash => snapshotInfoStorage.read(ordinal).map(_.isDefined)
+          case KryoHash => snapshotInfoKryoStorage.read(ordinal).map(_.isDefined)
+        }
+
+      def ensurePersistedAnchor(hash: Hash, ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Boolean] =
+        persistedStorage.ensureOrdinalLink(hash, ordinal).flatMap {
+          case status if status.usable => hasSnapshotInfo(ordinal)
+          case status =>
+            logger.warn(s"Rejected unusable persisted recovery anchor ordinal=${ordinal.show} reason=$status").as(false)
+        }
 
       def hasCorrectSnapshotInfo(
         ordinal: SnapshotOrdinal,
@@ -65,7 +76,15 @@ object SnapshotDownloadStorage {
       def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]] =
         snapshotInfoStorage.listStoredOrdinals
           .flatMap(_.filter(_ <= lte).compile.toList)
-          .map(_.maximumOption)
+          .flatMap { ordinals =>
+            def findReadable(remaining: List[SnapshotOrdinal]): F[Option[SnapshotOrdinal]] =
+              remaining match {
+                case head :: tail => hasSnapshotInfo(head).ifM(head.some.pure[F], findReadable(tail))
+                case Nil          => none[SnapshotOrdinal].pure[F]
+              }
+
+            findReadable(ordinals.sorted.reverse)
+          }
 
       def readCombined(
         ordinal: SnapshotOrdinal
@@ -106,7 +125,8 @@ object SnapshotDownloadStorage {
 
       def moveTmpToPersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] =
         HasherSelector[F].forOrdinal(snapshot.ordinal) { implicit hasher =>
-          persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
+          persistedStorage.replaceForRecovery(snapshot) >>
+            tmpStorage.delete(snapshot.ordinal)
         }
 
       def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] = fullGlobalSnapshotStorage.read(ordinal)
