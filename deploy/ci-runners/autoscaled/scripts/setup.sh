@@ -87,6 +87,35 @@ CONF
 }
 
 {
+    echo "Install the packages the harness assumes are present"
+    # Same set the fixed pool installs (terraform/templates/runner-init.tpl:23),
+    # which was assembled from real observed failures rather than guessed. The
+    # ephemeral path never had it, and was relying on whatever the docker-ce
+    # image happens to ship.
+    #
+    # libatomic1 is the one that matters most and is the least obvious: Node
+    # binaries link against libatomic.so.1, it is NOT on the minimal Ubuntu
+    # cloud image, and without it any node -- including the nvm-installed one a
+    # few blocks below -- dies with "error while loading shared libraries:
+    # libatomic.so.1". GitHub's hosted images ship it. The fixed pool hit this
+    # as a live E2E failure. Our matrix passes today only because the docker-ce
+    # image happens to include it, which is luck, not a guarantee.
+    #
+    # jq and curl are the ones workflows and operators reach for directly;
+    # wget/unzip/git/ca-certificates/gnupg are assumed by docker/bin/*.
+    #
+    # No apt-get update here: the upstream block immediately above already
+    # refreshed the cache to install fail2ban. If that block ever moves, this
+    # needs its own update.
+    apt-get install --yes --no-install-recommends \
+        ca-certificates curl wget gnupg jq lsb-release unzip git acl libatomic1
+    curl --version | head -1
+    jq --version
+    ldconfig -p | grep -q libatomic.so.1 && echo "  libatomic.so.1 present" \
+      || echo "WARNING: libatomic.so.1 still missing -- node will fail" >&2
+}
+
+{
     echo "Hosted-runner parity: /usr/local/bin and hostedtoolcache"
     # These are the two places GitHub's hosted images differ from a stock Ubuntu
     # box in ways the workflow silently depends on. Both were already solved in
