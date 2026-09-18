@@ -32,9 +32,23 @@ config:
   # Only act on jobs carrying this label. Deliberately NOT the default
   # `self-hosted`: gating on our own label means an unrelated `self-hosted` job
   # can never silently spend money in this project.
+  # ONE label only. This is an AND, not an OR: job_matches_labels()
+  # (scale_up.py:569) requires EVERY entry here to be present on the job, and
+  # filtered_run_jobs() silently skips any job that misses one. Listing both
+  # tessellation-e2e and tessellation-e2e-large meant a job had to carry both at
+  # once -- which nothing does -- so no job ever matched and the fleet created no
+  # runners at all, with no error logged anywhere. Verified the hard way
+  # 2026-09-16: a queued smoke job sat for 5+ minutes against an otherwise
+  # healthy controller.
+  #
+  # Consequence: tessellation-e2e-large jobs are NOT served while this says
+  # tessellation-e2e. That is fine today -- cpx62 is already the largest shared
+  # instance, so the meta_label below resolves to the same box, and the only
+  # workflow entry that used it (fork-recovery) is commented out. To serve both,
+  # the wide workflow must request BOTH labels in runs-on, e.g.
+  # `runs-on: [tessellation-e2e, tessellation-e2e-large]`.
   with_label:
     - "tessellation-e2e"
-    - "tessellation-e2e-large"
 
   # `tessellation-e2e` in a workflow's `runs-on` expands to the labels below,
   # which is how the server type / image / location get chosen. Keeping this
@@ -46,7 +60,7 @@ config:
   meta_label:
     tessellation-e2e:
       - "self-hosted"
-      - "type-ccx43"
+      - "type-cpx62"
       - "image-x86-app-docker-ce"
       - "in-hel1"
     # For test groups that run a wider topology than the 3-gl0 default — today
@@ -54,9 +68,13 @@ config:
     # Currently unused: the fork-recovery matrix entry is commented out in
     # e2e-just-test.yml pending PR #1485. Kept defined so re-enabling it is a
     # one-line workflow change.
+    # NOTE: cpx62 is already the LARGEST shared instance Hetzner sells in hel1
+    # (16c/32 GB); there is no shared step up from it. So "large" is currently
+    # the same box as the normal label. A genuinely wider topology needs the
+    # dedicated-core quota raised and a ccx53 — see the sizing note below.
     tessellation-e2e-large:
       - "self-hosted"
-      - "type-ccx53"
+      - "type-cpx62"
       - "image-x86-app-docker-ce"
       - "in-hel1"
 
@@ -66,7 +84,7 @@ config:
   # docker-compose.test.yaml).
   #
   # Prices below are hel1, pulled from the Hetzner API for this account (net ==
-  # gross). Monthly totals assume ~540 job-servers/mo (9 E2E jobs x ~60 runs) at
+  # gross). Monthly totals assume ~720 job-servers/mo (12 E2E jobs x ~60 runs) at
   # ~1.22 billed hours each — Hetzner rounds every partial hour UP to a full
   # calendar hour, so a 4-18 min job usually costs 1-2 h. Add the EUR 22.99/mo
   # controller.
@@ -91,27 +109,113 @@ config:
   # swap backstop so an overshoot degrades to paging instead of killing the runner
   # process; bake the equivalent into any snapshot image used here.
   #
-  # CCX (dedicated vCPU) not CPX (shared): this suite is timing-sensitive and
-  # docker-compose.test.yaml documents at length how shared-CPU contention
-  # produces multi-second JVM pauses and spurious consensus failures. Do not
-  # move to CPX to save money.
-  default_server_type: ccx43
+  # WHY cpx62 (SHARED vCPU) — reversed 2026-09-16, deliberately.
+  #
+  # This file used to default to ccx43 and told you never to use CPX, citing
+  # docker-compose.test.yaml on shared-CPU contention. That citation does not
+  # support the claim: the comment there is about OUR OWN 15 sibling JVMs each
+  # sizing their FJP/GC pools to the full host CPU count — an in-guest effect,
+  # already capped by -XX:ActiveProcessorCount=8, and identical on dedicated
+  # cores. It says nothing about hypervisor steal. Measured steal on the four
+  # CPX boxes in this account: 0.000% since boot, over 20-25 weeks.
+  #
+  # Two facts decide it:
+  #
+  #  1. CCX IS NOT ORDERABLE. This account's dedicated-core limit is 8 and
+  #     ci-runner-1 (ccx33) consumes all of it. A real POST /servers for ccx33
+  #     AND for ccx13 (2 cores) both return HTTP 403 resource_limit_exceeded,
+  #     "dedicated core limit exceeded". Until Hetzner support raises that,
+  #     every ccx* value in this file is unbuyable at any budget.
+  #
+  #  2. cpx62 STRICTLY DOMINATES the runner we use today. ci-runner-1 is a
+  #     ccx33: 8 cores / 32 GB. cpx62 is 16 cores / 32 GB. Same RAM, double the
+  #     cores. The measured ccx33 CPU failure was load 15.42 on 8 cores (193%),
+  #     which starved GL0's /global-snapshots/latest/combined into HTTP 503 and
+  #     failed `spend`; the same load on 16 cores is 96%, where ccx43 measured
+  #     fine. So this is an upgrade over current CI, not a downgrade.
+  #
+  # WHAT IT DOES NOT FIX: memory. 32 GB is the binding constraint and cpx62 does
+  # not move it — the shared line simply stops there (cpx62 and cax41 are both
+  # 32 GB, and cax41 is ARM, which our x86 node images rule out). Peak was
+  # 24 GB of 31.3 GB (77%), with swap untouched by every group. Measured
+  # 2026-09-17 on the autoscaled fleet, on the FORK effects-ai/tessellation run
+  # 35169636561 -- 12 jobs green (build + 11 groups). That predates
+  # rollback-download-head, which therefore has NO peak-RSS sample; it runs
+  # --num-gl0=3 --num-gl1=0, narrower than anything measured, but that is an
+  # expectation rather than data. No PR run on this repo has exercised the fleet.
+  # scripts/setup.sh still provisions a 16 GB swap
+  # backstop on every server, which converts an OOM kill into a slow job. Expect
+  # the heaviest 15-container groups to be tight until per-group peak RSS is
+  # measured (only dag-cluster is, at 5.8 GB) and the heavy ones are either
+  # heap-tuned or pinned to a dedicated box.
+  #
+  # Cost at cpx62, same ~720 job-servers/mo x ~1.22 billed hours:
+  #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 238/mo incl. controller  (87%)
+  #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 481/mo incl. controller  (74%)
+  # against the ~EUR 1852/mo GitHub Ubuntu-22-64-core baseline.
+  default_server_type: cpx62
   default_image: "x86:app:docker-ce"
+
+  # Custom server scripts. This REPLACES the package's scripts directory wholesale
+  # — get_setup_script()/get_startup_script() in scale_up.py raise if a file is
+  # missing rather than falling back — so bootstrap-controller.sh copies the
+  # installed package's scripts dir here first and then overlays our setup.sh.
+  # That way startup-x64.sh always tracks the installed package version and the
+  # only file we maintain is the one we actually changed.
+  scripts: "/etc/github-hetzner-runners/scripts"
   default_location: hel1
 
   # ---------------------------------------------------------------------------
   # Concurrency
   # ---------------------------------------------------------------------------
-  # The E2E matrix is 9 jobs on this label (the 10th, snapshot-streaming, stays on
-  # a GitHub-hosted ubuntu-22.04 runner). 12 leaves headroom for a second PR
-  # starting while one is mid-run.
+  # The E2E matrix is TWELVE jobs on this label -- dag-cluster, delegated-staking,
+  # token-lock-replacement, rollback-download-head, currency, rewards, token-locks,
+  # allow-spends, spend, data-with-fee, snapshot-streaming, committee-rewards.
+  # (Earlier revisions said 9, then 11; snapshot-streaming has no `runner:` override
+  # so it lands here like the rest, committee-rewards was added later, and
+  # rollback-download-head arrived with 63e31ea9a.)
   #
-  # NOTE: a Hetzner Cloud project ships with a server limit of ~10. Raise it via
-  # support BEFORE relying on this number, or scale-up silently caps. See README.
-  max_runners: 12
+  # 8 is deliberately BELOW the count needed for a single wave, and it is sized to
+  # the SHARED project this fleet runs in -- there is only one Hetzner project
+  # here, holding the nightly boxes, ci-runner-1, ci-builder-1 and roman-ai.
+  #
+  # That co-tenancy is safe. The autoscaler can only see its own servers: both
+  # servers.get_all() calls in the package pass
+  # label_selector="github-hetzner-runner=active" (scale_down.py:414,
+  # scale_up.py:1502), and the single server.delete() call site
+  # (scale_down.py:113) is fed from that list. GitHub-side it only touches
+  # runners whose name starts with "github-hetzner-runner-", so ci-runner-1 is
+  # never deregistered.
+  #
+  # Capacity VERIFIED 2026-09-16 rather than assumed: 9 cpx62 were created
+  # simultaneously on top of the 7 existing servers -- 16 servers and 220 shared
+  # cores -- with no refusal, then deleted. Peak here is 7 existing + 8 runners
+  # (128 cores) + 1 cpx22 controller (2 cores) = 16 servers / 206 cores, inside
+  # that. No support ticket needed. Note the headroom is thin: adding another
+  # permanent server to this project eats into it, so re-probe before raising
+  # max_runners.
+  #
+  # The wall-clock cost of stopping at 8 is small, because the makespan is floored
+  # by the LONGEST SINGLE JOB, not by the job count: measured jobs run 3m41s to
+  # 24m18s against 30/45/60 min timeouts, so ~130 min of total work across 12 jobs.
+  # 11 runners finish in ~20 min (one wave, bounded by the longest job); 8 runners
+  # finish in ~22-27 min, since the 3 queued jobs start as soon as the quickest of
+  # the first 8 frees a slot. Going 1 -> 8 captures nearly all of the ~105 min ->
+  # ~25 min win; 8 -> 12 buys the last ~5 min and costs a support ticket.
+  #
+  # Cost is UNCHANGED by this number. Billing is per job-server-hour, and the same
+  # 12 jobs run either way -- max_runners caps concurrency, not spend. A job that
+  # waits in the queue has no server and bills nothing.
+  #
+  # Raise to 12 (and request a project limit of >= 30) if the extra ~5 min of PR
+  # feedback is worth it. See README.
+  max_runners: 8
 
-  # Stop one PR from consuming the whole fleet and starving every other PR.
-  max_runners_in_workflow_run: 10
+  # Let one PR use the whole fleet. With 12 jobs against 8 runners any single PR
+  # already saturates it, so a lower cap here would only split that PR's own
+  # matrix into more waves without helping a second PR meaningfully. Drop this to
+  # ~6 if PR-vs-PR fairness matters more than one PR finishing fast.
+  max_runners_in_workflow_run: 8
 
   # ---------------------------------------------------------------------------
   # Lifecycle

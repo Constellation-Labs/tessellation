@@ -23,22 +23,24 @@ choose.
 
 **Always-on cloud only saves money by accepting queueing.** Per-core price is
 essentially flat across the CCX line (~€20/core/mo at every size), so there is no
-economy of scale to exploit — buying full 9-way concurrency means buying 9 boxes.
+economy of scale to exploit — buying full 11-way concurrency means buying 11 boxes.
 
 One runner per server (see [below](#why-one-runner-per-server)), so
-**concurrency = `runner_count`**. Measured on this fleet, the 9 E2E groups total
-**~70 min of work** (see [Measured](#measured-2026-07-31--08-03)), so wall-clock
-is roughly `70 / runner_count` minutes. Against the ~$2,000/mo (≈€1,852 at
-~1.08 USD/EUR) GitHub baseline, at `hel1` prices:
+**concurrency = `runner_count`**. The matrix is **12 groups** totalling
+**~105 min of work** — the ~70 min in [Measured](#measured-2026-07-31--08-03) was
+the 9-group matrix as it stood then — so wall-clock is roughly
+`105 / runner_count` minutes, floored by the longest single job (~20 min).
+Against the ~$2,000/mo (≈€1,852 at ~1.08 USD/EUR) GitHub baseline, at `hel1`
+prices:
 
 | Runners × type | Concurrent | PR wall-clock | €/mo | Saving |
 |---|---|---|---|---|
-| 2× `ccx43` | 2 | ~35 min | 651 | 65% |
-| **3× `ccx43`** | **3** | **~23 min** ≈ today | **976** | **47%** |
-| 4× `ccx43` | 4 | ~18 min | 1,302 | 30% |
+| 2× `ccx43` | 2 | ~53 min | 651 | 65% |
+| 3× `ccx43` | 3 | ~35 min | 976 | 47% |
+| **4× `ccx43`** | **4** | **~26 min** ≈ today | **1,302** | **30%** |
 | ~~any `ccx33`~~ | — | — | — | **rejected — see below** |
 
-Current PR feedback is ~25 min, so 3 runners roughly preserves it. If you want
+Current PR feedback is ~25 min, so 4 runners roughly preserves it. If you want
 bigger savings at the same speed, use [`../autoscaled`](../autoscaled) (~81%,
 elastic) instead — the duty cycle is only ~9%, so paying for always-on capacity
 is structurally wasteful.

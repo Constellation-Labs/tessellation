@@ -30,14 +30,22 @@ variable "controller_server_type" {
   default     = "cpx22"
 }
 
-variable "team_ssh_keys" {
-  description = "SSH public keys granted `admin` on the controller. At least one is required or the box is unreachable."
+variable "ssh_key_names" {
+  description = <<-EOT
+    Names of SSH keys ALREADY REGISTERED in the Hetzner project, granted `admin`
+    on the controller. Referenced by name rather than uploaded: Hetzner SSH keys
+    are project-global with unique fingerprints, so re-uploading a key any team
+    member has already added fails with a 409 uniqueness_error. This stack shares
+    a project with the chain boxes, so that collision is the normal case.
+
+    List them with: hcloud ssh-key list
+  EOT
   type        = list(string)
   default     = []
 
   validation {
-    condition     = length(var.team_ssh_keys) > 0
-    error_message = "Provide at least one team SSH public key, or the controller cannot be reached."
+    condition     = length(var.ssh_key_names) > 0
+    error_message = "Provide at least one registered SSH key name, or the controller cannot be reached."
   }
 }
 

@@ -11,7 +11,7 @@ terraform {
   #   terraform { backend "local" {} }
   # to run without AWS credentials.
   backend "s3" {
-    bucket = "tessellation-nightly"
+    bucket = "ci-terraform-150340915792-us-west-1-an"
     # Distinct key per variant — the autoscaled and fixed stacks must never share
     # state, so both can exist (even simultaneously) without clobbering.
     key    = "ci-runners-autoscaled/terraform.tfstate"
@@ -40,10 +40,14 @@ provider "hcloud" {
 # servers is correct, even while nine of them are running.
 # ---------------------------------------------------------------------------
 
-resource "hcloud_ssh_key" "team" {
-  for_each   = { for idx, key in var.team_ssh_keys : idx => key }
-  name       = "ci-runners-team-${each.key}"
-  public_key = each.value
+# Referenced by NAME, not uploaded — same as the fixed variant. Hetzner SSH keys
+# are project-global with unique fingerprints, so re-uploading a key anyone has
+# already added fails the apply with a 409 uniqueness_error. That is not
+# hypothetical here: this stack shares a project with the chain boxes, and every
+# team key is already registered.
+data "hcloud_ssh_key" "team" {
+  for_each = toset(var.ssh_key_names)
+  name     = each.value
 }
 
 resource "hcloud_firewall" "controller" {
@@ -92,12 +96,12 @@ resource "hcloud_server" "controller" {
   server_type  = var.controller_server_type
   image        = "ubuntu-24.04"
   location     = var.location
-  ssh_keys     = [for k in hcloud_ssh_key.team : k.id]
+  ssh_keys     = [for k in data.hcloud_ssh_key.team : k.id]
   firewall_ids = [hcloud_firewall.controller.id]
 
   user_data = templatefile("${path.module}/templates/controller-init.tpl", {
     hostname = "ci-runners-controller"
-    ssh_keys = var.team_ssh_keys
+    ssh_keys = [for k in data.hcloud_ssh_key.team : k.public_key]
   })
 
   labels = {

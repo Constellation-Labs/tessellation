@@ -8,7 +8,7 @@ terraform {
   #   terraform { backend "local" {} }
   # to run without AWS credentials.
   backend "s3" {
-    bucket = "tessellation-nightly"
+    bucket = "ci-terraform-150340915792-us-west-1-an"
     key    = "ci-runners-fixed/terraform.tfstate"
     region = "us-west-1"
   }
@@ -42,8 +42,8 @@ provider "hcloud" {
 # Docker daemon per runner in its own network namespace (privileged DinD) — see
 # the README for that trade-off.
 #
-# CONSEQUENCE: concurrency == runner_count. The 9-job E2E matrix runs in
-# ceil(9 / runner_count) waves, so runner_count is a direct
+# CONSEQUENCE: concurrency == runner_count. The 12-job E2E matrix runs in
+# ceil(12 / runner_count) waves, so runner_count is a direct
 # cost-vs-PR-feedback-time dial. See README for the table.
 # ---------------------------------------------------------------------------
 

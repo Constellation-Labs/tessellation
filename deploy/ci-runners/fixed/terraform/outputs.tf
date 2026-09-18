@@ -9,8 +9,8 @@ output "runner_ips_csv" {
 }
 
 output "concurrency" {
-  description = "Concurrent E2E jobs this pool can serve (one runner per server), and the resulting wave count for the 9-job matrix."
-  value       = "${var.runner_count} concurrent; ${ceil(9 / var.runner_count)} wave(s) for the 9-job E2E matrix"
+  description = "Concurrent E2E jobs this pool can serve (one runner per server), and the resulting wave count for the 12-job matrix."
+  value       = "${var.runner_count} concurrent; ${ceil(12 / var.runner_count)} wave(s) for the 12-job E2E matrix"
 }
 
 output "estimated_monthly_eur" {
