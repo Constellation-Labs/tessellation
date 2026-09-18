@@ -75,9 +75,17 @@ A job runs up to **15** containers (3 `gl0` + 3 `gl1` + 1 `ml0` + 3 `cl1` +
 
 ### Per-group peak RSS on a 32 GB box (2026-09-17)
 
-Sampled every 30 s across a **12/12 green** matrix on the on-demand `cpx62`
-fleet. This is the number that should drive sizing; everything before it was
-inferred from container count and heap defaults.
+Sampled every 30 s on the on-demand `cpx62` fleet during
+[`effects-ai/tessellation` run 35169636561](https://github.com/effects-ai/tessellation/actions/runs/35169636561)
+— 12 jobs green (build + 11 groups). This is the number that should drive sizing;
+everything before it was inferred from container count and heap defaults.
+
+**Provenance, stated plainly:** that run was on a **fork**, because the fleet could
+not register runners on this repository until 2026-09-18. **No PR run on
+`Constellation-Labs/tessellation` has yet exercised the fleet** — every E2E job on
+the PR that introduced it ran serially on `ci-runner-1`. The numbers below are real
+measurements from a real matrix, but they are not reproducible from this repo's CI
+history, and `rollback-download-head` postdates them entirely.
 
 | group | peak RSS | of 31.3 GB | swap | wall clock |
 |---|---|---|---|---|
@@ -163,6 +171,31 @@ measured when the matrix was 9 groups, so they are conservative. Prices are
 > `POST /servers` for `ccx33` *and* for `ccx13` (2 cores) both return HTTP 403
 > `resource_limit_exceeded`. Deleting shared servers frees none of that quota.
 > `cpx62` is shared vCPU and needs no increase.
+
+## Terraform state — read before applying either stack
+
+Both stacks moved their S3 backend to `ci-terraform-150340915792-us-west-1-an`.
+The previous value, `tessellation-nightly`, **does not exist** — `HeadBucket`
+returns 404 — so there is no remote state to migrate and
+`terraform init -migrate-state` has nothing to move. `terraform init` simply
+starts clean against the new bucket.
+
+That is fine for **`autoscaled/`**, whose state was created in the new bucket when
+the controller was applied on 2026-09-17.
+
+It is a hazard for **`fixed/`**. That stack's real state is not in S3 at all — it
+is a local file in a separate working copy:
+
+```
+~/src/tessellation.zzzzzz/deploy/ci-runners1/fixed/terraform/terraform.tfstate
+serial 15 · manages hcloud_server.runner (ci-runner-1) + hcloud_firewall.runner
+```
+
+So `terraform apply` from this repo against the new backend sees **empty state**
+and will create a **second** runner and firewall rather than adopting the existing
+`ci-runner-1`. Before applying `fixed/`, either copy that state file into place and
+`terraform init -migrate-state`, or `terraform import` the existing server and
+firewall. Do not apply it blind.
 
 ## Rollback
 

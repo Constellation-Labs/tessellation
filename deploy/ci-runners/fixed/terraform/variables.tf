@@ -47,27 +47,29 @@ variable "runner_server_type" {
     + 3 cl1 + 3 dl1), each defaulting to `-Xmx8g` with
     `-XX:ActiveProcessorCount=8`.
 
-      ccx33   8c /  32 GB  EUR 162.99/mo  — 74% saving at 3 runners; 32 GB is tight, measure first
-      ccx43  16c /  64 GB  EUR 325.49/mo  — default
+      cpx62  16c /  32 GB  EUR 152.99/mo  — shared vCPU, the default
+      ccx33   8c /  32 GB  EUR 162.99/mo  — dedicated; same RAM, half the cores
+      ccx43  16c /  64 GB  EUR 325.49/mo  — dedicated; 2x the price for headroom nothing used
       ccx53  32c / 128 GB  EUR 629.49/mo  — only if consensus timing flakes demand it
 
-    The ccx43 default is INFERRED from container count and heap defaults, not
-    measured. Stepping down to ccx33 takes 3 runners from EUR 976 to EUR 489/mo,
-    so measure peak RSS on the first green run (see README).
+    DEFAULT IS cpx62, and it must be: every ccx* row above returns
+    resource_limit_exceeded on this account. The dedicated-core quota is 8 and
+    ci-runner-1 consumes all of it -- a real POST /servers for ccx33 AND for
+    ccx13 (2 cores) both return HTTP 403. Leaving ccx43 as the default meant a
+    fresh `terraform apply` of this stack failed out of the box.
 
     CCX vs CPX: this used to say "dedicated not shared, do not move to CPX to
     save money", citing docker-compose.test.yaml. That citation does not support
     the claim -- the comment there is about our own 15 sibling JVMs sizing their
     thread pools to the host CPU count, already capped by
-    -XX:ActiveProcessorCount=8 and equally true on dedicated cores. Measured
-    2026-09-17 on shared vCPU under a full 12/12 green matrix: 0.0000% steal,
-    peak load 2.74/16 cores. cpx62 (16c/32 GB, EUR 152.99) carries the whole
-    matrix -- and is the ONLY option here, since this account's dedicated-core
-    quota is 8 and ci-runner-1 consumes all of it, so every ccx* value below
-    returns resource_limit_exceeded. See ../../README.md#sizing.
+    -XX:ActiveProcessorCount=8 and equally true on dedicated cores. Measured on
+    shared vCPU 2026-09-17 across 12 green jobs (fork run 35169636561):
+    0.0000% steal, peak load 2.74/16 cores, peak 24 GB of 31.3 GB with swap
+    untouched. Note that run was on the AUTOSCALED fleet and on a fork -- this
+    fixed stack has not itself been applied with cpx62. See ../../README.md#sizing.
   EOT
   type        = string
-  default     = "ccx43"
+  default     = "cpx62"
 }
 
 variable "ssh_key_names" {

@@ -137,14 +137,19 @@ config:
   # WHAT IT DOES NOT FIX: memory. 32 GB is the binding constraint and cpx62 does
   # not move it — the shared line simply stops there (cpx62 and cax41 are both
   # 32 GB, and cax41 is ARM, which our x86 node images rule out). Peak was
-  # 24 GB of 31.3 GB (77%), measured across a 12/12 green matrix on 2026-09-17,
-  # with swap untouched by every group. scripts/setup.sh still provisions a 16 GB swap
+  # 24 GB of 31.3 GB (77%), with swap untouched by every group. Measured
+  # 2026-09-17 on the autoscaled fleet, on the FORK effects-ai/tessellation run
+  # 35169636561 -- 12 jobs green (build + 11 groups). That predates
+  # rollback-download-head, which therefore has NO peak-RSS sample; it runs
+  # --num-gl0=3 --num-gl1=0, narrower than anything measured, but that is an
+  # expectation rather than data. No PR run on this repo has exercised the fleet.
+  # scripts/setup.sh still provisions a 16 GB swap
   # backstop on every server, which converts an OOM kill into a slow job. Expect
   # the heaviest 15-container groups to be tight until per-group peak RSS is
   # measured (only dag-cluster is, at 5.8 GB) and the heavy ones are either
   # heap-tuned or pinned to a dedicated box.
   #
-  # Cost at cpx62, same ~540 job-servers/mo x ~1.22 billed hours:
+  # Cost at cpx62, same ~720 job-servers/mo x ~1.22 billed hours:
   #   cpx62  16c / 32 GB  EUR 0.2452/h  ~= EUR 238/mo incl. controller  (87%)
   #   ccx43  16c / 64 GB  EUR 0.5216/h  ~= EUR 481/mo incl. controller  (74%)
   # against the ~EUR 1852/mo GitHub Ubuntu-22-64-core baseline.
@@ -163,12 +168,12 @@ config:
   # ---------------------------------------------------------------------------
   # Concurrency
   # ---------------------------------------------------------------------------
-  # The E2E matrix is ELEVEN jobs on this label -- dag-cluster, delegated-staking,
-  # token-lock-replacement, currency, rewards, token-locks, allow-spends, spend,
-  # data-with-fee, snapshot-streaming, committee-rewards. (Earlier revisions of
-  # this file said 9 and claimed snapshot-streaming stays GitHub-hosted; it has no
-  # `runner:` override, so it lands here like the rest, and committee-rewards was
-  # added since.)
+  # The E2E matrix is TWELVE jobs on this label -- dag-cluster, delegated-staking,
+  # token-lock-replacement, rollback-download-head, currency, rewards, token-locks,
+  # allow-spends, spend, data-with-fee, snapshot-streaming, committee-rewards.
+  # (Earlier revisions said 9, then 11; snapshot-streaming has no `runner:` override
+  # so it lands here like the rest, committee-rewards was added later, and
+  # rollback-download-head arrived with 63e31ea9a.)
   #
   # 8 is deliberately BELOW the count needed for a single wave, and it is sized to
   # the SHARED project this fleet runs in -- there is only one Hetzner project

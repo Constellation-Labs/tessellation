@@ -155,9 +155,10 @@ CONF
 {
     echo "Provision swap (OOM backstop)"
     # Hetzner cloud images ship with NO swap. Measured peak for one E2E job is
-    # 24 GB of 31.3 GB (77%) across a 12/12 green matrix on 2026-09-17, with swap
-    # untouched by every group. (An earlier no-swap ccx33 run reported 29.7 GB /
-    # 95%, which does not reproduce with a swapfile present.) Without swap the
+    # 24 GB of 31.3 GB (77%) with swap untouched by every group, measured on the
+    # fork run 35169636561 (12 jobs: build + 11 groups). (An earlier no-swap ccx33
+    # run reported 29.7 GB / 95%, which does not reproduce with a swapfile
+    # present.) Without swap the
     # kernel does not slow the job down, it OOM-kills a process — and the victim
     # on 2026-08-03 was the runner agent itself.
     #
