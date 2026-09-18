@@ -42,7 +42,8 @@ case class DelegatedRewardsResult(
 case class PartitionedStakeUpdates(
   unexpiredCreateDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
   unexpiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
-  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+  expiredWithdrawalsDelegatedStaking: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+  withdrawalSettlement: Option[DelegatedStakeWithdrawalSettlement] = None
 )
 
 trait DelegatedRewardsDistributor[F[_]] {
@@ -62,6 +63,8 @@ trait DelegatedRewardsDistributor[F[_]] {
 }
 
 object DelegatedRewardsDistributor {
+
+  // Withdrawal normalization is prepared once by acceptance, in DelegatedStakeWithdrawalSettlement.
 
   /** Identifies which stakes are being modified (have matching tokenLockRef in both existing records and acceptedCreates). Returns a Set of
     * (Address, TokenLockRef) tuples representing the modified stakes.
@@ -207,7 +210,21 @@ object DelegatedRewardsDistributor {
         }
     }.map(records => SortedMap.from(records))
       .map(partitionedRecords.unexpiredWithdrawalsDelegatedStaking |+| _)
+      .map(pending => partitionedRecords.withdrawalSettlement.fold(pending)(_.removeSettled(pending)))
       .map(_.filterNot(_._2.isEmpty))
+
+  /** Settled withdrawal rewards were counted at accrual, not again as current-round issuance. */
+  def sumMintedAmountChecked[F[_]: Async](
+    reservedAddressRewards: SortedSet[RewardTransaction],
+    nodeOperatorRewards: SortedSet[RewardTransaction],
+    delegatorRewardsMap: SortedMap[PeerId, SortedMap[Address, Amount]]
+  ): F[Amount] =
+    Async[F].fromEither(
+      (reservedAddressRewards.toList.map(tx => Amount(tx.amount.value)) ++
+        nodeOperatorRewards.toList.map(tx => Amount(tx.amount.value)) ++
+        delegatorRewardsMap.valuesIterator.flatMap(_.valuesIterator).toList)
+        .foldM(Amount.empty)(_.plus(_))
+    )
 
   def sumMintedAmount[F[_]: Async](
     reservedAddressRewards: SortedSet[RewardTransaction],

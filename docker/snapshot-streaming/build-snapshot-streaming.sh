@@ -106,6 +106,28 @@ else
     exit 1
   fi
 
+  # Develop's UpdateDelegatedStakeAcceptanceManager.make requires the resolved
+  # fixing-delegated-stake-double-withdrawal ordinal (#1593). Snapshot Streaming must wire the
+  # same gate it replays, so apply-or-fail like the state-proof patch; skip once upstream absorbs it.
+  DELEGATED_WITHDRAWAL_PATCH_FILE="$SS_DIR/snapshot-streaming-delegated-withdrawal.patch"
+  if [ -f "$DELEGATED_WITHDRAWAL_PATCH_FILE" ] && [ -s "$DELEGATED_WITHDRAWAL_PATCH_FILE" ]; then
+    cd "$BUILD_DIR"
+    if git apply --reverse --check "$DELEGATED_WITHDRAWAL_PATCH_FILE" 2>/dev/null; then
+      echo "Snapshot-streaming delegated-withdrawal gate patch already applied upstream — skipping."
+    elif git apply --check "$DELEGATED_WITHDRAWAL_PATCH_FILE" 2>/dev/null; then
+      echo "Applying snapshot-streaming delegated-withdrawal gate patch..."
+      git apply "$DELEGATED_WITHDRAWAL_PATCH_FILE"
+    else
+      echo "ERROR: snapshot-streaming delegated-withdrawal gate patch is stale or only partially applied." >&2
+      echo "       Update the Snapshot Streaming branch or regenerate the patch; refusing an unwired settlement gate." >&2
+      exit 1
+    fi
+    cd "$SCRIPT_DIR"
+  else
+    echo "ERROR: required Snapshot Streaming delegated-withdrawal gate patch is missing or empty." >&2
+    exit 1
+  fi
+
   cd "$BUILD_DIR"
   # Compile-time compatibility is insufficient for a proof-shape change. Run the
   # Snapshot Streaming repository's own suites before producing the E2E artifact.

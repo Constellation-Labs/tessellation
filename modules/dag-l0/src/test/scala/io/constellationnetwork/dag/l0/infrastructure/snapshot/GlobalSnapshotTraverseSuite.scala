@@ -386,7 +386,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
-        validators.updateDelegatedStakeValidator
+        validators.updateDelegatedStakeValidator,
+        SnapshotOrdinal.MinValue
       )
       updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
         validators.updateNodeCollateralValidator

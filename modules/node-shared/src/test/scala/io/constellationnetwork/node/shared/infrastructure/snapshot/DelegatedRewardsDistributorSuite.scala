@@ -57,6 +57,8 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
       NonEmptySet.one[SignatureProof](SignatureProof(nodeId.toId, Signature(Hex(Hash.empty.value))))
     )
 
+  // Settlement identity, ownership and activation are covered with the real distributor in dagL0.
+
   test("getUpdatedCreateDelegatedStakes should preserve balance and skip rewards issuance when updating existing delegation records") {
     val delegatorRewardsMap = SortedMap(
       nodeId1 -> SortedMap(address1 -> Amount(100L)),

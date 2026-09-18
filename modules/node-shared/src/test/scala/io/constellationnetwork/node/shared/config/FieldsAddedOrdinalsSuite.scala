@@ -60,7 +60,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "fixingDataApplicationFeeValidation" -> allEnvironments(6818000L, 9999999L, 9999999L),
     "fixingAllowSpendDestinationCredit" -> allEnvironments(6818000L, 9999999L, 9999999L),
     "preventingAllowSpendResurrection" -> allEnvironments(6828500L, 9999999L, 9999999L),
-    "fixingGlobalAllowSpendExpiration" -> allEnvironments(6828500L, 9999999L, 9999999L)
+    "fixingGlobalAllowSpendExpiration" -> allEnvironments(6828500L, 9999999L, 9999999L),
+    "fixingDelegatedStakeDoubleWithdrawal" -> Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue)
   )
 
   test("pins every packaged threshold and intentional absence in every environment") {
@@ -184,7 +185,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.preventingAllowSpendResurrectionFor(AppEnvironment.Mainnet),
-      fieldsAddedOrdinals.fixingGlobalAllowSpendExpirationFor(AppEnvironment.Mainnet)
+      fieldsAddedOrdinals.fixingGlobalAllowSpendExpirationFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet)
     )
 
     IO {
@@ -221,6 +223,32 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
           expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Integrationnet)) &&
           expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Testnet)) &&
           expect.same(SnapshotOrdinal.MaxValue, fieldsAddedOrdinals.currencySnapshotProtocolV1For(AppEnvironment.Mainnet))
+      }
+    }
+  }
+
+  test("delegated stake double-withdrawal hardening is enabled for dev and fails closed for public environments") {
+    IO {
+      ConfigSource.resources("application.conf").at("fields-added-ordinals").load[FieldsAddedOrdinals] match {
+        case Left(failures) =>
+          failure(failures.toList.mkString("\n"))
+        case Right(fieldsAddedOrdinals) =>
+          expect.same(
+            SnapshotOrdinal.MinValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Dev)
+          ) &&
+          expect.same(
+            SnapshotOrdinal.MaxValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Integrationnet)
+          ) &&
+          expect.same(
+            SnapshotOrdinal.MaxValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Testnet)
+          ) &&
+          expect.same(
+            SnapshotOrdinal.MaxValue,
+            fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet)
+          )
       }
     }
   }

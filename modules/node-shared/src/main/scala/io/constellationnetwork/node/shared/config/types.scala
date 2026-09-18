@@ -92,7 +92,12 @@ object types {
     preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, an expired global AllowSpend consumed in the same snapshot is settled once
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
-    fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, delegated-stake withdrawal acceptance prevents two stake records from scheduling
+    // the same effective token lock for unlock. Shared settlement pays lock-owned rewards with checked arithmetic,
+    // retires all settled pending copies and deduplicates withdrawal/replacement principal. Natural expiry suppresses
+    // generated unlocks to prevent double balance credit. Public environments remain absent until coordinated activation.
+    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -158,6 +163,9 @@ object types {
     def fixingGlobalAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingGlobalAllowSpendExpiration, environment)
 
+    def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingDelegatedStakeDoubleWithdrawal, environment)
+
     /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
     def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
       SortedMap(
@@ -180,7 +188,8 @@ object types {
         "fixingDataApplicationFeeValidation" -> fixingDataApplicationFeeValidationFor(environment),
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
-        "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment)
+        "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
+        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment)
       )
   }
 

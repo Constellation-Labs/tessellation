@@ -28,6 +28,7 @@ object FieldsAddedOrdinalsFixtures {
     fixingDataApplicationFeeValidation = active,
     fixingAllowSpendDestinationCredit = active,
     preventingAllowSpendResurrection = active,
-    fixingGlobalAllowSpendExpiration = active
+    fixingGlobalAllowSpendExpiration = active,
+    fixingDelegatedStakeDoubleWithdrawal = active
   )
 }
