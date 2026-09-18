@@ -50,9 +50,19 @@ object GossipClient {
 
       def queryPeerRumors(request: PeerRumorInquiryRequest): PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
         PeerResponse("rumors/peer/query", POST)(timeoutClient, session) { (req, c) =>
-          c.stream(req.withEntity(request)).flatMap { resp =>
-            resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
-          }
+          // Bound acquisition and decoding, then release the response before emitting.
+          // Downstream hashing and queue backpressure must not consume the peer's deadline.
+          Stream
+            .eval(
+              c.stream(req.withEntity(request))
+                .flatMap { resp =>
+                  resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
+                }
+                .compile
+                .toList
+                .timeout(gossipTimeoutsConfig.client)
+            )
+            .flatMap(Stream.emits)
         }
 
       def getInitialPeerRumors: PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
