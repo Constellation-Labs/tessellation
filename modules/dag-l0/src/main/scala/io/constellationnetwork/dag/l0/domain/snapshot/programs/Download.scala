@@ -37,7 +37,20 @@ import retry.RetryPolicies._
 import retry._
 import retry.implicits.retrySyntaxError
 
+case class PersistedRecoveryAnchorsInvalid(initialOrdinal: SnapshotOrdinal)
+    extends RuntimeException(
+      s"All inspected persisted snapshot/info pairs at or below ordinal=${initialOrdinal.show} failed validation; " +
+        "refusing to re-download from genesis"
+    )
+    with NoStackTrace
+
 object Download {
+  private[programs] def requirePersistedRecoveryAnchor[F[_], A](
+    initialOrdinal: SnapshotOrdinal,
+    result: Option[A]
+  )(implicit F: MonadError[F, Throwable]): F[A] =
+    result.fold(PersistedRecoveryAnchorsInvalid(initialOrdinal).raiseError[F, A])(_.pure[F])
+
   def make[F[_]: Async: Parallel: Random: KryoSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
@@ -382,7 +395,11 @@ object Download {
             lte: SnapshotOrdinal,
             attempts: Int
           ): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
-            if (attempts <= 0) none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
+            if (attempts <= 0)
+              logger.warn(
+                s"Exhausted $maxPersistedSearchAttempts attempts searching for a valid persisted recovery anchor " +
+                  s"at or below ordinal=${lte.show}"
+              ) >> none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
             else
               snapshotStorage.getHighestSnapshotInfoOrdinal(lte).flatMap {
                 case None => none[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)].pure[F]
@@ -406,9 +423,15 @@ object Download {
                     }
               }
 
-          startingOrdinal
-            .flatTraverse(findHighestValidPersisted(_, maxPersistedSearchAttempts))
-            .flatMap(_.fold(getGenesisSnapshot(tmpMap))(_.pure[F]))
+          startingOrdinal match {
+            case None =>
+              // No persisted snapshot-info filenames exist. This is a fresh bootstrap, for which
+              // replay from genesis is expected.
+              getGenesisSnapshot(tmpMap)
+            case Some(initial) =>
+              findHighestValidPersisted(initial, maxPersistedSearchAttempts)
+                .flatMap(requirePersistedRecoveryAnchor(initial, _))
+          }
         }
         .flatMap {
           case (s, c) =>

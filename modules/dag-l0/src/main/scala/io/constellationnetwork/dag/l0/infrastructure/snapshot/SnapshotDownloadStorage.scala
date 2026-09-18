@@ -76,15 +76,9 @@ object SnapshotDownloadStorage {
       def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]] =
         snapshotInfoStorage.listStoredOrdinals
           .flatMap(_.filter(_ <= lte).compile.toList)
-          .flatMap { ordinals =>
-            def findReadable(remaining: List[SnapshotOrdinal]): F[Option[SnapshotOrdinal]] =
-              remaining match {
-                case head :: tail => hasSnapshotInfo(head).ifM(head.some.pure[F], findReadable(tail))
-                case Nil          => none[SnapshotOrdinal].pure[F]
-              }
-
-            findReadable(ordinals.sorted.reverse)
-          }
+          // Preserve the distinction between a fresh node (no filenames) and a node with damaged
+          // persisted state. validateChain reads and validates each candidate while walking down.
+          .map(_.maximumOption)
 
       def readCombined(
         ordinal: SnapshotOrdinal
