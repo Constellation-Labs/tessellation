@@ -2,7 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.{Files => JFiles, _}
-import java.util.{Arrays, UUID}
+import java.util.Arrays
 
 import cats.Applicative
 import cats.effect.Async
@@ -50,15 +50,27 @@ abstract class SnapshotLocalFileSystemStorage[
     val ordinalName = toOrdinalName(snapshot.value)
 
     toHashName(snapshot.value).flatMap { hashName =>
+      def replaceBody: F[Unit] =
+        JsonSerializer[F].serialize(snapshot).flatMap(atomicReplace(hashName, _))
+
       (exists(ordinalName), exists(hashName)).flatMapN { (ordinalExists, hashExists) =>
         for {
           _ <- UnableToPersistSnapshot(ordinalName, hashName, hashExists).raiseError[F, Unit].whenA(ordinalExists)
-          _ <- hashExists
-            .pure[F]
-            .ifM(
-              logger.warn(s"Snapshot hash file $hashName exists but ordinal missing; linking to $ordinalName"),
-              write(hashName, snapshot)
-            )
+          _ <-
+            if (hashExists)
+              read(hashName).flatMap { existing =>
+                existing.filter(_.ordinal === snapshot.ordinal).traverse(value => toHashName(value.value)).flatMap {
+                  case Some(existingHashName) if existingHashName === hashName =>
+                    // Preserve ordinary same-value idempotency, including a different valid proof envelope.
+                    logger.warn(s"Verified snapshot hash file $hashName exists but ordinal missing; linking to $ordinalName")
+                  case _ =>
+                    // Existence alone is insufficient after a historical torn write. Replace the inode
+                    // atomically before publishing its ordinal link, leaving unrelated objects untouched.
+                    logger.warn(s"Replacing unreadable or mismatched snapshot hash file $hashName before linking to $ordinalName") >>
+                      replaceBody
+                }
+              }
+            else replaceBody
           _ <- link(hashName, ordinalName)
         } yield ()
       }
@@ -81,10 +93,9 @@ abstract class SnapshotLocalFileSystemStorage[
       ordinalName = toOrdinalName(snapshot.value)
       previousHashName <- read(snapshot.ordinal).flatMap(_.traverse(previous => toHashName(previous.value)))
       _ <- atomicReplace(hashName, bytes)
-      // A different value at the same ordinal is an abandoned branch, not an
-      // immutable historical snapshot. Leaving its content-addressed index in
-      // place would let peers continue serving fork bytes after recovery. Do
-      // this after the new hash is durable but before replacing the ordinal:
+      // Remove the conflicting hash identified by the old ordinal index.
+      // Other unreachable hashes need not be enumerated or deleted. Do this
+      // after the new hash is durable but before replacing the ordinal:
       // if the process crashes here, the old ordinal still identifies the
       // cleanup target and a retry converges.
       _ <- previousHashName.filterNot(_ === hashName).traverse_(delete)
@@ -113,6 +124,12 @@ abstract class SnapshotLocalFileSystemStorage[
 
     CrashSafeAtomicFileWriter.make[F](parent).flatMap(_.write(target.getFileName.toString, bytes))
   }
+
+  /** Snapshot readers treat malformed bodies as absent so anchor search and replay can progress. Decode failures are contained after
+    * reading the bytes; filesystem errors still propagate and must never be treated as permission to overwrite an unreadable device.
+    */
+  override def read(fileName: String): F[Option[Signed[S]]] =
+    readRecoveryIndex(fileName)
 
   def read(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
     read(toOrdinalName(ordinal))
@@ -313,75 +330,31 @@ abstract class SnapshotLocalFileSystemStorage[
       include = file => file.name.toLongOption.exists(_ > ordinal.value.value)
     )
 
-  private def streamHashIndexes: F[Stream[F, File]] =
-    streamIndexFiles(indexName = "hash", maxDepth = 3, include = _ => true)
-
-  /** Return the POSIX hard-link count when the filesystem exposes it.
-    *
-    * A normal snapshot hash has an ordinal hardlink (`nlink >= 2`). A hash-only torn write or abandoned branch has `nlink == 1` and is the
-    * only class whose body recovery needs to decode. On filesystems without the Unix attribute we conservatively return `None` and inspect
-    * the body, preserving correctness at the cost of the old scan behavior.
-    */
-  private def hardLinkCount(file: File): F[Option[Long]] =
-    Async[F].blocking {
-      JFiles.getAttribute(file.path, "unix:nlink", LinkOption.NOFOLLOW_LINKS) match {
-        case count: Number => count.longValue.some
-        case _             => none[Long]
-      }
-    }.handleErrorWith {
-      case _: NoSuchFileException           => 0L.some.pure[F]
-      case _: UnsupportedOperationException => none[Long].pure[F]
-      case _: IllegalArgumentException      => none[Long].pure[F]
-      case error if Option(error.getCause).exists(_.isInstanceOf[UnsupportedOperationException]) =>
-        none[Long].pure[F]
-      case error => error.raiseError[F, Option[Long]]
-    }
-
-  /** Read one recovery candidate while keeping disk I/O failures distinct from invalid bytes.
-    *
-    * `SerializableLocalFileSystemStorage.read` intentionally hides ordinary JSON/Kryo decode failures as `None`, but a legacy fallback
-    * decoder is allowed to throw. Recovery must quarantine invalid bytes while propagating EIO/EACCES/descriptor exhaustion unchanged;
-    * otherwise a transient filesystem fault could destructively remove valid history and still report cleanup success.
+  /** Decode a snapshot body without conflating malformed JSON/Brotli/Kryo input with a failed filesystem read. Both decoders may throw
+    * rather than return Left for torn bytes; only those in-memory decode failures become None. readBytes remains outside the handlers.
     */
   private def readRecoveryIndex(fileName: String): F[Option[Signed[S]]] =
     readBytes(fileName).flatMap {
       case None => none[Signed[S]].pure[F]
       case Some(bytes) =>
+        def useFallback(jsonError: Throwable): F[Option[Signed[S]]] =
+          Async[F].delay(deserializeFallback(bytes)).attempt.flatMap {
+            case Right(Right(snapshot))     => snapshot.some.pure[F]
+            case Left(fallbackError)        => warnUnreadable(jsonError, fallbackError)
+            case Right(Left(fallbackError)) => warnUnreadable(jsonError, fallbackError)
+          }
+
+        def warnUnreadable(jsonError: Throwable, fallbackError: Throwable): F[Option[Signed[S]]] =
+          logger.warn(fallbackError)(
+            s"Failed to deserialize snapshot file $fileName with both decoders; JSON error: ${jsonError.getMessage}"
+          ) >> none[Signed[S]].pure[F]
+
         JsonSerializer[F].deserialize[Signed[S]](bytes).attempt.flatMap {
           case Right(Right(snapshot)) => snapshot.some.pure[F]
-          case _ =>
-            Async[F].delay(deserializeFallback(bytes)).attempt.map {
-              case Right(Right(snapshot)) => snapshot.some
-              case _                      => none[Signed[S]]
-            }
+          case Left(jsonError)        => useFallback(jsonError)
+          case Right(Left(jsonError)) => useFallback(jsonError)
         }
     }
-
-  private def quarantineUnreadableHashIndex(file: File, reason: String): F[Unit] =
-    dir
-      .map(_ / ".recovery-quarantine" / "hash" / file.name)
-      .flatMap { primaryDestination =>
-        def move(destination: File): F[Unit] =
-          logger.warn(
-            s"Quarantining unreadable content-addressed snapshot path=${file.pathAsString} reason=$reason " +
-              s"destination=${destination.pathAsString}"
-          ) >> Async[F].blocking {
-            destination.parent.createDirectoryIfNotExists(createParents = true)
-            file.moveTo(destination)(File.CopyOptions(overwrite = false))
-          }.void
-
-        move(primaryDestination).handleErrorWith {
-          case _: FileAlreadyExistsException =>
-            val collisionSafeDestination =
-              primaryDestination.parent / s"${primaryDestination.name}.${UUID.randomUUID().toString}"
-            move(collisionSafeDestination)
-          case error => error.raiseError[F, Unit]
-        }
-      }
-      .handleErrorWith {
-        case _: NoSuchFileException => Async[F].unit
-        case error                  => error.raiseError[F, Unit]
-      }
 
   private def unlinkRecoveryIndex(file: File): F[Unit] =
     Async[F]
@@ -399,11 +372,8 @@ abstract class SnapshotLocalFileSystemStorage[
     actual == expected
   }
 
-  /** Remove a linked value occupying the recovery anchor before the orphan scan.
-    *
-    * The selected anchor may differ from the locally indexed value at the same ordinal. Both local indexes then have `nlink == 2`, so a
-    * hash-only orphan filter would intentionally skip them. Resolve this one known conflict directly from the ordinal index first. An
-    * unreadable anchor index is unlinked; its content hash consequently becomes an orphan and is quarantined by the subsequent scan.
+  /** Resolve the one indexed value occupying the selected recovery anchor. Unreadable or mismatched ordinal indexes are unlinked so
+    * validated recovery can install the selected anchor. Unreachable hash objects are left in place and confer no canonical authority.
     */
   private def cleanupConflictingAnchorOrdinal(
     ordinal: SnapshotOrdinal,
@@ -431,64 +401,12 @@ abstract class SnapshotLocalFileSystemStorage[
           exists(ordinalName).ifM(
             logger.warn(
               s"Removing unreadable recovery-anchor ordinal index ordinal=${ordinal.show}; " +
-                "the retained hash is independently validated and the hash-tree pass will quarantine the abandoned bytes"
+                "the selected recovery anchor is independently validated before installation"
             ) >> delete(ordinalName),
             Async[F].unit
           )
       }
     }
-
-  /** Remove content-addressed snapshots outside the selected recovery suffix.
-    *
-    * The hash tree is the only remaining source of truth after a torn ordinal write, so recovery scans it once without materializing it.
-    * Canonical history has an ordinal hardlink and is skipped without decoding; only `nlink == 1` orphan candidates are inspected. An
-    * unreadable orphan is removed from the remotely servable hash tree and preserved under `.recovery-quarantine/hash/` for diagnosis.
-    */
-  private def cleanupOrphanHashIndexesAboveOrdinal(
-    ordinal: SnapshotOrdinal,
-    retainedAnchorHash: Option[Hash],
-    movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
-  )(implicit hs: HasherSelector[F]): F[Unit] =
-    streamHashIndexes.flatMap(
-      _.parEvalMapUnordered(maxParallelFileOperations) { file =>
-        hardLinkCount(file).flatMap {
-          case Some(count) if count > 1L || count === 0L => Async[F].unit
-          case _ =>
-            val hash = Hash(file.name)
-
-            getPath(hash).flatMap { expectedFile =>
-              val expectedPath = expectedFile.path.toAbsolutePath.normalize()
-              val actualPath = file.path.toAbsolutePath.normalize()
-
-              if (actualPath != expectedPath)
-                quarantineUnreadableHashIndex(file, "misplaced_hash_index")
-              else if (retainedAnchorHash.contains(hash))
-                Async[F].unit
-              else
-                readRecoveryIndex(toHashName(hash)).flatMap {
-                  case Some(snapshot) =>
-                    HasherSelector[F]
-                      .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                        snapshot.toHashed.map(_.hash)
-                      }
-                      .flatMap {
-                        case actualHash if actualHash =!= hash =>
-                          quarantineUnreadableHashIndex(file, s"content_hash_mismatch:${actualHash.value}")
-                        case _
-                            if snapshot.ordinal > ordinal ||
-                              (snapshot.ordinal === ordinal && retainedAnchorHash.exists(_ =!= hash)) =>
-                          movePersistedToTmp(hash, snapshot.ordinal).handleErrorWith {
-                            case _: NoSuchFileException => Async[F].unit
-                            case error                  => error.raiseError[F, Unit]
-                          }
-                        case _ => Async[F].unit
-                      }
-                  case None => quarantineUnreadableHashIndex(file, "deserialization_failed")
-                }
-            }
-        }
-      }.compile.drain
-    )
 
   def processFileChunk(
     chunk: Stream[F, File],
@@ -529,9 +447,8 @@ abstract class SnapshotLocalFileSystemStorage[
                 ) >> unlinkRecoveryIndex(file)
               case None =>
                 // The ordinal filename alone proves this index is in the discarded
-                // suffix. Unlink it even if its body is torn; the following hash
-                // scan then observes the remaining content inode as nlink=1 and
-                // quarantines it instead of leaving it remotely servable.
+                // suffix. Unlink it even if its body is torn. Any remaining hash
+                // object is inert unless explicitly reached and validated by recovery.
                 logger.warn(s"Removing unreadable future ordinal index path=${file.pathAsString} ordinal=${ordinal.show}") >>
                   unlinkRecoveryIndex(file)
             }
@@ -541,9 +458,8 @@ abstract class SnapshotLocalFileSystemStorage[
             // File was deleted between listing and processing - expected during cleanup.
             Async[F].unit
           case err =>
-            // Recovery callers use this method to prove that no future branch
-            // remains servable. Logging-and-continuing would let verification
-            // miss an ordinal removed just before its hash cleanup failed.
+            // Recovery must complete indexed suffix cleanup before installing
+            // its head. Propagate persistence failures so callers can retry.
             logger.warn(err)(s"Failed to process file with ordinal $ordinal") >>
               err.raiseError[F, Unit]
         }
@@ -557,11 +473,11 @@ abstract class SnapshotLocalFileSystemStorage[
   )(implicit hs: HasherSelector[F]): F[Unit] =
     cleanupCanonicalSuffix(ordinal, none, movePersistedToTmp)
 
-  /** Remove every persisted successor and every alternate value at the anchor ordinal, retaining only `anchorHash`.
+  /** Remove future ordinal indexes and resolve an indexed conflict at the selected anchor.
     *
-    * Recovery can encounter multiple content-addressed values for the same ordinal after a fork or a crash between the hash and ordinal
-    * index replacements. Replacing the ordinal link alone is insufficient because peers can still request an abandoned value directly by
-    * hash. The full hash-tree scan therefore treats all same-ordinal values except the selected anchor as part of the discarded suffix.
+    * Only hashes identified directly through these ordinal indexes are moved. The hash tree is never enumerated: unreachable objects may
+    * remain readable by hash, but their presence does not make them canonical anchors. Callers retain responsibility for validating the
+    * selected lineage and context and installing the recovery head with the appropriate persistence lock.
     */
   def cleanupCanonicalSuffix(
     ordinal: SnapshotOrdinal,
@@ -576,14 +492,10 @@ abstract class SnapshotLocalFileSystemStorage[
     movePersistedToTmp: (Hash, SnapshotOrdinal) => F[Unit]
   )(implicit hs: HasherSelector[F]): F[Unit] =
     for {
-      _ <- logger.debug(s"Searching for persisted files above ordinal ${ordinal.show}")
+      _ <- logger.debug(s"Searching for snapshot ordinal indexes above ordinal ${ordinal.show}")
       ordinalIndexes <- streamOrdinalIndexesAbove(ordinal)
       _ <- processFileChunk(ordinalIndexes, movePersistedToTmp)
       _ <- cleanupConflictingAnchorOrdinal(ordinal, retainedAnchorHash, movePersistedToTmp)
-      // Re-scan the hash tree after normal ordinal cleanup. Remaining future
-      // entries are precisely torn/orphaned content indexes and must not stay
-      // remotely servable after the recovered head is installed.
-      _ <- cleanupOrphanHashIndexesAboveOrdinal(ordinal, retainedAnchorHash, movePersistedToTmp)
     } yield ()
 
   private def toOrdinalName(snapshot: S): String = toOrdinalName(snapshot.ordinal)

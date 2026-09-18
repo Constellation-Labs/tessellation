@@ -123,6 +123,229 @@ object SnapshotDownloadStorageValidatedSuite extends MutableIOSuite {
     }
   }
 
+  List((11L, false), (12L, false), (11L, true)).foreach {
+    case (boundary, failOrdinalRead) =>
+      test(s"staging replay repairs a poisoned ordinal at or below boundary=$boundary with failOrdinalRead=$failOrdinalRead") { res =>
+        implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
+        implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+        val hashSelect = new HashSelect {
+          def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+        }
+        File.temporaryDirectory() { root =>
+          def path(name: String): Path = Path((root / name).pathAsString)
+          for {
+            tmp <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+            persisted <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+            full <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+            infos <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info"))
+            kryoInfos <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+            checkpoints <- CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+              path("checkpoints")
+            )
+            producer <- InMemoryMerklePatriciaProducer.make[IO]()
+            mpt <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+            key <- KeyPairGenerator.makeKeyPair[IO]
+            genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+            info = genesis.info.toGlobalSnapshotInfo
+            base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
+            ordinal = SnapshotOrdinal.unsafeApply(11L)
+            proof <- GlobalSnapshotInfo.stateProofBuilder[IO].buildProof(info, ordinal)
+            snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = ordinal, stateProof = proof), key)
+            hash <- snapshot.toHashed[IO].map(_.hash)
+            _ <- persisted.write(snapshot)
+            hashFile <- persisted.getPath(hash)
+            ordinalFile <- persisted.getPath("ordinal/" + persisted.ordinalPathGenerator.get("11"))
+            witness = root / "torn-inode-witness"
+            original <- IO.blocking(hashFile.byteArray.toVector)
+            _ <- IO.blocking {
+              hashFile.writeByteArray(original.take(original.size / 2).toArray)
+              hashFile.linkTo(witness)
+            }
+            // Repro C: neither at-tip nor older poison is removed by cleanup above the network tip.
+            _ <- persisted.cleanupAboveOrdinal(SnapshotOrdinal.unsafeApply(boundary), (h, o) => persisted.delete(h) >> persisted.delete(o))
+            stillPoisoned <- persisted.read(ordinal)
+            ordinalSurvived <- persisted.exists(ordinal)
+            target =
+              if (failOrdinalRead) new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](path("persisted")) {
+                def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+                  Left(new IllegalArgumentException("unused fallback"))
+                override def readBytes(name: String): IO[Option[Array[Byte]]] =
+                  if (name.startsWith("ordinal/")) IO.raiseError(new java.io.IOException("simulated ordinal I/O failure"))
+                  else super.readBytes(name)
+              }
+              else persisted
+            storage = SnapshotDownloadStorage.make[IO](tmp, target, full, infos, kryoInfos, checkpoints, hashSelect, mpt)
+            _ <- storage.writeTmp(snapshot)
+            result <- storage.moveTmpToPersisted(snapshot).attempt
+            byHash <- persisted.read(hash)
+            byOrdinal <- persisted.read(ordinal)
+            status <- persisted.ensureOrdinalLink(hash, ordinal)
+            linked <- IO.blocking(ordinalFile.isSameFileAs(hashFile))
+            oldInode <- IO.blocking(ordinalFile.isSameFileAs(witness))
+            witnessBytes <- IO.blocking(witness.byteArray.toVector)
+            hashBytes <- IO.blocking(hashFile.byteArray.toVector)
+            ordinalBytes <- IO.blocking(ordinalFile.byteArray.toVector)
+            tmpRetained <- tmp.exists(ordinal)
+            _ <- infos.write(ordinal, info)
+            validated <- if (failOrdinalRead) IO.pure(None) else storage.readCombinedValidated(ordinal)
+          } yield
+            expect
+              .all(stillPoisoned.isEmpty, ordinalSurvived, witnessBytes == original.take(original.size / 2))
+              .and(
+                if (failOrdinalRead)
+                  expect.all(
+                    result.swap.exists(_.isInstanceOf[java.io.IOException]),
+                    byHash.isEmpty,
+                    byOrdinal.isEmpty,
+                    status == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.HashUnreadable,
+                    linked,
+                    oldInode,
+                    tmpRetained
+                  )
+                else
+                  expect.all(
+                    result.isRight,
+                    byHash.contains(snapshot),
+                    byOrdinal.contains(snapshot),
+                    status == SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Linked,
+                    // Recovery atomically replaces both indexes on develop; inode sharing is not required.
+                    hashBytes == original,
+                    ordinalBytes == original,
+                    !oldInode,
+                    !tmpRetained,
+                    validated.contains((snapshot, info))
+                  )
+              )
+        }
+      }
+  }
+
+  List(false, true).foreach { copiedIndexes =>
+    test(s"cleanup retains inert hashes and validates only the requested anchor with copiedIndexes=$copiedIndexes") { res =>
+      implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
+      implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
+      val hashSelect = new HashSelect {
+        def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash
+      }
+
+      File.temporaryDirectory() { root =>
+        def path(name: String): Path = Path((root / name).pathAsString)
+        val anchorOrdinal = SnapshotOrdinal.unsafeApply(10L)
+
+        for {
+          tmpStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("tmp"))
+          persisted <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](path("persisted"))
+          full <- GlobalSnapshotLocalFileSystemStorage.make[IO](path("full"))
+          infos <- GlobalSnapshotInfoLocalFileSystemStorage.make[IO](path("info"))
+          kryoInfos <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[IO](path("info-kryo"))
+          checkpoints <- CombinedSnapshotCheckpointFileSystemStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            path("checkpoints")
+          )
+          producer <- InMemoryMerklePatriciaProducer.make[IO]()
+          mptStore <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+          storage = SnapshotDownloadStorage.make[IO](tmpStorage, persisted, full, infos, kryoInfos, checkpoints, hashSelect, mptStore)
+          key <- KeyPairGenerator.makeKeyPair[IO]
+          genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+          info = genesis.info.toGlobalSnapshotInfo
+          base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
+          proof <- GlobalSnapshotInfo.stateProofBuilder[IO].buildProof(info, anchorOrdinal)
+          anchor <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = anchorOrdinal, stateProof = proof), key)
+          alternate <- Signed
+            .forAsyncHasher[IO, GlobalIncrementalSnapshot](anchor.value.copy(epochProgress = EpochProgress(NonNegLong(1L))), key)
+          future <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(40001L)), key)
+          orphan <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(40002L)), key)
+          anchorHash <- anchor.toHashed[IO].map(_.hash)
+          alternateHash <- alternate.toHashed[IO].map(_.hash)
+          futureHash <- future.toHashed[IO].map(_.hash)
+          orphanHash <- orphan.toHashed[IO].map(_.hash)
+          nextOrdinal = SnapshotOrdinal.unsafeApply(11L)
+          nextProof <- GlobalSnapshotInfo.stateProofBuilder[IO].buildProof(info, nextOrdinal)
+          next <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+            anchor.value.copy(ordinal = nextOrdinal, lastSnapshotHash = anchorHash, stateProof = nextProof),
+            key
+          )
+          nextHash <- next.toHashed[IO].map(_.hash)
+          _ <- persisted.write(next) >> persisted.delete(next.ordinal)
+          nextFile <- persisted.getPath(nextHash)
+          _ <- IO.blocking {
+            val bytes = nextFile.byteArray
+            nextFile.writeByteArray(bytes.take(bytes.length / 2))
+          }
+          // An older blind writer may already have linked the torn inode into the ordinal namespace.
+          _ <- persisted.link(next) >> infos.write(next.ordinal, info)
+          poisonedCombined <- storage.readCombined(next.ordinal)
+          _ <- persisted.write(alternate) >> persisted.delete(alternate.ordinal) >> persisted.write(anchor)
+          _ <- persisted.write(future) >> persisted.write(orphan) >> persisted.delete(orphan.ordinal)
+          _ <- IO.blocking {
+            if (copiedIndexes) {
+              val ordinalFile = root / "persisted" / "ordinal" / persisted.ordinalPathGenerator.get(future.ordinal.value.value.toString)
+              val bytes = ordinalFile.byteArray
+              ordinalFile.delete()
+              ordinalFile.writeByteArray(bytes)
+            }
+          }
+          futureHashFile <- persisted.getPath(futureHash)
+          futureOrdinalFile = root / "persisted" / "ordinal" / persisted.ordinalPathGenerator.get(future.ordinal.value.value.toString)
+          indexesLinked <- IO.blocking(futureHashFile.isSameFileAs(futureOrdinalFile))
+          _ <- infos.write(anchor.ordinal, info) >> infos.write(future.ordinal, info) >> infos.write(orphan.ordinal, info)
+          _ <- checkpoints.replaceForRecovery(future.ordinal, future, info, futureHash)
+          _ <- storage.cleanupAbove(anchor.ordinal)
+          futureOrdinal <- persisted.read(future.ordinal)
+          futureObject <- persisted.read(futureHash)
+          movedFuture <- tmpStorage.read(futureHash)
+          keptOrphan <- persisted.read(orphanHash)
+          keptAlternate <- persisted.read(alternateHash)
+          indexesAbove <- persisted.findAbove(anchor.ordinal).compile.toList
+          futureInfo <- infos.read(future.ordinal)
+          orphanInfo <- infos.read(orphan.ordinal)
+          latestCheckpoint <- checkpoints.getLatestOrdinal
+          alternateUsable <- storage.ensurePersistedAnchor(alternateHash, anchor.ordinal)
+          anchorAfterConflict <- persisted.read(anchor.ordinal)
+          // A torn canonical N+1 must not abort walk-back; the preceding persisted anchor remains usable.
+          tornUsable <- storage.ensurePersistedAnchor(nextHash, next.ordinal)
+          tornOrdinalExists <- persisted.exists(next.ordinal)
+          precedingAnchorUsable <- storage.ensurePersistedAnchor(anchorHash, anchor.ordinal)
+          orphanUsableWithoutContext <- storage.ensurePersistedAnchor(orphanHash, orphan.ordinal)
+          // On-demand repair is still allowed for the hash reached through the selected lineage.
+          _ <- persisted.delete(anchor.ordinal)
+          repaired <- storage.ensurePersistedAnchor(anchorHash, anchor.ordinal)
+          validated <- storage.readCombinedValidated(anchor.ordinal)
+          // An explicitly requested valid hash may get an ordinal link even when context is missing.
+          // Assert that side effect after all candidate checks, rather than hiding it in an earlier census.
+          indexesAfterCandidateChecks <- persisted.findAbove(anchor.ordinal).map(_.name).compile.toList
+          // Forward replay overwrites the unusable canonical hash using the existing staging path.
+          _ <- storage.writeTmp(next) >> storage.moveTmpToPersisted(next) >> infos.write(next.ordinal, info)
+          replayedUsable <- storage.ensurePersistedAnchor(nextHash, next.ordinal)
+          replayed <- storage.readCombinedValidated(next.ordinal)
+        } yield
+          expect.all(
+            indexesLinked == !copiedIndexes,
+            futureOrdinal.isEmpty,
+            futureObject.isEmpty,
+            movedFuture.contains(future),
+            keptOrphan.contains(orphan),
+            keptAlternate.contains(alternate),
+            indexesAbove.isEmpty,
+            futureInfo.isEmpty,
+            orphanInfo.isEmpty,
+            latestCheckpoint.isEmpty,
+            !alternateUsable,
+            anchorAfterConflict.contains(anchor),
+            poisonedCombined.isEmpty,
+            !tornUsable,
+            !tornOrdinalExists,
+            precedingAnchorUsable,
+            !orphanUsableWithoutContext,
+            indexesAfterCandidateChecks == List(orphan.ordinal.value.value.toString),
+            repaired,
+            validated.contains((anchor, info)),
+            replayedUsable,
+            replayed.contains((next, info))
+          )
+      }
+    }
+  }
+
   test("first incremental genesis validation derives its state proof at the full-genesis ordinal") { implicit res =>
     implicit val (kryoSerializer, jsonSerializer, hasher, securityProvider, metrics) = res
     implicit val hasherSelector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(hasher)
