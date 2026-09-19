@@ -54,19 +54,54 @@ class BalanceOpsManager[F[_]: Async](
     (finalBalances, acceptedTxs).pure
   }
 
+  /** Validates the fee transactions carried by a data application block and returns the ones that passed.
+    *
+    * At or above the activation ordinal each transaction is judged on its own and the invalid ones are left out, so the rest of the set is
+    * still applied. This mirrors how `applyFeeTransactions` already treats a transaction its source cannot cover. The selection is
+    * deterministic: a verdict is a pure function of the transaction and the authorization flag, and the surviving set keeps the incoming
+    * `SortedSet` ordering, so every node computes the same subset.
+    *
+    * Below the activation ordinal the earlier all-or-nothing behaviour is kept. Selecting per transaction changes which artifact a given
+    * set of events produces, and down there the data application layer applies its earlier rules - it checks neither source != destination
+    * nor signature exclusivity - so a mixed fleet would disagree during a rolling upgrade.
+    *
+    * @return
+    *   the transactions that passed validation, in the incoming order
+    */
   def validateFeeTxs(
     maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
-    enforceWalletAuthorization: Boolean
-  ): F[Unit] =
-    NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(().pure[F]) { nonEmptyTxs =>
-      feeTransactionValidator.validate(nonEmptyTxs, enforceWalletAuthorization).flatMap {
-        case Validated.Valid(_) =>
-          ().pure[F]
-        case Validated.Invalid(errors) =>
-          new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
-            .raiseError[F, Unit]
+    enforceWalletAuthorization: Boolean,
+    atOrAboveActivationOrdinal: Boolean
+  ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
+    if (!atOrAboveActivationOrdinal)
+      NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(maybeTxs.pure[F]) { nonEmptyTxs =>
+        feeTransactionValidator.validate(nonEmptyTxs, enforceWalletAuthorization).flatMap {
+          case Validated.Valid(_) =>
+            maybeTxs.pure[F]
+          case Validated.Invalid(errors) =>
+            new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
+              .raiseError[F, Option[SortedSet[Signed[FeeTransaction]]]]
+        }
       }
-    }
+    else
+      maybeTxs.traverse { txs =>
+        txs.toList.traverseFilter { signedTx =>
+          feeTransactionValidator.validate(signedTx, enforceWalletAuthorization).flatMap {
+            case Validated.Valid(_) =>
+              signedTx.some.pure[F]
+            case Validated.Invalid(errors) =>
+              logger
+                .warn(
+                  s"Dropped fee transaction from ${signedTx.value.source} to ${signedTx.value.destination} of " +
+                    s"${signedTx.value.amount.value.value}: ${errors.toList.mkString(", ")}"
+                )
+                .as(none[Signed[FeeTransaction]])
+          }
+        }.map { kept =>
+          val keptTxs = kept.toSet
+          txs.filter(keptTxs.contains)
+        }
+      }
 
   def acceptFeeTxs(
     balances: SortedMap[Address, Balance],
