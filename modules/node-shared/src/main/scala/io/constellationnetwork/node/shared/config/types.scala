@@ -449,6 +449,20 @@ object types {
     // divergent values are safe but can create noisy early-applier/late-applier behavior.
     viewChangeApplyDelay: FiniteDuration = 7.seconds,
     maxConsecutiveAbandonments: Int = 5,
+    // B3' probe scheduling coordinator: completion-based cooldown between two recovery-evidence
+    // units (peer rehabilitation pass + committed-ahead probe) at the same abandoned key /
+    // resource generation. Load control only: it changes when evidence is gathered, never how
+    // the recovery decision reads it. Timing-only: NOT in deterministicConfigHash.
+    abandonmentProbeCooldown: FiniteDuration = 30.seconds,
+    // B2' rehabilitation pass: bounded sample of retained Unresponsive peers whose session is
+    // re-checked before an ordinary probe. Timing/load only, not hashed.
+    rehabilitationSampleSize: Int = 8,
+    // B1' isolation repair: bounded concurrency of the retained-peer recheck, per-peer cooldown
+    // shared by rehabilitation and recheck, and the single-flight cooldown of the repair
+    // operation itself. Diagnostic/repair only, never recovery authority. Not hashed.
+    isolationRepairConcurrency: Int = 8,
+    isolationRepairPeerCooldown: FiniteDuration = 60.seconds,
+    isolationRepairCooldown: FiniteDuration = 60.seconds,
     // Defensive threshold for forcing a VCV emission when the cluster has
     // already abandoned the same ordinal this many times. Bypasses the "missing-still-responsive"
     // gate in StallDetector which is correct for transient gossip jitter on round 1 but wrong
@@ -1159,6 +1173,8 @@ object types {
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
+      *   - `abandonmentProbeCooldown`, `rehabilitationSampleSize`, `isolationRepairConcurrency`, `isolationRepairPeerCooldown`,
+      *     `isolationRepairCooldown`: local probe/repair load control only
       *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
       *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
       *

@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.healthcheck
 
 import cats.effect._
 import cats.effect.std.Supervisor
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -14,7 +15,7 @@ import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
-import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
+import io.constellationnetwork.node.shared.domain.healthcheck.{LocalHealthcheck, PeerRecheckOutcome}
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.schema.cluster.SessionToken
 import io.constellationnetwork.schema.peer._
@@ -103,6 +104,33 @@ object LocalHealthcheck {
           }
       }
     }
+
+    def recheck(peer: Peer): F[PeerRecheckOutcome] =
+      peersR(peer.id).get.flatMap {
+        case Some(_) => (PeerRecheckOutcome.Joined: PeerRecheckOutcome).pure[F]
+        case None =>
+          clusterStorage.getPeer(peer.id).flatMap {
+            case None => (PeerRecheckOutcome.Unknown: PeerRecheckOutcome).pure[F]
+            case Some(recorded) =>
+              check(peer).flatMap {
+                case Some(session) if session === recorded.session =>
+                  clusterStorage
+                    .setPeerResponsiveness(peer.id, Responsive)
+                    .as(PeerRecheckOutcome.Healthy: PeerRecheckOutcome)
+                case Some(_) =>
+                  logger.info(s"Peer ${peer.id.show} is responsive but found different session (recheck).") >>
+                    clusterStorage
+                      .removePeerIfSession(peer.id, recorded.session)
+                      .map(PeerRecheckOutcome.SessionChanged(_): PeerRecheckOutcome)
+                case None =>
+                  // Evidence first, demotion second: only a failed check on a Responsive peer starts the ordinary
+                  // (eagerly demoting, backoff-retrying) loop. An already Unresponsive peer keeps its classification.
+                  if (recorded.responsiveness === Responsive)
+                    start(peer).as(PeerRecheckOutcome.Unreachable(demotionStarted = true): PeerRecheckOutcome)
+                  else (PeerRecheckOutcome.Unreachable(demotionStarted = false): PeerRecheckOutcome).pure[F]
+              }
+          }
+      }
 
     def check(peer: Peer): F[Option[SessionToken]] =
       nodeClient.getSession

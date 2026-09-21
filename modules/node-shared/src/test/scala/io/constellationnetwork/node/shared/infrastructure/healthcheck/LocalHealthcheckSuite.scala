@@ -6,11 +6,15 @@ import cats.effect.kernel.Fiber
 import cats.effect.std.Supervisor
 import cats.effect.testkit.TestControl
 import cats.syntax.contravariantSemigroupal._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.option._
 import cats.syntax.parallel._
 
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.healthcheck.PeerRecheckOutcome
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.ClusterStorage
@@ -21,6 +25,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosLong
 import io.chrisdavenport.mapref.MapRef
 import retry.{RetryPolicies, RetryPolicy}
 import weaver.SimpleIOSuite
@@ -175,6 +180,154 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         TestControl.executeEmbed(prog) >>
           peersR.keys.map(_.size).map(expect.same(_, peers.size))
 
+      }
+    }
+  }
+
+  // --- B1' non-demoting recheck ---
+
+  private val otherSession: SessionToken = SessionToken(Generation(PosLong.unsafeFrom(2L)))
+
+  test("recheck keeps a healthy Responsive peer Responsive and spawns no fiber") {
+    forall(peerGen) { peer =>
+      val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
+
+      (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true), cs)
+          lh.recheck(peer)
+        }
+
+        TestControl.executeEmbed(prog).flatMap { outcome =>
+          (cs.getPeer(peer.id), peersR.keys.map(_.size)).tupled.map {
+            case (stored, fibers) =>
+              expect
+                .same(PeerRecheckOutcome.Healthy, outcome)
+                .and(expect(stored.exists(_.responsiveness == Responsive), "a healthy peer is never demoted"))
+                .and(expect.same(0, fibers))
+          }
+        }
+      }
+    }
+  }
+
+  test("recheck of an unreachable Responsive peer demotes only after the failed check, through the ordinary loop") {
+    forall(peerGen) { peer =>
+      val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
+
+      (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+          // The demotion runs on the ordinary loop's supervised fiber: observe it under the test clock.
+          lh.recheck(peer).flatMap { outcome =>
+            (IO.sleep(10.millis) >> cs.getPeer(peer.id))
+              .iterateUntil(_.exists(_.responsiveness == Unresponsive))
+              .timeout(5.seconds)
+              .attempt
+              .map(stored => outcome -> stored.toOption.flatten)
+          }
+        }
+
+        TestControl.executeEmbed(prog).map {
+          case (outcome, stored) =>
+            expect
+              .same(PeerRecheckOutcome.Unreachable(demotionStarted = true), outcome)
+              .and(expect(stored.exists(_.responsiveness == Unresponsive), "after a failed check the ordinary loop demotes the peer"))
+        }
+      }
+    }
+  }
+
+  test("recheck of an unreachable Unresponsive peer leaves it Unresponsive and spawns nothing") {
+    forall(peerGen) { peer =>
+      val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer).copy(responsiveness = Unresponsive))
+
+      (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+          lh.recheck(peer)
+        }
+
+        TestControl.executeEmbed(prog).flatMap { outcome =>
+          (cs.getPeer(peer.id), peersR.keys.map(_.size)).tupled.map {
+            case (stored, fibers) =>
+              expect
+                .same(PeerRecheckOutcome.Unreachable(demotionStarted = false), outcome)
+                .and(expect(stored.exists(_.responsiveness == Unresponsive), "still Unresponsive"))
+                .and(expect.same(0, fibers))
+          }
+        }
+      }
+    }
+  }
+
+  test("recheck restores an Unresponsive peer that answers with its recorded session") {
+    forall(peerGen) { peer =>
+      val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer).copy(responsiveness = Unresponsive))
+
+      (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true), cs)
+          lh.recheck(peer)
+        }
+
+        TestControl.executeEmbed(prog).flatMap { outcome =>
+          cs.getPeer(peer.id).map { stored =>
+            expect
+              .same(PeerRecheckOutcome.Healthy, outcome)
+              .and(expect(stored.exists(_.responsiveness == Responsive), "restored through setPeerResponsiveness"))
+          }
+        }
+      }
+    }
+  }
+
+  test("recheck with a differing session removes the record only through the session-conditional path") {
+    forall(peerGen) { peer =>
+      val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
+
+      (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true, session = otherSession.some), cs)
+          lh.recheck(peer)
+        }
+
+        TestControl.executeEmbed(prog).flatMap { outcome =>
+          cs.getPeer(peer.id).map { stored =>
+            expect
+              .same(PeerRecheckOutcome.SessionChanged(removed = true), outcome)
+              .and(expect(stored.isEmpty, "the stale record is removed"))
+          }
+        }
+      }
+    }
+  }
+
+  test("recheck joins an existing healthcheck fiber instead of spawning or checking again") {
+    forall(peerGen) { peer =>
+      val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
+
+      (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+          lh.start(peer) >> lh.recheck(peer)
+        }
+
+        TestControl.executeEmbed(prog).flatMap { outcome =>
+          peersR.keys.map(_.size).map(fibers => expect.same(PeerRecheckOutcome.Joined, outcome).and(expect.same(1, fibers)))
+        }
+      }
+    }
+  }
+
+  test("recheck of an unknown peer reports Unknown") {
+    forall(peerGen) { peer =>
+      (mkClusterStorage(Map.empty), mkPeersR).flatMapN { (cs, peersR) =>
+        val prog = Supervisor[IO].use { implicit s =>
+          LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true), cs).recheck(peer)
+        }
+
+        TestControl.executeEmbed(prog).map(outcome => expect.same(PeerRecheckOutcome.Unknown, outcome))
       }
     }
   }

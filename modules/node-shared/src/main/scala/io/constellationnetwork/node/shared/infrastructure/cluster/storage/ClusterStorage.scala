@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.cluster.storage
 
+import cats.Monad
 import cats.data.Ior
 import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
@@ -11,7 +12,7 @@ import cats.syntax.order._
 import cats.syntax.traverse._
 
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
-import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionAlreadyExists, ClusterSessionToken}
+import io.constellationnetwork.schema.cluster._
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
@@ -95,6 +96,11 @@ object ClusterStorage {
 
       def removePeers(ids: Set[PeerId]): F[Unit] =
         ids.toList.traverse(removePeer).void
+
+      override def removePeerIfSession(id: PeerId, expectedSession: SessionToken)(implicit F: Monad[F]): F[Boolean] =
+        updatePeerAndGet(id)(_.filterNot(_.session === expectedSession)).map {
+          case (oldValue, newValue) => oldValue.exists(_.session === expectedSession) && newValue.isEmpty
+        }
 
       def peerChanges: Stream[F, Ior[Peer, Peer]] =
         topic.subscribe(maxQueuedPeerChanges)

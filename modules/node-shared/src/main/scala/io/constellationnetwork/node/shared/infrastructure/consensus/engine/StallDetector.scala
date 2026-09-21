@@ -466,6 +466,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       _ <- Metrics[F].updateGauge("dag_consensus_cluster_ready_peer_count", readyPeerIds.size.toLong)
       _ <- Metrics[F].updateGauge("dag_consensus_cluster_waiting_for_ready_peer_count", waitingForReadyPeerCount.toLong)
       _ <- Metrics[F].updateGauge("dag_consensus_cluster_session_started_peer_count", sessionStartedPeerCount.toLong)
+      // B1': isolation repair trigger, evaluated on the monitor tick (not on an abandonment path a protected lock can
+      // suppress). Runs on its own fiber when it fires; diagnostic/repair only, never a recovery decision.
+      _ <- abandonmentTracker.maybeRepairIsolation(key, state, readyPeerIds.size).attempt.void
       readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
       peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
       totalRegisteredPeers = readyPeerRegs.size

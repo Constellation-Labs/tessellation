@@ -8,21 +8,28 @@ import io.constellationnetwork.security.hash.Hash
 
 import weaver.SimpleIOSuite
 
-/** D2 precedence table: probe results -> `suppressedBy`. Telemetry only; every row also pins that the decision (`decide`) is unchanged
-  * by the classification.
+/** D2 precedence table: probe results -> `suppressedBy`. Telemetry only; every row also pins that the decision (`decide`) is unchanged by
+  * the classification.
   */
 object EscalationSuppressedBySuite extends SimpleIOSuite {
 
   private val key = SnapshotOrdinal.unsafeApply(100L)
-  private def meta(n: Long, hash: String = "h"): PeerResult = PeerResult.Responded(SnapshotMetadata(SnapshotOrdinal.unsafeApply(n), Hash(hash), Hash("p")))
+  private def meta(n: Long, hash: String = "h"): PeerResult =
+    PeerResult.Responded(SnapshotMetadata(SnapshotOrdinal.unsafeApply(n), Hash(hash), Hash("p")))
   private def probeOf(results: List[PeerResult], sampled: Int): PeersAheadProbe =
     PeersCommittedAheadProbe.summarize(results, sampled, key, minCorroborators = 2)
 
   private val notAdvanced = AbandonmentTracker.escalationSignal(100L, List(99L))
   private val advanced = AbandonmentTracker.escalationSignal(100L, List(101L))
 
-  private def classify(thresholdMet: Boolean, readyPeers: Int, signal: AbandonmentTracker.EscalationSignal, probe: PeersAheadProbe) =
-    AbandonmentTracker.suppressedBy(thresholdMet, readyPeers, signal, probe, escalated = signal.decide(probe.confirmedAhead))
+  private def classify(
+    thresholdMet: Boolean,
+    readyPeers: Int,
+    signal: AbandonmentTracker.EscalationSignal,
+    probe: PeersAheadProbe,
+    scheduling: Option[SuppressedBy] = None
+  ) =
+    AbandonmentTracker.suppressedBy(thresholdMet, readyPeers, signal, probe, escalated = signal.decide(probe.confirmedAhead), scheduling)
 
   pureTest("precedence table") {
     val table: List[(String, SuppressedBy, SuppressedBy)] = List(
@@ -47,13 +54,43 @@ object EscalationSuppressedBySuite extends SimpleIOSuite {
         SuppressedBy.ProbeError
       ),
       (
-        "probe required but produced no result (reserved scheduling reasons not shipped)",
+        "probe required but produced no result and no scheduling reason",
         classify(thresholdMet = true, readyPeers = 3, notAdvanced, PeersAheadProbe.none),
         SuppressedBy.ProbeError
       ),
       (
+        "coordinator in flight: in_flight",
+        classify(thresholdMet = true, readyPeers = 3, notAdvanced, PeersAheadProbe.none, scheduling = Some(SuppressedBy.InFlight)),
+        SuppressedBy.InFlight
+      ),
+      (
+        "coordinator cooldown (or residence gate): cooldown",
+        classify(thresholdMet = true, readyPeers = 3, notAdvanced, PeersAheadProbe.none, scheduling = Some(SuppressedBy.Cooldown)),
+        SuppressedBy.Cooldown
+      ),
+      (
+        "threshold precedes a scheduling reason",
+        classify(thresholdMet = false, readyPeers = 3, notAdvanced, PeersAheadProbe.none, scheduling = Some(SuppressedBy.InFlight)),
+        SuppressedBy.Threshold
+      ),
+      (
+        "no candidates precedes a scheduling reason",
+        classify(thresholdMet = true, readyPeers = 0, notAdvanced, PeersAheadProbe.none, scheduling = Some(SuppressedBy.Cooldown)),
+        SuppressedBy.NoCandidates
+      ),
+      (
+        "rumor fast path with a scheduling reason still escalates: unsuppressed",
+        classify(thresholdMet = true, readyPeers = 3, advanced, PeersAheadProbe.none, scheduling = Some(SuppressedBy.Cooldown)),
+        SuppressedBy.Unsuppressed
+      ),
+      (
         "every sampled peer timed out or errored",
-        classify(thresholdMet = true, readyPeers = 3, notAdvanced, probeOf(List(PeerResult.TimedOut, PeerResult.Errored, PeerResult.TimedOut), 3)),
+        classify(
+          thresholdMet = true,
+          readyPeers = 3,
+          notAdvanced,
+          probeOf(List(PeerResult.TimedOut, PeerResult.Errored, PeerResult.TimedOut), 3)
+        ),
         SuppressedBy.NoResponders
       ),
       (
@@ -103,7 +140,8 @@ object EscalationSuppressedBySuite extends SimpleIOSuite {
     val disagreement = probeOf(List(meta(100L, "a"), meta(100L, "b"), meta(100L, "b"), meta(99L)), 4)
     val spread = probeOf(List(meta(101L, "a"), meta(102L, "b"), meta(99L)), 3)
 
-    expect.same(Some(100L), disagreement.corroboratingOrdinal)
+    expect
+      .same(Some(100L), disagreement.corroboratingOrdinal)
       .and(expect.same(2, disagreement.corroboratingPeers))
       .and(expect.same(2, disagreement.hashesAtCorroboratingOrdinal))
       .and(expect.same(2, disagreement.aheadGroups))
@@ -119,7 +157,8 @@ object EscalationSuppressedBySuite extends SimpleIOSuite {
   pureTest("per-peer local results are counted separately from responders") {
     val probe = probeOf(List(PeerResult.TimedOut, PeerResult.Errored, PeerResult.Errored, meta(99L)), 4)
 
-    expect.same(1, probe.timedOutPeers)
+    expect
+      .same(1, probe.timedOutPeers)
       .and(expect.same(2, probe.erroredPeers))
       .and(expect.same(1, probe.respondedPeers))
       .and(expect.same(4, probe.probedPeers))
@@ -128,30 +167,33 @@ object EscalationSuppressedBySuite extends SimpleIOSuite {
   }
 
   pureTest("the locked-attempt classifier maps a corroborated probe to none and an empty sample to no_candidates") {
-    expect.same(SuppressedBy.Unsuppressed, AbandonmentTracker.probeSuppressedBy(probeOf(List(meta(100L), meta(100L)), 2)))
+    expect
+      .same(SuppressedBy.Unsuppressed, AbandonmentTracker.probeSuppressedBy(probeOf(List(meta(100L), meta(100L)), 2)))
       .and(expect.same(SuppressedBy.NoCandidates, AbandonmentTracker.probeSuppressedBy(probeOf(Nil, 0))))
       .and(expect.same(SuppressedBy.ProbeTimeout, AbandonmentTracker.probeSuppressedBy(PeersAheadProbe.timedOut)))
   }
 
   pureTest("the enum is bounded and its labels are stable metric label values") {
     val labels = SuppressedBy.values.map(_.label)
-    expect.same(
-      List(
-        "threshold",
-        "no_candidates",
-        "in_flight",
-        "cooldown",
-        "probe_timeout",
-        "probe_error",
-        "no_responders",
-        "responders_below_key",
-        "insufficient_corroborators",
-        "disagreement",
-        "protected_lock_or_certified_transition",
-        "state_transition_failed",
-        "none"
-      ),
-      labels
-    ).and(expect(labels.distinct.size == labels.size, "labels are unique"))
+    expect
+      .same(
+        List(
+          "threshold",
+          "no_candidates",
+          "in_flight",
+          "cooldown",
+          "probe_timeout",
+          "probe_error",
+          "no_responders",
+          "responders_below_key",
+          "insufficient_corroborators",
+          "disagreement",
+          "protected_lock_or_certified_transition",
+          "state_transition_failed",
+          "none"
+        ),
+        labels
+      )
+      .and(expect(labels.distinct.size == labels.size, "labels are unique"))
   }
 }
