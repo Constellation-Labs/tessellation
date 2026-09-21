@@ -200,6 +200,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     for {
       now <- Async[F].monotonic
       resources <- storage.getResources(key)
+      // D1: feed the stale-key telemetry with this key's residence start and the external Facilities
+      // currently visible (monitor-tick resolution). Telemetry only, never a decision input.
+      externalFacilities = resources.peerDeclarationsMap.count { case (pid, decls) => pid =!= selfId && decls.facility.isDefined }
+      _ <- abandonmentTracker.staleKeyTelemetry.observe(key, externalFacilities).attempt.void
       observedPacemakerEpoch = ViewChangeManager.ObservedEpoch(
         state.viewNumber.toLong,
         observedAttemptId,
@@ -671,6 +675,16 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           Metrics[F].incrementCounter(
             "dag_consensus_same_key_restart_suppressed_total",
             Seq(Metrics.unsafeLabelName("reason") -> abandonReason.label)
+          ) >>
+          // D1: the stall/suppression boundary capture (rate-limited per key inside the tracker), so a
+          // locked attempt that never reaches performAbandon is still visible with its ages.
+          abandonmentTracker.captureStaleKey(
+            "stall_boundary",
+            key,
+            abandonReason.label,
+            state,
+            "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
+            "stallCount" -> finalStallCount.toString
           )
       ).whenA(restartSuppressed && didStall)
 

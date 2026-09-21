@@ -63,6 +63,8 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
             expect(!result.confirmedAhead, "a probe with zero responders must not confirm")
               .and(expect.same(3, result.probedPeers))
               .and(expect.same(0, result.respondedPeers))
+              .and(expect.same(3, result.erroredPeers))
+              .and(expect.same(0, result.timedOutPeers))
           }
       }
     }
@@ -122,6 +124,10 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
           .map { result =>
             expect(!result.confirmedAhead, "ordinal agreement without hash agreement is insufficient")
               .and(expect.same(1, result.corroboratingPeers))
+              .and(expect.same(3, result.aheadGroups))
+              .and(expect.same(Some(100L), result.corroboratingOrdinal))
+              .and(expect.same(3, result.hashesAtCorroboratingOrdinal))
+              .and(expect.same(3, result.atKeyPeers))
           }
       }
     }
@@ -155,7 +161,10 @@ object PeersCommittedAheadProbeSuite extends SimpleIOSuite with Checkers {
             overallTimeout = 200.millis
           )
           .map { result =>
-            expect(result.confirmedAhead, "a hung peer must not monopolize the only worker slot").and(expect.same(2, result.respondedPeers))
+            expect(result.confirmedAhead, "a hung peer must not monopolize the only worker slot")
+              .and(expect.same(2, result.respondedPeers))
+              .and(expect.same(1, result.timedOutPeers))
+              .and(expect.same(0, result.erroredPeers))
           }
       }
     }
