@@ -479,6 +479,29 @@ object IsolationRepair {
     def finish(now: FiniteDuration): F[Unit] =
       ref.update(_.copy(inFlight = false, lastFinishedAt = now.some))
 
+    /** Cancellation-safe acquisition and fiber handoff. The reservation and the start of `run` (with `finish` attached as its finalizer)
+      * happen in one uncancelable step, so from the moment the guard is reserved a fiber that will release it exists; if the fiber cannot
+      * be started the reservation is released here. Only then is `onStarted` run, outside the uncancelable region and failure-isolated: a
+      * failing or hanging telemetry effect can neither strand the reservation nor make the handoff uncancelable. `onSkipped` is
+      * failure-isolated the same way.
+      */
+    def launch(now: F[FiniteDuration])(run: F[Unit])(onStarted: F[Unit], onSkipped: Skip => F[Unit]): F[Unit] = {
+      val release = now.flatMap(finish)
+      Async[F].uncancelable { _ =>
+        now.flatMap(tryStart).flatMap {
+          case Some(skip) => (skip.asLeft[Unit]).pure[F]
+          case None =>
+            Async[F]
+              .start(run.guarantee(release))
+              .onError { case _ => release }
+              .as(().asRight[Skip])
+        }
+      }.flatMap {
+        case Left(skip) => onSkipped(skip).attempt.void
+        case Right(())  => onStarted.attempt.void
+      }
+    }
+
     def runs: F[Int] = ref.get.map(_.runs)
 
     def countRun: F[Unit] = ref.update(s => s.copy(runs = s.runs + 1))

@@ -952,16 +952,17 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
         val coreQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
         val trigger =
           IsolationRepair.Trigger.evaluate(residence, facilityAgo, config.timeTriggerInterval, responsiveReadyPeers, coreSize, coreQuorum)
-        val startRepair: F[Unit] = Async[F].monotonic.flatMap(repairGuard.tryStart).flatMap {
-          case Some(skip) =>
+        // Reservation, fiber handoff and finalizer are one cancellation-safe step; the counters run afterwards and
+        // are failure-isolated, so a metrics failure can never leave the guard reserved.
+        val startRepair: F[Unit] = repairGuard.launch(Async[F].monotonic)(runRepair(key, trigger))(
+          onStarted =
+            Metrics[F].incrementCounter("dag_consensus_isolation_repair_total", Seq(Metrics.unsafeLabelName("action") -> "started")),
+          onSkipped = skip =>
             Metrics[F].incrementCounter(
               "dag_consensus_isolation_repair_total",
               Seq(Metrics.unsafeLabelName("action") -> s"skipped_${skip.label}")
             )
-          case None =>
-            Metrics[F].incrementCounter("dag_consensus_isolation_repair_total", Seq(Metrics.unsafeLabelName("action") -> "started")) >>
-              Async[F].start(runRepair(key, trigger).guarantee(Async[F].monotonic.flatMap(repairGuard.finish))).void
-        }
+        )
         startRepair.whenA(trigger.fire)
     }.attempt.void
 

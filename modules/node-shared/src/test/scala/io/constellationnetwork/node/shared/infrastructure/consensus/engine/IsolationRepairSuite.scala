@@ -371,6 +371,51 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
         .and(expect(afterCooldown.isEmpty, s"after the cooldown a new run starts, got $afterCooldown"))
   }
 
+  test("a failing started counter cannot strand the repair guard: the run still executes and a healthy retry starts again") {
+    val boom = new RuntimeException("metrics backend down")
+    for {
+      guard <- RunGuard.make[IO](60.seconds)
+      clock <- clockAt(1000.seconds)
+      runs <- Ref.of[IO, Int](0)
+      started <- Ref.of[IO, Int](0)
+      skipped <- Ref.of[IO, List[RunGuard.Skip]](Nil)
+      firstDone <- Deferred[IO, Unit]
+      _ <- guard.launch(clock.get)(runs.update(_ + 1) >> firstDone.complete(()).void)(IO.raiseError(boom), s => skipped.update(_ :+ s))
+      _ <- firstDone.get.timeout(5.seconds)
+      // The fiber's finalizer has released the guard once the run completed; wait until it is observable.
+      _ <- (IO.sleep(5.millis) >> guard.tryStart(1000.seconds)).iterateUntil(_ != Some(RunGuard.Skip.InFlight)).timeout(5.seconds)
+      _ <- clock.update(_ + 61.seconds)
+      _ <- guard.launch(clock.get)(runs.update(_ + 1))(started.update(_ + 1), s => skipped.update(_ :+ s))
+      _ <- (IO.sleep(5.millis) >> runs.get).iterateUntil(_ == 2).timeout(5.seconds)
+      startedCount <- started.get
+      skips <- skipped.get
+    } yield
+      expect(startedCount == 1, s"the healthy retry starts a run and counts it, got started=$startedCount")
+        .and(expect(skips.isEmpty, s"neither launch was skipped as in-flight or cooling, got $skips"))
+  }
+
+  test("cancellation at the handoff leaves the guard owned by the repair fiber, which releases it") {
+    for {
+      guard <- RunGuard.make[IO](Duration.Zero)
+      clock <- clockAt(1000.seconds)
+      runStarted <- Deferred[IO, Unit]
+      finishRun <- Deferred[IO, Unit]
+      // A hung telemetry backend: the started counter never returns.
+      launcher <- guard.launch(clock.get)(runStarted.complete(()).void >> finishRun.get)(IO.never, _ => IO.unit).start
+      _ <- runStarted.get.timeout(5.seconds)
+      inFlight <- guard.tryStart(1000.seconds)
+      _ <- launcher.cancel
+      launcherOutcome <- launcher.join
+      stillInFlight <- guard.tryStart(1000.seconds)
+      _ <- finishRun.complete(())
+      released <- (IO.sleep(5.millis) >> guard.tryStart(1001.seconds)).iterateUntil(_.isEmpty).timeout(5.seconds)
+    } yield
+      expect(inFlight.contains(RunGuard.Skip.InFlight), s"the repair is in flight while the launcher hangs on the counter, got $inFlight")
+        .and(expect(launcherOutcome.isCanceled, s"the launcher is cancelable at the handoff, got $launcherOutcome"))
+        .and(expect(stillInFlight.contains(RunGuard.Skip.InFlight), "cancelling the launcher does not cancel the repair fiber"))
+        .and(expect(released.isEmpty, s"once the run finishes its finalizer releases the guard, got $released"))
+  }
+
   test("the recheck ledger is bounded") {
     forall(peerGen) { base =>
       for {
