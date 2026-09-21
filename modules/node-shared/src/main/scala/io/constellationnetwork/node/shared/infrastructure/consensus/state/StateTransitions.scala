@@ -2575,15 +2575,7 @@ class StateTransitions[
               permit.generation,
               queue.offer(NormalFirstRoundFallback(permit, evidence.origin))
             )
-            _ <- episode.update { current =>
-              result match {
-                case StateTransitions.NormalFirstRoundReentryResult.StaleOriginSession =>
-                  // The evidence origin left its session before the decision: inert, and fresh ahead
-                  // evidence must be observed again before another decision is due.
-                  current.copy(aheadEvidence = None)
-                case _ => current.copy(recoveryConcluded = true)
-              }
-            }
+            _ <- episode.update(_.afterFallback(result))
             now <- Temporal[F].monotonic
             currentEpisode <- reentryEpisode.get
             cycles = StateTransitions.normalFirstRoundPulseCycles(evidence.firstAttempt, attempt)
@@ -2659,13 +2651,7 @@ class StateTransitions[
 
           for {
             updated <- episode.modify { current =>
-              val labelChanged = !current.lastOutcomeLabel.contains(status.outcomeLabel)
-              // Keep the first ahead attempt for cycle accounting; refresh the origin to the latest ahead observation.
-              val evidence = (current.aheadEvidence, tickAheadEvidence) match {
-                case (Some(existing), Some(fresh)) => fresh.copy(firstAttempt = existing.firstAttempt).some
-                case (existing, fresh)             => existing.orElse(fresh)
-              }
-              val next = current.copy(aheadEvidence = evidence, lastOutcomeLabel = status.outcomeLabel.some)
+              val (next, labelChanged) = current.observe(tickAheadEvidence, status.outcomeLabel)
               next -> (next, labelChanged)
             }
             (state, labelChanged) = updated
@@ -3311,17 +3297,55 @@ object StateTransitions {
     firstAttempt: Long
   )
 
-  /** Loop-local follower episode state. The re-entry episode counter itself lives on the engine context (per node session). */
+  /** Loop-local follower episode state. The re-entry episode counter itself lives on the engine context (per node session).
+    *
+    * Two distinct records of ahead evidence are kept on purpose:
+    *   - `observedAhead` is the irreversible generation-local recovery-only latch: once any valid origin proved the cluster is beyond the
+    *     installed parent, this generation may never open the stale first round, whatever happens to that origin afterwards;
+    *   - `aheadEvidence` is the refreshable, session-bound evidence that authorizes one fallback decision. Losing the origin's session
+    *     invalidates that fallback attempt (fresh evidence must be observed before another decision is due) but never the latch.
+    */
   private[consensus] final case class NormalFirstRoundFollowerEpisode[Key](
+    observedAhead: Boolean,
     aheadEvidence: Option[NormalFirstRoundAheadEvidence[Key]],
     recoveryConcluded: Boolean,
     lastOutcomeLabel: Option[String]
   ) {
-    def recoveryOnly: Boolean = aheadEvidence.nonEmpty || recoveryConcluded
+    def recoveryOnly: Boolean = observedAhead || aheadEvidence.nonEmpty || recoveryConcluded
+
+    /** Fold one pulse tick in. Keeps the first ahead attempt for cycle accounting and refreshes the origin to the latest ahead observation;
+      * any ahead observation sets the latch. Returns the next state and whether the outcome label changed.
+      */
+    def observe(
+      tickAheadEvidence: Option[NormalFirstRoundAheadEvidence[Key]],
+      outcomeLabel: String
+    ): (NormalFirstRoundFollowerEpisode[Key], Boolean) = {
+      val labelChanged = !lastOutcomeLabel.contains(outcomeLabel)
+      val evidence = (aheadEvidence, tickAheadEvidence) match {
+        case (Some(existing), Some(fresh)) => fresh.copy(firstAttempt = existing.firstAttempt).some
+        case (existing, fresh)             => existing.orElse(fresh)
+      }
+      val next = copy(
+        observedAhead = observedAhead || tickAheadEvidence.nonEmpty,
+        aheadEvidence = evidence,
+        lastOutcomeLabel = outcomeLabel.some
+      )
+      next -> labelChanged
+    }
+
+    /** Fold the serialized fallback result in. A vanished origin session only discards the session-bound evidence; every other result
+      * concludes the episode's single decision. The latch is never cleared.
+      */
+    def afterFallback(result: NormalFirstRoundReentryResult): NormalFirstRoundFollowerEpisode[Key] =
+      result match {
+        case NormalFirstRoundReentryResult.StaleOriginSession => copy(aheadEvidence = None)
+        case _                                                => copy(recoveryConcluded = true)
+      }
   }
 
   private[consensus] object NormalFirstRoundFollowerEpisode {
-    def initial[Key]: NormalFirstRoundFollowerEpisode[Key] = NormalFirstRoundFollowerEpisode(None, recoveryConcluded = false, None)
+    def initial[Key]: NormalFirstRoundFollowerEpisode[Key] =
+      NormalFirstRoundFollowerEpisode(observedAhead = false, None, recoveryConcluded = false, None)
   }
 
   /** Pulse ticks consumed since the first ahead observation, inclusive of that tick. */
