@@ -159,6 +159,7 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
       cancelSignal <- Resource.eval(Ref.of[IO, Option[cats.effect.Deferred[IO, Unit]]](None))
       recovered <- Resource.eval(Ref.of[IO, Option[SnapshotOrdinal]](None))
       retriable <- Resource.eval(Ref.of[IO, (Option[SnapshotOrdinal], Int)]((None, 0)))
+      reentryEpisode <- Resource.eval(Ref.of[IO, Long](0L))
     } yield {
       implicit val randomIO: Random[IO] = random
       implicit val supervisorIO: Supervisor[IO] = supervisor
@@ -230,7 +231,8 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         onOutcomeSafetyInitialized = _ => IO.unit,
         onOutcomeRollbackInitialized = (_, _) => IO.unit,
         recoveredAtKeyRef = recovered,
-        retriableAtSameKeyRef = retriable
+        retriableAtSameKeyRef = retriable,
+        normalFirstRoundReentryEpisodeRef = reentryEpisode
       )
 
       val runner: Runner = new ConsensusRoundRunner[IO, Unit, SnapshotOrdinal, String, String, String, TestOutcome, String](
