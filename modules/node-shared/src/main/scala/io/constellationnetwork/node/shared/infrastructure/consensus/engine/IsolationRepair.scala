@@ -419,8 +419,13 @@ object IsolationRepair {
       * `discoverFrom` (`PeerDiscovery.discoverFrom`: filters self, the source, known peers with a session at least as new, and already
       * queued candidates). Up to `maxCandidates` distinct candidates are then handed to `rejoin` (`Joining.rejoin`: the ordinary seedlist,
       * registration-request, handshake and signature validation followed by `addPeer`), so nothing reaches the peer table without that
-      * validation; the attempt is marked finished in the discovery queue either way. Per-source and per-candidate failures are swallowed.
-      * Returns the number of candidates handed to validation.
+      * validation. Per-source and per-candidate failures are swallowed. Returns the number of candidates handed to validation.
+      *
+      * Reservation ownership: `discoverFrom` places every peer it returns into the discovery queue, whose ids are excluded from later
+      * discovery. This bounded pass owns exactly those reservations, so it releases all of them (`markAttemptsFinished`) when it ends,
+      * whether a candidate was handed to validation, left unsampled beyond `maxCandidates`, or abandoned by a timeout/cancellation after
+      * discovery. Unsampled candidates are therefore rediscovered by the next repair pass. Reservations owned by concurrent ordinary
+      * joining are never returned by `discoverFrom` (already queued) and are never touched.
       */
     def through[F[_]: Async](
       clusterStorage: ClusterStorage[F],
@@ -434,19 +439,26 @@ object IsolationRepair {
     ): F[Int] = {
       val priority = priorityPeerIds.fold(Set.empty[PeerId])(_.toSortedSet.toSet)
       val fanOut = math.max(1, parallelism)
-      for {
-        random <- Random.scalaUtilRandom[F]
-        retained <- clusterStorage.getPeers
-        preferred = retained.iterator.filter(p => priority.contains(p.id)).toList.distinctBy(_.id)
-        pool <- if (preferred.nonEmpty) preferred.pure[F] else clusterStorage.getResponsivePeers.map(_.toList.distinctBy(_.id))
-        sources <- random.shuffleList(pool).map(_.take(math.max(0, maxSources)))
-        discovered <- sources.parTraverseN(fanOut)(source => discoverFrom(source).handleError(_ => Set.empty[Peer]))
-        candidates <- random.shuffleList(discovered.combineAll.toList.distinctBy(_.id)).map(_.take(math.max(0, maxCandidates)))
-        _ <- candidates
-          .parTraverseN(fanOut)(candidate => rejoin(PeerToJoin(candidate.id, candidate.ip, candidate.p2pPort)).attempt.void)
-          .guarantee(markAttemptsFinished(candidates.map(_.id).toSet))
-          .whenA(candidates.nonEmpty)
-      } yield candidates.size
+      Ref.of[F, Set[PeerId]](Set.empty).flatMap { reserved =>
+        val pass = for {
+          random <- Random.scalaUtilRandom[F]
+          retained <- clusterStorage.getPeers
+          preferred = retained.iterator.filter(p => priority.contains(p.id)).toList.distinctBy(_.id)
+          pool <- if (preferred.nonEmpty) preferred.pure[F] else clusterStorage.getResponsivePeers.map(_.toList.distinctBy(_.id))
+          sources <- random.shuffleList(pool).map(_.take(math.max(0, maxSources)))
+          discovered <- sources.parTraverseN(fanOut) { source =>
+            discoverFrom(source)
+              .handleError(_ => Set.empty[Peer])
+              .flatTap(peers => reserved.update(_ ++ peers.iterator.map(_.id)))
+          }
+          candidates <- random.shuffleList(discovered.combineAll.toList.distinctBy(_.id)).map(_.take(math.max(0, maxCandidates)))
+          _ <- candidates
+            .parTraverseN(fanOut)(candidate => rejoin(PeerToJoin(candidate.id, candidate.ip, candidate.p2pPort)).attempt.void)
+            .whenA(candidates.nonEmpty)
+        } yield candidates.size
+
+        pass.guarantee(reserved.get.flatMap(ids => markAttemptsFinished(ids).whenA(ids.nonEmpty)))
+      }
     }
   }
 

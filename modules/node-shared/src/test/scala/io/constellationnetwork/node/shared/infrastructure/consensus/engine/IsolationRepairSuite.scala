@@ -8,10 +8,11 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.node.shared.domain.cluster.programs.PeerDiscovery
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.healthcheck.PeerRecheckOutcome
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
-import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
+import io.constellationnetwork.node.shared.http.p2p.clients.{ClusterClient, NodeClient}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.{ClusterStorage => ClusterStorageImpl}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.AbandonmentTracker.SuppressedBy
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.IsolationRepair._
@@ -485,6 +486,95 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
               s"re-discovery never writes the peer table itself, got ${table.map(_.id)}"
             )
           )
+    }
+  }
+
+  private def clusterClientAnswering(candidates: Set[Peer]): ClusterClient[IO] = new ClusterClient[IO] {
+    def getPeers: PeerResponse.PeerResponse[IO, Set[Peer]] = Kleisli(_ => IO.pure(candidates))
+    def getDiscoveryPeers: PeerResponse.PeerResponse[IO, Set[Peer]] = getPeers
+  }
+
+  test("bounded rediscovery releases unsampled reservations: nine candidates over two repair passes leave none queued") {
+    forall(peerGen) { base =>
+      val source = peer(base, 0, Responsive)
+      val candidates = (1 to 9).map(peer(base, _, Responsive)).toSet
+      val self = peer(base, 10, Responsive).id
+      def pass(cs: ClusterStorage[IO], discovery: PeerDiscovery[IO]): IO[Int] =
+        Rediscovery.through[IO](
+          cs,
+          NonEmptySet.of(source.id).some,
+          discovery.discoverFrom,
+          discovery.markAttemptsFinished,
+          p => cs.addPeer(candidates.find(_.id == p.id).get).void
+        )
+      for {
+        cs <- storage(source)
+        discovery <- PeerDiscovery.make[IO](clusterClientAnswering(candidates), cs, self)
+        first <- pass(cs, discovery)
+        queuedBetween <- discovery.getPeers
+        second <- pass(cs, discovery)
+        retained <- cs.getPeers
+        queued <- discovery.getPeers
+      } yield
+        expect(first == 8, s"the first pass hands eight candidates to validation, got $first")
+          .and(expect(queuedBetween.isEmpty, s"the unsampled candidate is released, not stranded in the queue, got ${queuedBetween.size}"))
+          .and(expect(second == 1, s"the second pass rediscovers exactly the unsampled candidate, got $second"))
+          .and(expect(retained.map(_.id) == candidates.map(_.id) + source.id, s"all nine candidates are recorded, got ${retained.size}"))
+          .and(expect(queued.isEmpty, s"nothing stays queued, got ${queued.size}"))
+    }
+  }
+
+  test("cancelling a rediscovery pass mid-way releases every reservation it created") {
+    forall(peerGen) { base =>
+      val source = peer(base, 0, Responsive)
+      val candidates = (1 to 9).map(peer(base, _, Responsive)).toSet
+      val self = peer(base, 10, Responsive).id
+      for {
+        cs <- storage(source)
+        discovery <- PeerDiscovery.make[IO](clusterClientAnswering(candidates), cs, self)
+        handshakeStarted <- Deferred[IO, Unit]
+        pass <- Rediscovery
+          .through[IO](
+            cs,
+            NonEmptySet.of(source.id).some,
+            discovery.discoverFrom,
+            discovery.markAttemptsFinished,
+            _ => handshakeStarted.complete(()).void >> IO.never
+          )
+          .start
+        _ <- handshakeStarted.get
+        queuedDuring <- discovery.getPeers
+        _ <- pass.cancel
+        queuedAfter <- discovery.getPeers
+        retained <- cs.getPeers
+      } yield
+        expect(queuedDuring.size == 9, s"during the pass all discovered candidates are reserved, got ${queuedDuring.size}")
+          .and(expect(queuedAfter.isEmpty, s"cancellation releases the sampled and the unsampled reservations, got ${queuedAfter.size}"))
+          .and(expect(retained.map(_.id) == Set(source.id), "nothing reached the peer table"))
+    }
+  }
+
+  test("rediscovery never releases reservations owned by concurrent ordinary joining") {
+    forall(peerGen) { base =>
+      val source = peer(base, 0, Responsive)
+      val candidate = peer(base, 1, Responsive)
+      val joining = peer(base, 2, Responsive)
+      val self = peer(base, 10, Responsive).id
+      for {
+        cs <- storage(source)
+        cache <- Ref.of[IO, Set[Peer]](Set(joining))
+        discovery = PeerDiscovery.make[IO](cache, clusterClientAnswering(Set(candidate, joining)), cs, self)
+        count <- Rediscovery.through[IO](
+          cs,
+          NonEmptySet.of(source.id).some,
+          discovery.discoverFrom,
+          discovery.markAttemptsFinished,
+          _ => IO.unit
+        )
+        queued <- discovery.getPeers
+      } yield
+        expect(count == 1, s"only the candidate not already queued is handed over, got $count")
+          .and(expect(queued.map(_.id) == Set(joining.id), s"the joining program's reservation is untouched, got ${queued.map(_.id)}"))
     }
   }
 
