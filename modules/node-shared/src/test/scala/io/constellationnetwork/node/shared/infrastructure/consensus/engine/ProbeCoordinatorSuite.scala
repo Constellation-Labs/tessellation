@@ -10,8 +10,8 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.engine.Probe
 
 import weaver.SimpleIOSuite
 
-/** B3' scheduling contract: atomic in-flight reservation, completion-based per-scope cooldown, residence gate, late-result rejection
-  * across a parent/generation change, and residence kept across same-key retries. The clock is injected; no test sleeps.
+/** B3' scheduling contract: atomic in-flight reservation, completion-based per-scope cooldown, residence gate, late-result rejection across
+  * a parent/generation change, and residence kept across same-key retries. The clock is injected; no test sleeps.
   */
 object ProbeCoordinatorSuite extends SimpleIOSuite {
 
@@ -40,10 +40,16 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           _ <- gate.complete(())
           firstResult <- first.joinWithNever
           total <- runs.get
-        } yield expect(second == Result.Suppressed(Suppression.InFlight), s"second caller must be in_flight, got $second")
-          .and(expect(second match { case Result.Suppressed(s) => s.suppressedBy == SuppressedBy.InFlight; case _ => false }, "D2 label is in_flight"))
-          .and(expect(firstResult == Result.Completed("first"), s"the reserved unit completes normally, got $firstResult"))
-          .and(expect(total == 1, s"exactly one unit ran, got $total"))
+        } yield
+          expect(second == Result.Suppressed(Suppression.InFlight), s"second caller must be in_flight, got $second")
+            .and(
+              expect(
+                second match { case Result.Suppressed(s) => s.suppressedBy == SuppressedBy.InFlight; case _ => false },
+                "D2 label is in_flight"
+              )
+            )
+            .and(expect(firstResult == Result.Completed("first"), s"the reserved unit completes normally, got $firstResult"))
+            .and(expect(total == 1, s"exactly one unit ran, got $total"))
     }
   }
 
@@ -57,11 +63,14 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           otherScope <- coordinator.run(scopeB, resident, current)(IO.pure(()))
           _ <- clock.update(_ + 20.seconds)
           sameScopeLater <- coordinator.run(scopeA, resident, current)(IO.pure(()))
-        } yield expect(
-          sameScopeEarly == Result.Suppressed(Suppression.Cooldown(20.seconds)),
-          s"10s after completion the same scope is in cooldown with 20s remaining, got $sameScopeEarly"
-        ).and(expect(otherScope == Result.Completed(()), s"a different scope is not held by the old cooldown, got $otherScope"))
-          .and(expect(sameScopeLater == Result.Completed(()), s"exactly 30s after completion the same scope runs again, got $sameScopeLater"))
+        } yield
+          expect(
+            sameScopeEarly == Result.Suppressed(Suppression.Cooldown(20.seconds)),
+            s"10s after completion the same scope is in cooldown with 20s remaining, got $sameScopeEarly"
+          ).and(expect(otherScope == Result.Completed(()), s"a different scope is not held by the old cooldown, got $otherScope"))
+            .and(
+              expect(sameScopeLater == Result.Completed(()), s"exactly 30s after completion the same scope runs again, got $sameScopeLater")
+            )
     }
   }
 
@@ -74,8 +83,12 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           early <- coordinator.run(scopeA, resident, current)(IO.pure(()))
           _ <- clock.update(_ + 20.seconds)
           later <- coordinator.run(scopeA, resident, current)(IO.pure(()))
-        } yield expect(early == Result.Suppressed(Suppression.Cooldown(20.seconds)), s"start-based cooldown would already have expired, got $early")
-          .and(expect(later == Result.Completed(()), s"30s after completion the scope runs, got $later"))
+        } yield
+          expect(
+            early == Result.Suppressed(Suppression.Cooldown(20.seconds)),
+            s"start-based cooldown would already have expired, got $early"
+          )
+            .and(expect(later == Result.Completed(()), s"30s after completion the scope runs, got $later"))
     }
   }
 
@@ -87,12 +100,23 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           unknown <- coordinator.run(scopeA, None, current)(IO.pure(()))
           eligibility <- coordinator.eligibility(scopeB, 42.seconds.some)
           exact <- coordinator.run(scopeB, 43.seconds.some, current)(IO.pure(()))
-        } yield expect(young == Result.Suppressed(Suppression.Residence(33.seconds)), s"10s residence needs 33s more, got $young")
-          .and(expect(young match { case Result.Suppressed(s) => s.suppressedBy == SuppressedBy.Cooldown; case _ => false }, "reported as cooldown"))
-          .and(expect(young match { case Result.Suppressed(s) => s.detail.startsWith("residence_"); case _ => false }, "detail names residence"))
-          .and(expect(unknown == Result.Completed(()), s"unknown residence is eligible (load control fails open), got $unknown"))
-          .and(expect(eligibility == Some(Suppression.Residence(1.second)), s"read-only eligibility mirrors run, got $eligibility"))
-          .and(expect(exact == Result.Completed(()), s"residence equal to the interval is eligible, got $exact"))
+        } yield
+          expect(young == Result.Suppressed(Suppression.Residence(33.seconds)), s"10s residence needs 33s more, got $young")
+            .and(
+              expect(
+                young match { case Result.Suppressed(s) => s.suppressedBy == SuppressedBy.Cooldown; case _ => false },
+                "reported as cooldown"
+              )
+            )
+            .and(
+              expect(
+                young match { case Result.Suppressed(s) => s.detail.startsWith("residence_"); case _ => false },
+                "detail names residence"
+              )
+            )
+            .and(expect(unknown == Result.Completed(()), s"unknown residence is eligible (load control fails open), got $unknown"))
+            .and(expect(eligibility == Some(Suppression.Residence(1.second)), s"read-only eligibility mirrors run, got $eligibility"))
+            .and(expect(exact == Result.Completed(()), s"residence equal to the interval is eligible, got $exact"))
     }
   }
 
@@ -104,9 +128,15 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           late <- coordinator.run(scopeA, resident, stillCurrent.get)(stillCurrent.set(false).as("evidence"))
           next <- coordinator.run(scopeA, resident, current)(IO.pure("again"))
           state <- coordinator.state
-        } yield expect(late == Result.Stale("evidence"), s"a late result is rejected, got $late")
-          .and(expect(next match { case Result.Suppressed(Suppression.Cooldown(_)) => true; case _ => false }, s"the stale unit still counts for cooldown, got $next"))
-          .and(expect(state.inFlight.isEmpty, "the reservation is released after a stale result"))
+        } yield
+          expect(late == Result.Stale("evidence"), s"a late result is rejected, got $late")
+            .and(
+              expect(
+                next match { case Result.Suppressed(Suppression.Cooldown(_)) => true; case _ => false },
+                s"the stale unit still counts for cooldown, got $next"
+              )
+            )
+            .and(expect(state.inFlight.isEmpty, "the reservation is released after a stale result"))
     }
   }
 
@@ -118,9 +148,10 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           state <- coordinator.state
           _ <- clock.update(_ + cooldown)
           next <- coordinator.run(scopeA, resident, current)(IO.pure(()))
-        } yield expect(failed.isLeft, "the unit's error propagates to the caller")
-          .and(expect(state.inFlight.isEmpty, "the reservation is released on failure"))
-          .and(expect(next == Result.Completed(()), s"after the cooldown the scope runs again, got $next"))
+        } yield
+          expect(failed.isLeft, "the unit's error propagates to the caller")
+            .and(expect(state.inFlight.isEmpty, "the reservation is released on failure"))
+            .and(expect(next == Result.Completed(()), s"after the cooldown the scope runs again, got $next"))
     }
   }
 
@@ -138,9 +169,10 @@ object ProbeCoordinatorSuite extends SimpleIOSuite {
           untracked <- telemetry.residenceOf(101L)
           _ <- telemetry.reset
           afterProgress <- telemetry.residenceOf(100L)
-        } yield expect(afterRetry.contains(50.seconds), s"residence runs from the first observation across retries, got $afterRetry")
-          .and(expect(untracked.isEmpty, "an untracked key has no residence"))
-          .and(expect(afterProgress.isEmpty, "accepted progress forgets the key"))
+        } yield
+          expect(afterRetry.contains(50.seconds), s"residence runs from the first observation across retries, got $afterRetry")
+            .and(expect(untracked.isEmpty, "an untracked key has no residence"))
+            .and(expect(afterProgress.isEmpty, "accepted progress forgets the key"))
       }
     }
   }

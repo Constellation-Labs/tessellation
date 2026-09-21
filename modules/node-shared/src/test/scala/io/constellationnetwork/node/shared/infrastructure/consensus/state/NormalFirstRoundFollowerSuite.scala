@@ -160,7 +160,10 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
         _ <- control.advanceAndTick(2.seconds)
         afterDeadline <- control.results
         observed = afterDeadline.flatMap(_.fold(None, _ => None, Some(_)))
-        status = observed.map(o => StateTransitions.normalFirstRoundPulseStatus(committee, committee, Set.empty, committee.toList.map(_ -> NodeState.Ready).toMap, o.toMap))
+        status = observed.map(o =>
+          StateTransitions
+            .normalFirstRoundPulseStatus(committee, committee, Set.empty, committee.toList.map(_ -> NodeState.Ready).toMap, o.toMap)
+        )
       } yield
         expect(afterFast.isEmpty, "fast aligned result must not complete the tick alone") &&
           expect(afterSlow.isEmpty, "a still-pending task keeps the tick open") &&
@@ -198,9 +201,11 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
         results <- control.results
       } yield
         expect.same(
-          Some(Outcome.succeeded[cats.Id, Throwable, List[(PeerId, PulseOutcome[Int])]](
-            List(a -> PulseOutcome.Aligned(parentKey, parentHash), b -> PulseOutcome.FetchFailed("RuntimeException"))
-          )),
+          Some(
+            Outcome.succeeded[cats.Id, Throwable, List[(PeerId, PulseOutcome[Int])]](
+              List(a -> PulseOutcome.Aligned(parentKey, parentHash), b -> PulseOutcome.FetchFailed("RuntimeException"))
+            )
+          ),
           results
         )
     }
@@ -231,9 +236,9 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
     reentry(permitOwned = false, originCurrent = true, NodeStateTransition.Success).map {
       case (result, marked, transitioned, episode) =>
         expect.same(ReentryResult.StaleGeneration, result) &&
-          expect(!marked, "recovery download flag must not be set by a stale generation") &&
-          expect(!transitioned, "a stale generation must not attempt a node-state transition") &&
-          expect.same(4L, episode)
+        expect(!marked, "recovery download flag must not be set by a stale generation") &&
+        expect(!transitioned, "a stale generation must not attempt a node-state transition") &&
+        expect.same(4L, episode)
     }
   }
 
@@ -241,9 +246,9 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
     reentry(permitOwned = true, originCurrent = false, NodeStateTransition.Success).map {
       case (result, marked, transitioned, episode) =>
         expect.same(ReentryResult.StaleOriginSession, result) &&
-          expect(!marked) &&
-          expect(!transitioned) &&
-          expect.same(4L, episode)
+        expect(!marked) &&
+        expect(!transitioned) &&
+        expect.same(4L, episode)
     }
   }
 
