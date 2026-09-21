@@ -4,6 +4,7 @@ import cats._
 import cats.effect.kernel.{Async, Ref, Temporal}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
+import cats.effect.{Concurrent, Deferred}
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -2423,6 +2424,38 @@ class StateTransitions[
       mode = "operator_recovery_seed"
     )
 
+  /** Follower fallback result handles keyed by permit generation. The pulse fiber registers one before queueing `NormalFirstRoundFallback`
+    * and awaits the serialized decision through it; the FSM completes it after acting.
+    */
+  private val normalFirstRoundFallbackHandles: Ref[F, Map[Long, Deferred[F, StateTransitions.NormalFirstRoundReentryResult]]] =
+    Ref.unsafe[F, Map[Long, Deferred[F, StateTransitions.NormalFirstRoundReentryResult]]](Map.empty)
+
+  private def normalFirstRoundOriginStillCurrent(origin: Peer): F[Boolean] =
+    ctx.clusterStorage.getResponsivePeers.map(_.exists(peer => peer.id === origin.id && peer.session === origin.session))
+
+  /** Serialized action boundary for `ConsensusCommand.NormalFirstRoundFallback`, run only on the FSM command loop.
+    *
+    * Ownership is validated here, against the same gate that initialization arms on this loop: the permit generation must still be pending
+    * and the evidence origin must still be a responsive peer in the session it was queried in. Only then are the recovery download flag,
+    * the node-state transition and the re-entry episode written. The pulse fiber that queued the command never mutates; it learns the
+    * result through its registered handle (if it is still waiting).
+    */
+  def normalFirstRoundFallback(permit: FirstRoundStartGate.Permit[Key], origin: Peer): F[Unit] =
+    StateTransitions
+      .enterNormalFirstRoundRecovery(
+        ctx.firstRoundStartGate.isPending(permit),
+        normalFirstRoundOriginStillCurrent(origin),
+        ctx.nodeStorage.setRecoveryDownload,
+        ctx.nodeStorage.tryModifyStateGetResult(
+          Set[NodeState](NodeState.WaitingForReady, NodeState.Ready, NodeState.Observing),
+          NodeState.WaitingForDownload
+        ),
+        ctx.normalFirstRoundReentryEpisodeRef
+      )
+      .flatMap { result =>
+        normalFirstRoundFallbackHandles.get.flatMap(_.get(permit.generation).traverse_(_.complete(result).void))
+      }
+
   /** Normal post-bootstrap validator release path.
     *
     * A held validator does not run its own first-round timer. It waits until an ordinary Facility for `key.next` has been stored from a
@@ -2432,9 +2465,9 @@ class StateTransitions[
     *
     * Each tick samples up to `config.firstRoundPulseFanout` distinct eligible origins concurrently under one tick deadline and classifies
     * every reported outcome with ordered keys. Ahead evidence makes the generation recovery-only; after the bounded safe pulse retries the
-    * follower makes one fallback decision (re-enter recovery download), revalidating permit ownership and the origin session at that
-    * boundary so stale work is inert. The re-entry episode counter lives on the engine context and increments only on a successful
-    * result-returning state transition.
+    * follower queues one generation-bound fallback command (`NormalFirstRoundFallback`) and awaits its result. Permit ownership, the origin
+    * session and every mutation are handled on the serialized FSM loop (`normalFirstRoundFallback`), so stale work is inert. The re-entry
+    * episode counter lives on the engine context and increments only on a successful result-returning state transition.
     */
   private def scheduleNormalFirstRoundFollower(
     key: Key,
@@ -2529,9 +2562,7 @@ class StateTransitions[
                 )
           }
 
-        def originStillCurrent(origin: Peer): F[Boolean] =
-          ctx.clusterStorage.getResponsivePeers.map(_.exists(peer => peer.id === origin.id && peer.session === origin.session))
-
+        // The pulse fiber only queues the generation-bound command; the decision and every mutation run on the FSM loop.
         def fallback(
           episode: Ref[F, Episode],
           evidence: StateTransitions.NormalFirstRoundAheadEvidence[Key],
@@ -2539,15 +2570,10 @@ class StateTransitions[
           startedAt: FiniteDuration
         ): F[Unit] =
           for {
-            result <- StateTransitions.enterNormalFirstRoundRecovery(
-              ctx.firstRoundStartGate.isPending(permit),
-              originStillCurrent(evidence.origin),
-              ctx.nodeStorage.setRecoveryDownload,
-              ctx.nodeStorage.tryModifyStateGetResult(
-                Set[NodeState](NodeState.WaitingForReady, NodeState.Ready, NodeState.Observing),
-                NodeState.WaitingForDownload
-              ),
-              reentryEpisode
+            result <- StateTransitions.awaitNormalFirstRoundFallback(
+              normalFirstRoundFallbackHandles,
+              permit.generation,
+              queue.offer(NormalFirstRoundFallback(permit, evidence.origin))
             )
             _ <- episode.update { current =>
               result match {
@@ -3317,10 +3343,12 @@ object StateTransitions {
     case object TransitionRejected extends NormalFirstRoundReentryResult { val label = "transition_rejected" }
   }
 
-  /** Serialized action boundary for the follower fallback.
+  /** Decision body of the follower fallback, meant to run on the serialized FSM loop (`normalFirstRoundFallback`).
     *
-    * Ownership is revalidated first: a permit generation that is no longer pending, or an origin whose session is gone, produces an inert
-    * result and touches neither the recovery flag nor the node state. The episode counter increments only when the result-returning state
+    * Ownership is validated first: a permit generation that is no longer pending, or an origin whose session is gone, produces an inert
+    * result and touches neither the recovery flag nor the node state. Ownership is read again immediately before the writes: the command
+    * loop already serializes this decision against the initialization that arms a newer generation, and the second read keeps a permit
+    * superseded while the origin was being revalidated inert as well. The episode counter increments only when the result-returning state
     * transition reports success.
     */
   private[consensus] def enterNormalFirstRoundRecovery[F[_]: Monad](
@@ -3329,19 +3357,35 @@ object StateTransitions {
     markRecoveryDownload: F[Unit],
     transition: F[NodeStateTransition],
     reentryEpisode: Ref[F, Long]
-  ): F[NormalFirstRoundReentryResult] =
+  ): F[NormalFirstRoundReentryResult] = {
+    val staleGeneration = (NormalFirstRoundReentryResult.StaleGeneration: NormalFirstRoundReentryResult).pure[F]
+    val enter = markRecoveryDownload >> transition.flatMap {
+      case NodeStateTransition.Success =>
+        reentryEpisode.updateAndGet(_ + 1L).map(NormalFirstRoundReentryResult.Entered(_): NormalFirstRoundReentryResult)
+      case NodeStateTransition.Failure =>
+        (NormalFirstRoundReentryResult.TransitionRejected: NormalFirstRoundReentryResult).pure[F]
+    }
     permitStillOwned.ifM(
-      ifFalse = (NormalFirstRoundReentryResult.StaleGeneration: NormalFirstRoundReentryResult).pure[F],
+      ifFalse = staleGeneration,
       ifTrue = originStillCurrent.ifM(
         ifFalse = (NormalFirstRoundReentryResult.StaleOriginSession: NormalFirstRoundReentryResult).pure[F],
-        ifTrue = markRecoveryDownload >> transition.flatMap {
-          case NodeStateTransition.Success =>
-            reentryEpisode.updateAndGet(_ + 1L).map(NormalFirstRoundReentryResult.Entered(_): NormalFirstRoundReentryResult)
-          case NodeStateTransition.Failure =>
-            (NormalFirstRoundReentryResult.TransitionRejected: NormalFirstRoundReentryResult).pure[F]
-        }
+        ifTrue = permitStillOwned.ifM(ifFalse = staleGeneration, ifTrue = enter)
       )
     )
+  }
+
+  /** Pulse-fiber side of the fallback: register a result handle for `generation`, queue the command through `offer`, and wait for the
+    * serialized decision. No mutation happens here. The handle is unregistered however the wait ends.
+    */
+  private[consensus] def awaitNormalFirstRoundFallback[F[_]: Concurrent](
+    handles: Ref[F, Map[Long, Deferred[F, NormalFirstRoundReentryResult]]],
+    generation: Long,
+    offer: F[Unit]
+  ): F[NormalFirstRoundReentryResult] =
+    Deferred[F, NormalFirstRoundReentryResult].flatMap { handle =>
+      (handles.update(_.updated(generation, handle)) >> offer >> handle.get)
+        .guarantee(handles.update(_ - generation))
+    }
 
   private[consensus] def normalFirstRoundQueriedSummary[Key: Show](
     queried: List[(PeerId, NormalFirstRoundPulsePeerOutcome[Key])]

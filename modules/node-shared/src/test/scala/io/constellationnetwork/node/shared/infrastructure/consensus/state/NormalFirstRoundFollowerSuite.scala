@@ -1,8 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
-import cats.effect.std.Random
+import cats.effect._
+import cats.effect.std.{Queue, Random}
 import cats.effect.testkit.TestControl
-import cats.effect.{IO, Outcome, Ref}
 import cats.kernel.{Next, PartialOrder}
 import cats.syntax.all._
 import cats.{Eq, Order}
@@ -11,11 +11,13 @@ import scala.collection.immutable.SortedSet
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
+import io.constellationnetwork.node.shared.infrastructure.cluster.storage.{ClusterStorage => ClusterStorageImpl}
+import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, FirstRoundStartGate}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.StateTransitions.{
   NormalFirstRoundPulsePeerOutcome => PulseOutcome,
   NormalFirstRoundReentryResult => ReentryResult
 }
-import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
+import io.constellationnetwork.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
 import io.constellationnetwork.schema.peer.{Peer, PeerId, Responsive}
@@ -263,6 +265,127 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
         expect.same(ReentryResult.TransitionRejected, rejected._1) &&
         expect(rejected._3, "the transition was attempted") &&
         expect.same(4L, rejected._4)
+  }
+
+  private def session(n: Long): SessionToken = SessionToken(Generation(PosLong.unsafeFrom(n)))
+
+  private def clusterStorage(peers: Peer*) =
+    ClusterStorageImpl.make[IO](ClusterId("8d07c061-d42f-4d9c-9efc-37e0d1ee73e7"), peers.map(p => p.id -> p).toMap)
+
+  private final case class FallbackProbe(
+    result: ReentryResult,
+    marked: Boolean,
+    transitioned: Boolean,
+    episode: Long,
+    freshHeld: Option[Boolean]
+  )
+
+  /** Run the fallback decision body against a real gate with the origin revalidation paused; `interleave` runs while it is paused. */
+  private def fallbackWhilePaused(
+    gate: FirstRoundStartGate[IO, Int],
+    permit: FirstRoundStartGate.Permit[Int],
+    originStillCurrent: IO[Boolean],
+    interleave: IO[Option[FirstRoundStartGate.Permit[Int]]]
+  ): IO[FallbackProbe] =
+    for {
+      originRead <- Deferred[IO, Unit]
+      finishRead <- Deferred[IO, Unit]
+      marked <- Ref.of[IO, Boolean](false)
+      transitioned <- Ref.of[IO, Boolean](false)
+      episode <- Ref.of[IO, Long](0L)
+      run <- StateTransitions
+        .enterNormalFirstRoundRecovery[IO](
+          gate.isPending(permit),
+          originRead.complete(()).void >> finishRead.get >> originStillCurrent,
+          marked.set(true),
+          transitioned.set(true).as(NodeStateTransition.Success),
+          episode
+        )
+        .start
+      _ <- originRead.get
+      fresh <- interleave
+      _ <- finishRead.complete(())
+      result <- run.joinWithNever
+      hasMarked <- marked.get
+      hasTransitioned <- transitioned.get
+      episodeAfter <- episode.get
+      freshHeld <- fresh.traverse(gate.isPending)
+    } yield FallbackProbe(result, hasMarked, hasTransitioned, episodeAfter, freshHeld)
+
+  test("the fallback is inert when a new gate generation is armed while the origin session is being revalidated") {
+    for {
+      gate <- FirstRoundStartGate.make[IO, Int](initiallyHeld = true)
+      old <- gate.arm(parentKey)
+      probe <- fallbackWhilePaused(gate, old, IO.pure(true), gate.arm(parentKey + 1).map(_.some))
+      oldHeld <- gate.isPending(old)
+    } yield
+      expect.same(ReentryResult.StaleGeneration, probe.result) &&
+        expect(!probe.marked, s"a superseded permit must not set the recovery download flag; $probe") &&
+        expect(!probe.transitioned, s"a superseded permit must not transition the node; $probe") &&
+        expect.same(0L, probe.episode) &&
+        expect(probe.freshHeld.contains(true), s"the newer permit remains held; $probe") &&
+        expect(!oldHeld, "the old permit is no longer pending")
+  }
+
+  test("the fallback is inert when the origin session is replaced while it is being revalidated") {
+    val origin = peerOf(pid("origin")).copy(session = session(1L))
+    val replaced = origin.copy(session = session(2L))
+    for {
+      gate <- FirstRoundStartGate.make[IO, Int](initiallyHeld = true)
+      permit <- gate.arm(parentKey)
+      cs <- clusterStorage(origin)
+      stillCurrent = cs.getResponsivePeers.map(_.exists(p => p.id === origin.id && p.session === origin.session))
+      probe <- fallbackWhilePaused(gate, permit, stillCurrent, cs.addPeer(replaced).as(none))
+      stillHeld <- gate.isPending(permit)
+      stored <- cs.getPeer(origin.id)
+    } yield
+      expect.same(ReentryResult.StaleOriginSession, probe.result) &&
+        expect(!probe.marked && !probe.transitioned, s"a vanished origin session must not enter recovery; $probe") &&
+        expect.same(0L, probe.episode) &&
+        expect(stillHeld, "the permit is still held: the follower may observe fresh evidence and decide again") &&
+        expect(stored.contains(replaced), s"the newer origin record is untouched, got $stored")
+  }
+
+  test("the pulse fiber only queues the generation-bound command; the serialized handler decides and completes the handle") {
+    val origin = peerOf(pid("origin"))
+    type Command = ConsensusCommand[Int, Nothing, Nothing, Nothing]
+    for {
+      gate <- FirstRoundStartGate.make[IO, Int](initiallyHeld = true)
+      permit <- gate.arm(parentKey)
+      queue <- Queue.unbounded[IO, Command]
+      handles <- Ref.of[IO, Map[Long, Deferred[IO, ReentryResult]]](Map.empty)
+      marked <- Ref.of[IO, Boolean](false)
+      episode <- Ref.of[IO, Long](0L)
+      waiting <- StateTransitions
+        .awaitNormalFirstRoundFallback[IO](
+          handles,
+          permit.generation,
+          queue.offer(ConsensusCommand.NormalFirstRoundFallback(permit, origin))
+        )
+        .start
+      queued <- queue.take
+      markedBeforeHandler <- marked.get
+      registered <- handles.get.map(_.contains(permit.generation))
+      // What the FSM handler does on the command loop for the queued command.
+      result <- StateTransitions.enterNormalFirstRoundRecovery[IO](
+        gate.isPending(permit),
+        IO.pure(true),
+        marked.set(true),
+        IO.pure(NodeStateTransition.Success),
+        episode
+      )
+      _ <- handles.get.flatMap(_.get(permit.generation).traverse_(_.complete(result)))
+      awaited <- waiting.joinWithNever
+      unregistered <- handles.get.map(_.isEmpty)
+      markedAfter <- marked.get
+    } yield
+      expect.same(ConsensusCommand.NormalFirstRoundFallback(permit, origin), queued) &&
+        expect(!markedBeforeHandler, "queueing the command mutates nothing") &&
+        expect(registered, "the handle is registered while the pulse fiber waits") &&
+        expect.same(ReentryResult.Entered(1L), result) &&
+        expect.same(result, awaited) &&
+        expect(markedAfter, "the serialized handler performed the mutation") &&
+        expect(unregistered, "the handle is unregistered once the wait ends")
   }
 
   pureTest("the single fallback decision is due only after the bounded safe pulse retries") {
