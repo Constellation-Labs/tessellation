@@ -74,39 +74,80 @@ object PeersCommittedAheadProbe {
         sample
           .parTraverseN(math.max(1, parallelism)) { peer =>
             fetchLatestCommittedMetadata(peer)
-              .map(_.some)
-              .timeoutTo(perPeerTimeout, none[SnapshotMetadata].pure[F])
-              .handleError(_ => none[SnapshotMetadata])
+              .map[PeerResult](PeerResult.Responded(_))
+              .timeoutTo(perPeerTimeout, (PeerResult.TimedOut: PeerResult).pure[F])
+              .handleError(_ => PeerResult.Errored)
           }
-          .map { results =>
-            val responded = results.flatten
-            val aheadGroups = responded
-              .filter(metadata => metadata.ordinal >= abandonedKey)
-              .groupBy(metadata => (metadata.ordinal, metadata.hash))
-              .values
-            val corroboratingPeers = aheadGroups.map(_.size).maxOption.getOrElse(0)
-            // The corroboration requirement scales down to what the cluster can possibly provide:
-            // demanding two matching responses inside a two-node metagraph (sample of one peer)
-            // would re-open #1533 as a permanent small-cluster suppression. With a single sampled
-            // peer, that peer is the only possible download source anyway, and the download stays
-            // signature-validated and checkpoint-gated -- this probe is a liveness heuristic, not
-            // a trust decision (the PeerSelect posture). A temporarily shrunken sample (e.g. a
-            // three-node cluster with one peer down) self-heals: the dead peer drops out of the
-            // Ready responsive set and the requirement follows it down on later abandonment
-            // cycles. On any cluster that can provide `minCorroborators` peers, the full
-            // requirement stands.
-            val requiredCorroborators = math.max(1, math.min(minCorroborators, sample.size))
-            val confirmedAhead =
-              corroboratingPeers >= requiredCorroborators && corroboratingPeers * 2 > responded.size
-            AbandonmentTracker.PeersAheadProbe(
-              confirmedAhead = confirmedAhead,
-              probedPeers = sample.size,
-              respondedPeers = responded.size,
-              corroboratingPeers = corroboratingPeers,
-              outcome = AbandonmentTracker.ProbeOutcome.Completed
-            )
-          }
+          .map(results => summarize(results, sample.size, abandonedKey, minCorroborators))
       }
       .timeoutTo(overallTimeout, AbandonmentTracker.PeersAheadProbe.timedOut.pure[F])
       .handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
+
+  /** Per-peer local result of one sampled fetch. Retained as counts on `PeersAheadProbe` so the escalation paths can explain a
+    * non-confirming probe (`AbandonmentTracker.SuppressedBy`) without changing how it is decided.
+    */
+  sealed trait PeerResult
+  object PeerResult {
+    final case class Responded(metadata: SnapshotMetadata) extends PeerResult
+    case object TimedOut extends PeerResult
+    case object Errored extends PeerResult
+  }
+
+  /** Pure fold of the sampled results into the probe verdict plus its reason data. The confirmation formula is unchanged: a strict
+    * responder-majority agreeing on one `(ordinal, hash)` at/above the key, with at least `minCorroborators` matching peers clamped to the
+    * sample size. The extra counts and the corroborating group's identity are telemetry only.
+    */
+  private[engine] def summarize(
+    results: List[PeerResult],
+    sampledPeers: Int,
+    abandonedKey: SnapshotOrdinal,
+    minCorroborators: Int
+  ): AbandonmentTracker.PeersAheadProbe = {
+    val responded = results.collect { case PeerResult.Responded(metadata) => metadata }
+    val timedOut = results.count { case PeerResult.TimedOut => true; case _ => false }
+    val errored = results.count { case PeerResult.Errored => true; case _ => false }
+    val belowKey = responded.count(_.ordinal < abandonedKey)
+    val atKey = responded.count(_.ordinal === abandonedKey)
+    val aboveKey = responded.count(_.ordinal > abandonedKey)
+    val atOrAbove = responded.filter(metadata => metadata.ordinal >= abandonedKey)
+    val aheadGroups = atOrAbove.groupBy(metadata => (metadata.ordinal, metadata.hash))
+    // Deterministic pick of the corroborating group: largest, then highest ordinal, then hash text.
+    val corroboratingGroup = aheadGroups.toList.map { case ((ordinal, hash), members) => (members.size, ordinal.value.value, hash.value) }
+      .sorted(Ordering.Tuple3(Ordering[Int].reverse, Ordering[Long].reverse, Ordering[String]))
+      .headOption
+    val corroboratingPeers = corroboratingGroup.fold(0)(_._1)
+    val corroboratingOrdinal = corroboratingGroup.map(_._2)
+    val hashesAtCorroboratingOrdinal = corroboratingOrdinal.fold(0) { ordinal =>
+      atOrAbove.filter(_.ordinal.value.value == ordinal).map(_.hash).distinct.size
+    }
+    // The corroboration requirement scales down to what the cluster can possibly provide:
+    // demanding two matching responses inside a two-node metagraph (sample of one peer)
+    // would re-open #1533 as a permanent small-cluster suppression. With a single sampled
+    // peer, that peer is the only possible download source anyway, and the download stays
+    // signature-validated and checkpoint-gated -- this probe is a liveness heuristic, not
+    // a trust decision (the PeerSelect posture). A temporarily shrunken sample (e.g. a
+    // three-node cluster with one peer down) self-heals: the dead peer drops out of the
+    // Ready responsive set and the requirement follows it down on later abandonment
+    // cycles. On any cluster that can provide `minCorroborators` peers, the full
+    // requirement stands.
+    val requiredCorroborators = math.max(1, math.min(minCorroborators, sampledPeers))
+    val confirmedAhead =
+      corroboratingPeers >= requiredCorroborators && corroboratingPeers * 2 > responded.size
+    AbandonmentTracker.PeersAheadProbe(
+      confirmedAhead = confirmedAhead,
+      probedPeers = sampledPeers,
+      respondedPeers = responded.size,
+      corroboratingPeers = corroboratingPeers,
+      outcome = AbandonmentTracker.ProbeOutcome.Completed,
+      timedOutPeers = timedOut,
+      erroredPeers = errored,
+      belowKeyPeers = belowKey,
+      atKeyPeers = atKey,
+      aboveKeyPeers = aboveKey,
+      requiredCorroborators = requiredCorroborators,
+      aheadGroups = aheadGroups.size,
+      corroboratingOrdinal = corroboratingOrdinal,
+      hashesAtCorroboratingOrdinal = hashesAtCorroboratingOrdinal
+    )
+  }
 }
