@@ -1,10 +1,10 @@
 package io.constellationnetwork.node.shared.infrastructure.healthcheck
 
 import cats.data.Kleisli
-import cats.effect.IO
 import cats.effect.kernel.Fiber
 import cats.effect.std.Supervisor
 import cats.effect.testkit.TestControl
+import cats.effect.{Deferred, IO}
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -316,6 +316,62 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         TestControl.executeEmbed(prog).flatMap { outcome =>
           peersR.keys.map(_.size).map(fibers => expect.same(PeerRecheckOutcome.Joined, outcome).and(expect.same(1, fibers)))
         }
+      }
+    }
+  }
+
+  /** Recheck `queried` (session 1), pause the `/session` answer, install `replacement` through the real `addPeer`, then deliver `answer`.
+    */
+  private def recheckWhileReplaced(
+    queried: Peer,
+    replacement: Peer,
+    answer: SessionToken
+  ): IO[(PeerRecheckOutcome, Option[Peer], Int)] =
+    (mkClusterStorage(Map(queried.id -> queried)), mkPeersR, Deferred[IO, Unit], Deferred[IO, Unit]).flatMapN {
+      (cs, peersR, started, respond) =>
+        val gated = new NodeClient[IO] {
+          def getState: PeerResponse.PeerResponse[IO, NodeState] = ???
+          def health: PeerResponse.PeerResponse[IO, Boolean] = ???
+          def getSession: PeerResponse.PeerResponse[IO, Option[SessionToken]] =
+            Kleisli(_ => started.complete(()).void >> respond.get.as(answer.some))
+        }
+        Supervisor[IO].use { implicit s =>
+          for {
+            run <- LocalHealthcheck.make(peersR, retryPolicy, gated, cs).recheck(queried).start
+            _ <- started.get
+            _ <- cs.addPeer(replacement)
+            _ <- respond.complete(())
+            outcome <- run.joinWithNever
+            stored <- cs.getPeer(queried.id)
+            fibers <- peersR.keys.map(_.size)
+          } yield (outcome, stored, fibers)
+        }
+    }
+
+  test("recheck binds the restore to the record it queried: a session installed in flight keeps its own responsiveness") {
+    forall(peerGen) { peer =>
+      val queried = mapPeer(peer).copy(responsiveness = Unresponsive, session = SessionToken(Generation(PosLong.unsafeFrom(1L))))
+      val fresh = queried.copy(session = otherSession, responsiveness = Unresponsive)
+      recheckWhileReplaced(queried, fresh, answer = queried.session).map {
+        case (outcome, stored, fibers) =>
+          expect
+            .same(PeerRecheckOutcome.Superseded, outcome)
+            .and(expect(stored.contains(fresh), s"the newer record must not be relabelled by the old session's answer, got $stored"))
+            .and(expect.same(0, fibers))
+      }
+    }
+  }
+
+  test("recheck binds the removal to the record it queried: a differing answer never removes a session installed in flight") {
+    forall(peerGen) { peer =>
+      val queried = mapPeer(peer).copy(session = SessionToken(Generation(PosLong.unsafeFrom(1L))))
+      val fresh = queried.copy(session = otherSession)
+      recheckWhileReplaced(queried, fresh, answer = SessionToken(Generation(PosLong.unsafeFrom(3L)))).map {
+        case (outcome, stored, fibers) =>
+          expect
+            .same(PeerRecheckOutcome.SessionChanged(removed = false), outcome)
+            .and(expect(stored.contains(fresh), s"the newer record survives, got $stored"))
+            .and(expect.same(0, fibers))
       }
     }
   }

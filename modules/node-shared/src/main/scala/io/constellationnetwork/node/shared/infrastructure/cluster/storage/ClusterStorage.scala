@@ -102,6 +102,15 @@ object ClusterStorage {
           case (oldValue, newValue) => oldValue.exists(_.session === expectedSession) && newValue.isEmpty
         }
 
+      override def setPeerResponsivenessIfSession(id: PeerId, expectedSession: SessionToken, responsiveness: PeerResponsiveness)(
+        implicit F: Monad[F]
+      ): F[Boolean] =
+        updatePeerAndGet(id)(_.map { peer =>
+          if (peer.session === expectedSession) peer.focus(_.responsiveness).replace(responsiveness) else peer
+        }).map {
+          case (_, newValue) => newValue.exists(peer => peer.session === expectedSession && peer.responsiveness === responsiveness)
+        }
+
       def peerChanges: Stream[F, Ior[Peer, Peer]] =
         topic.subscribe(maxQueuedPeerChanges)
 

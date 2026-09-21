@@ -3,7 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 import cats.data.{Kleisli, NonEmptySet}
 import cats.effect.kernel.Fiber
 import cats.effect.std.{Random, Supervisor}
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -178,6 +178,68 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
           .and(expect(result.restored == 0, "a differing session never restores"))
           .and(expect(changedNow.isEmpty, "the stale record is gone"))
     // The concurrent-newer-session branch of the CAS (removed = false) is pinned in ClusterStorageSuite.removePeerIfSession.
+    }
+  }
+
+  /** Sample `queried` (Unresponsive, session 1), pause its session answer, install `replacement` through the real `addPeer` while the
+    * request is in flight, then deliver `answer`. Returns the pass result and the record left in the table.
+    */
+  private def rehabilitateWhileReplaced(
+    queried: Peer,
+    replacement: Peer,
+    answer: SessionToken
+  ): IO[(Rehabilitation.Result, Option[Peer])] =
+    for {
+      cs <- storage(queried)
+      started <- Deferred[IO, Unit]
+      respond <- Deferred[IO, Unit]
+      clock <- clockAt(1000.seconds)
+      ledger <- PeerRecheckLedger.make[IO]()
+      checkSession = (_: Peer) => started.complete(()).void >> respond.get.as(answer.some)
+      run <- Rehabilitation.run[IO](cs, checkSession.some, ledger, clock.get, budget).start
+      _ <- started.get
+      installed <- cs.addPeer(replacement)
+      _ <- respond.complete(())
+      result <- run.joinWithNever
+      retained <- cs.getPeer(queried.id)
+    } yield (result.copy(candidates = if (installed) result.candidates else -1), retained)
+
+  test("rehabilitation preserves a newer Responsive session installed while the session check was in flight") {
+    forall(peerGen) { base =>
+      val queried = peer(base, 0, Unresponsive, sessionId = 1L)
+      val fresh = queried.copy(session = session(2L), responsiveness = Responsive)
+      rehabilitateWhileReplaced(queried, fresh, answer = session(1L)).map {
+        case (result, retained) =>
+          expect(retained.contains(fresh), s"the newer session must survive an answer for the old one, got $retained")
+            .and(expect(result.superseded == 1, s"the stale answer is reported as superseded, got $result"))
+            .and(expect(result.restored == 0 && result.sessionChanged == 0 && result.removed == 0, s"nothing else is counted, got $result"))
+      }
+    }
+  }
+
+  test("the restore is bound to the queried session: a record replaced in flight keeps its own responsiveness") {
+    forall(peerGen) { base =>
+      val queried = peer(base, 0, Unresponsive, sessionId = 1L)
+      val freshUnresponsive = queried.copy(session = session(2L), responsiveness = Unresponsive)
+      rehabilitateWhileReplaced(queried, freshUnresponsive, answer = session(1L)).map {
+        case (result, retained) =>
+          expect(
+            retained.contains(freshUnresponsive),
+            s"the old session's healthy answer must not relabel the newer record Responsive, got $retained"
+          ).and(expect(result.superseded == 1 && result.restored == 0, s"reported as superseded, not restored, got $result"))
+      }
+    }
+  }
+
+  test("a differing-session answer removes only the queried session, never a record installed in flight") {
+    forall(peerGen) { base =>
+      val queried = peer(base, 0, Unresponsive, sessionId = 1L)
+      val fresh = queried.copy(session = session(2L), responsiveness = Responsive)
+      rehabilitateWhileReplaced(queried, fresh, answer = session(3L)).map {
+        case (result, retained) =>
+          expect(retained.contains(fresh), s"the newer record survives a differing answer for the old one, got $retained")
+            .and(expect(result.sessionChanged == 1 && result.removed == 0, s"session change observed, nothing removed, got $result"))
+      }
     }
   }
 

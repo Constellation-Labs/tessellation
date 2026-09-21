@@ -110,24 +110,32 @@ object LocalHealthcheck {
         case Some(_) => (PeerRecheckOutcome.Joined: PeerRecheckOutcome).pure[F]
         case None =>
           clusterStorage.getPeer(peer.id).flatMap {
-            case None => (PeerRecheckOutcome.Unknown: PeerRecheckOutcome).pure[F]
+            case None           => (PeerRecheckOutcome.Unknown: PeerRecheckOutcome).pure[F]
             case Some(recorded) =>
-              check(peer).flatMap {
+              // The captured record is both the endpoint queried and the session every mutation below is bound to, so an
+              // answer for a record that was replaced during the round trip cannot relabel or remove its successor.
+              check(recorded).flatMap {
                 case Some(session) if session === recorded.session =>
                   clusterStorage
-                    .setPeerResponsiveness(peer.id, Responsive)
-                    .as(PeerRecheckOutcome.Healthy: PeerRecheckOutcome)
+                    .setPeerResponsivenessIfSession(recorded.id, recorded.session, Responsive)
+                    .map {
+                      case true  => PeerRecheckOutcome.Healthy: PeerRecheckOutcome
+                      case false => PeerRecheckOutcome.Superseded: PeerRecheckOutcome
+                    }
                 case Some(_) =>
-                  logger.info(s"Peer ${peer.id.show} is responsive but found different session (recheck).") >>
+                  logger.info(s"Peer ${recorded.id.show} is responsive but found different session (recheck).") >>
                     clusterStorage
-                      .removePeerIfSession(peer.id, recorded.session)
+                      .removePeerIfSession(recorded.id, recorded.session)
                       .map(PeerRecheckOutcome.SessionChanged(_): PeerRecheckOutcome)
                 case None =>
-                  // Evidence first, demotion second: only a failed check on a Responsive peer starts the ordinary
-                  // (eagerly demoting, backoff-retrying) loop. An already Unresponsive peer keeps its classification.
-                  if (recorded.responsiveness === Responsive)
-                    start(peer).as(PeerRecheckOutcome.Unreachable(demotionStarted = true): PeerRecheckOutcome)
-                  else (PeerRecheckOutcome.Unreachable(demotionStarted = false): PeerRecheckOutcome).pure[F]
+                  // Evidence first, demotion second: only a failed check on a Responsive peer whose record is still the
+                  // queried one starts the ordinary (eagerly demoting, backoff-retrying) loop. An already Unresponsive
+                  // peer keeps its classification, and a superseded record is not demoted on its predecessor's evidence.
+                  clusterStorage.getPeer(recorded.id).flatMap {
+                    case Some(current) if current.session === recorded.session && current.responsiveness === Responsive =>
+                      start(current).as(PeerRecheckOutcome.Unreachable(demotionStarted = true): PeerRecheckOutcome)
+                    case _ => (PeerRecheckOutcome.Unreachable(demotionStarted = false): PeerRecheckOutcome).pure[F]
+                  }
               }
           }
       }

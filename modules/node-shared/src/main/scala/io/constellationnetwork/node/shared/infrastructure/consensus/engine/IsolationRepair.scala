@@ -20,8 +20,9 @@ import io.constellationnetwork.schema.peer._
   *     wired, so the consensus engine compiles and behaves as before until a layer wires them.
   *   - `Trigger`: the pure B1' trigger rule.
   *   - `PeerRecheckLedger`: per-peer single-flight and cooldown shared by rehabilitation and recheck.
-  *   - `Rehabilitation`: bounded session preflight of retained Unresponsive peers (restore via `setPeerResponsiveness`, differing session
-  *     via the session-conditional `removePeerIfSession`).
+  *   - `Rehabilitation`: bounded session preflight of retained Unresponsive peers; every mutation is bound to the sampled record's session
+  *     (restore via `setPeerResponsivenessIfSession`, differing session via `removePeerIfSession`), so an answer for a record that was
+  *     replaced while the request was in flight is inert.
   *   - `Recheck`: bounded, jittered, non-demoting recheck of retained Responsive peers through `LocalHealthcheck.recheck`.
   *   - `RunGuard`: single-flight plus cooldown for the repair operation itself.
   */
@@ -162,6 +163,7 @@ object IsolationRepair {
       sessionChanged: Int,
       removed: Int,
       unreachable: Int,
+      superseded: Int,
       skipped: Int,
       timedOut: Boolean,
       failed: Boolean
@@ -176,6 +178,7 @@ object IsolationRepair {
           "rehabSessionChanged" -> sessionChanged.toString,
           "rehabRemoved" -> removed.toString,
           "rehabUnreachable" -> unreachable.toString,
+          "rehabSuperseded" -> superseded.toString,
           "rehabSkipped" -> skipped.toString,
           "rehabTimedOut" -> timedOut.toString,
           "rehabFailed" -> failed.toString
@@ -183,7 +186,7 @@ object IsolationRepair {
     }
 
     object Result {
-      val notWired: Result = Result(wired = false, 0, 0, 0, 0, 0, 0, 0, timedOut = false, failed = false)
+      val notWired: Result = Result(wired = false, 0, 0, 0, 0, 0, 0, 0, 0, timedOut = false, failed = false)
       val failed: Result = notWired.copy(wired = true, failed = true)
       def timedOut(candidates: Int, sampled: Int): Result =
         notWired.copy(wired = true, candidates = candidates, sampled = sampled, timedOut = true)
@@ -194,14 +197,20 @@ object IsolationRepair {
       case object Restored extends PeerOutcome
       final case class SessionChanged(removed: Boolean) extends PeerOutcome
       case object Unreachable extends PeerOutcome
+
+      /** The record was replaced (new session) while the session check was in flight: the answer belongs to the superseded record and
+        * nothing was changed.
+        */
+      case object Superseded extends PeerOutcome
       case object Skipped extends PeerOutcome
     }
 
     /** Sample up to `budget.sampleSize` retained Unresponsive peers (distinct identities), reserve each in the ledger (single-flight plus
-      * cooldown), run the session preflight inside the per-peer/overall budget, and apply the outcome:
-      *   - reported session == recorded session: `setPeerResponsiveness(Responsive)` (the ordinary restore path);
-      *   - reported session != recorded session: `removePeerIfSession(recorded)` (compare-and-set; a concurrently installed newer session
-      *     is left alone);
+      * cooldown), run the session preflight inside the per-peer/overall budget, and apply the outcome. Every mutation is bound to the
+      * session of the sampled record that was actually queried, never to whatever the table holds after the HTTP round trip:
+      *   - reported session == queried session: `setPeerResponsivenessIfSession(queried, Responsive)` (compare-and-set restore);
+      *   - reported session != queried session: `removePeerIfSession(queried)` (compare-and-set removal);
+      *   - either compare-and-set failing means a newer record was installed during the request: `Superseded`, left untouched;
       *   - no answer: the peer stays Unresponsive. Never confirms anything about cluster progress: the ordinary probe still has to
       *     corroborate committed progress afterwards.
       */
@@ -247,14 +256,13 @@ object IsolationRepair {
               .handleError(_ => none[SessionToken])
               .flatMap {
                 case None => (PeerOutcome.Unreachable: PeerOutcome).pure[F]
-                case Some(reported) =>
-                  clusterStorage.getPeer(peer.id).flatMap {
-                    case Some(recorded) if recorded.session === reported =>
-                      clusterStorage.setPeerResponsiveness(peer.id, Responsive).as(PeerOutcome.Restored: PeerOutcome)
-                    case Some(recorded) =>
-                      clusterStorage.removePeerIfSession(peer.id, recorded.session).map(PeerOutcome.SessionChanged(_): PeerOutcome)
-                    case None => (PeerOutcome.Unreachable: PeerOutcome).pure[F]
+                case Some(reported) if reported === peer.session =>
+                  clusterStorage.setPeerResponsivenessIfSession(peer.id, peer.session, Responsive).map {
+                    case true  => PeerOutcome.Restored: PeerOutcome
+                    case false => PeerOutcome.Superseded: PeerOutcome
                   }
+                case Some(_) =>
+                  clusterStorage.removePeerIfSession(peer.id, peer.session).map(PeerOutcome.SessionChanged(_): PeerOutcome)
               }
           preflight.guarantee(now.flatMap(ledger.release(peer.id, _)))
       }
@@ -268,6 +276,7 @@ object IsolationRepair {
         sessionChanged = outcomes.count { case PeerOutcome.SessionChanged(_) => true; case _ => false },
         removed = outcomes.count { case PeerOutcome.SessionChanged(true) => true; case _ => false },
         unreachable = outcomes.count(_ == PeerOutcome.Unreachable),
+        superseded = outcomes.count(_ == PeerOutcome.Superseded),
         skipped = outcomes.count(_ == PeerOutcome.Skipped),
         timedOut = false,
         failed = false
@@ -288,6 +297,7 @@ object IsolationRepair {
       sessionChanged: Int,
       unreachable: Int,
       demotionStarted: Int,
+      superseded: Int,
       skipped: Int,
       timedOut: Boolean,
       failed: Boolean
@@ -303,6 +313,7 @@ object IsolationRepair {
           "recheckSessionChanged" -> sessionChanged.toString,
           "recheckUnreachable" -> unreachable.toString,
           "recheckDemotionStarted" -> demotionStarted.toString,
+          "recheckSuperseded" -> superseded.toString,
           "recheckSkipped" -> skipped.toString,
           "recheckTimedOut" -> timedOut.toString,
           "recheckFailed" -> failed.toString
@@ -310,7 +321,7 @@ object IsolationRepair {
     }
 
     object Result {
-      val notWired: Result = Result(wired = false, 0, 0, 0, 0, 0, 0, 0, 0, timedOut = false, failed = false)
+      val notWired: Result = Result(wired = false, 0, 0, 0, 0, 0, 0, 0, 0, 0, timedOut = false, failed = false)
       val failed: Result = notWired.copy(wired = true, failed = true)
       val timedOut: Result = notWired.copy(wired = true, timedOut = true)
     }
@@ -371,6 +382,7 @@ object IsolationRepair {
         sessionChanged = checked.count { case PeerRecheckOutcome.SessionChanged(_) => true; case _ => false },
         unreachable = checked.count { case PeerRecheckOutcome.Unreachable(_) => true; case _ => false },
         demotionStarted = checked.count { case PeerRecheckOutcome.Unreachable(true) => true; case _ => false },
+        superseded = checked.count(_ == PeerRecheckOutcome.Superseded),
         skipped = outcomes.count(_ == PeerOutcome.Skipped),
         timedOut = false,
         failed = false
