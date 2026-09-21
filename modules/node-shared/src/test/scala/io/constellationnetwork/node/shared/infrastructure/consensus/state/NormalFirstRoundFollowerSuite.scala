@@ -420,6 +420,67 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
     expect(!StateTransitions.shouldReleaseNormalFirstRoundPulse(status, episode.copy(recoveryConcluded = true).recoveryOnly))
   }
 
+  test(
+    "an ahead observation is an irreversible latch: losing the origin session clears the fallback evidence, not the recovery-only state"
+  ) {
+    val self = pid("self")
+    val straggler = pid("straggler")
+    val ahead = peerOf(pid("ahead"))
+    val committee = SortedSet(self, straggler, ahead.id)
+    val alignedStraggler = StateTransitions.normalFirstRoundPulseStatus(
+      committee,
+      matchingFacilityOrigins = Set(straggler),
+      aheadProbeOrigins = Set.empty,
+      responsivePeerStates = Map(straggler -> NodeState.Ready),
+      peerOutcomes = Map[PeerId, PulseOutcome[Int]](straggler -> PulseOutcome.Aligned(parentKey, parentHash))
+    )
+    val evidence = StateTransitions.NormalFirstRoundAheadEvidence[Int](ahead, PulseOutcome.Ahead(parentKey + 1, parentHash), 1L)
+    val (observed, _) = StateTransitions.NormalFirstRoundFollowerEpisode.initial[Int].observe(evidence.some, "peer_ahead")
+    val originGone = observed.afterFallback(ReentryResult.StaleOriginSession)
+    val (stragglerOnly, _) = originGone.observe(None, alignedStraggler.outcomeLabel)
+
+    // Offer counting mirrors the alignment loop: the release predicate is evaluated with the episode's recoveryOnly flag.
+    val loopReleases = for {
+      episode <- Ref.of[IO, StateTransitions.NormalFirstRoundFollowerEpisode[Int]](
+        StateTransitions.NormalFirstRoundFollowerEpisode.initial[Int]
+      )
+      offers <- Ref.of[IO, Int](0)
+      ticks <- Ref.of[IO, Int](0)
+      _ <- StateTransitions.runFirstRoundAlignmentLoop[IO, Int](
+        inspect = ticks.updateAndGet(_ + 1),
+        isAligned = _ => false,
+        record = (tick, _) =>
+          episode.update { current =>
+            if (tick == 1) current.observe(evidence.some, "peer_ahead")._1
+            else if (tick == 2) current.afterFallback(ReentryResult.StaleOriginSession)
+            else current.observe(None, alignedStraggler.outcomeLabel)._1
+          } >> episode.get.flatMap { current =>
+            offers.update(_ + 1).whenA(StateTransitions.shouldReleaseNormalFirstRoundPulse(alignedStraggler, current.recoveryOnly))
+          },
+        pause = IO.unit,
+        offerStart = offers.update(_ + 1),
+        startPending = ticks.get.map(_ < 5),
+        reportFailure = (_, _) => IO.unit
+      )
+      offered <- offers.get
+      finalEpisode <- episode.get
+    } yield (offered, finalEpisode)
+
+    loopReleases.map {
+      case (offered, finalEpisode) =>
+        expect(observed.observedAhead && observed.recoveryOnly, s"an ahead observation latches recovery-only, got $observed") &&
+        expect(originGone.aheadEvidence.isEmpty, s"the session-bound fallback evidence is discarded, got $originGone") &&
+        expect(originGone.observedAhead && !originGone.recoveryConcluded, s"the latch survives the vanished origin, got $originGone") &&
+        expect(stragglerOnly.recoveryOnly, s"an aligned straggler afterwards keeps the generation recovery-only, got $stragglerOnly") &&
+        expect(
+          !StateTransitions.shouldReleaseNormalFirstRoundPulse(alignedStraggler, stragglerOnly.recoveryOnly),
+          "the stale first round must not be released on the straggler's aligned pulse"
+        ) &&
+        expect.same(0, offered) &&
+        expect(finalEpisode.observedAhead && finalEpisode.aheadEvidence.isEmpty, s"loop-level lifecycle, got $finalEpisode")
+    }
+  }
+
   test("fanout 1 samples exactly one origin and larger fanouts sample distinct origins") {
     val candidates = List("a", "b", "c", "d")
 
