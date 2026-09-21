@@ -75,7 +75,9 @@ object Mocks {
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
     fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
     fixingSpendActionAggregateBalanceOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
-    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None
+    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None,
+    stateChannelProcessor: Option[GlobalSnapshotStateChannelEventsProcessor[IO]] = None,
+    spendValidator: Option[SpendActionValidator[IO]] = None
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -288,11 +290,11 @@ object Mocks {
                     blockAcceptanceManager = mockBlockAcceptanceManager,
                     allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
                     tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-                    stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+                    stateChannelEventsProcessor = stateChannelProcessor.getOrElse(mockStateChannelEventsProcessor),
                     updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
                     updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
                     updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-                    spendActionValidator = spendActionValidatorOverride.getOrElse(mockSpendActionValidator),
+                    spendActionValidator = spendActionValidatorOverride.orElse(spendValidator).getOrElse(mockSpendActionValidator),
                     pricingUpdateValidator = mockPricingUpdateValidator,
                     priceStateUpdater = mockPriceStateUpdater,
                     collateral = Amount.empty,

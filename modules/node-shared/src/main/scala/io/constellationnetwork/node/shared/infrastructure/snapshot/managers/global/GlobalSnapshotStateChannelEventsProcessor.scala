@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.config.types.FieldsAddedOrdinals
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
+import io.constellationnetwork.node.shared.domain.swap.BurnActionValidator
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.HistoricalGlobalSnapshotResolver.{
@@ -24,6 +25,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.curr
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.ProcessedGlobalSnapshotHistory.ProcessedHistoryUnproven
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.BurnAction
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.currencyMessage._
 import io.constellationnetwork.schema.mpt.GlobalStateConverter.syntax._
@@ -37,7 +39,7 @@ import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
-import io.circe.Decoder
+import io.circe.{Decoder, Json}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
@@ -95,6 +97,34 @@ object GlobalSnapshotStateChannelEventsProcessor {
       def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
         JsonSerializer[F].deserialize[A](binary.value.content).map(_.toOption)
 
+      private def burnEnabled(parent: Option[CurrencySnapshotWithState]): Boolean =
+        BurnActionValidator.isEnabled(
+          parent.flatMap(_.fold(_.globalSyncView, _._1.globalSyncView)).fold(SnapshotOrdinal.MinValue)(_.ordinal),
+          fieldsAddedOrdinals.burnActionActivationFor(environment)
+        )
+
+      // Before activation the upstream artifact decoder did not recognize BurnAction. Both
+      // newly decodable burns and malformed markers must retain its opaque/fee-required fallback.
+      // After activation a malformed native claim must not escape strict Currency validation.
+      private def deserializeCurrencyIncremental(
+        binary: Signed[StateChannelSnapshotBinary],
+        burnsEnabled: Boolean
+      ): F[Either[String, Option[Signed[CurrencyIncrementalSnapshot]]]] =
+        deserialize[Signed[CurrencyIncrementalSnapshot]](binary).flatMap {
+          case Some(snapshot) if !burnsEnabled && snapshot.artifacts.exists(_.exists(_.isInstanceOf[BurnAction])) =>
+            none[Signed[CurrencyIncrementalSnapshot]].asRight[String].pure[F]
+          case Some(snapshot)        => Option(snapshot).asRight[String].pure[F]
+          case None if !burnsEnabled => none[Signed[CurrencyIncrementalSnapshot]].asRight[String].pure[F]
+          case None =>
+            deserialize[Json](binary).map { json =>
+              val claimsBurn = json
+                .flatMap(_.hcursor.downField("value").downField("artifacts").focus)
+                .flatMap(_.asArray)
+                .exists(_.exists(_.asObject.exists(_.contains("BurnAction"))))
+              Either.cond(!claimsBurn, none[Signed[CurrencyIncrementalSnapshot]], "malformed_native_burn")
+            }
+        }
+
       // Staking balance behavioral equivalence: for metagraphs with only a full snapshot
       // (Left case), the old fetchStakingBalance returned Balance.empty. With MptStore,
       // getCurrencySnapshotInfo returns a CurrencySnapshotInfo created via toCurrencySnapshotInfo
@@ -102,12 +132,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
       // Balance.empty — preserving the same behavior.
       def buildSnapshotFeesInfo(
         event: StateChannelOutput,
-        allFeesAddresses: Map[Address, Set[Address]]
+        allFeesAddresses: Map[Address, Set[Address]],
+        burnsEnabled: Boolean
       ): F[SnapshotFeesInfo] =
         event.snapshotBinary.value.lastSnapshotHash match {
           case hash if hash == Hash.empty => SnapshotFeesInfo.empty.pure // genesis
           case _ =>
-            deserialize[Signed[CurrencyIncrementalSnapshot]](event.snapshotBinary).flatMap {
+            deserializeCurrencyIncremental(event.snapshotBinary, burnsEnabled).map(_.toOption.flatten).flatMap {
               case None =>
                 logger.warn(s"Could not get snapshot fee info after deserializing event $event, using empty snapshot fees") >>
                   SnapshotFeesInfo.empty.pure
@@ -138,11 +169,15 @@ object GlobalSnapshotStateChannelEventsProcessor {
         val allFeesAddresses: Map[Address, Set[Address]] = getFeeAddresses(lastGlobalSnapshotInfo)
         type Acc = (Map[Address, Set[Address]], List[ValidatedNec[(Address, StateChannelValidationError), StateChannelOutput]])
 
-        events
+        val validatedEvents = events
           .sortBy(_.address)
           .foldLeftM[F, Acc]((allFeesAddresses, List.empty)) {
             case ((prevAllFeeAddresses, alreadyProcessed), event) =>
-              buildSnapshotFeesInfo(event, prevAllFeeAddresses).flatMap { snapshotFeesInfo =>
+              buildSnapshotFeesInfo(
+                event,
+                prevAllFeeAddresses,
+                burnEnabled(lastGlobalSnapshotInfo.lastCurrencySnapshots.get(event.address))
+              ).flatMap { snapshotFeesInfo =>
                 val validationV = validationType match {
                   case StateChannelValidationType.Full =>
                     stateChannelValidator.validate(event, snapshotOrdinal, snapshotFeesInfo)
@@ -162,33 +197,38 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 }
               }
           }
-          .map { case (_, processedEvents) => processedEvents.partitionMap(_.toEither) }
-          .flatTap { case (invalid, _) => logger.warn(s"Invalid state channels events: $invalid").whenA(invalid.nonEmpty) }
-          .flatMap { case (_, validatedEvents) => processStateChannelEvents(snapshotOrdinal, lastGlobalSnapshotInfo, validatedEvents) }
-          .flatMap {
-            case (scSnapshots, returnedSCEvents) =>
-              processCurrencySnapshotBranchesWithReturned(
-                snapshotOrdinal,
-                lastGlobalSnapshotInfo,
-                scSnapshots,
-                validationType,
-                getGlobalSnapshotByOrdinal
-              ).map {
-                case (accepted, typedReturned) =>
-                  val (lastCurrencyStates, incomingCurrencyState) = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
-                  val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
-                  // TODO: ASSUMING that owner addresses are restricted from being shared at this point
-                  val balanceUpdates = accepted.values.map(_._2).foldLeft(SortedMap.empty[Address, Balance])(_ ++ _)
+          .map { case (fees, processedEvents) => (fees, processedEvents.partitionMap(_.toEither)) }
 
-                  StateChannelAcceptanceResult(
-                    finalScSnapshots,
-                    lastCurrencyStates,
-                    returnedSCEvents ++ typedReturned,
-                    balanceUpdates,
-                    incomingCurrencyState
-                  )
-              }
-          }
+        validatedEvents.flatTap {
+          case (_, (invalid, _)) => logger.warn(s"Invalid state channels events: $invalid").whenA(invalid.nonEmpty)
+        }.flatMap {
+          case (fees, (_, admittedEvents)) =>
+            processStateChannelEvents(snapshotOrdinal, lastGlobalSnapshotInfo, admittedEvents).flatMap {
+              case (scSnapshots, returnedSCEvents) =>
+                processCurrencySnapshotBranchesWithReturned(
+                  snapshotOrdinal,
+                  lastGlobalSnapshotInfo,
+                  scSnapshots,
+                  validationType,
+                  getGlobalSnapshotByOrdinal,
+                  Some(fees)
+                ).map {
+                  case (accepted, typedReturned) =>
+                    val (lastCurrencyStates, incomingCurrencyState) = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
+                    val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
+                    // TODO: ASSUMING that owner addresses are restricted from being shared at this point
+                    val balanceUpdates = accepted.values.map(_._2).foldLeft(SortedMap.empty[Address, Balance])(_ ++ _)
+
+                    StateChannelAcceptanceResult(
+                      finalScSnapshots,
+                      lastCurrencyStates,
+                      returnedSCEvents ++ typedReturned,
+                      balanceUpdates,
+                      incomingCurrencyState
+                    )
+                }
+            }
+        }
       }
       private def calculateLastCurrencySnapshots(
         processedCurrencySnapshots: SortedMap[Address, MetagraphAcceptanceResult],
@@ -273,11 +313,17 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, SelectedBranches],
         validationType: StateChannelValidationType,
-        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+        admissionFees: Option[Map[Address, Set[Address]]] = None
       )(implicit hasher: Hasher[F]): F[CurrencyProcessingResult] = {
         val isFeeRequired = feeCalculator.isFeeRequired(snapshotOrdinal)
 
-        events.toList.parTraverse {
+        type AddressResult = (Address, Option[MetagraphAcceptanceResult], List[Signed[StateChannelSnapshotBinary]])
+        type AddressBranches = (Address, SelectedBranches)
+
+        def processAddress(
+          currentFees: Option[Map[Address, Set[Address]]]
+        ): AddressBranches => F[AddressResult] = {
           case (address, binaries) =>
             type Result = Option[MetagraphAcceptanceResult]
 
@@ -381,8 +427,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
                         }
 
                       case (_, lastCurrState @ Some(Left(fullSnapshot))) =>
-                        deserialize[Signed[CurrencyIncrementalSnapshot]](head).flatMap {
-                          case Some(snapshot) =>
+                        deserializeCurrencyIncremental(head, burnEnabled(lastCurrState)).flatMap {
+                          case Left(reason) => terminalRejected(current, head :: tail, reason)
+                          // The first incremental only projects the full genesis state; it does
+                          // not execute operations. Native burns require a reconstructable parent.
+                          case Right(Some(snapshot)) if snapshot.artifacts.exists(_.exists(_.isInstanceOf[BurnAction])) =>
+                            terminalRejected(current, head :: tail, "burn_in_genesis_projection")
+                          case Right(Some(snapshot)) =>
                             loop(
                               (
                                 nel.prepend((head, (snapshot, fullSnapshot.value.info.toCurrencySnapshotInfo).asRight.some)),
@@ -390,70 +441,92 @@ object GlobalSnapshotStateChannelEventsProcessor {
                               ).some,
                               tail
                             )
-                          case None if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
-                          case None                  => loop((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail)
+                          case Right(None) if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
+                          case Right(None)                  => loop((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail)
                         }
 
                       case (_, lastCurrState @ Some(Right((lastIncremental, lastState)))) =>
-                        deserialize[Signed[CurrencyIncrementalSnapshot]](head).flatMap {
-                          case Some(snapshot) =>
-                            applyCurrencySnapshot(
-                              address,
-                              lastState,
-                              lastIncremental,
-                              snapshot,
-                              validationType,
-                              getGlobalSnapshotByOrdinal
-                            ).flatMap { nextState =>
-                              val maybeFeeAddress = nextState.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
-
-                              maybeFeeAddress
-                                .filter(_ => isFeeRequired)
-                                .fold(
-                                  if (!isFeeRequired)
-                                    loop((nel.prepend((head, (snapshot, nextState).asRight.some)), balanceUpdate).some, tail)
-                                  else terminalRejected(current, head :: tail, "fee_address_missing")
-                                ) { feeAddress =>
-                                  val initialBalanceF =
-                                    if (snapshotOrdinal >= scFeeBalanceFromContextOrdinal)
-                                      lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty).pure[F]
-                                    else
-                                      mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty))
-
-                                  balanceUpdate.get(feeAddress).fold(initialBalanceF)(_.pure[F]).flatMap { balance =>
-                                    balance.minus(head.fee).toOption match {
-                                      case Some(updated) =>
-                                        loop(
-                                          (
-                                            nel.prepend((head, (snapshot, nextState).asRight.some)),
-                                            balanceUpdate + (feeAddress -> updated)
-                                          ).some,
-                                          tail
-                                        )
-                                      case None => terminalRejected(current, head :: tail, "fee_balance_insufficient")
-                                    }
+                        deserializeCurrencyIncremental(head, burnEnabled(lastCurrState)).flatMap {
+                          case Left(reason) => terminalRejected(current, head :: tail, reason)
+                          case Right(Some(snapshot)) =>
+                            val crossedActivation = !burnEnabled(lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address)) &&
+                              snapshot.artifacts.exists(_.exists(_.isInstanceOf[BurnAction]))
+                            val admitted = currentFees
+                              .filter(_ => crossedActivation)
+                              .fold(true.pure[F]) { fees =>
+                                // Only this child has an accepted active parent. Never expose
+                                // other channels' opaque metadata to recheck its admission.
+                                val output = StateChannelOutput(address, head)
+                                buildSnapshotFeesInfo(output, fees, burnsEnabled = true).flatMap { info =>
+                                  val checked = validationType match {
+                                    case StateChannelValidationType.Full => stateChannelValidator.validate(output, snapshotOrdinal, info)
+                                    case StateChannelValidationType.Historical =>
+                                      stateChannelValidator.validateHistorical(output, snapshotOrdinal, info)
                                   }
+                                  checked.map(_.isValid)
                                 }
-                            }.handleErrorWith {
-                              case error: OutsideRetainedWindow =>
-                                dependencyRejected(current, head :: tail, "outside_retention", error)
-                              case error: ProcessedHistoryUnproven =>
-                                dependencyRejected(current, head :: tail, "processed_history_unproven", error)
-                              case error: MissingInsideRetainedWindow =>
-                                recordMetric(
-                                  _.incrementCounter(
-                                    "dag_l0_state_channel_dependency_rejection_total",
-                                    Seq(Metrics.unsafeLabelName("reason") -> "missing_recent")
-                                  )
-                                ) >> error.raiseError[F, BranchResult]
-                              case error =>
-                                logger.warn(error)(
-                                  s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
-                                ) >> completed(normalize(current))
+                              }
+                            admitted.flatMap {
+                              case false => terminalRejected(current, head :: tail, "active_burn_state_channel_validation")
+                              case true =>
+                                applyCurrencySnapshot(
+                                  address,
+                                  lastState,
+                                  lastIncremental,
+                                  snapshot,
+                                  validationType,
+                                  getGlobalSnapshotByOrdinal
+                                ).flatMap { nextState =>
+                                  val maybeFeeAddress = nextState.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
+
+                                  maybeFeeAddress
+                                    .filter(_ => isFeeRequired)
+                                    .fold(
+                                      if (!isFeeRequired)
+                                        loop((nel.prepend((head, (snapshot, nextState).asRight.some)), balanceUpdate).some, tail)
+                                      else terminalRejected(current, head :: tail, "fee_address_missing")
+                                    ) { feeAddress =>
+                                      val initialBalanceF =
+                                        if (snapshotOrdinal >= scFeeBalanceFromContextOrdinal)
+                                          lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty).pure[F]
+                                        else
+                                          mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty))
+
+                                      balanceUpdate.get(feeAddress).fold(initialBalanceF)(_.pure[F]).flatMap { balance =>
+                                        balance.minus(head.fee).toOption match {
+                                          case Some(updated) =>
+                                            loop(
+                                              (
+                                                nel.prepend((head, (snapshot, nextState).asRight.some)),
+                                                balanceUpdate + (feeAddress -> updated)
+                                              ).some,
+                                              tail
+                                            )
+                                          case None => terminalRejected(current, head :: tail, "fee_balance_insufficient")
+                                        }
+                                      }
+                                    }
+                                }.handleErrorWith {
+                                  case error: OutsideRetainedWindow =>
+                                    dependencyRejected(current, head :: tail, "outside_retention", error)
+                                  case error: ProcessedHistoryUnproven =>
+                                    dependencyRejected(current, head :: tail, "processed_history_unproven", error)
+                                  case error: MissingInsideRetainedWindow =>
+                                    recordMetric(
+                                      _.incrementCounter(
+                                        "dag_l0_state_channel_dependency_rejection_total",
+                                        Seq(Metrics.unsafeLabelName("reason") -> "missing_recent")
+                                      )
+                                    ) >> error.raiseError[F, BranchResult]
+                                  case error =>
+                                    logger.warn(error)(
+                                      s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
+                                    ) >> completed(normalize(current))
+                                }
                             }
 
-                          case None if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
-                          case None                  => loop((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail)
+                          case Right(None) if isFeeRequired => terminalRejected(current, head :: tail, "fee_required_unparseable")
+                          case Right(None)                  => loop((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail)
                         }
                     }
                 }
@@ -488,7 +561,40 @@ object GlobalSnapshotStateChannelEventsProcessor {
               }
 
             tryBranches(binaries.toList, List.empty)
-        }.map { results =>
+        }
+
+        // During a possible same-batch activation, new fee claims must be shared in deterministic
+        // address order. Start from the unchanged initial admission context; extend it only with
+        // accepted Currency state, never raw claims from opaque binaries or rejected branches.
+        // Otherwise retain the existing parallel reconstruction path (including disabled burns).
+        val mayCrossActivation = admissionFees.nonEmpty &&
+          fieldsAddedOrdinals.burnActionActivationFor(environment) =!= SnapshotOrdinal.MaxValue &&
+          events.exists {
+            case (address, branches) =>
+              !burnEnabled(lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address)) && branches.exists(_.size > 1)
+          }
+        val processed =
+          if (mayCrossActivation)
+            events.toList
+              .foldLeftM((admissionFees.get, List.empty[AddressResult])) {
+                case ((fees, results), (address, binaries)) =>
+                  processAddress(Some(fees))((address, binaries)).map { result =>
+                    val acceptedAddresses = result._2.toList
+                      .flatMap(_._1.toList)
+                      .flatMap(_._2.toList)
+                      .flatMap {
+                        case Right((_, info)) => info.lastMessages.toList.flatMap(_.values.map(_.address))
+                        case Left(_)          => Nil
+                      }
+                      .toSet
+                    val updatedFees = fees.updated(address, fees.getOrElse(address, Set.empty) ++ acceptedAddresses)
+                    (updatedFees, result :: results)
+                  }
+              }
+              .map(_._2.reverse)
+          else events.toList.parTraverse(processAddress(admissionFees))
+
+        processed.map { results =>
           val accepted = results.foldLeft(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
             case (acc, (address, Some(result), _)) => acc + (address -> result)
             case (acc, (_, None, _))               => acc

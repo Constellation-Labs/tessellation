@@ -62,7 +62,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "preventingAllowSpendResurrection" -> allEnvironments(6828500L, 9999999L, 9999999L),
     "fixingGlobalAllowSpendExpiration" -> allEnvironments(6828500L, 9999999L, 9999999L),
     "fixingDelegatedStakeDoubleWithdrawal" -> Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue),
-    "fixingSpendActionAggregateBalance" -> allEnvironments(9999999L, 9999999L, 9999999L)
+    "fixingSpendActionAggregateBalance" -> allEnvironments(9999999L, 9999999L, 9999999L),
+    "burnActionActivation" -> Map.empty
   )
 
   test("pins every packaged threshold and intentional absence in every environment") {
@@ -187,7 +188,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.preventingAllowSpendResurrectionFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingGlobalAllowSpendExpirationFor(AppEnvironment.Mainnet),
-      fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet)
+      fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.burnActionActivationFor(AppEnvironment.Mainnet)
     )
 
     IO {
@@ -276,5 +278,27 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     )
 
     IO(expect.same(Map.empty, legacyShape.currencySnapshotProtocolV1))
+  }
+
+  test("burn activation may be omitted, but malformed or negative entries fail config loading") {
+    IO {
+      val base = ConfigSource.resources("application.conf").config().toOption.get.getConfig("fields-added-ordinals")
+      val omitted = ConfigSource.fromConfig(base).loadOrThrow[FieldsAddedOrdinals]
+      val enabled = ConfigSource
+        .string("burn-action-activation.dev = 0")
+        .withFallback(ConfigSource.fromConfig(base))
+        .loadOrThrow[FieldsAddedOrdinals]
+      val negative = ConfigSource
+        .string("burn-action-activation.dev = -1")
+        .withFallback(ConfigSource.fromConfig(base))
+        .load[FieldsAddedOrdinals]
+      val malformed = ConfigSource
+        .string("burn-action-activation.dev = invalid")
+        .withFallback(ConfigSource.fromConfig(base))
+        .load[FieldsAddedOrdinals]
+      expect.same(SnapshotOrdinal.MaxValue, omitted.burnActionActivationFor(AppEnvironment.Dev)) &&
+      expect.same(SnapshotOrdinal.MinValue, enabled.burnActionActivationFor(AppEnvironment.Dev)) &&
+      expect(negative.isLeft) && expect(malformed.isLeft)
+    }
   }
 }
