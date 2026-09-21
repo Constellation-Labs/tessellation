@@ -32,8 +32,9 @@ import weaver.scalacheck.Checkers
   *   - retained all dead -> nothing restored, the probe sees no candidates, `decide` stays false (no recovery);
   *   - 3-node / 1-dead: the responsive-primary probe behaves exactly as before rehabilitation existed;
   *   - session-conditional handling of a changed session, per-peer single-flight/cooldown;
-  *   - B1' trigger: common partition (every node repairs), never-received Facility falls back to residence, healthy quorum never
-  *     triggers; recheck never demotes a healthy peer; the repair guard is single-flight under repeated triggers.
+  *   - B1' trigger: common partition (every node repairs), a known Facility age alone measures silence, residence stands in only when
+  *     no Facility was ever received, healthy quorum never triggers; recheck never demotes a healthy peer; the repair guard is
+  *     single-flight under repeated triggers.
   */
 object IsolationRepairSuite extends SimpleIOSuite with Checkers {
 
@@ -198,18 +199,24 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
       .and(expect(!preCommittee.fire, s"a singleton committee never triggers, got $preCommittee"))
   }
 
-  pureTest("B1' trigger: a never-received Facility falls back to residence; the threshold is three intervals") {
+  pureTest("B1' trigger: a known Facility age is the silence measure; residence only stands in when no Facility was ever received") {
     val neverFacilityLong = Trigger.evaluate(130.seconds.some, None, interval, 0, 3, 2)
     val neverFacilityShort = Trigger.evaluate(129.seconds.some, None, interval, 0, 3, 2)
     val nothingKnown = Trigger.evaluate(None, None, interval, 0, 3, 2)
     val recentFacilityOldKey = Trigger.evaluate(300.seconds.some, 5.seconds.some, interval, 0, 3, 2)
+    val oldFacilityFreshKey = Trigger.evaluate(5.seconds.some, 130.seconds.some, interval, 0, 3, 2)
+    val oldFacilityNoResidence = Trigger.evaluate(None, 130.seconds.some, interval, 0, 3, 2)
 
     expect(neverFacilityLong.silenceThreshold == 129.seconds, s"threshold is 3 x interval, got ${neverFacilityLong.silenceThreshold}")
+      .and(expect(neverFacilityLong.silence.contains(130.seconds), s"unknown Facility: residence is the silence input, got $neverFacilityLong"))
       .and(expect(neverFacilityLong.fire, s"130s residence with no Facility ever fires, got $neverFacilityLong"))
       .and(expect(!neverFacilityShort.fire, s"exactly the threshold does not fire (strictly greater), got $neverFacilityShort"))
       .and(expect(!nothingKnown.fire, s"with neither age known the rule cannot fire, got $nothingKnown"))
-      .and(expect(recentFacilityOldKey.silence.contains(300.seconds), "max(lastFacilityAgo, residence) is the silence input"))
-      .and(expect(recentFacilityOldKey.fire, "a long residence fires even after a recent Facility (max rule)"))
+      .and(expect(recentFacilityOldKey.silence.contains(5.seconds), s"known Facility age is the silence input on its own, got $recentFacilityOldKey"))
+      .and(expect(!recentFacilityOldKey.fire, s"a long residence with a recent Facility is not silence: no repair, got $recentFacilityOldKey"))
+      .and(expect(oldFacilityFreshKey.silence.contains(130.seconds), s"residence never shortens a known Facility age, got $oldFacilityFreshKey"))
+      .and(expect(oldFacilityFreshKey.fire, s"an old Facility fires even on a freshly installed key, got $oldFacilityFreshKey"))
+      .and(expect(oldFacilityNoResidence.fire, s"a known old Facility fires without a residence clock, got $oldFacilityNoResidence"))
   }
 
   test("recheck never demotes a healthy Responsive peer and only starts demotion when its check fails") {

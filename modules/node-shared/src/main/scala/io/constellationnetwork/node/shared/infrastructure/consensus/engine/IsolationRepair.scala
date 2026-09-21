@@ -52,12 +52,13 @@ object IsolationRepair {
 
   /** B1' trigger rule (pure, monotonic inputs only).
     *
-    * Fires when `max(lastExternalFacilityAgo, residence) > silenceIntervals x timeTriggerInterval` AND the responsive Ready peers this
-    * node can see, counted together with itself, cannot form the last finalized round's Core quorum. An unknown last-Facility instant
-    * (never received one this session) falls back to the residence of the current key, so a node that never heard a Facility still
-    * repairs; an unknown residence contributes nothing. Before the first finalized round with a Core committee of at least two
-    * (`coreSize < 2`) the rule never fires. The quorum reference is the unshrunk Core quorum of the committee frozen from the last
-    * finalized outcome.
+    * Fires when `silence > silenceIntervals x timeTriggerInterval` AND the responsive Ready peers this node can see, counted together
+    * with itself, cannot form the last finalized round's Core quorum. `silence` is the age of the last external Facility whenever that
+    * age is known: a recent Facility means the node is being talked to, however long the current key has been resident. Only when no
+    * external Facility has been received this session does the residence of the current key stand in, so a node that never heard a
+    * Facility still repairs; with neither known the rule cannot fire. Before the first finalized round with a Core committee of at
+    * least two (`coreSize < 2`) the rule never fires. The quorum reference is the unshrunk Core quorum of the committee frozen from the
+    * last finalized outcome.
     */
   final case class Trigger(
     silence: Option[FiniteDuration],
@@ -91,11 +92,7 @@ object IsolationRepair {
       coreSize: Int,
       coreQuorum: Int
     ): Trigger = {
-      val silence = (lastExternalFacilityAgo, residence) match {
-        case (Some(f), Some(r)) => (f.max(r)).some
-        case (Some(f), None)    => f.some
-        case (None, r)          => r
-      }
+      val silence = lastExternalFacilityAgo.orElse(residence)
       Trigger(silence, timeTriggerInterval * SilenceIntervals.toLong, responsiveReadyPeers, coreSize, coreQuorum)
     }
   }
