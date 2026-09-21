@@ -625,6 +625,8 @@ object Main
         .make[IO, Run](
           sharedConfig,
           sharedServices,
+          sharedPrograms,
+          sharedP2PClient.node,
           sharedStorages,
           queues,
           storages,

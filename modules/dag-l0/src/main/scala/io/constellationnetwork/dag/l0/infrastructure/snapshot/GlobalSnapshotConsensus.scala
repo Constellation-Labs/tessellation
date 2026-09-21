@@ -36,6 +36,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, F
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
+import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
@@ -52,7 +53,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.glob
 }
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{OrdinalJsonSidecarStorage, PeerHistorySidecarStorage}
 import io.constellationnetwork.node.shared.logger.LoggerBundle
-import io.constellationnetwork.node.shared.modules.{SharedServices, SharedValidators}
+import io.constellationnetwork.node.shared.modules.{SharedPrograms, SharedServices, SharedValidators}
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -117,6 +118,10 @@ object GlobalSnapshotConsensus {
     snapshotDownloadStorage: SnapshotDownloadStorage[F],
     validators: SharedValidators[F],
     sharedServices: SharedServices[F, R],
+    // Ordinary cluster programs and the shared `/session` client, used only to wire the AbandonmentTracker isolation-repair hooks
+    // (B1'/B2'): peer-table rehabilitation and re-discovery go through `LocalHealthcheck`, `PeerDiscovery` and `Joining`.
+    sharedPrograms: SharedPrograms[F, R],
+    nodeClient: NodeClient[F],
     appConfig: AppConfig,
     effectiveConsensusConfig: ConsensusConfig,
     stateChannelPullDelay: NonNegLong,
@@ -492,6 +497,22 @@ object GlobalSnapshotConsensus {
         (peer: Peer) => request(peer)
       }
       peersCommittedAheadProbe = PeersCommittedAheadProbe.make[F](clusterStorage, fetchLatestCommittedMetadata)
+      // B1'/B2' isolation-repair hooks: `/session` preflight for the rehabilitation pass, the shared non-demoting
+      // `LocalHealthcheck.recheck`, and bounded re-discovery from the priority peers with every candidate validated by the
+      // ordinary `Joining.rejoin` handshake. Diagnostic only; the engine's decision rules do not read these.
+      isolationHooks = IsolationRepair.Hooks.wired[F](
+        checkSession = (peer: Peer) => nodeClient.getSession.run(Peer.toP2PContext(peer)),
+        localHealthcheck = sharedServices.localHealthcheck,
+        rediscover = IsolationRepair.Rediscovery
+          .through[F](
+            clusterStorage,
+            sharedCfg.priorityPeerIds,
+            sharedPrograms.peerDiscovery.discoverFrom,
+            sharedPrograms.peerDiscovery.markAttemptsFinished,
+            sharedPrograms.joining.rejoin
+          )
+          .some
+      )
       fetchProbationChainTip = (peer: Peer) => eventGossipClient.getChainTip.run(Peer.toP2PContext(peer))
       admissionCandidateTipProbe = AdmissionCandidateTipProbe.make[F](
         clusterStorage,
@@ -608,7 +629,8 @@ object GlobalSnapshotConsensus {
           },
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
           recoverySeedCommittee = Some(recoverySeedCommittee),
-          normalFirstRoundAlignment = normalFirstRoundAlignment.some
+          normalFirstRoundAlignment = normalFirstRoundAlignment.some,
+          isolationHooks = isolationHooks
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

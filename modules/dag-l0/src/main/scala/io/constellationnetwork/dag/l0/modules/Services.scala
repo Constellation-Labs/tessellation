@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.AddressService
+import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.collateral.MptStoreCollateral
 import io.constellationnetwork.node.shared.infrastructure.delegatedStake.{RewardsInfoCalculator, RewardsInfoStorage}
 import io.constellationnetwork.node.shared.infrastructure.gossip.event.{ChainTip, EventGossipClient, RecoveryPeerHint}
@@ -40,7 +41,7 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.logger.LoggerBundle
-import io.constellationnetwork.node.shared.modules.{SharedServices, SharedStorages, SharedValidators}
+import io.constellationnetwork.node.shared.modules._
 import io.constellationnetwork.node.shared.resources.ConsensusDispatcher
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.mpt.GlobalStateKey
@@ -58,6 +59,8 @@ object Services {
   ]: Async: Parallel: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor, R <: CliMethod](
     sharedCfg: SharedConfig,
     sharedServices: SharedServices[F, R],
+    sharedPrograms: SharedPrograms[F, R],
+    nodeClient: NodeClient[F],
     sharedStorages: SharedStorages[F],
     queues: Queues[F],
     storages: Storages[F],
@@ -132,6 +135,8 @@ object Services {
             storages.snapshotDownload,
             validators,
             sharedServices,
+            sharedPrograms,
+            nodeClient,
             cfg,
             effectiveConsensusConfig,
             stateChannelPullDelay = cfg.stateChannel.pullDelay,

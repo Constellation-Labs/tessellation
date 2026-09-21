@@ -1,5 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
+import cats.data.NonEmptySet
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
@@ -9,14 +10,14 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.healthcheck.{LocalHealthcheck, PeerRecheckOutcome}
-import io.constellationnetwork.schema.cluster.SessionToken
+import io.constellationnetwork.schema.cluster.{PeerToJoin, SessionToken}
 import io.constellationnetwork.schema.peer._
 
 /** Building blocks for the B2' peer rehabilitation pass and the B1' bounded isolation repair. Everything here is diagnostic/repair
   * machinery on the local peer table: it never reads or writes consensus state, node state, or the recovery decision.
   *
-  *   - `Hooks`: the layer-supplied transport/discovery capabilities. `Hooks.none` (the default) leaves every step inert and reported as
-  *     not wired, so the consensus engine compiles and behaves as before until a layer wires them.
+  *   - `Hooks`: the layer-supplied transport/discovery capabilities. `Hooks.none` (the default) leaves every step inert and reported as not
+  *     wired, so the consensus engine compiles and behaves as before until a layer wires them.
   *   - `Trigger`: the pure B1' trigger rule.
   *   - `PeerRecheckLedger`: per-peer single-flight and cooldown shared by rehabilitation and recheck.
   *   - `Rehabilitation`: bounded session preflight of retained Unresponsive peers (restore via `setPeerResponsiveness`, differing session
@@ -40,7 +41,8 @@ object IsolationRepair {
     def none[F[_]]: Hooks[F] = Hooks(None, None, None)
 
     /** Production wiring helper for a layer that has the shared `LocalHealthcheck` and a `/session` client. `rediscover` is the layer's
-      * `PeerDiscovery.discoverFrom` fan-out over its priority/seed peers (candidates are only queued; ordinary join validation applies).
+      * bounded `PeerDiscovery.discoverFrom` fan-out over its priority peers with every candidate handed to the ordinary handshake
+      * validation (`Rediscovery.through`); the peer table is never written directly.
       */
     def wired[F[_]](
       checkSession: Peer => F[Option[SessionToken]],
@@ -52,13 +54,12 @@ object IsolationRepair {
 
   /** B1' trigger rule (pure, monotonic inputs only).
     *
-    * Fires when `silence > silenceIntervals x timeTriggerInterval` AND the responsive Ready peers this node can see, counted together
-    * with itself, cannot form the last finalized round's Core quorum. `silence` is the age of the last external Facility whenever that
-    * age is known: a recent Facility means the node is being talked to, however long the current key has been resident. Only when no
-    * external Facility has been received this session does the residence of the current key stand in, so a node that never heard a
-    * Facility still repairs; with neither known the rule cannot fire. Before the first finalized round with a Core committee of at
-    * least two (`coreSize < 2`) the rule never fires. The quorum reference is the unshrunk Core quorum of the committee frozen from the
-    * last finalized outcome.
+    * Fires when `silence > silenceIntervals x timeTriggerInterval` AND the responsive Ready peers this node can see, counted together with
+    * itself, cannot form the last finalized round's Core quorum. `silence` is the age of the last external Facility whenever that age is
+    * known: a recent Facility means the node is being talked to, however long the current key has been resident. Only when no external
+    * Facility has been received this session does the residence of the current key stand in, so a node that never heard a Facility still
+    * repairs; with neither known the rule cannot fire. Before the first finalized round with a Core committee of at least two (`coreSize <
+    * 2`) the rule never fires. The quorum reference is the unshrunk Core quorum of the committee frozen from the last finalized outcome.
     */
   final case class Trigger(
     silence: Option[FiniteDuration],
@@ -97,8 +98,8 @@ object IsolationRepair {
     }
   }
 
-  /** Per-peer single-flight and cooldown, bounded in size. A reservation succeeds only when no check for the peer is in flight and its
-    * last check completed at least `cooldown` ago.
+  /** Per-peer single-flight and cooldown, bounded in size. A reservation succeeds only when no check for the peer is in flight and its last
+    * check completed at least `cooldown` ago.
     */
   final class PeerRecheckLedger[F[_]: Async](ref: Ref[F, Map[PeerId, PeerRecheckLedger.Entry]], maxEntries: Int) {
     import PeerRecheckLedger._
@@ -184,7 +185,8 @@ object IsolationRepair {
     object Result {
       val notWired: Result = Result(wired = false, 0, 0, 0, 0, 0, 0, 0, timedOut = false, failed = false)
       val failed: Result = notWired.copy(wired = true, failed = true)
-      def timedOut(candidates: Int, sampled: Int): Result = notWired.copy(wired = true, candidates = candidates, sampled = sampled, timedOut = true)
+      def timedOut(candidates: Int, sampled: Int): Result =
+        notWired.copy(wired = true, candidates = candidates, sampled = sampled, timedOut = true)
     }
 
     sealed trait PeerOutcome
@@ -198,10 +200,10 @@ object IsolationRepair {
     /** Sample up to `budget.sampleSize` retained Unresponsive peers (distinct identities), reserve each in the ledger (single-flight plus
       * cooldown), run the session preflight inside the per-peer/overall budget, and apply the outcome:
       *   - reported session == recorded session: `setPeerResponsiveness(Responsive)` (the ordinary restore path);
-      *   - reported session != recorded session: `removePeerIfSession(recorded)` (compare-and-set; a concurrently installed newer
-      *     session is left alone);
-      *   - no answer: the peer stays Unresponsive.
-      * Never confirms anything about cluster progress: the ordinary probe still has to corroborate committed progress afterwards.
+      *   - reported session != recorded session: `removePeerIfSession(recorded)` (compare-and-set; a concurrently installed newer session
+      *     is left alone);
+      *   - no answer: the peer stays Unresponsive. Never confirms anything about cluster progress: the ordinary probe still has to
+      *     corroborate committed progress afterwards.
       */
     def run[F[_]: Async](
       clusterStorage: ClusterStorage[F],
@@ -342,7 +344,10 @@ object IsolationRepair {
                   jitter
                     .flatMap(Async[F].sleep)
                     .productR(recheck(peer))
-                    .timeoutTo(budget.perPeerTimeout + budget.maxJitter, (PeerRecheckOutcome.Unreachable(demotionStarted = false): PeerRecheckOutcome).pure[F])
+                    .timeoutTo(
+                      budget.perPeerTimeout + budget.maxJitter,
+                      (PeerRecheckOutcome.Unreachable(demotionStarted = false): PeerRecheckOutcome).pure[F]
+                    )
                     .handleError(_ => PeerRecheckOutcome.Unreachable(demotionStarted = false): PeerRecheckOutcome)
                     .map(PeerOutcome.Checked(_): PeerOutcome)
                     .guarantee(now.flatMap(ledger.release(peer.id, _)))
@@ -391,6 +396,46 @@ object IsolationRepair {
           .timeoutTo(timeout, Result(wired = true, 0, failed = true).pure[F])
           .handleError(_ => Result(wired = true, 0, failed = true))
       }
+
+    val MaxSources: Int = 3
+    val MaxCandidates: Int = 8
+
+    /** The production `rediscover` hook, built from the ordinary cluster programs and never from a new client.
+      *
+      * Sources are the retained peers whose id is in `priorityPeerIds` (any responsiveness: an isolated node has typically marked them
+      * Unresponsive); when none is retained, a random sample of responsive peers. Up to `maxSources` sources are queried through
+      * `discoverFrom` (`PeerDiscovery.discoverFrom`: filters self, the source, known peers with a session at least as new, and already
+      * queued candidates). Up to `maxCandidates` distinct candidates are then handed to `rejoin` (`Joining.rejoin`: the ordinary seedlist,
+      * registration-request, handshake and signature validation followed by `addPeer`), so nothing reaches the peer table without that
+      * validation; the attempt is marked finished in the discovery queue either way. Per-source and per-candidate failures are swallowed.
+      * Returns the number of candidates handed to validation.
+      */
+    def through[F[_]: Async](
+      clusterStorage: ClusterStorage[F],
+      priorityPeerIds: Option[NonEmptySet[PeerId]],
+      discoverFrom: Peer => F[Set[Peer]],
+      markAttemptsFinished: Set[PeerId] => F[Unit],
+      rejoin: PeerToJoin => F[Unit],
+      maxSources: Int = MaxSources,
+      maxCandidates: Int = MaxCandidates,
+      parallelism: Int = Budget.Parallelism
+    ): F[Int] = {
+      val priority = priorityPeerIds.fold(Set.empty[PeerId])(_.toSortedSet.toSet)
+      val fanOut = math.max(1, parallelism)
+      for {
+        random <- Random.scalaUtilRandom[F]
+        retained <- clusterStorage.getPeers
+        preferred = retained.iterator.filter(p => priority.contains(p.id)).toList.distinctBy(_.id)
+        pool <- if (preferred.nonEmpty) preferred.pure[F] else clusterStorage.getResponsivePeers.map(_.toList.distinctBy(_.id))
+        sources <- random.shuffleList(pool).map(_.take(math.max(0, maxSources)))
+        discovered <- sources.parTraverseN(fanOut)(source => discoverFrom(source).handleError(_ => Set.empty[Peer]))
+        candidates <- random.shuffleList(discovered.combineAll.toList.distinctBy(_.id)).map(_.take(math.max(0, maxCandidates)))
+        _ <- candidates
+          .parTraverseN(fanOut)(candidate => rejoin(PeerToJoin(candidate.id, candidate.ip, candidate.p2pPort)).attempt.void)
+          .guarantee(markAttemptsFinished(candidates.map(_.id).toSet))
+          .whenA(candidates.nonEmpty)
+      } yield candidates.size
+    }
   }
 
   /** Single-flight plus cooldown for the repair operation. */
