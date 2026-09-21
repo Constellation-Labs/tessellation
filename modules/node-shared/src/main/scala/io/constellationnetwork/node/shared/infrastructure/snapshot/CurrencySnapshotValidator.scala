@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.artifact.BurnAction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
@@ -251,7 +252,14 @@ object CurrencySnapshotValidator {
                     .focus(_.artifact.dataApplication)
                     .replace(expected.dataApplication)
                     .focus(_.artifact.artifacts)
-                    .replace(expected.artifacts)
+                    // Without the metagraph application, opaque app artifacts remain signed input.
+                    // Native burns are NOT opaque: preserve only those independently accepted by
+                    // the Currency pipeline. Restoring a rejected signed claim here would conceal
+                    // disabled, unauthorized or unaffordable burns from GL0's snapshot comparison.
+                    .replace(expected.artifacts.map { artifacts =>
+                      artifacts.filterNot(_.isInstanceOf[BurnAction]) ++
+                        creationResult.artifact.artifacts.toList.flatMap(_.collect { case burn: BurnAction => burn })
+                    })
 
               }
             }.map { creationResult =>
