@@ -200,10 +200,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     for {
       now <- Async[F].monotonic
       resources <- storage.getResources(key)
-      // D1: feed the stale-key telemetry with this key's residence start and the external Facilities
-      // currently visible (monitor-tick resolution). Telemetry only, never a decision input.
-      externalFacilities = resources.peerDeclarationsMap.count { case (pid, decls) => pid =!= selfId && decls.facility.isDefined }
-      _ <- abandonmentTracker.staleKeyTelemetry.observe(key, externalFacilities).attempt.void
+      // D1: feed the stale-key telemetry with this key's residence start and the monotonic receipt revision of
+      // accepted external Facilities (replacements included), so a fresh Facility from an already-counted peer
+      // refreshes the silence clock while an unchanged map does not. Telemetry only, never a decision input.
+      externalFacilityReceipts <- storage.getFacilityReceipts.map(AbandonmentTracker.StaleKeyTelemetry.externalReceipts(selfId, _))
+      _ <- abandonmentTracker.staleKeyTelemetry.observe(key, externalFacilityReceipts).attempt.void
       observedPacemakerEpoch = ViewChangeManager.ObservedEpoch(
         state.viewNumber.toLong,
         observedAttemptId,

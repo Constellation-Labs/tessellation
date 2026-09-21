@@ -1578,9 +1578,10 @@ object AbandonmentTracker {
     * Reset ONLY by `resetOnSuccessfulRound` (accepted consensus progress): abandonment also emits `RoundCompleted`, so that command must
     * not reset it. Entries are bounded by evicting keys below the installed parent on every capture plus a hard cap on retained keys.
     *
-    * Also keeps the monotonic instant an external Facility was last observed for the tracked key (fed by the monitor each tick from the
-    * declaration map, so its resolution is one monitor tick) and the monotonic instant each key was first observed locally, which survives
-    * same-key retries and is what `residenceMs` reports.
+    * Also keeps the monotonic instant an external Facility was last received (fed by the monitor each tick with the storage's monotonic
+    * receipt revision of accepted external Facilities, so its resolution is one monitor tick and a same-count replacement still counts as
+    * an arrival) and the monotonic instant each key was first observed locally, which survives same-key retries and is what `residenceMs`
+    * reports.
     */
   final class StaleKeyTelemetry[F[_]: Async, Key: Order](
     ref: Ref[F, StaleKeyTelemetry.State[Key]],
@@ -1590,14 +1591,19 @@ object AbandonmentTracker {
   ) {
     import StaleKeyTelemetry._
 
-    /** Record that `key` is under local attempt and how many external Facilities the monitor currently sees for it. */
-    def observe(key: Key, externalFacilities: Int): F[Unit] =
+    /** Record that `key` is under local attempt and the current receipt revision of accepted external Facilities
+      * (`StaleKeyTelemetry.externalReceipts` over `ConsensusStorage.getFacilityReceipts`). The silence clock refreshes only when the
+      * revision moved past the high-water mark seen so far, i.e. on a genuine new receipt, replacements included; an unchanged map observed
+      * again does not refresh it.
+      */
+    def observe(key: Key, externalFacilityReceipts: Long): F[Unit] =
       now.flatMap { at =>
         ref.update { state =>
           val entry = state.entries.getOrElse(key, Entry(firstSeenAt = at))
-          val facilityArrived = externalFacilities > entry.externalFacilities
+          val facilityArrived = externalFacilityReceipts > state.externalFacilityReceipts
           state.copy(
-            entries = state.entries.updated(key, entry.copy(externalFacilities = math.max(entry.externalFacilities, externalFacilities))),
+            entries = state.entries.updated(key, entry),
+            externalFacilityReceipts = math.max(state.externalFacilityReceipts, externalFacilityReceipts),
             lastExternalFacilityAt = if (facilityArrived) at.some else state.lastExternalFacilityAt
           )
         }
@@ -1639,7 +1645,9 @@ object AbandonmentTracker {
         }
       }
 
-    /** Accepted consensus progress: forget every tracked key. The last-external-Facility instant is session-level and is kept. */
+    /** Accepted consensus progress: forget every tracked key. The last-external-Facility instant and the receipt high-water mark are
+      * session-level and are kept.
+      */
     def reset: F[Unit] = ref.update(_.copy(entries = Map.empty))
 
     def trackedKeys: F[Set[Key]] = ref.get.map(_.entries.keySet)
@@ -1652,15 +1660,22 @@ object AbandonmentTracker {
     final case class Entry(
       firstSeenAt: FiniteDuration,
       lastWarnAt: Option[FiniteDuration] = None,
-      warnCount: Int = 0,
-      externalFacilities: Int = 0
+      warnCount: Int = 0
     )
 
-    final case class State[Key](entries: Map[Key, Entry], lastExternalFacilityAt: Option[FiniteDuration])
+    final case class State[Key](
+      entries: Map[Key, Entry],
+      externalFacilityReceipts: Long,
+      lastExternalFacilityAt: Option[FiniteDuration]
+    )
 
     object State {
-      def empty[Key]: State[Key] = State(Map.empty, None)
+      def empty[Key]: State[Key] = State(Map.empty, 0L, None)
     }
+
+    /** The receipt revision fed to `observe`: every accepted Facility from a peer other than `selfId`, replacements included. */
+    def externalReceipts(selfId: PeerId, receipts: Map[PeerId, Long]): Long =
+      receipts.iterator.collect { case (peerId, count) if peerId =!= selfId => count }.sum
 
     final case class Emission(kind: String, warnsSoFar: Int, residence: FiniteDuration, lastExternalFacilityAgo: Option[FiniteDuration])
 

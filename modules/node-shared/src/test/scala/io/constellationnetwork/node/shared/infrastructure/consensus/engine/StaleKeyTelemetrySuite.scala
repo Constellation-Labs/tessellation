@@ -1,12 +1,25 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
+import cats.Eq
 import cats.effect.{IO, Ref}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.Facility
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.AbandonmentTracker.StaleKeyTelemetry
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.Candidates
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
+import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
+import monocle.Lens
 import weaver.SimpleIOSuite
 
 /** D1 stale-key WARN rate limiting: one initial WARN per key, at most one reminder per interval, reset only on accepted consensus progress
@@ -105,6 +118,72 @@ object StaleKeyTelemetrySuite extends SimpleIOSuite {
           expect
             .same(Set(101L, 102L), afterCap)
             .and(expect.same(Set(105L), afterParentAdvance))
+    }
+  }
+
+  private final case class Outcome(key: SnapshotOrdinal, value: String)
+  private implicit val outcomeEq: Eq[Outcome] = Eq.fromUniversalEquals
+  private implicit val outcomeKey: Lens[Outcome, SnapshotOrdinal] =
+    Lens[Outcome, SnapshotOrdinal](_.key)(key => _.copy(key = key))
+
+  private val consensusConfig =
+    ConsensusConfig(
+      timeTriggerInterval = 10.seconds,
+      declarationTimeout = 10.seconds,
+      declarationRangeLimit = 3L,
+      lockDuration = 10.seconds,
+      eventCutter = EventCutterConfig(maxBinarySizeBytes = PosInt(1024), maxUpdateNodeParametersSize = PosInt(1024))
+    )
+  private val selfId = PeerId(Hex("00" * 64))
+  private val peerA = PeerId(Hex("0a" * 64))
+  private val key = SnapshotOrdinal.unsafeApply(101L)
+  private val entropy = Hash.fromBytes("stale-key-telemetry".getBytes("UTF-8"))
+
+  private def facility(view: String): Facility =
+    Facility(
+      eventHashes = Set(Hash.fromBytes(view.getBytes("UTF-8"))),
+      candidates = Candidates(Set.empty),
+      trigger = EventTrigger.some,
+      facilitatorsHash = entropy,
+      lastGlobalSnapshotOrdinal = key,
+      lastSnapshotHash = entropy,
+      consensusConfigHash = entropy.some
+    )
+
+  test("a replacement Facility from an already-counted peer refreshes the silence clock; an unchanged map does not") {
+    // The monitor's feed: the storage's monotonic external receipt revision, not the declaration-map count.
+    def observe(storage: ConsensusStorage[IO, Unit, SnapshotOrdinal, Unit, Unit, String, Outcome, Unit], t: StaleKeyTelemetry[IO, Long]) =
+      storage.getFacilityReceipts.map(StaleKeyTelemetry.externalReceipts(selfId, _)).flatMap(t.observe(key.value.value, _))
+
+    (fixture(), ConsensusStorage.make[IO, Unit, SnapshotOrdinal, Unit, Unit, String, Outcome, Unit](consensusConfig)).tupled.flatMap {
+      case ((clock, telemetry), storage) =>
+        for {
+          _ <- storage.addFacility(peerA, key, facility("view-0"))
+          _ <- observe(storage, telemetry)
+          _ <- clock.update(_ + 200.seconds)
+          // A view-change replacement from the same peer: the declaration map still holds exactly one Facility.
+          _ <- storage.addFacility(peerA, key, facility("view-1"))
+          declarations <- storage.getResources(key).map(_.peerDeclarationsMap.count { case (_, d) => d.facility.isDefined })
+          _ <- observe(storage, telemetry)
+          afterReplacement <- telemetry.lastExternalFacilityAgo
+          _ <- clock.update(_ + 45.seconds)
+          _ <- observe(storage, telemetry)
+          afterUnchanged <- telemetry.lastExternalFacilityAgo
+          // Self's own Facility (round start / retry) is not an external receipt.
+          _ <- storage.addFacility(selfId, key, facility("self"))
+          _ <- observe(storage, telemetry)
+          afterSelf <- telemetry.lastExternalFacilityAgo
+        } yield
+          expect
+            .same(1, declarations)
+            .and(
+              expect(
+                afterReplacement.contains(Duration.Zero),
+                s"a fresh Facility at the same count refreshes silence, got $afterReplacement"
+              )
+            )
+            .and(expect(afterUnchanged.contains(45.seconds), s"observing an unchanged map does not refresh, got $afterUnchanged"))
+            .and(expect(afterSelf.contains(45.seconds), s"self's own Facility is not external traffic, got $afterSelf"))
     }
   }
 
