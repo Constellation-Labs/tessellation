@@ -193,6 +193,7 @@ object ConsensusLog {
     case object RollbackStateCleared extends Event { val show = "ROLLBACK_STATE_CLEARED" }
     case object RollbackBootstrapActive extends Event { val show = "ROLLBACK_BOOTSTRAP_ACTIVE" }
     case object RollbackFirstRoundDeferred extends Event { val show = "ROLLBACK_FIRST_ROUND_DEFERRED" }
+    case object RollbackFirstRoundLoop extends Event { val show = "ROLLBACK_FIRST_ROUND_LOOP" }
     case object RollbackQuorumFeasible extends Event { val show = "ROLLBACK_QUORUM_FEASIBLE" }
 
     // ── Recovery events ───────────────────────────────────────────

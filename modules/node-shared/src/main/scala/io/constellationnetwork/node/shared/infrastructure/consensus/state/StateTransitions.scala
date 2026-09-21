@@ -1,11 +1,11 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
+import cats._
 import cats.effect.kernel.{Async, Ref, Temporal}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
 import cats.kernel.Next
 import cats.syntax.all._
-import cats.{Eq, Monad, Show}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration._
@@ -21,7 +21,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message.GetC
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafeLabelName
-import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -1659,6 +1659,17 @@ class StateTransitions[
           unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
         )
       )
+      // A finalized round is successful first-round participation: the rollback-follower re-entry
+      // episode ends here, never on a Facility-pulse release alone. The gate guard keeps a
+      // superseding held generation's episode value intact.
+      _ <- ctx.firstRoundStartGate.isHeld
+        .ifM(
+          ifTrue = Async[F].unit,
+          ifFalse = ctx.normalFirstRoundReentryEpisodeRef.set(0L) >>
+            Metrics[F].updateGauge("dag_consensus_normal_first_round_reentry_episode", 0L)
+        )
+        .attempt
+        .void
       responders = newState.observedResponders.value.toSet
       committee = newState.roundStartFacilitators.value
       _ <-
@@ -2418,6 +2429,12 @@ class StateTransitions[
     * current-session member of the expected committee, validates the Facility through the layer policy, and confirms that origin's latest
     * typed outcome is still the exact installed parent. The Facility is only a timing pulse: the serialized release still derives the
     * complete round locally and enforces the expected committee before any local Facility effect can commit.
+    *
+    * Each tick samples up to `config.firstRoundPulseFanout` distinct eligible origins concurrently under one tick deadline and classifies
+    * every reported outcome with ordered keys. Ahead evidence makes the generation recovery-only; after the bounded safe pulse retries the
+    * follower makes one fallback decision (re-enter recovery download), revalidating permit ownership and the origin session at that
+    * boundary so stale work is inert. The re-entry episode counter lives on the engine context and increments only on a successful
+    * result-returning state transition.
     */
   private def scheduleNormalFirstRoundFollower(
     key: Key,
@@ -2432,30 +2449,42 @@ class StateTransitions[
       case Some(policy) =>
         val pollInterval = 1.second
         val perPeerTimeout = 3.seconds
+        val tickDeadline = StateTransitions.NormalFirstRoundPulseTickDeadline
+        val fanout = math.max(1, config.firstRoundPulseFanout)
         val nextKey = key.next
+        val installedParentHash = ctx.lastSnapshotHashOf(expectedOutcome)
+        val reentryEpisode = ctx.normalFirstRoundReentryEpisodeRef
+
+        type PeerOutcome = StateTransitions.NormalFirstRoundPulsePeerOutcome[Key]
+        type Episode = StateTransitions.NormalFirstRoundFollowerEpisode[Key]
 
         final case class PulseInspection(
           status: StateTransitions.NormalFirstRoundPulseStatus,
           invalidFacilityCount: Int,
-          recoveryAlreadyTriggered: Boolean
+          queried: List[(Peer, PeerOutcome)],
+          episode: Episode
         )
 
-        def latestOutcome(peer: Peer): F[(PeerId, StateTransitions.NormalFirstRoundPulsePeerOutcome)] =
+        def latestOutcome(peer: Peer): F[PeerOutcome] =
           Temporal[F]
             .timeoutTo(
-              ctx.consensusClient.getLatestConsensusOutcome.run(peer).map[StateTransitions.NormalFirstRoundPulsePeerOutcome] {
-                case Some(outcome) if outcome === expectedOutcome     => StateTransitions.NormalFirstRoundPulsePeerOutcome.Aligned
-                case Some(outcome) if outcomeKey.get(outcome) =!= key => StateTransitions.NormalFirstRoundPulsePeerOutcome.Ahead
-                case Some(_)                                          => StateTransitions.NormalFirstRoundPulsePeerOutcome.Mismatched
-                case None                                             => StateTransitions.NormalFirstRoundPulsePeerOutcome.Missing
+              ctx.consensusClient.getLatestConsensusOutcome.run(peer).map { observed =>
+                StateTransitions.classifyNormalFirstRoundPulseOutcome(key, expectedOutcome, observed)(
+                  outcomeKey.get,
+                  ctx.lastSnapshotHashOf
+                )
               },
               perPeerTimeout,
-              (StateTransitions.NormalFirstRoundPulsePeerOutcome.FetchFailed: StateTransitions.NormalFirstRoundPulsePeerOutcome).pure[F]
+              (StateTransitions.NormalFirstRoundPulsePeerOutcome.FetchFailed("timeout"): PeerOutcome).pure[F]
             )
-            .handleError(_ => StateTransitions.NormalFirstRoundPulsePeerOutcome.FetchFailed)
-            .tupleLeft(peer.id)
+            .handleError(err =>
+              StateTransitions.NormalFirstRoundPulsePeerOutcome.FetchFailed(StateTransitions.normalFirstRoundHttpResult(err))
+            )
 
-        def inspect(recoveryTriggered: Ref[F, Boolean]): F[PulseInspection] =
+        def eligible(peer: Peer): Boolean =
+          peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady
+
+        def inspect(episode: Ref[F, Episode]): F[PulseInspection] =
           (ctx.clusterStorage.getResponsivePeers, storage.getResources(nextKey), storage.getPeerCurrentKeys).flatMapN {
             (peers, resources, peerCurrentKeys) =>
               val peerById = peers.iterator.map(peer => peer.id -> peer).toMap
@@ -2468,74 +2497,156 @@ class StateTransitions[
               }.toSet
               val invalidFacilityCount = committeeFacilities.size - matchingOrigins.size
               // A node that starts alone while the chain is already moving may miss the K+1
-              // Facility pulse. An authenticated declaration at K+2 or later proves only that the
+              // Facility pulse. An authenticated declaration strictly beyond K+1 proves only that the
               // origin is worth querying; it never releases the gate by itself. The typed latest
               // outcome must still prove that recovery, rather than stale-round start, is required.
-              val futureDeclarationOrigins = peerCurrentKeys.collect {
-                case (peerId, observedKey) if committee.contains(peerId) && observedKey =!= key && observedKey =!= nextKey => peerId
-              }.toSet
-              val matchingPeers = matchingOrigins.toList.flatMap(peerById.get).filter { peer =>
-                peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady
-              }
-              val aheadPeers = futureDeclarationOrigins.toList.flatMap(peerById.get).filter { peer =>
-                peer.state === NodeState.Ready || peer.state === NodeState.WaitingForReady
-              }
-              // One typed corroboration is sufficient for either local action. Sampling one
-              // current-session origin per poll avoids an O(N^2) HTTP burst when a large committee
+              val futureDeclarationOrigins =
+                StateTransitions.normalFirstRoundFutureDeclarationOrigins(committee, nextKey, peerCurrentKeys)
+              val matchingPeers = matchingOrigins.toList.flatMap(peerById.get).filter(eligible)
+              val aheadPeers = futureDeclarationOrigins.toList.flatMap(peerById.get).filter(eligible)
+              // One typed corroboration is sufficient for either local action. Sampling a bounded number
+              // of current-session origins per tick avoids an O(N^2) HTTP burst when a large committee
               // gossips all of its Facilities at once. Future-key evidence takes precedence so a
               // late member cannot release an old round merely because a straggler still serves K.
               val probeCandidates = if (futureDeclarationOrigins.nonEmpty) aheadPeers else matchingPeers
-              val observeOne =
-                if (probeCandidates.isEmpty) List.empty[(PeerId, StateTransitions.NormalFirstRoundPulsePeerOutcome)].pure[F]
-                else Random[F].elementOf(probeCandidates).flatMap(latestOutcome).map(List(_))
 
-              (observeOne, recoveryTriggered.get).mapN { (observed, alreadyTriggered) =>
+              for {
+                sampled <- StateTransitions.sampleNormalFirstRoundOrigins(probeCandidates, fanout)
+                observed <- StateTransitions.observeNormalFirstRoundSample[F, Key, Peer](sampled, latestOutcome, tickDeadline)
+                current <- episode.get
+              } yield
                 PulseInspection(
                   StateTransitions.normalFirstRoundPulseStatus(
                     committee,
                     matchingOrigins,
                     futureDeclarationOrigins,
                     peerById.view.mapValues(_.state).toMap,
-                    observed.toMap
+                    observed.map { case (peer, outcome) => peer.id -> outcome }.toMap
                   ),
                   invalidFacilityCount,
-                  alreadyTriggered
+                  observed,
+                  current
                 )
-              }
           }
 
-        def triggerPeerAheadRecovery(origin: PeerId, triggered: Ref[F, Boolean]): F[Unit] =
-          triggered.get.ifM(
-            Async[F].unit,
-            (
-              ConsensusLog.warn(
-                log,
-                Category.Recovery,
-                key.show,
-                "n/a",
-                LogEvent.RollbackFirstRoundDeferred,
-                "mode" -> "normal_rollback_follower",
-                "reason" -> "pulse_origin_already_ahead",
-                "origin" -> ConsensusLog.pid(origin),
-                "action" -> "reenter_recovery_download"
-              ) >>
-                ctx.nodeStorage.setRecoveryDownload >>
-                ctx.nodeStorage.getNodeState.flatMap {
-                  case NodeState.WaitingForReady =>
-                    ctx.nodeStorage.tryModifyState(NodeState.WaitingForReady, NodeState.WaitingForDownload)
-                  case NodeState.Ready     => ctx.nodeStorage.tryModifyState(NodeState.Ready, NodeState.WaitingForDownload)
-                  case NodeState.Observing => ctx.nodeStorage.tryModifyState(NodeState.Observing, NodeState.WaitingForDownload)
-                  case _                   => Async[F].unit
-                }
-            ) >> triggered.set(true)
-          )
+        def originStillCurrent(origin: Peer): F[Boolean] =
+          ctx.clusterStorage.getResponsivePeers.map(_.exists(peer => peer.id === origin.id && peer.session === origin.session))
 
-        def record(triggered: Ref[F, Boolean])(inspection: PulseInspection, attempt: Long): F[Unit] = {
+        def fallback(
+          episode: Ref[F, Episode],
+          evidence: StateTransitions.NormalFirstRoundAheadEvidence[Key],
+          attempt: Long,
+          startedAt: FiniteDuration
+        ): F[Unit] =
+          for {
+            result <- StateTransitions.enterNormalFirstRoundRecovery(
+              ctx.firstRoundStartGate.isPending(permit),
+              originStillCurrent(evidence.origin),
+              ctx.nodeStorage.setRecoveryDownload,
+              ctx.nodeStorage.tryModifyStateGetResult(
+                Set[NodeState](NodeState.WaitingForReady, NodeState.Ready, NodeState.Observing),
+                NodeState.WaitingForDownload
+              ),
+              reentryEpisode
+            )
+            _ <- episode.update { current =>
+              result match {
+                case StateTransitions.NormalFirstRoundReentryResult.StaleOriginSession =>
+                  // The evidence origin left its session before the decision: inert, and fresh ahead
+                  // evidence must be observed again before another decision is due.
+                  current.copy(aheadEvidence = None)
+                case _ => current.copy(recoveryConcluded = true)
+              }
+            }
+            now <- Temporal[F].monotonic
+            currentEpisode <- reentryEpisode.get
+            cycles = StateTransitions.normalFirstRoundPulseCycles(evidence.firstAttempt, attempt)
+            _ <- (result match {
+              case StateTransitions.NormalFirstRoundReentryResult.Entered(_) |
+                  StateTransitions.NormalFirstRoundReentryResult.TransitionRejected =>
+                ConsensusLog.warn(
+                  log,
+                  Category.Recovery,
+                  key.show,
+                  "n/a",
+                  LogEvent.RollbackFirstRoundLoop,
+                  "mode" -> "normal_rollback_follower",
+                  "reason" -> "pulse_origin_already_ahead",
+                  "origin" -> ConsensusLog.pid(evidence.origin.id),
+                  "reportedKey" -> evidence.outcome.reportedKey.fold("n/a")(_.show),
+                  "reportedHash" -> evidence.outcome.reportedHash.fold("n/a")(_.value),
+                  "action" -> "reenter_recovery_download",
+                  "result" -> result.label,
+                  "reentryEpisode" -> currentEpisode.toString,
+                  "cycles" -> cycles.toString,
+                  "elapsedMs" -> (now - startedAt).toMillis.toString,
+                  "attempt" -> attempt.toString,
+                  "installedParent" -> key.show,
+                  "targetRound" -> nextKey.show,
+                  "permitGeneration" -> permit.generation.toString
+                )
+              case StateTransitions.NormalFirstRoundReentryResult.StaleGeneration |
+                  StateTransitions.NormalFirstRoundReentryResult.StaleOriginSession =>
+                ConsensusLog.info(
+                  log,
+                  Category.Recovery,
+                  key.show,
+                  "n/a",
+                  LogEvent.RollbackFirstRoundLoop,
+                  "mode" -> "normal_rollback_follower",
+                  "reason" -> "pulse_origin_already_ahead",
+                  "origin" -> ConsensusLog.pid(evidence.origin.id),
+                  "action" -> "inert_cancellation",
+                  "result" -> result.label,
+                  "reentryEpisode" -> currentEpisode.toString,
+                  "cycles" -> cycles.toString,
+                  "elapsedMs" -> (now - startedAt).toMillis.toString,
+                  "attempt" -> attempt.toString,
+                  "installedParent" -> key.show,
+                  "targetRound" -> nextKey.show,
+                  "permitGeneration" -> permit.generation.toString
+                )
+            }).attempt.void
+            _ <- (result match {
+              case StateTransitions.NormalFirstRoundReentryResult.Entered(entered) =>
+                Metrics[F].incrementCounter("dag_consensus_normal_first_round_reentry_total") >>
+                  // Guarded gauge write: a superseded generation must not overwrite the newer episode value.
+                  ctx.firstRoundStartGate
+                    .isPending(permit)
+                    .ifM(
+                      ifFalse = Async[F].unit,
+                      ifTrue = Metrics[F].updateGauge("dag_consensus_normal_first_round_reentry_episode", entered)
+                    )
+              case _ => Async[F].unit
+            }).attempt.void
+          } yield ()
+
+        def record(episode: Ref[F, Episode], startedAt: FiniteDuration)(inspection: PulseInspection, attempt: Long): F[Unit] = {
           val status = inspection.status
-          val maybeAhead = status.aheadOrigin.traverse_(triggerPeerAheadRecovery(_, triggered))
-          val logStatus =
-            if (status.releaseOrigin.nonEmpty || attempt === 1L || attempt % 5L === 0L)
-              ConsensusLog.info(
+          val tickAheadEvidence = status.aheadOrigin.flatMap { origin =>
+            inspection.queried.collectFirst {
+              case (peer, outcome) if peer.id === origin =>
+                StateTransitions.NormalFirstRoundAheadEvidence(peer, outcome, attempt)
+            }
+          }
+          val heartbeat = attempt % StateTransitions.NormalFirstRoundAttemptHeartbeat === 0L
+
+          for {
+            updated <- episode.modify { current =>
+              val labelChanged = !current.lastOutcomeLabel.contains(status.outcomeLabel)
+              // Keep the first ahead attempt for cycle accounting; refresh the origin to the latest ahead observation.
+              val evidence = (current.aheadEvidence, tickAheadEvidence) match {
+                case (Some(existing), Some(fresh)) => fresh.copy(firstAttempt = existing.firstAttempt).some
+                case (existing, fresh)             => existing.orElse(fresh)
+              }
+              val next = current.copy(aheadEvidence = evidence, lastOutcomeLabel = status.outcomeLabel.some)
+              next -> (next, labelChanged)
+            }
+            (state, labelChanged) = updated
+            now <- Temporal[F].monotonic
+            currentEpisode <- reentryEpisode.get
+            _ <- ConsensusLog
+              .info(
                 log,
                 Category.Lifecycle,
                 key.show,
@@ -2544,19 +2655,47 @@ class StateTransitions[
                 "mode" -> "normal_rollback_follower",
                 "outcome" -> status.outcomeLabel,
                 "attempt" -> attempt.toString,
+                "attemptHeartbeat" -> heartbeat.toString,
                 "committeeSize" -> committee.size.toString,
                 "matchingFacilityOrigins" -> status.matchingFacilityOrigins.size.toString,
                 "invalidFacilities" -> inspection.invalidFacilityCount.toString,
                 "releaseOrigin" -> status.releaseOrigin.fold("none")(ConsensusLog.pid),
-                "aheadOrigin" -> status.aheadOrigin.fold("none")(ConsensusLog.pid)
+                "aheadOrigin" -> status.aheadOrigin.fold("none")(ConsensusLog.pid),
+                "queried" -> StateTransitions.normalFirstRoundQueriedSummary(inspection.queried.map {
+                  case (peer, outcome) => peer.id -> outcome
+                }),
+                "unqueried" -> status.unqueried.size.toString,
+                "installedParent" -> key.show,
+                "installedParentHash" -> installedParentHash.value,
+                "targetRound" -> nextKey.show,
+                "permitGeneration" -> permit.generation.toString,
+                "sinceConvergedMs" -> (now - startedAt).toMillis.toString,
+                "reentryEpisode" -> currentEpisode.toString,
+                "cycles" -> state.aheadEvidence.fold("0")(evidence =>
+                  StateTransitions.normalFirstRoundPulseCycles(evidence.firstAttempt, attempt).toString
+                )
               )
-            else Async[F].unit
-
-          logStatus >>
-            Metrics[F].incrementCounter(
-              "dag_consensus_normal_first_round_pulse_total",
-              Seq(unsafeLabelName("outcome") -> status.outcomeLabel)
-            ) >> maybeAhead
+              .whenA(labelChanged || heartbeat)
+              .attempt
+              .void
+            _ <- Metrics[F]
+              .incrementCounter(
+                "dag_consensus_normal_first_round_pulse_total",
+                Seq(unsafeLabelName("outcome") -> status.outcomeLabel)
+              )
+              .attempt
+              .void
+            _ <- state.aheadEvidence
+              .filter(evidence =>
+                !state.recoveryConcluded &&
+                  StateTransitions.normalFirstRoundFallbackDue(
+                    evidence.firstAttempt,
+                    attempt,
+                    StateTransitions.NormalFirstRoundSafePulseRetries
+                  )
+              )
+              .traverse_(fallback(episode, _, attempt, startedAt))
+          } yield ()
         }
 
         def reportFailure(stage: String, err: Throwable): F[Unit] =
@@ -2568,7 +2707,7 @@ class StateTransitions[
           )).attempt.void
 
         for {
-          peerAheadTriggered <- Ref.of[F, Boolean](false)
+          episode <- Ref.of[F, Episode](StateTransitions.NormalFirstRoundFollowerEpisode.initial[Key])
           startedAt <- Temporal[F].monotonic
           _ <- Metrics[F].updateGauge("dag_consensus_normal_first_round_alignment_held", 1L).attempt.void
           _ <- Metrics[F]
@@ -2585,13 +2724,13 @@ class StateTransitions[
           _ <- Async[F]
             .start(
               StateTransitions.runFirstRoundAlignmentLoop(
-                inspect(peerAheadTriggered),
+                inspect(episode),
                 (inspection: PulseInspection) =>
                   StateTransitions.shouldReleaseNormalFirstRoundPulse(
                     inspection.status,
-                    inspection.recoveryAlreadyTriggered
+                    inspection.episode.recoveryOnly
                   ),
-                record(peerAheadTriggered),
+                record(episode, startedAt),
                 Temporal[F].sleep(pollInterval),
                 queue.offer(ReleaseFirstRoundStart(permit, committee)),
                 ctx.firstRoundStartGate.isPending(permit),
@@ -2600,7 +2739,7 @@ class StateTransitions[
                 ctx.firstRoundStartGate.isHeld.flatMap {
                   case true => Async[F].unit
                   case false =>
-                    peerAheadTriggered.get.flatMap {
+                    episode.get.map(_.recoveryOnly).flatMap {
                       case true =>
                         // A newer validated initialization superseded this permit. It did not
                         // release the stale first round, so do not report a Facility-pulse release.
@@ -2985,25 +3124,139 @@ object StateTransitions {
     case object FetchFailed extends RecoverySeedPeerOutcome
   }
 
-  private[consensus] sealed trait NormalFirstRoundPulsePeerOutcome
+  /** Ordered classification of one queried pulse origin's latest typed outcome against the installed parent `P`.
+    *
+    * The observed key and hash are retained as local diagnostic data: they never enter a wire format, a metric label, or a consensus
+    * decision beyond the ordered comparison itself. `Aligned` requires exact outcome equality; a peer serving the same key and hash with a
+    * different outcome stays `MismatchedAtP`. `Behind` (key < P) is a straggler and never counts as ahead evidence.
+    */
+  private[consensus] sealed trait NormalFirstRoundPulsePeerOutcome[+Key] {
+    def label: String
+    def httpResult: String
+    def reportedKey: Option[Key]
+    def reportedHash: Option[Hash]
+  }
 
   private[consensus] object NormalFirstRoundPulsePeerOutcome {
-    case object Aligned extends NormalFirstRoundPulsePeerOutcome
-    case object Ahead extends NormalFirstRoundPulsePeerOutcome
-    case object Missing extends NormalFirstRoundPulsePeerOutcome
-    case object Mismatched extends NormalFirstRoundPulsePeerOutcome
-    case object FetchFailed extends NormalFirstRoundPulsePeerOutcome
+    sealed trait Reported[+Key] extends NormalFirstRoundPulsePeerOutcome[Key] {
+      def key: Key
+      def hash: Hash
+      final def httpResult: String = "ok"
+      final def reportedKey: Option[Key] = key.some
+      final def reportedHash: Option[Hash] = hash.some
+    }
+
+    final case class Aligned[Key](key: Key, hash: Hash) extends Reported[Key] { val label = "aligned" }
+    final case class Behind[Key](key: Key, hash: Hash) extends Reported[Key] { val label = "behind" }
+    final case class Ahead[Key](key: Key, hash: Hash) extends Reported[Key] { val label = "ahead" }
+    final case class MismatchedAtP[Key](key: Key, hash: Hash) extends Reported[Key] { val label = "mismatched_at_parent" }
+
+    case object Missing extends NormalFirstRoundPulsePeerOutcome[Nothing] {
+      val label = "missing"
+      val httpResult = "empty"
+      val reportedKey: Option[Nothing] = None
+      val reportedHash: Option[Hash] = None
+    }
+
+    final case class FetchFailed(reason: String) extends NormalFirstRoundPulsePeerOutcome[Nothing] {
+      val label = "fetch_failed"
+      def httpResult: String = reason
+      val reportedKey: Option[Nothing] = None
+      val reportedHash: Option[Hash] = None
+    }
   }
+
+  private[consensus] def classifyNormalFirstRoundPulseOutcome[Key: Eq: Next, Outcome: Eq](
+    installedParent: Key,
+    expectedOutcome: Outcome,
+    observed: Option[Outcome]
+  )(keyOf: Outcome => Key, hashOf: Outcome => Hash): NormalFirstRoundPulsePeerOutcome[Key] =
+    observed.fold[NormalFirstRoundPulsePeerOutcome[Key]](NormalFirstRoundPulsePeerOutcome.Missing) { outcome =>
+      val reportedKey = keyOf(outcome)
+      val reportedHash = hashOf(outcome)
+      val order = implicitly[Next[Key]].partialOrder
+
+      if (reportedKey === installedParent)
+        if (outcome === expectedOutcome) NormalFirstRoundPulsePeerOutcome.Aligned(reportedKey, reportedHash)
+        else NormalFirstRoundPulsePeerOutcome.MismatchedAtP(reportedKey, reportedHash)
+      else if (order.lt(reportedKey, installedParent)) NormalFirstRoundPulsePeerOutcome.Behind(reportedKey, reportedHash)
+      else if (order.gt(reportedKey, installedParent)) NormalFirstRoundPulsePeerOutcome.Ahead(reportedKey, reportedHash)
+      else NormalFirstRoundPulsePeerOutcome.FetchFailed("incomparable_key")
+    }
+
+  /** Committee members whose observed current key is strictly beyond the first-round key `P+1`. Ordered comparison keeps a straggler still
+    * declaring below the installed parent out of the preferred ahead-probe pool.
+    */
+  private[consensus] def normalFirstRoundFutureDeclarationOrigins[Key: Next](
+    committee: SortedSet[PeerId],
+    nextKey: Key,
+    peerCurrentKeys: Map[PeerId, Key]
+  ): Set[PeerId] = {
+    val order = implicitly[Next[Key]].partialOrder
+    peerCurrentKeys.collect {
+      case (peerId, observedKey) if committee.contains(peerId) && order.gt(observedKey, nextKey) => peerId
+    }.toSet
+  }
+
+  private[consensus] def normalFirstRoundHttpResult(err: Throwable): String =
+    err match {
+      case UnexpectedStatus(status, _, _) => s"http_${status.code}"
+      case other                          => Option(other.getClass.getSimpleName).filter(_.nonEmpty).getOrElse("error")
+    }
+
+  private[consensus] val NormalFirstRoundPulseTickDeadline: FiniteDuration = 4.seconds
+  private[consensus] val NormalFirstRoundSafePulseRetries: Int = 3
+  private[consensus] val NormalFirstRoundAttemptHeartbeat: Long = 30L
+
+  /** Pick up to `fanout` distinct origins for one pulse tick. Fanout 1 keeps the historical single random origin. */
+  private[consensus] def sampleNormalFirstRoundOrigins[F[_]: MonadThrow: Random, A](candidates: List[A], fanout: Int): F[List[A]] =
+    if (candidates.isEmpty || fanout <= 0) List.empty[A].pure[F]
+    else if (fanout === 1) Random[F].elementOf(candidates).map(List(_))
+    else Random[F].shuffleList(candidates).map(_.take(fanout))
+
+  /** Bounded concurrent inspection of one sampled tick.
+    *
+    * Every sampled task runs concurrently under one tick deadline. The tick result is produced only once every task has completed or the
+    * deadline has cancelled the stragglers, so an early `Aligned` can never be acted on while another sampled task is still pending. A task
+    * that did not complete before the deadline counts as `FetchFailed("tick_deadline")` for this tick only.
+    */
+  private[consensus] def observeNormalFirstRoundSample[F[_]: Temporal, Key, A](
+    sampled: List[A],
+    fetch: A => F[NormalFirstRoundPulsePeerOutcome[Key]],
+    tickDeadline: FiniteDuration
+  ): F[List[(A, NormalFirstRoundPulsePeerOutcome[Key])]] =
+    if (sampled.isEmpty) List.empty[(A, NormalFirstRoundPulsePeerOutcome[Key])].pure[F]
+    else
+      Ref.of[F, Map[Int, NormalFirstRoundPulsePeerOutcome[Key]]](Map.empty).flatMap { completed =>
+        val indexed = sampled.zipWithIndex
+        val run = indexed
+          .parTraverseN(indexed.size) {
+            case (origin, index) =>
+              fetch(origin).attempt
+                .map(_.leftMap(err => NormalFirstRoundPulsePeerOutcome.FetchFailed(normalFirstRoundHttpResult(err))).merge)
+                .flatMap(result => completed.update(_ + (index -> result)))
+          }
+          .void
+
+        Temporal[F].timeoutTo(run, tickDeadline, Temporal[F].unit) >>
+          completed.get.map { done =>
+            indexed.map {
+              case (origin, index) => origin -> done.getOrElse(index, NormalFirstRoundPulsePeerOutcome.FetchFailed("tick_deadline"))
+            }
+          }
+      }
 
   private[consensus] final case class NormalFirstRoundPulseStatus(
     matchingFacilityOrigins: SortedSet[PeerId],
     alignedOrigins: SortedSet[PeerId],
     aheadOrigins: SortedSet[PeerId],
+    behindOrigins: SortedSet[PeerId],
     missingSession: SortedSet[PeerId],
     invalidState: SortedMap[PeerId, NodeState],
     missingOutcome: SortedSet[PeerId],
     mismatchedOutcome: SortedSet[PeerId],
-    fetchFailed: SortedSet[PeerId]
+    fetchFailed: SortedSet[PeerId],
+    unqueried: SortedSet[PeerId]
   ) {
     val aheadOrigin: Option[PeerId] = aheadOrigins.headOption
     // A peer already beyond the installed parent is stronger evidence than another peer still
@@ -3014,12 +3267,92 @@ object StateTransitions {
       if (aheadOrigin.nonEmpty) "peer_ahead"
       else if (releaseOrigin.nonEmpty) "aligned"
       else if (mismatchedOutcome.nonEmpty) "mismatch"
+      else if (behindOrigins.nonEmpty) "peer_behind"
       else if (fetchFailed.nonEmpty) "fetch_failed"
       else if (missingOutcome.nonEmpty) "missing_outcome"
+      else if (unqueried.nonEmpty) "unqueried"
       else if (invalidState.nonEmpty) "invalid_state"
       else if (missingSession.nonEmpty) "missing_session"
       else "waiting_for_facility"
   }
+
+  /** Ahead evidence retained for the current re-entry episode: the origin (with its session at query time) and the attempt on which the
+    * episode first became recovery-only.
+    */
+  private[consensus] final case class NormalFirstRoundAheadEvidence[Key](
+    origin: Peer,
+    outcome: NormalFirstRoundPulsePeerOutcome[Key],
+    firstAttempt: Long
+  )
+
+  /** Loop-local follower episode state. The re-entry episode counter itself lives on the engine context (per node session). */
+  private[consensus] final case class NormalFirstRoundFollowerEpisode[Key](
+    aheadEvidence: Option[NormalFirstRoundAheadEvidence[Key]],
+    recoveryConcluded: Boolean,
+    lastOutcomeLabel: Option[String]
+  ) {
+    def recoveryOnly: Boolean = aheadEvidence.nonEmpty || recoveryConcluded
+  }
+
+  private[consensus] object NormalFirstRoundFollowerEpisode {
+    def initial[Key]: NormalFirstRoundFollowerEpisode[Key] = NormalFirstRoundFollowerEpisode(None, recoveryConcluded = false, None)
+  }
+
+  /** Pulse ticks consumed since the first ahead observation, inclusive of that tick. */
+  private[consensus] def normalFirstRoundPulseCycles(firstAheadAttempt: Long, attempt: Long): Long =
+    attempt - firstAheadAttempt + 1L
+
+  /** The single fallback decision is due once `safePulseRetries` further pulse ticks have run after the first ahead observation. */
+  private[consensus] def normalFirstRoundFallbackDue(firstAheadAttempt: Long, attempt: Long, safePulseRetries: Int): Boolean =
+    attempt - firstAheadAttempt >= safePulseRetries.toLong
+
+  private[consensus] sealed trait NormalFirstRoundReentryResult {
+    def label: String
+  }
+
+  private[consensus] object NormalFirstRoundReentryResult {
+    final case class Entered(episode: Long) extends NormalFirstRoundReentryResult { val label = "entered" }
+    case object StaleGeneration extends NormalFirstRoundReentryResult { val label = "stale_generation" }
+    case object StaleOriginSession extends NormalFirstRoundReentryResult { val label = "stale_origin_session" }
+    case object TransitionRejected extends NormalFirstRoundReentryResult { val label = "transition_rejected" }
+  }
+
+  /** Serialized action boundary for the follower fallback.
+    *
+    * Ownership is revalidated first: a permit generation that is no longer pending, or an origin whose session is gone, produces an inert
+    * result and touches neither the recovery flag nor the node state. The episode counter increments only when the result-returning state
+    * transition reports success.
+    */
+  private[consensus] def enterNormalFirstRoundRecovery[F[_]: Monad](
+    permitStillOwned: F[Boolean],
+    originStillCurrent: F[Boolean],
+    markRecoveryDownload: F[Unit],
+    transition: F[NodeStateTransition],
+    reentryEpisode: Ref[F, Long]
+  ): F[NormalFirstRoundReentryResult] =
+    permitStillOwned.ifM(
+      ifFalse = (NormalFirstRoundReentryResult.StaleGeneration: NormalFirstRoundReentryResult).pure[F],
+      ifTrue = originStillCurrent.ifM(
+        ifFalse = (NormalFirstRoundReentryResult.StaleOriginSession: NormalFirstRoundReentryResult).pure[F],
+        ifTrue = markRecoveryDownload >> transition.flatMap {
+          case NodeStateTransition.Success =>
+            reentryEpisode.updateAndGet(_ + 1L).map(NormalFirstRoundReentryResult.Entered(_): NormalFirstRoundReentryResult)
+          case NodeStateTransition.Failure =>
+            (NormalFirstRoundReentryResult.TransitionRejected: NormalFirstRoundReentryResult).pure[F]
+        }
+      )
+    )
+
+  private[consensus] def normalFirstRoundQueriedSummary[Key: Show](
+    queried: List[(PeerId, NormalFirstRoundPulsePeerOutcome[Key])]
+  ): String =
+    if (queried.isEmpty) "none"
+    else
+      queried.map {
+        case (peerId, outcome) =>
+          s"${ConsensusLog.pid(peerId)}:${outcome.httpResult}:${outcome.reportedKey.fold("n/a")(_.show)}:${outcome.reportedHash
+              .fold("n/a")(_.value)}"
+      }.mkString("[", ";", "]")
 
   /** Process-local threshold for the shared exact-outcome first-round barrier.
     *
@@ -3208,13 +3541,15 @@ object StateTransitions {
     * through normal recovery instead of opening a stale round. A committee member observed declaring beyond the first-round key may be
     * queried for that same ahead proof, but cannot become a release candidate without a matching Facility.
     */
-  private[consensus] def normalFirstRoundPulseStatus(
+  private[consensus] def normalFirstRoundPulseStatus[Key](
     committee: SortedSet[PeerId],
     matchingFacilityOrigins: Set[PeerId],
     aheadProbeOrigins: Set[PeerId],
     responsivePeerStates: Map[PeerId, NodeState],
-    peerOutcomes: Map[PeerId, NormalFirstRoundPulsePeerOutcome]
+    peerOutcomes: Map[PeerId, NormalFirstRoundPulsePeerOutcome[Key]]
   ): NormalFirstRoundPulseStatus = {
+    import NormalFirstRoundPulsePeerOutcome._
+
     val expectedOrigins = SortedSet.from(matchingFacilityOrigins.intersect(committee))
     val probedOrigins = SortedSet.from((matchingFacilityOrigins ++ aheadProbeOrigins).intersect(committee))
     val present = probedOrigins.intersect(responsivePeerStates.keySet)
@@ -3225,36 +3560,41 @@ object StateTransitions {
       }
     })
     val fetchable = present -- invalidState.keySet
-    val aligned = SortedSet.from(
-      fetchable.intersect(expectedOrigins).filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Aligned))
-    )
-    val ahead = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Ahead)))
-    val missing = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Missing)))
-    val mismatched = SortedSet.from(fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.Mismatched)))
-    val explicitFailures = fetchable.filter(peerOutcomes.get(_).contains(NormalFirstRoundPulsePeerOutcome.FetchFailed))
-    val unobserved = fetchable -- peerOutcomes.keySet
+
+    def having(matches: PartialFunction[NormalFirstRoundPulsePeerOutcome[Key], Unit]): SortedSet[PeerId] =
+      fetchable.filter(peerOutcomes.get(_).exists(matches.isDefinedAt))
+
+    val aligned = having { case _: Aligned[_] => () }.intersect(expectedOrigins)
+    val ahead = having { case _: Ahead[_] => () }
+    val behind = having { case _: Behind[_] => () }
+    val missing = having { case Missing => () }
+    val mismatched = having { case _: MismatchedAtP[_] => () }
+    val explicitFailures = having { case _: FetchFailed => () }
+    val unqueried = fetchable -- peerOutcomes.keySet
 
     NormalFirstRoundPulseStatus(
       expectedOrigins,
       aligned,
       ahead,
+      behind,
       missingSession,
       invalidState,
       missing,
       mismatched,
-      SortedSet.from(explicitFailures ++ unobserved)
+      explicitFailures,
+      unqueried
     )
   }
 
   /** Once any valid pulse origin proves it has advanced beyond the installed parent, that generation is recovery-only. Even if the
     * advancing origin later disappears and another peer still serves the parent, the stale first round must not be reopened while the
-    * replacement download is in flight.
+    * bounded safe pulse retries or the replacement download are in flight.
     */
   private[consensus] def shouldReleaseNormalFirstRoundPulse(
     status: NormalFirstRoundPulseStatus,
-    recoveryAlreadyTriggered: Boolean
+    recoveryOnly: Boolean
   ): Boolean =
-    !recoveryAlreadyTriggered && status.releaseOrigin.nonEmpty
+    !recoveryOnly && status.releaseOrigin.nonEmpty
 
   /** View-change certificates use a Core-sized quorum, so the certified next leader must come from Core as well. The fallback preserves
     * startup/fork-recovery behavior if a malformed or transitional state has not populated Core yet.
