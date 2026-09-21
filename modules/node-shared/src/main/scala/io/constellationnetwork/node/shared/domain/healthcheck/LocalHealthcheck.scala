@@ -3,16 +3,25 @@ package io.constellationnetwork.node.shared.domain.healthcheck
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 
 trait LocalHealthcheck[F[_]] {
+
+  /** Demoting check loop for `peer`, bound to `peer.session`: it is acquired only while that exact session is the recorded Responsive one,
+    * every mark/removal it performs is a compare-and-set on that session, and it retires without acting on (or cancelling) a successor
+    * session's record or worker once superseded. A worker already bound to the same session is joined; one bound to another session is
+    * replaced.
+    */
   def start(peer: Peer): F[Unit]
+
+  /** Cancel whatever worker currently holds the slot for `peerId` (the ordinary join handshake does this after installing a fresh record).
+    */
   def cancel(peerId: PeerId): F[Unit]
 
   /** Non-demoting single check used by the isolation repair (B1'). Unlike `start`, it never marks a currently Responsive peer Unresponsive
     * before evidence: one `/session` round trip decides. The record captured from cluster storage at entry is the one queried and the one
     * every mutation is bound to (compare-and-set on its session): a healthy answer with that session restores/keeps Responsive; a differing
     * session is handled session-conditionally; a record replaced while the check was in flight is reported `Superseded` and left alone;
-    * only a failed check on a still-current Responsive record hands the peer to the ordinary `start` loop (which then demotes with evidence
-    * and retries with backoff). If an ordinary check fiber already exists for the peer, the call joins it (no second fiber) and reports
-    * `Joined`.
+    * only a failed check on a still-current Responsive record hands the peer to the ordinary loop bound to that record's session (which
+    * then demotes with evidence and retries with backoff, every mutation session-conditional). If an ordinary worker already exists for the
+    * recorded session, the call joins it (no second fiber) and reports `Joined`.
     */
   def recheck(peer: Peer): F[PeerRecheckOutcome]
 }

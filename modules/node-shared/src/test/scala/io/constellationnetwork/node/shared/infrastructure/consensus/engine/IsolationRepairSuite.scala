@@ -1,7 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.data.{Kleisli, NonEmptySet}
-import cats.effect.kernel.Fiber
 import cats.effect.std.{Random, Supervisor}
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all._
@@ -29,7 +28,6 @@ import io.constellationnetwork.security.hex.Hex
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
-import io.chrisdavenport.mapref.MapRef
 import retry.RetryPolicies
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
@@ -446,7 +444,7 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
       Supervisor[IO].use { implicit supervisor =>
         for {
           cs <- storage(healthy, retained)
-          peersR <- MapRef.ofConcurrentHashMap[IO, PeerId, IO[Fiber[IO, Throwable, Unit]]]()
+          peersR <- LocalHealthcheckImpl.mkWorkers[IO]
           healthcheck = LocalHealthcheckImpl.make(
             peersR,
             RetryPolicies.fibonacciBackoff[IO](2.seconds),
