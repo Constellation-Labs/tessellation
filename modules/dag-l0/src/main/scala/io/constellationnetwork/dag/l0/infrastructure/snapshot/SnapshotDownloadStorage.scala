@@ -57,6 +57,9 @@ object SnapshotDownloadStorage {
       def ensurePersistedAnchor(hash: Hash, ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Boolean] =
         persistedStorage.ensureOrdinalLink(hash, ordinal).flatMap {
           case status if status.usable => hasSnapshotInfo(ordinal)
+          case SnapshotLocalFileSystemStorage.OrdinalLinkStatus.Missing |
+              _: SnapshotLocalFileSystemStorage.OrdinalLinkStatus.OrdinalOccupied =>
+            false.pure[F]
           case status =>
             logger.warn(s"Rejected unusable persisted recovery anchor ordinal=${ordinal.show} reason=$status").as(false)
         }
