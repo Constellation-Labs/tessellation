@@ -6,8 +6,9 @@ trait LocalHealthcheck[F[_]] {
 
   /** Demoting check loop for `peer`, bound to `peer.session`: it is acquired only while that exact session is the recorded Responsive one,
     * every mark/removal it performs is a compare-and-set on that session, and it retires without acting on (or cancelling) a successor
-    * session's record or worker once superseded. A worker already bound to the same session is joined; one bound to another session is
-    * replaced.
+    * session's record or worker once superseded. A worker already bound to the same session is joined; one bound to an older session is
+    * replaced; a slot already held for a newer session rejects the request (its record is stale). Each acquisition has its own identity: a
+    * retiring worker releases only its own slot, never a successor's, even one bound to the same session.
     */
   def start(peer: Peer): F[Unit]
 

@@ -5,11 +5,12 @@ import cats.effect.std.Supervisor
 import cats.effect.syntax.all._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
-import cats.syntax.eq._
+import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.{Applicative, Show}
 
@@ -28,21 +29,30 @@ import retry._
 
 object LocalHealthcheck {
 
-  /** A running check loop, bound to the exact peer session it was acquired for. Every storage mutation the loop performs is a
-    * compare-and-set on `session`, and the loop retires, without touching the record or any successor worker, as soon as that session is no
-    * longer the recorded one.
+  /** A running check loop, bound to the exact peer session it was acquired for and identified by its acquisition (`workerId`, strictly
+    * increasing per `Workers`). Every storage mutation the loop performs is a compare-and-set on `session`; slot release, cancellation
+    * handoff and replacement compare `workerId`, so a retiring worker never touches a successor's slot, not even one bound to the same
+    * session. The fiber is spawned before the slot is published, so a visible worker always resolves to a supervised fiber.
     */
-  final case class Worker[F[_]](session: SessionToken, fiber: F[Fiber[F, Throwable, Unit]])
+  final case class Worker[F[_]](session: SessionToken, workerId: Long, fiber: Fiber[F, Throwable, Unit])
 
-  /** Worker slots keyed by peer id; the slot holds the worker bound to one session of that peer. */
-  type Workers[F[_]] = MapRef[F, PeerId, Option[Worker[F]]]
+  /** Worker slots keyed by peer id (each holding the worker bound to one session of that peer) and the acquisition counter. */
+  final case class Workers[F[_]](slots: MapRef[F, PeerId, Option[Worker[F]]], acquisitions: Ref[F, Long])
 
-  def mkWorkers[F[_]: Sync]: F[Workers[F]] = MapRef.ofConcurrentHashMap[F, PeerId, Worker[F]]()
+  def mkWorkers[F[_]: Sync]: F[Workers[F]] =
+    (MapRef.ofConcurrentHashMap[F, PeerId, Worker[F]](), Ref.of[F, Long](0L)).mapN(Workers(_, _))
 
   private sealed trait Acquisition[F[_]]
 
   private object Acquisition {
+
+    /** A worker bound to the same session already holds the slot. */
     final case class Joined[F[_]]() extends Acquisition[F]
+
+    /** The slot is held for a newer session: the request carries a superseded record and must not replace it. */
+    final case class Rejected[F[_]]() extends Acquisition[F]
+
+    /** The slot is now owned by the request's worker; `superseded` is the older-session worker it replaced, if any. */
     final case class Acquired[F[_]](superseded: Option[Worker[F]]) extends Acquisition[F]
   }
 
@@ -58,7 +68,7 @@ object LocalHealthcheck {
   }
 
   def make[F[_]: Async](
-    peersR: Workers[F],
+    workers: Workers[F],
     retryPolicy: RetryPolicy[F],
     nodeClient: NodeClient[F],
     clusterStorage: ClusterStorage[F]
@@ -77,41 +87,67 @@ object LocalHealthcheck {
 
     def start(peer: Peer): F[Unit] = startBound(peer).void
 
-    /** Acquire the worker slot for `(peer.id, peer.session)` and spawn the bound loop, but only while that exact session is still the
-      * recorded Responsive one. A slot already held for the same session is joined (nothing spawned). A slot held for another session is
-      * superseded: that worker is cancelled and replaced, since its evidence concerns a session that is no longer recorded. Returns whether
-      * a loop was started.
+    /** Acquire the worker slot for `(peer.id, peer.session)` and spawn the bound loop, but only while that exact session is the recorded
+      * Responsive one. Returns whether a loop was started.
+      *
+      * The record read and the slot update are not one atomic step, so the slot itself enforces a monotonic protocol: a slot held for the
+      * same session is joined (nothing spawned); one held for an older session is superseded (its worker is cancelled and replaced); one
+      * held for a newer session rejects the request, since cluster storage only ever moves a peer's recorded session forward (`addPeer`
+      * keeps the newer session), so the request's captured record is stale. A stale request that finds the slot empty acquires a worker
+      * whose first session-conditional mark is refused, so it retires without a network round trip. `acquire` is one bounded uncancelable
+      * step with the fiber spawned before publication; the wait for a superseded worker is owned by a separate supervised task.
       */
     private def startBound(peer: Peer): F[Boolean] =
       clusterStorage.getPeer(peer.id).flatMap {
-        case Some(current) if current.session === peer.session && current.responsiveness === Responsive =>
-          Deferred[F, Fiber[F, Throwable, Unit]].flatMap { d =>
-            peersR(peer.id).modify {
-              case held @ Some(worker) if worker.session === peer.session => (held, Acquisition.Joined[F](): Acquisition[F])
-              case previous => (Worker(peer.session, d.get).some, Acquisition.Acquired[F](previous): Acquisition[F])
-            }.flatMap {
-              case Acquisition.Joined() => false.pure[F]
-              case Acquisition.Acquired(superseded) =>
-                superseded.traverse_(_.fiber.flatMap(_.cancel)) >> spawn(peer).flatMap(d.complete).as(true)
-            }
+        case Some(current) if current.session === peer.session && current.responsiveness === Responsive => acquire(peer)
+        case _                                                                                          => false.pure[F]
+      }
+
+    private def acquire(peer: Peer): F[Boolean] =
+      Async[F].uncancelable { _ =>
+        for {
+          workerId <- workers.acquisitions.updateAndGet(_ + 1L)
+          launch <- Deferred[F, Boolean]
+          // Spawned before the slot is visible, released by its exact identity however it ends: a published handle is always a live
+          // supervised fiber, and a worker that never owns the slot (joined, rejected, cancelled while launching) retires as a no-op.
+          fiber <- S.supervise(launch.get.ifM(ifFalse = Applicative[F].unit, ifTrue = run(peer)).guarantee(retire(peer.id, workerId)))
+          acquisition <- workers.slots(peer.id).modify {
+            case held @ Some(worker) if worker.session === peer.session => (held, Acquisition.Joined[F](): Acquisition[F])
+            case held @ Some(worker) if worker.session > peer.session   => (held, Acquisition.Rejected[F](): Acquisition[F])
+            case previous => (Worker(peer.session, workerId, fiber).some, Acquisition.Acquired[F](previous): Acquisition[F])
           }
-        case _ => false.pure[F]
+          started <- acquisition match {
+            case Acquisition.Acquired(superseded) =>
+              // The predecessor's cancellation may wait on its in-flight request; that wait is owned by the supervisor, never by the
+              // caller (whose deadline must keep working) nor by the new worker (whose own cancellation must not chain behind it).
+              superseded
+                .traverse_(worker => S.supervise(worker.fiber.cancel).void)
+                .onError(_ => retire(peer.id, workerId) >> launch.complete(false).void) >>
+                launch.complete(true).as(true)
+            case Acquisition.Rejected() =>
+              logger.debug(s"Peer ${peer.id.show}: healthcheck acquisition for a superseded session rejected.") >>
+                launch.complete(false).as(false)
+            case Acquisition.Joined() =>
+              launch.complete(false).as(false)
+          }
+        } yield started
       }
 
     def cancel(peerId: PeerId): F[Unit] =
-      peersR(peerId).getAndSet(None).flatMap {
-        case Some(worker) => worker.fiber.flatMap(_.cancel) >> logger.debug(s"Cancelled local healthcheck for ${peerId.show}")
+      workers.slots(peerId).getAndSet(None).flatMap {
+        case Some(worker) => worker.fiber.cancel >> logger.debug(s"Cancelled local healthcheck for ${peerId.show}")
         case _            => Applicative[F].unit
       }
 
-    /** Release the slot only while it is still held by this worker's session; a successor's slot is never touched. */
-    private def retire(peer: Peer): F[Unit] =
-      peersR(peer.id).update {
-        case Some(worker) if worker.session === peer.session => None
-        case other                                           => other
+    /** Release the slot only while it is still held by this exact acquisition; a successor's slot (same session or not) is never touched.
+      */
+    private def retire(peerId: PeerId, workerId: Long): F[Unit] =
+      workers.slots(peerId).update {
+        case Some(worker) if worker.workerId === workerId => None
+        case other                                        => other
       }
 
-    def spawn(peer: Peer): F[Fiber[F, Throwable, Unit]] = {
+    private def run(peer: Peer): F[Unit] = {
       def mark(responsiveness: PeerResponsiveness): F[Boolean] =
         clusterStorage.setPeerResponsivenessIfSession(peer.id, peer.session, responsiveness)
 
@@ -131,22 +167,20 @@ object LocalHealthcheck {
           }
         }
 
-      S.supervise {
-        // Eagerly mark Unresponsive so gossip peer selection skips this peer on its
-        // next cycle, instead of waiting for the first check() to time out (which
-        // can take 15s+ per attempt). If the peer is actually healthy, the very
-        // next check() succeeds and restores Responsive via the Some(session) path.
-        // Every mark is bound to the checked session: a record replaced meanwhile is
-        // never demoted on this session's evidence and the worker retires at once.
-        mark(Unresponsive).ifM(ifFalse = superseded, ifTrue = loop).guarantee(retire(peer))
-      }
+      // Eagerly mark Unresponsive so gossip peer selection skips this peer on its
+      // next cycle, instead of waiting for the first check() to time out (which
+      // can take 15s+ per attempt). If the peer is actually healthy, the very
+      // next check() succeeds and restores Responsive via the Some(session) path.
+      // Every mark is bound to the checked session: a record replaced meanwhile is
+      // never demoted on this session's evidence and the worker retires at once.
+      mark(Unresponsive).ifM(ifFalse = superseded, ifTrue = loop)
     }
 
     def recheck(peer: Peer): F[PeerRecheckOutcome] =
       clusterStorage.getPeer(peer.id).flatMap {
         case None => (PeerRecheckOutcome.Unknown: PeerRecheckOutcome).pure[F]
         case Some(recorded) =>
-          peersR(peer.id).get.flatMap {
+          workers.slots(peer.id).get.flatMap {
             case Some(worker) if worker.session === recorded.session => (PeerRecheckOutcome.Joined: PeerRecheckOutcome).pure[F]
             case _                                                   =>
               // The captured record is both the endpoint queried and the session every mutation below is bound to, so an

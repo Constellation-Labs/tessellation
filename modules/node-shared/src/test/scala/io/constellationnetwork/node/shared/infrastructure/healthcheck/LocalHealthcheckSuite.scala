@@ -7,6 +7,7 @@ import cats.effect.testkit.TestControl
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.applicative._
 import cats.syntax.contravariantSemigroupal._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -54,7 +55,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog).flatMap { _ =>
-          peersR.keys.map(_.size).map(expect.same(_, 0))
+          peersR.slots.keys.map(_.size).map(expect.same(_, 0))
         }
       }
     }
@@ -73,7 +74,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog) >>
-          peersR.keys.map(_.size).map(expect.same(_, 0))
+          peersR.slots.keys.map(_.size).map(expect.same(_, 0))
       }
     }
   }
@@ -86,7 +87,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         // Slots are observed while the supervisor is alive: workers release their slot when they end.
         val prog = Supervisor[IO].use { implicit s =>
           val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
-          lh.start(mapPeer(peer)) >> peersR.keys.map(_.size)
+          lh.start(mapPeer(peer)) >> peersR.slots.keys.map(_.size)
         }
 
         TestControl.executeEmbed(prog).map(expect.same(_, 1))
@@ -105,7 +106,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog).flatMap { _ =>
-          peersR.keys.map(_.size).map(expect.same(_, 0))
+          peersR.slots.keys.map(_.size).map(expect.same(_, 0))
         }
       }
     }
@@ -122,7 +123,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog).flatMap { _ =>
-          peersR(peer.id).get.map(expect.same(_, None))
+          peersR.slots(peer.id).get.map(expect.same(_, None))
         }
       }
     }
@@ -137,7 +138,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
         val prog = Supervisor[IO].use { implicit s =>
           val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
-          peers.toList.parTraverse(peer => lh.start(mapPeer(peer))) >> peersR.keys.map(_.size)
+          peers.toList.parTraverse(peer => lh.start(mapPeer(peer))) >> peersR.slots.keys.map(_.size)
         }
 
         TestControl.executeEmbed(prog).map(expect.same(_, peers.size))
@@ -158,7 +159,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog) >>
-          peersR.keys.map(_.size).map(expect.same(_, 0))
+          peersR.slots.keys.map(_.size).map(expect.same(_, 0))
       }
     }
   }
@@ -174,7 +175,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
           val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
           peers.toList.parTraverse { peer =>
             lh.start(mapPeer(peer)) >> lh.cancel(peer.id) >> lh.start(mapPeer(peer))
-          } >> peersR.keys.map(_.size)
+          } >> peersR.slots.keys.map(_.size)
         }
 
         TestControl.executeEmbed(prog).map(expect.same(_, peers.size))
@@ -198,7 +199,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog).flatMap { outcome =>
-          (cs.getPeer(peer.id), peersR.keys.map(_.size)).tupled.map {
+          (cs.getPeer(peer.id), peersR.slots.keys.map(_.size)).tupled.map {
             case (stored, fibers) =>
               expect
                 .same(PeerRecheckOutcome.Healthy, outcome)
@@ -248,7 +249,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog).flatMap { outcome =>
-          (cs.getPeer(peer.id), peersR.keys.map(_.size)).tupled.map {
+          (cs.getPeer(peer.id), peersR.slots.keys.map(_.size)).tupled.map {
             case (stored, fibers) =>
               expect
                 .same(PeerRecheckOutcome.Unreachable(demotionStarted = false), outcome)
@@ -313,7 +314,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         }
 
         TestControl.executeEmbed(prog).flatMap { outcome =>
-          peersR.keys.map(_.size).map(fibers => expect.same(PeerRecheckOutcome.Joined, outcome).and(expect.same(1, fibers)))
+          peersR.slots.keys.map(_.size).map(fibers => expect.same(PeerRecheckOutcome.Joined, outcome).and(expect.same(1, fibers)))
         }
       }
     }
@@ -342,7 +343,7 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
             _ <- respond.complete(())
             outcome <- run.joinWithNever
             stored <- cs.getPeer(queried.id)
-            fibers <- peersR.keys.map(_.size)
+            fibers <- peersR.slots.keys.map(_.size)
           } yield (outcome, stored, fibers)
         }
     }
@@ -456,10 +457,10 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
           outcome <- run.joinWithNever
           // The guard read returned the old record before the pause, so the loop may have been acquired; its first
           // session-conditional mark then refuses and it retires. Wait for that (bounded) before reading the slot.
-          acquired <- peersR(old.id).get
-          _ <- acquired.traverse_(_.fiber.flatMap(_.join).timeout(5.seconds).attempt)
+          acquired <- peersR.slots(old.id).get
+          _ <- acquired.traverse_(_.fiber.join.timeout(5.seconds).attempt)
           stored <- cs.getPeer(old.id)
-          slot <- peersR(old.id).get
+          slot <- peersR.slots(old.id).get
           performed <- checks.get
         } yield (outcome, stored, slot, performed)
       }
@@ -493,12 +494,12 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
             _ <- lh.start(queried)
             _ <- started.get
             demoted <- cs.getPeer(queried.id)
-            worker <- peersR(queried.id).get
+            worker <- peersR.slots(queried.id).get
             _ <- cs.addPeer(replacement)
             _ <- respond.complete(())
-            _ <- worker.traverse_(_.fiber.flatMap(_.join).timeout(5.seconds).attempt)
+            _ <- worker.traverse_(_.fiber.join.timeout(5.seconds).attempt)
             stored <- cs.getPeer(queried.id)
-            slot <- peersR(queried.id).get
+            slot <- peersR.slots(queried.id).get
           } yield (demoted, worker.map(_.session), stored, slot.map(_.session))
         }
     }
@@ -551,20 +552,161 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         for {
           _ <- lh.start(old)
           _ <- oldStarted.get
+          older <- peersR.slots(old.id).get
           _ <- cs.addPeer(fresh)
           _ <- lh.start(fresh)
           _ <- oldCancelled.get.timeout(5.seconds)
-          slot <- peersR(old.id).get
+          // The superseded worker's own retirement (exact acquisition identity) must leave the successor's slot alone.
+          _ <- older.traverse_(_.fiber.join.timeout(5.seconds))
+          slot <- peersR.slots(old.id).get
           stored <- cs.getPeer(old.id)
-        } yield (slot.map(_.session), stored)
+        } yield (older.map(_.session), slot.map(_.session), stored)
       }
-      (slot, stored) = probe
+      (older, slot, stored) = probe
     } yield
-      expect(slot.contains(fresh.session), s"the slot is held by the newer session's worker, got $slot") &&
+      expect(older.contains(old.session), s"the first worker is bound to the older session, got $older") &&
+        expect(slot.contains(fresh.session), s"the slot is held by the newer session's worker, got $slot") &&
         expect(
           stored.contains(fresh.copy(responsiveness = Unresponsive)),
           s"only the newer worker marks the newer session, on its own evidence, got $stored"
         )
+  }
+
+  // --- R8-1..R8-3: acquisition identity, monotonic slot protocol and cancellation-safe handoff ---
+
+  /** A `/session` client whose every call runs `action`; the scenarios below hang it and observe its cancellation. */
+  private def clientRunning(action: IO[Option[SessionToken]]): NodeClient[IO] = new NodeClient[IO] {
+    def getState: PeerResponse.PeerResponse[IO, NodeState] = ???
+    def health: PeerResponse.PeerResponse[IO, Boolean] = ???
+    def getSession: PeerResponse.PeerResponse[IO, Option[SessionToken]] = Kleisli(_ => action)
+  }
+
+  test("a delayed old-session acquisition is rejected at the slot: it neither cancels nor replaces the newer session's worker") {
+    val old = boundPeer
+    val fresh = old.copy(session = session(2L))
+    for {
+      cs <- mkClusterStorage(Map(old.id -> old))
+      peersR <- mkPeersR
+      reads <- Ref.of[IO, Int](0)
+      paused <- Deferred[IO, Unit]
+      resume <- Deferred[IO, Unit]
+      started <- Deferred[IO, Unit]
+      cancelled <- Ref.of[IO, Boolean](false)
+      probe <- Supervisor[IO].use { implicit s =>
+        // The first `getPeer` is the old session's guard read; it is paused after returning the old Responsive record.
+        val lh = LocalHealthcheck.make(
+          peersR,
+          retryPolicy,
+          clientRunning(started.complete(()).void >> IO.never.onCancel(cancelled.set(true))),
+          pausingReads(cs, reads, pauseAtRead = 1, paused, resume)
+        )
+        for {
+          stale <- lh.start(old).start
+          _ <- paused.get
+          _ <- cs.addPeer(fresh)
+          _ <- lh.start(fresh)
+          _ <- started.get
+          _ <- resume.complete(())
+          _ <- stale.joinWithNever
+          wasCancelled <- cancelled.get
+          slot <- peersR.slots(old.id).get
+          stored <- cs.getPeer(old.id)
+        } yield (wasCancelled, slot.map(_.session), stored)
+      }
+      (wasCancelled, slot, stored) = probe
+    } yield
+      expect(!wasCancelled, "the newer session's worker must survive the stale acquisition") &&
+        expect(slot.contains(fresh.session), s"the slot stays with the newer session's worker, got $slot") &&
+        expect(
+          stored.contains(fresh.copy(responsiveness = Unresponsive)),
+          s"the newer session is demoted only on its own evidence, got $stored"
+        )
+  }
+
+  test("a retiring worker releases only its own slot: a same-session replacement keeps its slot while the old finalizer runs") {
+    val peer = boundPeer
+    for {
+      cs <- mkClusterStorage(Map(peer.id -> peer))
+      peersR <- mkPeersR
+      calls <- Ref.of[IO, Int](0)
+      oldStarted <- Deferred[IO, Unit]
+      newStarted <- Deferred[IO, Unit]
+      cancellingOld <- Deferred[IO, Unit]
+      finishOld <- Deferred[IO, Unit]
+      // The first `/session` call is the first worker; its cancellation finalizer waits until released.
+      client = clientRunning(calls.getAndUpdate(_ + 1).flatMap {
+        case 0 => oldStarted.complete(()).void >> IO.never.onCancel(cancellingOld.complete(()).void >> finishOld.get)
+        case _ => newStarted.complete(()).void >> IO.never
+      })
+      probe <- Supervisor[IO].use { implicit s =>
+        val lh = LocalHealthcheck.make(peersR, retryPolicy, client, cs)
+        for {
+          _ <- lh.start(peer)
+          _ <- oldStarted.get
+          first <- peersR.slots(peer.id).get
+          _ <- cs.addPeer(peer) // A revalidated same-session registration restores Responsive.
+          cancelling <- lh.cancel(peer.id).start // Ordinary joining cancels by id after addPeer.
+          _ <- cancellingOld.get
+          _ <- lh.start(peer) // A new gossip failure starts another worker for the still-current session.
+          _ <- newStarted.get
+          second <- peersR.slots(peer.id).get
+          _ <- finishOld.complete(())
+          _ <- cancelling.joinWithNever
+          _ <- first.traverse_(_.fiber.join.timeout(5.seconds))
+          current <- peersR.slots(peer.id).get
+        } yield (first.map(_.workerId), second.map(_.workerId), current.map(w => (w.session, w.workerId)))
+      }
+      (first, second, current) = probe
+    } yield
+      expect(
+        first.isDefined && second.isDefined && first =!= second,
+        s"the replacement is a distinct acquisition, got $first and $second"
+      ) &&
+        expect(
+          current.exists { case (s, id) => s === peer.session && second.contains(id) },
+          s"the successor worker is still running and must own its slot after the old finalizer, got $current"
+        )
+  }
+
+  test("cancelling the caller during a replacement handoff never leaves a slot without a live worker") {
+    val old = boundPeer
+    val fresh = old.copy(session = session(2L))
+    for {
+      cs <- mkClusterStorage(Map(old.id -> old))
+      peersR <- mkPeersR
+      oldStarted <- Deferred[IO, Unit]
+      cancellingOld <- Deferred[IO, Unit]
+      finishOld <- Deferred[IO, Unit]
+      cancelRequested <- Deferred[IO, Unit]
+      probe <- Supervisor[IO].use { implicit s =>
+        val lh = LocalHealthcheck.make(
+          peersR,
+          retryPolicy,
+          clientRunning(oldStarted.complete(()).void >> IO.never.onCancel(cancellingOld.complete(()).void >> finishOld.get)),
+          cs
+        )
+        for {
+          _ <- lh.start(old)
+          _ <- oldStarted.get
+          _ <- cs.addPeer(fresh)
+          replacing <- lh.start(fresh).start
+          _ <- cancellingOld.get
+          cancel <- (cancelRequested.complete(()) >> replacing.cancel).start
+          _ <- cancelRequested.get
+          _ <- IO.cede.replicateA_(5)
+          _ <- finishOld.complete(())
+          _ <- cancel.joinWithNever
+          slot <- peersR.slots(old.id).get
+          // A visible handle must be a real worker: cancelling through it completes, and the slot is released.
+          released <- lh.cancel(old.id).timeout(5.seconds).attempt
+          after <- peersR.slots(old.id).get
+        } yield (slot.map(_.session), released.isRight, after.map(_.session))
+      }
+      (slot, released, after) = probe
+    } yield
+      expect(slot.contains(fresh.session), s"the replacement owns the slot, got $slot") &&
+        expect(released, "cancelling through the published handle must complete: the handle is a live fiber") &&
+        expect(after.isEmpty, s"the cancelled worker released its slot, got $after")
   }
 
   def mkNodeClient(responsive: Boolean, session: Option[SessionToken] = None): NodeClient[IO] = new NodeClient[IO] {
