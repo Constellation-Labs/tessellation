@@ -4,7 +4,7 @@ import cats._
 import cats.effect.kernel.{Async, Ref, Temporal}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
-import cats.effect.{Concurrent, Deferred}
+import cats.effect.{Deferred, MonadCancelThrow}
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -2424,11 +2424,11 @@ class StateTransitions[
       mode = "operator_recovery_seed"
     )
 
-  /** Follower fallback result handles keyed by permit generation. The pulse fiber registers one before queueing `NormalFirstRoundFallback`
-    * and awaits the serialized decision through it; the FSM completes it after acting.
+  /** Follower fallback reply handles keyed by permit generation. The pulse fiber registers one before queueing `NormalFirstRoundFallback`
+    * and awaits the serialized decision through it; the FSM completes it on every handler exit (decision, error or cancellation).
     */
-  private val normalFirstRoundFallbackHandles: Ref[F, Map[Long, Deferred[F, StateTransitions.NormalFirstRoundReentryResult]]] =
-    Ref.unsafe[F, Map[Long, Deferred[F, StateTransitions.NormalFirstRoundReentryResult]]](Map.empty)
+  private val normalFirstRoundFallbackHandles: StateTransitions.NormalFirstRoundFallbackHandles[F] =
+    Ref.unsafe[F, Map[Long, Deferred[F, Either[Throwable, StateTransitions.NormalFirstRoundReentryResult]]]](Map.empty)
 
   private def normalFirstRoundOriginStillCurrent(origin: Peer): F[Boolean] =
     ctx.clusterStorage.getResponsivePeers.map(_.exists(peer => peer.id === origin.id && peer.session === origin.session))
@@ -2438,11 +2438,14 @@ class StateTransitions[
     * Ownership is validated here, against the same gate that initialization arms on this loop: the permit generation must still be pending
     * and the evidence origin must still be a responsive peer in the session it was queried in. Only then are the recovery download flag,
     * the node-state transition and the re-entry episode written. The pulse fiber that queued the command never mutates; it learns the
-    * result through its registered handle (if it is still waiting).
+    * outcome through its registered handle (if it is still waiting), which is completed on every exit of this handler: the decision, or the
+    * error/cancellation that interrupted it (`replyNormalFirstRoundFallback`). An error is rethrown so the command loop reports it.
     */
   def normalFirstRoundFallback(permit: FirstRoundStartGate.Permit[Key], origin: Peer): F[Unit] =
-    StateTransitions
-      .enterNormalFirstRoundRecovery(
+    StateTransitions.replyNormalFirstRoundFallback(
+      normalFirstRoundFallbackHandles,
+      permit.generation,
+      StateTransitions.enterNormalFirstRoundRecovery(
         ctx.firstRoundStartGate.isPending(permit),
         normalFirstRoundOriginStillCurrent(origin),
         ctx.nodeStorage.setRecoveryDownload,
@@ -2452,9 +2455,7 @@ class StateTransitions[
         ),
         ctx.normalFirstRoundReentryEpisodeRef
       )
-      .flatMap { result =>
-        normalFirstRoundFallbackHandles.get.flatMap(_.get(permit.generation).traverse_(_.complete(result).void))
-      }
+    )
 
   /** Normal post-bootstrap validator release path.
     *
@@ -2570,18 +2571,21 @@ class StateTransitions[
           startedAt: FiniteDuration
         ): F[Unit] =
           for {
-            result <- StateTransitions.awaitNormalFirstRoundFallback(
+            reply <- StateTransitions.awaitNormalFirstRoundFallback(
               normalFirstRoundFallbackHandles,
               permit.generation,
-              queue.offer(NormalFirstRoundFallback(permit, evidence.origin))
+              queue.offer(NormalFirstRoundFallback(permit, evidence.origin)),
+              StateTransitions.NormalFirstRoundFallbackReplyDeadline
             )
-            _ <- episode.update(_.afterFallback(result))
+            _ <- episode.update(_.afterFallback(reply))
             now <- Temporal[F].monotonic
             currentEpisode <- reentryEpisode.get
             cycles = StateTransitions.normalFirstRoundPulseCycles(evidence.firstAttempt, attempt)
-            _ <- (result match {
-              case StateTransitions.NormalFirstRoundReentryResult.Entered(_) |
-                  StateTransitions.NormalFirstRoundReentryResult.TransitionRejected =>
+            _ <- (reply match {
+              case StateTransitions.NormalFirstRoundFallbackReply.Decided(
+                    result @ (StateTransitions.NormalFirstRoundReentryResult.Entered(_) |
+                    StateTransitions.NormalFirstRoundReentryResult.TransitionRejected)
+                  ) =>
                 ConsensusLog.warn(
                   log,
                   Category.Recovery,
@@ -2603,8 +2607,10 @@ class StateTransitions[
                   "targetRound" -> nextKey.show,
                   "permitGeneration" -> permit.generation.toString
                 )
-              case StateTransitions.NormalFirstRoundReentryResult.StaleGeneration |
-                  StateTransitions.NormalFirstRoundReentryResult.StaleOriginSession =>
+              case StateTransitions.NormalFirstRoundFallbackReply.Decided(
+                    result @ (StateTransitions.NormalFirstRoundReentryResult.StaleGeneration |
+                    StateTransitions.NormalFirstRoundReentryResult.StaleOriginSession)
+                  ) =>
                 ConsensusLog.info(
                   log,
                   Category.Recovery,
@@ -2624,9 +2630,55 @@ class StateTransitions[
                   "targetRound" -> nextKey.show,
                   "permitGeneration" -> permit.generation.toString
                 )
+              case StateTransitions.NormalFirstRoundFallbackReply.HandlerFailed(error) =>
+                // The handler exited abnormally, possibly after a mutation: a failure, never an inert result. The evidence is
+                // discarded and the decision is queued again only after fresh ahead evidence and the bounded safe retries.
+                ConsensusLog.warnCause(
+                  log,
+                  error,
+                  Category.Recovery,
+                  key.show,
+                  "n/a",
+                  LogEvent.RollbackFirstRoundLoop,
+                  "mode" -> "normal_rollback_follower",
+                  "reason" -> "pulse_origin_already_ahead",
+                  "origin" -> ConsensusLog.pid(evidence.origin.id),
+                  "action" -> "fallback_handler_failed",
+                  "result" -> reply.label,
+                  "reentryEpisode" -> currentEpisode.toString,
+                  "cycles" -> cycles.toString,
+                  "elapsedMs" -> (now - startedAt).toMillis.toString,
+                  "attempt" -> attempt.toString,
+                  "installedParent" -> key.show,
+                  "targetRound" -> nextKey.show,
+                  "permitGeneration" -> permit.generation.toString
+                )
+              case StateTransitions.NormalFirstRoundFallbackReply.HandlerUnavailable =>
+                ConsensusLog.warn(
+                  log,
+                  Category.Recovery,
+                  key.show,
+                  "n/a",
+                  LogEvent.RollbackFirstRoundLoop,
+                  "mode" -> "normal_rollback_follower",
+                  "reason" -> "pulse_origin_already_ahead",
+                  "origin" -> ConsensusLog.pid(evidence.origin.id),
+                  "action" -> "fallback_handler_unavailable",
+                  "result" -> reply.label,
+                  "deadlineMs" -> StateTransitions.NormalFirstRoundFallbackReplyDeadline.toMillis.toString,
+                  "reentryEpisode" -> currentEpisode.toString,
+                  "cycles" -> cycles.toString,
+                  "elapsedMs" -> (now - startedAt).toMillis.toString,
+                  "attempt" -> attempt.toString,
+                  "installedParent" -> key.show,
+                  "targetRound" -> nextKey.show,
+                  "permitGeneration" -> permit.generation.toString
+                )
             }).attempt.void
-            _ <- (result match {
-              case StateTransitions.NormalFirstRoundReentryResult.Entered(entered) =>
+            _ <- (reply match {
+              case StateTransitions.NormalFirstRoundFallbackReply.Decided(
+                    StateTransitions.NormalFirstRoundReentryResult.Entered(entered)
+                  ) =>
                 Metrics[F].incrementCounter("dag_consensus_normal_first_round_reentry_total") >>
                   // Guarded gauge write: a superseded generation must not overwrite the newer episode value.
                   ctx.firstRoundStartGate
@@ -2635,6 +2687,12 @@ class StateTransitions[
                       ifFalse = Async[F].unit,
                       ifTrue = Metrics[F].updateGauge("dag_consensus_normal_first_round_reentry_episode", entered)
                     )
+              case StateTransitions.NormalFirstRoundFallbackReply.HandlerFailed(_) |
+                  StateTransitions.NormalFirstRoundFallbackReply.HandlerUnavailable =>
+                Metrics[F].incrementCounter(
+                  "dag_consensus_normal_first_round_alignment_error_total",
+                  Seq(unsafeLabelName("stage") -> "follower_fallback")
+                )
               case _ => Async[F].unit
             }).attempt.void
           } yield ()
@@ -3333,13 +3391,18 @@ object StateTransitions {
       next -> labelChanged
     }
 
-    /** Fold the serialized fallback result in. A vanished origin session only discards the session-bound evidence; every other result
-      * concludes the episode's single decision. The latch is never cleared.
+    /** Fold the fallback reply in. A vanished origin session only discards the session-bound evidence; every other decision concludes the
+      * episode's single decision. A handler failure or a missed reply deadline means no decision was taken: the evidence is discarded too,
+      * so the command is queued again only after fresh ahead evidence and the bounded safe retries (the handler is idempotent at the gate
+      * and node-state boundary, so a retry after a post-mutation error is decided as `TransitionRejected` or stale). The latch is never
+      * cleared.
       */
-    def afterFallback(result: NormalFirstRoundReentryResult): NormalFirstRoundFollowerEpisode[Key] =
-      result match {
-        case NormalFirstRoundReentryResult.StaleOriginSession => copy(aheadEvidence = None)
-        case _                                                => copy(recoveryConcluded = true)
+    def afterFallback(reply: NormalFirstRoundFallbackReply): NormalFirstRoundFollowerEpisode[Key] =
+      reply match {
+        case NormalFirstRoundFallbackReply.Decided(NormalFirstRoundReentryResult.StaleOriginSession) => copy(aheadEvidence = None)
+        case NormalFirstRoundFallbackReply.Decided(_)                                                => copy(recoveryConcluded = true)
+        case NormalFirstRoundFallbackReply.HandlerFailed(_) | NormalFirstRoundFallbackReply.HandlerUnavailable =>
+          copy(aheadEvidence = None)
       }
   }
 
@@ -3365,6 +3428,57 @@ object StateTransitions {
     case object StaleGeneration extends NormalFirstRoundReentryResult { val label = "stale_generation" }
     case object StaleOriginSession extends NormalFirstRoundReentryResult { val label = "stale_origin_session" }
     case object TransitionRejected extends NormalFirstRoundReentryResult { val label = "transition_rejected" }
+  }
+
+  /** The pulse fiber's view of one queued fallback command. */
+  private[consensus] sealed trait NormalFirstRoundFallbackReply {
+    def label: String
+  }
+
+  private[consensus] object NormalFirstRoundFallbackReply {
+
+    /** The serialized handler decided. */
+    final case class Decided(result: NormalFirstRoundReentryResult) extends NormalFirstRoundFallbackReply {
+      val label: String = result.label
+    }
+
+    /** The handler exited with an error or was cancelled, possibly after a mutation: reported as a failure, never as an inert result. */
+    final case class HandlerFailed(error: Throwable) extends NormalFirstRoundFallbackReply {
+      val label = "handler_failed"
+    }
+
+    /** No reply within the deadline: the command loop did not run the handler in time. */
+    case object HandlerUnavailable extends NormalFirstRoundFallbackReply {
+      val label = "handler_unavailable"
+    }
+  }
+
+  private[consensus] type NormalFirstRoundFallbackHandles[F[_]] =
+    Ref[F, Map[Long, Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]]]]
+
+  /** Reported to the waiting pulse fiber when the handler is cancelled before deciding. */
+  private[consensus] case object NormalFirstRoundFallbackHandlerCancelled
+      extends RuntimeException("NormalFirstRoundFallback handler cancelled before deciding")
+      with scala.util.control.NoStackTrace
+
+  /** Longest the pulse fiber waits for the serialized handler's reply before reporting `HandlerUnavailable`. */
+  private[consensus] val NormalFirstRoundFallbackReplyDeadline: FiniteDuration = 30.seconds
+
+  /** Handler-side reply contract, run on the serialized FSM loop: `decide` runs and its outcome (a decision, or the error that stopped it)
+    * is delivered to the pulse fiber's handle on every exit, cancellation included; an error is then rethrown so the command loop reports
+    * it. The reply is total: a pulse fiber that registered a handle never waits on a handler that has exited.
+    */
+  private[consensus] def replyNormalFirstRoundFallback[F[_]: MonadCancelThrow](
+    handles: NormalFirstRoundFallbackHandles[F],
+    generation: Long,
+    decide: F[NormalFirstRoundReentryResult]
+  ): F[Unit] = {
+    def reply(outcome: Either[Throwable, NormalFirstRoundReentryResult]): F[Unit] =
+      handles.get.flatMap(_.get(generation).traverse_(_.complete(outcome).void))
+
+    decide.attempt
+      .flatMap(outcome => reply(outcome) >> outcome.liftTo[F].void)
+      .onCancel(reply(Left(NormalFirstRoundFallbackHandlerCancelled)))
   }
 
   /** Decision body of the follower fallback, meant to run on the serialized FSM loop (`normalFirstRoundFallback`).
@@ -3398,16 +3512,22 @@ object StateTransitions {
     )
   }
 
-  /** Pulse-fiber side of the fallback: register a result handle for `generation`, queue the command through `offer`, and wait for the
-    * serialized decision. No mutation happens here. The handle is unregistered however the wait ends.
+  /** Pulse-fiber side of the fallback: register a reply handle for `generation`, queue the command through `offer`, and wait at most
+    * `deadline` for the serialized handler's reply (`Decided` or `HandlerFailed`); a missed deadline is `HandlerUnavailable`. No mutation
+    * happens here. The handle is unregistered however the wait ends, so a late reply is dropped.
     */
-  private[consensus] def awaitNormalFirstRoundFallback[F[_]: Concurrent](
-    handles: Ref[F, Map[Long, Deferred[F, NormalFirstRoundReentryResult]]],
+  private[consensus] def awaitNormalFirstRoundFallback[F[_]: Temporal](
+    handles: NormalFirstRoundFallbackHandles[F],
     generation: Long,
-    offer: F[Unit]
-  ): F[NormalFirstRoundReentryResult] =
-    Deferred[F, NormalFirstRoundReentryResult].flatMap { handle =>
-      (handles.update(_.updated(generation, handle)) >> offer >> handle.get)
+    offer: F[Unit],
+    deadline: FiniteDuration
+  ): F[NormalFirstRoundFallbackReply] =
+    Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]].flatMap { handle =>
+      (handles.update(_.updated(generation, handle)) >> offer >> handle.get.map[NormalFirstRoundFallbackReply] {
+        case Right(result) => NormalFirstRoundFallbackReply.Decided(result)
+        case Left(error)   => NormalFirstRoundFallbackReply.HandlerFailed(error)
+      })
+        .timeoutTo(deadline, (NormalFirstRoundFallbackReply.HandlerUnavailable: NormalFirstRoundFallbackReply).pure[F])
         .guarantee(handles.update(_ - generation))
     }
 

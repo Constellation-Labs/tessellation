@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventC
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.{ClusterStorage => ClusterStorageImpl}
 import io.constellationnetwork.node.shared.infrastructure.consensus.engine.{ConsensusCommand, FirstRoundStartGate}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state.StateTransitions.{
+  NormalFirstRoundFallbackReply => FallbackReply,
   NormalFirstRoundPulsePeerOutcome => PulseOutcome,
   NormalFirstRoundReentryResult => ReentryResult
 }
@@ -346,6 +347,9 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
         expect(stored.contains(replaced), s"the newer origin record is untouched, got $stored")
   }
 
+  private def handles: IO[StateTransitions.NormalFirstRoundFallbackHandles[IO]] =
+    Ref.of[IO, Map[Long, Deferred[IO, Either[Throwable, ReentryResult]]]](Map.empty)
+
   test("the pulse fiber only queues the generation-bound command; the serialized handler decides and completes the handle") {
     val origin = peerOf(pid("origin"))
     type Command = ConsensusCommand[Int, Nothing, Nothing, Nothing]
@@ -353,28 +357,32 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
       gate <- FirstRoundStartGate.make[IO, Int](initiallyHeld = true)
       permit <- gate.arm(parentKey)
       queue <- Queue.unbounded[IO, Command]
-      handles <- Ref.of[IO, Map[Long, Deferred[IO, ReentryResult]]](Map.empty)
+      handles <- handles
       marked <- Ref.of[IO, Boolean](false)
       episode <- Ref.of[IO, Long](0L)
       waiting <- StateTransitions
         .awaitNormalFirstRoundFallback[IO](
           handles,
           permit.generation,
-          queue.offer(ConsensusCommand.NormalFirstRoundFallback(permit, origin))
+          queue.offer(ConsensusCommand.NormalFirstRoundFallback(permit, origin)),
+          10.seconds
         )
         .start
       queued <- queue.take
       markedBeforeHandler <- marked.get
       registered <- handles.get.map(_.contains(permit.generation))
       // What the FSM handler does on the command loop for the queued command.
-      result <- StateTransitions.enterNormalFirstRoundRecovery[IO](
-        gate.isPending(permit),
-        IO.pure(true),
-        marked.set(true),
-        IO.pure(NodeStateTransition.Success),
-        episode
+      _ <- StateTransitions.replyNormalFirstRoundFallback[IO](
+        handles,
+        permit.generation,
+        StateTransitions.enterNormalFirstRoundRecovery[IO](
+          gate.isPending(permit),
+          IO.pure(true),
+          marked.set(true),
+          IO.pure(NodeStateTransition.Success),
+          episode
+        )
       )
-      _ <- handles.get.flatMap(_.get(permit.generation).traverse_(_.complete(result)))
       awaited <- waiting.joinWithNever
       unregistered <- handles.get.map(_.isEmpty)
       markedAfter <- marked.get
@@ -382,10 +390,117 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
       expect.same(ConsensusCommand.NormalFirstRoundFallback(permit, origin), queued) &&
         expect(!markedBeforeHandler, "queueing the command mutates nothing") &&
         expect(registered, "the handle is registered while the pulse fiber waits") &&
-        expect.same(ReentryResult.Entered(1L), result) &&
-        expect.same(result, awaited) &&
+        expect.same(FallbackReply.Decided(ReentryResult.Entered(1L)), awaited) &&
         expect(markedAfter, "the serialized handler performed the mutation") &&
         expect(unregistered, "the handle is unregistered once the wait ends")
+  }
+
+  private val handlerFault = new Exception("node store unavailable")
+
+  test("a raising handler effect produces a failed reply, is rethrown to the command loop, and the pulse loop continues") {
+    for {
+      handles <- handles
+      rethrown <- Ref.of[IO, Option[Throwable]](None)
+      replies <- Ref.of[IO, List[FallbackReply]](Nil)
+      attempts <- Ref.of[IO, List[Long]](Nil)
+      // The serialized handler runs inline on the offer and raises.
+      handler = StateTransitions
+        .replyNormalFirstRoundFallback[IO](handles, 7L, IO.raiseError[ReentryResult](handlerFault))
+        .handleErrorWith(err => rethrown.set(err.some))
+      _ <- StateTransitions.runFirstRoundAlignmentLoop[IO, Unit](
+        inspect = IO.unit,
+        isAligned = _ => false,
+        record = (_, attempt) =>
+          attempts.update(_ :+ attempt) >>
+            StateTransitions
+              .awaitNormalFirstRoundFallback[IO](handles, 7L, handler, 10.seconds)
+              .flatMap(reply => replies.update(_ :+ reply))
+              .whenA(attempt == 1L),
+        pause = IO.unit,
+        offerStart = IO.unit,
+        startPending = attempts.get.map(_.size < 2),
+        reportFailure = (_, _) => IO.unit
+      )
+      seen <- attempts.get
+      replied <- replies.get
+      loopError <- rethrown.get
+      dangling <- handles.get
+    } yield
+      expect.same(List(1L, 2L), seen) &&
+        expect.same(List(FallbackReply.HandlerFailed(handlerFault): FallbackReply), replied) &&
+        expect(loopError.contains(handlerFault), s"the handler error reaches the command loop, got $loopError") &&
+        expect(dangling.isEmpty, "the handle is unregistered after the failed reply")
+  }
+
+  test("a handler that throws after the recovery flag was set reports failure, not StaleGeneration or cancellation") {
+    val ahead = peerOf(pid("ahead"))
+    val evidence = StateTransitions.NormalFirstRoundAheadEvidence[Int](ahead, PulseOutcome.Ahead(parentKey + 1, parentHash), 1L)
+    for {
+      handles <- handles
+      marked <- Ref.of[IO, Boolean](false)
+      episode <- Ref.of[IO, Long](3L)
+      decide = StateTransitions.enterNormalFirstRoundRecovery[IO](
+        IO.pure(true),
+        IO.pure(true),
+        marked.set(true),
+        IO.raiseError[NodeStateTransition](handlerFault),
+        episode
+      )
+      awaited <- StateTransitions.awaitNormalFirstRoundFallback[IO](
+        handles,
+        9L,
+        StateTransitions.replyNormalFirstRoundFallback[IO](handles, 9L, decide).attempt.void,
+        10.seconds
+      )
+      wasMarked <- marked.get
+      episodeAfter <- episode.get
+    } yield {
+      val (observed, _) = StateTransitions.NormalFirstRoundFollowerEpisode.initial[Int].observe(evidence.some, "peer_ahead")
+      val afterFailure = observed.afterFallback(awaited)
+      expect.same(FallbackReply.HandlerFailed(handlerFault): FallbackReply, awaited) &&
+      expect(wasMarked, "the recovery flag had been set before the transition raised") &&
+      expect.same(3L, episodeAfter) &&
+      expect(afterFailure.observedAhead && !afterFailure.recoveryConcluded, s"a failure never concludes the decision, got $afterFailure") &&
+      expect(
+        afterFailure.aheadEvidence.isEmpty,
+        s"the evidence is discarded so the retry waits for fresh ahead evidence, got $afterFailure"
+      )
+    }
+  }
+
+  test("a cancelled handler reports failure to the waiting pulse fiber") {
+    for {
+      handles <- handles
+      registered <- Deferred[IO, Unit]
+      started <- Deferred[IO, Unit]
+      // The offer runs after the handle is registered: only then is the handler started and cancelled.
+      waiting <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, 11L, registered.complete(()).void, 10.seconds).start
+      _ <- registered.get
+      handler <- StateTransitions
+        .replyNormalFirstRoundFallback[IO](handles, 11L, started.complete(()).void >> IO.never[ReentryResult])
+        .start
+      _ <- started.get
+      _ <- handler.cancel
+      awaited <- waiting.joinWithNever
+    } yield expect.same(FallbackReply.HandlerFailed(StateTransitions.NormalFirstRoundFallbackHandlerCancelled): FallbackReply, awaited)
+  }
+
+  test("no reply within the deadline yields HandlerUnavailable and unregisters the handle") {
+    val program = for {
+      handles <- handles
+      awaited <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, 13L, IO.unit, 30.seconds)
+      dangling <- handles.get
+    } yield (awaited, dangling)
+
+    TestControl.executeEmbed(program).map {
+      case (awaited, dangling) =>
+        expect.same(FallbackReply.HandlerUnavailable: FallbackReply, awaited) &&
+        expect(dangling.isEmpty, "the handle is unregistered after the deadline") &&
+        expect(
+          StateTransitions.NormalFirstRoundFollowerEpisode.initial[Int].copy(observedAhead = true).afterFallback(awaited).recoveryOnly,
+          "a missed deadline keeps the recovery-only latch"
+        )
+    }
   }
 
   pureTest("the single fallback decision is due only after the bounded safe pulse retries") {
@@ -436,7 +551,7 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
     )
     val evidence = StateTransitions.NormalFirstRoundAheadEvidence[Int](ahead, PulseOutcome.Ahead(parentKey + 1, parentHash), 1L)
     val (observed, _) = StateTransitions.NormalFirstRoundFollowerEpisode.initial[Int].observe(evidence.some, "peer_ahead")
-    val originGone = observed.afterFallback(ReentryResult.StaleOriginSession)
+    val originGone = observed.afterFallback(FallbackReply.Decided(ReentryResult.StaleOriginSession))
     val (stragglerOnly, _) = originGone.observe(None, alignedStraggler.outcomeLabel)
 
     // Offer counting mirrors the alignment loop: the release predicate is evaluated with the episode's recoveryOnly flag.
@@ -452,7 +567,7 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
         record = (tick, _) =>
           episode.update { current =>
             if (tick == 1) current.observe(evidence.some, "peer_ahead")._1
-            else if (tick == 2) current.afterFallback(ReentryResult.StaleOriginSession)
+            else if (tick == 2) current.afterFallback(FallbackReply.Decided(ReentryResult.StaleOriginSession))
             else current.observe(None, alignedStraggler.outcomeLabel)._1
           } >> episode.get.flatMap { current =>
             offers.update(_ + 1).whenA(StateTransitions.shouldReleaseNormalFirstRoundPulse(alignedStraggler, current.recoveryOnly))
