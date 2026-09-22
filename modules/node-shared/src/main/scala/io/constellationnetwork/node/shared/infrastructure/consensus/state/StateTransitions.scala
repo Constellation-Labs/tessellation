@@ -4,7 +4,7 @@ import cats._
 import cats.effect.kernel.{Async, Ref, Temporal}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
-import cats.effect.{Deferred, MonadCancelThrow}
+import cats.effect.{Deferred, MonadCancelThrow, Sync}
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -2424,11 +2424,12 @@ class StateTransitions[
       mode = "operator_recovery_seed"
     )
 
-  /** Follower fallback reply handles keyed by permit generation. The pulse fiber registers one before queueing `NormalFirstRoundFallback`
-    * and awaits the serialized decision through it; the FSM completes it on every handler exit (decision, error or cancellation).
+  /** Follower fallback reply handles, one per pulse-side request. The pulse fiber registers a handle under a fresh request id, queues
+    * `NormalFirstRoundFallback` carrying that id and awaits the serialized decision through it; the FSM completes exactly that request's
+    * handle on every handler exit (decision, error or cancellation).
     */
   private val normalFirstRoundFallbackHandles: StateTransitions.NormalFirstRoundFallbackHandles[F] =
-    Ref.unsafe[F, Map[Long, Deferred[F, Either[Throwable, StateTransitions.NormalFirstRoundReentryResult]]]](Map.empty)
+    StateTransitions.NormalFirstRoundFallbackHandles.unsafe[F]
 
   private def normalFirstRoundOriginStillCurrent(origin: Peer): F[Boolean] =
     ctx.clusterStorage.getResponsivePeers.map(_.exists(peer => peer.id === origin.id && peer.session === origin.session))
@@ -2438,13 +2439,16 @@ class StateTransitions[
     * Ownership is validated here, against the same gate that initialization arms on this loop: the permit generation must still be pending
     * and the evidence origin must still be a responsive peer in the session it was queried in. Only then are the recovery download flag,
     * the node-state transition and the re-entry episode written. The pulse fiber that queued the command never mutates; it learns the
-    * outcome through its registered handle (if it is still waiting), which is completed on every exit of this handler: the decision, or the
-    * error/cancellation that interrupted it (`replyNormalFirstRoundFallback`). An error is rethrown so the command loop reports it.
+    * outcome through the handle it registered under `requestId` (if it is still waiting), which is completed on every exit of this handler:
+    * the decision, or the error/cancellation that interrupted it (`replyNormalFirstRoundFallback`). A command whose request has expired
+    * still runs: the permit, not the waiting fiber, authorizes the mutation, and the loop serializes it against any retry (which then
+    * decides `TransitionRejected` or stale at the same boundary). Its reply is dropped, never delivered to another request. An error is
+    * rethrown so the command loop reports it.
     */
-  def normalFirstRoundFallback(permit: FirstRoundStartGate.Permit[Key], origin: Peer): F[Unit] =
+  def normalFirstRoundFallback(permit: FirstRoundStartGate.Permit[Key], origin: Peer, requestId: Long): F[Unit] =
     StateTransitions.replyNormalFirstRoundFallback(
       normalFirstRoundFallbackHandles,
-      permit.generation,
+      requestId,
       StateTransitions.enterNormalFirstRoundRecovery(
         ctx.firstRoundStartGate.isPending(permit),
         normalFirstRoundOriginStillCurrent(origin),
@@ -2573,8 +2577,7 @@ class StateTransitions[
           for {
             reply <- StateTransitions.awaitNormalFirstRoundFallback(
               normalFirstRoundFallbackHandles,
-              permit.generation,
-              queue.offer(NormalFirstRoundFallback(permit, evidence.origin)),
+              requestId => queue.offer(NormalFirstRoundFallback(permit, evidence.origin, requestId)),
               StateTransitions.NormalFirstRoundFallbackReplyDeadline
             )
             _ <- episode.update(_.afterFallback(reply))
@@ -3453,8 +3456,27 @@ object StateTransitions {
     }
   }
 
-  private[consensus] type NormalFirstRoundFallbackHandles[F[_]] =
-    Ref[F, Map[Long, Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]]]]
+  /** Pulse-side reply handles of the follower fallback, keyed by request id. Successive attempts under one permit generation are distinct
+    * requests: a reply (or a cleanup) addresses exactly one of them, so a late reply to an expired request can never complete, and an
+    * expired request's cleanup can never remove, a newer attempt's handle. The permit generation carried by the command authorizes the
+    * mutation; the request id only correlates the reply.
+    */
+  private[consensus] final case class NormalFirstRoundFallbackHandles[F[_]](
+    nextRequestId: Ref[F, Long],
+    pending: Ref[F, Map[Long, Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]]]]
+  )
+
+  private[consensus] object NormalFirstRoundFallbackHandles {
+    def make[F[_]: Sync]: F[NormalFirstRoundFallbackHandles[F]] =
+      (Ref.of[F, Long](0L), Ref.of[F, Map[Long, Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]]]](Map.empty))
+        .mapN(NormalFirstRoundFallbackHandles(_, _))
+
+    def unsafe[F[_]: Sync]: NormalFirstRoundFallbackHandles[F] =
+      NormalFirstRoundFallbackHandles(
+        Ref.unsafe[F, Long](0L),
+        Ref.unsafe[F, Map[Long, Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]]]](Map.empty)
+      )
+  }
 
   /** Reported to the waiting pulse fiber when the handler is cancelled before deciding. */
   private[consensus] case object NormalFirstRoundFallbackHandlerCancelled
@@ -3465,16 +3487,18 @@ object StateTransitions {
   private[consensus] val NormalFirstRoundFallbackReplyDeadline: FiniteDuration = 30.seconds
 
   /** Handler-side reply contract, run on the serialized FSM loop: `decide` runs and its outcome (a decision, or the error that stopped it)
-    * is delivered to the pulse fiber's handle on every exit, cancellation included; an error is then rethrown so the command loop reports
-    * it. The reply is total: a pulse fiber that registered a handle never waits on a handler that has exited.
+    * is delivered to the handle registered under `requestId` on every exit, cancellation included; an error is then rethrown so the command
+    * loop reports it. The reply is total: a pulse fiber that registered a handle never waits on a handler that has exited. It is also
+    * exact: `decide` runs whether or not the request is still waiting (a request deadline bounds the wait, it does not cancel the queued
+    * command), and a reply whose request has expired is dropped rather than delivered to a later attempt.
     */
   private[consensus] def replyNormalFirstRoundFallback[F[_]: MonadCancelThrow](
     handles: NormalFirstRoundFallbackHandles[F],
-    generation: Long,
+    requestId: Long,
     decide: F[NormalFirstRoundReentryResult]
   ): F[Unit] = {
     def reply(outcome: Either[Throwable, NormalFirstRoundReentryResult]): F[Unit] =
-      handles.get.flatMap(_.get(generation).traverse_(_.complete(outcome).void))
+      handles.pending.get.flatMap(_.get(requestId).traverse_(_.complete(outcome).void))
 
     decide.attempt
       .flatMap(outcome => reply(outcome) >> outcome.liftTo[F].void)
@@ -3512,23 +3536,24 @@ object StateTransitions {
     )
   }
 
-  /** Pulse-fiber side of the fallback: register a reply handle for `generation`, queue the command through `offer`, and wait at most
-    * `deadline` for the serialized handler's reply (`Decided` or `HandlerFailed`); a missed deadline is `HandlerUnavailable`. No mutation
-    * happens here. The handle is unregistered however the wait ends, so a late reply is dropped.
+  /** Pulse-fiber side of the fallback: allocate a fresh request id, register a reply handle under it, queue the command through
+    * `offer(requestId)`, and wait at most `deadline` for the serialized handler's reply (`Decided` or `HandlerFailed`); a missed deadline
+    * is `HandlerUnavailable`. No mutation happens here. Only this request's handle is unregistered, however the wait ends: a reply that
+    * arrives later is dropped, and a retry registered meanwhile (a new request, possibly under the same permit generation) keeps its own.
     */
   private[consensus] def awaitNormalFirstRoundFallback[F[_]: Temporal](
     handles: NormalFirstRoundFallbackHandles[F],
-    generation: Long,
-    offer: F[Unit],
+    offer: Long => F[Unit],
     deadline: FiniteDuration
   ): F[NormalFirstRoundFallbackReply] =
-    Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]].flatMap { handle =>
-      (handles.update(_.updated(generation, handle)) >> offer >> handle.get.map[NormalFirstRoundFallbackReply] {
-        case Right(result) => NormalFirstRoundFallbackReply.Decided(result)
-        case Left(error)   => NormalFirstRoundFallbackReply.HandlerFailed(error)
-      })
-        .timeoutTo(deadline, (NormalFirstRoundFallbackReply.HandlerUnavailable: NormalFirstRoundFallbackReply).pure[F])
-        .guarantee(handles.update(_ - generation))
+    (handles.nextRequestId.updateAndGet(_ + 1L), Deferred[F, Either[Throwable, NormalFirstRoundReentryResult]]).tupled.flatMap {
+      case (requestId, handle) =>
+        (handles.pending.update(_.updated(requestId, handle)) >> offer(requestId) >> handle.get.map[NormalFirstRoundFallbackReply] {
+          case Right(result) => NormalFirstRoundFallbackReply.Decided(result)
+          case Left(error)   => NormalFirstRoundFallbackReply.HandlerFailed(error)
+        })
+          .timeoutTo(deadline, (NormalFirstRoundFallbackReply.HandlerUnavailable: NormalFirstRoundFallbackReply).pure[F])
+          .guarantee(handles.pending.update(_ - requestId))
     }
 
   private[consensus] def normalFirstRoundQueriedSummary[Key: Show](

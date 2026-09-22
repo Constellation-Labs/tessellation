@@ -80,10 +80,12 @@ object ConsensusCommand {
   /** Serialized, generation-bound fallback of the normal first-round follower: re-enter recovery download because `origin` (with the
     * session it had when queried) proved the cluster is already beyond the installed parent. The pulse fiber only queues this command;
     * ownership (the permit generation still pending, the origin session still current) and every mutation happen on the command loop, so a
-    * fallback decided for a superseded generation or a vanished origin is inert. Process-local orchestration input, not a wire or consensus
-    * schema.
+    * fallback decided for a superseded generation or a vanished origin is inert. `requestId` identifies the pulse fiber's request (its
+    * reply handle), distinct for every attempt even under the same permit generation: the reply goes to that request only, and a command
+    * whose request has already expired still runs under its permit but replies to nobody. Process-local orchestration input, not a wire or
+    * consensus schema.
     */
-  final case class NormalFirstRoundFallback[Key](permit: FirstRoundStartGate.Permit[Key], origin: Peer)
+  final case class NormalFirstRoundFallback[Key](permit: FirstRoundStartGate.Permit[Key], origin: Peer, requestId: Long)
       extends ConsensusCommand[Key, Nothing, Nothing, Nothing]
 
   final case class CheckUpdate[Key](key: Key) extends ConsensusCommand[Key, Nothing, Nothing, Nothing]

@@ -348,7 +348,7 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
   }
 
   private def handles: IO[StateTransitions.NormalFirstRoundFallbackHandles[IO]] =
-    Ref.of[IO, Map[Long, Deferred[IO, Either[Throwable, ReentryResult]]]](Map.empty)
+    StateTransitions.NormalFirstRoundFallbackHandles.make[IO]
 
   test("the pulse fiber only queues the generation-bound command; the serialized handler decides and completes the handle") {
     val origin = peerOf(pid("origin"))
@@ -363,18 +363,21 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
       waiting <- StateTransitions
         .awaitNormalFirstRoundFallback[IO](
           handles,
-          permit.generation,
-          queue.offer(ConsensusCommand.NormalFirstRoundFallback(permit, origin)),
+          requestId => queue.offer(ConsensusCommand.NormalFirstRoundFallback(permit, origin, requestId)),
           10.seconds
         )
         .start
       queued <- queue.take
+      queuedRequest = queued match {
+        case ConsensusCommand.NormalFirstRoundFallback(_, _, requestId) => requestId
+        case _                                                          => -1L
+      }
       markedBeforeHandler <- marked.get
-      registered <- handles.get.map(_.contains(permit.generation))
+      registered <- handles.pending.get.map(_.contains(queuedRequest))
       // What the FSM handler does on the command loop for the queued command.
       _ <- StateTransitions.replyNormalFirstRoundFallback[IO](
         handles,
-        permit.generation,
+        queuedRequest,
         StateTransitions.enterNormalFirstRoundRecovery[IO](
           gate.isPending(permit),
           IO.pure(true),
@@ -384,10 +387,10 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
         )
       )
       awaited <- waiting.joinWithNever
-      unregistered <- handles.get.map(_.isEmpty)
+      unregistered <- handles.pending.get.map(_.isEmpty)
       markedAfter <- marked.get
     } yield
-      expect.same(ConsensusCommand.NormalFirstRoundFallback(permit, origin), queued) &&
+      expect.same(ConsensusCommand.NormalFirstRoundFallback(permit, origin, 1L), queued) &&
         expect(!markedBeforeHandler, "queueing the command mutates nothing") &&
         expect(registered, "the handle is registered while the pulse fiber waits") &&
         expect.same(FallbackReply.Decided(ReentryResult.Entered(1L)), awaited) &&
@@ -404,16 +407,17 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
       replies <- Ref.of[IO, List[FallbackReply]](Nil)
       attempts <- Ref.of[IO, List[Long]](Nil)
       // The serialized handler runs inline on the offer and raises.
-      handler = StateTransitions
-        .replyNormalFirstRoundFallback[IO](handles, 7L, IO.raiseError[ReentryResult](handlerFault))
-        .handleErrorWith(err => rethrown.set(err.some))
+      handler = (requestId: Long) =>
+        StateTransitions
+          .replyNormalFirstRoundFallback[IO](handles, requestId, IO.raiseError[ReentryResult](handlerFault))
+          .handleErrorWith(err => rethrown.set(err.some))
       _ <- StateTransitions.runFirstRoundAlignmentLoop[IO, Unit](
         inspect = IO.unit,
         isAligned = _ => false,
         record = (_, attempt) =>
           attempts.update(_ :+ attempt) >>
             StateTransitions
-              .awaitNormalFirstRoundFallback[IO](handles, 7L, handler, 10.seconds)
+              .awaitNormalFirstRoundFallback[IO](handles, handler, 10.seconds)
               .flatMap(reply => replies.update(_ :+ reply))
               .whenA(attempt == 1L),
         pause = IO.unit,
@@ -424,7 +428,7 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
       seen <- attempts.get
       replied <- replies.get
       loopError <- rethrown.get
-      dangling <- handles.get
+      dangling <- handles.pending.get
     } yield
       expect.same(List(1L, 2L), seen) &&
         expect.same(List(FallbackReply.HandlerFailed(handlerFault): FallbackReply), replied) &&
@@ -448,8 +452,7 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
       )
       awaited <- StateTransitions.awaitNormalFirstRoundFallback[IO](
         handles,
-        9L,
-        StateTransitions.replyNormalFirstRoundFallback[IO](handles, 9L, decide).attempt.void,
+        requestId => StateTransitions.replyNormalFirstRoundFallback[IO](handles, requestId, decide).attempt.void,
         10.seconds
       )
       wasMarked <- marked.get
@@ -471,13 +474,13 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
   test("a cancelled handler reports failure to the waiting pulse fiber") {
     for {
       handles <- handles
-      registered <- Deferred[IO, Unit]
+      registered <- Deferred[IO, Long]
       started <- Deferred[IO, Unit]
       // The offer runs after the handle is registered: only then is the handler started and cancelled.
-      waiting <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, 11L, registered.complete(()).void, 10.seconds).start
-      _ <- registered.get
+      waiting <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, registered.complete(_).void, 10.seconds).start
+      requestId <- registered.get
       handler <- StateTransitions
-        .replyNormalFirstRoundFallback[IO](handles, 11L, started.complete(()).void >> IO.never[ReentryResult])
+        .replyNormalFirstRoundFallback[IO](handles, requestId, started.complete(()).void >> IO.never[ReentryResult])
         .start
       _ <- started.get
       _ <- handler.cancel
@@ -488,8 +491,8 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
   test("no reply within the deadline yields HandlerUnavailable and unregisters the handle") {
     val program = for {
       handles <- handles
-      awaited <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, 13L, IO.unit, 30.seconds)
-      dangling <- handles.get
+      awaited <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, _ => IO.unit, 30.seconds)
+      dangling <- handles.pending.get
     } yield (awaited, dangling)
 
     TestControl.executeEmbed(program).map {
@@ -500,6 +503,66 @@ object NormalFirstRoundFollowerSuite extends SimpleIOSuite {
           StateTransitions.NormalFirstRoundFollowerEpisode.initial[Int].copy(observedAhead = true).afterFallback(awaited).recoveryOnly,
           "a missed deadline keeps the recovery-only latch"
         )
+    }
+  }
+
+  // --- R8-4: replies are correlated per request, not per permit generation ---
+
+  test("a late reply to an expired request is dropped; the retry under the same permit generation receives only its own reply") {
+    val program = for {
+      handles <- handles
+      firstRequest <- Deferred[IO, Long]
+      // Attempt A: the command is queued (its request id captured) but the serialized handler does not run before the deadline.
+      first <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, firstRequest.complete(_).void, 30.seconds)
+      a <- firstRequest.get
+      secondRequest <- Deferred[IO, Long]
+      // Attempt B: fresh ahead evidence registers a new request under the same permit generation.
+      second <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, secondRequest.complete(_).void, 30.seconds).start
+      b <- secondRequest.get
+      decidedA <- Ref.of[IO, Boolean](false)
+      // A's queued command finally reaches the handler: it still acts under its permit, but its origin's session is gone.
+      _ <- StateTransitions.replyNormalFirstRoundFallback[IO](
+        handles,
+        a,
+        decidedA.set(true).as(ReentryResult.StaleOriginSession: ReentryResult)
+      )
+      pendingAfterA <- handles.pending.get.map(_.keySet)
+      // B's command has a fresh origin and enters recovery. It must receive exactly its own result.
+      _ <- StateTransitions.replyNormalFirstRoundFallback[IO](handles, b, IO.pure(ReentryResult.Entered(1L): ReentryResult))
+      reply <- second.joinWithNever
+      aRan <- decidedA.get
+      dangling <- handles.pending.get
+    } yield (a, b, first, reply, pendingAfterA, aRan, dangling)
+
+    TestControl.executeEmbed(program).map {
+      case (a, b, first, reply, pendingAfterA, aRan, dangling) =>
+        expect(a =!= b, s"successive attempts are distinct requests, got $a and $b") &&
+        expect.same(FallbackReply.HandlerUnavailable: FallbackReply, first) &&
+        expect(aRan, "an expired request's queued command still decides under its permit") &&
+        expect.same(Set(b), pendingAfterA) &&
+        expect.same(FallbackReply.Decided(ReentryResult.Entered(1L)): FallbackReply, reply) &&
+        expect(dangling.isEmpty, "both handles are unregistered once their own waits end")
+    }
+  }
+
+  test("an expired request's cleanup cannot remove a newer attempt's handle") {
+    val program = for {
+      handles <- handles
+      secondRequest <- Deferred[IO, Long]
+      first <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, _ => IO.unit, 30.seconds).start
+      second <- StateTransitions.awaitNormalFirstRoundFallback[IO](handles, secondRequest.complete(_).void, 60.seconds).start
+      b <- secondRequest.get
+      firstReply <- first.joinWithNever
+      stillRegistered <- handles.pending.get.map(_.contains(b))
+      _ <- StateTransitions.replyNormalFirstRoundFallback[IO](handles, b, IO.pure(ReentryResult.Entered(2L): ReentryResult))
+      secondReply <- second.joinWithNever
+    } yield (firstReply, stillRegistered, secondReply)
+
+    TestControl.executeEmbed(program).map {
+      case (firstReply, stillRegistered, secondReply) =>
+        expect.same(FallbackReply.HandlerUnavailable: FallbackReply, firstReply) &&
+        expect(stillRegistered, "the first request's deadline unregisters only its own handle") &&
+        expect.same(FallbackReply.Decided(ReentryResult.Entered(2L)): FallbackReply, secondReply)
     }
   }
 

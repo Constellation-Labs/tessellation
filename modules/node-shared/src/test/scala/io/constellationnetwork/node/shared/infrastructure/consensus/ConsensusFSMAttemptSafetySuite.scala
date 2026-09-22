@@ -465,11 +465,11 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
       for {
         permit <- h.gate.arm(parentKey)
         superseded = FirstRoundStartGate.Permit(parentKey, permit.generation - 1L)
-        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(superseded, origin))
+        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(superseded, origin, 1L))
         afterStalePermit <- (h.nodeState.get, h.reentryEpisode.get, h.recoveryDownloads.get).tupled
-        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(permit, staleOrigin))
+        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(permit, staleOrigin, 2L))
         afterStaleOrigin <- (h.nodeState.get, h.reentryEpisode.get, h.recoveryDownloads.get).tupled
-        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(permit, origin))
+        _ <- h.fsm.handle(ConsensusCommand.NormalFirstRoundFallback(permit, origin, 3L))
         afterCurrent <- (h.nodeState.get, h.reentryEpisode.get, h.recoveryDownloads.get).tupled
         stillHeld <- h.gate.isPending(permit)
       } yield
