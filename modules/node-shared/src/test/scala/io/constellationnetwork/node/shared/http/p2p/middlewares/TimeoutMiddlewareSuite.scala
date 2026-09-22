@@ -7,7 +7,7 @@ import cats.effect.{IO, Ref, Resource}
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withTimeout
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.{withResponseBodyTimeout, withTimeout}
 
 import fs2.Stream
 import org.http4s.client.Client
@@ -38,7 +38,7 @@ object TimeoutMiddlewareSuite extends SimpleIOSuite {
         transport = Client[IO] { _ =>
           Resource.make(IO.pure(Response[IO]().withBodyStream(body)))(_ => released.update(_ + 1))
         }
-        result <- withTimeout(transport, timeout)
+        result <- withResponseBodyTimeout(transport, timeout, 30.seconds)
           .stream(request)
           .flatMap(_.body)
           .evalTap(_ => received.update(_ + 1))
@@ -60,7 +60,7 @@ object TimeoutMiddlewareSuite extends SimpleIOSuite {
 
       for {
         start <- IO.monotonic
-        result <- withTimeout(transport, timeout).stream(request).flatMap(_.body).compile.toList
+        result <- withResponseBodyTimeout(transport, timeout, 30.seconds).stream(request).flatMap(_.body).compile.toList
         elapsed <- IO.monotonic.map(_ - start)
       } yield expect.same(result, List(1.toByte, 2.toByte, 3.toByte)) && expect.same(elapsed, 12.seconds)
     }
@@ -76,7 +76,7 @@ object TimeoutMiddlewareSuite extends SimpleIOSuite {
           Resource.make(IO.pure(Response[IO]().withBodyStream(body)))(_ => released.update(_ + 1))
         }
         start <- IO.monotonic
-        result <- withTimeout(transport, timeout, 10.seconds)
+        result <- withResponseBodyTimeout(transport, timeout, 10.seconds)
           .stream(request)
           .flatMap(_.body)
           .evalTap(_ => received.update(_ + 1))
@@ -97,12 +97,23 @@ object TimeoutMiddlewareSuite extends SimpleIOSuite {
       val transport = Client[IO](_ => Resource.pure(Response[IO]().withBodyStream(Stream.emit(1.toByte).covary[IO])))
 
       for {
-        result <- withTimeout(transport, timeout)
+        result <- withResponseBodyTimeout(transport, timeout, 30.seconds)
           .stream(request)
           .flatMap(_.body)
           .evalMap(byte => IO.sleep(6.seconds).as(byte))
           .compile
           .toList
+      } yield expect.same(result, List(1.toByte))
+    }
+  }
+
+  test("the acquisition-only middleware does not impose a body deadline") {
+    TestControl.executeEmbed {
+      val body = Stream.eval(IO.sleep(6.seconds).as(1.toByte))
+      val transport = Client[IO](_ => Resource.pure(Response[IO]().withBodyStream(body)))
+
+      for {
+        result <- withTimeout(transport, timeout).stream(request).flatMap(_.body).compile.toList
       } yield expect.same(result, List(1.toByte))
     }
   }

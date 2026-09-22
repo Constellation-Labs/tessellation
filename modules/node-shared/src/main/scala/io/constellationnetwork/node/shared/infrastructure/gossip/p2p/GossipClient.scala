@@ -7,7 +7,7 @@ import io.constellationnetwork.node.shared.config.types.GossipTimeoutsConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
-import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withTimeout
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.withResponseBodyTimeout
 import io.constellationnetwork.schema.gossip._
 import io.constellationnetwork.security.signature.Signed
 
@@ -41,7 +41,7 @@ object GossipClient {
     gossipTimeoutsConfig: GossipTimeoutsConfig
   ): GossipClient[F] = {
     val timeoutClient: Client[F] =
-      withTimeout(client, gossipTimeoutsConfig.client, gossipTimeoutsConfig.response)
+      withResponseBodyTimeout(client, gossipTimeoutsConfig.client, gossipTimeoutsConfig.response)
 
     new GossipClient[F] {
       implicit val facade: Facade[Json] = new CirceSupportParser(None, false).facade
