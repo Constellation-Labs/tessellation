@@ -1,8 +1,8 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.data.{Kleisli, NonEmptySet}
+import cats.effect._
 import cats.effect.std.{Random, Supervisor}
-import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -488,7 +488,7 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
   }
 
   test(
-    "Rediscovery.through queries retained priority sources, hands each new candidate to the ordinary rejoin validation and marks the attempt finished"
+    "Rediscovery.through queries retained priority sources, hands each new candidate to the ordinary rejoin validation and releases its claim"
   ) {
     forall(peerGen) { base =>
       val priority = peer(base, 0, Unresponsive)
@@ -500,9 +500,12 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
         sources <- Ref.of[IO, List[PeerId]](Nil)
         joined <- Ref.of[IO, List[PeerToJoin]](Nil)
         finished <- Ref.of[IO, Option[Set[PeerId]]](None)
-        discoverFrom = (p: Peer) => sources.update(_ :+ p.id).as(if (p.id == priority.id) Set(accepted, rejected) else Set.empty[Peer])
+        discoverFrom = (p: Peer) =>
+          Resource.make(
+            sources.update(_ :+ p.id).as(PeerDiscovery.Claim(1L, if (p.id == priority.id) Set(accepted, rejected) else Set.empty[Peer]))
+          )(claim => finished.set(claim.peers.map(_.id).some))
         rejoin = (p: PeerToJoin) => joined.update(_ :+ p) >> IO.raiseError(new Exception("handshake rejected")).whenA(p.id == rejected.id)
-        count <- Rediscovery.through[IO](cs, NonEmptySet.of(priority.id).some, discoverFrom, ids => finished.set(ids.some), rejoin)
+        count <- Rediscovery.through[IO](cs, NonEmptySet.of(priority.id).some, discoverFrom, rejoin)
         queried <- sources.get
         handshakes <- joined.get
         marked <- finished.get
@@ -522,7 +525,7 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
               s"rejoin targets the candidate's p2p endpoint, got $handshakes"
             )
           )
-          .and(expect(marked.contains(Set(accepted.id, rejected.id)), s"the discovery queue attempt is marked finished, got $marked"))
+          .and(expect(marked.contains(Set(accepted.id, rejected.id)), s"the pass releases its claim when it ends, got $marked"))
           .and(
             expect(
               table.map(_.id) == Set(priority.id, other.id),
@@ -547,7 +550,6 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
           cs,
           NonEmptySet.of(source.id).some,
           discovery.discoverFrom,
-          discovery.markAttemptsFinished,
           p => cs.addPeer(candidates.find(_.id == p.id).get).void
         )
       for {
@@ -581,7 +583,6 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
             cs,
             NonEmptySet.of(source.id).some,
             discovery.discoverFrom,
-            discovery.markAttemptsFinished,
             _ => handshakeStarted.complete(()).void >> IO.never
           )
           .start
@@ -597,27 +598,50 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("rediscovery never releases reservations owned by concurrent ordinary joining") {
+  test("rediscovery never releases a candidate claimed by an overlapping ordinary discovery") {
     forall(peerGen) { base =>
-      val source = peer(base, 0, Responsive)
-      val candidate = peer(base, 1, Responsive)
-      val joining = peer(base, 2, Responsive)
+      val ordinarySource = peer(base, 0, Responsive)
+      val repairSource = peer(base, 1, Responsive)
+      val candidate = peer(base, 2, Responsive)
       val self = peer(base, 10, Responsive).id
       for {
-        cs <- storage(source)
-        cache <- Ref.of[IO, Set[Peer]](Set(joining))
-        discovery = PeerDiscovery.make[IO](cache, clusterClientAnswering(Set(candidate, joining)), cs, self)
-        count <- Rediscovery.through[IO](
-          cs,
-          NonEmptySet.of(source.id).some,
-          discovery.discoverFrom,
-          discovery.markAttemptsFinished,
-          _ => IO.unit
-        )
-        queued <- discovery.getPeers
+        ordinaryRequested <- Deferred[IO, Unit]
+        repairRequested <- Deferred[IO, Unit]
+        finishOrdinary <- Deferred[IO, Unit]
+        finishRepair <- Deferred[IO, Unit]
+        releaseOrdinary <- Deferred[IO, Unit]
+        ordinaryClaim <- Deferred[IO, Set[Peer]]
+        client = new ClusterClient[IO] {
+          def getPeers: PeerResponse.PeerResponse[IO, Set[Peer]] = getDiscoveryPeers
+          def getDiscoveryPeers: PeerResponse.PeerResponse[IO, Set[Peer]] = Kleisli { p =>
+            (if (p.id == ordinarySource.id) ordinaryRequested.complete(()).void >> finishOrdinary.get
+             else repairRequested.complete(()).void >> finishRepair.get).as(Set(candidate))
+          }
+        }
+        cs <- storage(ordinarySource, repairSource)
+        discovery <- PeerDiscovery.make[IO](client, cs, self)
+        // Ordinary joining: its discovery request is in flight, then it holds the claim until told to release it.
+        ordinary <- discovery.discoverFrom(ordinarySource).use(claim => ordinaryClaim.complete(claim.peers) >> releaseOrdinary.get).start
+        _ <- ordinaryRequested.get
+        repair <- Rediscovery
+          .through[IO](cs, NonEmptySet.of(repairSource.id).some, discovery.discoverFrom, _ => IO.unit)
+          .start
+        _ <- repairRequested.get
+        _ <- finishOrdinary.complete(())
+        claimed <- ordinaryClaim.get
+        queuedBefore <- discovery.getPeers
+        _ <- finishRepair.complete(())
+        count <- repair.joinWithNever
+        queuedAfter <- discovery.getPeers
+        _ <- releaseOrdinary.complete(())
+        _ <- ordinary.joinWithNever
+        queuedAfterRelease <- discovery.getPeers
       } yield
-        expect(count == 1, s"only the candidate not already queued is handed over, got $count")
-          .and(expect(queued.map(_.id) == Set(joining.id), s"the joining program's reservation is untouched, got ${queued.map(_.id)}"))
+        expect(claimed == Set(candidate), s"ordinary joining claims the candidate first, got $claimed")
+          .and(expect(queuedBefore == Set(candidate), s"the claim is queued, got $queuedBefore"))
+          .and(expect(count == 0, s"the repair pass obtains nothing already claimed, got $count"))
+          .and(expect(queuedAfter == Set(candidate), s"the repair pass leaves the ordinary claim in place, got $queuedAfter"))
+          .and(expect(queuedAfterRelease.isEmpty, s"only the owner's release clears it, got $queuedAfterRelease"))
     }
   }
 
@@ -632,10 +656,10 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
         cs <- storage(responsive: _*)
         sources <- Ref.of[IO, List[PeerId]](Nil)
         joined <- Ref.of[IO, List[PeerId]](Nil)
-        discoverFrom = (p: Peer) => sources.update(_ :+ p.id).as(candidates)
+        discoverFrom = (p: Peer) => Resource.eval(sources.update(_ :+ p.id)).as(PeerDiscovery.Claim(0L, candidates))
         rejoin = (p: PeerToJoin) => joined.update(_ :+ p.id)
         count <- Rediscovery
-          .through[IO](cs, NonEmptySet.of(unknownPriority).some, discoverFrom, _ => IO.unit, rejoin, maxSources = 2, maxCandidates = 8)
+          .through[IO](cs, NonEmptySet.of(unknownPriority).some, discoverFrom, rejoin, maxSources = 2, maxCandidates = 8)
         queried <- sources.get
         handshakes <- joined.get
         empty <- storage()
@@ -643,8 +667,7 @@ object IsolationRepairSuite extends SimpleIOSuite with Checkers {
         emptyCount <- Rediscovery.through[IO](
           empty,
           none,
-          _ => emptyTouched.set(true).as(candidates),
-          _ => emptyTouched.set(true),
+          _ => Resource.eval(emptyTouched.set(true)).as(PeerDiscovery.Claim(0L, candidates)),
           _ => emptyTouched.set(true)
         )
         touched <- emptyTouched.get

@@ -1,13 +1,14 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.data.NonEmptySet
-import cats.effect.kernel.{Async, Ref}
+import cats.effect.kernel.{Async, Ref, Resource}
 import cats.effect.std.Random
 import cats.effect.syntax.all._
 import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.node.shared.domain.cluster.programs.PeerDiscovery
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.healthcheck.{LocalHealthcheck, PeerRecheckOutcome}
 import io.constellationnetwork.schema.cluster.{PeerToJoin, SessionToken}
@@ -421,17 +422,17 @@ object IsolationRepair {
       * registration-request, handshake and signature validation followed by `addPeer`), so nothing reaches the peer table without that
       * validation. Per-source and per-candidate failures are swallowed. Returns the number of candidates handed to validation.
       *
-      * Reservation ownership: `discoverFrom` places every peer it returns into the discovery queue, whose ids are excluded from later
-      * discovery. This bounded pass owns exactly those reservations, so it releases all of them (`markAttemptsFinished`) when it ends,
-      * whether a candidate was handed to validation, left unsampled beyond `maxCandidates`, or abandoned by a timeout/cancellation after
-      * discovery. Unsampled candidates are therefore rediscovered by the next repair pass. Reservations owned by concurrent ordinary
-      * joining are never returned by `discoverFrom` (already queued) and are never touched.
+      * Reservation ownership: every `discoverFrom` call returns a `PeerDiscovery.Claim` resource holding exactly the candidates it claimed
+      * atomically (candidates already claimed by ordinary joining or another pass are never in it). This pass holds its claims while the
+      * sampled candidates go through validation and releases them, and only them, when it ends, whether a candidate was handed to
+      * validation, left unsampled beyond `maxCandidates`, or abandoned by a timeout/cancellation after discovery (the discovery request
+      * itself stays cancelable, so the repair time budget still interrupts it). Unsampled candidates are therefore rediscovered by the next
+      * repair pass, and a claim held by ordinary joining is never released here.
       */
     def through[F[_]: Async](
       clusterStorage: ClusterStorage[F],
       priorityPeerIds: Option[NonEmptySet[PeerId]],
-      discoverFrom: Peer => F[Set[Peer]],
-      markAttemptsFinished: Set[PeerId] => F[Unit],
+      discoverFrom: Peer => Resource[F, PeerDiscovery.Claim],
       rejoin: PeerToJoin => F[Unit],
       maxSources: Int = MaxSources,
       maxCandidates: Int = MaxCandidates,
@@ -439,26 +440,26 @@ object IsolationRepair {
     ): F[Int] = {
       val priority = priorityPeerIds.fold(Set.empty[PeerId])(_.toSortedSet.toSet)
       val fanOut = math.max(1, parallelism)
-      Ref.of[F, Set[PeerId]](Set.empty).flatMap { reserved =>
-        val pass = for {
-          random <- Random.scalaUtilRandom[F]
-          retained <- clusterStorage.getPeers
-          preferred = retained.iterator.filter(p => priority.contains(p.id)).toList.distinctBy(_.id)
-          pool <- if (preferred.nonEmpty) preferred.pure[F] else clusterStorage.getResponsivePeers.map(_.toList.distinctBy(_.id))
-          sources <- random.shuffleList(pool).map(_.take(math.max(0, maxSources)))
-          discovered <- sources.parTraverseN(fanOut) { source =>
-            discoverFrom(source)
-              .handleError(_ => Set.empty[Peer])
-              .flatTap(peers => reserved.update(_ ++ peers.iterator.map(_.id)))
+      for {
+        random <- Random.scalaUtilRandom[F]
+        retained <- clusterStorage.getPeers
+        preferred = retained.iterator.filter(p => priority.contains(p.id)).toList.distinctBy(_.id)
+        pool <- if (preferred.nonEmpty) preferred.pure[F] else clusterStorage.getResponsivePeers.map(_.toList.distinctBy(_.id))
+        sources <- random.shuffleList(pool).map(_.take(math.max(0, maxSources)))
+        count <- sources
+          .parTraverse(source =>
+            discoverFrom(source).map(_.peers).handleErrorWith((_: Throwable) => Resource.pure[F, Set[Peer]](Set.empty))
+          )
+          .use { discovered =>
+            random.shuffleList(discovered.combineAll.toList.distinctBy(_.id)).map(_.take(math.max(0, maxCandidates))).flatMap {
+              candidates =>
+                candidates
+                  .parTraverseN(fanOut)(candidate => rejoin(PeerToJoin(candidate.id, candidate.ip, candidate.p2pPort)).attempt.void)
+                  .whenA(candidates.nonEmpty)
+                  .as(candidates.size)
+            }
           }
-          candidates <- random.shuffleList(discovered.combineAll.toList.distinctBy(_.id)).map(_.take(math.max(0, maxCandidates)))
-          _ <- candidates
-            .parTraverseN(fanOut)(candidate => rejoin(PeerToJoin(candidate.id, candidate.ip, candidate.p2pPort)).attempt.void)
-            .whenA(candidates.nonEmpty)
-        } yield candidates.size
-
-        pass.guarantee(reserved.get.flatMap(ids => markAttemptsFinished(ids).whenA(ids.nonEmpty)))
-      }
+      } yield count
     }
   }
 

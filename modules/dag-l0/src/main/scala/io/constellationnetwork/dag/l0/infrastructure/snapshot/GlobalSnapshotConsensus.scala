@@ -508,7 +508,6 @@ object GlobalSnapshotConsensus {
             clusterStorage,
             sharedCfg.priorityPeerIds,
             sharedPrograms.peerDiscovery.discoverFrom,
-            sharedPrograms.peerDiscovery.markAttemptsFinished,
             sharedPrograms.joining.rejoin
           )
           .some

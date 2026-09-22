@@ -1,9 +1,9 @@
 package io.constellationnetwork.node.shared.domain.cluster.programs
 
 import cats.data.{EitherT, NonEmptySet}
-import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.effect.syntax.all._
+import cats.effect.{Async, Resource}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.apply._
@@ -157,17 +157,18 @@ class Joining[
           )
       }
 
-  private def discoverFrom(peer: Peer): F[Set[Peer]] =
+  /** Claim the candidates `peer` reports; the claim is this program's own for as long as the resource is held. */
+  private def discoverFrom(peer: Peer): Resource[F, Set[P2PContext]] =
     peerDiscovery
       .discoverFrom(peer)
-      .handleErrorWith { e =>
-        MonadThrow[F].raiseError(FailedToDiscoverFrom(peer, e))
-      }
+      .map(_.peers.map(toP2PContext))
+      .handleErrorWith((e: Throwable) => Resource.raiseError[F, Set[P2PContext], Throwable](FailedToDiscoverFrom(peer, e)))
 
-  private def joinAndDiscover(toJoin: P2PContext): EitherT[F, Throwable, Set[P2PContext]] =
-    joinTo(toJoin)
-      .semiflatMap(discoverFrom)
-      .map(_.map(toP2PContext))
+  private def joinAndDiscover(toJoin: P2PContext): Resource[F, Set[P2PContext]] =
+    Resource.eval(joinTo(toJoin).value).flatMap {
+      case Right(joined) => discoverFrom(joined)
+      case Left(err)     => Resource.raiseError[F, Set[P2PContext], Throwable](err)
+    }
 
   /** Initial joiners can contact the same entry peer at nearly the same time. Their first discovery responses are then valid but incomplete
     * snapshots of the changing cluster, leaving peer pairs permanently unknown because ordinary discovery only runs during join. Re-query
@@ -182,7 +183,7 @@ class Joining[
           .flatMap {
             case None => Applicative[F].unit
             case Some(peer) =>
-              discoverFrom(peer).flatMap(discovered => joinAll(discovered.toList.map(toP2PContext).toSet))
+              discoverFrom(peer).use(joinAll)
           }
           .handleErrorWith(error => logger.warn(error)(s"Concurrent join reconciliation failed through ${entryPeer.id.show}"))
     }
@@ -190,27 +191,24 @@ class Joining[
   private def joinAll(peerToJoin: P2PContext): F[Unit] =
     joinAll(Set(peerToJoin))
 
+  /** Breadth-first join. The discovery claims obtained by one wave are held (as resources) while the following waves join the claimed
+    * candidates and are released only by this program, when the join finishes or is cancelled; a claim is never released by another
+    * discoverer. The recursion nests one resource scope per wave, bounded by the cluster's hop diameter.
+    */
   private def joinAll(initialPeers: Set[P2PContext]): F[Unit] = {
-    type Agg = (Set[P2PContext], Set[P2PContext])
-    type Res = Unit
-
-    (initialPeers, Set.empty[P2PContext]).tailRecM {
-      case (toJoin, _) if toJoin.isEmpty => ().asRight[Agg].pure
-      case (toJoin, attempted) =>
-        for {
-          discovered <- toJoin.toList.parTraverse { peer =>
-            joinAndDiscover(peer).valueOrF { err =>
-              logger
-                .warn(err)(s"Failed to join and discover from ${peer.show}")
-                .as(Set.empty[P2PContext])
-            }
+    def wave(toJoin: Set[P2PContext], attempted: Set[P2PContext]): F[Unit] =
+      if (toJoin.isEmpty) Applicative[F].unit
+      else
+        toJoin.toList.parTraverse { peer =>
+          joinAndDiscover(peer).handleErrorWith { (err: Throwable) =>
+            Resource.eval(logger.warn(err)(s"Failed to join and discover from ${peer.show}").as(Set.empty[P2PContext]))
           }
-            .guarantee(peerDiscovery.markAttemptsFinished(toJoin.toList.map(_.id).toSet))
-          reduced = discovered.combineAll
-          updatedAttempted = attempted ++ toJoin
-          updatedToJoin = reduced.diff(updatedAttempted)
-        } yield (updatedToJoin, updatedAttempted).asLeft[Res]
-    }
+        }.use { discovered =>
+          val updatedAttempted = attempted ++ toJoin
+          wave(discovered.combineAll.diff(updatedAttempted), updatedAttempted)
+        }
+
+    wave(initialPeers, Set.empty)
   }
 
   private def twoWayHandshake(
