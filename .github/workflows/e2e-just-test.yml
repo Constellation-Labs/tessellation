@@ -163,6 +163,22 @@ jobs:
         with:
           fetch-tags: true
 
+      # These host tools are needed before just's later dependency installation.
+      - name: Check E2E runner dependencies
+        shell: bash
+        run: |
+          missing=0
+          for dependency in curl jq; do
+            if ! command -v "$dependency" >/dev/null 2>&1; then
+              echo "::error::Missing required E2E runner dependency: $dependency. Install it in the runner image or bootstrap."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "E2E runner dependencies available: curl jq"
+
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
