@@ -378,6 +378,17 @@ object SnapshotStorage {
             case None    => snapshotLocalFileSystemStorage.read(hash)
           }
 
+        override def getIndexed(hash: Hash): F[Option[Signed[S]]] =
+          get(hash).flatMap {
+            _.flatTraverse { candidate =>
+              ordinalCache(candidate.ordinal).get.flatMap {
+                case Some(indexedHash) => (indexedHash === hash).pure[F]
+                case None              => snapshotLocalFileSystemStorage.isIndexed(hash, candidate.ordinal)
+              }
+                .map(Option.when(_)(candidate))
+            }
+          }
+
         def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hash]] =
           get(ordinal).flatMap {
             _.traverse(_.toHashed.map(_.hash))

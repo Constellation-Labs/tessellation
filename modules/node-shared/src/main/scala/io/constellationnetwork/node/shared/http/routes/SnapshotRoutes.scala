@@ -439,7 +439,7 @@ final case class SnapshotRoutes[F[_]: Async: Metrics, S <: Snapshot: Encoder, SI
         case req @ GET -> Root / HashVar(hash) =>
           whenNodeReady {
             resolveEncoder[F, Signed[S]](req) { implicit enc =>
-              snapshotStorage.get(hash).flatMap {
+              snapshotStorage.getIndexed(hash).flatMap {
                 case Some(snapshot) => Ok(snapshot)
                 case _              => NotFound()
               }

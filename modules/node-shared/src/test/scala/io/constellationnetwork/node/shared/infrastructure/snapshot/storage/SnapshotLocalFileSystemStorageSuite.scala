@@ -6,6 +6,8 @@ import cats.effect.std.Supervisor
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
+import scala.jdk.CollectionConverters._
+
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.kryo._
@@ -15,14 +17,20 @@ import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.shared.sharedKryoRegistrar
 import io.constellationnetwork.storage.PathGenerator
 import io.constellationnetwork.storage.PathGenerator._
 
 import better.files._
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.classic.{Level, Logger}
+import ch.qos.logback.core.read.ListAppender
 import eu.timepit.refined.auto._
 import fs2.io.file.Path
+import io.circe.Encoder
+import org.slf4j.LoggerFactory
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -48,7 +56,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   private def mkLocalFileSystemStorage(tmpDir: File)(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO]) =
     GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString))
 
-  private def mkReadFailingStorage(tmpDir: File, failedFileName: String)(
+  private def mkReadFailingStorage(tmpDir: File, failedFilePrefix: String)(
     implicit K: KryoSerializer[IO],
     J: JsonSerializer[IO]
   ): IO[SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot]] = {
@@ -59,7 +67,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
           .map(_.map(_.toGlobalIncrementalSnapshot))
 
       override def readBytes(fileName: String): IO[Option[Array[Byte]]] =
-        if (fileName === failedFileName) IO.raiseError(new IOException("simulated snapshot-index I/O failure"))
+        if (fileName.startsWith(failedFilePrefix)) IO.raiseError(new IOException("simulated snapshot-index I/O failure"))
         else super.readBytes(fileName)
     }
 
@@ -160,6 +168,132 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
+  test("write - retains a verified existing value and its proof envelope") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, original) = snapshots
+        key <- KeyPairGenerator.makeKeyPair[IO]
+        incoming <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](original.value, key)
+        _ <- storage.write(original) >> storage.delete(original.ordinal)
+        hashFile <- mkHashFile(tmpDir, original)
+        witness = tmpDir / "existing-inode"
+        _ <- IO.blocking(hashFile.linkTo(witness))
+        _ <- storage.write(incoming)
+        stored <- storage.read(original.ordinal)
+      } yield
+        expect.all(
+          original.proofs != incoming.proofs,
+          stored.contains(original),
+          mkOrdinalFile(tmpDir, original).isSameFileAs(witness)
+        )
+    }
+  }
+
+  List(false, true).foreach { wrongOrdinal =>
+    test(s"write - replaces a decodable body at the wrong hash path with wrongOrdinal=$wrongOrdinal") { res =>
+      implicit val (_, kryo, j, h, sp, gsps) = res
+
+      File.temporaryDirectory() { tmpDir =>
+        for {
+          storage <- mkLocalFileSystemStorage(tmpDir)
+          snapshots <- mkSnapshots
+          (_, expected) = snapshots
+          key <- KeyPairGenerator.makeKeyPair[IO]
+          wrong <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+            expected.value.copy(
+              ordinal = if (wrongOrdinal) SnapshotOrdinal.unsafeApply(40001L) else expected.ordinal,
+              epochProgress = EpochProgress(1L)
+            ),
+            key
+          )
+          hashFile <- mkHashFile(tmpDir, expected)
+          wrongBytes <- JsonSerializer[IO].serialize(wrong)
+          _ <- IO.blocking {
+            hashFile.parent.createDirectories()
+            hashFile.writeByteArray(wrongBytes)
+          }
+          _ <- storage.write(expected)
+          byOrdinal <- storage.read(expected.ordinal)
+          expectedHash <- expected.value.hash
+          byHash <- storage.read(expectedHash)
+        } yield expect.all(byOrdinal.contains(expected), byHash.contains(expected))
+      }
+    }
+  }
+
+  test("hash read I/O errors propagate through reads, anchor checks and reuse without changing either index") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, snapshot) = snapshots
+        hash <- snapshot.value.hash
+        _ <- storage.write(snapshot) >> storage.delete(snapshot.ordinal)
+        hashFile <- mkHashFile(tmpDir, snapshot)
+        before <- IO.blocking(hashFile.byteArray.toVector)
+        failing <- mkReadFailingStorage(tmpDir, "hash/")
+        read <- failing.read(hash).attempt
+        anchor <- failing.ensureOrdinalLink(hash, snapshot.ordinal).attempt
+        write <- failing.write(snapshot).attempt
+        after <- IO.blocking(hashFile.byteArray.toVector)
+        ordinalExists <- storage.exists(snapshot.ordinal)
+      } yield
+        expect.all(
+          read.swap.exists(_.isInstanceOf[IOException]),
+          anchor.swap.exists(_.isInstanceOf[IOException]),
+          write.swap.exists(_.isInstanceOf[IOException]),
+          before == after,
+          !ordinalExists
+        )
+    }
+  }
+
+  test("read warns once only when both snapshot decoders fail") { res =>
+    implicit val (_, _, json, hasher, security, stateProofSelector) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        snapshots <- mkSnapshots
+        (_, expected) = snapshots
+        legacyBytes = Array[Byte](1, 2, 3)
+        corruptBytes = Array[Byte](4, 5, 6)
+        storage = new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)) {
+          def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+            if (bytes.sameElements(legacyBytes)) Right(expected)
+            else Left(new IllegalArgumentException("simulated fallback decode failure"))
+        }
+        _ <- storage.createDirectoryIfNotExists().rethrowT
+        _ <- storage.write("legacy", legacyBytes) >> storage.write("corrupt", corruptBytes)
+        backend = LoggerFactory.getLogger(storage.getClass).asInstanceOf[Logger]
+        originalLevel = backend.getLevel
+        appender = new ListAppender[ILoggingEvent]
+        resultsAndWarnings <- Resource
+          .make(
+            IO {
+              appender.setContext(backend.getLoggerContext)
+              appender.start()
+              backend.setLevel(Level.WARN)
+              backend.addAppender(appender)
+            }
+          )(_ => IO { backend.detachAppender(appender); backend.setLevel(originalLevel); appender.stop() })
+          .use { _ =>
+            for {
+              legacy <- storage.read("legacy")
+              corrupt <- storage.read("corrupt")
+              warnings <- IO(appender.list.asScala.toList.map(_.getFormattedMessage))
+            } yield (legacy, corrupt, warnings)
+          }
+        (legacy, corrupt, warnings) = resultsAndWarnings
+      } yield expect.all(legacy.contains(expected), corrupt.isEmpty, warnings.size == 1, warnings.headOption.exists(_.contains("corrupt")))
+    }
+  }
+
   test("write - create hash file and link ordinal file to it") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
 
@@ -245,7 +379,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
-  test("canonical recovery removes every alternate hash at the anchor ordinal across restart") { res =>
+  test("canonical recovery retains unindexed alternate hashes without letting them replace the selected anchor across restart") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -298,15 +432,19 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
         coldAlternate2 <- restarted.read(alternate2Hash)
         coldSelected <- restarted.read(selectedHash)
         coldOrdinal <- restarted.read(selected.ordinal)
+        alternateLink <- restarted.ensureOrdinalLink(alternate1Hash, selected.ordinal)
+        ordinalAfterRepairAttempt <- restarted.read(selected.ordinal)
       } yield
         expect.all(
           alternate1Hash != alternate2Hash,
           alternate1Hash != selectedHash,
           alternate2Hash != selectedHash,
-          warmAlternate1.isEmpty,
-          warmAlternate2.isEmpty,
-          coldAlternate1.isEmpty,
-          coldAlternate2.isEmpty,
+          warmAlternate1.contains(alternate1),
+          warmAlternate2.contains(alternate2),
+          coldAlternate1.contains(alternate1),
+          coldAlternate2.contains(alternate2),
+          alternateLink == OrdinalLinkStatus.OrdinalOccupied(selected.ordinal, selectedHash),
+          ordinalAfterRepairAttempt.contains(selected),
           warmSelected.contains(selected),
           warmOrdinal.contains(selected),
           coldSelected.contains(selected),
@@ -315,7 +453,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
-  test("canonical cleanup removes a linked conflicting anchor before filtering linked history") { res =>
+  test("canonical cleanup removes the indexed conflicting anchor") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -540,7 +678,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
-  test("cleanupAboveOrdinal removes a future orphan hash whose ordinal index is missing") { res =>
+  test("cleanupAboveOrdinal retains a future hash without recreating its missing ordinal index") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -563,11 +701,12 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
           (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
         )
         after <- storage.read(futureHash)
-      } yield expect.all(before.nonEmpty, after.isEmpty)
+        ordinalAfter <- storage.read(future.ordinal)
+      } yield expect.all(before.contains(future), after.contains(future), ordinalAfter.isEmpty)
     }
   }
 
-  test("cleanupAboveOrdinal skips linked canonical bodies and decodes only orphan candidates") { res =>
+  test("cleanupAboveOrdinal reads no snapshot bodies in retained linked or copied history") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -582,7 +721,8 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
             hashFile.parent.createDirectories()
             ordinalFile.parent.createDirectories()
             hashFile.writeByteArray(Array[Byte](1, 2, 3))
-            hashFile.linkTo(ordinalFile)
+            if (index % 2L == 0L) hashFile.copyTo(ordinalFile)
+            else hashFile.linkTo(ordinalFile)
           }
         }
         snapshots <- mkSnapshots
@@ -595,7 +735,8 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
         orphanHash <- orphan.value.hash
         _ <- storage.write(orphan)
         _ <- storage.delete(orphan.ordinal)
-        _ <- storage.cleanupAboveOrdinal(
+        unreadableStorage <- mkReadFailingStorage(tmpDir, "")
+        _ <- unreadableStorage.cleanupAboveOrdinal(
           SnapshotOrdinal(1000L),
           (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
         )
@@ -605,7 +746,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
         linkedOrdinalFile = tmpDir / "ordinal" / ordinalPathGenerator.get("1")
       } yield
         expect.all(
-          orphanAfter.isEmpty,
+          orphanAfter.contains(orphan),
           linkedHashFile.exists,
           linkedOrdinalFile.exists,
           linkedHashFile.isSameFileAs(linkedOrdinalFile)
@@ -613,7 +754,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
-  test("cleanupAboveOrdinal quarantines an unreadable orphan instead of blocking recovery") { res =>
+  test("cleanupAboveOrdinal leaves an unreadable unindexed hash untouched") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -634,11 +775,11 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
             (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
           )
           .attempt
-      } yield expect.all(clue(result).isRight, corruptHashFile.notExists, quarantinedFile.exists)
+      } yield expect.all(clue(result).isRight, corruptHashFile.exists, quarantinedFile.notExists)
     }
   }
 
-  test("cleanupAboveOrdinal unlinks an unreadable future ordinal and quarantines its content inode") { res =>
+  test("cleanupAboveOrdinal unlinks an unreadable future ordinal and retains its unindexed hash") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -665,14 +806,14 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
       } yield
         expect.all(
           clue(result).isRight,
-          corruptHashFile.notExists,
+          corruptHashFile.exists,
           corruptOrdinalFile.notExists,
-          quarantinedFile.exists
+          quarantinedFile.notExists
         )
     }
   }
 
-  test("cleanupAboveOrdinal propagates a transient hash read error without quarantining valid bytes") { res =>
+  test("cleanupAboveOrdinal propagates an indexed suffix read error without deleting valid bytes") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -680,11 +821,11 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
       for {
         ordinaryStorage <- mkLocalFileSystemStorage(tmpDir)
         snapshots <- mkSnapshots
-        (_, snapshot) = snapshots
-        snapshotHash <- snapshot.value.hash
+        (_, base) = snapshots
+        key <- KeyPairGenerator.makeKeyPair[IO]
+        snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.value.copy(ordinal = SnapshotOrdinal(2L)), key)
         _ <- ordinaryStorage.write(snapshot)
-        _ <- ordinaryStorage.delete(snapshot.ordinal)
-        failedFileName = "hash/" + hashPathGenerator.get(snapshotHash.value)
+        failedFileName = "ordinal/" + ordinalPathGenerator.get(snapshot.ordinal.value.value.toString)
         failingStorage <- mkReadFailingStorage(tmpDir, failedFileName)
         result <- failingStorage
           .cleanupAboveOrdinal(
@@ -693,12 +834,12 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
           )
           .attempt
         hashFile <- mkHashFile(tmpDir, snapshot)
-        quarantinedFile = tmpDir / ".recovery-quarantine" / "hash" / snapshotHash.value
-      } yield expect.all(result.isLeft, hashFile.exists, quarantinedFile.notExists)
+        ordinalAfter <- ordinaryStorage.read(snapshot.ordinal)
+      } yield expect.all(result.isLeft, hashFile.exists, ordinalAfter.contains(snapshot))
     }
   }
 
-  test("cleanupAboveOrdinal removes a misplaced ordinal path and its newly orphaned future hash") { res =>
+  test("cleanupAboveOrdinal removes a misplaced future ordinal path and retains its unindexed hash") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -722,7 +863,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
           (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
         )
         hashAfter <- storage.read(futureHash)
-      } yield expect.all(misplacedOrdinalFile.notExists, canonicalOrdinalFile.notExists, hashAfter.isEmpty)
+      } yield expect.all(misplacedOrdinalFile.notExists, canonicalOrdinalFile.notExists, hashAfter.contains(future))
     }
   }
 
@@ -758,7 +899,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     }
   }
 
-  test("canonical cleanup structurally preserves the selected nlink-one anchor hash without decoding") { res =>
+  test("canonical cleanup leaves selected hash validation to anchor installation") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
@@ -779,16 +920,46 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
             (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
           )
           .attempt
-      } yield expect.all(result.isRight, selectedHashFile.exists)
+        anchorStatus <- storage.ensureOrdinalLink(selectedHash, SnapshotOrdinal(1L))
+        byHash <- storage.read(selectedHash)
+        ordinalExists <- storage.exists(SnapshotOrdinal.unsafeApply(1L))
+      } yield
+        expect.all(
+          result.isRight,
+          selectedHashFile.exists,
+          anchorStatus == OrdinalLinkStatus.HashUnreadable,
+          byHash.isEmpty,
+          !ordinalExists
+        )
     }
   }
 
-  test("cleanupAboveOrdinal fails loud on an unexpected hidden index directory") { res =>
+  test("cleanupAboveOrdinal never traverses an unrelated hash tree") { res =>
     implicit val (_, kryo, j, h, sp, gsps) = res
     implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
 
     File.temporaryDirectory() { tmpDir =>
       val unexpectedDirectory = tmpDir / "hash" / "aaa" / "bbb" / "hidden"
+
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        _ <- IO.blocking(unexpectedDirectory.createDirectories())
+        result <- storage
+          .cleanupAboveOrdinal(
+            SnapshotOrdinal(1L),
+            (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
+          )
+          .attempt
+      } yield expect.all(result.isRight, unexpectedDirectory.exists)
+    }
+  }
+
+  test("cleanupAboveOrdinal still rejects an unexpected ordinal index directory") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+    implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
+
+    File.temporaryDirectory() { tmpDir =>
+      val unexpectedDirectory = tmpDir / "ordinal" / "0" / "hidden"
 
       for {
         storage <- mkLocalFileSystemStorage(tmpDir)
@@ -835,6 +1006,109 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
         finalOrdinal <- storage.read(future.ordinal)
         finalHash <- storage.read(futureHash)
       } yield expect.all(first.isLeft, afterCut.nonEmpty, finalOrdinal.isEmpty, finalHash.isEmpty)
+    }
+  }
+
+  test("cleanupAboveOrdinal neither fails nor discards orphans whose ordinal selects an unhashable hasher") { res =>
+    implicit val (_, kryo, j, h, sp, gsps) = res
+
+    // Mirrors production. `last-kryo-hash-ordinal` routes ordinals at or below the boundary to the Kryo hasher, and
+    // the Kryo registrar carries GlobalIncrementalSnapshotV1 rather than the current snapshot class -- so hashing
+    // those raises `Class is not registered`. Every other test in this suite pins the JSON hasher via
+    // forSyncAlwaysCurrent, which is why an unguarded verification could abort a real rollback undetected.
+    val unhashable: Hasher[IO] = new Hasher[IO] {
+      private def unregistered[A]: IO[A] = IO.raiseError(
+        new IllegalArgumentException("Class is not registered: io.constellationnetwork.schema.GlobalIncrementalSnapshot")
+      )
+      def hash[A: Encoder](data: A): IO[Hash] = unregistered
+      def hashBytes(bytes: Array[Byte]): IO[Hash] = unregistered
+      def compare[A: Encoder](data: A, expectedHash: Hash): IO[Boolean] = unregistered
+      def getLogic(ordinal: SnapshotOrdinal): HashLogic = KryoHash
+      def prefixedHash[A: Encoder](data: A, prefix: Array[Byte]): IO[Hash] = unregistered
+    }
+
+    val boundary = SnapshotOrdinal.unsafeApply(50000L)
+    implicit val selector: HasherSelector[IO] = HasherSelector.forSync(
+      h,
+      unhashable,
+      new HashSelect {
+        def select(ordinal: SnapshotOrdinal): HashLogic = if (ordinal <= boundary) KryoHash else JsonHash
+      }
+    )
+
+    File.temporaryDirectory() { tmpDir =>
+      for {
+        storage <- mkLocalFileSystemStorage(tmpDir)
+        snapshots <- mkSnapshots
+        (_, base) = snapshots
+        mkOrphan = (ord: Long) =>
+          for {
+            key <- KeyPairGenerator.makeKeyPair[IO]
+            signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+              base.value.copy(ordinal = SnapshotOrdinal.unsafeApply(ord)),
+              key
+            )
+            hash <- signed.value.hash
+            _ <- storage.write(signed)
+            _ <- storage.delete(signed.ordinal)
+          } yield hash
+        // below the anchor and unhashable: never a removal candidate, so it must not even be verified
+        belowAnchor <- mkOrphan(100L)
+        // Hash-only objects above the anchor are also retained without consulting the hasher.
+        aboveAnchorUnhashable <- mkOrphan(40001L)
+        // A current-format orphan is equally inert.
+        aboveAnchorHashable <- mkOrphan(50001L)
+        _ <- storage.cleanupAboveOrdinal(
+          SnapshotOrdinal.unsafeApply(40000L),
+          (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal)
+        )
+        keptBelow <- storage.read(belowAnchor)
+        keptUnhashable <- storage.read(aboveAnchorUnhashable)
+        keptHashable <- storage.read(aboveAnchorHashable)
+      } yield expect.all(keptBelow.nonEmpty, keptUnhashable.nonEmpty, keptHashable.nonEmpty)
+    }
+  }
+
+  List(false, true).foreach { anchorPresent =>
+    test(s"cleanupAboveOrdinal ignores hash timestamps and bodies with anchorPresent=$anchorPresent") { res =>
+      implicit val (_, kryo, j, h, sp, gsps) = res
+      implicit val selector: HasherSelector[IO] = HasherSelector.forSyncAlwaysCurrent(h)
+      val anchor = SnapshotOrdinal.unsafeApply(40000L)
+
+      File.temporaryDirectory() { tmpDir =>
+        for {
+          storage <- mkLocalFileSystemStorage(tmpDir)
+          snapshots <- mkSnapshots
+          (_, base) = snapshots
+          key <- KeyPairGenerator.makeKeyPair[IO]
+          anchorSigned <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.value.copy(ordinal = anchor), key)
+          anchorHash <- anchorSigned.value.hash
+          _ <- storage.write(anchorSigned).whenA(anchorPresent)
+          orphanHashes <- List(40001L, 40002L).traverse { ordinal =>
+            for {
+              snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+                base.value.copy(ordinal = SnapshotOrdinal.unsafeApply(ordinal)),
+                key
+              )
+              hash <- snapshot.value.hash
+              _ <- storage.write(snapshot)
+              _ <- storage.delete(snapshot.ordinal)
+            } yield hash
+          }
+          _ <- orphanHashes.zip(List(0L, Long.MaxValue / 1000000L)).traverse_ {
+            case (hash, millis) =>
+              storage.getPath(hash).flatMap { file =>
+                IO.blocking(java.nio.file.Files.setLastModifiedTime(file.path, java.nio.file.attribute.FileTime.fromMillis(millis)))
+              }
+          }
+          // Fail the test if cleanup opens any hash body, independent of its age or link count.
+          noHashReads <- mkReadFailingStorage(tmpDir, "hash/")
+          _ <- noHashReads.cleanupAboveOrdinal(anchor, (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal))
+          _ <- noHashReads.cleanupCanonicalSuffix(anchor, anchorHash, (hash, ordinal) => storage.delete(hash) >> storage.delete(ordinal))
+          kept <- orphanHashes.traverse(storage.read)
+          futureIndexes <- storage.findAbove(anchor).compile.toList
+        } yield expect.all(kept.forall(_.nonEmpty), futureIndexes.isEmpty)
+      }
     }
   }
 
