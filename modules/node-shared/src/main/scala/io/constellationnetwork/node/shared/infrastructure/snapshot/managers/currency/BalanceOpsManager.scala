@@ -56,19 +56,18 @@ class BalanceOpsManager[F[_]: Async](
 
   /** Validates the fee transactions carried by a data application block and returns the ones that passed.
     *
-    * At or above the activation ordinal each transaction is judged on its own and the invalid ones are left out, so the rest of the set is
+    * With `dropInvalidTransactions` set, each transaction is judged on its own and the invalid ones are left out, so the rest of the set is
     * still applied instead of one user-supplied transaction failing the round. The selection is deterministic: a verdict is a pure function
     * of the transaction and the authorization flag, and the surviving set keeps the incoming `SortedSet` ordering, so every node computes
     * the same subset.
     *
-    * A drop here is safe only because the data application layer already rejects, with the same rules for the same parent Global ordinal,
-    * every fee transaction this validator would drop: source != destination, and the signer policy selected by fee-transaction-security
+    * A drop is safe only because the data application layer already rejects, with the same rules for the same parent Global ordinal, every
+    * fee transaction this validator would drop: source != destination, and the signer policy selected by fee-transaction-security
     * (exclusively the source before it, source plus valid co-signers after it). Its data update is therefore never combined without the
     * fee. Keep both layers aligned when changing either rule.
     *
-    * Below the activation ordinal the earlier all-or-nothing behaviour is kept for replay: there the data application layer does not check
-    * source != destination, a failure raised and produced no artifact, and so no signed snapshot below the gate holds a set that per
-    * transaction selection would prune.
+    * Without it, any invalid transaction fails the whole set. Callers clear it below fixing-data-application-fee-validation, where the data
+    * application layer does not check source != destination and a drop could leave a combined data update unpaid.
     *
     * @return
     *   the transactions that passed validation, in the incoming order
@@ -76,9 +75,9 @@ class BalanceOpsManager[F[_]: Async](
   def validateFeeTxs(
     maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
     enforceWalletAuthorization: Boolean,
-    atOrAboveActivationOrdinal: Boolean
+    dropInvalidTransactions: Boolean
   ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
-    if (!atOrAboveActivationOrdinal)
+    if (!dropInvalidTransactions)
       NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(maybeTxs.pure[F]) { nonEmptyTxs =>
         feeTransactionValidator.validate(nonEmptyTxs, enforceWalletAuthorization).flatMap {
           case Validated.Valid(_) =>

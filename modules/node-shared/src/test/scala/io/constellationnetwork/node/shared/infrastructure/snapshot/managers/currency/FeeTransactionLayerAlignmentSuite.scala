@@ -126,7 +126,7 @@ object FeeTransactionLayerAlignmentSuite extends MutableIOSuite {
       survivors <- balanceOps.validateFeeTxs(
         SortedSet(env.fee).some,
         enforceWalletAuthorization = policy.feeTransactionSecurityActive,
-        atOrAboveActivationOrdinal = true
+        dropInvalidTransactions = true
       )
       (after, _) <- balanceOps.acceptFeeTxs(balances, survivors, checkedArithmetic = true)
     } yield (env, Outcome(verdict, survivors, after.get(env.source)))

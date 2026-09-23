@@ -253,11 +253,11 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
 
     validatedFeeTxs <- balanceOps.validateFeeTxs(
       feeTransactionsForAcceptance,
-      isEnabled(
+      enforceWalletAuthorization = isEnabled(
         maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         feeTransactionSecurityActivationOrdinal
       ),
-      maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >=
+      dropInvalidTransactions = maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >=
         fixingDataApplicationFeeValidationActivationOrdinal
     )
 

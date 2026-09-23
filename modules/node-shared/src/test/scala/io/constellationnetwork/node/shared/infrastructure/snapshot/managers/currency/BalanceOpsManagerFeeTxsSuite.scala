@@ -208,12 +208,12 @@ object BalanceOpsManagerFeeTxsSuite extends SimpleIOSuite with Checkers {
   private val otherValidTx = feeTx(payer, payeeB, 20L, 2)
   private val selfPayingTx = feeTx(payer, payer, 30L, 3)
 
-  test("at or above the activation ordinal, an invalid fee transaction is dropped and the rest are applied") {
+  test("when dropping invalid transactions, an invalid fee transaction is dropped and the rest are applied") {
     // One invalid entry must not decide the fate of the whole set: the valid transactions alongside it are
     // still applied, and only the invalid one is left out.
     val txs = SortedSet(validTx, otherValidTx, selfPayingTx)
 
-    balanceOps.validateFeeTxs(txs.some, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true).map { result =>
+    balanceOps.validateFeeTxs(txs.some, enforceWalletAuthorization = true, dropInvalidTransactions = true).map { result =>
       expect.all(
         result.contains(SortedSet(validTx, otherValidTx)),
         result.forall(!_.contains(selfPayingTx))
@@ -221,43 +221,43 @@ object BalanceOpsManagerFeeTxsSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  test("at or above the activation ordinal, an all-invalid set yields an empty set rather than raising") {
+  test("when dropping invalid transactions, an all-invalid set yields an empty set rather than raising") {
     balanceOps
-      .validateFeeTxs(SortedSet(selfPayingTx).some, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true)
+      .validateFeeTxs(SortedSet(selfPayingTx).some, enforceWalletAuthorization = true, dropInvalidTransactions = true)
       .attempt
       .map(result => expect(result == Right(Some(SortedSet.empty[Signed[FeeTransaction]]))))
   }
 
-  test("at or above the activation ordinal, an all-valid set is returned unchanged") {
+  test("when dropping invalid transactions, an all-valid set is returned unchanged") {
     val txs = SortedSet(validTx, otherValidTx)
 
     balanceOps
-      .validateFeeTxs(txs.some, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true)
+      .validateFeeTxs(txs.some, enforceWalletAuthorization = true, dropInvalidTransactions = true)
       .map(result => expect(result.contains(txs)))
   }
 
-  test("below the activation ordinal, an invalid fee transaction still raises") {
+  test("when not dropping invalid transactions, an invalid fee transaction still raises") {
     // Deliberate: selecting per transaction changes which artifact the same events produce, and below the
     // gate the data application layer applies its earlier rules, so a mixed fleet would disagree during a
     // rolling upgrade.
     balanceOps
-      .validateFeeTxs(SortedSet(validTx, selfPayingTx).some, enforceWalletAuthorization = false, atOrAboveActivationOrdinal = false)
+      .validateFeeTxs(SortedSet(validTx, selfPayingTx).some, enforceWalletAuthorization = false, dropInvalidTransactions = false)
       .attempt
       .map(result => expect(result.isLeft))
   }
 
-  test("below the activation ordinal, an all-valid set is returned unchanged") {
+  test("when not dropping invalid transactions, an all-valid set is returned unchanged") {
     val txs = SortedSet(validTx, otherValidTx)
 
     balanceOps
-      .validateFeeTxs(txs.some, enforceWalletAuthorization = false, atOrAboveActivationOrdinal = false)
+      .validateFeeTxs(txs.some, enforceWalletAuthorization = false, dropInvalidTransactions = false)
       .map(result => expect(result.contains(txs)))
   }
 
   test("no fee transactions is a no-op in both modes") {
     for {
-      above <- balanceOps.validateFeeTxs(none, enforceWalletAuthorization = true, atOrAboveActivationOrdinal = true)
-      below <- balanceOps.validateFeeTxs(none, enforceWalletAuthorization = false, atOrAboveActivationOrdinal = false)
+      above <- balanceOps.validateFeeTxs(none, enforceWalletAuthorization = true, dropInvalidTransactions = true)
+      below <- balanceOps.validateFeeTxs(none, enforceWalletAuthorization = false, dropInvalidTransactions = false)
     } yield expect.all(above.isEmpty, below.isEmpty)
   }
 }
