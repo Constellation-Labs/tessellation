@@ -366,9 +366,12 @@ object types {
     interval: FiniteDuration,
     maxConcurrentRounds: PosInt,
     maxOrdinalsPerRequest: Option[PosInt] = None,
+    // Peers with an unresolved gossip failure use a separate, deliberately
+    // small worker lane so they cannot consume the healthy-peer pool.
+    maxConcurrentSuspectRounds: PosInt = PosInt.unsafeFrom(1),
     // Per-peer cooldown for chronic gossip failures. After `failureCountThreshold`
-    // failed gossip rounds within `failureWindow`, the peer is excluded from this
-    // runner's peer selection until enough failure timestamps age out of the window.
+    // consecutive failed gossip rounds, the peer is excluded from this runner's
+    // peer selection for `failureWindow`. A successful round clears the count.
     // This bypasses the `/session`-based LocalHealthcheck recovery loop that keeps
     // chronic non-signers (peers whose `/session` works but who don't participate
     // in consensus rumor exchange) cycling back into the gossip pool every cycle.

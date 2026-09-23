@@ -1,7 +1,5 @@
 package io.constellationnetwork.node.shared.infrastructure.gossip.p2p
 
-import java.util.concurrent.TimeoutException
-
 import cats.data.NonEmptySet
 import cats.effect.std.{Random, Supervisor}
 import cats.effect.testkit.TestControl
@@ -10,12 +8,14 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.node.shared.config.types.{GossipRoundConfig, GossipTimeoutsConfig}
+import io.constellationnetwork.ext.cats.syntax.next._
+import io.constellationnetwork.node.shared.config.types.{GossipRoundConfig, GossipTimeoutsConfig, RumorStorageConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.http.p2p.headers.`X-Id`
+import io.constellationnetwork.node.shared.http.p2p.middlewares.TimeoutMiddleware.{ResponseBodyIdleTimeout, ResponseBodyLifetimeTimeout}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.ClusterStorage
-import io.constellationnetwork.node.shared.infrastructure.gossip.GossipRoundRunner
+import io.constellationnetwork.node.shared.infrastructure.gossip.{GossipDaemon, GossipRoundRunner, RumorStorage}
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.schema.cluster._
 import io.constellationnetwork.schema.generation.Generation
@@ -31,6 +31,7 @@ import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.auto._
 import fs2.{Chunk, Stream}
 import io.circe.Json
+import io.circe.parser.decode
 import io.circe.syntax._
 import org.http4s._
 import org.http4s.client.{Client, UnexpectedStatus}
@@ -76,7 +77,7 @@ object GossipResponseDeadlineSuite extends SimpleIOSuite {
         acquiredCount <- acquired.get
         releasedCount <- released.get
       } yield
-        expect(results.forall(_.left.exists(_.isInstanceOf[TimeoutException]))) &&
+        expect(results.forall(_.left.exists(_.isInstanceOf[ResponseBodyIdleTimeout]))) &&
           expect.same(acquiredCount, 5) && expect.same(releasedCount, 5)
     }
   }
@@ -93,7 +94,9 @@ object GossipResponseDeadlineSuite extends SimpleIOSuite {
         result <- query(transport).evalTap(_ => emitted.update(_ + 1)).compile.drain.attempt
         count <- emitted.get
         releasedCount <- released.get
-      } yield expect(result.left.exists(_.isInstanceOf[TimeoutException])) && expect.same(count, 1) && expect.same(releasedCount, 1)
+      } yield
+        expect(result.left.exists(_.isInstanceOf[ResponseBodyIdleTimeout])) &&
+          expect.same(count, 1) && expect.same(releasedCount, 1)
     }
   }
 
@@ -130,7 +133,7 @@ object GossipResponseDeadlineSuite extends SimpleIOSuite {
         received <- chunks.get
         releasedCount <- released.get
       } yield
-        expect(result.left.exists(_.isInstanceOf[TimeoutException])) &&
+        expect(result.left.exists(_.isInstanceOf[ResponseBodyLifetimeTimeout])) &&
           expect.same(elapsed, config.response) && expect(received > 100) && expect.same(releasedCount, 1)
     }
   }
@@ -195,6 +198,62 @@ object GossipResponseDeadlineSuite extends SimpleIOSuite {
             healthcheckCount <- healthchecks.get
           } yield expect(acquisitionCount >= 2) && expect(processedCount >= 2) && expect.same(healthcheckCount, 1)
         }
+      }
+    }
+  }
+
+  test("a partial timed-out daemon round advances the cursor in the next request") {
+    TestControl.executeEmbed {
+      Random.scalaUtilRandomSeedInt[IO](0).flatMap { implicit random =>
+        val peer = Peer(
+          id,
+          context.ip,
+          Port.fromInt(9000).get,
+          context.port,
+          ClusterSessionToken(Generation.MinValue),
+          SessionToken(Generation.MinValue),
+          NodeState.Ready,
+          Responsive,
+          Hash.empty
+        )
+
+        for {
+          storage <- RumorStorage.make[IO](RumorStorageConfig(50L, 20L, 50L))
+          requests <- Ref.of[IO, List[PeerRumorInquiryRequest]](List.empty)
+          transport = Client[IO] { request =>
+            Resource.eval {
+              request.bodyText.compile.string
+                .flatMap(body => IO.fromEither(decode[PeerRumorInquiryRequest](body)))
+                .flatMap { inquiry =>
+                  requests.modify { previous =>
+                    val responseBody =
+                      if (previous.isEmpty)
+                        Stream.chunk(Chunk.array((rumor.asJson.noSpaces + "\n").getBytes("UTF-8"))) ++ Stream.never[IO]
+                      else
+                        Stream.empty
+                    (previous :+ inquiry, Response[IO]().putHeaders(`X-Id`(id)).withBodyStream(responseBody))
+                  }
+                }
+            }
+          }
+          client = GossipClient.make(transport, validSession, config)
+          roundCfg = GossipRoundConfig(1, 200.millis, 1)
+          first <- GossipDaemon
+            .runPeerRound(storage, client, peer, roundCfg)(
+              storage.addPeerRumorIfConsecutive(_).void
+            )
+            .attempt
+          second <- GossipDaemon
+            .runPeerRound(storage, client, peer, roundCfg)(
+              storage.addPeerRumorIfConsecutive(_).void
+            )
+            .attempt
+          recorded <- requests.get
+          nextOrdinal = Ordinal(rumor.ordinal.generation, rumor.ordinal.counter.next)
+        } yield
+          expect(first.left.exists(_.isInstanceOf[ResponseBodyIdleTimeout])) &&
+            expect(second.isRight) &&
+            expect.same(recorded.map(_.ordinals), List(Map.empty, Map(id -> nextOrdinal)))
       }
     }
   }
