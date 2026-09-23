@@ -142,7 +142,7 @@ object FeeTransactionValidator {
       allowSourceAuthorizedCoSigners = true
     )
 
-  private[validations] def validateAllFeeTransactionsWithSignerPolicy[F[_]: Async: JsonSerializer: SecurityProvider](
+  def validateAllFeeTransactionsWithSignerPolicy[F[_]: Async: JsonSerializer: SecurityProvider](
     dataTransactions: DataTransactions,
     balances: Map[Address, Balance],
     dataApplication: BaseDataApplicationService[F],

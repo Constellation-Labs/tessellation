@@ -63,8 +63,8 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
 
   private def signedEnvelope(
     coSigned: Boolean
-  )(implicit
-    jsonSerializer: JsonSerializer[IO],
+  )(
+    implicit jsonSerializer: JsonSerializer[IO],
     hasher: Hasher[IO],
     securityProvider: SecurityProvider[IO]
   ): IO[(Address, DataTransactions)] =
@@ -90,8 +90,8 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
   private def validate(
     coSigned: Boolean,
     allowSourceAuthorizedCoSigners: Boolean
-  )(implicit
-    jsonSerializer: JsonSerializer[IO],
+  )(
+    implicit jsonSerializer: JsonSerializer[IO],
     hasher: Hasher[IO],
     securityProvider: SecurityProvider[IO]
   ): IO[ValidatedNec[DataApplicationValidationError, Unit]] =
