@@ -57,13 +57,18 @@ class BalanceOpsManager[F[_]: Async](
   /** Validates the fee transactions carried by a data application block and returns the ones that passed.
     *
     * At or above the activation ordinal each transaction is judged on its own and the invalid ones are left out, so the rest of the set is
-    * still applied. This mirrors how `applyFeeTransactions` already treats a transaction its source cannot cover. The selection is
-    * deterministic: a verdict is a pure function of the transaction and the authorization flag, and the surviving set keeps the incoming
-    * `SortedSet` ordering, so every node computes the same subset.
+    * still applied instead of one user-supplied transaction failing the round. The selection is deterministic: a verdict is a pure function
+    * of the transaction and the authorization flag, and the surviving set keeps the incoming `SortedSet` ordering, so every node computes
+    * the same subset.
     *
-    * Below the activation ordinal the earlier all-or-nothing behaviour is kept. Selecting per transaction changes which artifact a given
-    * set of events produces, and down there the data application layer applies its earlier rules - it checks neither source != destination
-    * nor signature exclusivity - so a mixed fleet would disagree during a rolling upgrade.
+    * A drop here is safe only because the data application layer already rejects, with the same rules for the same parent Global ordinal,
+    * every fee transaction this validator would drop: source != destination, and the signer policy selected by fee-transaction-security
+    * (exclusively the source before it, source plus valid co-signers after it). Its data update is therefore never combined without the
+    * fee. Keep both layers aligned when changing either rule.
+    *
+    * Below the activation ordinal the earlier all-or-nothing behaviour is kept for replay: there the data application layer does not check
+    * source != destination, a failure raised and produced no artifact, and so no signed snapshot below the gate holds a set that per
+    * transaction selection would prune.
     *
     * @return
     *   the transactions that passed validation, in the incoming order

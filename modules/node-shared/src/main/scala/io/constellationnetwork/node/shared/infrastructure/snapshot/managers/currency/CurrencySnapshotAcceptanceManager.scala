@@ -169,8 +169,8 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     extends CurrencySnapshotAcceptanceManager[F] {
   private val feeTransactionSecurityActivationOrdinal = fieldsAddedOrdinals.feeTransactionSecurityFor(environment)
   private val currencySnapshotProtocolV1ActivationOrdinal = fieldsAddedOrdinals.currencySnapshotProtocolV1For(environment)
-  // Same boundary the data application layer uses for `validateEveryFeeTransaction`, so both layers agree on when
-  // an invalid fee transaction becomes a drop rather than a raise.
+  // Same boundary the data application layer uses for `validateEveryFeeTransaction`. From it on, the data application
+  // layer rejects every fee transaction this layer would drop, so a drop never leaves a combined update unpaid.
   private val fixingDataApplicationFeeValidationActivationOrdinal =
     fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(environment)
 
