@@ -137,20 +137,22 @@ object FeeTransactionLayerAlignmentSuite extends MutableIOSuite {
     policy <- List(preSecurity, security)
     signers <- List(SourceOnly, SourceAndCoSigner, CoSignerOnly)
   } test(s"${policy.name}, $signers: a fee accepted with its data update is also applied by final acceptance") { res =>
-      implicit val (jsonSerializer, hasher, securityProvider) = res
+    implicit val (jsonSerializer, hasher, securityProvider) = res
 
-      run(policy, signers).map {
-        case (env, outcome) =>
-          if (outcome.dataApplicationVerdict.isValid)
+    run(policy, signers).map {
+      case (env, outcome) =>
+        if (outcome.dataApplicationVerdict.isValid)
+          expect(
+            outcome.survivors.contains(SortedSet(env.fee)),
+            s"final acceptance dropped a fee the data application layer accepted: ${outcome.survivors}"
+          ).and(
             expect(
-              outcome.survivors.contains(SortedSet(env.fee)),
-              s"final acceptance dropped a fee the data application layer accepted: ${outcome.survivors}"
-            ) and expect(
               outcome.sourceBalanceAfter == debited,
               s"source should be debited to $debited, got ${outcome.sourceBalanceAfter}"
             )
-          else success
-      }
+          )
+        else success
+    }
   }
 
   test("before fee-transaction-security, a co-signed fee is rejected before its data update is combined") { res =>
@@ -170,9 +172,9 @@ object FeeTransactionLayerAlignmentSuite extends MutableIOSuite {
 
     run(security, SourceAndCoSigner).map {
       case (env, outcome) =>
-        expect(outcome.dataApplicationVerdict.isValid, s"data application verdict: ${outcome.dataApplicationVerdict}") and
-          expect(outcome.survivors.contains(SortedSet(env.fee)), s"final acceptance survivors: ${outcome.survivors}") and
-          expect(outcome.sourceBalanceAfter == debited, s"source balance after: ${outcome.sourceBalanceAfter}")
+        expect(outcome.dataApplicationVerdict.isValid, s"data application verdict: ${outcome.dataApplicationVerdict}")
+          .and(expect(outcome.survivors.contains(SortedSet(env.fee)), s"final acceptance survivors: ${outcome.survivors}"))
+          .and(expect(outcome.sourceBalanceAfter == debited, s"source balance after: ${outcome.sourceBalanceAfter}"))
     }
   }
 }
