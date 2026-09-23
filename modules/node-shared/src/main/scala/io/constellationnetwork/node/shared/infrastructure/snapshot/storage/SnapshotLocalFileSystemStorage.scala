@@ -125,12 +125,6 @@ abstract class SnapshotLocalFileSystemStorage[
     CrashSafeAtomicFileWriter.make[F](parent).flatMap(_.write(target.getFileName.toString, bytes))
   }
 
-  /** Snapshot readers treat malformed bodies as absent so anchor search and replay can progress. Decode failures are contained after
-    * reading the bytes; filesystem errors still propagate and must never be treated as permission to overwrite an unreadable device.
-    */
-  override def read(fileName: String): F[Option[Signed[S]]] =
-    readRecoveryIndex(fileName)
-
   def read(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
     read(toOrdinalName(ordinal))
 
@@ -215,6 +209,28 @@ abstract class SnapshotLocalFileSystemStorage[
         )
     }
   }
+
+  /** Whether the ordinal index serves this hash body: the same file (hard link) or, after recovery installs both indexes separately, a
+    * byte-identical copy. Stat-only while the link is intact; never decodes or hashes.
+    */
+  def isIndexed(hash: Hash, ordinal: SnapshotOrdinal): F[Boolean] =
+    (getPath(hash), getPath(toOrdinalName(ordinal))).flatMapN { (hashFile, ordinalFile) =>
+      Async[F]
+        .blocking(JFiles.isSameFile(hashFile.path, ordinalFile.path))
+        .ifM(
+          ifTrue = true.pure[F],
+          ifFalse = Async[F]
+            .blocking(JFiles.size(hashFile.path) === JFiles.size(ordinalFile.path))
+            .ifM(
+              ifFalse = false.pure[F],
+              ifTrue = (readBytes(toHashName(hash)), readBytes(toOrdinalName(ordinal))).mapN {
+                case (Some(hashBytes), Some(ordinalBytes)) => Arrays.equals(hashBytes, ordinalBytes)
+                case _                                     => false
+              }
+            )
+        )
+        .recover { case _: NoSuchFileException => false }
+    }
 
   def delete(ordinal: SnapshotOrdinal): F[Unit] =
     delete(toOrdinalName(ordinal))
@@ -330,32 +346,6 @@ abstract class SnapshotLocalFileSystemStorage[
       include = file => file.name.toLongOption.exists(_ > ordinal.value.value)
     )
 
-  /** Decode a snapshot body without conflating malformed JSON/Brotli/Kryo input with a failed filesystem read. Both decoders may throw
-    * rather than return Left for torn bytes; only those in-memory decode failures become None. readBytes remains outside the handlers.
-    */
-  private def readRecoveryIndex(fileName: String): F[Option[Signed[S]]] =
-    readBytes(fileName).flatMap {
-      case None => none[Signed[S]].pure[F]
-      case Some(bytes) =>
-        def useFallback(jsonError: Throwable): F[Option[Signed[S]]] =
-          Async[F].delay(deserializeFallback(bytes)).attempt.flatMap {
-            case Right(Right(snapshot))     => snapshot.some.pure[F]
-            case Left(fallbackError)        => warnUnreadable(jsonError, fallbackError)
-            case Right(Left(fallbackError)) => warnUnreadable(jsonError, fallbackError)
-          }
-
-        def warnUnreadable(jsonError: Throwable, fallbackError: Throwable): F[Option[Signed[S]]] =
-          logger.warn(fallbackError)(
-            s"Failed to deserialize snapshot file $fileName with both decoders; JSON error: ${jsonError.getMessage}"
-          ) >> none[Signed[S]].pure[F]
-
-        JsonSerializer[F].deserialize[Signed[S]](bytes).attempt.flatMap {
-          case Right(Right(snapshot)) => snapshot.some.pure[F]
-          case Left(jsonError)        => useFallback(jsonError)
-          case Right(Left(jsonError)) => useFallback(jsonError)
-        }
-    }
-
   private def unlinkRecoveryIndex(file: File): F[Unit] =
     Async[F]
       .blocking(file.delete())
@@ -383,7 +373,7 @@ abstract class SnapshotLocalFileSystemStorage[
     retainedAnchorHash.traverse_ { expectedHash =>
       val ordinalName = toOrdinalName(ordinal)
 
-      readRecoveryIndex(ordinalName).flatMap {
+      read(ordinalName).flatMap {
         case Some(snapshot) if snapshot.ordinal === ordinal =>
           HasherSelector[F]
             .forOrdinal(ordinal) { implicit hasher =>
@@ -423,7 +413,7 @@ abstract class SnapshotLocalFileSystemStorage[
               s"Removing misplaced future ordinal index path=${file.pathAsString} ordinal=${ordinal.show}"
             ) >> unlinkRecoveryIndex(file)
           else
-            readRecoveryIndex(toOrdinalName(ordinal)).flatMap {
+            read(toOrdinalName(ordinal)).flatMap {
               case Some(snapshot) if snapshot.ordinal === ordinal =>
                 HasherSelector[F].forOrdinal(ordinal) { implicit hasher =>
                   for {

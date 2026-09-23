@@ -194,33 +194,12 @@ object SnapshotRoutesHashServingSuite extends MutableIOSuite {
     }
   }
 
-  test("hash reads reject a readable body stored under the wrong requested hash") { res =>
-    implicit val (supervisor, kryo, json, hasher, security) = res
-    File.temporaryDirectory() { root =>
-      for {
-        files <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path((root / "snapshots").pathAsString))
-        s <- snapshot
-        _ <- files.write(s)
-        realHash <- s.value.hash
-        wrongHash = Hash("a" * 64)
-        original <- files.getPath(realHash)
-        wrong <- files.getPath(wrongHash)
-        _ <- IO.blocking { wrong.parent.createDirectories(); wrong.writeByteArray(original.byteArray) }
-        built <- routes(root, files, HasherSelector.forSyncAlwaysCurrent(hasher))
-        (api, _) = built
-        responses <- fetchBoth(api, wrongHash)
-      } yield expect(clue(responses).forall(_._1 == Status.NotFound))
-    }
-  }
-
-  test("hash reads select the hasher for the requested snapshot ordinal") { res =>
+  test("hash reads serve indexed disk snapshots without hashing") { res =>
     implicit val (supervisor, kryo, json, hasher, security) = res
     val selector = new HasherSelector[IO] {
-      def getForOrdinal(ordinal: SnapshotOrdinal): Hasher[IO] = {
-        require(ordinal == SnapshotOrdinal.unsafeApply(11L))
-        hasher
-      }
-      def getCurrent: Hasher[IO] = throw new IllegalStateException("historical serving must select by ordinal")
+      def getForOrdinal(ordinal: SnapshotOrdinal): Hasher[IO] =
+        throw new IllegalStateException(s"hash serving must not hash ordinal=$ordinal")
+      def getCurrent: Hasher[IO] = throw new IllegalStateException("hash serving must not hash")
     }
     File.temporaryDirectory() { root =>
       for {
@@ -263,7 +242,9 @@ object SnapshotRoutesHashServingSuite extends MutableIOSuite {
         _ <- snapshotHashCalls.set(0)
         responses <- fetchBoth(api, hash)
         calls <- snapshotHashCalls.get
-      } yield expect.all(clue(responses).forall(_ == ((Status.Ok, s.some))), calls == 2)
+      } yield
+        expect(clue(responses).forall(_ == ((Status.Ok, s.some))))
+          .and(expect(calls == 0, s"cached hash serving should not hash, got $calls calls"))
     }
   }
 
@@ -277,6 +258,9 @@ object SnapshotRoutesHashServingSuite extends MutableIOSuite {
         hash <- s.value.hash
         _ <- files.write(s)
         hashFile <- files.getPath(hash)
+        ordinalFile <- files.getPath("ordinal/" + files.ordinalPathGenerator.get(s.ordinal.value.value.toString))
+        // A copied (non-linked) ordinal index is verified by content, which reads the ordinal bytes.
+        _ <- IO.blocking { val bytes = ordinalFile.byteArray; ordinalFile.delete(); ordinalFile.writeByteArray(bytes) }
         before <- IO.blocking(hashFile.byteArray.toVector)
         failing = new SnapshotLocalFileSystemStorage[IO, GlobalIncrementalSnapshot](path) {
           def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =

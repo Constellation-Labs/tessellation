@@ -21,6 +21,11 @@ trait SnapshotStorage[F[_], S <: Snapshot, State] {
   def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hashed[S]]]
 
   def get(hash: Hash): F[Option[Signed[S]]]
+
+  /** A snapshot servable by hash: the body plus an ordinal index for that same body. Filesystem-backed stores override this to exclude
+    * retained hash-only objects; stores without such residue serve `get`.
+    */
+  def getIndexed(hash: Hash): F[Option[Signed[S]]] = get(hash)
   def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hash]]
 
   /** Publish an already validated download or recovery terminal pair as the visible head. Unlike `prepend`, this does not require
