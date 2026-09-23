@@ -55,7 +55,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "subTrieRoots" -> allEnvironments(9999999L, 9999999L, 5880000L),
     "delegatedRewardsFullCommittee" -> allEnvironments(9999999L, 9999999L, 5880000L),
     "feeTransactionSecurity" -> allEnvironments(9999999L, 9999999L, 5880000L),
-    "fixingFeeTransactionBalanceOverflow" -> allEnvironments(6814499L, 3255000L, 5905000L),
+    "fixingFeeTransactionBalanceOverflow" -> allEnvironments(6814499L, 3255000L, 9999999L),
     "currencySnapshotProtocolV1" -> Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue),
     "fixingDataApplicationFeeValidation" -> allEnvironments(6818000L, 9999999L, 9999999L),
     "fixingAllowSpendDestinationCredit" -> allEnvironments(6818000L, 9999999L, 9999999L),
