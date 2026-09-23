@@ -4,7 +4,7 @@ import cats.data.NonEmptySet
 import cats.syntax.option._
 
 import scala.collection.immutable.SortedMap
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types.DelegatedRewardsConfig
@@ -125,12 +125,16 @@ object types {
   case class GossipRoundConfig(
     fanout: PosInt,
     interval: FiniteDuration,
-    maxConcurrentRounds: PosInt
+    maxConcurrentRounds: PosInt,
+    maxConcurrentSuspectRounds: PosInt = PosInt.unsafeFrom(1),
+    failureCountThreshold: PosInt = PosInt.unsafeFrom(3),
+    failureWindow: FiniteDuration = 60.seconds
   )
 
   case class GossipTimeoutsConfig(
     routes: FiniteDuration,
-    client: FiniteDuration
+    client: FiniteDuration,
+    response: FiniteDuration
   )
 
   case class GossipConfig(

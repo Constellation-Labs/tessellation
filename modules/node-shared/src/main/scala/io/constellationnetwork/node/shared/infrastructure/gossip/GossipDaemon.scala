@@ -35,6 +35,19 @@ trait GossipDaemon[F[_]] {
 
 object GossipDaemon {
 
+  private[gossip] def runPeerRound[F[_]: Async](
+    rumorStorage: RumorStorage[F],
+    gossipClient: GossipClient[F],
+    peer: Peer
+  )(consume: Signed[PeerRumorRaw] => F[Unit]): F[Unit] =
+    rumorStorage.getLastPeerOrdinals.flatMap { lastOrdinals =>
+      val nextOrdinals = lastOrdinals.view
+        .mapValues(o => Ordinal(o.generation, o.counter.next))
+        .toMap
+
+      gossipClient.queryPeerRumors(PeerRumorInquiryRequest(nextOrdinals)).run(peer).evalMap(consume).compile.drain
+    }
+
   def make[F[_]: Async: Random: Metrics](
     rumorStorage: RumorStorage[F],
     rumorQueue: Queue[F, Hashed[RumorRaw]],
@@ -172,18 +185,8 @@ object GossipDaemon {
         }
 
       private def peerRound(peer: Peer): F[Unit] =
-        rumorStorage.getLastPeerOrdinals.flatMap { lastOrdinals =>
-          val nextOrdinals = lastOrdinals.view
-            .mapValues(o => Ordinal(o.generation, o.counter.next))
-            .toMap
-
-          gossipClient
-            .queryPeerRumors(PeerRumorInquiryRequest(nextOrdinals))
-            .run(peer)
-            .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
-            .enqueueUnterminated(rumorQueue)
-            .compile
-            .drain
+        GossipDaemon.runPeerRound(rumorStorage, gossipClient, peer) { rumor =>
+          hasherSelector.withCurrent(implicit hasher => rumor.toHashed).flatMap(rumorQueue.offer)
         }
 
       private def commonRound(peer: Peer): F[Unit] =
