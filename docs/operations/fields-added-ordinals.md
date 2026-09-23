@@ -77,7 +77,7 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `delegated-rewards-full-committee` | 9999999 | 9999999 | 5880000 | 0 |
 | `fee-transaction-security` | 9999999 | 9999999 | 5880000 | 0 |
 | `currency-snapshot-protocol-v1` | absent | absent | absent | 0 |
-| `fixing-fee-transaction-balance-overflow` | 6814499 | 3255000 | 5905000 | 0 |
+| `fixing-fee-transaction-balance-overflow` | 6814499 | 3255000 | 9999999 | 0 |
 | `fixing-data-application-fee-validation` | 6818000 | 9999999 | 9999999 | 0 |
 | `fixing-allow-spend-destination-credit` | 6818000 | 9999999 | 9999999 | 0 |
 | `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 9999999 | 0 |
