@@ -70,7 +70,7 @@ package object pureconfig {
       .map(SortedMap.from(_))
   implicit val envToOrdinalToDustSweepReader: ConfigReader[Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
-  implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
+  private val existingFieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
     ConfigReader.forProduct22(
       "tessellation-3-migration",
       "tessellation-301-migration",
@@ -94,5 +94,40 @@ package object pureconfig {
       "preventing-allow-spend-resurrection",
       "fixing-global-allow-spend-expiration",
       "fixing-delegated-stake-double-withdrawal"
-    )(FieldsAddedOrdinals.apply)
+    )(
+      (
+        a: Map[AppEnvironment, SnapshotOrdinal],
+        b: Map[AppEnvironment, SnapshotOrdinal],
+        c: Map[AppEnvironment, SnapshotOrdinal],
+        d: Map[AppEnvironment, SnapshotOrdinal],
+        e: Map[AppEnvironment, SnapshotOrdinal],
+        f: Map[AppEnvironment, SnapshotOrdinal],
+        g: Map[AppEnvironment, SnapshotOrdinal],
+        h: Map[AppEnvironment, SnapshotOrdinal],
+        i: Map[AppEnvironment, SnapshotOrdinal],
+        j: Map[AppEnvironment, SnapshotOrdinal],
+        k: Map[AppEnvironment, SnapshotOrdinal],
+        l: Map[AppEnvironment, SnapshotOrdinal],
+        m: Map[AppEnvironment, SnapshotOrdinal],
+        n: Map[AppEnvironment, SnapshotOrdinal],
+        o: Map[AppEnvironment, SnapshotOrdinal],
+        p: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]],
+        q: Map[AppEnvironment, SnapshotOrdinal],
+        r: Map[AppEnvironment, SnapshotOrdinal],
+        s: Map[AppEnvironment, SnapshotOrdinal],
+        t: Map[AppEnvironment, SnapshotOrdinal],
+        u: Map[AppEnvironment, SnapshotOrdinal],
+        v: Map[AppEnvironment, SnapshotOrdinal]
+      ) => FieldsAddedOrdinals(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v)
+    )
+
+  // forProduct readers stop at 22 fields. Read the appended optional gate separately without
+  // changing any historical field mapping or requiring old configurations to add a burn entry.
+  implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] = ConfigReader.fromCursor { cursor =>
+    for {
+      existing <- existingFieldsAddedOrdinalsReader.from(cursor)
+      obj <- cursor.asObjectCursor
+      activation <- ConfigReader[Option[Map[AppEnvironment, SnapshotOrdinal]]].from(obj.atKeyOrUndefined("burn-action-activation"))
+    } yield existing.copy(burnActionActivation = activation.getOrElse(Map.empty))
+  }
 }
