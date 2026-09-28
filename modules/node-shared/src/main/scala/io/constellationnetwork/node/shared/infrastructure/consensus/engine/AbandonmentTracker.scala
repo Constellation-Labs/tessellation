@@ -1,14 +1,18 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
 import cats.effect.kernel.{Async, Ref}
+import cats.effect.syntax.all._
 import cats.syntax.all._
 import cats.{Order, Show}
+
+import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog.{Category, Event => LogEvent}
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
+import io.constellationnetwork.schema.peer.PeerId
 
 import eu.timepit.refined.auto._
 
@@ -128,11 +132,121 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
   // of Ready peers report the same committed snapshot at or above the abandoned key? See
   // `AbandonmentTracker.EscalationSignal` for why frozen rumor state alone must never escalate,
   // and `PeersCommittedAheadProbe.make` for the standard implementation both layers wire in.
-  peersCommittedAheadProbe: Key => F[AbandonmentTracker.PeersAheadProbe]
+  peersCommittedAheadProbe: Key => F[AbandonmentTracker.PeersAheadProbe],
+  // Layer-supplied transport/discovery capabilities for the B2' rehabilitation pass and the B1' isolation repair. The default leaves
+  // every repair step inert (reported as not wired) so the engine behaves as before until a layer wires `IsolationRepair.Hooks.wired`.
+  isolationHooks: IsolationRepair.Hooks[F] = IsolationRepair.Hooks.none[F]
 ) {
 
   import ctx.{clusterStorage, config, logger, peerQualityTracker, queue, storage}
-  import AbandonmentTracker.EscalationCause
+  import AbandonmentTracker.{EscalationCause, EscalationSignal, Evidence, PeersAheadProbe, StaleKeyTelemetry, SuppressedBy}
+
+  /** B3' probe scheduling coordinator, shared by both abandonment paths, the locked-attempt path and the B1' repair. Residence gate = one
+    * time-trigger interval; completion-based cooldown = `config.abandonmentProbeCooldown`.
+    */
+  val probeCoordinator: ProbeCoordinator[F, Key] =
+    ProbeCoordinator.unsafe[F, Key](config.timeTriggerInterval, config.abandonmentProbeCooldown)
+
+  private val recheckLedger: IsolationRepair.PeerRecheckLedger[F] = IsolationRepair.PeerRecheckLedger.unsafe[F]
+  private val repairGuard: IsolationRepair.RunGuard[F] = IsolationRepair.RunGuard.unsafe[F](config.isolationRepairCooldown)
+
+  private val rehabilitationBudget: IsolationRepair.Budget = IsolationRepair.Budget(
+    sampleSize = config.rehabilitationSampleSize,
+    parallelism = IsolationRepair.Budget.Parallelism,
+    perPeerTimeout = IsolationRepair.Budget.PerPeerTimeout,
+    overallTimeout = IsolationRepair.Budget.OverallTimeout,
+    peerCooldown = config.isolationRepairPeerCooldown,
+    maxJitter = Duration.Zero
+  )
+
+  private val recheckBudget: IsolationRepair.Budget = rehabilitationBudget.copy(
+    sampleSize = Int.MaxValue,
+    parallelism = config.isolationRepairConcurrency,
+    maxJitter = AbandonmentTracker.RepairRecheckMaxJitter
+  )
+
+  /** D1 stale-key rate limiter, shared with `StallDetector` (which feeds it per monitor tick and captures at the same-key suppression
+    * boundary). See `AbandonmentTracker.StaleKeyTelemetry` for the reset and bounding contract.
+    */
+  val staleKeyTelemetry: StaleKeyTelemetry[F, Key] = StaleKeyTelemetry.unsafe[F, Key]
+
+  /** D2 disposition counter. Telemetry only: a metrics failure can never reach a consensus decision. */
+  private def recordDisposition(by: SuppressedBy): F[Unit] =
+    Metrics[F]
+      .incrementCounter("dag_consensus_recovery_suppressed_total", Seq(Metrics.unsafeLabelName("by") -> by.label))
+      .attempt
+      .void
+
+  private def dispositionOfTransition(transitioned: Boolean): SuppressedBy =
+    if (transitioned) SuppressedBy.Unsuppressed else SuppressedBy.StateTransitionFailed
+
+  /** D1: emit the rate-limited stale-key WARN for `key` with the attempt/resource/phase/view snapshot and the three separate ages
+    * (wall-clock parent age, monotonic local residence, monotonic time since the last observed external Facility). Called at the monitor's
+    * same-key suppression boundary and before `performAbandon` clears state, so locked attempts are visible too. Every effect here is
+    * `.attempt.void`: a logging or storage-read failure never changes a consensus decision.
+    */
+  def captureStaleKey(
+    site: String,
+    key: Key,
+    requestedReason: String,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    extraPairs: (String, String)*
+  ): F[Unit] =
+    captureStaleKeyWith(site, key, requestedReason, state, force = false, extraPairs.toList)
+
+  /** `force = true` bypasses the per-key reminder budget (used once per B1' repair run, which has its own cooldown). */
+  private def captureStaleKeyWith(
+    site: String,
+    key: Key,
+    requestedReason: String,
+    state: ConsensusState[Key, Status, Outcome, Kind],
+    force: Boolean,
+    extraPairs: List[(String, String)]
+  ): F[Unit] =
+    staleKeyTelemetry
+      .capture(key, ctx.lastOutcomeKeyOf(state.lastOutcome), force)
+      .flatMap(_.traverse_ { emission =>
+        for {
+          attemptId <- storage.getRoundAttemptId
+          resourceGeneration <- storage.getResourceGeneration(key)
+          nowWallMs <- Async[F].realTime.map(_.toMillis)
+          declarations <- storage.getPeerDeclarations(key)
+          responsivePeers <- clusterStorage.getResponsivePeers
+          retriable <- retriableAtSameKeyRef.get.map { case (lastKey, count) => if (lastKey.exists(_ === key)) count else 0 }
+          consecutive <- consecutiveAbandonmentsFor(key)
+          parentAgeMs = ctx.lastOutcomeEndTimeMsOf(state.lastOutcome).fold("unknown")(end => (nowWallMs - end).toString)
+          pairs = List(
+            "reason" -> "STALE_KEY",
+            "site" -> site,
+            "requestedReason" -> requestedReason,
+            "warnKind" -> emission.kind,
+            "warnsSoFar" -> emission.warnsSoFar.toString,
+            "attemptId" -> attemptId.toString,
+            "resourceGeneration" -> resourceGeneration.toString,
+            "phase" -> state.status.getClass.getSimpleName.stripSuffix("$"),
+            "phaseIndex" -> ctx.ops.phaseIndex(state.status).toString,
+            "view" -> state.viewNumber.toString,
+            "parentAgeMs" -> parentAgeMs,
+            "residenceMs" -> emission.residence.toMillis.toString,
+            "lastExternalFacilityAgoMs" -> emission.lastExternalFacilityAgo.fold("unknown")(_.toMillis.toString),
+            "facilitiesReceived" -> declarations.count { case (_, decls) => decls.facility.isDefined }.toString,
+            "committee" -> state.facilitators.value.size.toString,
+            "responsiveReadyPeers" -> responsivePeers.count(_.state === NodeState.Ready).toString,
+            "retriableAtSameKey" -> retriable.toString,
+            "consecutiveAbandonments" -> consecutive.toString
+          ) ++ extraPairs
+          _ <- ConsensusLog.warn(
+            logger,
+            Category.Stall,
+            key.toString,
+            ConsensusLog.role(ctx.selfId, state.leader),
+            LogEvent.StallDetected,
+            pairs: _*
+          )
+        } yield ()
+      })
+      .attempt
+      .void
 
   /** Emit a `RoundCompleted` tagged with the current attempt id so the FSM can drop it if the round has since advanced. See Bug A in the
     * fork-recovery post-mortem: an abandonment-queued `RoundCompleted` fired after a view change had moved the round forward and wiped the
@@ -193,7 +307,8 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
   def resetOnSuccessfulRound: F[Unit] =
     totalRecoveryAttemptsRef.set(0) >>
       retriableAtSameKeyRef.set((none[Key], 0)) >>
-      healthRef.update(_.copy(totalRecoveryAttempts = 0, wedgeDetectedAtMs = None))
+      healthRef.update(_.copy(totalRecoveryAttempts = 0, wedgeDetectedAtMs = None)) >>
+      staleKeyTelemetry.reset.attempt.void
 
   /** Threshold for declaring a "sustained wedge": retriable abandonments at the same key with no peer ahead. Set to half the recovery
     * threshold so the wedge signal fires before recovery would have been triggered if a peer WERE ahead. Read by Cluster.leave() guard.
@@ -404,6 +519,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                   "timeoutScheduled" -> timeoutScheduled.toString
                 ) >>
                   Metrics[F].incrementCounter("dag_consensus_abandon_skipped_certified_view_total") >>
+                  recordDisposition(SuppressedBy.ProtectedLockOrCertifiedTransition) >>
                   queue.offer(ConsensusCommand.CheckViewChangeApply(key, fromView, toView)).whenA(vccScheduled) >>
                   queue.offer(ConsensusCommand.CheckTimeoutCertificateApply(key, fromView, toView)).whenA(timeoutScheduled)
               case _
@@ -418,26 +534,34 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                 // round attempt id, so re-check the safety boundary at drain time as well.
                 reason match {
                   case _: AbandonReason.Lagging =>
-                    peersCommittedAheadProbe(key)
-                      .handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
-                      .flatMap { probe =>
+                    // The locked-attempt rule is unchanged: only a corroborated probe may release the lock. The
+                    // evidence unit runs through the B3' coordinator (rehabilitation pass, then the probe whenever
+                    // Ready peers exist); a suppressed unit reads as no evidence and retains the attempt.
+                    clusterStorage.getResponsivePeers
+                      .map(_.count(_.state === NodeState.Ready))
+                      .flatMap(readyPeerCount => gatherEvidence(key, EscalationSignal.noRumor, readyPeerCount))
+                      .flatMap { evidence =>
+                        val probe = evidence.probe
                         val action = AbandonmentTracker.lockedAttemptAction(reason, probe)
+                        val decisionSuppressedBy = action match {
+                          case AbandonmentTracker.LockedAttemptAction.RecoverByDownload => SuppressedBy.Unsuppressed
+                          case AbandonmentTracker.LockedAttemptAction.Retain            => evidence.suppressedBy(EscalationSignal.noRumor)
+                        }
                         val observe = ConsensusLog.warn(
                           logger,
                           Category.Recovery,
                           key.toString,
                           "n/a",
                           LogEvent.RoundAbandoned,
-                          "reason" -> reason.label,
-                          "action" -> action.label,
-                          "view" -> state.viewNumber.toString,
-                          "phaseIndex" -> ctx.ops.phaseIndex(state.status).toString,
-                          "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
-                          "lockedQcView" -> voteLock.flatMap(_.lockedQc).fold("none")(_.view.toString),
-                          "probeConfirmedAhead" -> probe.confirmedAhead.toString,
-                          "probeOutcome" -> probe.outcome.label,
-                          "probeResponded" -> s"${probe.respondedPeers}/${probe.probedPeers}",
-                          "probeCorroborators" -> probe.corroboratingPeers.toString
+                          List(
+                            "reason" -> reason.label,
+                            "action" -> action.label,
+                            "suppressedBy" -> decisionSuppressedBy.label,
+                            "view" -> state.viewNumber.toString,
+                            "phaseIndex" -> ctx.ops.phaseIndex(state.status).toString,
+                            "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
+                            "lockedQcView" -> voteLock.flatMap(_.lockedQc).fold("none")(_.view.toString)
+                          ) ++ evidence.logPairs: _*
                         ) >> Metrics[F].incrementCounter(
                           "dag_consensus_locked_lagging_recovery_probe_total",
                           Seq(
@@ -446,17 +570,18 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                           )
                         )
 
-                        observe.attempt.void >> (action match {
-                          case AbandonmentTracker.LockedAttemptAction.RecoverByDownload =>
-                            attemptRecoveryDownload(
-                              key,
-                              reason.label,
-                              "locked_lagging_corroborated",
-                              retainRoundOnTransitionFailure = true,
-                              preferFollowerCatchUp = AbandonmentTracker.followerCatchUpEligible(reason)
-                            )
-                          case AbandonmentTracker.LockedAttemptAction.Retain => Async[F].unit
-                        })
+                        captureStaleKey("pre_abandon", key, reason.label, state, "action" -> action.label) >>
+                          observe.attempt.void >> (action match {
+                            case AbandonmentTracker.LockedAttemptAction.RecoverByDownload =>
+                              attemptRecoveryDownload(
+                                key,
+                                reason.label,
+                                "locked_lagging_corroborated",
+                                retainRoundOnTransitionFailure = true,
+                                preferFollowerCatchUp = AbandonmentTracker.followerCatchUpEligible(reason)
+                              ).map(dispositionOfTransition)
+                            case AbandonmentTracker.LockedAttemptAction.Retain => decisionSuppressedBy.pure[F]
+                          }).flatMap(recordDisposition)
                       }
                   case _ =>
                     ConsensusLog.warn(
@@ -472,7 +597,9 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                       "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
                       "lockedQcView" -> voteLock.flatMap(_.lockedQc).fold("none")(_.view.toString)
                     ) >>
-                      Metrics[F].incrementCounter("dag_consensus_abandon_skipped_same_key_lock_total")
+                      Metrics[F].incrementCounter("dag_consensus_abandon_skipped_same_key_lock_total") >>
+                      captureStaleKey("pre_abandon", key, reason.label, state, "skipped" -> "same_key_restart_unsafe_at_drain") >>
+                      recordDisposition(SuppressedBy.ProtectedLockOrCertifiedTransition)
                 }
               case _ =>
                 performAbandon(key, reason)
@@ -483,13 +610,15 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     }
 
   private def performAbandon(key: Key, reason: AbandonReason): F[Unit] =
-    // Retriable abandons (QuorumInfeasible / ReadyParticipationQuorumInfeasible) are routine transient
-    // churn -- the node is not stuck or forked, it just needs more peers; log them at DEBUG. Reserve a
-    // single WARN for the non-retriable cases (MaxStalls / RoundTimeout / Lagging) that an operator
-    // actually wants to see. The dag_consensus_round_abandoned counter (below) is unconditional.
-    (if (reason.retriable)
-       ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)
-     else ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)) >>
+    // D1: snapshot attempt/phase/view and the residence ages BEFORE cleanup wipes them (rate-limited per key).
+    storage.getState(key).flatMap(_.traverse_(state => captureStaleKey("pre_abandon", key, reason.label, state))).attempt.void >>
+      // Retriable abandons (QuorumInfeasible / ReadyParticipationQuorumInfeasible) are routine transient
+      // churn -- the node is not stuck or forked, it just needs more peers; log them at DEBUG. Reserve a
+      // single WARN for the non-retriable cases (MaxStalls / RoundTimeout / Lagging) that an operator
+      // actually wants to see. The dag_consensus_round_abandoned counter (below) is unconditional.
+      (if (reason.retriable)
+         ConsensusLog.debug(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)
+       else ConsensusLog.warn(logger, Category.Lifecycle, key.toString, "n/a", LogEvent.RoundAbandoned, "reason" -> reason.message)) >>
       Metrics[F].incrementCounter("dag_consensus_round_abandoned") >>
       Metrics[F].incrementCounter("dag_consensus_stall_abandon_reason", Seq((Metrics.unsafeLabelName("reason"), reason.label))) >>
       storage
@@ -563,62 +692,65 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                             // is the live per-peer tip (max seen via incoming keyed rumors);
                             // `readyPeerIds` filters to peers currently in Ready state because
                             // a non-Ready peer's reported tip can't be downloaded from.
-                            peerCurrentKeys <- storage.getPeerCurrentKeys
-                            responsivePeers <- clusterStorage.getResponsivePeers
-                            readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
-                            readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
-                            peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
-                            peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
+                            inputs <- readEscalationInputs(key)
                             // Fast path: rumor tips above the key escalate directly. Every other
                             // shape (all-below, at-key, empty map) is ambiguous between isolation
-                            // and a cluster-wide stall, so whenever HTTP-Ready peers exist the
-                            // preflight asks them for committed progress -- escalation requires a
-                            // corroborated `(ordinal, hash)` at/above the key. A genuine
-                            // cluster-wide stall cannot corroborate it because nobody committed it.
-                            // See AbandonmentTracker.EscalationSignal for the full argument.
-                            signal = AbandonmentTracker.escalationSignal(key, readyPeerRegs.values)
-                            probe <-
-                              if (signal.probeRequired(readyPeerIds.size))
-                                peersCommittedAheadProbe(key).handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
-                              else AbandonmentTracker.PeersAheadProbe.none.pure[F]
-                            escalate = signal.decide(probe.confirmedAhead)
-                            effectiveCause = if (escalate && !signal.networkAdvanced) EscalationCause.RumorIsolated else cause
+                            // and a cluster-wide stall, so the evidence unit (B2' rehabilitation
+                            // pass, then the preflight whenever HTTP-Ready peers exist) asks them
+                            // for committed progress -- escalation requires a corroborated
+                            // `(ordinal, hash)` at/above the key. A genuine cluster-wide stall
+                            // cannot corroborate it because nobody committed it. The B3'
+                            // coordinator bounds how often the unit runs; a suppressed unit is
+                            // simply "no evidence this cycle". See AbandonmentTracker.EscalationSignal.
+                            evidence <- gatherEvidence(key, inputs.signal, inputs.readyPeerIds.size)
+                            probe = evidence.probe
+                            escalate = inputs.signal.decide(probe.confirmedAhead)
+                            effectiveCause = if (escalate && !inputs.signal.networkAdvanced) EscalationCause.RumorIsolated else cause
+                            decisionSuppressedBy = AbandonmentTracker.suppressedBy(
+                              thresholdMet = true,
+                              readyPeerCount = evidence.readyPeers,
+                              signal = inputs.signal,
+                              probe = probe,
+                              escalated = escalate,
+                              scheduling = evidence.scheduling
+                            )
                             _ <- ConsensusLog.info(
                               logger,
                               Category.Lifecycle,
                               key.toString,
                               "n/a",
                               LogEvent.RetriableEscalated,
-                              "reason" -> reason.label,
-                              "activeFacilitators" -> activeFacilitators.toString,
-                              "requiredQuorum" -> requiredQuorum.toString,
-                              "escalationCause" -> effectiveCause.label,
-                              "peersAtHigherKey" -> peersAtHigherKey.toString,
-                              "peersAtSameKey" -> peersAtSameKey.toString,
-                              "rumorStale" -> signal.rumorStale.toString,
-                              "probeConfirmedAhead" -> probe.confirmedAhead.toString,
-                              "probeOutcome" -> probe.outcome.label,
-                              "probeResponded" -> s"${probe.respondedPeers}/${probe.probedPeers}",
-                              "probeCorroborators" -> probe.corroboratingPeers.toString,
-                              "readyPeers" -> readyPeerIds.size.toString,
-                              "registeredReadyPeers" -> readyPeerRegs.size.toString,
-                              "triggerRecovery" -> escalate.toString,
-                              "recoverySuppressed" -> (!escalate).toString
+                              List(
+                                "reason" -> reason.label,
+                                "activeFacilitators" -> activeFacilitators.toString,
+                                "requiredQuorum" -> requiredQuorum.toString,
+                                "escalationCause" -> effectiveCause.label,
+                                "triggerRecovery" -> escalate.toString,
+                                "recoverySuppressed" -> (!escalate).toString,
+                                "suppressedBy" -> decisionSuppressedBy.label
+                              ) ++ inputs.logPairs ++ evidence.logPairs: _*
                             )
                             _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
                             // Update wedge signal for Cluster.leave() guard. Fires when retriable abandonments at the same key
                             // pile up AND no peer is ahead - the symptom of an orchestration-induced wedge where consensus
                             // can't close because the committee is structurally short of quorum. Clears when peersAtHigherKey > 0
                             // (cluster has advanced) or when a round closes (resetOnSuccessfulRound).
-                            _ <- updateWedgeHealth(retriableCount, peersAtHigherKey, reason.label)
-                            _ <-
-                              if (escalate) triggerRecoveryDownload(key, consecutiveCount, reason.label, effectiveCause.label)
-                              else retryAfterRetriableAbandon(key, reason)
+                            _ <- updateWedgeHealth(retriableCount, inputs.peersAtHigherKey, reason.label)
+                            disposition <-
+                              if (escalate)
+                                triggerRecoveryDownload(key, consecutiveCount, reason.label, effectiveCause.label)
+                                  .map(dispositionOfTransition)
+                              else retryAfterRetriableAbandon(key, reason).as(decisionSuppressedBy)
+                            _ <- recordDisposition(disposition)
                           } yield ()
                         }
                   }
               else
-                retryAfterRetriableAbandon(key, reason))
+                // B3': below the retriable threshold the evidence unit may still run (residence- and
+                // cooldown-bound) so the stale-key diagnostics show whether the cluster committed past
+                // this key. The disposition stays `threshold`: no transition is possible here.
+                gatherEarlyEvidence(key, reason) >>
+                  retryAfterRetriableAbandon(key, reason) >> recordDisposition(SuppressedBy.Threshold))
          }
        else
          // Non-retriable path (MaxStalls / RoundTimeout). Historically this
@@ -643,23 +775,23 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
              // `peerCurrentKeys` = live per-peer tip (max seen via incoming keyed rumors).
              // Supersedes the old `peerRegistrations` read which was a one-time join-ordinal
              // and left lagging nodes with peersAtHigherKey=0 forever (Bug B).
-             peerCurrentKeys <- storage.getPeerCurrentKeys
-             responsivePeers <- clusterStorage.getResponsivePeers
-             readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
-             readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
-             peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
-             peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key }
-             // Same evidence + preflight composition as the retriable path; the probe only runs
-             // once the recovery threshold is met AND the fast path has not fired AND there are
-             // Ready peers to ask, so pre-threshold abandonment cycles never generate probe
-             // traffic.
-             signal = AbandonmentTracker.escalationSignal(key, readyPeerRegs.values)
-             probe <-
-               if (shouldRecover && signal.probeRequired(readyPeerIds.size))
-                 peersCommittedAheadProbe(key).handleError(_ => AbandonmentTracker.PeersAheadProbe.failed)
-               else AbandonmentTracker.PeersAheadProbe.none.pure[F]
-             willRecover = shouldRecover && signal.decide(probe.confirmedAhead)
-             recoveryCause = if (willRecover && !signal.networkAdvanced) EscalationCause.RumorIsolated.label else "non_retriable"
+             inputs <- readEscalationInputs(key)
+             // Same evidence + preflight composition as the retriable path. B3': the evidence unit is
+             // eligible on residence/cooldown rather than only at the recovery threshold, so an early
+             // probe can show corroborated progress in the diagnostics; the transition below still
+             // requires `shouldRecover` (unchanged), so pre-threshold evidence never recovers.
+             evidence <- gatherEvidence(key, inputs.signal, inputs.readyPeerIds.size)
+             probe = evidence.probe
+             willRecover = shouldRecover && inputs.signal.decide(probe.confirmedAhead)
+             recoveryCause = if (willRecover && !inputs.signal.networkAdvanced) EscalationCause.RumorIsolated.label else "non_retriable"
+             decisionSuppressedBy = AbandonmentTracker.suppressedBy(
+               thresholdMet = shouldRecover,
+               readyPeerCount = evidence.readyPeers,
+               signal = inputs.signal,
+               probe = probe,
+               escalated = willRecover,
+               scheduling = evidence.scheduling
+             )
              _ <- healthRef.update(_.copy(consecutiveAbandonments = consecutiveCount))
              _ <- ConsensusLog.info(
                logger,
@@ -667,22 +799,16 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                key.toString,
                "n/a",
                LogEvent.RoundAbandonedTracked,
-               "reason" -> reason.label,
-               "consecutiveAbandonments" -> consecutiveCount.toString,
-               "maxConsecutiveAbandonments" -> config.maxConsecutiveAbandonments.toString,
-               "peersAtHigherKey" -> peersAtHigherKey.toString,
-               "peersAtSameKey" -> peersAtSameKey.toString,
-               "rumorStale" -> signal.rumorStale.toString,
-               "probeConfirmedAhead" -> probe.confirmedAhead.toString,
-               "probeOutcome" -> probe.outcome.label,
-               "probeResponded" -> s"${probe.respondedPeers}/${probe.probedPeers}",
-               "probeCorroborators" -> probe.corroboratingPeers.toString,
-               "readyPeers" -> readyPeerIds.size.toString,
-               "registeredReadyPeers" -> readyPeerRegs.size.toString,
-               "triggerRecovery" -> willRecover.toString,
-               "recoverySuppressed" -> (shouldRecover && !willRecover).toString
+               List(
+                 "reason" -> reason.label,
+                 "consecutiveAbandonments" -> consecutiveCount.toString,
+                 "maxConsecutiveAbandonments" -> config.maxConsecutiveAbandonments.toString,
+                 "triggerRecovery" -> willRecover.toString,
+                 "recoverySuppressed" -> (shouldRecover && !willRecover).toString,
+                 "suppressedBy" -> decisionSuppressedBy.label
+               ) ++ inputs.logPairs ++ evidence.logPairs: _*
              )
-             _ <-
+             disposition <-
                if (willRecover)
                  triggerRecoveryDownload(
                    key,
@@ -690,10 +816,182 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
                    reason.label,
                    recoveryCause,
                    preferFollowerCatchUp = AbandonmentTracker.followerCatchUpEligible(reason)
-                 )
-               else offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)
+                 ).map(dispositionOfTransition)
+               else (offerRoundCompleted >> queue.offer(ConsensusCommand.TimeTick)).as(decisionSuppressedBy)
+             _ <- recordDisposition(disposition)
            } yield ()
          })
+
+  /** `peerCurrentKeys` is the live per-peer tip (max seen via incoming keyed rumors); `readyPeerIds` filters to peers currently Ready
+    * because a non-Ready peer's reported tip cannot be downloaded from.
+    */
+  private def readEscalationInputs(key: Key): F[AbandonmentTracker.EscalationInputs[Key]] =
+    for {
+      peerCurrentKeys <- storage.getPeerCurrentKeys
+      responsivePeers <- clusterStorage.getResponsivePeers
+      readyPeerIds = responsivePeers.filter(_.state === NodeState.Ready).map(_.id).toSet
+      readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
+    } yield
+      AbandonmentTracker.EscalationInputs(
+        readyPeerIds = readyPeerIds,
+        readyPeerRegs = readyPeerRegs,
+        peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key },
+        peersAtSameKey = readyPeerRegs.count { case (_, peerKey) => peerKey === key },
+        signal = AbandonmentTracker.escalationSignal(key, readyPeerRegs.values)
+      )
+
+  /** The recovery-evidence unit, run under the B3' coordinator: the B2' rehabilitation pass over retained Unresponsive peers, then the
+    * committed-ahead probe whenever the fast path has not fired and Ready HTTP peers exist (`probeRequired`, unchanged; it reads the Ready
+    * count AFTER the pass so a just-rehabilitated peer takes part in this ordinary probe). The fast path is untouched: when the rumor
+    * signal already says the network advanced, nothing runs. A coordinator suppression (`in_flight` / `cooldown`) or a late result
+    * (parent/generation moved while the unit ran) yields no evidence; every failure is folded into a non-confirming probe. This function
+    * never decides anything: `decide`, `shouldRecover` and the locked-attempt rule read `evidence.probe.confirmedAhead` exactly as they
+    * read the raw probe before.
+    */
+  private[engine] def gatherEvidence(key: Key, signal: EscalationSignal, readyPeerCount: Int): F[Evidence] =
+    if (signal.networkAdvanced) Evidence.fastPath(readyPeerCount).pure[F]
+    else
+      (for {
+        residence <- staleKeyTelemetry.residenceOf(key).attempt.map(_.toOption.flatten)
+        generation <- storage.getResourceGeneration(key)
+        scope = ProbeCoordinator.Scope(key, generation)
+        result <- probeCoordinator.run(scope, residence, storage.getResourceGeneration(key).map(_ == generation)) {
+          for {
+            rehabilitation <- IsolationRepair.Rehabilitation
+              .run(clusterStorage, isolationHooks.checkSession, recheckLedger, Async[F].monotonic, rehabilitationBudget)
+            _ <- logRehabilitation(key, rehabilitation).attempt.void
+            responsivePeers <- clusterStorage.getResponsivePeers
+            readyPeers = responsivePeers.count(_.state === NodeState.Ready)
+            probe <-
+              if (signal.probeRequired(readyPeers)) peersCommittedAheadProbe(key).handleError(_ => PeersAheadProbe.failed)
+              else PeersAheadProbe.none.pure[F]
+          } yield (rehabilitation, readyPeers, probe)
+        }
+      } yield
+        result match {
+          case ProbeCoordinator.Result.Completed((rehabilitation, readyPeers, probe)) =>
+            Evidence(probe, rehabilitation, readyPeers, scheduling = None, schedulingDetail = "ran", stale = false)
+          case ProbeCoordinator.Result.Stale((rehabilitation, readyPeers, _)) =>
+            Evidence(
+              PeersAheadProbe.none,
+              rehabilitation,
+              readyPeers,
+              scheduling = SuppressedBy.ProbeError.some,
+              "stale_scope",
+              stale = true
+            )
+          case ProbeCoordinator.Result.Suppressed(suppression) =>
+            Evidence(
+              PeersAheadProbe.none,
+              IsolationRepair.Rehabilitation.Result.notWired.copy(wired = isolationHooks.checkSession.isDefined),
+              readyPeerCount,
+              scheduling = suppression.suppressedBy.some,
+              schedulingDetail = suppression.detail,
+              stale = false
+            )
+        }).handleError(_ =>
+        Evidence(PeersAheadProbe.failed, IsolationRepair.Rehabilitation.Result.failed, readyPeerCount, None, "error", stale = false)
+      )
+
+  /** Pre-threshold retriable abandonment: run the (cadence-bound) evidence unit for diagnostics only and log it when it ran. */
+  private def gatherEarlyEvidence(key: Key, reason: AbandonReason): F[Unit] =
+    readEscalationInputs(key).flatMap { inputs =>
+      gatherEvidence(key, inputs.signal, inputs.readyPeerIds.size).flatMap { evidence =>
+        ConsensusLog
+          .info(
+            logger,
+            Category.Lifecycle,
+            key.toString,
+            "n/a",
+            LogEvent.RoundAbandonedRetriable,
+            List(
+              "reason" -> reason.label,
+              "action" -> "early_evidence",
+              "triggerRecovery" -> "false",
+              "suppressedBy" -> SuppressedBy.Threshold.label
+            ) ++ inputs.logPairs ++ evidence.logPairs: _*
+          )
+          .whenA(evidence.ran)
+      }
+    }.attempt.void
+
+  private def logRehabilitation(key: Key, result: IsolationRepair.Rehabilitation.Result): F[Unit] =
+    (ConsensusLog.info(
+      logger,
+      Category.Recovery,
+      key.toString,
+      "n/a",
+      LogEvent.StallDetected,
+      ("reason" -> "PEER_REHABILITATION") :: result.logPairs: _*
+    ) >>
+      Metrics[F].incrementCounterBy(
+        "dag_consensus_peer_rehabilitation_total",
+        result.restored.toLong,
+        Seq(Metrics.unsafeLabelName("result") -> "restored")
+      ) >>
+      Metrics[F].incrementCounterBy(
+        "dag_consensus_peer_rehabilitation_total",
+        result.sessionChanged.toLong,
+        Seq(Metrics.unsafeLabelName("result") -> "session_changed")
+      ) >>
+      Metrics[F].incrementCounterBy(
+        "dag_consensus_peer_rehabilitation_total",
+        result.unreachable.toLong,
+        Seq(Metrics.unsafeLabelName("result") -> "unreachable")
+      )).whenA(result.wired && result.sampled > 0)
+
+  /** B1' trigger, evaluated by `StallDetector` on every monitor tick (never from an abandonment path a protected lock can suppress).
+    * `responsiveReadyPeers` excludes self; the rule counts self in. When it fires and no repair is in flight or cooling down, the repair
+    * runs on its own fiber so the monitor loop is never blocked. Diagnostic only: repair never touches node state, consensus state, or the
+    * recovery decision, so in a common partition every node repairs and none recovers.
+    */
+  def maybeRepairIsolation(key: Key, state: ConsensusState[Key, Status, Outcome, Kind], responsiveReadyPeers: Int): F[Unit] =
+    (staleKeyTelemetry.residenceOf(key), staleKeyTelemetry.lastExternalFacilityAgo).tupled.flatMap {
+      case (residence, facilityAgo) =>
+        val coreSize = state.coreFacilitators.value.size
+        val coreQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
+        val trigger =
+          IsolationRepair.Trigger.evaluate(residence, facilityAgo, config.timeTriggerInterval, responsiveReadyPeers, coreSize, coreQuorum)
+        // Reservation, fiber handoff and finalizer are one cancellation-safe step; the counters run afterwards and
+        // are failure-isolated, so a metrics failure can never leave the guard reserved.
+        val startRepair: F[Unit] = repairGuard.launch(Async[F].monotonic)(runRepair(key, trigger))(
+          onStarted =
+            Metrics[F].incrementCounter("dag_consensus_isolation_repair_total", Seq(Metrics.unsafeLabelName("action") -> "started")),
+          onSkipped = skip =>
+            Metrics[F].incrementCounter(
+              "dag_consensus_isolation_repair_total",
+              Seq(Metrics.unsafeLabelName("action") -> s"skipped_${skip.label}")
+            )
+        )
+        startRepair.whenA(trigger.fire)
+    }.attempt.void
+
+  /** One bounded repair run: (1) non-demoting recheck of retained Responsive peers, (2) re-discovery through the layer hook, (3) the
+    * evidence unit (B2' rehabilitation pass and, if eligible under B3', the probe), (4) the D1 stale-key WARN with `repair=true`.
+    */
+  private def runRepair(key: Key, trigger: IsolationRepair.Trigger): F[Unit] =
+    (for {
+      _ <- repairGuard.countRun
+      recheck <- IsolationRepair.Recheck.run(clusterStorage, isolationHooks.recheckPeer, recheckLedger, Async[F].monotonic, recheckBudget)
+      rediscovery <- IsolationRepair.Rediscovery.run(isolationHooks.rediscover, rehabilitationBudget.overallTimeout)
+      responsivePeers <- clusterStorage.getResponsivePeers
+      readyPeers = responsivePeers.count(_.state === NodeState.Ready)
+      evidence <- gatherEvidence(key, EscalationSignal.noRumor, readyPeers)
+      pairs = List("repair" -> "true", "repairAction" -> "diagnostic_only_no_recovery") ++
+        trigger.logPairs ++ recheck.logPairs ++ rediscovery.logPairs ++ evidence.logPairs
+      state <- storage.getState(key)
+      _ <- state.fold(
+        ConsensusLog.warn(
+          logger,
+          Category.Stall,
+          key.toString,
+          "n/a",
+          LogEvent.StallDetected,
+          (("reason" -> "ISOLATION_REPAIR") :: ("site" -> "repair") :: ("note" -> "round moved on before the repair finished") :: pairs): _*
+        )
+      )(s => captureStaleKeyWith("repair", key, "ISOLATION_REPAIR", s, force = true, pairs))
+      _ <- Metrics[F].incrementCounter("dag_consensus_isolation_repair_total", Seq(Metrics.unsafeLabelName("action") -> "completed"))
+    } yield ()).attempt.void
 
   /** Track consecutive abandonments at the same key. Returns the new count. Resets to 1 when the key changes (different ordinal).
     */
@@ -740,7 +1038,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     triggerReason: String,
     triggerClass: String,
     preferFollowerCatchUp: Boolean = false
-  ): F[Unit] =
+  ): F[Boolean] =
     totalRecoveryAttemptsRef.updateAndGet(_ + 1).flatMap { totalAttempts =>
       val shouldForceLeave = totalAttempts >= maxTotalRecoveryAttempts
 
@@ -800,7 +1098,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     * leads to the same stuck ordinal. Tries multiple source states since the node could be in Ready, WaitingForDownload,
     * DownloadInProgress, or Observing when force-leave fires.
     */
-  private def forceLeave(key: Key, totalAttempts: Int): F[Unit] = {
+  private def forceLeave(key: Key, totalAttempts: Int): F[Boolean] = {
     val forceLeaveStates = List(
       NodeState.Ready,
       NodeState.WaitingForDownload,
@@ -836,7 +1134,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
           totalRecoveryAttemptsRef.set(0) >>
           healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
           ctx.pending.clear() >>
-          offerRoundCompleted
+          offerRoundCompleted.as(true)
       } else {
         tryStates(forceLeaveStates).flatMap {
           case true =>
@@ -853,7 +1151,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
               totalRecoveryAttemptsRef.set(0) >>
               healthRef.update(_.copy(consecutiveAbandonments = 0, totalRecoveryAttempts = 0)) >>
               ctx.pending.clear() >>
-              offerRoundCompleted
+              offerRoundCompleted.as(true)
           case false =>
             // If we can't transition to Leaving from any state, fall back to recovery download
             ConsensusLog.warn(
@@ -876,7 +1174,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
     triggerClass: String,
     retainRoundOnTransitionFailure: Boolean = false,
     preferFollowerCatchUp: Boolean = false
-  ): F[Unit] = {
+  ): F[Boolean] = {
     val recoveryStates = List(
       NodeState.Ready,
       NodeState.Observing,
@@ -937,7 +1235,7 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
             storage.clearTimeTrigger >>
             storage.clearObservationKey >>
             ctx.pending.clear() >>
-            offerRoundCompleted
+            offerRoundCompleted.as(true)
         case None =>
           // Check if node is already in Leaving state — if so, just complete the round and stop.
           // CRITICAL: Do NOT queue TimeTick here. The old code queued RoundCompleted + TimeTick,
@@ -969,13 +1267,65 @@ class AbandonmentTracker[F[_]: Async: Metrics, Event, Key: Order, Artifact, Ctx,
             ctx.nodeStorage.clearRecoveryDownload.attempt.void.whenA(retainRoundOnTransitionFailure) >>
               observe.attempt.void >>
               (if (retainRoundOnTransitionFailure) Async[F].unit
-               else ctx.pending.clear() >> offerRoundCompleted)
+               else ctx.pending.clear() >> offerRoundCompleted).as(false)
           }
       }
   }
 }
 
 object AbandonmentTracker {
+
+  /** Rumor-side inputs of an escalation decision, read once per abandonment and shared by both paths. */
+  private[engine] final case class EscalationInputs[Key](
+    readyPeerIds: Set[PeerId],
+    readyPeerRegs: Map[PeerId, Key],
+    peersAtHigherKey: Int,
+    peersAtSameKey: Int,
+    signal: EscalationSignal
+  ) {
+
+    def logPairs: List[(String, String)] =
+      List(
+        "peersAtHigherKey" -> peersAtHigherKey.toString,
+        "peersAtSameKey" -> peersAtSameKey.toString,
+        "rumorStale" -> signal.rumorStale.toString,
+        "readyPeers" -> readyPeerIds.size.toString,
+        "registeredReadyPeers" -> readyPeerRegs.size.toString
+      )
+  }
+
+  /** Upper bound of the per-peer start jitter in the B1' recheck. */
+  val RepairRecheckMaxJitter: FiniteDuration = 500.millis
+
+  /** Outcome of one evidence unit (see `gatherEvidence`). `probe` is what the decision rules read; everything else is telemetry. */
+  final case class Evidence(
+    probe: PeersAheadProbe,
+    rehabilitation: IsolationRepair.Rehabilitation.Result,
+    // Ready responsive peers after the rehabilitation pass (the pre-pass count when the unit did not run).
+    readyPeers: Int,
+    scheduling: Option[SuppressedBy],
+    schedulingDetail: String,
+    stale: Boolean
+  ) {
+    def ran: Boolean = scheduling.isEmpty
+
+    /** Probe-side explanation when no rumor threshold applies (locked-attempt path). */
+    def suppressedBy(signal: EscalationSignal): SuppressedBy =
+      if (!signal.probeRequired(readyPeers)) SuppressedBy.NoCandidates
+      else scheduling.getOrElse(probeSuppressedBy(probe))
+
+    def logPairs: List[(String, String)] =
+      probe.logPairs ++ rehabilitation.logPairs ++ List(
+        "probeScheduling" -> schedulingDetail,
+        "probeStale" -> stale.toString,
+        "readyPeersAfterRehab" -> readyPeers.toString
+      )
+  }
+
+  object Evidence {
+    def fastPath(readyPeers: Int): Evidence =
+      Evidence(PeersAheadProbe.none, IsolationRepair.Rehabilitation.Result.notWired, readyPeers, None, "fast_path", stale = false)
+  }
 
   /** Only a node outside the frozen round committee may fast-forward through a committed successor. Committee members remain responsible
     * for that round and must use the full recovery boundary instead of silently skipping their voting obligation.
@@ -1034,8 +1384,41 @@ object AbandonmentTracker {
     probedPeers: Int,
     respondedPeers: Int,
     corroboratingPeers: Int,
-    outcome: ProbeOutcome
-  )
+    outcome: ProbeOutcome,
+    // Reason data (telemetry only; the decision reads `confirmedAhead` alone). Per-peer local
+    // results of the sampled fetches, the corroboration floor that applied, the number of distinct
+    // `(ordinal, hash)` groups at/above the key, the ordinal the largest group agreed on, and how
+    // many distinct hashes responders reported AT that ordinal -- so "same ordinal, different
+    // hashes" (disagreement) is distinguishable from "not enough corroborators".
+    timedOutPeers: Int = 0,
+    erroredPeers: Int = 0,
+    belowKeyPeers: Int = 0,
+    atKeyPeers: Int = 0,
+    aboveKeyPeers: Int = 0,
+    requiredCorroborators: Int = 0,
+    aheadGroups: Int = 0,
+    corroboratingOrdinal: Option[Long] = None,
+    hashesAtCorroboratingOrdinal: Int = 0
+  ) {
+
+    /** Log pairs shared by every decision line that reports a probe. Never used as metric labels. */
+    def logPairs: List[(String, String)] =
+      List(
+        "probeConfirmedAhead" -> confirmedAhead.toString,
+        "probeOutcome" -> outcome.label,
+        "probeResponded" -> s"$respondedPeers/$probedPeers",
+        "probeCorroborators" -> corroboratingPeers.toString,
+        "probeTimedOut" -> timedOutPeers.toString,
+        "probeErrored" -> erroredPeers.toString,
+        "probeBelowKey" -> belowKeyPeers.toString,
+        "probeAtKey" -> atKeyPeers.toString,
+        "probeAboveKey" -> aboveKeyPeers.toString,
+        "probeRequiredCorroborators" -> requiredCorroborators.toString,
+        "probeAheadGroups" -> aheadGroups.toString,
+        "probeCorroboratingOrdinal" -> corroboratingOrdinal.fold("none")(_.toString),
+        "probeHashesAtCorroboratingOrdinal" -> hashesAtCorroboratingOrdinal.toString
+      )
+  }
 
   sealed abstract class ProbeOutcome(val label: String)
   object ProbeOutcome {
@@ -1090,6 +1473,14 @@ object AbandonmentTracker {
       networkAdvanced || probeConfirmedAhead
   }
 
+  object EscalationSignal {
+
+    /** No rumor signal computed (locked-attempt path and repair): the fast path never fires and the probe is required iff Ready peers
+      * exist.
+      */
+    val noRumor: EscalationSignal = EscalationSignal(networkAdvanced = false, rumorStale = false)
+  }
+
   def escalationSignal[K: Order](abandonedKey: K, readyPeerKeys: Iterable[K]): EscalationSignal = {
     val higher = readyPeerKeys.count(Order[K].gt(_, abandonedKey))
     val same = readyPeerKeys.count(Order[K].eqv(_, abandonedKey))
@@ -1097,5 +1488,206 @@ object AbandonmentTracker {
       networkAdvanced = higher > 0,
       rumorStale = readyPeerKeys.nonEmpty && higher == 0 && same == 0
     )
+  }
+
+  /** Why an abandonment did not become a recovery transition (D2). Bounded enum used as the `by` label of
+    * `dag_consensus_recovery_suppressed_total`; `none` is the unsuppressed disposition. `in_flight` and `cooldown` come from the B3'
+    * probe-scheduling coordinator (`cooldown` also covers the residence gate; the log line's `probeScheduling` pair distinguishes them).
+    */
+  sealed abstract class SuppressedBy(val label: String)
+  object SuppressedBy {
+    case object Threshold extends SuppressedBy("threshold")
+    case object NoCandidates extends SuppressedBy("no_candidates")
+    case object InFlight extends SuppressedBy("in_flight")
+    case object Cooldown extends SuppressedBy("cooldown")
+    case object ProbeTimeout extends SuppressedBy("probe_timeout")
+    case object ProbeError extends SuppressedBy("probe_error")
+    case object NoResponders extends SuppressedBy("no_responders")
+    case object RespondersBelowKey extends SuppressedBy("responders_below_key")
+    case object InsufficientCorroborators extends SuppressedBy("insufficient_corroborators")
+    case object Disagreement extends SuppressedBy("disagreement")
+    case object ProtectedLockOrCertifiedTransition extends SuppressedBy("protected_lock_or_certified_transition")
+    case object StateTransitionFailed extends SuppressedBy("state_transition_failed")
+    case object Unsuppressed extends SuppressedBy("none")
+
+    val values: List[SuppressedBy] = List(
+      Threshold,
+      NoCandidates,
+      InFlight,
+      Cooldown,
+      ProbeTimeout,
+      ProbeError,
+      NoResponders,
+      RespondersBelowKey,
+      InsufficientCorroborators,
+      Disagreement,
+      ProtectedLockOrCertifiedTransition,
+      StateTransitionFailed,
+      Unsuppressed
+    )
+  }
+
+  /** Deterministic explanation of an escalation decision, evaluated in enum order. Pure and total; it reads the same inputs the decision
+    * used plus the probe's reason data, and never feeds back into `EscalationSignal.decide`.
+    *
+    *   - `threshold`: the consecutive/retriable count has not reached the recovery threshold, so no evidence was gathered.
+    *   - `no_candidates`: the fast path did not fire and there was no Ready HTTP peer to ask (nothing to probe, nothing to fetch).
+    *   - `in_flight` / `cooldown`: the B3' coordinator declined to run the evidence unit (another unit in flight; inside the post-
+    *     completion cooldown or the residence gate). A late result whose parent/generation moved on is reported as `probe_error`.
+    *   - `probe_timeout` / `probe_error`: the preflight ran and degraded (or was required but produced no result).
+    *   - `no_responders`: every sampled peer timed out or errored.
+    *   - `responders_below_key`: responders exist but all committed strictly below the key (the cluster-wide-stall answer).
+    *   - `disagreement`: responders at the corroborating ordinal reported more than one hash.
+    *   - `insufficient_corroborators`: a single identity at/above the key, but fewer matching peers than the floor or not a strict
+    *     responder majority.
+    *   - `none`: the decision escalated.
+    *
+    * `protected_lock_or_certified_transition` and `state_transition_failed` are attributed at their own boundaries (the abandon-drain
+    * safety checks and the recovery state transition), not by this function.
+    */
+  def suppressedBy(
+    thresholdMet: Boolean,
+    readyPeerCount: Int,
+    signal: EscalationSignal,
+    probe: PeersAheadProbe,
+    escalated: Boolean,
+    scheduling: Option[SuppressedBy] = None
+  ): SuppressedBy =
+    if (escalated) SuppressedBy.Unsuppressed
+    else if (!thresholdMet) SuppressedBy.Threshold
+    else if (!signal.probeRequired(readyPeerCount)) SuppressedBy.NoCandidates
+    else scheduling.getOrElse(probeSuppressedBy(probe))
+
+  /** Probe-only tail of `suppressedBy`, for the locked-attempt path where the probe is unconditional and no rumor signal is computed. A
+    * completed probe that sampled nobody had no candidates to ask.
+    */
+  def probeSuppressedBy(probe: PeersAheadProbe): SuppressedBy =
+    probe.outcome match {
+      case ProbeOutcome.TimedOut                     => SuppressedBy.ProbeTimeout
+      case ProbeOutcome.Failed | ProbeOutcome.NotRun => SuppressedBy.ProbeError
+      case ProbeOutcome.Completed =>
+        if (probe.confirmedAhead) SuppressedBy.Unsuppressed
+        else if (probe.probedPeers == 0) SuppressedBy.NoCandidates
+        else if (probe.respondedPeers == 0) SuppressedBy.NoResponders
+        else if (probe.atKeyPeers + probe.aboveKeyPeers == 0) SuppressedBy.RespondersBelowKey
+        else if (probe.hashesAtCorroboratingOrdinal > 1) SuppressedBy.Disagreement
+        else SuppressedBy.InsufficientCorroborators
+    }
+
+  /** Stale-key telemetry rate limiter (D1). One initial WARN per key, then at most one reminder per `reminderInterval`, shared by both
+    * capture sites (the monitor's same-key suppression boundary and `performAbandon`) so retries at the same key cannot re-open the budget.
+    * Reset ONLY by `resetOnSuccessfulRound` (accepted consensus progress): abandonment also emits `RoundCompleted`, so that command must
+    * not reset it. Entries are bounded by evicting keys below the installed parent on every capture plus a hard cap on retained keys.
+    *
+    * Also keeps the monotonic instant an external Facility was last received (fed by the monitor each tick with the storage's monotonic
+    * receipt revision of accepted external Facilities, so its resolution is one monitor tick and a same-count replacement still counts as
+    * an arrival) and the monotonic instant each key was first observed locally, which survives same-key retries and is what `residenceMs`
+    * reports.
+    */
+  final class StaleKeyTelemetry[F[_]: Async, Key: Order](
+    ref: Ref[F, StaleKeyTelemetry.State[Key]],
+    now: F[FiniteDuration],
+    reminderInterval: FiniteDuration,
+    maxEntries: Int
+  ) {
+    import StaleKeyTelemetry._
+
+    /** Record that `key` is under local attempt and the current receipt revision of accepted external Facilities
+      * (`StaleKeyTelemetry.externalReceipts` over `ConsensusStorage.getFacilityReceipts`). The silence clock refreshes only when the
+      * revision moved past the high-water mark seen so far, i.e. on a genuine new receipt, replacements included; an unchanged map observed
+      * again does not refresh it.
+      */
+    def observe(key: Key, externalFacilityReceipts: Long): F[Unit] =
+      now.flatMap { at =>
+        ref.update { state =>
+          val entry = state.entries.getOrElse(key, Entry(firstSeenAt = at))
+          val facilityArrived = externalFacilityReceipts > state.externalFacilityReceipts
+          state.copy(
+            entries = state.entries.updated(key, entry),
+            externalFacilityReceipts = math.max(state.externalFacilityReceipts, externalFacilityReceipts),
+            lastExternalFacilityAt = if (facilityArrived) at.some else state.lastExternalFacilityAt
+          )
+        }
+      }
+
+    /** Monotonic residence of `key` (time since first observed locally, kept across same-key retries), if tracked. */
+    def residenceOf(key: Key): F[Option[FiniteDuration]] =
+      (now, ref.get).tupled.map { case (at, state) => state.entries.get(key).map(entry => at - entry.firstSeenAt) }
+
+    /** Monotonic time since the last observed external Facility this session, or `None` if none was ever observed. */
+    def lastExternalFacilityAgo: F[Option[FiniteDuration]] =
+      (now, ref.get).tupled.map { case (at, state) => state.lastExternalFacilityAt.map(at - _) }
+
+    /** Decide whether a WARN may be emitted for `key` now. Evicts keys below `installedParent` and enforces the cap. `force` bypasses the
+      * reminder budget (the emission still counts toward it).
+      */
+    def capture(key: Key, installedParent: Key, force: Boolean = false): F[Option[Emission]] =
+      now.flatMap { at =>
+        ref.modify { state =>
+          val pruned = state.entries.filter { case (k, _) => Order[Key].gteqv(k, installedParent) }
+          val entry = pruned.getOrElse(key, Entry(firstSeenAt = at))
+          val due = force || entry.lastWarnAt.fold(true)(last => at - last >= reminderInterval)
+          val emission =
+            Option.when(due)(
+              Emission(
+                kind = if (entry.warnCount == 0) "initial" else "reminder",
+                warnsSoFar = entry.warnCount,
+                residence = at - entry.firstSeenAt,
+                lastExternalFacilityAgo = state.lastExternalFacilityAt.map(at - _)
+              )
+            )
+          val nextEntry = if (due) entry.copy(lastWarnAt = at.some, warnCount = entry.warnCount + 1) else entry
+          val updated = pruned.updated(key, nextEntry)
+          val capped =
+            if (updated.size > maxEntries)
+              updated.toList.sortBy { case (k, _) => k }(Order[Key].toOrdering).takeRight(maxEntries).toMap
+            else updated
+          (state.copy(entries = capped), emission)
+        }
+      }
+
+    /** Accepted consensus progress: forget every tracked key. The last-external-Facility instant and the receipt high-water mark are
+      * session-level and are kept.
+      */
+    def reset: F[Unit] = ref.update(_.copy(entries = Map.empty))
+
+    def trackedKeys: F[Set[Key]] = ref.get.map(_.entries.keySet)
+  }
+
+  object StaleKeyTelemetry {
+    val ReminderInterval: FiniteDuration = 1.minute
+    val MaxEntries: Int = 32
+
+    final case class Entry(
+      firstSeenAt: FiniteDuration,
+      lastWarnAt: Option[FiniteDuration] = None,
+      warnCount: Int = 0
+    )
+
+    final case class State[Key](
+      entries: Map[Key, Entry],
+      externalFacilityReceipts: Long,
+      lastExternalFacilityAt: Option[FiniteDuration]
+    )
+
+    object State {
+      def empty[Key]: State[Key] = State(Map.empty, 0L, None)
+    }
+
+    /** The receipt revision fed to `observe`: every accepted Facility from a peer other than `selfId`, replacements included. */
+    def externalReceipts(selfId: PeerId, receipts: Map[PeerId, Long]): Long =
+      receipts.iterator.collect { case (peerId, count) if peerId =!= selfId => count }.sum
+
+    final case class Emission(kind: String, warnsSoFar: Int, residence: FiniteDuration, lastExternalFacilityAgo: Option[FiniteDuration])
+
+    def make[F[_]: Async, Key: Order](
+      now: F[FiniteDuration],
+      reminderInterval: FiniteDuration = ReminderInterval,
+      maxEntries: Int = MaxEntries
+    ): F[StaleKeyTelemetry[F, Key]] =
+      Ref.of[F, State[Key]](State.empty[Key]).map(new StaleKeyTelemetry[F, Key](_, now, reminderInterval, maxEntries))
+
+    def unsafe[F[_]: Async, Key: Order]: StaleKeyTelemetry[F, Key] =
+      new StaleKeyTelemetry[F, Key](Ref.unsafe(State.empty[Key]), Async[F].monotonic, ReminderInterval, MaxEntries)
   }
 }

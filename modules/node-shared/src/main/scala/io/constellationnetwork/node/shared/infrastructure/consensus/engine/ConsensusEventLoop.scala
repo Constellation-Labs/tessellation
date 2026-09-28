@@ -325,7 +325,10 @@ object ConsensusEventLoop {
     onOutcomeRollbackInitialized: Option[(Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit]] = None,
     initiallyHoldFirstRound: Boolean = false,
     recoverySeedCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
-    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None,
+    // Layer-supplied transport/discovery capabilities for AbandonmentTracker's B2' rehabilitation pass and B1' isolation repair.
+    // `Hooks.none` keeps every repair step inert (reported as not wired); production layers pass `IsolationRepair.Hooks.wired`.
+    isolationHooks: IsolationRepair.Hooks[F] = IsolationRepair.Hooks.none[F]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -392,7 +395,8 @@ object ConsensusEventLoop {
       abandonmentTracker = new AbandonmentTracker[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](
         ctx,
         healthRef,
-        peersCommittedAheadProbe
+        peersCommittedAheadProbe,
+        isolationHooks
       )
       b2AtTipStreakRef <- Ref.of[F, Map[PeerId, Int]](Map.empty)
       stallDetector = new StallDetector[F, Event, Key, Artifact, Ctx, Status, Outcome, Kind](

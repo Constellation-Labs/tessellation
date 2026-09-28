@@ -200,6 +200,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     for {
       now <- Async[F].monotonic
       resources <- storage.getResources(key)
+      // D1: feed the stale-key telemetry with this key's residence start and the monotonic receipt revision of
+      // accepted external Facilities (replacements included), so a fresh Facility from an already-counted peer
+      // refreshes the silence clock while an unchanged map does not. Telemetry only, never a decision input.
+      externalFacilityReceipts <- storage.getFacilityReceipts.map(AbandonmentTracker.StaleKeyTelemetry.externalReceipts(selfId, _))
+      _ <- abandonmentTracker.staleKeyTelemetry.observe(key, externalFacilityReceipts).attempt.void
       observedPacemakerEpoch = ViewChangeManager.ObservedEpoch(
         state.viewNumber.toLong,
         observedAttemptId,
@@ -462,6 +467,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       _ <- Metrics[F].updateGauge("dag_consensus_cluster_ready_peer_count", readyPeerIds.size.toLong)
       _ <- Metrics[F].updateGauge("dag_consensus_cluster_waiting_for_ready_peer_count", waitingForReadyPeerCount.toLong)
       _ <- Metrics[F].updateGauge("dag_consensus_cluster_session_started_peer_count", sessionStartedPeerCount.toLong)
+      // B1': isolation repair trigger, evaluated on the monitor tick (not on an abandonment path a protected lock can
+      // suppress). Runs on its own fiber when it fires; diagnostic/repair only, never a recovery decision.
+      _ <- abandonmentTracker.maybeRepairIsolation(key, state, readyPeerIds.size).attempt.void
       readyPeerRegs = peerCurrentKeys.view.filterKeys(readyPeerIds.contains).toMap
       peersAtHigherKey = readyPeerRegs.count { case (_, peerKey) => peerKey > key }
       totalRegisteredPeers = readyPeerRegs.size
@@ -671,6 +679,16 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           Metrics[F].incrementCounter(
             "dag_consensus_same_key_restart_suppressed_total",
             Seq(Metrics.unsafeLabelName("reason") -> abandonReason.label)
+          ) >>
+          // D1: the stall/suppression boundary capture (rate-limited per key inside the tracker), so a
+          // locked attempt that never reaches performAbandon is still visible with its ages.
+          abandonmentTracker.captureStaleKey(
+            "stall_boundary",
+            key,
+            abandonReason.label,
+            state,
+            "highestVotedView" -> voteLock.flatMap(_.highestVotedView).fold("none")(_.toString),
+            "stallCount" -> finalStallCount.toString
           )
       ).whenA(restartSuppressed && didStall)
 
