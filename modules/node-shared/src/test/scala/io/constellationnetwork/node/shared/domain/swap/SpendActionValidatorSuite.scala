@@ -25,7 +25,7 @@ import io.constellationnetwork.security.{Hasher, SecurityProvider, _}
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import weaver.MutableIOSuite
 
 object SpendActionValidatorSuite extends MutableIOSuite {
@@ -331,7 +331,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
         spendActions,
         activeAllowSpends,
-        balances
+        balances,
+        enforceAggregateCustodyBalance = false
       )
     } yield
       expect.all(
@@ -379,7 +380,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
         spendActions,
         activeAllowSpends,
-        balances
+        balances,
+        enforceAggregateCustodyBalance = false
       )
     } yield
       expect.all(
@@ -431,7 +433,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
         spendActions,
         activeAllowSpends,
-        balances
+        balances,
+        enforceAggregateCustodyBalance = false
       )
     } yield
       expect.all(
@@ -469,7 +472,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
         spendActions,
         activeAllowSpends,
-        balances
+        balances,
+        enforceAggregateCustodyBalance = false
       )
     } yield
       expect.all(
@@ -513,7 +517,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (acceptedSpendActions, rejectedSpendActions) <- validator.validateReturningAcceptedAndRejected(
         spendActions,
         activeAllowSpends,
-        balances
+        balances,
+        enforceAggregateCustodyBalance = false
       )
     } yield
       expect.all(
@@ -524,5 +529,148 @@ object SpendActionValidatorSuite extends MutableIOSuite {
           AllowSpendNotFound(s"Allow spend ${Hash.empty} not found in currency active allow spends")
         )
       )
+  }
+
+  private def directLeg(metagraph: Address, token: Option[Address], amount: Long, destination: Address): SpendTransaction =
+    SpendTransaction(none, token.map(CurrencyId(_)), SwapAmount(PosLong.unsafeFrom(amount)), metagraph, destination)
+
+  private def aggregate(
+    spendActions: Map[Address, List[SpendAction]],
+    balances: Map[Option[Address], SortedMap[Address, Balance]],
+    activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = SortedMap.empty,
+    enforce: Boolean = true
+  )(implicit hs: Hasher[IO]) =
+    SpendActionValidator
+      .make[IO]
+      .validateReturningAcceptedAndRejected(spendActions, activeAllowSpends, balances, enforceAggregateCustodyBalance = enforce)
+
+  private def isNotEnoughBalance(errors: List[SpendActionValidationError]): Boolean =
+    errors.exists {
+      case NotEnoughCurrencyIdBalance(_) => true
+      case _                             => false
+    }
+
+  test("without the aggregate check, two direct payouts that together exceed the metagraph balance are both accepted") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      first = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 60L, user)))
+      second = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 61L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(first, second)), balances, enforce = false)
+    } yield
+      expect(accepted.get(metagraph).contains(List(first, second)), s"accepted: $accepted")
+        .and(expect(rejected.isEmpty, s"rejected: $rejected"))
+  }
+
+  test("with the aggregate check, a payout that would overdraw what earlier payouts left is rejected") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      first = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 60L, user)))
+      second = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 61L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(first, second)), balances)
+    } yield
+      expect(accepted.get(metagraph).contains(List(first)), s"accepted: $accepted")
+        .and(expect(rejected.get(metagraph).map(_._1).contains(second), s"rejected action: $rejected"))
+        .and(expect(rejected.get(metagraph).exists(r => isNotEnoughBalance(r._2)), s"rejection reason: $rejected"))
+  }
+
+  test("with the aggregate check, payouts that exactly exhaust the metagraph balance are all accepted") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      first = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 60L, user)))
+      second = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 40L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(first, second)), balances)
+    } yield
+      expect(accepted.get(metagraph).contains(List(first, second)), s"accepted: $accepted")
+        .and(expect(rejected.isEmpty, s"rejected: $rejected"))
+  }
+
+  test("with the aggregate check, an action whose own legs overdraw is rejected whole and its debits are discarded") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      overdrawing = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 60L, user), directLeg(metagraph, None, 60L, user)))
+      following = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 100L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(overdrawing, following)), balances)
+    } yield
+      expect(rejected.get(metagraph).map(_._1).contains(overdrawing), s"rejected action: $rejected")
+        .and(expect(accepted.get(metagraph).contains(List(following)), s"the later action should see the full balance: $accepted"))
+  }
+
+  test("with the aggregate check, DAG and metagraph-token payouts draw on separate balances") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      dagPayout = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 80L, user)))
+      tokenPayout = SpendAction(NonEmptyList.of(directLeg(metagraph, metagraph.some, 80L, user)))
+      balances = Map(
+        none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))),
+        metagraph.some -> SortedMap(metagraph -> Balance(NonNegLong(100L)))
+      )
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(dagPayout, tokenPayout)), balances)
+    } yield
+      expect(accepted.get(metagraph).contains(List(dagPayout, tokenPayout)), s"accepted: $accepted")
+        .and(expect(rejected.isEmpty, s"rejected: $rejected"))
+  }
+
+  test("with the aggregate check, each metagraph draws only on its own balance") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraphA <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      metagraphB <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      payoutA = SpendAction(NonEmptyList.of(directLeg(metagraphA, None, 90L, user)))
+      payoutB = SpendAction(NonEmptyList.of(directLeg(metagraphB, None, 90L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraphA -> Balance(NonNegLong(100L)), metagraphB -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraphA -> List(payoutA), metagraphB -> List(payoutB)), balances)
+    } yield
+      expect(accepted.get(metagraphA).contains(List(payoutA)), s"metagraph A: $accepted")
+        .and(expect(accepted.get(metagraphB).contains(List(payoutB)), s"metagraph B: $accepted"))
+        .and(expect(rejected.isEmpty, s"rejected: $rejected"))
+  }
+
+  test("with the aggregate check, legs settled from an allow spend do not draw on the metagraph balance") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      userKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user = userKeyPair.getPublic.toAddress
+      allowSpend = AllowSpend(
+        user,
+        metagraph,
+        None,
+        SwapAmount(50L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(metagraph)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, userKeyPair)
+      hashedAllowSpend <- signedAllowSpend.toHashed
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(user -> SortedSet(signedAllowSpend)))
+      escrowLeg = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(50L), user, metagraph)
+      action = SpendAction(NonEmptyList.of(escrowLeg, directLeg(metagraph, None, 100L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(action)), balances, activeAllowSpends)
+    } yield
+      expect(accepted.get(metagraph).contains(List(action)), s"accepted: $accepted").and(expect(rejected.isEmpty, s"rejected: $rejected"))
   }
 }

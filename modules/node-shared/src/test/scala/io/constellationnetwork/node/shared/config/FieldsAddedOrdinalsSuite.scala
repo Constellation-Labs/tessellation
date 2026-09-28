@@ -61,7 +61,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "fixingAllowSpendDestinationCredit" -> allEnvironments(6818000L, 9999999L, 9999999L),
     "preventingAllowSpendResurrection" -> allEnvironments(6828500L, 9999999L, 9999999L),
     "fixingGlobalAllowSpendExpiration" -> allEnvironments(6828500L, 9999999L, 9999999L),
-    "fixingDelegatedStakeDoubleWithdrawal" -> Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue)
+    "fixingDelegatedStakeDoubleWithdrawal" -> Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue),
+    "fixingSpendActionAggregateBalance" -> allEnvironments(9999999L, 9999999L, 9999999L)
   )
 
   test("pins every packaged threshold and intentional absence in every environment") {
