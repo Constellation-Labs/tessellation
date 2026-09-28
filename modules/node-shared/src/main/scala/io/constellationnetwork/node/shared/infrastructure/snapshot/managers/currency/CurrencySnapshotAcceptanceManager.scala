@@ -169,6 +169,10 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     extends CurrencySnapshotAcceptanceManager[F] {
   private val feeTransactionSecurityActivationOrdinal = fieldsAddedOrdinals.feeTransactionSecurityFor(environment)
   private val currencySnapshotProtocolV1ActivationOrdinal = fieldsAddedOrdinals.currencySnapshotProtocolV1For(environment)
+  // Same boundary the data application layer uses for `validateEveryFeeTransaction`. From it on, the data application
+  // layer rejects every fee transaction this layer would drop, so a drop never leaves a combined update unpaid.
+  private val fixingDataApplicationFeeValidationActivationOrdinal =
+    fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(environment)
 
   def accept(
     blocksForAcceptance: List[Signed[Block]],
@@ -247,12 +251,14 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
       rewards
     )
 
-    _ <- balanceOps.validateFeeTxs(
+    validatedFeeTxs <- balanceOps.validateFeeTxs(
       feeTransactionsForAcceptance,
-      isEnabled(
+      enforceWalletAuthorization = isEnabled(
         maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue),
         feeTransactionSecurityActivationOrdinal
-      )
+      ),
+      dropInvalidTransactions = maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >=
+        fixingDataApplicationFeeValidationActivationOrdinal
     )
 
     // Gated on the GLOBAL ordinal, like every other FieldsAddedOrdinals entry -- the currency ordinal is
@@ -260,7 +266,7 @@ private class CurrencySnapshotAcceptanceManagerImpl[F[_]: Async: Parallel: JsonS
     // history replays to the state that was actually signed.
     (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- balanceOps.acceptFeeTxs(
       updatedBalancesByRewards,
-      feeTransactionsForAcceptance,
+      validatedFeeTxs,
       maybeLastGlobalSyncView.map(_.ordinal).getOrElse(SnapshotOrdinal.MinValue) >
         fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflowFor(environment)
     )

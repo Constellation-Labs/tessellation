@@ -61,8 +61,12 @@ jobs:
 
       - name: Install just
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
-          echo "/usr/local/bin" >> $GITHUB_PATH
+          # Pin the installer and release to avoid an unauthenticated latest-release lookup.
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
+            https://raw.githubusercontent.com/casey/just/1.58.0/www/install.sh \
+            -o "$RUNNER_TEMP/install-just.sh"
+          bash "$RUNNER_TEMP/install-just.sh" --tag 1.58.0 --to /usr/local/bin
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
 
       - name: Install sbt
         run: |
@@ -209,8 +213,12 @@ jobs:
 
       - name: Install just
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
-          echo "/usr/local/bin" >> $GITHUB_PATH
+          # Pin the installer and release to avoid an unauthenticated latest-release lookup.
+          curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
+            https://raw.githubusercontent.com/casey/just/1.58.0/www/install.sh \
+            -o "$RUNNER_TEMP/install-just.sh"
+          bash "$RUNNER_TEMP/install-just.sh" --tag 1.58.0 --to /usr/local/bin
+          echo "/usr/local/bin" >> "$GITHUB_PATH"
 
       - name: Install sbt
         run: |
