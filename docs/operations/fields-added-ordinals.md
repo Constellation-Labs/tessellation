@@ -33,7 +33,8 @@ case class FieldsAddedOrdinals(
   fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+  fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
 )
 ```
 
@@ -98,6 +99,12 @@ the complete dust schedule. New gates must be added to that table. The shared te
 all current thresholds; tests of historical behavior must explicitly override their boundary.
 `ConsensusOrdinalConfigSuite` checks that changing or removing activation values changes the
 consensus hash, and that unrelated environments and configuration ordering do not.
+
+The record has more fields than pureconfig's `forProductN` readers (and Scala 2 functions) support,
+so `fieldsAddedOrdinalsReader` in `ext/pureconfig` builds it with named arguments. A new gate needs a
+named entry there as well as in `resolvedThresholdsFor`. `FieldsAddedOrdinalsReaderSuite` gives every
+field a distinct ordinal per environment and checks that each field is read from its own kebab-case
+key, that a missing key fails loading, and that unknown keys are ignored.
 
 Snapshot Streaming is updated separately after the node changes reach `develop`. Its current
 compatibility patch retains the older missing-environment defaults for four thresholds; this

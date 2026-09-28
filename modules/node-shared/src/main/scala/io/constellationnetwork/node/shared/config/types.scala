@@ -37,8 +37,8 @@ object types {
       ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
   }
 
-  // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
-  // Fields share similar map types, so reordering them without updating that reader can miswire gates.
+  // SDK consumers construct this positionally, so append new gates at the end and never reorder. Every new field also
+  // needs a named entry in fieldsAddedOrdinalsReader (ext.pureconfig) and in resolvedThresholdsFor.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
