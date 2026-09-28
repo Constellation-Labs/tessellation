@@ -83,12 +83,20 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 9999999 | 0 |
 | `fixing-global-allow-spend-expiration` | 6828500 | 9999999 | 9999999 | 0 |
 | `fixing-delegated-stake-double-withdrawal` | absent | absent | absent | 0 |
+| `burn-action-activation` | absent | absent | absent | absent |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder only while the chain remains below it. A `0`
 entry means the new path is active from genesis on that environment. An absent threshold mapping
 resolves to `SnapshotOrdinal.MaxValue` and is the repository's disabled convention; an absent
 exact-key sweep means no sweep is scheduled.
+
+Native self-burn is a proposed, disabled-by-default schema addition. Its first-active comparison
+uses the **signed parent Currency snapshot's Global sync ordinal** (`>=`), with no parent view
+contributing zero; it never uses the new Currency ordinal or a live Global head. `MaxValue` is
+explicitly disabled even at that ordinal. An omitted burn map is supported. No packaged
+environment is enabled pending the consumer and release qualifications in the
+[self-burn review package](../development/metagraph-native-self-burn.md).
 
 ## Regression coverage and consumer alignment
 

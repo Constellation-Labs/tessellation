@@ -29,6 +29,7 @@ object FieldsAddedOrdinalsFixtures {
     fixingAllowSpendDestinationCredit = active,
     preventingAllowSpendResurrection = active,
     fixingGlobalAllowSpendExpiration = active,
-    fixingDelegatedStakeDoubleWithdrawal = active
+    fixingDelegatedStakeDoubleWithdrawal = active,
+    burnActionActivation = active
   )
 }

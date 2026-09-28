@@ -73,7 +73,9 @@ object Mocks {
 
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
+    stateChannelProcessor: Option[GlobalSnapshotStateChannelEventsProcessor[IO]] = None,
+    spendValidator: Option[SpendActionValidator[IO]] = None
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -284,11 +286,11 @@ object Mocks {
                     blockAcceptanceManager = mockBlockAcceptanceManager,
                     allowSpendBlockAcceptanceManager = mockAllowSpendBlockAcceptanceManager,
                     tokenLockBlockAcceptanceManager = mockTokenLockBlockAcceptanceManager,
-                    stateChannelEventsProcessor = mockStateChannelEventsProcessor,
+                    stateChannelEventsProcessor = stateChannelProcessor.getOrElse(mockStateChannelEventsProcessor),
                     updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
                     updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
                     updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-                    spendActionValidator = mockSpendActionValidator,
+                    spendActionValidator = spendValidator.getOrElse(mockSpendActionValidator),
                     pricingUpdateValidator = mockPricingUpdateValidator,
                     priceStateUpdater = mockPriceStateUpdater,
                     collateral = Amount.empty,

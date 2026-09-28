@@ -97,7 +97,10 @@ object types {
     // the same effective token lock for unlock. Shared settlement pays lock-owned rewards with checked arithmetic,
     // retires all settled pending copies and deduplicates withdrawal/replacement principal. Natural expiry suppresses
     // generated unlocks to prevent double balance credit. Public environments remain absent until coordinated activation.
-    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // First active GLOBAL ordinal, read from the signed parent Currency snapshot's globalSyncView.
+    // No environment is enabled by default. MaxValue is a disabled sentinel, including at MaxValue.
+    burnActionActivation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -166,6 +169,9 @@ object types {
     def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingDelegatedStakeDoubleWithdrawal, environment)
 
+    def burnActionActivationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(burnActionActivation, environment)
+
     /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
     def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
       SortedMap(
@@ -189,7 +195,8 @@ object types {
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
-        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment)
+        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment),
+        "burnActionActivation" -> burnActionActivationFor(environment)
       )
   }
 
