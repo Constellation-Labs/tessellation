@@ -37,8 +37,8 @@ object types {
       ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
   }
 
-  // Keep this parameter order aligned with the explicit forProduct reader in ext.pureconfig.
-  // Fields share similar map types, so reordering them without updating that reader can miswire gates.
+  // SDK consumers construct this positionally, so append new gates at the end and never reorder. Every new field also
+  // needs a named entry in fieldsAddedOrdinalsReader (ext.pureconfig) and in resolvedThresholdsFor.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
@@ -97,7 +97,11 @@ object types {
     // the same effective token lock for unlock. Shared settlement pays lock-owned rewards with checked arithmetic,
     // retires all settled pending copies and deduplicates withdrawal/replacement principal. Natural expiry suppresses
     // generated unlocks to prevent double balance credit. Public environments remain absent until coordinated activation.
-    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // At/after this global ordinal, Global L0 debits each metagraph's direct SpendAction legs from a running balance while
+    // validating, so the accepted legs cannot together exceed the metagraph's balance. Below it each leg is only compared
+    // with the starting balance, and an over-committed batch fails the round when the legs are applied.
+    fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -166,6 +170,9 @@ object types {
     def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingDelegatedStakeDoubleWithdrawal, environment)
 
+    def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(fixingSpendActionAggregateBalance, environment)
+
     /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
     def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
       SortedMap(
@@ -189,7 +196,8 @@ object types {
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
-        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment)
+        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment),
+        "fixingSpendActionAggregateBalance" -> fixingSpendActionAggregateBalanceFor(environment)
       )
   }
 

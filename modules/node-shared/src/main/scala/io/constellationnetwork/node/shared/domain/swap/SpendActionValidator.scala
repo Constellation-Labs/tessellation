@@ -12,7 +12,7 @@ import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.{Spe
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SpendAction, SpendTransaction}
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.swap.AllowSpend
+import io.constellationnetwork.schema.swap.{AllowSpend, SwapAmount}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -28,10 +28,17 @@ trait SpendActionValidator[F[_]] {
     currencyId: Address
   ): F[SpendActionValidationErrorOr[SpendAction]]
 
+  /** Validates each metagraph's spend actions in order and splits them into accepted and rejected.
+    *
+    * With `enforceAggregateCustodyBalance`, direct legs (no allow spend reference) are also debited from a running copy of `allBalances`.
+    * An action whose direct legs would overdraw its metagraph's remaining balance is rejected as a whole, and its debits are discarded.
+    * Without it each leg is only compared with the starting balance, so several accepted legs can together exceed it.
+    */
   def validateReturningAcceptedAndRejected(
     spendActions: Map[Address, List[SpendAction]],
     activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-    allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+    allBalances: Map[Option[Address], SortedMap[Address, Balance]],
+    enforceAggregateCustodyBalance: Boolean
   ): F[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidationError])])]
 }
 
@@ -41,54 +48,76 @@ object SpendActionValidator {
     def validateReturningAcceptedAndRejected(
       spendActions: Map[Address, List[SpendAction]],
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
+      enforceAggregateCustodyBalance: Boolean
     ): F[
       (
         Map[Address, List[SpendAction]],
         Map[Address, (SpendAction, List[SpendActionValidationError])]
       )
     ] = {
+      type Balances = Map[Option[Address], SortedMap[Address, Balance]]
+
       def processActionsForCurrency(
         currencyId: Address,
         currencySpendActions: List[SpendAction],
-        currentAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+        currentAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+        currentCustodyBalances: Balances
       ): F[
         (
           SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+          Balances,
           (Address, (List[(SpendAction, List[SpendActionValidationError])], List[SpendAction]))
         )
       ] =
         currencySpendActions
           .foldLeftM(
-            (currentAllowSpends, List.empty[(SpendAction, List[SpendActionValidationError])], List.empty[SpendAction])
+            (
+              currentAllowSpends,
+              currentCustodyBalances,
+              List.empty[(SpendAction, List[SpendActionValidationError])],
+              List.empty[SpendAction]
+            )
           ) {
-            case ((allowSpendsAcc, rejectedSpendActions, acceptedSpendActions), action) =>
-              validate(action, allowSpendsAcc, allBalances, currencyId).flatMap {
-                case Valid(validAction) =>
+            case ((allowSpendsAcc, custodyAcc, rejectedSpendActions, acceptedSpendActions), action) =>
+              val validated = validate(action, allowSpendsAcc, allBalances, currencyId).map {
+                case Valid(validAction) if enforceAggregateCustodyBalance =>
+                  debitDirectLegs(validAction, currencyId, custodyAcc).map(validAction -> _)
+                case other => other.map(_ -> custodyAcc)
+              }
+
+              validated.flatMap {
+                case Valid((validAction, updatedCustody)) =>
                   updateCurrentAllowSpendsForValidation(validAction, allowSpendsAcc).map { updated =>
-                    (updated, rejectedSpendActions, validAction :: acceptedSpendActions)
+                    (updated, updatedCustody, rejectedSpendActions, validAction :: acceptedSpendActions)
                   }
                 case Invalid(errors) =>
-                  Async[F].pure((allowSpendsAcc, (action -> errors.toNonEmptyList.toList) :: rejectedSpendActions, acceptedSpendActions))
+                  Async[F].pure(
+                    (allowSpendsAcc, custodyAcc, (action -> errors.toNonEmptyList.toList) :: rejectedSpendActions, acceptedSpendActions)
+                  )
               }
           }
           .map {
-            case (updatedAllowSpends, rejected, accepted) =>
-              updatedAllowSpends -> (currencyId -> (rejected.reverse, accepted.reverse))
+            case (updatedAllowSpends, updatedCustody, rejected, accepted) =>
+              (updatedAllowSpends, updatedCustody, currencyId -> (rejected.reverse, accepted.reverse))
           }
 
       spendActions.toList
         .foldLeftM(
-          (activeAllowSpends, List.empty[(Address, (List[(SpendAction, List[SpendActionValidationError])], List[SpendAction]))])
+          (
+            activeAllowSpends,
+            allBalances,
+            List.empty[(Address, (List[(SpendAction, List[SpendActionValidationError])], List[SpendAction]))]
+          )
         ) {
-          case ((allowSpendsAcc, results), (currencyId, currencySpendActions)) =>
-            processActionsForCurrency(currencyId, currencySpendActions, allowSpendsAcc).map {
-              case (updatedAllowSpends, result) =>
-                (updatedAllowSpends, result :: results)
+          case ((allowSpendsAcc, custodyAcc, results), (currencyId, currencySpendActions)) =>
+            processActionsForCurrency(currencyId, currencySpendActions, allowSpendsAcc, custodyAcc).map {
+              case (updatedAllowSpends, updatedCustody, result) =>
+                (updatedAllowSpends, updatedCustody, result :: results)
             }
         }
         .map {
-          case (_, spendTransactionsValidations) =>
+          case (_, _, spendTransactionsValidations) =>
             val acceptedSpendActions = spendTransactionsValidations.map {
               case (address, (_, accepted)) => address -> accepted
             }.filter {
@@ -106,6 +135,35 @@ object SpendActionValidator {
             (acceptedSpendActions, rejectedSpendActions)
         }
     }
+
+    /** Debits every direct leg of an accepted action from its metagraph's remaining balance in that leg's token. Credits are ignored, so
+      * the check never depends on the order in which other legs are applied. Any overdraft rejects the whole action.
+      */
+    private def debitDirectLegs(
+      spendAction: SpendAction,
+      currencyId: Address,
+      custodyBalances: Map[Option[Address], SortedMap[Address, Balance]]
+    ): SpendActionValidationErrorOr[Map[Option[Address], SortedMap[Address, Balance]]] =
+      spendAction.spendTransactions
+        .filter(_.allowSpendRef.isEmpty)
+        .foldLeft(custodyBalances.validNec[SpendActionValidationError]) { (acc, spendTransaction) =>
+          acc.andThen { balances =>
+            val token = spendTransaction.currencyId.map(_.value)
+            val tokenBalances = balances.getOrElse(token, SortedMap.empty[Address, Balance])
+            val remaining = tokenBalances.getOrElse(currencyId, Balance.empty)
+
+            remaining
+              .minus(SwapAmount.toAmount(spendTransaction.amount))
+              .map(updated => balances.updated(token, tokenBalances.updated(currencyId, updated)))
+              .leftMap[SpendActionValidationError](_ =>
+                NotEnoughCurrencyIdBalance(
+                  s"Spend amount: ${spendTransaction.amount} exceeds the remaining currencyId balance: $remaining " +
+                    "after earlier spend actions in this snapshot"
+                )
+              )
+              .toValidatedNec
+          }
+        }
 
     def validate(
       spendAction: SpendAction,

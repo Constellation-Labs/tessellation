@@ -70,29 +70,65 @@ package object pureconfig {
       .map(SortedMap.from(_))
   implicit val envToOrdinalToDustSweepReader: ConfigReader[Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
+  // FieldsAddedOrdinals has more fields than forProductN (and Scala 2 FunctionN) supports, so it is built with named
+  // arguments: a field cannot be wired to another gate's key. Like forProductN, every key is required and unknown keys
+  // are ignored. FieldsAddedOrdinalsReaderSuite checks that each field is read from its own kebab-case key.
   implicit val fieldsAddedOrdinalsReader: ConfigReader[FieldsAddedOrdinals] =
-    ConfigReader.forProduct22(
-      "tessellation-3-migration",
-      "tessellation-301-migration",
-      "check-sync-global-snapshot-field",
-      "metagraph-sync-data",
-      "updated-last-sync-global-order",
-      "updated-last-sync-global-from-peers-in-consensus",
-      "updating-combine-function-spend-actions",
-      "fixing-allow-spend-expiration",
-      "fixing-allow-spend-and-token-lock-validation",
-      "set-sum-fix",
-      "sc-fee-balance-from-context",
-      "sub-trie-roots",
-      "delegated-rewards-full-committee",
-      "fee-transaction-security",
-      "fixing-fee-transaction-balance-overflow",
-      "dust-sweeps",
-      "currency-snapshot-protocol-v1",
-      "fixing-data-application-fee-validation",
-      "fixing-allow-spend-destination-credit",
-      "preventing-allow-spend-resurrection",
-      "fixing-global-allow-spend-expiration",
-      "fixing-delegated-stake-double-withdrawal"
-    )(FieldsAddedOrdinals.apply)
+    ConfigReader.fromCursor { cursor =>
+      cursor.asObjectCursor.flatMap { gates =>
+        def gate(key: String): ConfigReader.Result[Map[AppEnvironment, SnapshotOrdinal]] =
+          gates.atKey(key).flatMap(environmentToOrdinalMapReader.from)
+
+        for {
+          tessellation3Migration <- gate("tessellation-3-migration")
+          tessellation301Migration <- gate("tessellation-301-migration")
+          checkSyncGlobalSnapshotField <- gate("check-sync-global-snapshot-field")
+          metagraphSyncData <- gate("metagraph-sync-data")
+          updatedLastSyncGlobalOrder <- gate("updated-last-sync-global-order")
+          updatedLastSyncGlobalFromPeersInConsensus <- gate("updated-last-sync-global-from-peers-in-consensus")
+          updatingCombineFunctionSpendActions <- gate("updating-combine-function-spend-actions")
+          fixingAllowSpendExpiration <- gate("fixing-allow-spend-expiration")
+          fixingAllowSpendAndTokenLockValidation <- gate("fixing-allow-spend-and-token-lock-validation")
+          setSumFix <- gate("set-sum-fix")
+          scFeeBalanceFromContext <- gate("sc-fee-balance-from-context")
+          subTrieRoots <- gate("sub-trie-roots")
+          delegatedRewardsFullCommittee <- gate("delegated-rewards-full-committee")
+          feeTransactionSecurity <- gate("fee-transaction-security")
+          fixingFeeTransactionBalanceOverflow <- gate("fixing-fee-transaction-balance-overflow")
+          dustSweeps <- gates.atKey("dust-sweeps").flatMap(envToOrdinalToDustSweepReader.from)
+          currencySnapshotProtocolV1 <- gate("currency-snapshot-protocol-v1")
+          fixingDataApplicationFeeValidation <- gate("fixing-data-application-fee-validation")
+          fixingAllowSpendDestinationCredit <- gate("fixing-allow-spend-destination-credit")
+          preventingAllowSpendResurrection <- gate("preventing-allow-spend-resurrection")
+          fixingGlobalAllowSpendExpiration <- gate("fixing-global-allow-spend-expiration")
+          fixingDelegatedStakeDoubleWithdrawal <- gate("fixing-delegated-stake-double-withdrawal")
+          fixingSpendActionAggregateBalance <- gate("fixing-spend-action-aggregate-balance")
+        } yield
+          FieldsAddedOrdinals(
+            tessellation3Migration = tessellation3Migration,
+            tessellation301Migration = tessellation301Migration,
+            checkSyncGlobalSnapshotField = checkSyncGlobalSnapshotField,
+            metagraphSyncData = metagraphSyncData,
+            updatedLastSyncGlobalOrder = updatedLastSyncGlobalOrder,
+            updatedLastSyncGlobalFromPeersInConsensus = updatedLastSyncGlobalFromPeersInConsensus,
+            updatingCombineFunctionSpendActions = updatingCombineFunctionSpendActions,
+            fixingAllowSpendExpiration = fixingAllowSpendExpiration,
+            fixingAllowSpendAndTokenLockValidation = fixingAllowSpendAndTokenLockValidation,
+            setSumFix = setSumFix,
+            scFeeBalanceFromContext = scFeeBalanceFromContext,
+            subTrieRoots = subTrieRoots,
+            delegatedRewardsFullCommittee = delegatedRewardsFullCommittee,
+            feeTransactionSecurity = feeTransactionSecurity,
+            fixingFeeTransactionBalanceOverflow = fixingFeeTransactionBalanceOverflow,
+            dustSweeps = dustSweeps,
+            currencySnapshotProtocolV1 = currencySnapshotProtocolV1,
+            fixingDataApplicationFeeValidation = fixingDataApplicationFeeValidation,
+            fixingAllowSpendDestinationCredit = fixingAllowSpendDestinationCredit,
+            preventingAllowSpendResurrection = preventingAllowSpendResurrection,
+            fixingGlobalAllowSpendExpiration = fixingGlobalAllowSpendExpiration,
+            fixingDelegatedStakeDoubleWithdrawal = fixingDelegatedStakeDoubleWithdrawal,
+            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance
+          )
+      }
+    }
 }

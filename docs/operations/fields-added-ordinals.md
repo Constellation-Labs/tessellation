@@ -33,7 +33,9 @@ case class FieldsAddedOrdinals(
   fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+  fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
 )
 ```
 
@@ -83,6 +85,7 @@ Per-environment activation ordinals differ because the same fix crosses differen
 | `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 9999999 | 0 |
 | `fixing-global-allow-spend-expiration` | 6828500 | 9999999 | 9999999 | 0 |
 | `fixing-delegated-stake-double-withdrawal` | absent | absent | absent | 0 |
+| `fixing-spend-action-aggregate-balance` | 9999999 | 9999999 | 9999999 | 0 |
 | `dust-sweeps` | (none) | {3154700} | (none) | (none) |
 
 A `9999999` entry is a not-yet-activated placeholder only while the chain remains below it. A `0`
@@ -98,6 +101,12 @@ the complete dust schedule. New gates must be added to that table. The shared te
 all current thresholds; tests of historical behavior must explicitly override their boundary.
 `ConsensusOrdinalConfigSuite` checks that changing or removing activation values changes the
 consensus hash, and that unrelated environments and configuration ordering do not.
+
+The record has more fields than pureconfig's `forProductN` readers (and Scala 2 functions) support,
+so `fieldsAddedOrdinalsReader` in `ext/pureconfig` builds it with named arguments. A new gate needs a
+named entry there as well as in `resolvedThresholdsFor`. `FieldsAddedOrdinalsReaderSuite` gives every
+field a distinct ordinal per environment and checks that each field is read from its own kebab-case
+key, that a missing key fails loading, and that unknown keys are ignored.
 
 Snapshot Streaming is updated separately after the node changes reach `develop`. Its current
 compatibility patch retains the older missing-environment defaults for four thresholds; this
@@ -218,6 +227,7 @@ Currency Snapshot ordinals never activate this platform rule. See
   - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet is scheduled for `5880000`.
   - `currency-snapshot-protocol-v1.<env>`: set one future GLOBAL L0 ordinal only after every active Currency stack is upgraded. Active lineages transition their existing signed `version` to `1.0.0`; dormant lineages must upgrade before returning. See [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
   - `fixing-delegated-stake-double-withdrawal.<env>`: set the deploying environment to the first Global Snapshot ordinal produced only after every Global L0 is upgraded. Before activation, historical acceptance, unlock, and reward behavior is retained exactly. At and after activation, creates and withdrawals cannot reuse a pending effective lock; reward/principal settlement uses one lock-owned result, checked reward/issuance sums and fail-on-overflow reward credits. All pending copies of a settled effective lock are retired, including later-cooldown copies whose cumulative entitlement participates in maximum selection. Withdrawal/replacement unlocks are deduplicated, and naturally expired locks (strictly `unlockEpoch < currentEpoch`) are excluded from generated unlocks to prevent a second **balance credit**, not just a duplicate artifact. Develop preserves replacement rollover: R unlocks OLD and carries the rewritten NEW withdrawal; R+1 settles NEW. Missing-lock records otherwise remain pending. See [the settlement audit checklist](delegated-stake-settlement-audit.md) before selecting a public ordinal.
+  - `fixing-spend-action-aggregate-balance.<env>` (`9999999`): set the deploying environment to the first Global Snapshot ordinal produced only after every Global L0 is upgraded. Below it, each direct SpendAction leg is compared only with the metagraph's starting balance, so legs that together exceed it are accepted and then fail the round when applied. At and after it, Global L0 debits direct legs from a running balance per metagraph and token and rejects, as a whole, any action that would overdraw it. Allow-spend-settled legs are unaffected.
   - `dust-sweeps` has no mainnet entry yet (`application.conf`). If a mainnet sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf`). Bump it up if the chain nears it before the coordinated cold restart completes.
 - Every resolved threshold in `FieldsAddedOrdinals`, the full dust-sweep schedule (ordinals, thresholds, and burn/credit destinations), and the three shared hashing/state-proof/staking boundaries enter both L0 config hashes. Only the running environment is included. Currency protocol-v1 retains its existing explicit activation field as well. The advertised jar metadata hash is still not a substitute for either the release-version gate or this config fence. A unanimously wrong ordinal remains dangerous even when every node reports the same hash, so verify gates by inspection before assembly and deploy the identical artifact cluster-wide.
