@@ -7,7 +7,7 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import io.constellationnetwork.ext.cats.syntax.next._
-import io.constellationnetwork.node.shared.config.types.GossipDaemonConfig
+import io.constellationnetwork.node.shared.config.types.{GossipDaemonConfig, GossipRoundConfig}
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
@@ -34,6 +34,34 @@ trait GossipDaemon[F[_]] {
 }
 
 object GossipDaemon {
+
+  private[gossip] def runPeerRound[F[_]: Async: Random](
+    rumorStorage: RumorStorage[F],
+    gossipClient: GossipClient[F],
+    peer: Peer,
+    cfg: GossipRoundConfig
+  )(consume: Signed[PeerRumorRaw] => F[Unit]): F[Unit] =
+    rumorStorage.getLastPeerOrdinals.flatMap { lastOrdinals =>
+      val nextOrdinals = lastOrdinals.view
+        .mapValues(o => Ordinal(o.generation, o.counter.next))
+        .toMap
+
+      limitOrdinals(nextOrdinals, cfg.maxOrdinalsPerRequest).flatMap {
+        case (ordinals, wasLimited) =>
+          val request = PeerRumorInquiryRequest(ordinals, Option.when(wasLimited)(true))
+          gossipClient.queryPeerRumors(request).run(peer).evalMap(consume).compile.drain
+      }
+    }
+
+  private def limitOrdinals[F[_]: Async: Random](
+    ordinals: Map[PeerId, Ordinal],
+    maxOrdinalsPerRequest: Option[eu.timepit.refined.types.numeric.PosInt]
+  ): F[(Map[PeerId, Ordinal], Boolean)] =
+    maxOrdinalsPerRequest match {
+      case Some(max) if ordinals.size > max.value =>
+        Random[F].shuffleList(ordinals.toList).map(_.take(max.value).toMap -> true)
+      case _ => (ordinals -> false).pure[F]
+    }
 
   def make[F[_]: Async: Random: Metrics](
     rumorStorage: RumorStorage[F],
@@ -185,29 +213,8 @@ object GossipDaemon {
         }
 
       private def peerRound(peer: Peer): F[Unit] =
-        rumorStorage.getLastPeerOrdinals.flatMap { lastOrdinals =>
-          val nextOrdinals = lastOrdinals.view
-            .mapValues(o => Ordinal(o.generation, o.counter.next))
-            .toMap
-
-          limitOrdinals(nextOrdinals).flatMap {
-            case (ordinals, wasLimited) =>
-              val request = PeerRumorInquiryRequest(ordinals, Option.when(wasLimited)(true))
-              gossipClient
-                .queryPeerRumors(request)
-                .run(peer)
-                .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
-                .enqueueUnterminated(rumorQueue)
-                .compile
-                .drain
-          }
-        }
-
-      private def limitOrdinals(ordinals: Map[PeerId, Ordinal]): F[(Map[PeerId, Ordinal], Boolean)] =
-        cfg.peerRound.maxOrdinalsPerRequest match {
-          case Some(max) if ordinals.size > max.value =>
-            Random[F].shuffleList(ordinals.toList).map(_.take(max.value).toMap -> true)
-          case _ => (ordinals -> false).pure[F]
+        GossipDaemon.runPeerRound(rumorStorage, gossipClient, peer, cfg.peerRound) { rumor =>
+          hasherSelector.withCurrent(implicit hasher => rumor.toHashed).flatMap(rumorQueue.offer)
         }
 
       private def commonRound(peer: Peer): F[Unit] =
