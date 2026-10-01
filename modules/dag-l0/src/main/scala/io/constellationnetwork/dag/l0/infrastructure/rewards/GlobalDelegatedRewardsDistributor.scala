@@ -508,17 +508,22 @@ object GlobalDelegatedRewardsDistributor {
 
         withdrawalRewardTxs <-
           calculateWithdrawalRewardTransactions(
-            partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
-              case (address, withdrawals) =>
-                withdrawals.toList.mapFilter { withdrawal =>
-                  Option.when(withdrawal.rewards.value > Balance.empty.value) {
-                    (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
+            partitionedRecords.withdrawalSettlement.map(_.rewardsByAddress.toMap).getOrElse {
+              // Preserve address-keyed, last-wins reward settlement exactly before activation.
+              partitionedRecords.expiredWithdrawalsDelegatedStaking.toList.flatMap {
+                case (address, withdrawals) =>
+                  withdrawals.toList.mapFilter { withdrawal =>
+                    Option.when(withdrawal.rewards.value > Balance.empty.value) {
+                      (address, Amount(NonNegLong.unsafeFrom(withdrawal.rewards.value.value)))
+                    }
                   }
-                }
-            }.toMap
+              }.toMap
+            }
           )
 
-        totalEmittedReward <- DelegatedRewardsDistributor.sumMintedAmount(
+        totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
+                                 DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
+                               else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
           reservedAddressRewards,
           nodeOperatorRewardsTxs,
           delegatorRewardsMap

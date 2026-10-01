@@ -29,6 +29,9 @@ jobs:
           npm i zod
           npm i elliptic
 
+      - name: Test delegated stake invariant checks
+        run: node --test .github/action_scripts/delegated_staking/stake-invariants.test.js
+
       - name: Download shared_jars artifacts
         uses: actions/download-artifact@v4
         env:
@@ -60,7 +63,7 @@ jobs:
           DAG_L0_PORT_PREFIX: 90
           DAG_L1_PORT_PREFIX: 91
 
-      - name: Test Delegated Staking
+      - name: Test Delegated Staking and Concurrent Withdrawal Settlement
         run: |
           cd .github/action_scripts/delegated_staking
           node delegated-staking.js 90 91 testDelegatedStaking
