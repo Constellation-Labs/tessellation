@@ -28,7 +28,6 @@ case class FieldsAddedOrdinals(
   fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   tessellation41Migration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
 )
@@ -87,7 +86,6 @@ non-mainnet threshold, the Kryo boundary and the fee schedule start at genesis.
 | `fixing-allow-spend-destination-credit` | 6818000 | 0 | 0 | 0 |
 | `preventing-allow-spend-resurrection` | 6828500 | 0 | 0 | 0 |
 | `fixing-global-allow-spend-expiration` | 6828500 | 0 | 0 | 0 |
-| `fixing-spend-action-aggregate-balance` | 9999999 | 0 | 0 | 0 |
 | `tessellation-41-migration` | 9999999 (set to R+1 at cutover) | 0 | 0 | 0 |
 | `dust-sweeps` | (none) | (none) | (none) | (none) |
 
@@ -95,10 +93,10 @@ non-mainnet threshold, the Kryo boundary and the fee schedule start at genesis.
 
 `tessellation-41-migration` is the cutover C: the first global ordinal produced by v4.1. Every
 v4.1-only replay/state-transition rule switches on there. The former separate gates
-`sub-trie-roots`, `fee-transaction-security`, `currency-snapshot-protocol-v1` and
-`fixing-delegated-stake-double-withdrawal` were folded into it; their accessors (`subTrieRootsFor`,
-`feeTransactionSecurityFor`, `currencySnapshotProtocolV1For`,
-`fixingDelegatedStakeDoubleWithdrawalFor`) remain and resolve to C. The legacy state-proof and
+`sub-trie-roots`, `fee-transaction-security`, `currency-snapshot-protocol-v1`,
+`fixing-delegated-stake-double-withdrawal` and `fixing-spend-action-aggregate-balance` were folded into it;
+their accessors (`subTrieRootsFor`, `feeTransactionSecurityFor`, `currencySnapshotProtocolV1For`,
+`fixingDelegatedStakeDoubleWithdrawalFor`, `fixingSpendActionAggregateBalanceFor`) remain and resolve to C. The legacy state-proof and
 incremental-staking boundaries are derived as `C - 1`.
 
 At the mainnet v3.5 -> v4.1 cold-restart cutover two ordinals are pinned, and they differ on purpose.
@@ -247,7 +245,6 @@ Currency Snapshot ordinals never activate this platform rule. See
 - Ordinal gates are **consensus-critical** and must match cluster-wide. They live in shared HOCON configuration packaged into the assembly. Deployments use one software version and a full-cluster cold restart; version mismatches are rejected at joining. The config hash additionally checks agreement among nodes running that version.
 - At the mainnet v3.5 -> v4.1 cutover, pin the two cutover ordinals described in "The v4.1 cutover gate": `tessellation-41-migration.mainnet = R + 1` and `certified-consensus-activation-ordinal.mainnet = R`. That single change activates sub-trie roots, fee transaction security, Currency snapshot protocol 1.0.0, unique delegated-stake settlement (#1593, composed with the #1498 processed-withdrawal removal), MPT state proofs and incremental staking.
 - Remaining per-gate placeholders:
-  - `fixing-spend-action-aggregate-balance.<env>` (`9999999`): set the deploying environment to the first Global Snapshot ordinal produced only after every Global L0 is upgraded. Below it, each direct SpendAction leg is compared only with the metagraph's starting balance, so legs that together exceed it are accepted and then fail the round when applied. At and after it, Global L0 debits direct legs from a running balance per metagraph and token and rejects, as a whole, any action that would overdraw it. Allow-spend-settled legs are unaffected. The running balance ignores credits, so this is stricter than applying the legs. Before the gate, a direct leg could spend a credit that an earlier leg in the same snapshot paid to the metagraph's address: an allow-spend-settled leg or another metagraph's leg. At and after the gate, that action is rejected with `NotEnoughCurrencyIdBalance` unless the metagraph's starting balance covers it. For metagraph-token legs the starting balance comes from the metagraph's last currency snapshot included in this Global Snapshot. The metagraph applies the legs some currency ordinals later, and its own transactions in between can still drain that balance. The gate narrows that halt but does not close it.
   - `dust-sweeps` has no entry on any network (`application.conf`). If a sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf`). Bump it up if the chain nears it before the coordinated cold restart completes.
 - Every resolved threshold in `FieldsAddedOrdinals`, the full dust-sweep schedule (ordinals, thresholds, and burn/credit destinations), the Kryo boundary and the two derived state-proof/staking boundaries enter both L0 config hashes. Only the running environment is included. Currency protocol-v1 retains its existing explicit activation field as well. The advertised jar metadata hash is still not a substitute for either the release-version gate or this config fence. A unanimously wrong ordinal remains dangerous even when every node reports the same hash, so verify gates by inspection before assembly and deploy the identical artifact cluster-wide.

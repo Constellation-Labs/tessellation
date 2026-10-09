@@ -62,7 +62,7 @@ object SpendActionAggregateBalanceGateSuite extends MutableIOSuite {
       lastSnapshotContext = mkGlobalSnapshotInfo()
       manager <- mkManager(
         lastSnapshotContext.some,
-        fixingSpendActionAggregateBalanceOrdinal = activation,
+        tessellation41MigrationOrdinal = activation,
         spendActionValidatorOverride = recordingValidator(flags).some
       )
       _ <- ordinals.traverse_ { ordinal =>

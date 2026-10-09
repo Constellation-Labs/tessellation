@@ -73,8 +73,7 @@ object Mocks {
 
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
-    fixingSpendActionAggregateBalanceOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
+    tessellation41MigrationOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
     spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None,
     removingProcessedDelegatedStakeWithdrawalsOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
@@ -202,7 +201,7 @@ object Mocks {
     val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None)
     val updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
       updateDelegatedStakeValidator,
-      fixingDelegatedStakeDoubleWithdrawalOrdinal
+      tessellation41MigrationOrdinal
     )
 
     val mockUpdateNodeCollateralAcceptanceManager = new UpdateNodeCollateralAcceptanceManager[IO] {
@@ -284,8 +283,7 @@ object Mocks {
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
                     FieldsAddedOrdinalsFixtures.current.copy(
-                      tessellation41Migration = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal),
-                      fixingSpendActionAggregateBalance = Map(AppEnvironment.Dev -> fixingSpendActionAggregateBalanceOrdinal),
+                      tessellation41Migration = Map(AppEnvironment.Dev -> tessellation41MigrationOrdinal),
                       removingProcessedDelegatedStakeWithdrawals =
                         Map(AppEnvironment.Dev -> removingProcessedDelegatedStakeWithdrawalsOrdinal)
                     ),

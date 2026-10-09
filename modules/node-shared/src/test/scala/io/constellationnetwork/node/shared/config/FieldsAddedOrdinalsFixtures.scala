@@ -23,7 +23,6 @@ object FieldsAddedOrdinalsFixtures {
     fixingAllowSpendDestinationCredit = active,
     preventingAllowSpendResurrection = active,
     fixingGlobalAllowSpendExpiration = active,
-    fixingSpendActionAggregateBalance = active,
     removingProcessedDelegatedStakeWithdrawals = active,
     tessellation41Migration = active
   )

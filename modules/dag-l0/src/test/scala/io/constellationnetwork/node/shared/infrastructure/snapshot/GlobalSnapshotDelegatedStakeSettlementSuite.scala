@@ -540,7 +540,7 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
     for {
       manager <- Mocks.mkManager(
         Some(context),
-        fixingDelegatedStakeDoubleWithdrawalOrdinal = uniqueSettlementOrdinal,
+        tessellation41MigrationOrdinal = uniqueSettlementOrdinal,
         removingProcessedDelegatedStakeWithdrawalsOrdinal = removingProcessedWithdrawalsOrdinal
       )
       result <- manager.accept(

@@ -95,7 +95,6 @@ package object pureconfig {
           fixingAllowSpendDestinationCredit <- gate("fixing-allow-spend-destination-credit")
           preventingAllowSpendResurrection <- gate("preventing-allow-spend-resurrection")
           fixingGlobalAllowSpendExpiration <- gate("fixing-global-allow-spend-expiration")
-          fixingSpendActionAggregateBalance <- gate("fixing-spend-action-aggregate-balance")
           removingProcessedDelegatedStakeWithdrawals <- gate("removing-processed-delegated-stake-withdrawals")
           tessellation41Migration <- gate("tessellation-41-migration")
         } yield
@@ -115,7 +114,6 @@ package object pureconfig {
             fixingAllowSpendDestinationCredit = fixingAllowSpendDestinationCredit,
             preventingAllowSpendResurrection = preventingAllowSpendResurrection,
             fixingGlobalAllowSpendExpiration = fixingGlobalAllowSpendExpiration,
-            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance,
             removingProcessedDelegatedStakeWithdrawals = removingProcessedDelegatedStakeWithdrawals,
             tessellation41Migration = tessellation41Migration
           )

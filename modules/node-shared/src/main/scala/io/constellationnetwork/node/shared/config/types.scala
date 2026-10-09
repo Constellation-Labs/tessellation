@@ -73,10 +73,6 @@ object types {
     // At/after this global ordinal, an expired global AllowSpend consumed in the same snapshot is settled once
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this global ordinal, Global L0 debits each metagraph's direct SpendAction legs from a running balance while
-    // validating, so the accepted legs cannot together exceed the metagraph's balance. Below it each leg is only compared
-    // with the starting balance, and an over-committed batch fails the round when the legs are applied.
-    fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal (mainnet 6176655, release/mainnet #1498) an expired delegated-stake withdrawal whose
     // token lock is no longer active (an orphan) is skipped by unlock generation instead of failing the snapshot, and
     // every expired withdrawal's token-lock reference is removed from that address's pending withdrawals.
@@ -157,8 +153,9 @@ object types {
     // Unique delegated-stake withdrawal settlement (#1593), composed with removingProcessedDelegatedStakeWithdrawals. v4.1 cutover.
     def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
-    def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(fixingSpendActionAggregateBalance, environment)
+    // Running-balance validation of direct SpendAction legs (#1619): below it each leg is only compared with the starting
+    // balance and an over-committed batch fails the round when applied. Never ran on mainnet. v4.1 cutover.
+    def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def removingProcessedDelegatedStakeWithdrawalsFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(removingProcessedDelegatedStakeWithdrawals, environment)
@@ -180,7 +177,6 @@ object types {
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
-        "fixingSpendActionAggregateBalance" -> fixingSpendActionAggregateBalanceFor(environment),
         "removingProcessedDelegatedStakeWithdrawals" -> removingProcessedDelegatedStakeWithdrawalsFor(environment),
         "tessellation41Migration" -> tessellation41MigrationFor(environment)
       )

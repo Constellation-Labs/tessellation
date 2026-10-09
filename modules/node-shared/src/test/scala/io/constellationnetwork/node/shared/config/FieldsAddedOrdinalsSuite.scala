@@ -54,7 +54,6 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "fixingAllowSpendDestinationCredit" -> allEnvironments(6818000L, 0L, 0L),
     "preventingAllowSpendResurrection" -> allEnvironments(6828500L, 0L, 0L),
     "fixingGlobalAllowSpendExpiration" -> allEnvironments(6828500L, 0L, 0L),
-    "fixingSpendActionAggregateBalance" -> allEnvironments(9999999L, 0L, 0L),
     "removingProcessedDelegatedStakeWithdrawals" -> allEnvironments(6176655L, 0L, 0L),
     "tessellation41Migration" -> allEnvironments(9999999L, 0L, 0L)
   )
@@ -134,7 +133,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
           "subTrieRoots" -> fields.subTrieRootsFor(environment),
           "feeTransactionSecurity" -> fields.feeTransactionSecurityFor(environment),
           "currencySnapshotProtocolV1" -> fields.currencySnapshotProtocolV1For(environment),
-          "fixingDelegatedStakeDoubleWithdrawal" -> fields.fixingDelegatedStakeDoubleWithdrawalFor(environment)
+          "fixingDelegatedStakeDoubleWithdrawal" -> fields.fixingDelegatedStakeDoubleWithdrawalFor(environment),
+          "fixingSpendActionAggregateBalance" -> fields.fixingSpendActionAggregateBalanceFor(environment)
         )
         folded.foldMap {
           case (name, ordinal) => expect(ordinal == cutover, s"${environment.entryName} $name: $ordinal != cutover $cutover")
