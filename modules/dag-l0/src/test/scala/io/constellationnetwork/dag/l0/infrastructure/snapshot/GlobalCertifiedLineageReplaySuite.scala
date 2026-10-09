@@ -603,7 +603,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     val evicted = value.evictedPeers.toSet
     val artifactSigners = prior.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
     val singletonException = CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
-      certifiedConsensusActive = true,
       config.certifiedConsensusActivationKey,
       roundStart.size,
       CertifiedConsensusGenesis.hasExpandedBeyondSingleton(
@@ -706,8 +705,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         leader = roundStart.head,
         viewNumber = value.committedView.toInt,
         initialViewNumber = 0,
-        entropy = prior.finished.snapshotHash,
-        certifiedConsensusActive = true
+        entropy = prior.finished.snapshotHash
       )
       next <- IO.fromOption(stateAdvancer.getConsensusOutcome(state).map(_._2))(
         new IllegalStateException("production DAG outcome transition rejected frame")
@@ -792,7 +790,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       runs <- CertifiedLineageReplayHarness.execute(root, frames)(derive(_, _, stateAdvancer))
       finalOutcome = built._1
       laterSingletonBypass = CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
-        certifiedConsensusActive = true,
         config.certifiedConsensusActivationKey,
         currentCommitteeSize = 1,
         finalOutcome.expandedBeyondSingleton.getOrElse(false)

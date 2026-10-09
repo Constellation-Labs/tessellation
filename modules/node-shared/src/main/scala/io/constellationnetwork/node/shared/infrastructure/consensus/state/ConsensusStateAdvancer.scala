@@ -1,10 +1,10 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.state
 
 import cats.data.StateT
-import cats.effect.{Async, Clock}
+import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.node.shared.config.types.ConsensusConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
@@ -120,70 +120,31 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
   protected def config: ConsensusConfig
 
-  /** Layer-specific extraction of the most recent `controllerEvidence` entry's `completedSigners` from the carried outcome -- the
-    * deterministic voter anchor for `QuorumDenominatorShrink`. Consensus-agreed signed-outcome data; see the rung's scaladoc for the full
-    * two-node determinism argument. Defaults to `None` (rung inert) for implementations that do not carry evidence.
-    */
-  protected def latestEvidenceSigners(lastOutcome: Outcome): Option[SortedSet[PeerId]] = None
-
-  /** Layer-specific extraction of the parent outcome's `consensusEndTime` (last `recentRoundEndTimes` entry) -- the shared time anchor for
-    * `QuorumDenominatorShrink` escalation. Defaults to `None` (rung inert).
-    */
-  protected def lastOutcomeEndTimeMs(lastOutcome: Outcome): Option[Long] = None
-
   /** v4.1.0 cluster-majority floor gate. When true (the production default for L0 snapshot consensus, OFF during bootstrap), the finality
     * quorum is floored at a super/unanimity-majority of `roundStartFacilitators` so a minority Core cannot finalize (see
-    * `QuorumDenominatorShrink.decide`). Defaults to `false` (floor inert, byte-identical to pre-floor behavior) so any advancer that does
-    * not opt in is unaffected; the gl0 and currency-l0 advancers override it to `!isInBootstrap(state)`. Must be deterministic across nodes
-    * (it feeds the quorum decision): both overrides derive it from `state.lastOutcome.recentProofSizes`, which is signed consensus data.
+    * `FinalityQuorum.required`). Defaults to `false` (floor inert, byte-identical to pre-floor behavior) so any advancer that does not opt
+    * in is unaffected; the gl0 and currency-l0 advancers override it to `!isInBootstrap(state)`. Must be deterministic across nodes (it
+    * feeds the quorum decision): both overrides derive it from `state.lastOutcome.recentProofSizes`, which is signed consensus data.
     */
   protected def clusterFloorActive(state: ConsensusState[Key, Status, Outcome, Kind]): Boolean = false
 
-  /** Shared derivation for both quorum decisions (see `quorumShrinkDecision` and `quorumFinalityDecision`). The ONLY difference between the
-    * two is `applyClusterFloor`; every other input is identical so the rung anchors cannot drift between them. Pure except for the
-    * wall-clock read.
+  /** LIVENESS quorum: Core-sized, never the cluster floor. Consumed by VCC/TC assembly and apply in `StateTransitions`, proposal-embedded
+    * certificate validation, and the `StallDetector` feasibility gates. Their effects only take hold through a finalized snapshot, and
+    * finalization is floored (see `finalityQuorum`).
     */
-  private def decideQuorum(
-    state: ConsensusState[Key, Status, Outcome, Kind],
-    applyClusterFloor: Boolean
-  )(implicit asyncF: Async[F]): F[QuorumDenominatorShrink.Decision] =
-    Clock[F].realTime.map { now =>
-      QuorumDenominatorShrink.decide(
-        coreSize = state.coreFacilitators.value.size,
-        applyClusterFloor = applyClusterFloor,
-        quorumThresholdFraction = config.quorumThresholdFraction,
-        latestEvidenceSigners = latestEvidenceSigners(state.lastOutcome),
-        roundStartFacilitators = state.roundStartFacilitators.value.toSet,
-        parentEndTimeMs = lastOutcomeEndTimeMs(state.lastOutcome),
-        nowMs = now.toMillis,
-        viewIntervalMs = config.viewInterval.toMillis,
-        activationViews = if (state.certifiedConsensusActive) 0 else config.quorumShrinkActivationViews
-      )
-    }
+  def livenessQuorum(state: ConsensusState[Key, Status, Outcome, Kind]): Int =
+    FinalityQuorum.coreQuorum(state.coreFacilitators.value.size, config.quorumThresholdFraction)
 
-  /** LIVENESS-cert decision: Core-sized quorum, NEVER the v4.1.0 cluster floor. Consumed by the VCC/TC assembly+apply sites in
-    * `StateTransitions`, the proposal-embedded cert validation in both layer advancers, and the `StallDetector` feasibility gates. These
-    * mechanisms (rotate a wedged leader, evict/admit to reconfigure the committee) MUST keep working in a degraded committee or a single
-    * dead leader wedges the round; flooring them would re-create the very leader-rotation/reconfiguration deadlock the shrink rung was
-    * built to break. They are safe to leave Core-sized because their EFFECTS only take hold via a finalized snapshot, and finalization IS
-    * floored (see `quorumFinalityDecision`). Byte-identical to pre-v4.1.0 behavior. With `config.quorumShrinkActivationViews <= 0` (the
-    * default) or absent anchors the returned decision is inert.
+  /** FINALITY quorum: carries the cluster-majority floor over the FROZEN round committee outside bootstrap. Used only where a snapshot is
+    * committed -- the phase gate `maybeGetAllDeclarations` and the dag-l0 finalization gate.
     */
-  def quorumShrinkDecision(
-    state: ConsensusState[Key, Status, Outcome, Kind]
-  )(implicit asyncF: Async[F]): F[QuorumDenominatorShrink.Decision] =
-    decideQuorum(state, applyClusterFloor = false)
-
-  /** FINALITY decision: carries the v4.1.0 cluster-majority floor (a super/unanimity-majority of `roundStartFacilitators` outside
-    * bootstrap; see `QuorumDenominatorShrink.decide`). Used ONLY where a snapshot is actually COMMITTED -- the phase gate
-    * `maybeGetAllDeclarations` and the dag-l0 finalization gate -- so a Core that has shrunk to a cluster-minority can never finalize a
-    * divergent snapshot (the proven 2-of-5 fork). The floor is over the FROZEN round committee, so a mid-round Core-narrowing
-    * TimeoutCertificate cannot lower it.
-    */
-  def quorumFinalityDecision(
-    state: ConsensusState[Key, Status, Outcome, Kind]
-  )(implicit asyncF: Async[F]): F[QuorumDenominatorShrink.Decision] =
-    decideQuorum(state, applyClusterFloor = clusterFloorActive(state))
+  def finalityQuorum(state: ConsensusState[Key, Status, Outcome, Kind]): Int =
+    FinalityQuorum.required(
+      state.coreFacilitators.value.size,
+      state.roundStartFacilitators.value.size,
+      clusterFloorActive(state),
+      config.quorumThresholdFraction
+    )
 
   protected def maybeGetAllDeclarations[A](
     state: State,
@@ -200,7 +161,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     //
     // v4.1.0 cluster-majority floor: outside bootstrap the GATE set is the FROZEN ROUND COMMITTEE
     // (`roundStartFacilitators`) and the threshold a committee-sized super/unanimity-majority,
-    // matching the floored denominator in `QuorumDenominatorShrink.decide`. This fences the proven
+    // matching the floored denominator in `FinalityQuorum.required`. This fences the proven
     // 2-of-5 self-finalization fork: a minority Core can no longer satisfy the gate. The COUNTED
     // VOTERS widen with the threshold -- raising the bar while still counting only Core declarations
     // would wedge a healthy mixed committee where Core < committee. During bootstrap
@@ -239,37 +200,18 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     // Testnet/mainnet use 0.6666666666666666 (exact 2/3) so community peers don't block rounds.
     // Dev uses 1.0 (unanimity) for clean E2E convergence. Integer arithmetic via
     // `QuorumPolicy.fromFraction` removes the `Double` from consensus math. The threshold here
-    // mirrors `decision.baseQuorum` for the active gate set (Core in bootstrap, committee otherwise).
+    // mirrors `finalityQuorum` for the active gate set (Core in bootstrap, committee otherwise).
     val quorumFraction = config.quorumThresholdFraction
     val quorumThreshold = math.max(1, QuorumPolicy.fromFraction(gateSize, quorumFraction))
     val gateDeclared: Set[PeerId] = declarationsMap.keySet.filter(gateSet.contains)
 
-    for {
-      // v33 quorum-denominator shrink: when the cluster has been silent at this key past the
-      // deterministic escalation threshold, the phase gate may pass on `requiredQuorum`
-      // anchor-member declarations instead of the full quorum. Inert (decision.meets ==
-      // `gateReceivedCount >= quorumThreshold`) in normal operation; outside bootstrap the rung is
-      // neutralized by the cluster floor (no shrink below the committee majority).
-      decision <- quorumFinalityDecision(state)
-      met = decision.meets(gateDeclared)
-      shrunk = decision.shrunkPath(gateDeclared)
-      result <-
-        if (met) {
-          logger.debug(
-            s"Quorum reached: ${gateReceivedCount}/${gateSize} committee declared (total received ${receivedCount}/${collectionUniverse.size}, need ${quorumThreshold}) for key=${state.key}"
-          ) >>
-            logger
-              .info(
-                s"[QuorumShrink] phase gate passed via shrunken quorum for key=${state.key}: " +
-                  s"declared=${gateReceivedCount}/${gateSize} base=${decision.baseQuorum} required=${decision.requiredQuorum} " +
-                  s"steps=${decision.steps} anchorSize=${decision.anchor.size}"
-              )
-              .whenA(shrunk) >>
-            declarationsMap.some.pure[F]
-        } else {
-          none[SortedMap[PeerId, A]].pure[F]
-        }
-    } yield result
+    val required = finalityQuorum(state)
+
+    if (gateDeclared.size >= required)
+      logger.debug(
+        s"Quorum reached: ${gateReceivedCount}/${gateSize} committee declared (total received ${receivedCount}/${collectionUniverse.size}, need ${quorumThreshold}) for key=${state.key}"
+      ) >> declarationsMap.some.pure[F]
+    else none[SortedMap[PeerId, A]].pure[F]
   }
 }
 

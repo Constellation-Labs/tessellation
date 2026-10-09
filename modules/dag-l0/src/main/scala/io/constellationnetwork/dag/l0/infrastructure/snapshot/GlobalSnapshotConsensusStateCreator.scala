@@ -124,7 +124,6 @@ object GlobalSnapshotConsensusStateCreator {
     consensusConfigHash: Hash,
     consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
-    tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     localHealthMonitor: LocalHealthMonitor[F],
     // v19 multi-committee floor for the Core committee. The Core committee is the
@@ -440,49 +439,8 @@ object GlobalSnapshotConsensusStateCreator {
             s"fullBase=${fullBase.size}"
         )
 
-        // TCA (Trailing Common Ancestor): exclude degraded peers. Degraded = peers who were
-        // facilitators in the previous round but got evicted via the consensus-agreed facility-phase
-        // fork-eviction (stored in `state.removedFacilitators`). Previously this compared against
-        // `signedMajorityArtifact.proofs` (who actually signed), but THAT set is per-node-local:
-        // each node's signed snapshot carries only the proofs it collected before CASing. Fast
-        // finalizers stop at quorum; slower finalizers see more. Using it here caused different
-        // nodes to derive different degraded sets → different committees → cascading divergence.
-        //
-        // Now we derive degraded purely from consensus-agreed state: `lastFacilitators -
-        // removedFacilitators`. A peer that participated and wasn't fork-evicted is "presumed to
-        // have signed" for TCA purposes, matching the Phase 3 canonical-signers philosophy.
-        lastFacilitators = lastOutcome.facilitators.value.toSet
-        // A bridge node may start from an rc.6 anchor that already carries health-derived
-        // `removedFacilitators`. Retain mode must neutralize those inherited removals too;
-        // otherwise the first rc.7 round would contract before the new emission/apply gates
-        // get a chance to take effect. Currency keeps consuming the carried set unchanged.
-        carriedFacilityRemovals = membershipPolicy.persistentFacilityRemovals(lastOutcome.removedFacilitators.value)
-        lastSigners = lastFacilitators -- carriedFacilityRemovals
-        tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
-        tcaFilteredBase = tcaDegraded match {
-          case Some(degraded) =>
-            val filtered = fullBase.filterNot(degraded.contains)
-            if (filtered.isEmpty) fullBase
-            else filtered
-          case None => fullBase
-        }
-
-        _ <- tcaDegraded.traverse_ { degraded =>
-          ConsensusLog.debug(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            TcaFilterApplied,
-            "tcaDegraded" -> degraded.size.toString,
-            "fullBase" -> fullBase.size.toString,
-            "tcaFiltered" -> tcaFilteredBase.size.toString,
-            "degradedPeers" -> degraded.toList.map(_.value.value.take(8)).mkString(",")
-          )
-        }
-
         // All eligible after collateral filtering (includes previously removed peers so they can re-enter)
-        collateralEligible <- tcaFilteredBase.filterA { peerId =>
+        collateralEligible <- fullBase.filterA { peerId =>
           val seedlistAllows = seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId)
           consensusFns
             .facilitatorFilter(
@@ -607,13 +565,6 @@ object GlobalSnapshotConsensusStateCreator {
           .map(_._1)
           .getOrElse(facilitatorSelector.select(eligibleThisRound, entropy))
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
-        locallyBufferedWithdrawals = selectedFacilitators.iterator
-          .filter(peerId => resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility))
-          .toSet
-        withdrawnPeers = CertifiedRoundCommitteeProjector.roundStartWithdrawals(
-          config.certifiedConsensusActiveAt(key.value.value),
-          locallyBufferedWithdrawals
-        )
         membershipProjection = certifiedRoundProjection.fold(
           CertifiedRoundCommitteeProjector.project(
             key = key,
@@ -630,7 +581,9 @@ object GlobalSnapshotConsensusStateCreator {
             config = config,
             coreCommitteeSize = coreCommitteeSize,
             forcedTier1Peers = Set.empty,
-            withdrawnPeers = withdrawnPeers
+            // Buffered withdrawal rumors are not certified and can arrive before state creation on one node but after it on
+            // another. The frozen round-start/QC committee therefore ignores that local timing input.
+            withdrawnPeers = Set.empty
           )
         )(_._2)
         admissionSizing = membershipProjection.admissionSizing
@@ -780,12 +733,6 @@ object GlobalSnapshotConsensusStateCreator {
             activeExclusionCounts.getOrElse(reason.label, 0).toLong,
             Seq(admissionReasonLabel -> reason.label)
           )
-        }
-
-        withdrawn = activeFacilitators.filter(withdrawnPeers.contains)
-
-        _ <- withdrawn.traverse_ { peerId =>
-          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus at key=$key")
         }
 
         time <- Clock[F].monotonic
@@ -968,11 +915,10 @@ object GlobalSnapshotConsensusStateCreator {
             lastOutcome.finished.snapshotHash
           ),
           time,
-          withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
+          withdrawnFacilitators = WithdrawnFacilitators.empty,
           eligibleFacilitators = EligibleFacilitators(allEligible),
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
-          certifiedConsensusActive = config.certifiedConsensusActiveAt(key.value.value),
           leader = leader,
           // Round-start view = certified initial view. MUST match the
           // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the
@@ -1008,8 +954,7 @@ object GlobalSnapshotConsensusStateCreator {
             "nowMs" -> nowMs.toString
           )
           val optionalPairs =
-            (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
-              (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
+            (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (probationPeers.nonEmpty) Seq("probation" -> probationPeers.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
               (if (priorAbandonmentCount > 0) Seq("suppressedRetryViewSeed" -> priorAbandonmentCount.toString) else Seq.empty)
@@ -1037,7 +982,7 @@ object GlobalSnapshotConsensusStateCreator {
               Metrics[F].incrementCounter("dag_consensus_eviction_vote_retransmitted_total")
           }
         roundStartMembershipEffect <-
-          if (membershipPolicy.allowsCertifiedAtomicReplacement(config.certifiedConsensusActiveAt(key.value.value)))
+          if (membershipPolicy.allowsCertifiedAtomicReplacement)
             auditSigningFinalityParticipation(
               key,
               lastOutcome,
@@ -1076,24 +1021,22 @@ object GlobalSnapshotConsensusStateCreator {
         // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
         proposerClockMs <- Clock[F].realTime.map(_.toMillis)
         triggerStatement <-
-          if (state.certifiedConsensusActive)
-            HasherSelector[F].withCurrent { implicit hasher =>
-              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
-                CertifiedConsensus.signTriggerStatement[F](
-                  CertifiedConsensus.triggerStatement(
-                    CertifiedConsensus.ConsensusDomain.DagL0,
-                    networkId,
-                    key.value.value,
-                    lastOutcome.finished.snapshotHash,
-                    roundStartHash,
-                    consensusConfigHash,
-                    maybeTrigger
-                  ),
-                  keyPair
-                )
-              }
-            }.map(_.some)
-          else none[io.constellationnetwork.security.signature.Signed[CertifiedConsensus.TriggerStatement]].pure[F]
+          HasherSelector[F].withCurrent { implicit hasher =>
+            state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+              CertifiedConsensus.signTriggerStatement[F](
+                CertifiedConsensus.triggerStatement(
+                  CertifiedConsensus.ConsensusDomain.DagL0,
+                  networkId,
+                  key.value.value,
+                  lastOutcome.finished.snapshotHash,
+                  roundStartHash,
+                  consensusConfigHash,
+                  maybeTrigger
+                ),
+                keyPair
+              )
+            }
+          }.map(_.some)
         facility = Facility(
           eventHashes,
           candidates,

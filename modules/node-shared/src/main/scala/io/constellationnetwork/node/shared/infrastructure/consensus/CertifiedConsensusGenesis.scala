@@ -28,13 +28,11 @@ object CertifiedConsensusGenesis {
     * re-arm after later degradation to one signer.
     */
   def allowsSingletonBootstrapExpansion(
-    certifiedConsensusActive: Boolean,
     certifiedConsensusActivationKey: Long,
     currentCommitteeSize: Int,
     expandedBeyondSingleton: Boolean
   ): Boolean =
-    certifiedConsensusActive &&
-      isActiveFromGenesis(certifiedConsensusActivationKey) &&
+    isActiveFromGenesis(certifiedConsensusActivationKey) &&
       currentCommitteeSize == 1 &&
       !expandedBeyondSingleton
 

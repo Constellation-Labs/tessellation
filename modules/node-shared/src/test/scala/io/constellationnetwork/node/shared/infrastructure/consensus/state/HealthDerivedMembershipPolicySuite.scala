@@ -23,10 +23,9 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     expect(!policy.acceptsCertifiedNextRoundEvictions) &&
     expect(!policy.acceptsEvictionCertificates) &&
     expect(policy.acceptsEvictionVotes) &&
-    expect(!policy.acceptsEvictionVotesAt(certifiedConsensusActive = false)) &&
-    expect(policy.acceptsEvictionVotesAt(certifiedConsensusActive = true)) &&
-    expect(!policy.allowsCertifiedAtomicReplacement(certifiedConsensusActive = false)) &&
-    expect(policy.allowsCertifiedAtomicReplacement(certifiedConsensusActive = true))
+    expect(!policy.acceptsEvictionVotesForRound(roundExists = false)) &&
+    expect(policy.acceptsEvictionVotesForRound(roundExists = true)) &&
+    expect(policy.allowsCertifiedAtomicReplacement)
   }
 
   test("GL0 retain policy preserves facilitator and Core ordering across a timeout") {
@@ -119,13 +118,6 @@ object HealthDerivedMembershipPolicySuite extends FunSuite {
     val policy = HealthDerivedMembershipPolicy.RetainSigningLeases
 
     expect.same(Set.empty, policy.persistentFacilityRemovals(carriedRemovedFacilitators))
-  }
-
-  test("GL0 retain policy is stable across the v35 activation boundary") {
-    val policy = HealthDerivedMembershipPolicy.RetainSigningLeases
-
-    expect.same(policy, policy.forCertifiedView(certifiedConsensusActive = false)) &&
-    expect.same(policy, policy.forCertifiedView(certifiedConsensusActive = true))
   }
 
 }

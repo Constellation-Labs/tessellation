@@ -13,18 +13,16 @@ object CertifiedConsensusGenesisSuite extends SimpleIOSuite {
     expect(CertifiedConsensusGenesis.isActiveFromGenesis(0L)) &&
     expect(CertifiedConsensusGenesis.isActiveFromGenesis(root.value.value)) &&
     expect(!CertifiedConsensusGenesis.isActiveFromGenesis(root.value.value + 1L)) &&
-    expect(CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(true, 0L, 1, expandedBeyondSingleton = false)) &&
-    expect(!CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(true, 0L, 1, expandedBeyondSingleton = true)) &&
-    expect(!CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(true, 0L, 2, expandedBeyondSingleton = false)) &&
+    expect(CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(0L, 1, expandedBeyondSingleton = false)) &&
+    expect(!CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(0L, 1, expandedBeyondSingleton = true)) &&
+    expect(!CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(0L, 2, expandedBeyondSingleton = false)) &&
     expect(
       !CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
-        true,
         root.value.value + 1L,
         1,
         expandedBeyondSingleton = false
       )
     ) &&
-    expect(!CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(false, 0L, 1, expandedBeyondSingleton = false)) &&
     expect(!CertifiedConsensusGenesis.hasExpandedBeyondSingleton(0L, root, 1, Some(false))) &&
     expect(CertifiedConsensusGenesis.hasExpandedBeyondSingleton(0L, root, 1, Some(true))) &&
     expect(!CertifiedConsensusGenesis.hasExpandedBeyondSingleton(0L, root, 1, None)) &&

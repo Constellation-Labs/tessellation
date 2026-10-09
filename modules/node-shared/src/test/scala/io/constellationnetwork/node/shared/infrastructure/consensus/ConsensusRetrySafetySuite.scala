@@ -56,33 +56,19 @@ object ConsensusRetrySafetySuite extends FunSuite {
   private def majority(view: Long, hash: Hash = proposalHash): MajoritySignature =
     MajoritySignature(signature, facilitatorsHash, lastSnapshotHash, view, hash)
 
-  test("GL0 same-key retry retains Facility and clears every attempt-bound declaration slot") {
+  test("same-key retry retains Facility and clears every attempt-bound declaration slot") {
     val declarations = PeerDeclarations(
       facility = facility.some,
       proposal = proposal(0L).some,
       signature = majority(0L).some,
       binarySignature = BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some
     )
-    val retained = ConsensusStorage.declarationsAfterAbandon(declarations, ViewSafetyMode.LegacyFreezeAfterVote)
+    val retained = ConsensusStorage.retainFacilityOnly(declarations)
 
     expect(retained.facility.contains(facility))
       .and(expect(retained.proposal.isEmpty))
       .and(expect(retained.signature.isEmpty))
       .and(expect(retained.binarySignature.isEmpty))
-  }
-
-  test("Currency same-key retry retains the rc.7 declaration map") {
-    val declarations = PeerDeclarations(
-      facility = facility.some,
-      proposal = proposal(0L).some,
-      signature = majority(0L).some,
-      binarySignature = BinarySignature(signature, facilitatorsHash, lastSnapshotHash).some
-    )
-
-    expect.same(
-      declarations,
-      ConsensusStorage.declarationsAfterAbandon(declarations, ViewSafetyMode.LegacyPreserve)
-    )
   }
 
   test("a failed CheckUpdate retry never adopts a newer round's attempt token") {
@@ -150,11 +136,6 @@ object ConsensusRetrySafetySuite extends FunSuite {
       .and(expect(!ConsensusStorage.isExactTransitionScheduled(None, parent, 2L, 3L)))
   }
 
-  test("abandon retains GL0's fail-closed lock but clears Currency's legacy retry lock") {
-    expect(ConsensusStorage.retainVoteLockAcrossAbandon(ViewSafetyMode.LegacyFreezeAfterVote))
-      .and(expect(!ConsensusStorage.retainVoteLockAcrossAbandon(ViewSafetyMode.LegacyPreserve)))
-  }
-
   test("certified view pruning drops lower-view slots and all view-less binary signatures") {
     val lower = PeerDeclarations(
       facility.some,
@@ -189,55 +170,6 @@ object ConsensusRetrySafetySuite extends FunSuite {
       .and(expect(!domain.contains(wrongParent)))
   }
 
-  test("queued abandon becomes unsafe when a vote lands before command drain") {
-    val safeWhenQueued = StallDetector.sameKeyRestartUnsafe(
-      viewNumber = 0,
-      phaseIndex = 0,
-      voteLockPopulated = false,
-      mode = ViewSafetyMode.LegacyFreezeAfterVote
-    )
-    val unsafeAtDrain = StallDetector.sameKeyRestartUnsafe(
-      viewNumber = 0,
-      phaseIndex = 0,
-      voteLockPopulated = true,
-      mode = ViewSafetyMode.LegacyFreezeAfterVote
-    )
-    val unsafeAfterProposalAcceptance = StallDetector.sameKeyRestartUnsafe(
-      viewNumber = 0,
-      phaseIndex = 2,
-      voteLockPopulated = false,
-      mode = ViewSafetyMode.LegacyFreezeAfterVote
-    )
-
-    expect(!safeWhenQueued)
-      .and(expect(unsafeAtDrain))
-      .and(expect(unsafeAfterProposalAcceptance))
-  }
-
-  test("a locked attempt can only leave through corroborated lagging recovery") {
-    val confirmed = AbandonmentTracker.PeersAheadProbe(
-      confirmedAhead = true,
-      probedPeers = 3,
-      respondedPeers = 3,
-      corroboratingPeers = 2,
-      outcome = AbandonmentTracker.ProbeOutcome.Completed
-    )
-    val unconfirmed = confirmed.copy(confirmedAhead = false, corroboratingPeers = 1)
-
-    expect.same(
-      AbandonmentTracker.LockedAttemptAction.RecoverByDownload,
-      AbandonmentTracker.lockedAttemptAction(AbandonReason.Lagging(2, 3, 3), confirmed)
-    ) &&
-    expect.same(
-      AbandonmentTracker.LockedAttemptAction.Retain,
-      AbandonmentTracker.lockedAttemptAction(AbandonReason.Lagging(2, 3, 3), unconfirmed)
-    ) &&
-    expect.same(
-      AbandonmentTracker.LockedAttemptAction.Retain,
-      AbandonmentTracker.lockedAttemptAction(AbandonReason.RoundTimeout(60L, None), confirmed)
-    )
-  }
-
   test("only a lagging non-committee observer is eligible for bounded follower catch-up") {
     val committeeMember = AbandonReason.Lagging(2, 3, 3, followerCatchUpEligible = false)
     val observer = AbandonReason.Lagging(2, 3, 3, followerCatchUpEligible = true)
@@ -247,108 +179,21 @@ object ConsensusRetrySafetySuite extends FunSuite {
     expect(!AbandonmentTracker.followerCatchUpEligible(AbandonReason.RoundTimeout(60L, None)))
   }
 
-  test("Currency preserves rc.7 higher-view voting and same-key retry policy") {
-    val priorVote = VoteLock(highestVotedView = 0L.some, votedHashAtHighestView = proposalHash.some, lockedQc = None)
-    val higherViewVote = priorVote.acceptVote(
-      view = 1L,
-      proposalHash = otherHash,
-      effectiveLockedQc = None,
-      mode = ViewSafetyMode.LegacyPreserve
-    )
-
-    expect(higherViewVote.isRight)
-      .and(
-        expect(
-          !StallDetector.sameKeyRestartUnsafe(
-            viewNumber = 0,
-            phaseIndex = 2,
-            voteLockPopulated = true,
-            mode = ViewSafetyMode.LegacyPreserve
-          )
-        )
-      )
-      .and(
-        expect(
-          !StallDetector.sameKeyRestartUnsafe(
-            viewNumber = 0,
-            phaseIndex = 3,
-            voteLockPopulated = true,
-            mode = ViewSafetyMode.LegacyPreserve
-          )
-        )
-      )
-  }
-
   test("queued abandon is stale when either state or declarations advance before command drain") {
     expect(AbandonmentTracker.isCurrentDecision(7L, 11L, 7L, 11L))
       .and(expect(!AbandonmentTracker.isCurrentDecision(7L, 11L, 8L, 11L)))
       .and(expect(!AbandonmentTracker.isCurrentDecision(7L, 11L, 7L, 12L)))
   }
 
-  test("same-key soft reset is allowed only before vote, certified view, or later view") {
-    val voted = VoteLock(highestVotedView = 0L.some, votedHashAtHighestView = proposalHash.some, lockedQc = None)
-    val qcOnly = VoteLock.empty.copy(
-      lockedQc = ProposalQC(
-        view = 0L,
-        proposalHash = proposalHash,
-        facilitatorsHash = facilitatorsHash,
-        signatures = cats.data.NonEmptySet.of(
-          io.constellationnetwork.security.signature.signature.SignatureProof(
-            io.constellationnetwork.schema.ID.Id(Hex("01")),
-            signature
-          )
-        )
-      ).some
-    )
+  test("same-key soft reset is refused only while an exact certified view advance is scheduled") {
+    expect(ConsensusStorage.sameKeySoftResetAllowed(hasScheduledAdvance = false))
+      .and(expect(!ConsensusStorage.sameKeySoftResetAllowed(hasScheduledAdvance = true)))
+  }
 
-    expect(
-      ConsensusStorage.sameKeySoftResetAllowed(
-        0,
-        None,
-        hasScheduledAdvance = false,
-        mode = ViewSafetyMode.LegacyFreezeAfterVote
-      )
-    )
-      .and(
-        expect(
-          !ConsensusStorage.sameKeySoftResetAllowed(
-            0,
-            voted.some,
-            hasScheduledAdvance = false,
-            mode = ViewSafetyMode.LegacyFreezeAfterVote
-          )
-        )
-      )
-      .and(
-        expect(
-          !ConsensusStorage.sameKeySoftResetAllowed(
-            0,
-            qcOnly.some,
-            hasScheduledAdvance = false,
-            mode = ViewSafetyMode.LegacyFreezeAfterVote
-          )
-        )
-      )
-      .and(
-        expect(
-          !ConsensusStorage.sameKeySoftResetAllowed(
-            1,
-            None,
-            hasScheduledAdvance = false,
-            mode = ViewSafetyMode.LegacyFreezeAfterVote
-          )
-        )
-      )
-      .and(
-        expect(
-          !ConsensusStorage.sameKeySoftResetAllowed(
-            0,
-            None,
-            hasScheduledAdvance = true,
-            mode = ViewSafetyMode.LegacyFreezeAfterVote
-          )
-        )
-      )
+  test("a newly enqueued pacemaker request gets one monitor tick before an abandon") {
+    expect(StallDetector.shouldAbandonThisMonitorTick(abandonRequested = true, newPacemakerRequestEnqueued = false))
+      .and(expect(!StallDetector.shouldAbandonThisMonitorTick(abandonRequested = true, newPacemakerRequestEnqueued = true)))
+      .and(expect(!StallDetector.shouldAbandonThisMonitorTick(abandonRequested = false, newPacemakerRequestEnqueued = false)))
   }
 
   test("queued view-change requests are bound to view, state attempt, progress evidence, and unfinished state") {

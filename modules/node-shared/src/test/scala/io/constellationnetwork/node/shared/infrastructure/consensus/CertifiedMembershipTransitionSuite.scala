@@ -105,20 +105,6 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
     expect.same(Right(()), openReplacement)
   }
 
-  test("v35 round-start committee ignores asymmetric buffered withdrawal arrival") {
-    val observedEarly = Set(a)
-    val observedLate = Set.empty[PeerId]
-
-    expect.same(
-      CertifiedRoundCommitteeProjector.roundStartWithdrawals(certifiedConsensusActive = true, observedLate),
-      CertifiedRoundCommitteeProjector.roundStartWithdrawals(certifiedConsensusActive = true, observedEarly)
-    ) &&
-    expect.same(
-      observedEarly,
-      CertifiedRoundCommitteeProjector.roundStartWithdrawals(certifiedConsensusActive = false, observedEarly)
-    )
-  }
-
   test("local proof subsets can abstain from expansion but cannot alter a same-size replacement") {
     val current = (1 to 6).map(peer).toSet
     val replacement = peer(7)

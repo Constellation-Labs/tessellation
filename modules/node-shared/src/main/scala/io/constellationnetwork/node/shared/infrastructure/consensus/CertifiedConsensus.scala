@@ -353,19 +353,16 @@ object CertifiedConsensus {
 
   /** Select whether this node may emit a pacemaker vote and, when it may, the exact direct-gossip targets.
     *
-    * Legacy rounds retain their existing active-facilitator behavior. Certified rounds use only frozen Core votes for VCC/TC quorum
-    * intersection, while delivering those votes to the complete frozen committee. `None` distinguishes an ineligible Tier-1 node from an
-    * eligible solo Core node whose target set is legitimately empty.
+    * Certified rounds use only frozen Core votes for VCC/TC quorum intersection, while delivering those votes to the complete frozen
+    * committee. `None` distinguishes an ineligible Tier-1 node from an eligible solo Core node whose target set is legitimately empty.
     */
   def pacemakerVoteTargets(
-    certifiedConsensusActive: Boolean,
     selfId: PeerId,
     frozenCommittee: Set[PeerId],
-    frozenCore: Set[PeerId],
-    legacyFacilitators: Set[PeerId]
+    frozenCore: Set[PeerId]
   ): Option[Set[PeerId]] =
-    if (certifiedConsensusActive && !frozenCore.contains(selfId)) None
-    else Some((if (certifiedConsensusActive) frozenCommittee else legacyFacilitators) - selfId)
+    if (!frozenCore.contains(selfId)) None
+    else Some(frozenCommittee - selfId)
 
   /** Extract every advertised v35 QC from either pacemaker certificate family.
     *

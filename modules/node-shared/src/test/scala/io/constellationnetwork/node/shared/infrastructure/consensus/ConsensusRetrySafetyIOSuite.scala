@@ -464,8 +464,6 @@ object ConsensusRetrySafetyIOSuite extends SimpleIOSuite {
       // duplicate (not new) request and must be free to abandon from the new epoch.
       nextTickShouldAbandon = StallDetector.shouldAbandonThisMonitorTick(
         abandonRequested = true,
-        isLagging = false,
-        sameKeyRestartUnsafe = false,
         newPacemakerRequestEnqueued = false
       )
       nextAbandon = ConsensusCommand.AbandonRound[Long](
