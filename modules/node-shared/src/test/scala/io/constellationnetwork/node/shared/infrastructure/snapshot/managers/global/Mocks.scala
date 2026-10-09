@@ -235,8 +235,11 @@ object Mocks {
         activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
         allBalances: Map[Option[Address], SortedMap[Address, Balance]],
         enforceAggregateBalance: Boolean
-      ): IO[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidator.SpendActionValidationError])])] =
-        (Map.empty[Address, List[SpendAction]], Map.empty[Address, (SpendAction, List[SpendActionValidator.SpendActionValidationError])])
+      ): IO[(Map[Address, List[SpendAction]], Map[Address, List[(SpendAction, List[SpendActionValidator.SpendActionValidationError])]])] =
+        (
+          Map.empty[Address, List[SpendAction]],
+          Map.empty[Address, List[(SpendAction, List[SpendActionValidator.SpendActionValidationError])]]
+        )
           .pure[IO]
     }
 

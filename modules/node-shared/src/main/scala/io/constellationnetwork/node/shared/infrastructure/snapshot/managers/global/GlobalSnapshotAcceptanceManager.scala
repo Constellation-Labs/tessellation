@@ -80,7 +80,7 @@ case class MerkleTreeResult(
 
 case class ArtifactValidationResult(
   acceptedSpendActions: Map[Address, List[SpendAction]],
-  rejectedSpendActions: Map[Address, (SpendAction, List[SpendActionValidationError])],
+  rejectedSpendActions: Map[Address, List[(SpendAction, List[SpendActionValidationError])]],
   acceptedPricingUpdates: List[PricingUpdate],
   rejectedPricingUpdates: List[(PricingUpdate, List[PricingUpdateValidationError])]
 )

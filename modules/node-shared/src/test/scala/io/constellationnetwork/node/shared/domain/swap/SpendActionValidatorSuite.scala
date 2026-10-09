@@ -392,8 +392,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         acceptedSpendActions.contains(ammAddress),
         rejectedSpendActions.contains(ammAddress),
         acceptedSpendActions(ammAddress) === List(spendAction),
-        rejectedSpendActions(ammAddress)._1 === duplicatedAction,
-        rejectedSpendActions(ammAddress)._2 === List(NoActiveAllowSpends("Currency None not found in active allow spends"))
+        rejectedSpendActions(ammAddress).map(_._1) === List(duplicatedAction),
+        rejectedSpendActions(ammAddress).map(_._2) === List(List(NoActiveAllowSpends("Currency None not found in active allow spends")))
       )
   }
 
@@ -442,9 +442,9 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         rejectedSpendActions.nonEmpty,
         rejectedSpendActions.size === 1,
         rejectedSpendActions.contains(ammAddress),
-        rejectedSpendActions(ammAddress)._1 === spendAction,
-        rejectedSpendActions(ammAddress)._2 === List(
-          DuplicatedAllowSpendReference("Duplicated allow spend reference in the same SpendAction")
+        rejectedSpendActions(ammAddress).map(_._1) === List(spendAction),
+        rejectedSpendActions(ammAddress).map(_._2) === List(
+          List(DuplicatedAllowSpendReference("Duplicated allow spend reference in the same SpendAction"))
         )
       )
   }
@@ -525,8 +525,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         rejectedSpendActions.nonEmpty,
         acceptedSpendActions.isEmpty,
         rejectedSpendActions.contains(ammAddress),
-        rejectedSpendActions(ammAddress)._2 === List(
-          AllowSpendNotFound(s"Allow spend ${Hash.empty} not found in currency active allow spends")
+        rejectedSpendActions(ammAddress).map(_._2) === List(
+          List(AllowSpendNotFound(s"Allow spend ${Hash.empty} not found in currency active allow spends"))
         )
       )
   }
@@ -577,8 +577,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (accepted, rejected) <- aggregate(Map(metagraph -> List(first, second)), balances)
     } yield
       expect(accepted.get(metagraph).contains(List(first)), s"accepted: $accepted")
-        .and(expect(rejected.get(metagraph).map(_._1).contains(second), s"rejected action: $rejected"))
-        .and(expect(rejected.get(metagraph).exists(r => isNotEnoughBalance(r._2)), s"rejection reason: $rejected"))
+        .and(expect(rejected.get(metagraph).map(_.map(_._1)).contains(List(second)), s"rejected action: $rejected"))
+        .and(expect(rejected.get(metagraph).exists(_.forall(r => isNotEnoughBalance(r._2))), s"rejection reason: $rejected"))
   }
 
   test("with the aggregate check, payouts that exactly exhaust the metagraph balance are all accepted") { res =>
@@ -607,7 +607,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
       (accepted, rejected) <- aggregate(Map(metagraph -> List(overdrawing, following)), balances)
     } yield
-      expect(rejected.get(metagraph).map(_._1).contains(overdrawing), s"rejected action: $rejected")
+      expect(rejected.get(metagraph).map(_.map(_._1)).contains(List(overdrawing)), s"rejected action: $rejected")
         .and(expect(accepted.get(metagraph).contains(List(following)), s"the later action should see the full balance: $accepted"))
   }
 
@@ -700,7 +700,28 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       (accepted, rejected) <- aggregate(Map(metagraph -> List(action)), balances, activeAllowSpends)
     } yield
       expect(accepted.isEmpty, s"accepted: $accepted")
-        .and(expect(rejected.get(metagraph).map(_._1).contains(action), s"rejected action: $rejected"))
-        .and(expect(rejected.get(metagraph).exists(r => isNotEnoughBalance(r._2)), s"rejection reason: $rejected"))
+        .and(expect(rejected.get(metagraph).map(_.map(_._1)).contains(List(action)), s"rejected action: $rejected"))
+        .and(expect(rejected.get(metagraph).exists(_.forall(r => isNotEnoughBalance(r._2))), s"rejection reason: $rejected"))
+  }
+
+  test("returns every rejected action of the same metagraph, not only the last one") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      firstOverdraft = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 150L, user)))
+      secondOverdraft = SpendAction(NonEmptyList.of(directLeg(metagraph, None, 200L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(firstOverdraft, secondOverdraft)), balances)
+    } yield
+      expect(accepted.isEmpty, s"accepted: $accepted")
+        .and(
+          expect(
+            rejected.get(metagraph).map(_.map(_._1)).contains(List(firstOverdraft, secondOverdraft)),
+            s"both rejected actions should be returned in order: $rejected"
+          )
+        )
+        .and(expect(rejected.get(metagraph).exists(_.forall(r => isNotEnoughBalance(r._2))), s"rejection reasons: $rejected"))
   }
 }
