@@ -34,7 +34,6 @@ object method {
       stateChannel = c.stateChannel,
       peerDiscovery = c.peerDiscovery,
       incremental = c.incremental,
-      recovery = c.recovery,
       shared = shared
     )
 

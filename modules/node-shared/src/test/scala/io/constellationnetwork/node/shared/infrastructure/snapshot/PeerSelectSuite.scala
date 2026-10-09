@@ -8,8 +8,8 @@ import weaver.FunSuite
   * filter.
   *
   * This is a LIVENESS / efficiency heuristic, not a fork-safety boundary (fork-safety on recovery is enforced on download: snapshot
-  * signature validation against the seedlist plus the optional seedlist-signed recovery checkpoint). The heuristic keeps the responders at
-  * the single most-common ahead ordinal only when that ordinal has a strict majority -- biasing sourcing away from a lone raced-ahead peer
+  * signature validation against the seedlist). The heuristic keeps the responders at the single most-common ahead ordinal only when that
+  * ordinal has a strict majority -- biasing sourcing away from a lone raced-ahead peer
   * -- otherwise returns all responders unchanged. (`String` stands in for the peer.)
   */
 object PeerSelectSuite extends FunSuite {

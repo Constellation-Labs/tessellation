@@ -85,16 +85,10 @@ untrusted or permissionless recovery cohort.
 ## What the node does
 
 The rollback lead accepts only an incremental-snapshot rollback source and
-requires the loaded snapshot hash to equal the `run-rollback` hash exactly. If
-`CL_RECOVERY_CHECKPOINT_PATH` is also configured, the independently signed
-checkpoint must describe that same network, ordinal, and hash. These source,
-hash, checkpoint, public-key, and collateral checks run before rollback storage
-is mutated.
-
-`CL_RECOVERY_CHECKPOINT_PATH` is the pre-existing fork-anchor pin. It is not a
-committee recovery plan, does not name the recovery committee, and is not
-distributed to or signed by community validators. The sole committee override
-remains `CL_GL0_RECOVERY_SEED_COMMITTEE`.
+requires the loaded snapshot hash to equal the `run-rollback` hash exactly.
+These source, hash, public-key, and collateral checks run before rollback
+storage is mutated. The sole committee override is
+`CL_GL0_RECOVERY_SEED_COMMITTEE`.
 
 The lead then uses the existing typed `GlobalRecoverySeedOutcome.seed`
 constructor. The resulting outcome:
@@ -228,8 +222,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    and exit status. Confirm every node will start the same
    immutable release/version and effective `deterministicConfigHash`.
 5. Select a canonical **incremental** anchor by exact ordinal, hash, snapshot
-   content, state proof, and snapshot info—not by recency alone. If a signed
-   recovery checkpoint is configured, confirm it is the same anchor.
+   content, state proof, and snapshot info—not by recency alone.
 6. Select a viable, collateralized recovery cohort. For the normal source-node
    procedure, use all three controlled source PeerIds. Independently compare the
    exact environment value on all three machines.

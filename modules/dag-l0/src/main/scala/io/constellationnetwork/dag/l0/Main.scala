@@ -49,7 +49,7 @@ import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops._
-import io.constellationnetwork.security.signature.{Signed, SignedValidator}
+import io.constellationnetwork.security.signature.Signed
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -106,16 +106,6 @@ object Main
     */
   private[dag] def rollbackAnchorHasCollateral(balance: Option[Balance], required: Amount): Boolean =
     balance.getOrElse(Balance.empty).satisfiesCollateral(required)
-
-  private[dag] final case class ConflictingRecoverySeedAnchors(
-    selected: RecoveryCheckpoint,
-    configured: RecoveryCheckpoint
-  ) extends NoStackTrace {
-    override def getMessage: String =
-      s"GL0 recovery seed anchor conflicts with configured recovery checkpoint: " +
-        s"selected=(${selected.network},${selected.ordinal.value.value},${selected.snapshotHash.value}) " +
-        s"checkpoint=(${configured.network},${configured.ordinal.value.value},${configured.snapshotHash.value})"
-  }
 
   private[dag] case object RecoverySeedConfiguredWithoutTrustRoot extends NoStackTrace {
     override def getMessage: String =
@@ -317,13 +307,6 @@ object Main
       RecoverySeedAtCanonicalGenesisRootUnsupported(anchor, activation)
     )
 
-  private[dag] def validateRecoverySeedAnchorCompatibility(
-    selected: RecoveryCheckpoint,
-    configured: Option[RecoveryCheckpoint]
-  ): Either[ConflictingRecoverySeedAnchors, Unit] =
-    configured.fold[Either[ConflictingRecoverySeedAnchors, Unit]](Right(())) { checkpoint =>
-      Either.cond(selected === checkpoint, (), ConflictingRecoverySeedAnchors(selected, checkpoint))
-    }
   private[dag] def validateRecoverySeedAnchorSource(
     source: RollbackLoader.Source
   ): Either[RecoverySeedUnsupportedAnchorSource, Unit] =
@@ -673,14 +656,6 @@ object Main
         )
         .asResource
 
-      recoveryCheckpoint <- HasherSelector[IO].withCurrent { implicit hasher =>
-        RecoveryCheckpointLoader.load[IO](
-          cfg.recovery.checkpointPath,
-          nodeShared.seedlist.map(_.map(_.peerId)),
-          cfg.environment.toString,
-          SignedValidator.make[IO]
-        )
-      }.asResource
       programs = Programs.make[IO, Run](
         sharedPrograms,
         storages,
@@ -694,8 +669,7 @@ object Main
         sharedStorages.lastNGlobalSnapshot,
         sharedStorages.lastGlobalSnapshot,
         sharedStorages.mptStore,
-        nodeShared.seedlist.map(_.map(_.peerId)),
-        recoveryCheckpoint
+        nodeShared.seedlist.map(_.map(_.peerId))
       )
 
       rumorHandler = RumorHandlers
@@ -911,10 +885,6 @@ object Main
                       hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
                       _ <- validateRecoverySeedPublicDiscoverability(snapshot.ordinal, activation).liftTo[IO]
                       _ <- validateRecoverySeedRollbackHash(m.rollbackHash, hashedSnapshot.hash).liftTo[IO]
-                      _ <- validateRecoverySeedAnchorCompatibility(
-                        RecoveryCheckpoint(cfg.environment.toString, snapshot.ordinal, hashedSnapshot.hash),
-                        recoveryCheckpoint
-                      ).liftTo[IO]
                       ineligibleSeedPeers <- seed.committee.toList.filterA { peerId =>
                         peerId.toPublic[IO].map(_.toAddress).map { address =>
                           !rollbackAnchorHasCollateral(snapshotInfo.balances.get(address), cfg.collateral.amount)

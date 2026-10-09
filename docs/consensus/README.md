@@ -1232,8 +1232,7 @@ Recovery can be triggered by three independent paths, all converging on `Waiting
      - If exact hash-addressed bytes exist but their ordinal hardlink is missing, recreate only that hardlink and verify it by reading and
        hashing the result. An occupied ordinal is never overwritten by this repair. If snapshot-info is missing, continue walking and use
        normal validated replay to rebuild the incomplete range.
-     - Enforce any configured seedlist-signed recovery checkpoint: the checkpoint file is verified at startup, downloaded/observed snapshots must pass the checkpoint hash at the checkpoint ordinal, and a local persisted chain whose resolved anchor is already at/above the checkpoint must also prove the checkpoint locally.
-     - Replay validates every successor's parent hash, ordinal/height sequence, signatures, checkpoint, derived context, and state proof
+     - Replay validates every successor's parent hash, ordinal/height sequence, signatures, derived context, and state proof
        before it becomes application state. Replacing an ordinal's local hash/ordinal indexes is uncancelable; recovery may run for hours
        while progressing, but an inactivity watchdog retries it after ten minutes without an ordinal advance.
      - `setForRecovery` bypasses sequential prepend requirement on `SnapshotStorage`
