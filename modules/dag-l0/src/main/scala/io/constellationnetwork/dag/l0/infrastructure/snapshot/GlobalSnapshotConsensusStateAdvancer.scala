@@ -123,6 +123,13 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
 
 object GlobalSnapshotConsensusStateAdvancer {
 
+  private[snapshot] def acceptedProposalEffect[F[_]: Applicative](
+    trigger: ConsensusTrigger,
+    clearTimeTrigger: F[Unit],
+    publish: F[Unit]
+  ): F[Unit] =
+    clearTimeTrigger.whenA(trigger === TimeTrigger) *> publish
+
   private final case class AdmissionPreProposalWait(
     shouldWait: Boolean,
     voteTargetCount: Int,
@@ -1924,7 +1931,6 @@ object GlobalSnapshotConsensusStateAdvancer {
         for {
           earlyCarriedQc <- currentViewCertifiedQc(state)
           effectiveTrigger = earlyCarriedQc.toOption.flatten.fold(majorityTrigger)(_.value.trigger)
-          _ <- clearTimeTriggerIfNeeded(effectiveTrigger)
           facilitatorsHash <- hashFacilitators(state)
 
           // Pull events from mempool using hash union
@@ -3304,6 +3310,40 @@ object GlobalSnapshotConsensusStateAdvancer {
         resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
         leaderProposal: Proposal
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
+        val candidate =
+          if (leaderProposal.hash === status.proposalArtifactInfo.hash) status.proposalArtifactInfo.artifact.some
+          else resources.artifacts.get(leaderProposal.hash)
+
+        candidate.fold(none[Transition].pure[F]) { artifact =>
+          GlobalSnapshotTriggerValidation.whenValid(
+            state.lastOutcome.finished.signedMajorityArtifact.epochProgress,
+            status.majorityTrigger,
+            artifact.epochProgress
+          )(error =>
+            ConsensusLog
+              .debug(
+                logger,
+                Category.Validation,
+                state.key.show,
+                ConsensusLog.role(selfId, state.leader),
+                Event.ValidationFailed,
+                "reason" -> "authorized_trigger_epoch_progress_mismatch",
+                "trigger" -> status.majorityTrigger.toString,
+                "expected" -> error.expected.show,
+                "actual" -> error.actual.show
+              )
+              .productR(Metrics[F].incrementCounter("dag_consensus_trigger_epoch_progress_mismatch_total"))
+              .as(none[Transition])
+          )(resolveTriggerBoundLeaderProposal(state, status, resources, leaderProposal))
+        }
+      }
+
+      private def resolveTriggerBoundLeaderProposal(
+        state: GlobalSnapshotConsensusState,
+        status: CollectingProposals,
+        resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
+        leaderProposal: Proposal
+      )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val role = if (selfId === state.leader) "LEADER" else "FOLLOWER"
         if (leaderProposal.hash === status.proposalArtifactInfo.hash) {
           // Leader's artifact matches our own — use local ArtifactInfo (avoids re-validation)
@@ -3597,6 +3637,8 @@ object GlobalSnapshotConsensusStateAdvancer {
       /** Produces a human-readable description of why the leader's artifact failed validation. */
       private def describeInvalidArtifact(err: InvalidArtifact): String = err match {
         case CertifiedLineageInvalid(reason) => s"certifiedLineage($reason)"
+        case GlobalSnapshotTriggerValidation.EpochProgressMismatch(expected, actual) =>
+          s"epochProgress(expected=${expected.show},actual=${actual.show})"
         case GlobalArtifactMismatch(leader, own) =>
           val leaderScAddrs = leader.stateChannelSnapshots.keySet
           val ownScAddrs = own.stateChannelSnapshots.keySet
@@ -3953,43 +3995,49 @@ object GlobalSnapshotConsensusStateAdvancer {
         majorityInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
         leaderProposal: Proposal
       )(implicit hasher: Hasher[F]): F[Option[Transition]] =
-        if (!certifiedConsensusActive(state))
-          buildSignatureTransition(
-            state,
-            status,
-            majorityInfo,
-            List(leaderProposal.hash),
-            leaderProposal.vcc,
-            leaderProposal.timeoutCertificate,
-            leaderProposal.evictionCertificates,
-            leaderProposal.admissionCertificates,
-            leaderProposal.observedResponders,
-            leaderProposal.observedSelfHealth,
-            leaderProposal.admissionNominee
+        (if (!certifiedConsensusActive(state))
+           buildSignatureTransition(
+             state,
+             status,
+             majorityInfo,
+             List(leaderProposal.hash),
+             leaderProposal.vcc,
+             leaderProposal.timeoutCertificate,
+             leaderProposal.evictionCertificates,
+             leaderProposal.admissionCertificates,
+             leaderProposal.observedResponders,
+             leaderProposal.observedSelfHealth,
+             leaderProposal.admissionNominee
+           )
+         else
+           validateProposalValue(state, status, majorityInfo, leaderProposal).flatMap {
+             case Left(error) =>
+               ConsensusLog
+                 .warn(
+                   logger,
+                   Category.Validation,
+                   state.key.show,
+                   ConsensusLog.role(selfId, state.leader),
+                   Event.ValidationFailed,
+                   "reason" -> s"certified_value_validation:$error",
+                   "leader" -> ConsensusLog.pid(state.leader),
+                   "view" -> leaderProposal.view.toString
+                 )
+                 .as(none[Transition])
+             case Right((value, carriedQc)) =>
+               val accepted = status.copy(
+                 proposalArtifactInfo = majorityInfo,
+                 candidates = Candidates(value.admissionNominee.toSet),
+                 acceptedValue = value.some
+               )
+               prepareOrAwaitCertifiedQc(state, accepted, resources, value, carriedQc, newlyAccepted = true)
+           }).map(
+          _.map(transition =>
+            transition.copy(sideEffect =
+              acceptedProposalEffect(status.majorityTrigger, consensusStorage.clearTimeTrigger, transition.sideEffect)
+            )
           )
-        else
-          validateProposalValue(state, status, majorityInfo, leaderProposal).flatMap {
-            case Left(error) =>
-              ConsensusLog
-                .warn(
-                  logger,
-                  Category.Validation,
-                  state.key.show,
-                  ConsensusLog.role(selfId, state.leader),
-                  Event.ValidationFailed,
-                  "reason" -> s"certified_value_validation:$error",
-                  "leader" -> ConsensusLog.pid(state.leader),
-                  "view" -> leaderProposal.view.toString
-                )
-                .as(none[Transition])
-            case Right((value, carriedQc)) =>
-              val accepted = status.copy(
-                proposalArtifactInfo = majorityInfo,
-                candidates = Candidates(value.admissionNominee.toSet),
-                acceptedValue = value.some
-              )
-              prepareOrAwaitCertifiedQc(state, accepted, resources, value, carriedQc, newlyAccepted = true)
-          }
+        )
 
       private def advanceAcceptedCertifiedValue(
         state: GlobalSnapshotConsensusState,
@@ -5002,9 +5050,6 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       private def checkFollowerExit(state: GlobalSnapshotConsensusState): F[Unit] =
         ExitOnFork.exitOnCheck("CL_EXIT_ON_FOLLOWER_ADVANCER", () => state.facilitators.value.toSet)
-
-      private def clearTimeTriggerIfNeeded(trigger: ConsensusTrigger): F[Unit] =
-        Applicative[F].whenA(trigger === TimeTrigger)(consensusStorage.clearTimeTrigger)
 
       private def recordProposalAffinity(allHashes: List[Hash], ownHash: Hash): F[Unit] =
         Metrics[F].recordDistribution("dag_consensus_proposal_affinity", proposalAffinity(allHashes, ownHash))
