@@ -271,8 +271,7 @@ object GlobalSnapshotAcceptanceManager {
         lastSnapshotContext: GlobalSnapshotInfo,
         lastActiveTips: SortedSet[ActiveTip],
         lastDeprecatedTips: SortedSet[DeprecatedTip],
-        acceptedGlobalTokenLocks: List[Signed[TokenLock]],
-        removingProcessedWithdrawals: Boolean
+        acceptedGlobalTokenLocks: List[Signed[TokenLock]]
       )(
         implicit hasher: Hasher[F]
       ): F[InitialData] =
@@ -290,8 +289,7 @@ object GlobalSnapshotAcceptanceManager {
               lastSnapshotContext,
               epochProgress,
               acceptedGlobalTokenLocks,
-              withdrawalTimeLimit,
-              removingProcessedWithdrawals
+              withdrawalTimeLimit
             )
 
           delegatedResult <- updateDelegatedStakeAcceptanceManager.accept(
@@ -759,8 +757,7 @@ object GlobalSnapshotAcceptanceManager {
                 lastSnapshotContext,
                 lastActiveTips,
                 lastDeprecatedTips,
-                acceptedGlobalTokenLocks,
-                removingProcessedWithdrawals
+                acceptedGlobalTokenLocks
               )
 
             nodeCollateralAcceptanceResult <- acceptNodeCollateral(

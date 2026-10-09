@@ -29,8 +29,7 @@ trait DelegatedStakeStateManager[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     epochProgress: EpochProgress,
     acceptedTokenLocks: List[Signed[TokenLock]],
-    withdrawalTimeLimit: EpochProgress,
-    removingProcessedWithdrawals: Boolean
+    withdrawalTimeLimit: EpochProgress
   )(implicit hasher: Hasher[F]): F[PartitionedRecords[SortedSet[DelegatedStakeRecord], SortedSet[PendingDelegatedStakeWithdrawal]]]
 }
 
@@ -42,8 +41,7 @@ object DelegatedStakeStateManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       epochProgress: EpochProgress,
       acceptedTokenLocks: List[Signed[TokenLock]],
-      withdrawalTimeLimit: EpochProgress,
-      removingProcessedWithdrawals: Boolean
+      withdrawalTimeLimit: EpochProgress
     )(implicit hasher: Hasher[F]): F[PartitionedRecords[SortedSet[DelegatedStakeRecord], SortedSet[PendingDelegatedStakeWithdrawal]]] = {
       def isWithdrawalExpired(withdrawalEpoch: EpochProgress): Boolean =
         (withdrawalEpoch |+| withdrawalTimeLimit) <= epochProgress
@@ -116,15 +114,11 @@ object DelegatedStakeStateManager {
         isCarriedByReplacement = (withdrawal: PendingDelegatedStakeWithdrawal) =>
           !activeTokenLocksByRef.contains(withdrawal.tokenLockRef) && replacementRefs.contains(withdrawal.tokenLockRef)
 
-        // At/after removing-processed-delegated-stake-withdrawals (release/mainnet #1498) any other expired withdrawal stays
-        // in `expired` even when its token lock is gone (an orphan), as on mainnet: its rewards are paid on the legacy path,
-        // unlock generation skips it, and acceptance removes its reference from pending. Below the gate develop keeps every
-        // expired withdrawal without an active lock pending. Mainnet never reached that branch: it halted on the first
-        // orphan (6176655) with MissingTokenLock, and v3.5 has no lock replacement, so no signed mainnet snapshot depends
-        // on either behaviour.
-        keepPending = (withdrawal: PendingDelegatedStakeWithdrawal) =>
-          if (removingProcessedWithdrawals) isCarriedByReplacement(withdrawal)
-          else !activeTokenLocksByRef.contains(withdrawal.tokenLockRef)
+        // Every other expired withdrawal stays in `expired` even when its token lock is gone (an orphan), exactly as on
+        // release/mainnet. Below removing-processed-delegated-stake-withdrawals (#1498) unlock generation then fails with
+        // "Token lock not found", as v3.5 did; at/after it unlock generation skips the orphan, its recorded rewards are paid on
+        // the legacy path and acceptance removes its reference from pending (see GlobalSnapshotAcceptanceManager).
+        keepPending = isCarriedByReplacement
 
         finalUnexpiredWithdrawals = unexpiredWithdrawals |+| expiredWithdrawals.map {
           case (address, withdrawals) => address -> withdrawals.filter(keepPending)
