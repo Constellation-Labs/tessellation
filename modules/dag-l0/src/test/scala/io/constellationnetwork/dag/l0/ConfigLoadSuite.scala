@@ -60,7 +60,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
           expect.same(Some(1000), effective.facilitatorSelectionMax) &&
             expect.same(Some(9), effective.coreCommitteeSize) &&
             expect.same(0, effective.quorumShrinkActivationViews) &&
-            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
+            expect.same(0L, effective.certifiedConsensusActivationKey) &&
             expect.same(9, effective.eventTriggerThreshold) &&
             expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
             expect.same(10, effective.activeAdmissionRecentSignerWindow) &&
@@ -95,6 +95,22 @@ object ConfigLoadSuite extends SimpleIOSuite {
             expect.same(3, effective.activeAdmissionRecentSignerWindow) &&
             expect.same(cfg.snapshot.consensus.activeFacilitatorTarget, effective.activeFacilitatorTarget) &&
             expect.same(cfg.snapshot.consensus.activeFacilitatorMax, effective.activeFacilitatorMax)
+      )
+    }
+  }
+
+  test("certified consensus is active from genesis off mainnet and pinned to a placeholder on mainnet") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val activation = cfg.snapshot.certifiedConsensusActivationOrdinal.view.mapValues(_.value.value).toMap
+
+      expect.same(
+        Map(
+          AppEnvironment.Mainnet -> 9999999L,
+          AppEnvironment.Testnet -> 0L,
+          AppEnvironment.Integrationnet -> 0L,
+          AppEnvironment.Dev -> 0L
+        ),
+        activation
       )
     }
   }

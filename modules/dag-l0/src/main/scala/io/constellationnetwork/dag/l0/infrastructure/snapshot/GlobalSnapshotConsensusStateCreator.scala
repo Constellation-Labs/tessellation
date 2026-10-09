@@ -11,6 +11,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
@@ -64,6 +65,24 @@ object GlobalSnapshotConsensusStateCreator {
     checkAssembly: F[Unit]
   ): F[Unit] =
     (if (alreadyVoted) Sync[F].unit else emitVote) >> checkAssembly
+
+  /** This build contains no pre-v35 Global L0 engine. Keys below the certified-consensus activation are replayed or downloaded, never
+    * produced; a node asked to facilitate one fails closed instead of signing with retired rules.
+    */
+  final case class CertifiedConsensusNotActiveForProduction(key: GlobalSnapshotKey, activationKey: Long) extends NoStackTrace {
+    override def getMessage: String =
+      s"Refusing to produce GL0 snapshot ordinal=${key.value.value}: certified-consensus activation=$activationKey has not been " +
+        "reached and this build has no pre-v35 consensus engine. Pin snapshot.certified-consensus-activation-ordinal to the recovery " +
+        "anchor and enter certified consensus through the recovery-seed rollback."
+  }
+
+  private[snapshot] def requireCertifiedProduction[F[_]: MonadThrow](
+    config: ConsensusConfig,
+    key: GlobalSnapshotKey
+  ): F[Unit] =
+    CertifiedConsensusNotActiveForProduction(key, config.certifiedConsensusActivationKey)
+      .raiseError[F, Unit]
+      .unlessA(config.certifiedConsensusActiveAt(key.value.value))
 
   private def resetLegacyOutcomeToAuthenticatedSeed[F[_]: cats.Functor: Hasher](
     outcome: GlobalConsensusOutcome,
@@ -475,7 +494,8 @@ object GlobalSnapshotConsensusStateCreator {
       priorAbandonmentCount: Int,
       expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
     ): F[StateCreateResult] =
-      consensusStorage.resumePendingStateEffect(key) >>
+      requireCertifiedProduction[F](config, key) >>
+        consensusStorage.resumePendingStateEffect(key) >>
         consensusStorage
           .condModifyStateWithSideEffect(key)(
             toCreateStateFn(

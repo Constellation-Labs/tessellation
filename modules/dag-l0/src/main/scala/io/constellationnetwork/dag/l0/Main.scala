@@ -247,14 +247,29 @@ object Main
     } yield ()
   }
 
-  private[dag] final case class RecoverySeedTooCloseToCertifiedActivation(
+  /** This build contains no pre-v35 Global L0 engine. It may replay or download history below the certified-consensus activation key, but
+    * it must never produce a round there.
+    */
+  private[dag] final case class CertifiedConsensusActivationUnconfigured(environment: String) extends NoStackTrace {
+    override def getMessage: String =
+      s"snapshot.certified-consensus-activation-ordinal has no entry for environment=$environment. This build has no pre-v35 GL0 " +
+        "consensus engine and refuses to start without an explicit activation ordinal."
+  }
+
+  private[dag] final case class GenesisBeforeCertifiedActivation(activation: SnapshotOrdinal) extends NoStackTrace {
+    override def getMessage: String =
+      s"run-genesis requires certified consensus from genesis (activation <= ${CertifiedConsensusGenesis.FirstIncrementalOrdinal.value.value}); " +
+        s"configured activation=${activation.value.value}. This build has no pre-v35 GL0 consensus engine to produce earlier rounds."
+  }
+
+  private[dag] final case class RollbackAnchorBelowCertifiedActivation(
     anchor: SnapshotOrdinal,
     activation: SnapshotOrdinal
   ) extends NoStackTrace {
     override def getMessage: String =
-      s"${Gl0RecoverySeedCommittee.EnvironmentVariable} anchor=${anchor.value.value} is too close to " +
-        s"certified-consensus activation=${activation.value.value}; a pre-activation recovery must precede activation by at least three " +
-        "ordinals so the controller-evidence window is rebuilt. At or after activation the env seed starts an explicit certified epoch."
+      s"GL0 rollback anchor=${anchor.value.value} is below certified-consensus activation=${activation.value.value}. " +
+        "This build has no pre-v35 GL0 consensus engine to produce rounds below activation; set the activation ordinal to the " +
+        s"recovery anchor and roll back with ${Gl0RecoverySeedCommittee.EnvironmentVariable}."
   }
 
   private[dag] final case class RecoverySeedAtCanonicalGenesisRootUnsupported(
@@ -268,21 +283,24 @@ object Main
         "If no successor exists, restart genesis normally; otherwise recover from an incremental anchor at ordinal 2 or later."
   }
 
-  /** The environment seed is the sole explicit operator recovery authority. It flushes controller-evidence windows. A legacy anchor must
-    * precede activation by three ordinals to rebuild those inputs before v35; an anchor at/after activation starts a new canonical
-    * certified epoch. Its first-successor QC becomes publicly reconstructible only when the second successor carries it.
+  /** Every rollback anchor, with or without the environment recovery seed, must be at or after activation: the first produced round is
+    * `anchor + 1`, and there is no pre-v35 engine to produce a round below activation. With the env seed an anchor at/after activation
+    * starts a new canonical certified epoch whose first-successor QC becomes publicly reconstructible when the second successor carries it.
     */
-  private[dag] def validateRecoverySeedActivationSpacing(
+  private[dag] def validateRollbackAnchorAtOrAfterActivation(
     anchor: SnapshotOrdinal,
     activation: SnapshotOrdinal
-  ): Either[RecoverySeedTooCloseToCertifiedActivation, Unit] = {
-    val distance = BigInt(activation.value.value) - BigInt(anchor.value.value)
+  ): Either[RollbackAnchorBelowCertifiedActivation, Unit] =
+    Either.cond(anchor >= activation, (), RollbackAnchorBelowCertifiedActivation(anchor, activation))
+
+  private[dag] def validateGenesisCertifiedActivation(
+    activation: SnapshotOrdinal
+  ): Either[GenesisBeforeCertifiedActivation, Unit] =
     Either.cond(
-      anchor >= activation || distance >= 3,
+      CertifiedConsensusGenesis.isActiveFromGenesis(activation.value.value),
       (),
-      RecoverySeedTooCloseToCertifiedActivation(anchor, activation)
+      GenesisBeforeCertifiedActivation(activation)
     )
-  }
 
   /** A certified-from-genesis root and an env-reset root at ordinal 1 produce indistinguishable public key-2 lineage shapes. Refuse that
     * one ambiguous boundary before rollback storage can be mutated. Later certified anchors become publicly discoverable when the second
@@ -320,15 +338,16 @@ object Main
 
   /** Snapshot-info roots that must survive the ordinary logarithmic cutoff so a restarted validator can authenticate certified lineage.
     *
-    * A production-style ordinal-gated activation roots at `activation - 1`. The development active-from-genesis mode instead roots at the
-    * first incremental artifact: its state proof is derived from full genesis, but replay still needs the ordinal-1 artifact/context pair.
-    * A dormant (`Long.MaxValue`) deployment has no certified root to retain.
+    * A non-genesis activation enters certified consensus through the environment recovery seed with the rollback anchor R equal to the
+    * activation key, so the recovery root is the activation key itself. Active-from-genesis roots at the first incremental artifact: its
+    * state proof is derived from full genesis, but replay still needs the ordinal-1 artifact/context pair. An unconfigured
+    * (`Long.MaxValue`) deployment has no certified root to retain. A later recovery epoch R' > activation is not protected here.
     */
   private[dag] def protectedCertifiedSnapshotInfoOrdinals(activationKey: Long): Set[SnapshotOrdinal] =
     if (activationKey === Long.MaxValue) Set.empty
     else if (CertifiedConsensusGenesis.isActiveFromGenesis(activationKey))
       Set(CertifiedConsensusGenesis.FirstIncrementalOrdinal)
-    else Set(SnapshotOrdinal.unsafeApply(activationKey - 1L))
+    else Set(SnapshotOrdinal.unsafeApply(activationKey))
 
   private[dag] final case class RecentCoreReconstructionDiagnostic(
     source: String,
@@ -381,7 +400,15 @@ object Main
         case m: RunGenesis if m.recoverySeedCommittee.nonEmpty => RecoverySeedConfiguredForGenesis.raiseError[IO, Unit]
         case _                                                 => IO.unit
       }).asResource
+      _ <- CertifiedConsensusActivationUnconfigured(sharedConfig.environment.toString)
+        .raiseError[IO, Unit]
+        .whenA(loadedConsensusConfig.certifiedConsensusActivationKey === Long.MaxValue)
+        .asResource
       certifiedConsensusActivationOrdinal = SnapshotOrdinal.unsafeApply(loadedConsensusConfig.certifiedConsensusActivationKey)
+      _ <- (method match {
+        case _: RunGenesis => validateGenesisCertifiedActivation(certifiedConsensusActivationOrdinal).liftTo[IO]
+        case _             => IO.unit
+      }).asResource
       protectedCertifiedSnapshotInfoOrdinals =
         Main.protectedCertifiedSnapshotInfoOrdinals(loadedConsensusConfig.certifiedConsensusActivationKey)
       recoveryMaxFacilitatorCount = loadedConsensusConfig.facilitatorSelectionMax
@@ -850,9 +877,10 @@ object Main
               snapshotInfo: GlobalSnapshotInfo,
               snapshot: Signed[GlobalIncrementalSnapshot]
             ): IO[Option[GlobalConsensusOutcome]] =
-              if (recoverySeed.nonEmpty || snapshot.ordinal < activation) none[GlobalConsensusOutcome].pure[IO]
+              if (recoverySeed.nonEmpty) none[GlobalConsensusOutcome].pure[IO]
               else
                 for {
+                  _ <- validateRollbackAnchorAtOrAfterActivation(snapshot.ordinal, activation).liftTo[IO]
                   read <- services.consensus.historicalOutcome.liftTo[IO](
                     CertifiedRollbackOutcomeUnavailable(snapshot.ordinal, "certified-outcome storage is unavailable")
                   )
@@ -880,8 +908,8 @@ object Main
                 (_, snapshotInfo, snapshot) =>
                   recoverySeed.traverse_ { seed =>
                     for {
+                      _ <- validateRollbackAnchorAtOrAfterActivation(snapshot.ordinal, activation).liftTo[IO]
                       hashedSnapshot <- hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[IO])
-                      _ <- validateRecoverySeedActivationSpacing(snapshot.ordinal, activation).liftTo[IO]
                       _ <- validateRecoverySeedPublicDiscoverability(snapshot.ordinal, activation).liftTo[IO]
                       _ <- validateRecoverySeedRollbackHash(m.rollbackHash, hashedSnapshot.hash).liftTo[IO]
                       _ <- validateRecoverySeedAnchorCompatibility(
