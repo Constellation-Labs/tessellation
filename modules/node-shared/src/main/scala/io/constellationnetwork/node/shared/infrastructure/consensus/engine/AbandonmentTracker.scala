@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusLog
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.schema.node.{NodeState, NodeStateTransition}
+import io.constellationnetwork.schema.peer.PeerId
 
 import eu.timepit.refined.auto._
 
@@ -1382,6 +1383,10 @@ object AbandonmentTracker {
     def reset: F[Unit] = ref.update(_.copy(entries = Map.empty))
 
     def trackedKeys: F[Set[Key]] = ref.get.map(_.entries.keySet)
+
+    /** Monotonic time since the last observed external Facility this session, or `None` if none was ever observed. */
+    def lastExternalFacilityAgo: F[Option[FiniteDuration]] =
+      (now, ref.get).tupled.map { case (at, state) => state.lastExternalFacilityAt.map(at - _) }
   }
 
   object StaleKeyTelemetry {
