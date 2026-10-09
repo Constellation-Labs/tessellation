@@ -73,7 +73,9 @@ object Mocks {
 
   private[snapshot] def mkManager(
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
-    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue
+    fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
+    fixingSpendActionAggregateBalanceOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
+    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -230,7 +232,8 @@ object Mocks {
       override def validateReturningAcceptedAndRejected(
         spendActions: Map[Address, List[SpendAction]],
         activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-        allBalances: Map[Option[Address], SortedMap[Address, Balance]]
+        allBalances: Map[Option[Address], SortedMap[Address, Balance]],
+        enforceAggregateBalance: Boolean
       ): IO[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidator.SpendActionValidationError])])] =
         (Map.empty[Address, List[SpendAction]], Map.empty[Address, (SpendAction, List[SpendActionValidator.SpendActionValidationError])])
           .pure[IO]
@@ -277,7 +280,8 @@ object Mocks {
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
                     FieldsAddedOrdinalsFixtures.current.copy(
-                      fixingDelegatedStakeDoubleWithdrawal = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal)
+                      fixingDelegatedStakeDoubleWithdrawal = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal),
+                      fixingSpendActionAggregateBalance = Map(AppEnvironment.Dev -> fixingSpendActionAggregateBalanceOrdinal)
                     ),
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,
@@ -288,7 +292,7 @@ object Mocks {
                     updateNodeParametersAcceptanceManager = mockUpdateNodeParametersAcceptanceManager,
                     updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
                     updateNodeCollateralAcceptanceManager = mockUpdateNodeCollateralAcceptanceManager,
-                    spendActionValidator = mockSpendActionValidator,
+                    spendActionValidator = spendActionValidatorOverride.getOrElse(mockSpendActionValidator),
                     pricingUpdateValidator = mockPricingUpdateValidator,
                     priceStateUpdater = mockPriceStateUpdater,
                     collateral = Amount.empty,
