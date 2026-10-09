@@ -673,4 +673,34 @@ object SpendActionValidatorSuite extends MutableIOSuite {
     } yield
       expect(accepted.get(metagraph).contains(List(action)), s"accepted: $accepted").and(expect(rejected.isEmpty, s"rejected: $rejected"))
   }
+
+  test("with the aggregate check, a same-snapshot escrow credit is ignored so a direct leg beyond the balance is rejected") { res =>
+    implicit val (_, hs, sp) = res
+
+    for {
+      userKeyPair <- KeyPairGenerator.makeKeyPair[IO]
+      metagraph <- KeyPairGenerator.makeKeyPair[IO].map(_.getPublic.toAddress)
+      user = userKeyPair.getPublic.toAddress
+      allowSpend = AllowSpend(
+        user,
+        metagraph,
+        None,
+        SwapAmount(50L),
+        AllowSpendFee(1L),
+        AllowSpendReference.empty,
+        EpochProgress(20L),
+        List(metagraph)
+      )
+      signedAllowSpend <- Signed.forAsyncHasher(allowSpend, userKeyPair)
+      hashedAllowSpend <- signedAllowSpend.toHashed
+      activeAllowSpends = SortedMap(none[Address] -> SortedMap(user -> SortedSet(signedAllowSpend)))
+      escrowLeg = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(50L), user, metagraph)
+      action = SpendAction(NonEmptyList.of(escrowLeg, directLeg(metagraph, None, 120L, user)))
+      balances = Map(none[Address] -> SortedMap(metagraph -> Balance(NonNegLong(100L))))
+      (accepted, rejected) <- aggregate(Map(metagraph -> List(action)), balances, activeAllowSpends)
+    } yield
+      expect(accepted.isEmpty, s"accepted: $accepted")
+        .and(expect(rejected.get(metagraph).map(_._1).contains(action), s"rejected action: $rejected"))
+        .and(expect(rejected.get(metagraph).exists(r => isNotEnoughBalance(r._2)), s"rejection reason: $rejected"))
+  }
 }
