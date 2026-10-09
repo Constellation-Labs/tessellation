@@ -1,7 +1,5 @@
 package io.constellationnetwork.node.shared.config
 
-import cats.syntax.partialOrder._
-
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.env.AppEnvironment
@@ -50,40 +48,27 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           epochsPerMonth = NonNegLong(10L)
         )
       },
-      AppEnvironment.Testnet -> {
-        case epoch if epoch < EpochProgress(1049436L) => // ~ 8 jul 2025
-          EmissionConfigEntry(
-            epochsPerYear = PosLong(732000L),
-            asOfEpoch = EpochProgress(997094L),
-            iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
-            iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
-            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
-            iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
-            totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
-            dagPrices = SortedMap(
-              EpochProgress(0L) -> initialDagPrice
-            ),
-            epochsPerMonth = NonNegLong(84L) // one hour
-          )
-        case _ =>
-          EmissionConfigEntry(
-            epochsPerYear = PosLong(732000L),
-            asOfEpoch = EpochProgress(997094L),
-            iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
-            iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
-            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
-            iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
-            totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
-            dagPrices = SortedMap(
-              EpochProgress(0L) -> initialDagPrice
-            ),
-            epochsPerMonth = NonNegLong(61000L) // 732000 / 12
-          )
+      // testnet and integrationnet are fresh-genesised on v4.1: emission starts at epoch 0 like dev, with their
+      // steady-state public-network cadence.
+      AppEnvironment.Testnet -> { _: EpochProgress =>
+        EmissionConfigEntry(
+          epochsPerYear = PosLong(732000L),
+          asOfEpoch = EpochProgress(0L),
+          iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
+          iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
+          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
+          iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
+          totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
+          dagPrices = SortedMap(
+            EpochProgress(0L) -> initialDagPrice
+          ),
+          epochsPerMonth = NonNegLong(61000L) // 732000 / 12
+        )
       },
       AppEnvironment.Integrationnet -> { _: EpochProgress =>
         EmissionConfigEntry(
           epochsPerYear = PosLong(732000L),
-          asOfEpoch = EpochProgress(751085L),
+          asOfEpoch = EpochProgress(0L),
           iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
           iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
           lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
@@ -119,13 +104,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
     ),
     oneTimeRewards = Map(
       AppEnvironment.Dev -> List(),
-      AppEnvironment.Testnet -> List(
-        OneTimeReward(
-          EpochProgress(1001105L), // approx. 2025-07-11 15:30:00 +UTC
-          Address("DAG0WJjvo8s1h2Mn8g9G3HXuSTN12UGF4RzF7whp"),
-          TransactionAmount(12_345_000_000_00L)
-        )
-      ),
+      AppEnvironment.Testnet -> List(),
       AppEnvironment.Integrationnet -> List(),
       AppEnvironment.Mainnet -> List(
         OneTimeReward(mintEpoch1, wallet1, TransactionAmount(22_088_904_680_692_84L)),
@@ -136,8 +115,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
     ),
     priceOracleEpoch = Map(
       AppEnvironment.Dev -> EpochProgress.MinValue,
-      AppEnvironment.Testnet -> EpochProgress(1001105L), // approx. 2025-07-11
-      AppEnvironment.Integrationnet -> EpochProgress(835520L), // approx. 07-22-2025
+      AppEnvironment.Testnet -> EpochProgress.MinValue,
+      AppEnvironment.Integrationnet -> EpochProgress.MinValue,
       AppEnvironment.Mainnet -> EpochProgress.MaxValue
     )
   )
@@ -150,14 +129,9 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
       )
 
-  private val testnetDistributionProgram: EpochProgress => ProgramsDistributionConfig = {
-    case epoch if epoch < EpochProgress(997154L) =>
-      ProgramsDistributionConfig(
-        weights = Map.empty,
-        validatorsWeight = NonNegFraction.unsafeFrom(50L, 100L),
-        delegatorsWeight = NonNegFraction.unsafeFrom(50L, 100L)
-      )
-    case _ =>
+  // Fresh v4.1 genesis: testnet runs its steady-state program from epoch 0.
+  private val testnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
+    _ =>
       ProgramsDistributionConfig(
         weights = Map(
           stardustNewPrimary -> NonNegFraction.unsafeFrom(5L, 100L),
@@ -168,7 +142,6 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         validatorsWeight = NonNegFraction.unsafeFrom(88L, 1000L),
         delegatorsWeight = NonNegFraction.unsafeFrom(45L, 100L)
       )
-  }
 
   private val intnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
     _ =>
