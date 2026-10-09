@@ -12,7 +12,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.dag.l0.Main
 import io.constellationnetwork.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{CollectingProposals, Finished, GlobalConsensusOutcome}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -31,7 +31,7 @@ import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
-import io.constellationnetwork.node.shared.logger.LoggerBundle
+import io.constellationnetwork.node.shared.logger.{LoggerBundle, Slf4jLoggerBundle}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -353,7 +353,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       )
   }
 
-  private def advancer(keyPair: KeyPair)(
+  private def advancer(
+    keyPair: KeyPair,
+    liveStorage: GlobalConsensusStorage[IO] = unused[GlobalConsensusStorage[IO]],
+    liveNodeStorage: NodeStorage[IO] = unused[NodeStorage[IO]],
+    liveLogger: LoggerBundle[IO] = unused[LoggerBundle[IO]]
+  )(
     implicit serializer: JsonSerializer[IO],
     hasherSelector: HasherSelector[IO],
     provider: SecurityProvider[IO]
@@ -362,12 +367,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       consensusConfig = config,
       networkId = "integrationnet",
       keyPair = keyPair,
-      consensusStorage = unused[GlobalConsensusStorage[IO]],
+      consensusStorage = liveStorage,
       globalSnapshotStorage = unused[SnapshotStorage[IO, GlobalSnapshotArtifact, GlobalSnapshotContext]],
       consensusFns = replayConsensusFunctions,
       gossip = unused[Gossip[IO]],
       restartService = unused[RestartService[IO, CliMethod]],
-      nodeStorage = unused[NodeStorage[IO]],
+      nodeStorage = liveNodeStorage,
       leavingDelay = 1.second,
       lastNGlobalSnapshotStorage = unused[LastNGlobalSnapshotStorage[IO]],
       lastGlobalSnapshotStorage = unused[LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo]],
@@ -375,7 +380,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       clusterStorageInstance = unused[ClusterStorage[IO]],
       eventMempool = unused[EventMempool[IO, GlobalSnapshotEvent, GlobalStateKey]],
       eventGossipClient = unused[EventGossipClient[IO, GlobalSnapshotEvent]],
-      loggerBundle = unused[LoggerBundle[IO]],
+      loggerBundle = liveLogger,
       mptStore = unused[MptStore[IO, GlobalStateKey]],
       facilitatorSelector = FacilitatorSelector.make(None),
       seedlistPeerIds = Set.empty,
@@ -737,6 +742,119 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         committees.tier1,
         next.expandedBeyondSingleton.contains(true)
       )
+  }
+
+  List((false, false), (false, true), (true, false), (true, true)).foreach {
+    case (matchingHash, carriedQc) =>
+      List[ConsensusTrigger](EventTrigger, TimeTrigger).foreach { authorizedTrigger =>
+        test(
+          s"live V35 rejects epochProgress inconsistent with $authorizedTrigger authority (matching hash: $matchingHash, carried QC: $carriedQc)"
+        ) { res =>
+          implicit val serializer: JsonSerializer[IO] = res.serializer
+          implicit val hasher: Hasher[IO] = res.hasher
+          implicit val selector: HasherSelector[IO] = res.selector
+          implicit val provider: SecurityProvider[IO] = res.provider
+
+          for {
+            prior <- signedRoot(res.pairs)
+            frame <- buildFrame(prior, Script(Set.empty, triggerTime = authorizedTrigger == TimeTrigger), res.pairs)
+            candidate = frame.artifact.value.copy(epochProgress =
+              if (authorizedTrigger == EventTrigger) prior.finished.signedMajorityArtifact.epochProgress.next
+              else prior.finished.signedMajorityArtifact.epochProgress
+            )
+            candidateHash <- hasher.hash(candidate)
+            value = frame.certifiedOutcome.proposalQc.value.copy(artifactHash = candidateHash)
+            certified <- certifyValue(value, prior.facilitators.value, prior.facilitators.value, res.pairs.map(p => peer(p) -> p).toMap, 0)
+            timeoutVote <- Signed.forAsyncHasher[IO, declaration.TimeoutVote](
+              declaration.TimeoutVote(
+                0L,
+                1L,
+                value.roundStartFacilitatorsHash,
+                prior.finished.snapshotHash,
+                None,
+                declaration.TimeoutReason.NoProgress,
+                Some(certified.proposalQc)
+              ),
+              res.pairs.head
+            )
+            timeout = Option.when(carriedQc)(
+              declaration.TimeoutCertificate(
+                0L,
+                1L,
+                value.roundStartFacilitatorsHash,
+                prior.finished.snapshotHash,
+                declaration.TimeoutReason.NoProgress,
+                NonEmptySet.one(timeoutVote)
+              )
+            )
+            // The local speculative trigger matches the bad artifact, not the signed evidence.
+            localTrigger: ConsensusTrigger = if (authorizedTrigger == EventTrigger) TimeTrigger else EventTrigger
+            status = CollectingProposals(
+              localTrigger,
+              ArtifactInfo(candidate, frame.context, if (matchingHash) candidateHash else Hash.empty),
+              Candidates.empty,
+              value.roundStartFacilitatorsHash,
+              prior.finished.snapshotHash,
+              List.empty,
+              SortedMap.empty
+            )
+            state = ConsensusState[GlobalSnapshotKey, GlobalSnapshotStatus, GlobalConsensusOutcome, schema.GlobalConsensusKind](
+              key = candidate.ordinal,
+              lastOutcome = prior,
+              facilitators = prior.facilitators,
+              roundStartFacilitators = prior.facilitators,
+              coreFacilitators = CoreFacilitators(prior.facilitators.value),
+              status = status,
+              createdAt = Duration.Zero,
+              leader = peer(res.pairs.head),
+              entropy = prior.finished.snapshotHash,
+              certifiedConsensusActive = true,
+              viewNumber = if (carriedQc) 1 else 0
+            )
+            proposal = declaration.Proposal(
+              hash = candidateHash,
+              facilitatorsHash = value.roundStartFacilitatorsHash,
+              lastSnapshotHash = prior.finished.snapshotHash,
+              view = state.viewNumber.toLong,
+              vcc = None,
+              timeoutCertificate = timeout,
+              observedResponders = List.empty,
+              triggerEvidence = Option.unless(carriedQc)(frame.triggerEvidence),
+              proposalValue = Some(value)
+            )
+            storage <- ConsensusStorage.make[
+              IO,
+              GlobalSnapshotEvent,
+              GlobalSnapshotKey,
+              GlobalSnapshotArtifact,
+              GlobalSnapshotContext,
+              GlobalSnapshotStatus,
+              GlobalConsensusOutcome,
+              schema.GlobalConsensusKind
+            ](config)
+            node <- io.constellationnetwork.node.shared.infrastructure.node.NodeStorage.make[IO]
+            log <- Slf4jLoggerBundle.makeF[IO]
+            empty <- ConsensusResources.empty[IO, GlobalSnapshotArtifact, schema.GlobalConsensusKind]
+            resources = empty.copy(
+              peerDeclarationsMap = Map(state.leader -> PeerDeclarations.empty.copy(proposal = Some(proposal))),
+              artifacts = if (matchingHash) Map.empty[Hash, GlobalSnapshotArtifact] else Map(candidateHash -> candidate)
+            )
+            validator = advancer(res.pairs.head, storage, node, log)
+            // Repeated rejection must never escalate to reconstruction or recovery. The replay-only
+            // interpreter and unused MPT/gossip dependencies fail if either validation path reaches them.
+            attempts <- List.fill(4)(validator.advanceStatus(resources).run(state)).sequence
+            _ <- attempts.traverse_(_._2)
+            lock <- storage.getVoteLock(state.key)
+            recovery <- node.isRecoveryDownload
+            after <- storage.getResources(state.key)
+          } yield
+            expect(attempts.forall(_._1 == state), "rejection must preserve the unaccepted local status") &&
+              expect(lock.isEmpty, "invalid progress must not acquire a prepare/signature vote lock") &&
+              expect(!recovery, "invalid progress must not trigger corruption recovery") &&
+              expect(after.withdrawalsMap.isEmpty, "invalid progress must not withdraw from the round") &&
+              expect(after.outcomeVotes.isEmpty, "invalid progress must not emit prepare votes")
+        }
+      }
   }
 
   test("warm, restart-every-round and fresh-root DAG replay derive byte-identical certified lineage") { res =>
