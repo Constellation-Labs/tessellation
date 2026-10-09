@@ -927,13 +927,13 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         // and only Core membership affects quorum.
         val totalFacilitators = state.facilitators.value.size
         val remaining = totalFacilitators - missingPeers.size
-        val activeCore = state.coreFacilitators.value.toSet -- state.withdrawnFacilitators.value
-        val missingCore = activeCore.intersect(missingPeers)
-        // Pure helper `computeCoreQuorumStatus` is unit-tested in
-        // `StallDetectorCoreQuorumSuite`. Inline aliases below retain the names the
-        // surrounding code, logs, and StallResult fields already reference.
+        // Feasibility is judged against the frozen round Core, the same denominator certificates use.
+        // `missingPeers` already counts a withdrawn member that has not declared (see `getResourcesInfo`),
+        // so a local withdrawal never shrinks the denominator.
+        val frozenCore = state.coreFacilitators.value.toSet
+        val missingCore = frozenCore.intersect(missingPeers)
         val coreStatus = StallDetector.computeCoreQuorumStatus(
-          activeCore = activeCore,
+          activeCore = frozenCore,
           missingPeers = missingPeers,
           quorumThresholdFraction = config.quorumThresholdFraction
         )
@@ -1347,7 +1347,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     state: ConsensusState[Key, Status, Outcome, Kind],
     resources: ConsensusResources[Artifact, Kind]
   ): ResourcesInfo = {
-    val active = state.facilitators.value.toSet -- state.withdrawnFacilitators.value
+    // Count against the round's facilitators without subtracting local withdrawals: a withdrawn member that has not
+    // declared is missing. Withdrawal timing is node-local, and subtracting it made nodes disagree on progress,
+    // timeout extension, and abandon feasibility.
+    val active = StallDetector.declarationUniverse(state.facilitators.value.toSet)
     ops.maybeCollectingKind(state.status) match {
       case Some(kind) =>
         val getter = ops.kindGetter(kind)
@@ -2277,6 +2280,9 @@ object StallDetector {
       quorumInfeasible = coreRemaining < baseRequired
     )
   }
+
+  /** Peers whose declarations a stall check waits for. Deliberately independent of locally observed withdrawals. */
+  private[consensus] def declarationUniverse(facilitators: Set[PeerId]): Set[PeerId] = facilitators
 
   /** Outcome of the alpha.98 ready-participation feasibility check. Pure data so the gate can be exercised in unit tests without a live
     * consensus context. `behindNonReady` is a diagnostic subset (count of `notReadyCore` peers whose observed tip is also behind our last

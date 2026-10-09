@@ -231,4 +231,29 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       .and(expect.same(4, status.coreRequired))
       .and(expect(status.quorumInfeasible))
   }
+
+  // ---------------------------------------------------------------------------
+  // Frozen denominator: a local withdrawal is a missing vote, not a smaller committee
+  // ---------------------------------------------------------------------------
+
+  test("withdrawn members that have not declared stay in the declaration universe") {
+    expect.same(core3of3, StallDetector.declarationUniverse(core3of3))
+  }
+
+  test("a withdrawn non-declaring Core member makes a 4-member round infeasible at 2 responders") {
+    // Frozen Core of 4 (quorum 3): one withdrew locally without declaring, one silent, two respond.
+    // Subtracting the withdrawal would judge Core 3 / quorum 2 / remaining 2 as feasible, although
+    // certificates need 3 of the frozen 4.
+    val core4 = core3of3 + tier1a
+    val status = StallDetector.computeCoreQuorumStatus(
+      activeCore = core4,
+      missingPeers = Set(core3, tier1a),
+      quorumThresholdFraction = Supermajority
+    )
+    expect
+      .same(4, status.coreSize)
+      .and(expect.same(2, status.coreRemaining))
+      .and(expect.same(3, status.coreRequired))
+      .and(expect(status.quorumInfeasible, "2 of 4 frozen Core can vote; quorum 3 is infeasible"))
+  }
 }
