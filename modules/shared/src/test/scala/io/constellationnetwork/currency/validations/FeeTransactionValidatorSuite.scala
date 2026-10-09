@@ -1,6 +1,6 @@
 package io.constellationnetwork.currency.validations
 
-import cats.data.{NonEmptyList, ValidatedNec}
+import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
@@ -17,6 +17,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.SignatureProof
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -62,7 +63,9 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
     }
 
   private def signedEnvelope(
-    coSigned: Boolean
+    coSigned: Boolean,
+    mismatchedProof: Boolean = false,
+    selfAddressed: Boolean = false
   )(
     implicit jsonSerializer: JsonSerializer[IO],
     hasher: Hasher[IO],
@@ -79,24 +82,33 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
       updateHash <- Hash.fromBytesForSync[IO](serializedUpdate)
       feeTransaction = FeeTransaction(
         source,
-        destinationKeyPair.getPublic.toAddress,
+        if (selfAddressed) source else destinationKeyPair.getPublic.toAddress,
         Amount(NonNegLong.unsafeFrom(1L)),
         updateHash
       )
       sourceSigned <- Signed.forAsyncHasher(feeTransaction, sourceKeyPair)
-      signedFee <- if (coSigned) sourceSigned.signAlsoWith(coSignerKeyPair) else sourceSigned.pure[IO]
+      // A proof naming the source wallet but carrying signature bytes produced by a different key: the address
+      // checks read it as the source, so only proof verification rejects it (release/mainnet #1577).
+      feeHash <- FeeTransaction.serialize[IO](feeTransaction).map(Hash.fromBytes)
+      otherProof <- SignatureProof.fromHash[IO](coSignerKeyPair, feeHash)
+      signedFee <-
+        if (mismatchedProof) Signed(feeTransaction, NonEmptySet.one(otherProof.copy(id = sourceSigned.proofs.head.id))).pure[IO]
+        else if (coSigned) sourceSigned.signAlsoWith(coSignerKeyPair)
+        else sourceSigned.pure[IO]
     } yield (source, NonEmptyList[Signed[DataTransaction]](signedUpdate, List(signedFee)))
 
   private def validate(
     coSigned: Boolean,
-    allowSourceAuthorizedCoSigners: Boolean
+    allowSourceAuthorizedCoSigners: Boolean,
+    mismatchedProof: Boolean = false,
+    selfAddressed: Boolean = false
   )(
     implicit jsonSerializer: JsonSerializer[IO],
     hasher: Hasher[IO],
     securityProvider: SecurityProvider[IO]
   ): IO[ValidatedNec[DataApplicationValidationError, Unit]] =
     for {
-      (source, transactions) <- signedEnvelope(coSigned)
+      (source, transactions) <- signedEnvelope(coSigned, mismatchedProof, selfAddressed)
       balances = Map(source -> Balance(NonNegLong.unsafeFrom(10L)))
       result <- validateAllFeeTransactionsWithSignerPolicy[IO](
         transactions,
@@ -126,5 +138,25 @@ object FeeTransactionValidatorSuite extends MutableIOSuite {
     implicit val (jsonSerializer, hasher, securityProvider) = res
 
     validate(coSigned = true, allowSourceAuthorizedCoSigners = true).map(result => expect(result.isValid))
+  }
+
+  test("both policies reject a fee whose proof names the source but does not verify against the transaction") { res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+
+    List(false, true).traverse { allowCoSigners =>
+      validate(coSigned = false, allowSourceAuthorizedCoSigners = allowCoSigners, mismatchedProof = true).map { result =>
+        expect(errorsOf(result).contains(InvalidFeeTransactionSignature), s"allowCoSigners=$allowCoSigners: $result")
+      }
+    }.map(_.combineAll)
+  }
+
+  test("both policies reject a self-addressed fee") { res =>
+    implicit val (jsonSerializer, hasher, securityProvider) = res
+
+    List(false, true).traverse { allowCoSigners =>
+      validate(coSigned = false, allowSourceAuthorizedCoSigners = allowCoSigners, selfAddressed = true).map { result =>
+        expect(errorsOf(result).contains(SameSourceAndDestinationAddress), s"allowCoSigners=$allowCoSigners: $result")
+      }
+    }.map(_.combineAll)
   }
 }

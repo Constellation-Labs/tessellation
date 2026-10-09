@@ -17,12 +17,34 @@ import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 trait FeeTransactionValidator[F[_]] {
   def validate(
     signedTransaction: Signed[FeeTransaction],
-    enforceWalletAuthorization: Boolean
+    signerPolicy: FeeTransactionSignerPolicy
   ): F[FeeTransactionValidationErrorOr[Signed[FeeTransaction]]]
   def validate(
     signedTransactions: NonEmptyList[Signed[FeeTransaction]],
-    enforceWalletAuthorization: Boolean
+    signerPolicy: FeeTransactionSignerPolicy
   ): F[FeeTransactionValidationErrorOr[NonEmptyList[Signed[FeeTransaction]]]]
+}
+
+/** Which proof rule acceptance applies to a fee transaction, selected from the parent global ordinal. */
+sealed trait FeeTransactionSignerPolicy
+
+object FeeTransactionSignerPolicy {
+
+  /** Below fixing-data-application-fee-validation: every proof id must map to the source address; proof bytes are not verified. */
+  case object LegacyExclusiveSource extends FeeTransactionSignerPolicy
+
+  /** From fixing-data-application-fee-validation (mainnet 6818000, release/mainnet #1577) until fee-transaction-security: every proof is
+    * verified against the transaction bytes first, then every proof must belong to the source wallet.
+    */
+  case object VerifiedExclusiveSource extends FeeTransactionSignerPolicy
+
+  /** From fee-transaction-security: every proof is verified and the source must sign; source-authorized co-signers are allowed. */
+  case object VerifiedSourceAuthorized extends FeeTransactionSignerPolicy
+
+  def select(walletAuthorizationActive: Boolean, proofVerificationActive: Boolean): FeeTransactionSignerPolicy =
+    if (walletAuthorizationActive) VerifiedSourceAuthorized
+    else if (proofVerificationActive) VerifiedExclusiveSource
+    else LegacyExclusiveSource
 }
 
 object FeeTransactionValidator {
@@ -32,16 +54,21 @@ object FeeTransactionValidator {
     new FeeTransactionValidator[F] {
       def validate(
         signedTransaction: Signed[FeeTransaction],
-        enforceWalletAuthorization: Boolean
+        signerPolicy: FeeTransactionSignerPolicy
       ): F[FeeTransactionValidationErrorOr[Signed[FeeTransaction]]] =
         for {
-          srcAddressSignatureV <-
-            if (enforceWalletAuthorization)
-              FeeTransactionSignatureValidator
-                .validate(signedTransaction)
-                .map(_.errorMap[FeeTransactionValidationError](InvalidSigned))
-            else
+          srcAddressSignatureV <- signerPolicy match {
+            case FeeTransactionSignerPolicy.LegacyExclusiveSource =>
               validateSourceAddressSignature(signedTransaction)
+            case FeeTransactionSignerPolicy.VerifiedSourceAuthorized =>
+              validateProofs(signedTransaction)
+            case FeeTransactionSignerPolicy.VerifiedExclusiveSource =>
+              // Proof verification runs first, as on release/mainnet: it caps the proof count and never raises on an
+              // unparseable id, so the exclusivity check only ever sees proofs that verified.
+              validateProofs(signedTransaction).flatMap { proofsV =>
+                if (proofsV.isValid) validateSourceAddressSignature(signedTransaction) else proofsV.pure[F]
+              }
+          }
           differentSrcAndDstV = validateDifferentSourceAndDestinationAddress(signedTransaction)
         } yield
           srcAddressSignatureV
@@ -49,11 +76,18 @@ object FeeTransactionValidator {
 
       def validate(
         signedTransactions: NonEmptyList[Signed[FeeTransaction]],
-        enforceWalletAuthorization: Boolean
+        signerPolicy: FeeTransactionSignerPolicy
       ): F[FeeTransactionValidationErrorOr[NonEmptyList[Signed[FeeTransaction]]]] =
         signedTransactions
-          .traverse(validate(_, enforceWalletAuthorization))
+          .traverse(validate(_, signerPolicy))
           .map(_.sequence)
+
+      private def validateProofs(
+        signedTx: Signed[FeeTransaction]
+      ): F[FeeTransactionValidationErrorOr[Signed[FeeTransaction]]] =
+        FeeTransactionSignatureValidator
+          .validate(signedTx)
+          .map(_.errorMap[FeeTransactionValidationError](InvalidSigned))
 
       private def validateSourceAddressSignature(
         signedTx: Signed[FeeTransaction]
