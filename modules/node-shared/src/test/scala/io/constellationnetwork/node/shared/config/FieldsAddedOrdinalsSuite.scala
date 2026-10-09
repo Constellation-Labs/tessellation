@@ -167,6 +167,20 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     }
   }
 
+  // The cutover C must sit above every other activation: on mainnet R + 1 lands after all v3.5 history, and the
+  // fee-transaction signer policy relies on C >= fixing-data-application-fee-validation (wallet authorization
+  // without proof verification must be unreachable).
+  test("the v4.1 cutover is never below any other threshold in any environment") {
+    IO {
+      val fields = ConfigSource.resources("application.conf").at("fields-added-ordinals").loadOrThrow[FieldsAddedOrdinals]
+      AppEnvironment.values.toList.foldMap { environment =>
+        val cutover = fields.tessellation41MigrationFor(environment)
+        val above = fields.resolvedThresholdsFor(environment).filter { case (_, ordinal) => ordinal > cutover }
+        expect(above.isEmpty, s"${environment.entryName}: thresholds above the cutover $cutover: $above")
+      }
+    }
+  }
+
   pureTest("the shared ordinary-test fixture explicitly enables every current threshold") {
     val current = FieldsAddedOrdinalsFixtures.current
     val expected = Map(AppEnvironment.Dev -> SnapshotOrdinal.MinValue)
