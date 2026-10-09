@@ -304,8 +304,7 @@ object Main
 
   /** A certified-from-genesis root and an env-reset root at ordinal 1 produce indistinguishable public key-2 lineage shapes. Refuse that
     * one ambiguous boundary before rollback storage can be mutated. Later certified anchors become publicly discoverable when the second
-    * successor carries the first-successor QC; a future ordinal-gated activation is not a genesis root and retains the ordinary spacing
-    * rule.
+    * successor carries the first-successor QC; a non-genesis activation is not a genesis root and only requires anchor >= activation.
     */
   private[dag] def validateRecoverySeedPublicDiscoverability(
     anchor: SnapshotOrdinal,

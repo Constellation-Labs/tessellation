@@ -2,9 +2,10 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.data.NonEmptySet
 
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusKind
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusResources
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionCertificate, EvictionReason, EvictionVote}
 import io.constellationnetwork.schema.ID.Id
@@ -15,6 +16,8 @@ import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
 import weaver.FunSuite
 
 object GlobalSnapshotConsensusStateCreatorSuite extends FunSuite {
@@ -73,4 +76,28 @@ object GlobalSnapshotConsensusStateCreatorSuite extends FunSuite {
     expect(afterAssembly.isEmpty)
   }
 
+  test("a key below certified activation is refused for production; keys at or above it proceed") {
+    val config = ConsensusConfig(
+      timeTriggerInterval = 10.seconds,
+      declarationTimeout = 10.seconds,
+      declarationRangeLimit = 100L,
+      lockDuration = 10.seconds,
+      eventCutter = EventCutterConfig(PosInt(1024), PosInt(1024)),
+      certifiedConsensusActivationKey = 100L
+    )
+    def attempt(key: Long): Either[Throwable, Unit] =
+      GlobalSnapshotConsensusStateCreator.requireCertifiedProduction[Either[Throwable, *]](config, SnapshotOrdinal.unsafeApply(key))
+
+    expect(attempt(99L).left.exists(_.isInstanceOf[GlobalSnapshotConsensusStateCreator.CertifiedConsensusNotActiveForProduction])) &&
+    expect(attempt(100L).isRight) &&
+    expect(attempt(101L).isRight) &&
+    expect(
+      GlobalSnapshotConsensusStateCreator
+        .requireCertifiedProduction[Either[Throwable, *]](
+          config.copy(certifiedConsensusActivationKey = Long.MaxValue),
+          SnapshotOrdinal.unsafeApply(5L)
+        )
+        .isLeft
+    )
+  }
 }

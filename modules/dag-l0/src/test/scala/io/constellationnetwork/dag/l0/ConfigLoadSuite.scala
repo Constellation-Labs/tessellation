@@ -21,9 +21,8 @@ import weaver.SimpleIOSuite
   *   - `Main.run` then loads `AppConfigReader` (the dag-l0 layer, `dag-l0.conf`)
   *
   * both off `TessellationIOApp.loadConfigAs`, i.e. `ConfigSource.resources("dag-l0.conf")` falling back to `ConfigSource.default`.
-  * Replicating that here turns a packaged-config regression -- e.g. a refined-type field set to a value its predicate rejects, like the
-  * `PosInt` quorum-shrink map that was given `0` (fix e159385fd) -- into a red test instead of a `ConfigReaderException` that crashes every
-  * node at startup. See feedback_fix_type_not_revert_feature.
+  * Replicating that here turns a packaged-config regression -- e.g. a refined-type field set to a value its predicate rejects -- into a red
+  * test instead of a `ConfigReaderException` that crashes every node at startup.
   */
 object ConfigLoadSuite extends SimpleIOSuite {
 
