@@ -115,11 +115,12 @@ object types {
       SnapshotOrdinalGate.resolveOrDisabled(tessellation41Migration, environment)
 
     /** Last ordinal of v3.5 history: C-1, or 0 when C is 0. At C = 0 the genesis snapshot itself stays on the legacy side of `<=`/`>`
-      * comparators, as dev always ran.
+      * comparators, as dev always ran. A disabled cutover (MaxValue) keeps every ordinal legacy, so it stays MaxValue.
       */
     def tessellation41LastLegacyOrdinalFor(environment: AppEnvironment): SnapshotOrdinal = {
       val cutover = tessellation41MigrationFor(environment)
       if (cutover.value.value == 0L) SnapshotOrdinal.MinValue
+      else if (cutover == SnapshotOrdinal.MaxValue) SnapshotOrdinal.MaxValue
       else SnapshotOrdinal.unsafeApply(cutover.value.value - 1L)
     }
 

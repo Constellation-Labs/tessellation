@@ -77,10 +77,9 @@ object ConsensusOrdinalConfigSuite extends SimpleIOSuite {
       fieldsAddedOrdinals = packaged.fieldsAddedOrdinals.copy(tessellation41Migration = Map.empty)
     )
     val explicit = missing.copy(lastKryoHashOrdinal = Map(AppEnvironment.Mainnet -> SnapshotOrdinal.MinValue))
-    val lastBeforeDisabledCutover = SnapshotOrdinal.unsafeApply(SnapshotOrdinal.MaxValue.value.value - 1L)
     expect.same(SnapshotOrdinal.MinValue, missing.lastKryoHashOrdinalFor(AppEnvironment.Mainnet)) &&
-    expect.same(lastBeforeDisabledCutover, missing.lastLegacyStateProofOrdinalFor(AppEnvironment.Mainnet)) &&
-    expect.same(lastBeforeDisabledCutover, missing.incrementalDelegatedStakingStartingOrdinalFor(AppEnvironment.Mainnet)) &&
+    expect.same(SnapshotOrdinal.MaxValue, missing.lastLegacyStateProofOrdinalFor(AppEnvironment.Mainnet)) &&
+    expect.same(SnapshotOrdinal.MaxValue, missing.incrementalDelegatedStakingStartingOrdinalFor(AppEnvironment.Mainnet)) &&
     expect.same(hash(missing, AppEnvironment.Mainnet), hash(explicit, AppEnvironment.Mainnet))
   }
 

@@ -118,8 +118,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       .and(expect(at(Some(7100001L)) == SnapshotOrdinal.unsafeApply(7100000L), s"C = R + 1: ${at(Some(7100001L))}"))
       .and(
         expect(
-          at(None) == SnapshotOrdinal.unsafeApply(SnapshotOrdinal.MaxValue.value.value - 1L),
-          s"absent cutover: ${at(None)}"
+          at(None) == SnapshotOrdinal.MaxValue,
+          s"absent (disabled) cutover keeps every ordinal legacy: ${at(None)}"
         )
       )
   }
