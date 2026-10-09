@@ -61,6 +61,13 @@ class AllowSpendOpsManager[F[_]: Async] {
     } yield result
   }
 
+  /** Mirrors release/mainnet CurrencySnapshotAcceptanceManager.filterExpiredAllowSpends exactly (fixing-allow-spend-expiration, mainnet
+    * 5033174). Two details are consensus-visible and must not be "simplified":
+    *   - spent references are collected with `flatMap`, so a direct spend (no allowSpendRef) in the same snapshot does not suppress expiry
+    *     of unrelated allow spends;
+    *   - every address with active allow spends keeps an entry, even an empty one. updateCurrencyBalancesByAllowSpends writes a balance for
+    *     every key it visits, so dropping empty entries would omit balance entries mainnet records.
+    */
   def filterExpiredAllowSpends(
     activeCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
     epochProgress: EpochProgress,
@@ -69,38 +76,20 @@ class AllowSpendOpsManager[F[_]: Async] {
     fixingAllowSpendExpiration: SnapshotOrdinal
   )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[AllowSpend]]]] =
     if (lastUnsyncGlobalSnapshotOrdinal > fixingAllowSpendExpiration) {
-      val spendTxnAllowSpendsRefsOpt = metagraphIdSpendTransactions.traverse(_.allowSpendRef)
+      val spentAllowSpendHashes = metagraphIdSpendTransactions.flatMap(_.allowSpendRef).toSet
 
-      spendTxnAllowSpendsRefsOpt match {
-        case Some(spendTxnAllowSpendsRefs) =>
-          val spendTxnAllowSpendsRefsSet = spendTxnAllowSpendsRefs.toSet
-
-          activeCurrencyAllowSpends.toList.traverse {
-            case (address, allowSpends) =>
-              allowSpends.toList.traverse { allowSpend =>
-                allowSpend.toHashed.map { hashedAllowSpend =>
-                  val isExpired = allowSpend.value.lastValidEpochProgress < epochProgress
-                  val isNotUsed = !spendTxnAllowSpendsRefsSet.contains(hashedAllowSpend.hash)
-                  if (isExpired && isNotUsed) Some(allowSpend) else None
-                }
-              }.map { expiredList =>
-                val expiredForAddress = expiredList.flatten.to(SortedSet)
-                if (expiredForAddress.nonEmpty) Some(address -> expiredForAddress)
-                else None
-              }
-          }.map(_.flatten.to(SortedMap))
-
-        case None =>
-          SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]].pure[F]
-      }
-    } else {
-      activeCurrencyAllowSpends.flatMap {
+      activeCurrencyAllowSpends.toList.traverse {
         case (address, allowSpends) =>
-          val expired = allowSpends.filter(_.value.lastValidEpochProgress < epochProgress)
-          if (expired.nonEmpty) Some(address -> expired)
-          else None
-      }
-        .pure[F]
+          allowSpends.toList.traverse { allowSpend =>
+            allowSpend.toHashed.map { hashedAllowSpend =>
+              val isExpired = allowSpend.value.lastValidEpochProgress < epochProgress
+              val isNotSpent = !spentAllowSpendHashes.contains(hashedAllowSpend.hash)
+              Option.when(isExpired && isNotSpent)(allowSpend)
+            }
+          }.map(expired => address -> expired.flatten.to(SortedSet))
+      }.map(_.to(SortedMap))
+    } else {
+      activeCurrencyAllowSpends.view.mapValues(_.filter(_.value.lastValidEpochProgress < epochProgress)).to(SortedMap).pure[F]
     }
 
   def updateCurrencyBalancesByAllowSpends(
