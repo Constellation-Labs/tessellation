@@ -37,8 +37,9 @@ object types {
       ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
   }
 
-  // SDK consumers construct this positionally, so append new gates at the end and never reorder. Every new field also
-  // needs a named entry in fieldsAddedOrdinalsReader (ext.pureconfig) and in resolvedThresholdsFor.
+  // Every field needs a named entry in fieldsAddedOrdinalsReader (ext.pureconfig) and in resolvedThresholdsFor. The v4.1
+  // migration removed several gates, so positional construction from older SDK code no longer compiles; use named
+  // arguments.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
@@ -56,14 +57,9 @@ object types {
     // activation ordinals live in the `fields-added-ordinals` HOCON (see docs/operations/fields-added-ordinals.md): testnet
     // activates at its v4.0.0->alpha.0 cutover ordinal, dev at 0 (genesis-fresh), mainnet/integrationnet are placeholders.
     scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
-    // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.
-    subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
     // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
     delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
-    feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, acceptFeeTxs applies fee transactions through checked Balance arithmetic. Below it, the
     // original wrapping fold is replayed so already-signed history re-derives byte-identically -- the fix changes what a
     // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
@@ -73,15 +69,9 @@ object types {
     // the separate `versionHash` checks the advertised software version. Default empty: no entry means no sweep.
     // See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
-    // Appended to preserve positional source compatibility for existing SDK consumers.
-    // At/after this GLOBAL L0 ordinal a Currency snapshot lineage may transition from
-    // snapshot protocol 0.0.1 to 1.0.0. The signed CurrencySnapshot.version then keeps
-    // historical replay self-describing. Public environments stay absent until the
-    // coordinated v35 rollout; dev activates from genesis so CI exercises the new path.
-    currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal every fee transaction in a data envelope is validated, and a data block whose
-    // fees cannot be applied is rejected. Deliberately NOT feeTransactionSecurity: that gate is already open on
-    // integrationnet at 5880000, so widening what it controls would change how signed history there replays.
+    // fees cannot be applied is rejected. Live on mainnet since 6818000; distinct from the v4.1 cutover, which also
+    // enables source-authorized fee co-signers (feeTransactionSecurityFor).
     fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
     // destination is credited only when a SpendAction consumes the allowance.
@@ -93,11 +83,6 @@ object types {
     // At/after this global ordinal, an expired global AllowSpend consumed in the same snapshot is settled once
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this global ordinal, delegated-stake withdrawal acceptance prevents two stake records from scheduling
-    // the same effective token lock for unlock. Shared settlement pays lock-owned rewards with checked arithmetic,
-    // retires all settled pending copies and deduplicates withdrawal/replacement principal. Natural expiry suppresses
-    // generated unlocks to prevent double balance credit. Public environments remain absent until coordinated activation.
-    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, Global L0 debits each metagraph's direct SpendAction legs from a running balance while
     // validating, so the accepted legs cannot together exceed the metagraph's balance. Below it each leg is only compared
     // with the starting balance, and an over-committed batch fails the round when the legs are applied.
@@ -105,7 +90,12 @@ object types {
     // At/after this global ordinal (mainnet 6176655, release/mainnet #1498) an expired delegated-stake withdrawal whose
     // token lock is no longer active (an orphan) is skipped by unlock generation instead of failing the snapshot, and
     // every expired withdrawal's token-lock reference is removed from that address's pending withdrawals.
-    removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // The v3.5 -> v4.1 cutover C: the first global ordinal produced by v4.1. Every v4.1-only replay/state-transition rule
+    // switches on here (see the named accessors below), and the legacy state-proof and staking boundaries are derived
+    // from it (lastLegacyStateProofOrdinalFor / incrementalDelegatedStakingStartingOrdinalFor = C-1). Mainnet sets it to
+    // R+1 at the cold-restart cutover, R being the final v3.5 snapshot; networks born on v4.1 use 0.
+    tessellation41Migration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -141,14 +131,26 @@ object types {
     def scFeeBalanceFromContextFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(scFeeBalanceFromContext, environment)
 
-    def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(subTrieRoots, environment)
+    def tessellation41MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(tessellation41Migration, environment)
+
+    /** Last ordinal of v3.5 history: C-1, or 0 when C is 0. At C = 0 the genesis snapshot itself stays on the legacy side of `<=`/`>`
+      * comparators, as dev always ran.
+      */
+    def tessellation41LastLegacyOrdinalFor(environment: AppEnvironment): SnapshotOrdinal = {
+      val cutover = tessellation41MigrationFor(environment)
+      if (cutover.value.value == 0L) SnapshotOrdinal.MinValue
+      else SnapshotOrdinal.unsafeApply(cutover.value.value - 1L)
+    }
+
+    // Per-field MPT sub-trie roots in GlobalSnapshotStateProof (signed proof bytes). v4.1 cutover.
+    def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def delegatedRewardsFullCommitteeFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(delegatedRewardsFullCommittee, environment)
 
-    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(feeTransactionSecurity, environment)
+    // Cryptographic fee-transaction authorization with source-authorized co-signers. v4.1 cutover.
+    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def fixingFeeTransactionBalanceOverflowFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingFeeTransactionBalanceOverflow, environment)
@@ -156,8 +158,8 @@ object types {
     def dustSweepFor(environment: AppEnvironment, ordinal: SnapshotOrdinal): Option[DustSweep] =
       dustSweeps.get(environment).flatMap(_.get(ordinal))
 
-    def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(currencySnapshotProtocolV1, environment)
+    // Currency snapshot protocol 0.0.1 -> 1.0.0 transition, keyed by the GLOBAL ordinal. v4.1 cutover.
+    def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingDataApplicationFeeValidation, environment)
@@ -171,8 +173,8 @@ object types {
     def fixingGlobalAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingGlobalAllowSpendExpiration, environment)
 
-    def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(fixingDelegatedStakeDoubleWithdrawal, environment)
+    // Unique delegated-stake withdrawal settlement (#1593), composed with removingProcessedDelegatedStakeWithdrawals. v4.1 cutover.
+    def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingSpendActionAggregateBalance, environment)
@@ -194,18 +196,15 @@ object types {
         "fixingAllowSpendAndTokenLockValidation" -> fixingAllowSpendAndTokenLockValidationFor(environment),
         "setSumFix" -> setSumFixFor(environment),
         "scFeeBalanceFromContext" -> scFeeBalanceFromContextFor(environment),
-        "subTrieRoots" -> subTrieRootsFor(environment),
         "delegatedRewardsFullCommittee" -> delegatedRewardsFullCommitteeFor(environment),
-        "feeTransactionSecurity" -> feeTransactionSecurityFor(environment),
         "fixingFeeTransactionBalanceOverflow" -> fixingFeeTransactionBalanceOverflowFor(environment),
-        "currencySnapshotProtocolV1" -> currencySnapshotProtocolV1For(environment),
         "fixingDataApplicationFeeValidation" -> fixingDataApplicationFeeValidationFor(environment),
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
-        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment),
         "fixingSpendActionAggregateBalance" -> fixingSpendActionAggregateBalanceFor(environment),
-        "removingProcessedDelegatedStakeWithdrawals" -> removingProcessedDelegatedStakeWithdrawalsFor(environment)
+        "removingProcessedDelegatedStakeWithdrawals" -> removingProcessedDelegatedStakeWithdrawalsFor(environment),
+        "tessellation41Migration" -> tessellation41MigrationFor(environment)
       )
   }
 
@@ -260,18 +259,19 @@ object types {
     def lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
     def fieldsAddedOrdinals: FieldsAddedOrdinals
     def lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
-    def lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal]
-    def incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal]
 
     // These are last-legacy boundaries, not first-active thresholds. Preserve their existing defaults.
     def lastKryoHashOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
       lastKryoHashOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
 
+    // Derived from the v4.1 cutover C, never configured separately: v3.5 history (<= C-1) has legacy state proofs and no
+    // incremental delegated-staking fields; v4.1 (>= C) has MPT proofs and incremental staking. Comparators: state proof
+    // `<=` is legacy; incremental staking `>` is active. A missing cutover (MaxValue) keeps both legacy forever.
     def lastLegacyStateProofOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
-      lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      fieldsAddedOrdinals.tessellation41LastLegacyOrdinalFor(environment)
 
     def incrementalDelegatedStakingStartingOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(incrementalDelegatedStakingStartingOrdinal, environment)
+      fieldsAddedOrdinals.tessellation41LastLegacyOrdinalFor(environment)
 
     def ordinalConfigHashFor(environment: AppEnvironment): Hash = {
       val thresholds = fieldsAddedOrdinals
@@ -304,8 +304,6 @@ object types {
     feeConfigs: Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]],
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
@@ -332,8 +330,6 @@ object types {
     snapshotSize: SnapshotSizeConfig,
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,

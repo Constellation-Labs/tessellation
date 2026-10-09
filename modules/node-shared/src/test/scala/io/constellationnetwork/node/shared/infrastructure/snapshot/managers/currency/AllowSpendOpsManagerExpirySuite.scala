@@ -92,11 +92,12 @@ object AllowSpendOpsManagerExpirySuite extends MutableIOSuite {
       expect(
         expired.get(f.expiredOwner).contains(SortedSet(f.expired)),
         s"the unused expired allow spend is still selected: $expired"
-      ) and
+      ).and(
         expect(
           balances.toOption.flatMap(_.get(f.expiredOwner)).contains(Balance(NonNegLong.unsafeFrom(107L))),
           s"its amount is refunded to the source: $balances"
         )
+      )
   }
 
   test("a spent allow spend is not expired above the gate") { res =>
@@ -130,11 +131,12 @@ object AllowSpendOpsManagerExpirySuite extends MutableIOSuite {
         expect(
           expired == SortedMap(f.expiredOwner -> SortedSet(f.expired), f.activeOwner -> SortedSet.empty[Signed[AllowSpend]]),
           s"ordinal=$ordinal: $expired"
-        ) and
+        ).and(
           expect(
             balances.toOption.flatMap(_.get(f.activeOwner)).contains(Balance.empty),
             s"ordinal=$ordinal: mainnet records a balance entry for the active owner: $balances"
           )
+        )
     }.map(_.combineAll)
   }
 }

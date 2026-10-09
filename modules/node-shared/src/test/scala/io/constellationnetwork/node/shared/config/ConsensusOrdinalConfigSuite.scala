@@ -37,9 +37,10 @@ object ConsensusOrdinalConfigSuite extends SimpleIOSuite {
     .map {
       case "tessellation3Migration"   => "fields-added-ordinals.tessellation-3-migration"
       case "tessellation301Migration" => "fields-added-ordinals.tessellation-301-migration"
+      case "tessellation41Migration"  => "fields-added-ordinals.tessellation-41-migration"
       case name                       => "fields-added-ordinals." + name.replaceAll("([A-Z])", "-$1").toLowerCase
     }
-    .toList ++ List("last-kryo-hash-ordinal", "last-legacy-state-proof-ordinal", "incremental-delegated-staking-starting-ordinal")
+    .toList :+ "last-kryo-hash-ordinal"
 
   AppEnvironment.values.foreach { environment =>
     thresholdPaths.foreach { path =>
@@ -50,13 +51,7 @@ object ConsensusOrdinalConfigSuite extends SimpleIOSuite {
     }
   }
 
-  // Dev-only gates carry no explicit Mainnet entry, so there is nothing to remove; absent and disabled hash identically.
-  private val devOnlyThresholdPaths = Set(
-    "fields-added-ordinals.currency-snapshot-protocol-v1",
-    "fields-added-ordinals.fixing-delegated-stake-double-withdrawal"
-  )
-
-  thresholdPaths.filterNot(devOnlyThresholdPaths.contains).foreach { path =>
+  thresholdPaths.foreach { path =>
     pureTest(s"$path: removing an explicit Mainnet activation changes the consensus hash") {
       val incomplete = ConfigSource.fromConfig(raw.withoutPath(s"$path.mainnet")).loadOrThrow[SharedConfigReader]
       expect(hash(packaged, AppEnvironment.Mainnet) != hash(incomplete, AppEnvironment.Mainnet))
@@ -70,19 +65,30 @@ object ConsensusOrdinalConfigSuite extends SimpleIOSuite {
   }
 
   pureTest("absent first-active thresholds hash identically to explicit disabled thresholds") {
-    val explicit = replace("fields-added-ordinals.currency-snapshot-protocol-v1.mainnet", Long.box(Long.MaxValue))
-    expect.same(hash(packaged, AppEnvironment.Mainnet), hash(explicit, AppEnvironment.Mainnet))
+    val path = "fields-added-ordinals.tessellation-41-migration.mainnet"
+    val absent = ConfigSource.fromConfig(raw.withoutPath(path)).loadOrThrow[SharedConfigReader]
+    val explicit = replace(path, Long.box(Long.MaxValue))
+    expect.same(hash(absent, AppEnvironment.Mainnet), hash(explicit, AppEnvironment.Mainnet))
   }
 
   pureTest("last-legacy defaults retain their existing distinct meanings") {
-    val missing = packaged.copy(lastKryoHashOrdinal = Map.empty, lastLegacyStateProofOrdinal = Map.empty)
-    val explicit = missing.copy(
-      lastKryoHashOrdinal = Map(AppEnvironment.Mainnet -> SnapshotOrdinal.MinValue),
-      lastLegacyStateProofOrdinal = Map(AppEnvironment.Mainnet -> SnapshotOrdinal.MaxValue)
+    val missing = packaged.copy(
+      lastKryoHashOrdinal = Map.empty,
+      fieldsAddedOrdinals = packaged.fieldsAddedOrdinals.copy(tessellation41Migration = Map.empty)
     )
+    val explicit = missing.copy(lastKryoHashOrdinal = Map(AppEnvironment.Mainnet -> SnapshotOrdinal.MinValue))
+    val lastBeforeDisabledCutover = SnapshotOrdinal.unsafeApply(SnapshotOrdinal.MaxValue.value.value - 1L)
     expect.same(SnapshotOrdinal.MinValue, missing.lastKryoHashOrdinalFor(AppEnvironment.Mainnet)) &&
-    expect.same(SnapshotOrdinal.MaxValue, missing.lastLegacyStateProofOrdinalFor(AppEnvironment.Mainnet)) &&
+    expect.same(lastBeforeDisabledCutover, missing.lastLegacyStateProofOrdinalFor(AppEnvironment.Mainnet)) &&
+    expect.same(lastBeforeDisabledCutover, missing.incrementalDelegatedStakingStartingOrdinalFor(AppEnvironment.Mainnet)) &&
     expect.same(hash(missing, AppEnvironment.Mainnet), hash(explicit, AppEnvironment.Mainnet))
+  }
+
+  pureTest("the legacy state-proof and incremental staking boundaries move with the v4.1 cutover") {
+    val moved = replace("fields-added-ordinals.tessellation-41-migration.mainnet", Long.box(7100001L))
+    expect.same(SnapshotOrdinal.unsafeApply(7100000L), moved.lastLegacyStateProofOrdinalFor(AppEnvironment.Mainnet)) &&
+    expect.same(SnapshotOrdinal.unsafeApply(7100000L), moved.incrementalDelegatedStakingStartingOrdinalFor(AppEnvironment.Mainnet)) &&
+    expect(hash(packaged, AppEnvironment.Mainnet) != hash(moved, AppEnvironment.Mainnet))
   }
 
   pureTest("changing a dust sweep's ordinal, threshold, or burn/credit destination changes the hash") {

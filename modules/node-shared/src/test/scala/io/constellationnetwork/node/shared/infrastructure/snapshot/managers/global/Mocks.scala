@@ -281,7 +281,7 @@ object Mocks {
                 GlobalSnapshotAcceptanceManager
                   .make[IO](
                     FieldsAddedOrdinalsFixtures.current.copy(
-                      fixingDelegatedStakeDoubleWithdrawal = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal),
+                      tessellation41Migration = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal),
                       fixingSpendActionAggregateBalance = Map(AppEnvironment.Dev -> fixingSpendActionAggregateBalanceOrdinal),
                       removingProcessedDelegatedStakeWithdrawals =
                         Map(AppEnvironment.Dev -> removingProcessedDelegatedStakeWithdrawalsOrdinal)

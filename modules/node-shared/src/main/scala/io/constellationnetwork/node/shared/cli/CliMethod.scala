@@ -65,8 +65,6 @@ trait CliMethod {
     c.snapshot.size,
     c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
     c.lastKryoHashOrdinal,
-    c.lastLegacyStateProofOrdinal,
-    c.incrementalDelegatedStakingStartingOrdinal,
     c.addresses,
     c.allowSpends,
     c.tokenLocks,
