@@ -1256,19 +1256,109 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     } yield expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_requires_full_committee_core")))
   }
 
-  test("public replay roots at configured activation A-1 rather than downloaded terminal T-1") { _ =>
-    val activation = 100L
-    val terminal = SnapshotOrdinal.unsafeApply(150L)
+  test("mainnet cutover shape: activation == recovery anchor R without peerHistory certifies R+1 and replays via the recovery root") {
+    res =>
+      implicit val serializer: JsonSerializer[IO] = res.serializer
+      implicit val hasher: Hasher[IO] = res.hasher
+      implicit val hasherSelector: HasherSelector[IO] = res.selector
+      implicit val provider: SecurityProvider[IO] = res.provider
 
-    (
-      expect.same(
-        Right(SnapshotOrdinal.unsafeApply(99L)),
-        GlobalCertifiedDownloadValidator.activationParentOrdinal(activation, terminal)
-      ) &&
-        expect.same(
-          Left("activation_after_downloaded_candidate"),
-          GlobalCertifiedDownloadValidator.activationParentOrdinal(151L, terminal)
+      val growToThree = List(
+        Script(responders = Set(0), admitted = Some(1)),
+        Script(responders = Set(0, 1)),
+        Script(responders = Set(0, 1), admitted = Some(2))
+      )
+      val afterRecovery = List(
+        Script(responders = Set(0, 1, 2)),
+        Script(responders = Set(0, 1, 2), proofRotation = 1)
+      )
+
+      for {
+        seededRoot <- signedRoot(res.pairs)
+        genesisCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
+        root = GlobalRecoverySeedOutcome.seed(
+          seededRoot.finished.signedMajorityArtifact,
+          seededRoot.finished.context,
+          seededRoot.finished.snapshotHash,
+          genesisCommittee
         )
-    ).pure[IO]
+        stateAdvancer = advancer(res.pairs.head)
+        history <- growToThree.foldM((root, List.empty[PublicFrame])) {
+          case ((prior, frames), script) =>
+            buildFrame(prior, script, res.pairs).flatMap { frame =>
+              derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
+            }
+        }
+        // The final v3.5 snapshot R carries neither signed peerHistory nor certified lineage.
+        legacyValue = history._1.finished.signedMajorityArtifact.value.copy(peerHistory = None, certifiedLineage = None)
+        legacyAnchor <- signWith(legacyValue, res.pairs.take(3))
+        legacyAnchorHash <- Hasher[IO].hash(legacyValue)
+        anchorKey = legacyValue.ordinal
+        recoveryCommittee = SortedSet.from(res.pairs.take(3).map(peer))
+        recoveryRoot = GlobalRecoverySeedOutcome.seed(
+          legacyAnchor,
+          history._1.finished.context,
+          legacyAnchorHash,
+          recoveryCommittee
+        )
+        recovered <- afterRecovery.foldM((recoveryRoot, List.empty[PublicFrame])) {
+          case ((prior, frames), script) =>
+            buildFrame(prior, script, res.pairs).flatMap { frame =>
+              derive(prior, frame, stateAdvancer).map { case (next, _) => next -> (frames :+ frame) }
+            }
+        }
+        frames = recovered._2
+        candidate = recovered._1
+        firstSuccessor <- derive(recoveryRoot, frames.head, stateAdvancer).map(_._1)
+        artifacts = Map.from((anchorKey -> legacyAnchor) :: frames.map(frame => frame.artifact.ordinal -> frame.artifact))
+        mainnetShape = config.copy(certifiedConsensusActivationKey = anchorKey.value.value)
+        validator = GlobalCertifiedDownloadValidator.make[IO](
+          config = mainnetShape,
+          networkId = "integrationnet",
+          seedlistPeerIds = res.pairs.map(peer).toSet,
+          snapshotDownloadStorage = publicDownloadStorage(artifacts, Map(candidate.key -> candidate.finished.context))
+        )
+        accepted <- validator(candidate).attempt
+        firstSuccessorValidator = GlobalCertifiedDownloadValidator.make[IO](
+          config = mainnetShape,
+          networkId = "integrationnet",
+          seedlistPeerIds = res.pairs.map(peer).toSet,
+          snapshotDownloadStorage = publicDownloadStorage(
+            Map(anchorKey -> legacyAnchor, frames.head.artifact.ordinal -> frames.head.artifact),
+            Map(frames.head.artifact.ordinal -> frames.head.context)
+          )
+        )
+        firstSuccessorAccepted <- firstSuccessorValidator(firstSuccessor).attempt
+        // Activation above the anchor leaves no later reset boundary and no legacy bridge to fall back on.
+        noBridgeValidator = GlobalCertifiedDownloadValidator.make[IO](
+          config = config.copy(certifiedConsensusActivationKey = anchorKey.value.value + 1L),
+          networkId = "integrationnet",
+          seedlistPeerIds = res.pairs.map(peer).toSet,
+          snapshotDownloadStorage = publicDownloadStorage(artifacts, Map(candidate.key -> candidate.finished.context))
+        )
+        noBridge <- noBridgeValidator(candidate).attempt
+      } yield {
+        val acceptedExpectation = accepted match {
+          case Right(_)    => success
+          case Left(error) => failure(s"mainnet-shape recovery replay unexpectedly failed: ${error.getMessage}")
+        }
+        val firstSuccessorExpectation = firstSuccessorAccepted match {
+          case Right(_)    => success
+          case Left(error) => failure(s"mainnet-shape first successor R+1 unexpectedly failed: ${error.getMessage}")
+        }
+        expect(legacyAnchor.value.peerHistory.isEmpty, "anchor R must have the v3.5 shape without peerHistory") &&
+        expect(frames.head.artifact.value.certifiedLineage.isEmpty, "R+1 is the uncertified-root child and carries no lineage") &&
+        expect.same(
+          Some(frames.head.certifiedOutcome),
+          frames(1).artifact.value.certifiedLineage.map(_.parentOutcome)
+        ) &&
+        expect(firstSuccessor.finished.certifiedOutcome.nonEmpty, "R+1 must be certified") &&
+        acceptedExpectation &&
+        firstSuccessorExpectation &&
+        expect(
+          noBridge.left.exists(_.getMessage.contains("certified_recovery_root_required")),
+          s"activation above the anchor must require a recovery root, got $noBridge"
+        )
+      }
   }
 }

@@ -1106,9 +1106,6 @@ object types {
     def certifiedConsensusActiveAt(key: Long): Boolean =
       key >= certifiedConsensusActivationKey
 
-    def certifiedConsensusActivatesAt(key: Long): Boolean =
-      key == certifiedConsensusActivationKey
-
     /** Deterministic hash of consensus-critical config values.
       *
       * All nodes in a consensus round MUST have the same config to produce the same results. L0 advertises this hash during joining and

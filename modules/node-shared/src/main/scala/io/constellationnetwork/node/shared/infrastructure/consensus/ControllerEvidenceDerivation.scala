@@ -259,20 +259,6 @@ object ControllerEvidenceDerivation {
   def nextCommittee(entry: ControllerEvidenceEntry): SortedSet[PeerId] =
     (entry.roundStartFacilitators -- entry.evictedPeers) ++ entry.admittedPeers
 
-  /** Deterministic committee seed available at a legacy-to-certified activation boundary.
-    *
-    * A snapshot's signed `peerHistory` is intentionally one outcome behind because the artifact is created before its own consensus outcome
-    * exists. Its latest evidence entry therefore describes the parent round's committee transition. Reusing that resulting committee for
-    * the first certified round deliberately delays the final legacy round's membership delta by one round; it is the only committee source
-    * here that is both signed and byte-identical across nodes. In particular, DAG's historical `GlobalIncrementalSnapshot.nextFacilitators`
-    * field is a constant bootstrap value and must not be used for this purpose.
-    */
-  def certifiedActivationCommittee(peerHistory: Option[ConsensusOperationalState]): Option[List[PeerId]] =
-    peerHistory
-      .flatMap(_.controllerEvidence)
-      .flatMap(_.lastOption.map { case (_, entry) => nextCommittee(entry).toList })
-      .filter(_.nonEmpty)
-
   /** Canonical completed-signer set for a finalized round, used for `ControllerEvidenceEntry.completedSigners` AND the `recentSigners`
     * window entry by BOTH StateAdvancers (shared here so the two layers cannot drift).
     *
