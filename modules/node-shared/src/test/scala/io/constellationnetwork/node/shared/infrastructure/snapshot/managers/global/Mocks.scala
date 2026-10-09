@@ -75,7 +75,8 @@ object Mocks {
     initialSnapshotInfo: Option[GlobalSnapshotInfo] = None,
     fixingDelegatedStakeDoubleWithdrawalOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
     fixingSpendActionAggregateBalanceOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue,
-    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None
+    spendActionValidatorOverride: Option[SpendActionValidator[IO]] = None,
+    removingProcessedDelegatedStakeWithdrawalsOrdinal: SnapshotOrdinal = SnapshotOrdinal.MinValue
   )(implicit h: Hasher[IO], sp: SecurityProvider[IO]): IO[GlobalSnapshotAcceptanceManager[IO]] = {
     // Create mock dependencies for testing
     val mockBlockAcceptanceManager = new BlockAcceptanceManager[IO] {
@@ -281,7 +282,9 @@ object Mocks {
                   .make[IO](
                     FieldsAddedOrdinalsFixtures.current.copy(
                       fixingDelegatedStakeDoubleWithdrawal = Map(AppEnvironment.Dev -> fixingDelegatedStakeDoubleWithdrawalOrdinal),
-                      fixingSpendActionAggregateBalance = Map(AppEnvironment.Dev -> fixingSpendActionAggregateBalanceOrdinal)
+                      fixingSpendActionAggregateBalance = Map(AppEnvironment.Dev -> fixingSpendActionAggregateBalanceOrdinal),
+                      removingProcessedDelegatedStakeWithdrawals =
+                        Map(AppEnvironment.Dev -> removingProcessedDelegatedStakeWithdrawalsOrdinal)
                     ),
                     MetagraphsSyncConfig(PosInt(100)),
                     AppEnvironment.Dev,

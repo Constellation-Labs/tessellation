@@ -44,6 +44,40 @@ object GlobalSnapshotAcceptanceManagerSuite extends MutableIOSuite {
     Hex("5dc4f7eba443f9a0dff11469b4fede358034abf20f9bbd8ea2b607179b72cfc159f33a64e24626891fc38b2c5a3dd7920c6b44a85cb745137b2e2e3e130adb5e")
   )
 
+  pureTest("removeProcessedWithdrawals drops every same-address copy of an expired reference, orphans included") {
+    def pending(ref: String, epoch: Long) = PendingDelegatedStakeWithdrawal(
+      Signed(
+        UpdateDelegatedStake.Create(address1, nodeId, DelegatedStakeAmount(100L), tokenLockRef = Hash(ref)),
+        cats.data.NonEmptySet.one(
+          io.constellationnetwork.security.signature.signature.SignatureProof(
+            nodeId.toId,
+            io.constellationnetwork.security.signature.signature.Signature(Hex(Hash.empty.value))
+          )
+        )
+      ),
+      Amount(1L),
+      SnapshotOrdinal(1L),
+      EpochProgress(NonNegLong.unsafeFrom(epoch))
+    )
+    val expired = SortedMap(address1 -> SortedSet(pending("processed", 1L), pending("orphan", 1L)))
+    val pendingAfterRewards = SortedMap(
+      address1 -> SortedSet(pending("processed", 9L), pending("orphan", 9L), pending("other", 9L)),
+      address2 -> SortedSet(pending("processed", 9L))
+    )
+
+    expect
+      .same(
+        SortedMap(address1 -> SortedSet(pending("other", 9L)), address2 -> SortedSet(pending("processed", 9L))),
+        GlobalSnapshotAcceptanceManager.removeProcessedWithdrawals(pendingAfterRewards, expired)
+      )
+      .and(
+        expect.same(
+          SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+          GlobalSnapshotAcceptanceManager.removeProcessedWithdrawals(expired, expired)
+        )
+      )
+  }
+
   test("should handle delegated stakes with replacement token locks") { res =>
     implicit val (h, sp) = res
 

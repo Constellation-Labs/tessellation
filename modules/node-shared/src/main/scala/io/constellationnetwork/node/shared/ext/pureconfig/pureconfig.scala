@@ -103,6 +103,7 @@ package object pureconfig {
           fixingGlobalAllowSpendExpiration <- gate("fixing-global-allow-spend-expiration")
           fixingDelegatedStakeDoubleWithdrawal <- gate("fixing-delegated-stake-double-withdrawal")
           fixingSpendActionAggregateBalance <- gate("fixing-spend-action-aggregate-balance")
+          removingProcessedDelegatedStakeWithdrawals <- gate("removing-processed-delegated-stake-withdrawals")
         } yield
           FieldsAddedOrdinals(
             tessellation3Migration = tessellation3Migration,
@@ -127,7 +128,8 @@ package object pureconfig {
             preventingAllowSpendResurrection = preventingAllowSpendResurrection,
             fixingGlobalAllowSpendExpiration = fixingGlobalAllowSpendExpiration,
             fixingDelegatedStakeDoubleWithdrawal = fixingDelegatedStakeDoubleWithdrawal,
-            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance
+            fixingSpendActionAggregateBalance = fixingSpendActionAggregateBalance,
+            removingProcessedDelegatedStakeWithdrawals = removingProcessedDelegatedStakeWithdrawals
           )
       }
     }

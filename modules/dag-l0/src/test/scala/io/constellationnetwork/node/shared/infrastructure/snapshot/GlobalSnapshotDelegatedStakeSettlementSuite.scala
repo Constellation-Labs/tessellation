@@ -104,13 +104,22 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
     ordinal: SnapshotOrdinal = activation,
     balances: SortedMap[Address, Balance] = initialBalances,
     unexpired: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = SortedMap.empty,
-    replacements: List[Signed[TokenLock]] = List.empty
+    replacements: List[Signed[TokenLock]] = List.empty,
+    removingProcessedWithdrawals: Boolean = false
   )(implicit hasher: Hasher[IO], store: MptStore[IO, GlobalStateKey]): IO[Result] = {
     val active = SortedMap.from(locks.values.toList.groupBy(_.source).view.mapValues(SortedSet.from(_)))
     val context = GlobalSnapshotInfo.empty.copy(activeTokenLocks = Some(active), delegatedStakesWithdrawals = Some(expired |+| unexpired))
     val manager = TokenLockStateManager.make[IO](store)
     for {
-      existing <- DelegatedStakeStateManager.make[IO]().processExistingDelegatedStakes(context, epoch, replacements, EpochProgress(5L))
+      existing <- DelegatedStakeStateManager
+        .make[IO]()
+        .processExistingDelegatedStakes(
+          context,
+          epoch,
+          replacements,
+          EpochProgress(5L),
+          removingProcessedWithdrawals
+        )
       settlement <- IO.fromEither(
         DelegatedStakeWithdrawalSettlement.prepare(existing.expired, existing.unexpired, locks, ordinal, activation)
       )
@@ -239,7 +248,7 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
       )
   }
 
-  test("missing locks stay pending without payout on develop, including later-cooldown copies") { res =>
+  test("below the processed-withdrawal gate, missing locks stay pending without payout, including later-cooldown copies") { res =>
     implicit val (hasher, store) = res
     val missing = withdrawal(Hash("missing"), 90L)
     val later = missing.copy(createdAt = EpochProgress(9L))
@@ -530,6 +539,138 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
           results.tail.forall(_._9.activeTokenLocks.exists(_.isEmpty)),
           results.tail.forall(_._13.collect { case u: TokenUnlock => u.tokenLockRef } == SortedSet(hashed.hash))
         )
+    }
+  }
+
+  private def acceptAt(
+    context: GlobalSnapshotInfo,
+    ordinal: SnapshotOrdinal,
+    removingProcessedWithdrawalsOrdinal: SnapshotOrdinal,
+    uniqueSettlementOrdinal: SnapshotOrdinal
+  )(implicit hasher: Hasher[IO], sp: io.constellationnetwork.security.SecurityProvider[IO]) =
+    for {
+      manager <- Mocks.mkManager(
+        Some(context),
+        fixingDelegatedStakeDoubleWithdrawalOrdinal = uniqueSettlementOrdinal,
+        removingProcessedDelegatedStakeWithdrawalsOrdinal = removingProcessedWithdrawalsOrdinal
+      )
+      result <- manager.accept(
+        ordinal = ordinal,
+        epochProgress = epoch,
+        blocksForAcceptance = List.empty,
+        allowSpendBlocksForAcceptance = List.empty,
+        tokenLockBlocksForAcceptance = List.empty,
+        scEvents = List.empty,
+        unpEvents = List.empty,
+        cdsEvents = List.empty,
+        wdsEvents = List.empty,
+        cncEvents = List.empty,
+        wncEvents = List.empty,
+        lastSnapshotContext = context,
+        lastActiveTips = SortedSet.empty,
+        lastDeprecatedTips = SortedSet.empty,
+        calculateRewardsFn = {
+          case DelegateRewardsInput(diffs, partitioned, ep) =>
+            GlobalDelegatedRewardsDistributor
+              .make[IO](AppEnvironment.Dev, DefaultDelegatedRewardsConfigProvider.getConfig())
+              .distribute(context, EventTrigger, ep, List.empty, diffs, partitioned)
+          case _ => IO.raiseError(new IllegalStateException("Expected delegated rewards"))
+        },
+        validationType = io.constellationnetwork.statechannel.StateChannelValidationType.Full,
+        getGlobalSnapshotByOrdinal = _ => IO.pure(None),
+        allowSpendBlockAcceptanceMode = AllowSpendBlockAcceptanceMode.live
+      )
+    } yield result
+
+  // Mirrors mainnet 6176654 -> 6176655 (#1498): a pending withdrawal survives for a token lock that was already unlocked.
+  // Below the gate develop keeps it pending (mainnet halted there with MissingTokenLock). At/after the gate the orphan is
+  // paid its recorded rewards on the legacy path (as mainnet did), produces no unlock and is dropped from pending, and every
+  // same-address pending copy of an expired reference is removed.
+  test("orphan withdrawal under legacy settlement at A-1/A/A+1 of removing-processed-delegated-stake-withdrawals") { res =>
+    implicit val (hasher, store) = res
+    io.constellationnetwork.security.SecurityProvider.forAsync[IO].use { implicit sp =>
+      val lock = tokenLock()
+      val orphanRef = Hash("bdbdb766-orphan")
+      for {
+        hashed <- lock.toHashed
+        backed = withdrawal(hashed.hash, 20L)
+        backedLaterCopy = withdrawal(hashed.hash, 40L, 9L)
+        orphan = withdrawal(orphanRef, 5L, 1L, other)
+        pending = SortedMap(owner -> SortedSet(backed, backedLaterCopy), other -> SortedSet(orphan))
+        context = Mocks
+          .mkGlobalSnapshotInfo(activeTokenLocks = Some(SortedMap(owner -> SortedSet(lock))), delegatedStakesWithdrawals = Some(pending))
+          .copy(balances = initialBalances)
+        results <- List(SnapshotOrdinal.unsafeApply(9L), activation, activation.next).traverse { ordinal =>
+          acceptAt(context, ordinal, activation, SnapshotOrdinal.MaxValue).attempt
+        }
+        unlocked = results.map(_.toOption.map(_._13.collect { case u: TokenUnlock => u.tokenLockRef }))
+        pendingAfter = results.map(_.toOption.flatMap(_._9.delegatedStakesWithdrawals))
+        rewardsAfter = results.map(_.toOption.map(_._8))
+      } yield
+        expect(results.forall(_.isRight), s"acceptance must not raise MissingTokenLock: ${results.collect { case Left(e) => e }}")
+          .and(expect(Some(SortedSet(hashed.hash)) == unlocked.head, s"A-1 unlocks only the backed lock: ${unlocked.head}"))
+          .and(
+            expect(
+              Some(SortedMap(owner -> SortedSet(backedLaterCopy), other -> SortedSet(orphan))) == pendingAfter.head,
+              s"A-1 keeps the orphan and the same-address later copy pending (develop below-gate behaviour): ${pendingAfter.head}"
+            )
+          )
+          .and(
+            expect(Some(SortedSet(reward(owner, 20L))) == rewardsAfter.head, s"A-1 pays only the backed withdrawal: ${rewardsAfter.head}")
+          )
+          .and(expect(unlocked.tail.forall(_ == Some(SortedSet(hashed.hash))), s"A/A+1 never unlock the orphan: $unlocked"))
+          .and(
+            expect(
+              pendingAfter.tail.forall(_ == Some(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]])),
+              s"A/A+1 drop the orphan and every same-address copy of a processed reference: $pendingAfter"
+            )
+          )
+          .and(
+            expect(
+              rewardsAfter.tail.forall(_ == Some(SortedSet(reward(owner, 20L), reward(other, 5L)))),
+              s"A/A+1 pay the orphan's recorded rewards on the legacy path, as mainnet did: $rewardsAfter"
+            )
+          )
+    }
+  }
+
+  test("orphan withdrawal under unique settlement is dropped without unlock or payout") { res =>
+    implicit val (hasher, store) = res
+    io.constellationnetwork.security.SecurityProvider.forAsync[IO].use { implicit sp =>
+      val lock = tokenLock()
+      val orphanRef = Hash("orphan-under-unique")
+      for {
+        hashed <- lock.toHashed
+        backed = withdrawal(hashed.hash, 20L)
+        orphan = withdrawal(orphanRef, 5L, 1L, other)
+        orphanLaterCopy = withdrawal(orphanRef, 7L, 9L, other)
+        pending = SortedMap(owner -> SortedSet(backed), other -> SortedSet(orphan, orphanLaterCopy))
+        context = Mocks
+          .mkGlobalSnapshotInfo(activeTokenLocks = Some(SortedMap(owner -> SortedSet(lock))), delegatedStakesWithdrawals = Some(pending))
+          .copy(balances = initialBalances)
+        withoutRemoval <- acceptAt(context, activation, SnapshotOrdinal.MaxValue, activation)
+        result <- acceptAt(context, activation, SnapshotOrdinal.MinValue, activation)
+      } yield
+        expect(
+          Some(SortedMap(other -> SortedSet(orphan, orphanLaterCopy))) == withoutRemoval._9.delegatedStakesWithdrawals,
+          s"unique settlement alone (#1593) skips orphans and leaves them pending: ${withoutRemoval._9.delegatedStakesWithdrawals}"
+        ).and(
+          expect(
+            Some(SortedMap.empty[Address, SortedSet[PendingDelegatedStakeWithdrawal]]) == result._9.delegatedStakesWithdrawals,
+            s"with #1498 composed, the orphan and its same-address copies are dropped: ${result._9.delegatedStakesWithdrawals}"
+          )
+        ).and(
+          expect(
+            SortedSet(hashed.hash) == result._13.collect { case u: TokenUnlock => u.tokenLockRef },
+            s"only the backed lock unlocks: ${result._13.collect { case u: TokenUnlock => u.tokenLockRef }}"
+          )
+        ).and(expect(SortedSet(reward(owner, 20L)) == result._8, s"orphans are not paid under unique settlement: ${result._8}"))
+          .and(
+            expect(
+              initialBalances.updated(owner, balance(1027L)) == result._9.balances,
+              s"balances move only for the backed lock: ${result._9.balances}"
+            )
+          )
     }
   }
 

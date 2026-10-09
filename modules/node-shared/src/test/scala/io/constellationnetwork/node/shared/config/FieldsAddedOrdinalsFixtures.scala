@@ -30,6 +30,7 @@ object FieldsAddedOrdinalsFixtures {
     preventingAllowSpendResurrection = active,
     fixingGlobalAllowSpendExpiration = active,
     fixingDelegatedStakeDoubleWithdrawal = active,
-    fixingSpendActionAggregateBalance = active
+    fixingSpendActionAggregateBalance = active,
+    removingProcessedDelegatedStakeWithdrawals = active
   )
 }
