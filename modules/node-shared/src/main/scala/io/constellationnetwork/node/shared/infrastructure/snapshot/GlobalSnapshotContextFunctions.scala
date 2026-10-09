@@ -168,22 +168,27 @@ object GlobalSnapshotContextFunctions {
                 enforceModeAgreement = false
               )
             case mode :: rest =>
-              createContextWithMode(
-                context,
-                lastArtifact,
-                signedArtifact,
-                getGlobalSnapshotByOrdinal,
-                mode,
-                enforceModeAgreement = true
-              ).handleErrorWith { error =>
-                // While a fallback mode remains, ANY failure means this mode did not reproduce the signed
-                // snapshot rather than that this node has forked -- both the soft divergence signalled by
-                // AllowSpendModeMismatchError and a hard failure such as the balance underflow escrow
-                // semantics produce on pre-activation snapshots. Matches the mainnet fix, which likewise
-                // falls back on any raised error. The final mode never reaches here, so a genuine failure
-                // there still surfaces unchanged.
-                logger.debug(error)(s"Retrying global snapshot recreation with allow-spend mode=${rest.head}") >>
-                  attempt(rest)
+              // Acceptance ends with an incremental MPT sync, and a divergent mode is only detected after accept returns. Roll
+              // the store back before the next mode so it neither reads nor builds on the abandoned attempt's state.
+              mptStore.savepoint.flatMap { savepoint =>
+                createContextWithMode(
+                  context,
+                  lastArtifact,
+                  signedArtifact,
+                  getGlobalSnapshotByOrdinal,
+                  mode,
+                  enforceModeAgreement = true
+                ).handleErrorWith { error =>
+                  // While a fallback mode remains, ANY failure means this mode did not reproduce the signed
+                  // snapshot rather than that this node has forked -- both the soft divergence signalled by
+                  // AllowSpendModeMismatchError and a hard failure such as the balance underflow escrow
+                  // semantics produce on pre-activation snapshots. Matches the mainnet fix, which likewise
+                  // falls back on any raised error. The final mode never reaches here, so a genuine failure
+                  // there still surfaces unchanged.
+                  savepoint.restore >>
+                    logger.debug(error)(s"Retrying global snapshot recreation with allow-spend mode=${rest.head}") >>
+                    attempt(rest)
+                }
               }
             case Nil =>
               new IllegalStateException("No allow-spend acceptance mode available for global snapshot recreation")
