@@ -26,8 +26,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     updatedLastSyncGlobalFromPeersInConsensus = Map.empty,
     updatingCombineFunctionSpendActions = Map.empty,
     fixingAllowSpendExpiration = Map.empty,
-    fixingAllowSpendAndTokenLockValidation = Map.empty,
-    setSumFix = Map.empty
+    fixingAllowSpendAndTokenLockValidation = Map.empty
   )
 
   // Independent expected values: changing a signed-history boundary requires review of this table,
@@ -50,9 +49,6 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "updatingCombineFunctionSpendActions" -> allEnvironments(4957662L, 2987405L, 3975600L),
     "fixingAllowSpendExpiration" -> allEnvironments(5033174L, 2987405L, 3975600L),
     "fixingAllowSpendAndTokenLockValidation" -> allEnvironments(5058096L, 9999999L, 5880000L),
-    "setSumFix" -> allEnvironments(9999999L, 9999999L, 5880000L),
-    "scFeeBalanceFromContext" -> allEnvironments(9999999L, 3101393L, 5880000L),
-    "delegatedRewardsFullCommittee" -> allEnvironments(9999999L, 9999999L, 5880000L),
     "fixingFeeTransactionBalanceOverflow" -> allEnvironments(6814499L, 3255000L, 9999999L),
     "fixingDataApplicationFeeValidation" -> allEnvironments(6818000L, 9999999L, 9999999L),
     "fixingAllowSpendDestinationCredit" -> allEnvironments(6818000L, 9999999L, 9999999L),
@@ -86,10 +82,7 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
         allEnvironments(2572384L, 1933590L, 1527434L),
         source.at("last-kryo-hash-ordinal").loadOrThrow[Map[AppEnvironment, SnapshotOrdinal]]
       ) &&
-      expect.same(
-        Map(AppEnvironment.Testnet -> SortedMap(SnapshotOrdinal.unsafeApply(3154700L) -> DustSweep(Balance(100000L), None))),
-        fields.dustSweeps
-      )
+      expect(fields.dustSweeps.isEmpty, s"no network schedules a dust sweep: ${fields.dustSweeps}")
     }
   }
 
@@ -172,9 +165,6 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       fieldsAddedOrdinals.updatingCombineFunctionSpendActionsFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingAllowSpendExpirationFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidationFor(AppEnvironment.Mainnet),
-      fieldsAddedOrdinals.setSumFixFor(AppEnvironment.Mainnet),
-      fieldsAddedOrdinals.scFeeBalanceFromContextFor(AppEnvironment.Mainnet),
-      fieldsAddedOrdinals.delegatedRewardsFullCommitteeFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingFeeTransactionBalanceOverflowFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingDataApplicationFeeValidationFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(AppEnvironment.Mainnet),

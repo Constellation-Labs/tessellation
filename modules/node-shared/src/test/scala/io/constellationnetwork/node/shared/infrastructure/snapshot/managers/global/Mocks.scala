@@ -473,8 +473,7 @@ object Mocks {
         SortedMap.empty,
         SortedSet.empty,
         SortedSet.empty,
-        SortedSet.empty,
-        Amount.empty
+        SortedSet.empty
       ).pure[F]
   }
 
@@ -997,14 +996,6 @@ object Mocks {
                 }.toMap
               }
             )
-
-          totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
-                                   DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
-                                 else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
-            reservedAddressRewards,
-            nodeOperatorRewardsTxs,
-            delegatorRewardsMap
-          )
         } yield
           DelegatedRewardsResult(
             delegatorRewardsMap,
@@ -1012,8 +1003,7 @@ object Mocks {
             updatedWithdrawDelegatedStakes,
             nodeOperatorRewardsTxs,
             reservedAddressRewards,
-            withdrawalRewardTxs,
-            totalEmittedReward
+            withdrawalRewardTxs
           )
     }
   }

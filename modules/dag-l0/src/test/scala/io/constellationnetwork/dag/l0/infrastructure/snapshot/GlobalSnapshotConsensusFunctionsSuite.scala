@@ -319,8 +319,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         SortedMap.empty,
         SortedSet.empty,
         SortedSet.empty,
-        SortedSet.empty,
-        Amount.empty
+        SortedSet.empty
       )
         .pure[F]
 
@@ -428,10 +427,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           delegatedRewardsConfigProvider,
           SnapshotOrdinal.MinValue,
           SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue,
-          SnapshotOrdinal.MinValue,
-          mptStore,
-          100
+          mptStore
         )
     } yield globalSnapshotConsensusFunction
   }
@@ -921,7 +917,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         acceptanceManager,
         updateDelegatedStakeAcceptanceManager,
         EpochProgress(NonNegLong.unsafeFrom(1L)),
-        SnapshotOrdinal.MinValue,
         SnapshotOrdinal.MinValue,
         mptStore,
         SnapshotOrdinal.MinValue,

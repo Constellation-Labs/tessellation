@@ -91,21 +91,25 @@ object ConsensusOrdinalConfigSuite extends SimpleIOSuite {
     expect(hash(packaged, AppEnvironment.Mainnet) != hash(moved, AppEnvironment.Mainnet))
   }
 
+  // No network ships a dust sweep, so the schedule tests install one.
+  private val sweepPath = "fields-added-ordinals.dust-sweeps.testnet.3154700"
+  private val withSweep = raw.withValue(s"$sweepPath.threshold", ConfigValueFactory.fromAnyRef(Long.box(100000L)))
+  private lazy val packagedWithSweep = ConfigSource.fromConfig(withSweep).loadOrThrow[SharedConfigReader]
+
   pureTest("changing a dust sweep's ordinal, threshold, or burn/credit destination changes the hash") {
-    val threshold = replace("fields-added-ordinals.dust-sweeps.testnet.3154700.threshold", Long.box(100001L))
-    val destination = replace(
-      "fields-added-ordinals.dust-sweeps.testnet.3154700.collection-address",
-      "DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM"
+    def load(config: com.typesafe.config.Config) = ConfigSource.fromConfig(config).loadOrThrow[SharedConfigReader]
+    val threshold = load(withSweep.withValue(s"$sweepPath.threshold", ConfigValueFactory.fromAnyRef(Long.box(100001L))))
+    val destination = load(
+      withSweep.withValue(s"$sweepPath.collection-address", ConfigValueFactory.fromAnyRef("DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM"))
     )
-    val ordinal = ConfigSource
-      .fromConfig(
-        raw
-          .withoutPath("fields-added-ordinals.dust-sweeps.testnet.3154700")
-          .withValue("fields-added-ordinals.dust-sweeps.testnet.3154701", raw.getValue("fields-added-ordinals.dust-sweeps.testnet.3154700"))
-      )
-      .loadOrThrow[SharedConfigReader]
-    val original = hash(packaged, AppEnvironment.Testnet)
-    expect(List(threshold, destination, ordinal).forall(config => hash(config, AppEnvironment.Testnet) != original))
+    val ordinal = load(
+      withSweep
+        .withoutPath(sweepPath)
+        .withValue("fields-added-ordinals.dust-sweeps.testnet.3154701", withSweep.getValue(sweepPath))
+    )
+    val original = hash(packagedWithSweep, AppEnvironment.Testnet)
+    expect(hash(packaged, AppEnvironment.Testnet) != original, "installing a sweep changes the hash")
+      .and(expect(List(threshold, destination, ordinal).forall(config => hash(config, AppEnvironment.Testnet) != original)))
   }
 
   pureTest("the complete dust schedule is hashed independently of configuration key order") {

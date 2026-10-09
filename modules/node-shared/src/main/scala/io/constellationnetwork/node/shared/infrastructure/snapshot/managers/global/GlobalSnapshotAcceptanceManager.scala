@@ -869,8 +869,7 @@ object GlobalSnapshotAcceptanceManager {
               updatedWithdrawDelegatedStakes,
               nodeOperatorRewards,
               reservedAddressRewards,
-              withdrawalRewardTxs,
-              _
+              withdrawalRewardTxs
             ) <- calculateRewards(
               ordinal,
               epochProgress,

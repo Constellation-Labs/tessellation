@@ -213,7 +213,6 @@ object SharedServices {
         updateDelegatedStakeAcceptanceManager,
         cfg.delegatedStaking.withdrawalTimeLimit.getOrElse(cfg.environment, EpochProgress.MinValue),
         cfg.fieldsAddedOrdinals.tessellation3MigrationFor(cfg.environment),
-        cfg.fieldsAddedOrdinals.setSumFixFor(cfg.environment),
         storages.mptStore,
         cfg.incrementalDelegatedStakingStartingOrdinalFor(cfg.environment),
         cfg.fieldsAddedOrdinals.fixingAllowSpendDestinationCreditFor(cfg.environment)

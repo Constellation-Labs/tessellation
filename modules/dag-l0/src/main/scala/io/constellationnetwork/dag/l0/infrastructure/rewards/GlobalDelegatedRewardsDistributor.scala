@@ -535,14 +535,6 @@ object GlobalDelegatedRewardsDistributor {
                 .toMap
             }
           )
-
-        totalEmittedReward <- (if (partitionedRecords.withdrawalSettlement.isDefined)
-                                 DelegatedRewardsDistributor.sumMintedAmountChecked[F] _
-                               else DelegatedRewardsDistributor.sumMintedAmount[F] _)(
-          reservedAddressRewards,
-          nodeOperatorRewardsTxs,
-          delegatorRewardsMap
-        )
       } yield
         DelegatedRewardsResult(
           delegatorRewardsMap,
@@ -550,8 +542,7 @@ object GlobalDelegatedRewardsDistributor {
           updatedWithdrawDelegatedStakes,
           nodeOperatorRewardsTxs,
           reservedAddressRewards,
-          withdrawalRewardTxs,
-          totalEmittedReward
+          withdrawalRewardTxs
         )
   }
 }

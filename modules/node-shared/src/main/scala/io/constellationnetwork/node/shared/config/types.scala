@@ -50,16 +50,6 @@ object types {
     updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
-    setSumFix: Map[AppEnvironment, SnapshotOrdinal],
-    // Ordinal-gated balance source for state-channel fee affordability (commit dd6e83a19). At/after this ordinal the fee
-    // check reads the metagraph owner's balance from the deterministic accept() context (lastGlobalSnapshotInfo.balances);
-    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. Per-env
-    // activation ordinals live in the `fields-added-ordinals` HOCON (see docs/operations/fields-added-ordinals.md): testnet
-    // activates at its v4.0.0->alpha.0 cutover ordinal, dev at 0 (genesis-fresh), mainnet/integrationnet are placeholders.
-    scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
-    // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
-    delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, acceptFeeTxs applies fee transactions through checked Balance arithmetic. Below it, the
     // original wrapping fold is replayed so already-signed history re-derives byte-identically -- the fix changes what a
     // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
@@ -125,12 +115,6 @@ object types {
     def fixingAllowSpendAndTokenLockValidationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendAndTokenLockValidation, environment)
 
-    def setSumFixFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(setSumFix, environment)
-
-    def scFeeBalanceFromContextFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(scFeeBalanceFromContext, environment)
-
     def tessellation41MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(tessellation41Migration, environment)
 
@@ -145,9 +129,6 @@ object types {
 
     // Per-field MPT sub-trie roots in GlobalSnapshotStateProof (signed proof bytes). v4.1 cutover.
     def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
-
-    def delegatedRewardsFullCommitteeFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(delegatedRewardsFullCommittee, environment)
 
     // Cryptographic fee-transaction authorization with source-authorized co-signers. v4.1 cutover.
     def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
@@ -194,9 +175,6 @@ object types {
         "updatingCombineFunctionSpendActions" -> updatingCombineFunctionSpendActionsFor(environment),
         "fixingAllowSpendExpiration" -> fixingAllowSpendExpirationFor(environment),
         "fixingAllowSpendAndTokenLockValidation" -> fixingAllowSpendAndTokenLockValidationFor(environment),
-        "setSumFix" -> setSumFixFor(environment),
-        "scFeeBalanceFromContext" -> scFeeBalanceFromContextFor(environment),
-        "delegatedRewardsFullCommittee" -> delegatedRewardsFullCommitteeFor(environment),
         "fixingFeeTransactionBalanceOverflow" -> fixingFeeTransactionBalanceOverflowFor(environment),
         "fixingDataApplicationFeeValidation" -> fixingDataApplicationFeeValidationFor(environment),
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),

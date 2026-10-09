@@ -89,9 +89,6 @@ package object pureconfig {
           updatingCombineFunctionSpendActions <- gate("updating-combine-function-spend-actions")
           fixingAllowSpendExpiration <- gate("fixing-allow-spend-expiration")
           fixingAllowSpendAndTokenLockValidation <- gate("fixing-allow-spend-and-token-lock-validation")
-          setSumFix <- gate("set-sum-fix")
-          scFeeBalanceFromContext <- gate("sc-fee-balance-from-context")
-          delegatedRewardsFullCommittee <- gate("delegated-rewards-full-committee")
           fixingFeeTransactionBalanceOverflow <- gate("fixing-fee-transaction-balance-overflow")
           dustSweeps <- gates.atKey("dust-sweeps").flatMap(envToOrdinalToDustSweepReader.from)
           fixingDataApplicationFeeValidation <- gate("fixing-data-application-fee-validation")
@@ -112,9 +109,6 @@ package object pureconfig {
             updatingCombineFunctionSpendActions = updatingCombineFunctionSpendActions,
             fixingAllowSpendExpiration = fixingAllowSpendExpiration,
             fixingAllowSpendAndTokenLockValidation = fixingAllowSpendAndTokenLockValidation,
-            setSumFix = setSumFix,
-            scFeeBalanceFromContext = scFeeBalanceFromContext,
-            delegatedRewardsFullCommittee = delegatedRewardsFullCommittee,
             fixingFeeTransactionBalanceOverflow = fixingFeeTransactionBalanceOverflow,
             dustSweeps = dustSweeps,
             fixingDataApplicationFeeValidation = fixingDataApplicationFeeValidation,

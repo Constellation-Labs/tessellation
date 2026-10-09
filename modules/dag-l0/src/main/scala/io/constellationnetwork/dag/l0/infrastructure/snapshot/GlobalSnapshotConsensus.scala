@@ -257,11 +257,8 @@ object GlobalSnapshotConsensus {
           appConfig.environment,
           DefaultDelegatedRewardsConfigProvider,
           sharedCfg.fieldsAddedOrdinals.tessellation3MigrationFor(sharedCfg.environment),
-          sharedCfg.fieldsAddedOrdinals.setSumFixFor(sharedCfg.environment),
-          sharedCfg.fieldsAddedOrdinals.delegatedRewardsFullCommitteeFor(sharedCfg.environment),
           sharedCfg.incrementalDelegatedStakingStartingOrdinalFor(sharedCfg.environment),
-          mptStore,
-          effectiveConsensusConfig.activeAdmissionPromoteThreshold
+          mptStore
         )
 
       facilitatorSelector = FacilitatorSelector.make(

@@ -49,7 +49,6 @@ object GlobalSnapshotContextFunctions {
     updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
     withdrawalTimeLimit: EpochProgress,
     tessellation3MigrationStartingOrdinal: SnapshotOrdinal,
-    setSumFixOrdinal: SnapshotOrdinal,
     mptStore: MptStore[F, GlobalStateKey],
     incrementalDelegatedStakingStartingOrdinal: SnapshotOrdinal,
     fixingAllowSpendDestinationCredit: SnapshotOrdinal
@@ -322,34 +321,7 @@ object GlobalSnapshotContextFunctions {
                       updatedWithdrawDelegatedStakes = SortedMap.empty,
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
-                      withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount =
-                        Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
-                    )
-                  } else if (signedArtifact.ordinal.value < setSumFixOrdinal.value) {
-                    // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
-                    val transformedCreateDelegatedStakes =
-                      if (signedArtifact.ordinal > incrementalDelegatedStakingStartingOrdinal) {
-                        updatedCreateDelegatedStakes.view.mapValues { records =>
-                          records.map { r =>
-                            r.copy(
-                              currentTokenLockRef = r.currentTokenLockRef.orElse(r.tokenLockRef.some),
-                              currentAmount = r.currentAmount.orElse(r.amount.some)
-                            )
-                          }
-                        }.to(SortedMap)
-                      } else updatedCreateDelegatedStakes
-
-                    DelegatedRewardsResult(
-                      delegatorRewardsMap = signedArtifact.delegateRewards
-                        .getOrElse(SortedMap.empty[PeerId, SortedMap[Address, Amount]]),
-                      updatedCreateDelegatedStakes = transformedCreateDelegatedStakes,
-                      updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
-                      nodeOperatorRewards = txs,
-                      reservedAddressRewards = SortedSet.empty,
-                      withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount =
-                        Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).distinct.sum)) // mimic incorrect behaviour
+                      withdrawalRewardTxs = SortedSet.empty
                     )
                   } else {
                     // Apply same transformation as consensus path for ordinals > incrementalDelegatedStakingStartingOrdinal
@@ -372,8 +344,7 @@ object GlobalSnapshotContextFunctions {
                       updatedWithdrawDelegatedStakes = updatedWithdrawDelegatedStakes,
                       nodeOperatorRewards = txs,
                       reservedAddressRewards = SortedSet.empty,
-                      withdrawalRewardTxs = SortedSet.empty,
-                      totalEmittedRewardsAmount = Amount(NonNegLong.unsafeFrom(txs.toList.map(_.amount.value.value).sum))
+                      withdrawalRewardTxs = SortedSet.empty
                     )
                   }
                 },

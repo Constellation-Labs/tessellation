@@ -180,7 +180,6 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
         before.transition.balances(owner) == balance(1027L),
         before.transition.balances(other) == balance(1041L),
         results.forall(_.rewards.withdrawalRewardTxs == SortedSet(reward(owner, 30L))),
-        results.forall(_.rewards.totalEmittedRewardsAmount == Amount.empty),
         results.forall(_.transition.balances == initialBalances.updated(owner, balance(1037L))),
         results.forall(_.transition.generatedArtifacts == SortedSet[SharedArtifact](expectedUnlock)),
         results.forall(_.transition.activeTokenLocks.isEmpty),
@@ -223,7 +222,6 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
       expect.all(
         before.rewards.withdrawalRewardTxs == SortedSet(reward(owner, 50L)),
         at.rewards.withdrawalRewardTxs == SortedSet(reward(owner, 50L)),
-        at.rewards.totalEmittedRewardsAmount == Amount.empty,
         at.transition.balances(owner) == balance(3057L),
         at.transition.generatedArtifacts.size == 2,
         at.settlement.exists(_.duplicateCount == 0)
@@ -395,15 +393,6 @@ object GlobalSnapshotDelegatedStakeSettlementSuite extends MutableIOSuite {
         balances = initialBalances.updated(owner, balance(Long.MaxValue))
       ).attempt
     } yield expect(result == Left(AmountOverflow))
-  }
-
-  test("checked issuance totals reject overflow even when unchecked addition would wrap positive") { _ =>
-    val positiveWrap = SortedSet(reward(owner, Long.MaxValue), reward(other, Long.MaxValue), reward(third, 3L))
-    for {
-      exact <- DelegatedRewardsDistributor
-        .sumMintedAmountChecked[IO](SortedSet(reward(owner, Long.MaxValue)), SortedSet.empty, SortedMap.empty)
-      overflow <- DelegatedRewardsDistributor.sumMintedAmountChecked[IO](positiveWrap, SortedSet.empty, SortedMap.empty).attempt
-    } yield expect.all(exact == amount(Long.MaxValue), overflow == Left(AmountOverflow))
   }
 
   test("replacement R/R+1 carries pending rewards under NEW and settles its principal and maximum entitlement once") { res =>
