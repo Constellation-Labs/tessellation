@@ -362,14 +362,14 @@ object GlobalSnapshotAcceptanceManager {
         currencyBalances: Map[Option[Address], SortedMap[Address, Balance]],
         globalBalances: Map[Option[Address], SortedMap[Address, Balance]],
         lastSnapshotContext: GlobalSnapshotInfo,
-        enforceAggregateCustodyBalance: Boolean
+        enforceAggregateBalance: Boolean
       ): F[ArtifactValidationResult] =
         for {
           (acceptedSpend, rejectedSpend) <- spendActionValidator.validateReturningAcceptedAndRejected(
             spendActions,
             lastActiveAllowSpends,
             currencyBalances ++ globalBalances,
-            enforceAggregateCustodyBalance
+            enforceAggregateBalance
           )
           (acceptedPricing, rejectedPricing) <- pricingUpdateValidator.validateReturningAcceptedAndRejected(
             pricingUpdates,
@@ -673,8 +673,9 @@ object GlobalSnapshotAcceptanceManager {
         val suppressSpentExpiredAllowSpends = ordinal >= fixingGlobalAllowSpendExpirationOrdinal
 
         // Validation balances are taken before allow-spend, token-lock and spend settlement, which can only credit a metagraph's own
-        // address, so a running total against them never accepts a direct leg that its later application cannot debit.
-        val enforceAggregateCustodyBalance =
+        // address, so a running total against them never accepts a direct leg that its later application cannot debit. The converse does
+        // not hold: same-snapshot credits to the metagraph are not counted, so a direct leg that relied on one is now rejected.
+        val enforceAggregateBalance =
           ordinal >= fieldsAddedOrdinals.fixingSpendActionAggregateBalanceFor(environment)
 
         val fixingAllowSpendAndTokenLockValidation =
@@ -900,7 +901,7 @@ object GlobalSnapshotAcceptanceManager {
               currencyBalances,
               globalBalances,
               lastSnapshotContext,
-              enforceAggregateCustodyBalance
+              enforceAggregateBalance
             )
             acceptedSpendActionsMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Accepted spend actions: ${acceptedSpendActions.show}"
             rejectedSpendActionMessage = s"[CONSENSUS:PROPOSAL] [ORDINAL=$ordinal] Rejected spend actions: ${rejectedSpendActions.show}"

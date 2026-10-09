@@ -49,10 +49,10 @@ object SpendActionAggregateBalanceGateSuite extends MutableIOSuite {
       spendActions: Map[Address, List[SpendAction]],
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
       allBalances: Map[Option[Address], SortedMap[Address, Balance]],
-      enforceAggregateCustodyBalance: Boolean
+      enforceAggregateBalance: Boolean
     ): IO[(Map[Address, List[SpendAction]], Map[Address, (SpendAction, List[SpendActionValidationError])])] =
       flags
-        .update(_ :+ enforceAggregateCustodyBalance)
+        .update(_ :+ enforceAggregateBalance)
         .as((Map.empty[Address, List[SpendAction]], Map.empty[Address, (SpendAction, List[SpendActionValidationError])]))
   }
 
@@ -90,7 +90,7 @@ object SpendActionAggregateBalanceGateSuite extends MutableIOSuite {
       recorded <- flags.get
     } yield recorded
 
-  test("the aggregate custody check is off before the activation ordinal and on from it") { res =>
+  test("the aggregate balance check is off before the activation ordinal and on from it") { res =>
     implicit val (h, sp) = res
 
     val ordinals = List(activationOrdinal - 1L, activationOrdinal, activationOrdinal + 1L).map(SnapshotOrdinal.unsafeApply(_))

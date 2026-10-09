@@ -332,7 +332,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         spendActions,
         activeAllowSpends,
         balances,
-        enforceAggregateCustodyBalance = false
+        enforceAggregateBalance = false
       )
     } yield
       expect.all(
@@ -381,7 +381,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         spendActions,
         activeAllowSpends,
         balances,
-        enforceAggregateCustodyBalance = false
+        enforceAggregateBalance = false
       )
     } yield
       expect.all(
@@ -434,7 +434,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         spendActions,
         activeAllowSpends,
         balances,
-        enforceAggregateCustodyBalance = false
+        enforceAggregateBalance = false
       )
     } yield
       expect.all(
@@ -473,7 +473,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         spendActions,
         activeAllowSpends,
         balances,
-        enforceAggregateCustodyBalance = false
+        enforceAggregateBalance = false
       )
     } yield
       expect.all(
@@ -518,7 +518,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         spendActions,
         activeAllowSpends,
         balances,
-        enforceAggregateCustodyBalance = false
+        enforceAggregateBalance = false
       )
     } yield
       expect.all(
@@ -542,7 +542,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
   )(implicit hs: Hasher[IO]) =
     SpendActionValidator
       .make[IO]
-      .validateReturningAcceptedAndRejected(spendActions, activeAllowSpends, balances, enforceAggregateCustodyBalance = enforce)
+      .validateReturningAcceptedAndRejected(spendActions, activeAllowSpends, balances, enforceAggregateBalance = enforce)
 
   private def isNotEnoughBalance(errors: List[SpendActionValidationError]): Boolean =
     errors.exists {
