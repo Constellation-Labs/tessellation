@@ -506,7 +506,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       // `ReadyParticipationQuorumInfeasible`.
       lastOutcomeKey = ctx.lastOutcomeKeyOf(state.lastOutcome)
       readyParticipationStatus = StallDetector.computeReadyParticipationStatus(
-        coreFacilitators = state.votingCommittee.toSet,
+        coreFacilitators = state.roundStartFacilitators.value.toSet,
         readyPeerIds = readyPeerIds,
         selfId = selfId,
         peerCurrentKeysContains = peerCurrentKeys.contains _,
@@ -930,7 +930,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         // Feasibility is judged against the frozen round Core, the same denominator certificates use.
         // `missingPeers` already counts a withdrawn member that has not declared (see `getResourcesInfo`),
         // so a local withdrawal never shrinks the denominator.
-        val frozenCore = state.votingCommittee.toSet
+        val frozenCore = state.roundStartFacilitators.value.toSet
         val missingCore = frozenCore.intersect(missingPeers)
         val coreStatus = StallDetector.computeCoreQuorumStatus(
           activeCore = frozenCore,
@@ -1518,7 +1518,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       case _                        => none[SnapshotOrdinal]
     }
     val committee = state.roundStartFacilitators.value.toSet
-    val core = state.votingCommittee.toSet
+    val core = state.roundStartFacilitators.value.toSet
     val requireCoreCertification =
       ctx.membershipPolicy.allowsCertifiedAtomicReplacement
     val selfIsCore = core.contains(selfId)
@@ -1530,7 +1530,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     // allowing a failed direct response to fall back to cached evidence.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
       AdmissionTipReadiness.isCachedReady(tip, expectedTip, expectedOrdinal, requireCoreCertification)
-    val coreSize = math.max(1, state.votingCommittee.size)
+    val coreSize = math.max(1, state.roundStartFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
     val bootstrapActive = ctx.isInBootstrap(state.lastOutcome)
     val locallyObservedParentSigners = locallyObservedParentSignersOf(state.lastOutcome)

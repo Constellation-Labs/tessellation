@@ -120,7 +120,7 @@ class StateTransitions[
     state: ConsensusState[Key, Status, Outcome, Kind],
     votes: Map[PeerId, Signed[A]]
   ): StateTransitions.CertificateQuorum[A] = {
-    val core = state.votingCommittee.toSet
+    val core = state.roundStartFacilitators.value.toSet
     val coreVotes = votes.collect {
       case (origin, signed)
           if signed.proofs.size === 1L &&
@@ -672,7 +672,7 @@ class StateTransitions[
       .exists(kind =>
         resources.peerDeclarationsMap.exists {
           case (peerId, declarations) =>
-            state.votingCommittee.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
+            state.roundStartFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
         }
       )
     val localProgress = phaseIndex == 2 || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
@@ -799,7 +799,7 @@ class StateTransitions[
                     "toView" -> toView.toString,
                     "votes" -> votes.size.toString,
                     "quorum" -> q.toString,
-                    "leaderPool" -> (if (leaderPool == state.votingCommittee) "core" else "facilitators_fallback"),
+                    "leaderPool" -> (if (leaderPool == state.roundStartFacilitators.value) "core" else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
                     "statusReset" -> resetStatus.isDefined.toString
@@ -962,7 +962,7 @@ class StateTransitions[
                     "votes" -> reasonVotes.size.toString,
                     "quorum" -> q.toString,
                     "leaderPool" -> (if (shrunk) "certified_shrink"
-                                     else if (leaderPool == state.votingCommittee) "core"
+                                     else if (leaderPool == state.roundStartFacilitators.value) "core"
                                      else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
@@ -1116,7 +1116,7 @@ class StateTransitions[
           // participants from peerQuality), but the LIVENESS denominator is Core-sized so
           // a leader assembling with q Core-derived signatures will validate against
           // every follower's matching denominator. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.votingCommittee.size
+          val n = state.roundStartFacilitators.value.size
           val atomicReplacement =
             ctx.membershipPolicy.allowsCertifiedAtomicReplacement
           val q =
@@ -1144,7 +1144,7 @@ class StateTransitions[
                     // prevents a damaged Core committee from making its own repair impossible.
                     // The shared selector is also used by both proposal validators so assembly
                     // and acceptance cannot drift.
-                    val witnessPool = EvictionVoterPool.select(target, state.votingCommittee.toSet)
+                    val witnessPool = EvictionVoterPool.select(target, state.roundStartFacilitators.value.toSet)
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder
                       .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
@@ -1234,7 +1234,7 @@ class StateTransitions[
           // mirrors `validateProposalAcs` in the advancer. See ECS assembly above for the
           // full rationale on decoupling the Core-sized liveness quorum from the broad
           // signing committee. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.votingCommittee.size
+          val n = state.roundStartFacilitators.value.size
           val q = AdmissionVoterPool.requiredQuorum(n, config.quorumThresholdFraction)
           // Open expansion is certified by Core only: Tier 1 remains outside the liveness
           // machinery and cannot become necessary for committee growth. The legacy probation
@@ -1242,7 +1242,7 @@ class StateTransitions[
           // however, every admission-only transition changes the Core-certified proposal value,
           // so probation ACS assembly is Core-certified too.
           val isProbationReadmission = ctx.probationPeersOf(state.lastOutcome).contains(target)
-          val voterPool = AdmissionVoterPool.select(target, state.votingCommittee.toSet)
+          val voterPool = AdmissionVoterPool.select(target, state.roundStartFacilitators.value.toSet)
           val eligibleVotes = votes.filter { case (voter, _) => voterPool.contains(voter) }
 
           if (eligibleVotes.size >= q) {

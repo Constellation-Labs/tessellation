@@ -1,6 +1,7 @@
 package io.constellationnetwork.node.shared.config
 
 import cats.data.NonEmptySet
+import cats.syntax.either._
 import cats.syntax.option._
 
 import scala.collection.immutable.SortedMap
@@ -411,20 +412,6 @@ object types {
     // canonically — see buildFinishedTransition). Tune down if round throughput
     // becomes a bottleneck; tune up if network jitter routinely drops late signers.
     signatureGracePeriod: FiniteDuration = 3.seconds,
-    // SHORT grace delay used when the CORE committee has fully signed but not the whole
-    // committee, to collect late-arriving Tier 1 signatures before finalizing. Distinct from
-    // `signatureGracePeriod` (which covers the Core-incomplete case): once every Core member has
-    // signed, liveness no longer needs the full window, but we still want Tier 1 signatures to
-    // land in `signedArtifact.proofs` and participation evidence (the alpha.153 regression where
-    // finalizing the INSTANT Core completed dropped every Tier 1 proof). Delegated rewards follow
-    // frozen committee membership, not proofs. The bounded wait trades a few ms of finalization
-    // latency for evidence completeness. Timing-only:
-    // NOT included in `deterministicConfigHash`, for the SAME reason as `signatureGracePeriod` --
-    // the canonical `snapshotHash` is the agreed ARTIFACT hash, not the signed-artifact hash, so
-    // two nodes with different grace periods still produce the same downstream snapshotHash; this
-    // lever only changes which proofs ride along, never a consensus-decided value. Default
-    // `signatureGracePeriod / 4` (a short fraction of the Core-incomplete window).
-    tier1SignatureGracePeriod: FiniteDuration = 750.milliseconds,
     // Delay between assembling/receiving a certified view-change and locally applying it
     // to reset the round into the next view. The VCC is still stored and gossiped immediately;
     // this only gives ordinary proposal/signature traffic time to arrive before a timeout
@@ -483,57 +470,8 @@ object types {
     // divergent operator values are rejected at handshake.
     tighteningWindow: Int = 10,
     activeFacilitatorFloor: Int = 4,
-    // Deterministic GL0 controller target. Recent signers are preferred; additional selected peers
-    // are ranked by consensus-agreed peerQuality and stable peer id. It classifies Core eligibility
-    // and does not cap retained Tier-1 signing membership. Currency L0's local synchronous engine
-    // does not consume the controller policy; the field remains in its join fingerprint only for
-    // release/config compatibility.
-    activeFacilitatorTarget: Option[Int] = None,
-    // Hard cap for the deterministic GL0 controller cohort. It caps Core classification, not the
-    // broad signing/reward committee. Currency L0's local synchronous engine does not consume it.
-    // None preserves the selected-pool size.
-    activeFacilitatorMax: Option[Int] = None,
-    // v27 consensus peer controller: bounded integral score used for role classification.
-    // All fields below are consensus-critical for GL0 because they change Core/tier derivation
-    // from the same parent state. Currency L0 retains them only in the configuration fingerprint;
-    // its flat synchronous committee does not use this controller.
-    activeAdmissionPromoteThreshold: Int = 100,
-    activeAdmissionRetainThreshold: Int = 70,
-    activeAdmissionDemoteThreshold: Int = 40,
-    activeAdmissionMaxScore: Int = 150,
-    activeAdmissionSignatureReward: Int = 20,
-    activeAdmissionResponderReward: Int = 5,
-    activeAdmissionMissedActivePenalty: Int = 15,
-    activeAdmissionTimeoutMissingPenalty: Int = 10,
-    activeAdmissionEvictedPenalty: Int = 40,
-    activeAdmissionDegradedPenalty: Int = 5,
-    activeAdmissionCriticalPenalty: Int = 20,
-    activeAdmissionPassiveDecay: Int = 1,
     activeAdmissionMaxExpansionPerRound: Int = 1,
     activeAdmissionExpansionIntervalRounds: Int = 1,
-    // Bounded probation lane: minimum number of below-promote-threshold peers retained in the
-    // controller cohort even when the per-round expansion budget is exhausted. A peer that signs
-    // the latest round keeps classifier priority until it reaches the retain band; missing ends
-    // that priority. On Global L0 it does not delete the peer's separate Tier-1 signing lease.
-    // Probation peers are non-Core (routed to `nonCorePeers` in `CommitteeBuilder`).
-    // Env-resolved at the consensus construction site from
-    // `SnapshotConfig.activeAdmissionMinProbationReentrySlots.get(env)` (the coreCommitteeSize
-    // pattern); default 0 leaves the lane inert. Consensus-critical: it changes the active committee
-    // -> roundStartFacilitators -> facilitatorsHash, so it is folded into `deterministicConfigHash`
-    // and divergent operator values handshake-reject.
-    activeAdmissionMinProbationReentrySlots: Int = 0,
-    // Recent-signer pool lookback depth (in ordinals): how far back a peer may have last signed and
-    // still hold sticky, score-gated controller priority instead of churning through the volatile
-    // expansion/reserve fill. Decoupled from the demotion hysteresis (which stays at
-    // `TierTransitions.DemotionConsecutiveMisses` = 3 and independently keeps non-recent signers out
-    // of Core). On Global L0 this does not cap the separate Tier-1 signing lease; Currency L0
-    // retains its active-set interpretation.
-    // Floored to DemotionConsecutiveMisses by SnapshotConfig.resolveEffectiveConsensusConfig. Default 3
-    // preserves the pre-change lookback; the packaged GL0 config uses the full persisted
-    // `recentSigners` window (`tighteningWindow`) on every environment. Consensus-critical:
-    // it changes deterministic tier/controller derivation, so it is folded into
-    // `deterministicConfigHash` and divergent operator values handshake-reject.
-    activeAdmissionRecentSignerWindow: Int = 3,
     // Controller evidence stage 3: duration (in ordinals) of a cert-anchored penalty. An
     // EvictionCertificate applied at ordinal N writes `penaltyUntil(target) = N + D`; an
     // AdmissionCertificate clears the entry. Pure ordinal comparisons, no per-round countdown.
@@ -544,7 +482,6 @@ object types {
     penaltyDurationOrdinals: Int = 100,
     monitorSummaryInterval: FiniteDuration = FiniteDuration(10, "s"),
     peerScoreLogInterval: FiniteDuration = FiniteDuration(60, "s"),
-    qualityDecayThreshold: Int = 100,
     eventTriggerThreshold: Int = 1,
     eventTriggerCooldown: FiniteDuration = FiniteDuration(5, "s"),
     eventGossipHeartbeatInterval: FiniteDuration = FiniteDuration(10, "s"),
@@ -553,89 +490,6 @@ object types {
     quorumThresholdFraction: Double = 1.0,
     exponentialPenaltyBase: Int = 2,
     maxRemovalPenaltyRounds: Int = 10000,
-    // Chronic non-signer filter: exclude peers from the committee if their
-    // historical participation rate is below `minParticipationRatio` AFTER they have
-    // been observed for at least `minParticipationObservations` rounds. Uses the
-    // consensus-agreed `peerQuality` outcome field, so all nodes compute the same
-    // exclusion set deterministically. Applied in addition to removal penalties and
-    // deferral, as a hard filter that keeps chronic flaky community peers out of the
-    // committee before round start (preventing mid-round eviction cascades).
-    minParticipationObservations: Int = 5,
-    // Default reverted 0.7 -> 0.5. The combined prior tightenings
-    // shrank the eligible facilitator set to the point where even source nodes (e.g.
-    // e2f4496e:21/31 = 0.677) crossed below the gate and were excluded by their own
-    // classifier. alpha.52's 0.5 value ran the cluster stably for 5 days. The wider
-    // witness pool and peersAtHigherKey gate provide the safety / liveness
-    // reinforcements the tightenings were targeting, without compressing the eligible set.
-    minParticipationRatio: Double = 0.5,
-    // Leader-rotation band threshold. Integer percent (0..100) such that a graduated peer with
-    // `completed * 100 >= participated * threshold` lands in the leader-eligible tier; the rest
-    // fall into a fallback tier used only when no eligible peer is available. Default 50 mirrors
-    // `minParticipationRatio`. Consensus-critical: included in `deterministicConfigHash`.
-    // Deploy history: introduced in v14 (consensusSchemaVersion); see the v14 entry below for the
-    // ratchet failure it replaces.
-    leaderRotationMinRatioPct: Int = 50,
-    // Hard leader-eligible floor on the integer quality score
-    // `(completed/participated) * (1 - viewChangesCaused/participated)`. Inside
-    // `selectLeaderWeighted`, peers below the floor are EXCLUDED from the leader-eligible pool
-    // entirely (not just demoted to tier 1). They remain facilitators (vote / sign / witness),
-    // just cannot be selected as leader. Closes the chronic-leader-loop wedge:
-    // peers with quality score decaying through 0.07-0.25 (driven by view-change
-    // rate, not completion rate) were still tier 1 and `sorted[viewNumber % size]` continued
-    // to walk through them on view rotation, dragging out 30-90 minute wedges per chronic-
-    // leader episode. The raw completion ratio missed this case because the looping leaders
-    // STILL completed rounds (as followers after view advance), only failed AS leaders.
-    //
-    // Default 20 is intentionally well below `leaderRotationMinRatioPct` (50). The two
-    // thresholds work in concert: 50 deprioritises within the leader pool (tier 1 fallback
-    // band); 20 removes from the pool entirely. Setting them equal would collapse the
-    // gradient and reintroduce the cliff that motivated the tier-1 band.
-    //
-    // The score is consensus-agreed because all three inputs (peerQuality.completed,
-    // peerQuality.participated, peerViewChanges) are populated by the StateAdvancer from
-    // deterministic functions of the prior outcome at round finalization.
-    //
-    // Pool collapse is guarded by `minLeaderPoolSize`: if fewer than that many peers clear the
-    // 0.20 floor, the selector falls back to the full graduated set to avoid starvation
-    // (bootstrap, mass-chronic, single-node test rigs).
-    //
-    // Consensus-critical: included in `deterministicConfigHash`. Different operator values
-    // would compute different leader pools, different leaders, and silently fork.
-    hardLeaderQualityScorePct: Int = 20,
-    // Minimum size of the hard-filtered leader pool. If `selectLeaderWeighted`
-    // filters fewer than this many leader-eligible peers (after applying
-    // `hardLeaderQualityScorePct`), it falls back to the full graduated facilitator set so
-    // consensus does not starve. Default 2 matches the call-site graduation ladder
-    // (`graduatedLeaderPool.size >= 2`): a single-peer pool deadlocks view rotation because
-    // `viewNumber % 1 == 0` always selects the same peer, so we require at least two healthy
-    // candidates before excluding the chronic ones; below that, the fallback re-admits the
-    // graduated set so rotation can still cover the round.
-    //
-    // Consensus-critical: included in `deterministicConfigHash`.
-    minLeaderPoolSize: Int = 2,
-    // Minimum-history floor for chronic classification. Recommended as a
-    // separate knob: the existing `minParticipationObservations` is reused as the leader-
-    // graduation gate (state-creator:470), so bumping it to 30 would also delay leader
-    // eligibility — a different policy decision. Keeping the two knobs split lets us require
-    // a long observation window before chronic classification (where false positives wedge
-    // the cluster) without restricting which peers can lead.
-    //
-    // Effect: a peer needs `>= minObservationHistoryFloor` rounds of evidence before the
-    // chronic filter can fire. At ~25-30s/round on testnet, 30 observations = ~12-15 minutes
-    // of cluster activity per peer. Truly chronic peers (40% participation) reach the floor
-    // after ~75 rounds (~30 minutes) — still classified, just with more evidence.
-    //
-    // Included in `deterministicConfigHash` because it changes the agreed-upon
-    // chronicNonSigners set and therefore the committee composition.
-    minObservationHistoryFloor: Int = 30,
-    // Periodic reinstatement: every N ordinals, one chronic non-signer is rotated back into
-    // the eligible committee pool for a single round to test whether they have recovered.
-    // Necessary because once a peer is classified chronic they are excluded from the committee,
-    // so their peerQuality.participated count stops growing — without reinstatement they
-    // would stay chronic forever. Deterministic: all honest nodes compute the same
-    // reinstatement round from the consensus-agreed key value and sort chronic set.
-    // 0 disables reinstatement (peers stay chronic until manual intervention).
-    chronicReinstatementInterval: Int = 100,
     // Bootstrap warmup threshold: minimum proofs.size in any recent snapshot required to classify the chain as
     // post-bootstrap. While bootstrap is active (no recent snapshot meets this threshold), penalty accrual is
     // suppressed to avoid ejecting slow peers during the solo->multi transition. Consensus-critical because it
@@ -881,7 +735,7 @@ object types {
     //     Tier 1 (Witness-eligible), Witness (Tier 0) -- derived per round by
     //     `CommitteeBuilder.build` from the consensus-agreed `lastOutcome.peerTiers`
     //     map. Quorum sites switch from `state.facilitators.value.size` /
-    //     `state.roundStartFacilitators.value.size` to `state.votingCommittee.size`,
+    //     `state.roundStartFacilitators.value.size` to `state.roundStartFacilitators.value.size`,
     //     so the LIVENESS denominator is now the Core committee only. Per-peer tier
     //     is carried via `Option[Int]` on `PerPeerOperationalRecord` (Option-wrapped
     //     for derevo back-compat); absent peers default to Tier 2 (Core) at consume
@@ -1015,7 +869,11 @@ object types {
     //     `quorumShrinkActivationViews` knobs, and the selector cap now resolves from the
     //     scalar `maxFacilitatorCount`. The signed/wire schema is unchanged; the version moves
     //     because `deterministicConfigHash` inputs changed.
-    consensusSchemaVersion: Int = 36,
+    //     v37: single frozen voting set and round-robin leaders. Leader-reported participation,
+    //     self-health, Core/Tier classification and the quality controller are deleted; their
+    //     knobs leave the hash. Certified wire schema moves to CertifiedConsensusSchema v36
+    //     (no roundStartCore, CommitQC over the frozen committee).
+    consensusSchemaVersion: Int = 37,
     // DAG/Global-L0 activation key for v35 certified outcomes. Currency L0 deliberately
     // remains on its flat synchronous protocol and never consults this key. SnapshotConfig
     // resolves the current environment's value once at the GL0 consensus construction site.
@@ -1040,19 +898,6 @@ object types {
     // loop is single-threaded by construction; the pool size matters only for the fanned-out
     // round handlers that elect to shift back via `evalOn`.
     consensusDispatcherThreads: Int = 2,
-    // v20: env-resolved GL0 Core committee size, populated by GlobalSnapshotConsensus from
-    // `SnapshotConfig.coreCommitteeSize.get(env).map(_.value).getOrElse(3)` BEFORE
-    // `deterministicConfigHash` is read. Threading the env-resolved value through here lets
-    // the hash include it without restructuring the HOCON layer or duplicating env resolution.
-    // The `Option` default is `None` so unit tests / construction sites that don't go through
-    // the snapshot wiring continue to compile; the hash treats `None` as the default `3` (the
-    // dev value matching the pre-v20 `getOrElse(3)` behaviour). Consensus-critical because the
-    // LIVENESS quorum threshold is computed against `coreFacilitators.value.size`; divergent
-    // operator values would derive divergent Core committees and silently fork. Now in
-    // `deterministicConfigHash` so a v19 (no-hash) and v20 (with-hash) cluster compute
-    // different hashes and reject each other at L0 joining. Facility comparison remains diagnostic.
-    // The separate `versionHash` hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes.
-    coreCommitteeSize: Option[Int] = None,
     // Cross-layer historical-dependency boundary. These values already decide Currency L0
     // GlobalSnapshotSync target selection and protocol-v1 reset acceptance. They are copied from
     // SharedConfig.lastGlobalSnapshotsSync at each L0 construction site so a misconfigured
@@ -1098,32 +943,16 @@ object types {
       *   - `quorumThresholdFraction`: determines how many declarations needed to advance phases
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
-      *   - `minParticipationObservations`: threshold at which chronic non-signer filter kicks in
-      *   - `minParticipationRatio`: ratio below which a peer is excluded from Core/leader eligibility
-      *   - `leaderRotationMinRatioPct`: leader-rotation band threshold (tier 0 vs tier 1 inside the pool)
-      *   - `hardLeaderQualityScorePct`: hard floor on the consensus-agreed quality score (peers below excluded from leader pool)
-      *   - `minLeaderPoolSize`: fallback threshold when too few peers clear the hard floor
-      *   - `minObservationHistoryFloor`: minimum participated count before chronic classification can fire
       *   - `forceViewChangeAbandonments`: defensive force-VCV threshold (bypasses missing-still-responsive gate after N same-key abandons)
-      *   - `tighteningWindow`: size of the rolling `recentSigners` window; as of v22 it feeds the tier-demotion hysteresis (LIVE)
+      *   - `tighteningWindow`: size of the rolling round-history windows (`recentProofSizes`, `recentRoundEndTimes`)
       *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
-      *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: GL0 Core-controller expansion and cap; retained but behaviorally inert in
-      *     Currency L0's flat synchronous engine
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `maxRoundDuration`: v35 bounds the committed leader-proposed consensus end time; before v35 it was only a local watchdog
-      *   - `coreCommitteeSize`: env-resolved Core committee floor; changes Core derivation and the LIVENESS quorum denominator. Populated
-      *     by the consensus construction site from `SnapshotConfig.coreCommitteeSize.get(env)` (defaults to dev value 3 when absent). v20
-      *     pulls this into the hash so divergent operator values handshake-reject rather than silently forking.
       *
       * '''Non-critical fields''' (excluded — affect timing/performance, not deterministic outcomes):
       *   - `timeTriggerInterval`, `declarationTimeout`, `lockDuration`, `reStallTimeout`, `noProgressTimeout`: timing only
       *   - `facilitiesTimeoutMultiplier`, `proposalsTimeoutMultiplier`, `signaturesTimeoutMultiplier`: timing multipliers only
       *   - `declarationRangeLimit`, `eventCutter`: event filtering, not consensus decisions
-      *
-      * '''qualityDecayThreshold reclassified.''' Previously documented as local-only and excluded from this hash. In reality it mutates the
-      * consensus-agreed `lastOutcome.peerQuality` field at advancer:330 (decay halves both completed and participated counters when any
-      * peer's participated exceeds threshold). Two nodes with different threshold values would compute different `peerQuality` after any
-      * decay event, producing latent divergence. Now included in the hash. Pre-existing latent bug fix bundled with the schema bump.
       *
       * IMPORTANT: When adding new fields to ConsensusConfig, evaluate whether they affect consensus determinism. If the field changes what
       * peers decide (facilitator selection, quorum logic, voting thresholds), add it to the hash string below. If it only affects timing or
@@ -1140,19 +969,6 @@ object types {
           s"quorumThresholdFraction=$quorumThresholdFraction," +
           s"exponentialPenaltyBase=$exponentialPenaltyBase," +
           s"maxRemovalPenaltyRounds=$maxRemovalPenaltyRounds," +
-          s"minParticipationObservations=$minParticipationObservations," +
-          s"minParticipationRatio=$minParticipationRatio," +
-          // Leader-rotation band threshold. Mutates the agreed leader of every
-          // round; divergent operator values would silently fork the cluster.
-          s"leaderRotationMinRatioPct=$leaderRotationMinRatioPct," +
-          // Hard quality-score floor + pool-size fallback. Together these
-          // determine which peers are leader candidates; divergent operator values would
-          // produce different leader pools and silently fork.
-          s"hardLeaderQualityScorePct=$hardLeaderQualityScorePct," +
-          s"minLeaderPoolSize=$minLeaderPoolSize," +
-          // Chronic-classification floor. Changes the agreed chronicNonSigners
-          // set; divergent operator values would produce silently-divergent committee composition.
-          s"minObservationHistoryFloor=$minObservationHistoryFloor," +
           // Defensive force-VCV threshold. Different operator values would
           // produce divergent VCV-emission timing, splitting the cluster across (fromView, toView)
           // pairs and starving VCC assembly.
@@ -1170,42 +986,10 @@ object types {
           // divergent facilitator sets and fork the cluster.
           s"tighteningWindow=$tighteningWindow," +
           s"activeFacilitatorFloor=$activeFacilitatorFloor," +
-          s"activeFacilitatorTarget=${activeFacilitatorTarget.getOrElse(coreCommitteeSize.getOrElse(3))}," +
-          s"activeFacilitatorMax=${activeFacilitatorMax.map(_.toString).getOrElse("none")}," +
-          s"activeAdmissionPromoteThreshold=$activeAdmissionPromoteThreshold," +
-          s"activeAdmissionRetainThreshold=$activeAdmissionRetainThreshold," +
-          s"activeAdmissionDemoteThreshold=$activeAdmissionDemoteThreshold," +
-          s"activeAdmissionMaxScore=$activeAdmissionMaxScore," +
-          s"activeAdmissionSignatureReward=$activeAdmissionSignatureReward," +
-          s"activeAdmissionResponderReward=$activeAdmissionResponderReward," +
-          s"activeAdmissionMissedActivePenalty=$activeAdmissionMissedActivePenalty," +
-          s"activeAdmissionTimeoutMissingPenalty=$activeAdmissionTimeoutMissingPenalty," +
-          s"activeAdmissionEvictedPenalty=$activeAdmissionEvictedPenalty," +
-          s"activeAdmissionDegradedPenalty=$activeAdmissionDegradedPenalty," +
-          s"activeAdmissionCriticalPenalty=$activeAdmissionCriticalPenalty," +
-          s"activeAdmissionPassiveDecay=$activeAdmissionPassiveDecay," +
           s"activeAdmissionMaxExpansionPerRound=$activeAdmissionMaxExpansionPerRound," +
           s"activeAdmissionExpansionIntervalRounds=$activeAdmissionExpansionIntervalRounds," +
-          // Bounded probation re-entry lane: changes the active committee -> roundStartFacilitators
-          // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
-          // silently fork. Env-resolved to 0 (inert) when absent for an environment.
-          s"activeAdmissionMinProbationReentrySlots=$activeAdmissionMinProbationReentrySlots," +
-          // Recent-signer pool lookback depth: changes the active committee -> roundStartFacilitators
-          // -> facilitatorsHash, so divergent operator values must handshake-reject rather than
-          // silently fork. Floored to DemotionConsecutiveMisses (3) at the construction site.
-          s"activeAdmissionRecentSignerWindow=$activeAdmissionRecentSignerWindow," +
-          s"chronicReinstatementInterval=$chronicReinstatementInterval," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
           s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier," +
-          // v7 (codex turn 2 fix): qualityDecayThreshold mutates consensus-agreed peerQuality
-          // (advancer:330 decay path); must be in the hash so divergent operator values can't
-          // produce silently-divergent peerQuality maps.
-          s"qualityDecayThreshold=$qualityDecayThreshold," +
-          // v20: env-resolved Core committee size. Divergent operator values would produce
-          // divergent Core committee derivation and silently fork. Treated as the dev default
-          // `3` when absent (matches the pre-v20 `SnapshotConfig.coreCommitteeSize.get(env)
-          // .map(_.value).getOrElse(3)` resolution at the consensus construction site).
-          s"coreCommitteeSize=${coreCommitteeSize.getOrElse(3)}," +
           // v32 (stage 4): cert-anchored penalty duration. Read by the StateCreators'
           // penaltyUntil eligibility filtering and the advancers' penaltyUntil writes;
           // divergent operator values would derive divergent committees and silently fork.
@@ -1331,45 +1115,6 @@ object types {
     // in the Global snapshot-ordinal space. Currency L0 does not use certified outcomes.
     // Absent means disabled.
     certifiedConsensusActivationOrdinal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // v19 multi-committee minimum Core size, keyed by AppEnvironment. Targets observed
-    // committee sizes: testnet ~14 peers -> Core 5, mainnet ~150 peers -> Core 15,
-    // integrationnet ~10 peers -> Core 9, dev (single-node test rigs) -> Core 3.
-    // Consensus-critical because the LIVENESS quorum threshold is computed against
-    // `coreFacilitators.value.size`; divergent operator values would derive divergent
-    // Core committees and silently fork. The separate join-time `versionHash` gates advertised
-    // software versions; it does not hash jar bytes or this runtime value.
-    //
-    // v20 update: the env-resolved value is now also folded into `ConsensusConfig.coreCommitteeSize`
-    // at the consensus construction site, which in turn folds into `deterministicConfigHash`,
-    // so the strict L0 config-hash join fence rejects divergent operator values. Facility
-    // comparison remains a post-join diagnostic. The advertised-version `versionHash` is a separate software fence.
-    // The `Map[AppEnvironment, PosInt]` shape is
-    // preserved -- env resolution still happens at the GL0 construction site; only the resolved scalar is
-    // additionally threaded into the hash.
-    coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
-    // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
-    // resolution happens once at the consensus construction site and the resolved scalar is threaded
-    // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into
-    // `deterministicConfigHash`). An absent env entry means the lane is DISABLED for that
-    // environment (resolved scalar 0). Public GL0 environments configure one Core-sized cohort;
-    // responsive climbers retain bounded priority until they reach the retain band. `Int` (not
-    // `PosInt`) keeps 0 available as an explicit disable.
-    activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
-    // Core-controller target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
-    // resolution happens once at the consensus construction site and the resolved value is threaded
-    // into `ConsensusConfig.activeFacilitatorTarget`, which folds into `deterministicConfigHash`).
-    // On Global L0 it sizes the score/recent-signer Core classification, not the broad
-    // signing/reward committee or certified open-admission lane. Currency L0's synchronous
-    // engine does not consume it. INVARIANT: must EXCEED `coreCommitteeSize` so the
-    // controller has classification headroom. Scaled 2c+1 in the conf files.
-    // Absent env entries preserve the ConsensusConfig scalar resolution.
-    activeFacilitatorTarget: Map[AppEnvironment, Int] = Map.empty,
-    // Core-controller cap, keyed by AppEnvironment (same pattern; folds into the hash via
-    // `ConsensusConfig.activeFacilitatorMax`). Bounds the sticky recent-signer classification and
-    // probation headroom. It does not cap retained Core + Tier-1 membership on Global L0;
-    // Currency L0's synchronous engine does not consume it. INVARIANT: must be >= the environment's
-    // `coreCommitteeSize`. Scaled 4c+1 from Core size.
-    activeFacilitatorMax: Map[AppEnvironment, Int] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,
@@ -1394,51 +1139,17 @@ object types {
       snapshot: SnapshotConfig,
       environment: AppEnvironment
     ): Either[IllegalArgumentException, ConsensusConfig] = {
-      val coreCommitteeSize = snapshot.coreCommitteeSize.get(environment).map(_.value).getOrElse(3)
-      val activeFacilitatorTarget = snapshot.activeFacilitatorTarget
-        .get(environment)
-        .orElse(snapshot.consensus.activeFacilitatorTarget)
-      val activeFacilitatorMax = snapshot.activeFacilitatorMax
-        .get(environment)
-        .orElse(snapshot.consensus.activeFacilitatorMax)
       val certifiedConsensusActivationKey = snapshot.certifiedConsensusActivationOrdinal
         .getOrElse(environment, SnapshotOrdinal.MaxValue)
         .value
         .value
 
-      val effective = snapshot.consensus.copy(
-        facilitatorSelectionMax = snapshot.consensus.maxFacilitatorCount.map(_.value),
-        coreCommitteeSize = Some(coreCommitteeSize),
-        certifiedConsensusActivationKey = certifiedConsensusActivationKey,
-        activeAdmissionMinProbationReentrySlots = snapshot.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0),
-        activeAdmissionRecentSignerWindow = math.max(3, snapshot.consensus.activeAdmissionRecentSignerWindow),
-        activeFacilitatorTarget = activeFacilitatorTarget,
-        activeFacilitatorMax = activeFacilitatorMax
-      )
-
-      for {
-        _ <- Either.cond(
-          activeFacilitatorTarget.forall(_ > coreCommitteeSize),
-          (),
-          new IllegalArgumentException(
-            s"active-facilitator-target ($activeFacilitatorTarget) must exceed core-committee-size ($coreCommitteeSize)"
-          )
+      snapshot.consensus
+        .copy(
+          facilitatorSelectionMax = snapshot.consensus.maxFacilitatorCount.map(_.value),
+          certifiedConsensusActivationKey = certifiedConsensusActivationKey
         )
-        _ <- Either.cond(
-          activeFacilitatorMax.forall(_ >= coreCommitteeSize),
-          (),
-          new IllegalArgumentException(
-            s"active-facilitator-max ($activeFacilitatorMax) must be >= core-committee-size ($coreCommitteeSize)"
-          )
-        )
-        _ <- Either.cond(
-          !activeFacilitatorTarget.exists(target => activeFacilitatorMax.exists(maximum => target > maximum)),
-          (),
-          new IllegalArgumentException(
-            s"active-facilitator-target ($activeFacilitatorTarget) must not exceed active-facilitator-max ($activeFacilitatorMax)"
-          )
-        )
-      } yield effective
+        .asRight[IllegalArgumentException]
     }
   }
 

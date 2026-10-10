@@ -176,11 +176,7 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // currency-l0 state creators populate it.
   initialViewNumber: Int = 0,
   entropy: Hash
-) {
-
-  /** The single frozen voting set for this round: every quorum, eligibility, emission, assembly, and verification uses it. */
-  def votingCommittee: List[PeerId] = roundStartFacilitators.value
-}
+)
 
 object ConsensusState {
   implicit def showInstance[K: Show, S: Show, O, Kind: Show]: Show[ConsensusState[K, S, O, Kind]] = { cs =>

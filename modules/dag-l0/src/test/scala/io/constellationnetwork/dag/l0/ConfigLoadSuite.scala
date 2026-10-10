@@ -49,26 +49,17 @@ object ConfigLoadSuite extends SimpleIOSuite {
         error => failure(error.getMessage),
         effective =>
           expect.same(Some(1000), effective.facilitatorSelectionMax) &&
-            expect.same(Some(9), effective.coreCommitteeSize) &&
             expect.same(0L, effective.certifiedConsensusActivationKey) &&
-            expect.same(9, effective.eventTriggerThreshold) &&
-            expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
-            expect.same(10, effective.activeAdmissionRecentSignerWindow) &&
-            expect.same(Some(19), effective.activeFacilitatorTarget) &&
-            expect.same(Some(37), effective.activeFacilitatorMax)
+            expect.same(9, effective.eventTriggerThreshold)
       )
     }
   }
 
-  test("resolver defaults and floors are applied before hashing") {
+  test("resolver defaults are applied before hashing") {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       val withoutEnvironmentOverrides = cfg.snapshot.copy(
-        consensus = cfg.snapshot.consensus.copy(maxFacilitatorCount = None, activeAdmissionRecentSignerWindow = 1),
-        certifiedConsensusActivationOrdinal = Map.empty,
-        coreCommitteeSize = Map.empty,
-        activeAdmissionMinProbationReentrySlots = Map.empty,
-        activeFacilitatorTarget = Map.empty,
-        activeFacilitatorMax = Map.empty
+        consensus = cfg.snapshot.consensus.copy(maxFacilitatorCount = None),
+        certifiedConsensusActivationOrdinal = Map.empty
       )
       val resolved = SnapshotConfig.resolveEffectiveConsensusConfig(withoutEnvironmentOverrides, AppEnvironment.Integrationnet)
 
@@ -76,12 +67,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
         error => failure(error.getMessage),
         effective =>
           expect.same(None, effective.facilitatorSelectionMax) &&
-            expect.same(Some(3), effective.coreCommitteeSize) &&
-            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
-            expect.same(0, effective.activeAdmissionMinProbationReentrySlots) &&
-            expect.same(3, effective.activeAdmissionRecentSignerWindow) &&
-            expect.same(cfg.snapshot.consensus.activeFacilitatorTarget, effective.activeFacilitatorTarget) &&
-            expect.same(cfg.snapshot.consensus.activeFacilitatorMax, effective.activeFacilitatorMax)
+            expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey)
       )
     }
   }
@@ -102,16 +88,6 @@ object ConfigLoadSuite extends SimpleIOSuite {
     }
   }
 
-  test("resolver rejects an invalid controller range before the node can join") {
-    source.loadF[IO, AppConfigReader]().map { cfg =>
-      val invalid = cfg.snapshot.copy(
-        activeFacilitatorTarget = Map(AppEnvironment.Integrationnet -> 8),
-        activeFacilitatorMax = Map(AppEnvironment.Integrationnet -> 7)
-      )
-
-      expect(SnapshotConfig.resolveEffectiveConsensusConfig(invalid, AppEnvironment.Integrationnet).isLeft)
-    }
-  }
   AppEnvironment.values.foreach { environment =>
     test(s"${environment.entryName}: the named L0 config retains all shared activation values") {
       for {

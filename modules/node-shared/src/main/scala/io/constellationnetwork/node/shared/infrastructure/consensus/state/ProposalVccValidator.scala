@@ -24,14 +24,14 @@ import io.circe.Encoder
   * '''Branch summary''':
   *   - `proposalView == 0` && Some(vcc/tc): reject `view0_proposal_must_not_carry_view_cert`
   *   - `proposalView == 0` && None: accept
-  *   - `proposalView > 0` && None && `coreSize <= 1`: accept (alpha.89 solo-core bypass)
+  *   - `proposalView > 0` && None && committee size <= 1: accept (alpha.89 solo bypass)
   *   - `proposalView > 0` && None && `proposalView == initialViewNumber`: accept (round-start certified seed bypass)
   *   - `proposalView > 0` && None: reject `view{N}_proposal_missing_view_cert`
   *   - `proposalView > 0` && Some(vcc) && Some(tc): reject `view{N}_proposal_multiple_view_certs`
   *   - `proposalView > 0` && Some(vcc) && `vcc.toView != proposalView`: reject `vcc_view_mismatch` (alpha.90 issue 2 -- closes the latent
   *     gap that the alpha.90 seed-view bypass would otherwise expose: a stale 0->1 VCC could be embedded on a view=2 proposal without this
   *     check)
-  *   - distinct signers below the frozen-Core quorum, or any signer outside the frozen Core: reject `vcc_under_quorum`
+  *   - distinct signers below the frozen-committee quorum, or any signer outside the frozen committee: reject `vcc_under_quorum`
   *   - `vcc.facilitatorsHash =!= facilitatorsHash`: reject `vcc_facilitators_mismatch`
   *   - VCC votes do not all carry the current parent hash: reject `vcc_last_snapshot_mismatch`
   *   - `vcc.highestQcInVcc` exists and disagrees with `proposalHash`: reject `highest_qc_carry_forward_violation`
@@ -52,14 +52,12 @@ object ProposalVccValidator {
     * @param initialViewNumber
     *   `ConsensusState.initialViewNumber` -- the round-start view stamped by the state creator. A round that starts at a non-zero certified
     *   seed view may need to accept a no-VCC proposal at that seed view if the local VCC cache is not rehydrated yet.
-    * @param coreSize
-    *   `ConsensusState.coreFacilitators.value.size` -- the LIVENESS-quorum denominator (Tier 0 / Core).
     * @param facilitatorsHash
     *   the round's facilitators hash as held by the validator (status-side).
     * @param lastSnapshotHash
     *   the current parent snapshot hash as held by the validator.
-    * @param certifiedCore
-    *   The frozen Core voter universe. VCC/TC validation requires every distinct signer to belong to this exact set and applies the same
+    * @param committee
+    *   The frozen round committee. VCC/TC validation requires every distinct signer to belong to this exact set and applies the same
     *   `max(BFT supermajority, configured fraction)` quorum used by ProposalQC/CommitQC.
     * @param quorumThresholdFraction
     *   `ConsensusConfig.quorumThresholdFraction`.
@@ -70,14 +68,12 @@ object ProposalVccValidator {
     proposalVcc: Option[ViewChangeCertificate],
     proposalTimeoutCertificate: Option[TimeoutCertificate] = None,
     initialViewNumber: Int,
-    coreSize: Int,
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
-    certifiedCore: Set[PeerId],
+    committee: Set[PeerId],
     quorumThresholdFraction: Double
   ): Either[ProposalRejection, Unit] = {
-    val n = coreSize
-    val q = CertifiedConsensus.requiredQuorum(certifiedCore.size, quorumThresholdFraction)
+    val q = CertifiedConsensus.requiredQuorum(committee.size, quorumThresholdFraction)
 
     // Count DISTINCT signers, not raw votes. `ViewChangeVote.highestKnownQc`/`TimeoutVote` are part of
     // the vote identity, so one signer can contribute multiple distinct Signed votes that all survive in
@@ -85,10 +81,10 @@ object ProposalVccValidator {
     // must too, or ceil(q/2) equivocators could each emit two differing-QC votes to forge quorum.
     def certQuorumMet(voterIds: List[PeerId]): Boolean = {
       val signers = voterIds.toSet
-      signers.subsetOf(certifiedCore) && signers.size >= q
+      signers.subsetOf(committee) && signers.size >= q
     }
 
-    val isSoloCore = n <= 1
+    val isSolo = committee.size <= 1
     val isRoundStartView = proposalView === initialViewNumber.toLong
 
     if (proposalView === 0L) {
@@ -96,7 +92,7 @@ object ProposalVccValidator {
       else Right(())
     } else {
       (proposalVcc, proposalTimeoutCertificate) match {
-        case (None, None) if isSoloCore       => Right(())
+        case (None, None) if isSolo           => Right(())
         case (None, None) if isRoundStartView => Right(())
         case (None, None) =>
           Left(ProposalRejection(s"view${proposalView}_proposal_missing_view_cert", ProposalRejection.Kind.MissingViewCert))
@@ -141,7 +137,7 @@ object ProposalVccValidator {
               )
             )
           else
-            // Every voter is already in the frozen Core: `certQuorumMet` requires the signer set to be a subset of it.
+            // Every voter is already in the frozen committee: `certQuorumMet` requires the signer set to be a subset of it.
             vcc.highestQcInVcc match {
               case Some(qc) if qc.proposalHash =!= proposalHash =>
                 Left(
@@ -187,7 +183,7 @@ object ProposalVccValidator {
               )
             )
           else {
-            // Every voter is already in the frozen Core: `certQuorumMet` requires the signer set to be a subset of it.
+            // Every voter is already in the frozen committee: `certQuorumMet` requires the signer set to be a subset of it.
             val qcs = tc.votes.toNonEmptyList.toList.flatMap(_.value.highestKnownQc)
             val maxQcByView = qcs.groupBy(_.view).toList.sortBy(_._1).lastOption
             maxQcByView match {
@@ -210,7 +206,7 @@ object ProposalVccValidator {
   /** Shared cryptographic verification for VCC/TC vote collections.
     *
     * Global L0 owns proposal-state transitions, while this helper owns certificate signature semantics. Every vote must carry exactly one
-    * proof because the frozen-Core quorum counts identities.
+    * proof because the frozen-committee quorum counts identities.
     */
   private def verifySignedVotes[F[_]: Async: Hasher: SecurityProvider, A: Encoder](
     certificate: String,

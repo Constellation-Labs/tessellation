@@ -28,10 +28,7 @@ object ConfigLoadSuite extends SimpleIOSuite {
           effective =>
             expect.same(Some(20), effective.facilitatorSelectionMax) &&
               expect.same(Some(20), effective.maxFacilitatorCount.map(_.value)) &&
-              expect.same(Some(3), effective.coreCommitteeSize) &&
-              expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
-              expect.same(0, effective.activeAdmissionMinProbationReentrySlots) &&
-              expect.same(3, effective.activeAdmissionRecentSignerWindow)
+              expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey)
         )
     }
   }

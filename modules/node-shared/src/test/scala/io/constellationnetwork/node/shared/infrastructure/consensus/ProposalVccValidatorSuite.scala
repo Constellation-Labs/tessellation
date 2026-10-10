@@ -103,10 +103,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = None,
       initialViewNumber = 2,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isRight, s"seed-view no-VCC proposal must be accepted, got $result")
@@ -124,10 +123,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = None,
       initialViewNumber = 1, // round started at view 1, advanced to view 3 -- needs VCC
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(
@@ -148,10 +146,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = None,
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(
@@ -181,10 +178,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(staleVcc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     val expected =
@@ -208,17 +204,16 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(matchingVcc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isRight, s"matching VCC on view-2 proposal must be accepted, got $result")
   }
 
-  test("v35 VCC requires the named BFT supermajority drawn only from frozen Core") {
-    val core = poolABC + signerPid(outOfPoolSigner)
+  test("v35 VCC requires the named BFT supermajority drawn only from the frozen committee") {
+    val committee = poolABC + signerPid(outOfPoolSigner)
     val matchingVcc = vcc(
       fromView = 1L,
       toView = 2L,
@@ -234,18 +229,17 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(matchingVcc),
       initialViewNumber = 0,
-      coreSize = core.size,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = core,
+      committee = committee,
       quorumThresholdFraction = 2.0 / 3.0
     )
 
-    expect(result.isRight, s"three frozen-Core voters must satisfy the 3-of-4 v35 quorum, got $result")
+    expect(result.isRight, s"three frozen-committee voters must satisfy the 3-of-4 v35 quorum, got $result")
   }
 
-  test("v35 VCC cannot substitute a Tier-1 vote for a missing frozen-Core voter") {
-    val core = poolABC + signerPid(outOfPoolSigner)
+  test("v35 VCC cannot substitute an outside vote for a missing committee voter") {
+    val committee = poolABC + signerPid(outOfPoolSigner)
 
     val mixedVcc = vcc(
       fromView = 1L,
@@ -262,16 +256,15 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(mixedVcc),
       initialViewNumber = 0,
-      coreSize = core.size,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = core,
+      committee = committee,
       quorumThresholdFraction = 2.0 / 3.0
     )
 
     expect(
       result == Left(ProposalRejection("vcc_under_quorum votes=3 required=3")),
-      s"Tier-1 must not count toward the certified pacemaker quorum, got $result"
+      s"an outside signer must not count toward the certified pacemaker quorum, got $result"
     )
   }
 
@@ -291,10 +284,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalVcc = None,
       proposalTimeoutCertificate = Some(matchingTc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isRight, s"matching TC on view-2 proposal must be accepted, got $result")
@@ -315,10 +307,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(anyVcc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(
@@ -333,10 +324,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = None,
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isRight, s"view-0 no-VCC must be accepted, got $result")
@@ -360,10 +350,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(underQuorum),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = 1.0 // q = 3
     )
     expect(
@@ -388,10 +377,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(mismatchedVcc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isLeft, s"facilitatorsHash mismatch must be rejected, got $result")
@@ -417,10 +405,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(mismatchedVcc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isLeft, s"lastSnapshotHash mismatch must be rejected, got $result")
@@ -430,7 +417,7 @@ object ProposalVccValidatorSuite extends FunSuite {
     )
   }
 
-  test("voter outside the frozen Core cannot count toward the VCC quorum") {
+  test("voter outside the frozen committee cannot count toward the VCC quorum") {
     val poolingExcludesDD = poolABC
     val badVcc = vcc(
       fromView = 1L,
@@ -446,13 +433,12 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash,
       proposalVcc = Some(badVcc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolingExcludesDD,
+      committee = poolingExcludesDD,
       quorumThresholdFraction = quorum
     )
-    expect(result.isLeft, s"out-of-Core voter must be rejected, got $result")
+    expect(result.isLeft, s"out-of-committee voter must be rejected, got $result")
     expect(
       result.swap.exists(_.code.startsWith("vcc_under_quorum")),
       s"rejection code must start with vcc_under_quorum, got $result"
@@ -480,10 +466,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalHash = proposalHash, // proposal says hashY, but QC bound hashX
       proposalVcc = Some(carryForward),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isLeft, s"carry-forward violation must be rejected, got $result")
@@ -521,10 +506,9 @@ object ProposalVccValidatorSuite extends FunSuite {
       proposalVcc = None,
       proposalTimeoutCertificate = Some(divergentTc),
       initialViewNumber = 0,
-      coreSize = 3,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = poolABC,
       quorumThresholdFraction = quorum
     )
     expect(result.isLeft, s"divergent TC highest-QC must be rejected, got $result")
@@ -535,22 +519,21 @@ object ProposalVccValidatorSuite extends FunSuite {
   }
 
   // ----------------------------------------------------------------------------
-  // Solo-core (Core <= 1) bypass: no quorum to assemble a VCC, so a no-VCC view > 0
+  // Solo (committee <= 1) bypass: no quorum to assemble a VCC, so a no-VCC view > 0
   // proposal is the only achievable outcome and must be accepted. Already covered by
   // the alpha.89 path -- pinning here so the shared helper preserves it after refactor.
   // ----------------------------------------------------------------------------
-  test("solo-core (coreSize=1), view > 0, no VCC: accepted (alpha.89 bypass)") {
+  test("solo committee, view > 0, no VCC: accepted (alpha.89 bypass)") {
     val result = ProposalVccValidator.validate(
       proposalView = 1L,
       proposalHash = proposalHash,
       proposalVcc = None,
       initialViewNumber = 0,
-      coreSize = 1,
       facilitatorsHash = facHash,
       lastSnapshotHash = lastSnap,
-      certifiedCore = poolABC,
+      committee = Set(signerPid(signerA)),
       quorumThresholdFraction = quorum
     )
-    expect(result.isRight, s"solo-core no-VCC must be accepted, got $result")
+    expect(result.isRight, s"solo no-VCC must be accepted, got $result")
   }
 }

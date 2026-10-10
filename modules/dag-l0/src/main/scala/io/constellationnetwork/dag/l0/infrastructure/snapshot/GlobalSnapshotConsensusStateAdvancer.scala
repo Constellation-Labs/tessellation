@@ -1648,7 +1648,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               "parentFacilitatorsHash" -> state.lastOutcome.finished.facilitatorsHash.show.take(8),
               "parentKey" -> state.lastOutcome.key.show,
               "roundStartFacilitators" -> state.roundStartFacilitators.value.size.toString,
-              "votingCommittee" -> state.votingCommittee.size.toString
+              "votingCommittee" -> state.roundStartFacilitators.value.size.toString
             ) ++ (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty)): _*
           )
           _ <- ConsensusLog.debug(
@@ -1714,13 +1714,13 @@ object GlobalSnapshotConsensusStateAdvancer {
           // a momentary solo state after self-rejoin or community-peer drop-off (overnight
           // alpha.88 monitor saw repeated `ROUND_STARTED facs=1 leader=e2f4496e view=0` with
           // vcc_missing_for_view_gt_0 on every retry).
-          isSoloCore = state.votingCommittee.size <= 1
+          isSolo = state.roundStartFacilitators.value.size <= 1
           // A round-start seed view is accepted without consulting a locally cached VCC. Once
           // `viewNumber > initialViewNumber`, a real view-change has occurred and the VCC
           // requirement re-engages.
           isRoundStartView = state.viewNumber === state.initialViewNumber
           viewCertMissing =
-            isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && maybeTimeoutCertificate.isEmpty && !isSoloCore && !isRoundStartView
+            isLeader && state.viewNumber > 0 && maybeAssembledVcc.isEmpty && maybeTimeoutCertificate.isEmpty && !isSolo && !isRoundStartView
           aborted = vccMismatch || tcMismatch || certifiedQcSelectionError.nonEmpty || certifiedValueMismatch || viewCertMissing
           _ <- ConsensusLog
             .warn(
@@ -2246,10 +2246,9 @@ object GlobalSnapshotConsensusStateAdvancer {
             proposalVcc = proposal.vcc,
             proposalTimeoutCertificate = proposal.timeoutCertificate,
             initialViewNumber = state.initialViewNumber,
-            coreSize = state.votingCommittee.size,
             facilitatorsHash = facilitatorsHash,
             lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
-            certifiedCore = state.votingCommittee.toSet,
+            committee = state.roundStartFacilitators.value.toSet,
             quorumThresholdFraction = config.quorumThresholdFraction
           )
           .pure[F]
@@ -2293,7 +2292,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // rationale. Both the assembly site and this re-validation must agree on the witness
         // pool, otherwise leaders would assemble certs that followers reject. Integer math via
         // `QuorumPolicy.fromFraction`.
-        val n = state.votingCommittee.size
+        val n = state.roundStartFacilitators.value.size
         val q =
           if (atomicReplacement) CertifiedConsensus.requiredQuorum(n, config.quorumThresholdFraction)
           else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
@@ -2352,7 +2351,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                     // V35 atomic replacement requires Core attestations for any signing-seat
                     // target. Legacy Core/Tier-1 targets preserve their existing distinct
                     // recovery lanes. This must stay identical to StateTransitions.checkEvictionAssembly.
-                    val witnessPool = EvictionVoterPool.select(cert.targetPeer, state.votingCommittee.toSet)
+                    val witnessPool = EvictionVoterPool.select(cert.targetPeer, state.roundStartFacilitators.value.toSet)
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
@@ -2443,7 +2442,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // v19: quorum threshold computed against the Core committee only -- see
         // validateProposalEcs for the full decoupled-threshold-vs-membership rationale.
         // Integer math via `QuorumPolicy.fromFraction`.
-        val n = state.votingCommittee.size
+        val n = state.roundStartFacilitators.value.size
         val q = AdmissionVoterPool.requiredQuorum(n, config.quorumThresholdFraction)
         val committee = state.roundStartFacilitators.value.toSet
         val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
@@ -2517,7 +2516,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                     )
                   case None =>
-                    val voterPool = AdmissionVoterPool.select(cert.targetPeer, state.votingCommittee.toSet)
+                    val voterPool = AdmissionVoterPool.select(cert.targetPeer, state.roundStartFacilitators.value.toSet)
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !voterPool.contains(sv.proofs.head.id.toPeerId))
                     nonWitnessPoolVoter match {
                       case Some(bad) =>
@@ -3692,7 +3691,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               commitQc <- CertifiedConsensus.buildCommitQc[F](
                 proposalQc,
                 commits,
-                state.votingCommittee.toSet,
+                state.roundStartFacilitators.value.toSet,
                 config.quorumThresholdFraction
               )
               result <- commitQc match {
@@ -3727,51 +3726,12 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[Option[Transition]] =
         loggerBundle.app.withOrdinal(status.majorityArtifactInfo.artifact.ordinal) {
           HasherSelector[F].withCurrent { implicit hasher =>
-            // Finalization threshold (v4.1.0 cluster-majority floor, always active under certified consensus).
-            //
-            // Finalization requires a super-majority of the FROZEN ROUND COMMITTEE (`roundStartFacilitators`),
-            // via the same `FinalityQuorum` the phase gate uses (`canFinalize` below). This closes the proven 2-of-5 fork: the
-            // pre-v4.1.0 gate was a strict majority of the CORE sub-committee `(coreSize/2)+1`, which a Core
-            // that had shrunk to a cluster-minority could satisfy and self-finalize a snapshot diverging
-            // from the cluster majority. The Tier 1 reward-decoupling that motivated the Core-only gate
-            // (alpha.88/89: 3 source nodes signing, 3 community Tier 1 silent, a Core+Tier1 threshold
-            // unreachable) is now handled without weakening the safety floor: Core alone gates the normal
-            // liveness machinery, while finality still requires a super-majority of the frozen Core + Tier 1
-            // committee. Health classification may demote a peer from Core but does not infer snapshot-signing
-            // failure from an early Facility miss and silently delete its Tier-1 lease. Explicit eligibility,
-            // penalty/probation, withdrawal, and certified-eviction paths can remove a seat in a later round;
-            // until then, loss of more than one third of the frozen committee halts safely.
-            //
-            // The grace-window machinery below (coreComplete / fullCommittee) is unchanged: it governs
-            // proof/evidence collection timing, not the finality threshold or delegated reward recipients,
-            // so it stays Core/committee-derived per its original design.
-            //
-            // The signature grace window is THREE-WAY, keyed on how complete the signer set is
-            // (`coreComplete` + `fullCommittee`), so neither liveness nor evidence completeness is
-            // sacrificed:
-            //
-            //   1. FULL committee signed (`validSignatures.size >= fullCommittee`): finalize NOW.
-            //      Nothing more can arrive, so any wait would be pure latency.
-            //   2. CORE complete but not full: wait only the SHORT `tier1SignatureGracePeriod` for
-            //      the remaining (Tier 1 / probation) signatures, then finalize. Liveness no longer
-            //      needs the full window once Core has signed, but we still give Tier 1 signatures a
-            //      brief, bounded chance to land in the artifact and evidence. This
-            //      replaces the alpha.153 "finalize the INSTANT Core completes" behavior, which
-            //      dropped every Tier 1 signature from `signedArtifact.proofs`.
-            //   3. CORE incomplete: wait the full `signatureGracePeriod` for the slow Core member,
-            //      as before. This is the liveness-relevant case (a Core signature gates the quorum
-            //      denominator), so it keeps the longer window.
-            //
-            // The short Tier-1 window keeps the alpha.152 fix intact (high-latency re-admitted peers
-            // can no longer stall finalization for the FULL grace period -- the grace_wait_rate spike
-            // and committee 3<->7 oscillation) while restoring Tier 1 proof inclusion. `fullCommittee`
-            // now drives both the immediate-finalize check and the signature-count log display below.
+            // Finalization requires a supermajority of the frozen round committee (`roundStartFacilitators`), the same
+            // `FinalityQuorum` the phase gate uses. Once quorum is reached the round finalizes immediately if the whole
+            // committee has signed, otherwise after the bounded `signatureGracePeriod` so late signatures still land in the
+            // artifact proofs and the commit evidence (see SignatureGraceDecision).
             val canonicalCommitteeSize = state.roundStartFacilitators.value.size
-            val coreSize = state.votingCommittee.size
             val fullCommittee = canonicalCommitteeSize
-            val coreSet = state.votingCommittee.toSet
-            val coreSignedCount = validSignatures.count(p => coreSet.contains(p.id.toPeerId))
-            val coreComplete = coreSignedCount >= coreSize
             val fullCommitteeSigned = validSignatures.size >= fullCommittee
             // The finalization gate is the LAST quorum chokepoint: signers must reach the committee-supermajority
             // finality floor over the frozen round committee, so a minority Core can never finalize.
@@ -3804,35 +3764,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                   "facilitators" -> state.facilitators.value.size.toString
                 )
                 .whenA(!canFinalize)
-              // Signature grace period (three-way, see the block comment above the threshold
-              // derivation). If the full committee has signed, finalize immediately (nothing more
-              // can arrive). Otherwise stamp the quorum-first-seen time and wait a BOUNDED grace:
-              // the SHORT `tier1SignatureGracePeriod` when Core is already complete (collect late
-              // Tier 1 / probation signatures for evidence completeness without blocking liveness), or the
-              // full `signatureGracePeriod` when a Core member is still missing (the
-              // liveness-relevant case). Mirrors the pattern in `recoveryObserve` where we wait for
-              // peer convergence before committing. Without any grace, a round that crosses quorum in
-              // 1-3ms on a small cluster finalizes missing late signers -- noisy signer sets, missed
-              // evidence, and divergent peerQuality on downstream rounds.
               now <- Async[F].monotonic
-              // Active grace window: short Tier-1 collection window once Core is complete, full
-              // window while a Core signer is still missing. Used both by the wait evaluation below
-              // and the diagnostic log line.
-              activeGraceWindow = if (coreComplete) config.tier1SignatureGracePeriod else config.signatureGracePeriod
-              // Three-way grace decision (see SignatureGraceDecision): full committee -> finalize now;
-              // Core complete -> short Tier-1 window measured from FIRST Core completion (not first
-              // quorum, so a late-completing Core still gets the full Tier-1 collection); Core
-              // incomplete -> full window for the missing Core signer.
               quorumSeen <- signatureQuorumFirstSeenRef.modify { m =>
                 val eval = SignatureGraceDecision.evaluate(
                   now = now,
                   validCount = validSignatures.size,
                   canFinalize = canFinalize,
                   fullCommitteeSigned = fullCommitteeSigned,
-                  coreComplete = coreComplete,
                   existing = m.get(state.key),
-                  tier1Window = config.tier1SignatureGracePeriod,
-                  fullWindow = config.signatureGracePeriod
+                  window = config.signatureGracePeriod
                 )
                 val m2 = eval.update match {
                   case SignatureGraceDecision.Leave  => m
@@ -3872,8 +3812,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   "signatures" -> s"${validSignatures.size}/$fullCommittee",
                   "required" -> actualFinalityRequired.toString,
                   "finalityMargin" -> (validSignatures.size - actualFinalityRequired).toString,
-                  "coreComplete" -> coreComplete.toString,
-                  "gracePeriodMs" -> activeGraceWindow.toMillis.toString
+                  "gracePeriodMs" -> config.signatureGracePeriod.toMillis.toString
                 )
                 .whenA(waitMore)
               result <-

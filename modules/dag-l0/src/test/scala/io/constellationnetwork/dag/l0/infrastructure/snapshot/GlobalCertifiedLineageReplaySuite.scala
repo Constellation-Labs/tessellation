@@ -131,7 +131,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     ),
     quorumThresholdFraction = 2.0 / 3.0,
     tighteningWindow = 3,
-    qualityDecayThreshold = 2,
     activeAdmissionMaxExpansionPerRound = 1,
     certifiedConsensusActivationKey = CertifiedConsensusGenesis.FirstIncrementalOrdinal.value.value
   )
@@ -944,10 +943,10 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       prunedContextsAccepted <- prunedContextValidator(candidate).attempt
       // Historical verification must consume the authority certified by each parent QC,
       // not reinterpret old rounds through the downloader's current liveness policy.
-      // A unanimity quorum and a one-seat Core target would reject/reclassify this
+      // A unanimity quorum would reject this
       // history if either current setting leaked into replay.
       changedPolicyValidator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config.copy(quorumThresholdFraction = 1.0, coreCommitteeSize = Some(1)),
+        config = config.copy(quorumThresholdFraction = 1.0),
         networkId = "integrationnet",
         // Simulate a later permissioned-policy update that removes one activation
         // signer. That current seedlist must govern future live proposals only; it
@@ -1122,7 +1121,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       firstSuccessorAccepted <- firstSuccessorValidator(firstSuccessor).attempt
       missingRecoveryMember = recoveryCommittee.last
       unseedlistedValidator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config.copy(quorumThresholdFraction = 1.0, coreCommitteeSize = Some(1)),
+        config = config.copy(quorumThresholdFraction = 1.0),
         networkId = "integrationnet",
         seedlistPeerIds = allSeedlisted - missingRecoveryMember,
         snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
