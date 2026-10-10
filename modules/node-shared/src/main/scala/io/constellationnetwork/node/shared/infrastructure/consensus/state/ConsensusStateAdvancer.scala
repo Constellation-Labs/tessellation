@@ -120,11 +120,10 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
 
   protected def config: ConsensusConfig
 
-  /** v4.1.0 cluster-majority floor gate. When true (the production default for L0 snapshot consensus, OFF during bootstrap), the finality
-    * quorum is floored at a super/unanimity-majority of `roundStartFacilitators` so a minority Core cannot finalize (see
-    * `FinalityQuorum.required`). Defaults to `false` (floor inert, byte-identical to pre-floor behavior) so any advancer that does not opt
-    * in is unaffected; the gl0 and currency-l0 advancers override it to `!isInBootstrap(state)`. Must be deterministic across nodes (it
-    * feeds the quorum decision): both overrides derive it from `state.lastOutcome.recentProofSizes`, which is signed consensus data.
+  /** v4.1.0 cluster-majority floor gate. When true, the finality quorum is floored at a super/unanimity-majority of
+    * `roundStartFacilitators` so a minority Core cannot finalize (see `FinalityQuorum.required`). Defaults to `false` (floor inert) so any
+    * advancer that does not opt in is unaffected. The Global L0 advancer overrides it to always true: certified consensus applies the floor
+    * in every round, including bootstrap. Must be deterministic across nodes because it feeds the quorum decision.
     */
   protected def clusterFloorActive(state: ConsensusState[Key, Status, Outcome, Kind]): Boolean = false
 

@@ -39,7 +39,6 @@ object ActiveFacilitatorAdmission {
     case object ScoreBelowDemoteThreshold extends ExclusionReason("score_below_demote_threshold")
     case object MissedLatestRound extends ExclusionReason("missed_latest_round")
     case object BeyondTarget extends ExclusionReason("beyond_target")
-    case object CertifiedTimeoutMissing extends ExclusionReason("certified_timeout_missing")
   }
 
   final case class Exclusion(peerId: PeerId, reason: ExclusionReason)
@@ -283,51 +282,4 @@ object ActiveFacilitatorAdmission {
     )
   }
 
-  def fromCertifiedTimeout(
-    selected: List[PeerId],
-    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
-    timeoutVoters: Set[PeerId],
-    minActiveSize: Int
-  ): Result = {
-    val recentSets = recentSigners.values.toList.takeRight(TierTransitions.DemotionConsecutiveMisses)
-    val recentSignerPool = selected.filter(pid => recentSets.exists(_.contains(pid)))
-    val timeoutRetained = selected.filter(timeoutVoters.contains)
-    val deterministicFill =
-      selected
-        .filter(pid => recentSignerPool.contains(pid) && !timeoutRetained.contains(pid))
-        .take((minActiveSize - timeoutRetained.size).max(0))
-    val retained = timeoutRetained ++ deterministicFill
-    val useCertifiedShrink = retained.size >= minActiveSize && retained.size < selected.size
-    val active = if (useCertifiedShrink) retained else selected
-    val exclusions =
-      if (useCertifiedShrink)
-        selected.filterNot(active.toSet).map(Exclusion(_, ExclusionReason.CertifiedTimeoutMissing))
-      else
-        List.empty
-
-    Result(
-      active = active,
-      exclusions = exclusions,
-      recentSignerPoolSize = recentSignerPool.size,
-      candidateSize = retained.size,
-      targetSize = minActiveSize,
-      promotedCandidateSize = 0,
-      scoreExcludedSize = 0,
-      qualityExcludedSize = 0,
-      demotedRecentSignerSize = 0,
-      belowRetainRecentSignerSize = 0,
-      expansionAdmittedSize = 0,
-      reserveAdmitted = List.empty,
-      reserveAdmittedSize = 0,
-      probationAdmitted = List.empty,
-      probationAdmittedSize = 0,
-      stickyProbationCandidateSize = 0,
-      freshProbationCandidateSize = 0,
-      freshProbationStarved = false,
-      recentSignerMinCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).minOption.getOrElse(0),
-      recentSignerMaxCount = recentSignerPool.map(pid => recentSets.count(_.contains(pid))).maxOption.getOrElse(0),
-      recentWindowSize = recentSets.size,
-      recentFilterApplied = useCertifiedShrink
-    )
-  }
 }

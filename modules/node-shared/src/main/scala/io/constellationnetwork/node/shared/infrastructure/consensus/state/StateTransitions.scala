@@ -148,16 +148,6 @@ class StateTransitions[
       )
       .union(state.roundStartFacilitators.value.toSet - target)
 
-  /** Same as [[widerWitnessPool]] without target removal. Used for callers like VCC that aren't keyed by a specific target peer. */
-  private[state] def widerWitnessPoolAll(state: ConsensusState[Key, Status, Outcome, Kind]): Set[PeerId] =
-    WitnessPool
-      .all(
-        state.eligibleFacilitators.value.toSet,
-        peerQualityOf(state.lastOutcome),
-        config.minParticipationObservations
-      )
-      .union(state.roundStartFacilitators.value.toSet)
-
   /** The one certificate-voter universe: VCC/TC certificates are made only from uniquely identified frozen-Core voters and require the same
     * BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in the shared state machine prevents the VCC and TC
     * paths from drifting onto different safety universes.
