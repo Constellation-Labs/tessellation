@@ -30,12 +30,12 @@ object CertifiedNextRoundProjector {
   ): Either[String, List[PeerId]] =
     CertifiedMembershipTransition.applyTo(roundStartCommittee, admittedPeers, evictedPeers, maxChanges)
 
-  /** Admissions a proposal may carry without the successor exceeding max(cap, |B|). Evictions free one seat each, so one-for-one
-    * replacements always fit; deterministic exits only shrink the successor and are ignored here (conservative).
+  /** Admissions a proposal may carry without the successor exceeding max(cap, |B|). `removedCount` = |E u D|, the incumbents leaving
+    * through certified evictions or deterministic exits; each frees one seat, so one-for-one replacements always fit.
     */
-  def admissionCapacity(roundStartSize: Int, evictionCount: Int, maxCommitteeSize: Option[Int]): Int =
+  def admissionCapacity(roundStartSize: Int, removedCount: Int, maxCommitteeSize: Option[Int]): Int =
     maxCommitteeSize.fold(Int.MaxValue) { cap =>
-      math.max(0, math.max(cap, roundStartSize) - (roundStartSize - evictionCount))
+      math.max(0, math.max(cap, roundStartSize) - (roundStartSize - removedCount))
     }
 
   def project[F[_]: Monad](

@@ -33,8 +33,6 @@ object SingleVotingSetAuthoritySuite extends SimpleIOSuite {
     GlobalSnapshotConsensusStateCreator
       .requireSingleVotingSetAuthority[IO](key, authority(NonEmptySet.fromSetUnsafe(SortedSet(pid(1)))))
       .attempt
-      .map(result =>
-        expect(result.left.exists(_.isInstanceOf[GlobalSnapshotConsensusStateCreator.SplitCertifiedAuthorityUnsupported]))
-      )
+      .map(result => expect(result.left.exists(_.isInstanceOf[GlobalSnapshotConsensusStateCreator.SplitCertifiedAuthorityUnsupported])))
   }
 }

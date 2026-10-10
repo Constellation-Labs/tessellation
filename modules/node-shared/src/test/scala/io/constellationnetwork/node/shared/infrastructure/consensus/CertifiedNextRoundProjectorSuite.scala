@@ -91,4 +91,17 @@ object CertifiedNextRoundProjectorSuite extends FunSuite {
     val admitted = Set(pid(5)).take(capacity)
     expect(project(admitted = admitted, cap = Some(4)).isRight)
   }
+
+  test("deterministic exits free capacity: an at-cap admission that keeps the successor nonempty is seated") {
+    // Four incumbents at cap four all lose collateral eligibility; the only valid successor is the admitted member.
+    val capacity = CertifiedNextRoundProjector.admissionCapacity(committee.size, removedCount = committee.size, Some(4))
+    val result = project(admitted = Set(pid(5)).take(capacity), eligible = _ == pid(5), cap = Some(4))
+    expect(capacity >= 1).and(expect.same(Right(List(pid(5))), result.map(_.selectedCommittee)))
+  }
+
+  test("one deterministic exit lets one admission fit at the cap") {
+    val capacity = CertifiedNextRoundProjector.admissionCapacity(committee.size, removedCount = 1, Some(4))
+    val result = project(admitted = Set(pid(5)).take(capacity), seedlist = committee.toSet - pid(1) + pid(5), cap = Some(4))
+    expect.same(1, capacity).and(expect.same(Right(List(pid(2), pid(3), pid(4), pid(5))), result.map(_.selectedCommittee)))
+  }
 }

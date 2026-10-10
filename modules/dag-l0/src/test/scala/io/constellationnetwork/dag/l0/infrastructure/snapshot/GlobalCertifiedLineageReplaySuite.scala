@@ -869,11 +869,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       Script(responders = Set(0, 1), admitted = Some(2)),
       Script(responders = Set(0, 1, 2))
     )
-    // Truthful leader: everyone responded. Lying leader: reports only itself (false omission of the others)
-    // and marks them Critical.
     val truthful = Script(responders = Set(0, 1, 2))
-    val lying = Script(
-      responders = Set(0),
+    // Separate perturbations of everything a leader reports: false omission of honest responders, and Critical
+    // self-health hints for responders that really are healthy.
+    val omitting = Script(responders = Set(0))
+    val smearing = Script(
+      responders = Set(0, 1, 2),
       selfHealth = SortedMap(1 -> SelfHealthHint.Critical, 2 -> SelfHealthHint.Critical)
     )
 
@@ -884,30 +885,40 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
       }
       honestFrame <- buildFrame(prior, truthful, res.pairs)
-      lyingFrame <- buildFrame(prior, lying, res.pairs)
+      omittingFrame <- buildFrame(prior, omitting, res.pairs)
+      smearingFrame <- buildFrame(prior, smearing, res.pairs)
       honestNext <- derive(prior, honestFrame, stateAdvancer).map(_._1)
-      lyingNext <- derive(prior, lyingFrame, stateAdvancer).map(_._1)
-      // Carry both histories forward one more round with an ordinary truthful script.
+      omittingNext <- derive(prior, omittingFrame, stateAdvancer).map(_._1)
+      smearingNext <- derive(prior, smearingFrame, stateAdvancer).map(_._1)
+      // Restart: a fresh advancer instance re-derives the perturbed round from the same public inputs.
+      restartedNext <- derive(prior, smearingFrame, advancer(res.pairs.head)).map(_._1)
       honestAfter <- buildFrame(honestNext, truthful, res.pairs)
-      lyingAfter <- buildFrame(lyingNext, truthful, res.pairs)
+      omittingAfter <- buildFrame(omittingNext, truthful, res.pairs)
+      smearingAfter <- buildFrame(smearingNext, truthful, res.pairs)
     } yield {
-      val honestAuthority = honestFrame.certifiedOutcome.proposalQc.value.nextRoundAuthority
-      val lyingAuthority = lyingFrame.certifiedOutcome.proposalQc.value.nextRoundAuthority
+      def value(frame: PublicFrame) = frame.certifiedOutcome.proposalQc.value
+      val honestAuthority = value(honestFrame).nextRoundAuthority
       val nextKey = honestNext.key.value.value + 1L
-      val views = 0L until 6L
-      val honestLeaders = views.map(v => LeaderSchedule.leader(honestAuthority.facilitators.toSortedSet, nextKey, v))
-      val lyingLeaders = views.map(v => LeaderSchedule.leader(lyingAuthority.facilitators.toSortedSet, nextKey, v))
+      def schedule(authority: CertifiedConsensus.CertifiedRoundAuthorityV1) =
+        (0L until 6L).map(v => LeaderSchedule.leader(authority.facilitators.toSortedSet, nextKey, v))
+      val quorum = (n: Int) => QuorumPolicy.fromFraction(n, config.quorumThresholdFraction)
 
-      expect(honestAuthority === lyingAuthority, "certified next-round authority must not depend on leader reports") &&
+      expect(value(omittingFrame) =!= value(honestFrame), "the omission perturbation must reach the certified payload") &&
+      expect(value(smearingFrame).observedSelfHealth.nonEmpty, "the self-health perturbation must reach the certified payload") &&
+      expect(value(omittingFrame).nextRoundAuthority === honestAuthority, "omission cannot change next-round authority") &&
+      expect(value(smearingFrame).nextRoundAuthority === honestAuthority, "self-health cannot change next-round authority") &&
       expect.same(honestAuthority.facilitators, honestAuthority.core) &&
-      expect.same(honestNext.facilitators, lyingNext.facilitators) &&
-      expect.same(honestLeaders, lyingLeaders) &&
-      expect.same(honestAfter.roundStartFacilitators, lyingAfter.roundStartFacilitators) &&
-      expect(
-        honestAfter.certifiedOutcome.proposalQc.value.nextRoundAuthority ===
-          lyingAfter.certifiedOutcome.proposalQc.value.nextRoundAuthority,
-        "the following round's authority must also be unaffected"
-      )
+      expect.same(honestNext.facilitators, omittingNext.facilitators) &&
+      expect.same(honestNext.facilitators, smearingNext.facilitators) &&
+      expect.same(smearingNext.facilitators, restartedNext.facilitators) &&
+      expect.same(schedule(honestAuthority), schedule(value(omittingFrame).nextRoundAuthority)) &&
+      expect.same(schedule(honestAuthority), schedule(value(smearingFrame).nextRoundAuthority)) &&
+      expect.same(value(honestFrame).roundStartFacilitators, value(omittingFrame).roundStartFacilitators) &&
+      expect.same(quorum(value(honestFrame).roundStartFacilitators.length), quorum(value(smearingFrame).roundStartFacilitators.length)) &&
+      expect.same(honestAfter.roundStartFacilitators, omittingAfter.roundStartFacilitators) &&
+      expect.same(honestAfter.roundStartFacilitators, smearingAfter.roundStartFacilitators) &&
+      expect(value(honestAfter).nextRoundAuthority === value(omittingAfter).nextRoundAuthority) &&
+      expect(value(honestAfter).nextRoundAuthority === value(smearingAfter).nextRoundAuthority)
     }
   }
 

@@ -1575,7 +1575,8 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def membershipCertificatesForProposal(
         state: GlobalSnapshotConsensusState,
         assembledEvictions: Set[EvictionCertificate],
-        assembledAdmissions: Set[AdmissionCertificate]
+        assembledAdmissions: Set[AdmissionCertificate],
+        context: GlobalSnapshotContext
       ): F[(List[EvictionCertificate], List[AdmissionCertificate])] = {
         val atomicReplacementActive =
           membershipPolicy.allowsCertifiedAtomicReplacement
@@ -1614,39 +1615,49 @@ object GlobalSnapshotConsensusStateAdvancer {
               allowSingletonBootstrapExpansion = allowsSingletonGenesisBootstrapExpansion(state)
             )
             // Never carry an admission the successor cannot seat: a pure expansion past max(cap, |B|) would make the
-            // projection reject this leader's proposal. Excess admissions are dropped so the leader still proposes.
-            val capacity = CertifiedNextRoundProjector.admissionCapacity(
-              state.roundStartFacilitators.value.size,
-              selection.evictions.size,
-              facilitatorSelector.getMaxCount
-            )
-            val seatedAdmissions = selection.admissions.take(capacity)
-            val capSuppressed = selection.admissions.size - seatedAdmissions.size
-            val suppressedEvictions = assembledEvictions.size - selection.evictions.size
-            val suppressedAdmissions = admissions.size - selection.admissions.size
-
-            Metrics[F]
-              .incrementCounterBy(
-                "dag_consensus_eviction_cert_suppressed_total",
-                suppressedEvictions.toLong,
-                Seq(Metrics.unsafeLabelName("reason") -> "requires_atomic_admission")
+            // projection reject this leader's proposal. Seats freed by certified evictions and by deterministic exits
+            // (computed with the same seedlist and candidate-context predicate the projection uses) count as capacity.
+            val evictedTargets = selection.evictions.map(_.targetPeer).toSet
+            val remaining = state.roundStartFacilitators.value.filterNot(evictedTargets.contains)
+            remaining
+              .filterA(pid =>
+                if (seedlistPeerIds.nonEmpty && !seedlistPeerIds.contains(pid)) true.pure[F]
+                else consensusFns.facilitatorEligible(context, pid).map(!_)
               )
-              .whenA(suppressedEvictions > 0) >>
-              Metrics[F]
-                .incrementCounterBy(
-                  "dag_consensus_admission_cert_suppressed_total",
-                  suppressedAdmissions.toLong,
-                  Seq(Metrics.unsafeLabelName("reason") -> "local_headroom")
+              .flatMap { exits =>
+                val capacity = CertifiedNextRoundProjector.admissionCapacity(
+                  state.roundStartFacilitators.value.size,
+                  evictedTargets.size + exits.size,
+                  facilitatorSelector.getMaxCount
                 )
-                .whenA(suppressedAdmissions > 0) >>
-              Metrics[F]
-                .incrementCounterBy(
-                  "dag_consensus_admission_cert_suppressed_total",
-                  capSuppressed.toLong,
-                  Seq(Metrics.unsafeLabelName("reason") -> "successor_cap")
-                )
-                .whenA(capSuppressed > 0)
-                .as(selection.evictions -> seatedAdmissions)
+                val seatedAdmissions = selection.admissions.take(capacity)
+                val capSuppressed = selection.admissions.size - seatedAdmissions.size
+                val suppressedEvictions = assembledEvictions.size - selection.evictions.size
+                val suppressedAdmissions = admissions.size - selection.admissions.size
+
+                Metrics[F]
+                  .incrementCounterBy(
+                    "dag_consensus_eviction_cert_suppressed_total",
+                    suppressedEvictions.toLong,
+                    Seq(Metrics.unsafeLabelName("reason") -> "requires_atomic_admission")
+                  )
+                  .whenA(suppressedEvictions > 0) >>
+                  Metrics[F]
+                    .incrementCounterBy(
+                      "dag_consensus_admission_cert_suppressed_total",
+                      suppressedAdmissions.toLong,
+                      Seq(Metrics.unsafeLabelName("reason") -> "local_headroom")
+                    )
+                    .whenA(suppressedAdmissions > 0) >>
+                  Metrics[F]
+                    .incrementCounterBy(
+                      "dag_consensus_admission_cert_suppressed_total",
+                      capSuppressed.toLong,
+                      Seq(Metrics.unsafeLabelName("reason") -> "successor_cap")
+                    )
+                    .whenA(capSuppressed > 0)
+                    .as(selection.evictions -> seatedAdmissions)
+              }
           } else
             Metrics[F]
               .incrementCounterBy(
@@ -2140,7 +2151,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                   else consensusStorage.getAssembledEvictionCertificates(state.key)
                 assembledAcs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
-                membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs)
+                membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs, context)
               } yield membership
             else (List.empty[EvictionCertificate], List.empty[AdmissionCertificate]).pure[F]
           (leaderEcs, leaderAcs) = leaderEvidence
@@ -2311,7 +2322,12 @@ object GlobalSnapshotConsensusStateAdvancer {
                         if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                         else consensusStorage.getAssembledEvictionCertificates(state.key)
                       assembledAcs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
-                      membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs)
+                      membership <- membershipCertificatesForProposal(
+                        state,
+                        assembledEcs,
+                        assembledAcs,
+                        status.proposalArtifactInfo.context
+                      )
                       (ecs, acs) = membership
                     } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
                       case (maybeVcc, maybeTc, ecs, acs) =>
