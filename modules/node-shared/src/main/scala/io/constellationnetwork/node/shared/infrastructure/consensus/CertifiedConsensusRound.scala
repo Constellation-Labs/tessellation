@@ -66,16 +66,15 @@ object CertifiedConsensusRound {
         configuredFraction
       )
       isCore = frozenCore.contains(selfId)
-      lockResult <-
-        if (existingQc.isEmpty && (!isCore || !allowVoteEmission)) ().asRight[VoteRejection].pure[F]
-        else
-          // A verified carried/assembled QC is a new safety fact for every recipient, including a
-          // non-Core follower or a Core peer abstaining under a local-only admission headroom gate.
-          // Check it against the restored lock before it can drive artifact/CoreCommit progression.
-          // Only a path with no QC and no locally eligible vote has no safety fact to persist.
-          storage
-            .tryLockCertifiedVote(key, value.committedView, valueHash, existingQc)
-            .map(_.void)
+      lockResult <- existingQc match {
+        // A verified carried/assembled QC is a new safety fact for every recipient, including a
+        // non-Core follower or a Core peer abstaining under a local-only admission headroom gate.
+        // Check it against the restored lock before it can drive artifact/CoreCommit progression.
+        case Some(qc) => storage.tryAdoptCertifiedQc(key, qc).map(_.void)
+        // Only a path with no QC and no locally eligible vote has no safety fact to persist.
+        case None if !isCore || !allowVoteEmission => ().asRight[VoteRejection].pure[F]
+        case None                                  => storage.tryLockCertifiedVote(key, value.committedView, valueHash, None).map(_.void)
+      }
       voteResult <- lockResult match {
         case Left(rejection) => rejection.asLeft[(Boolean, F[Unit])].pure[F]
         case Right(_) if existingQc.isDefined || !isCore || !allowVoteEmission =>

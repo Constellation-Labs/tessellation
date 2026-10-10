@@ -1351,4 +1351,74 @@ object CertifiedConsensusSuite extends MutableIOSuite {
       expect(rejected.left.exists(_.isInstanceOf[VoteRejection.LockedOnQc]))
         .and(expect(idempotent.isRight))
   }
+
+  private def prepareQc(
+    value: ProposalValue,
+    pairs: List[java.security.KeyPair],
+    ids: List[PeerId]
+  )(implicit hasher: Hasher[IO], provider: SecurityProvider[IO]): IO[CertifiedProposalQC] =
+    for {
+      votes <- pairs.take(3).traverse(signOutcomeVote[IO](value, _).map(_._2))
+      qc <- buildProposalQc[IO](value, SortedMap.from(ids.take(3).zip(votes)), ids.toSet, ids.toSet, 2.0 / 3.0)
+        .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+    } yield qc
+
+  test("adopting a verified QC overrides a same-view conflicting prepare vote and keeps the vote history") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      qc <- prepareQc(value, pairs, ids)
+      view = qc.value.committedView
+      ownVote = hash("rollback-lead-fresh-value")
+      votedOther = CertifiedVoteLock(Some(view), Some(ownVote), None)
+      plainVote = votedOther.acceptVote(view, qc.valueHash, qc.some)
+      adopted = votedOther.acceptVerifiedQc(qc)
+      laterConflictingHash <- valueHash[IO](value.copy(artifactHash = hash("later-conflicting"), committedView = view + 1))
+      laterConflicting = adopted.flatMap(_.acceptVote(view + 1, laterConflictingHash, None))
+    } yield
+      expect(plainVote.left.exists(_.isInstanceOf[VoteRejection.ConflictingSameView]), s"plain vote path: $plainVote")
+        .and(expect(adopted.exists(_.lockedQc.contains(qc)), s"adopted lock: $adopted"))
+        .and(expect(adopted.exists(_.highestVotedView.contains(view)), "vote view must stay unchanged"))
+        .and(expect(adopted.exists(_.votedValueHashAtHighestView.contains(ownVote)), "voted hash must stay unchanged"))
+        .and(expect(laterConflicting.left.exists(_.isInstanceOf[VoteRejection.LockedOnQc]), s"later conflict: $laterConflicting"))
+  }
+
+  test("adopting a lower-view QC is still refused after a higher-view prepare vote") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      qc <- prepareQc(value, pairs, ids)
+      votedHigher = CertifiedVoteLock(Some(qc.value.committedView + 1), Some(hash("higher-view-prepare")), None)
+      adopted = votedHigher.acceptVerifiedQc(qc)
+    } yield expect(adopted.left.exists(_.isInstanceOf[VoteRejection.LowerView]), s"adopted: $adopted")
+  }
+
+  test("adopting a verified QC never displaces an equal- or higher-view locked QC for another value") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(4)
+      ids = pairs.map(peerId)
+      value <- withCommittee(ids)
+      qc <- prepareQc(value, pairs, ids)
+      view = qc.value.committedView
+      sameViewOther <- prepareQc(value.copy(artifactHash = hash("same-view-other")), pairs, ids)
+      higherViewOther <- prepareQc(value.copy(artifactHash = hash("higher-view-other"), committedView = view + 1), pairs, ids)
+      lockedSameView = CertifiedVoteLock(Some(view), Some(sameViewOther.valueHash), Some(sameViewOther))
+      lockedHigherView = CertifiedVoteLock(Some(view), Some(hash("own-vote")), Some(higherViewOther))
+      sameViewResult = lockedSameView.acceptVerifiedQc(qc)
+      higherViewResult = lockedHigherView.acceptVerifiedQc(qc)
+    } yield
+      expect(sameViewResult.left.exists(_.isInstanceOf[VoteRejection.LockedOnQc]), s"same view: $sameViewResult")
+        .and(expect(higherViewResult.left.exists(_.isInstanceOf[VoteRejection.LockedOnQc]), s"higher view: $higherViewResult"))
+  }
 }
