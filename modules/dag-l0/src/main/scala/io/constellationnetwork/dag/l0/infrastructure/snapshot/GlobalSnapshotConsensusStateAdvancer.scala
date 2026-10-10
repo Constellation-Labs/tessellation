@@ -302,50 +302,37 @@ object GlobalSnapshotConsensusStateAdvancer {
         lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1]
       ): Option[(ClearingState, Option[PeerId])] =
         Option.when(config.clearingActiveAt(state.key.value.value)) {
-          val prior = state.lastOutcome.clearing.getOrElse(ClearingState.empty)
-          val parentKey = state.key.value.value - 1L
-          val recorded = lineage
-            .map(_.parentOutcome)
-            .filter(outcome => outcome.proposalQc.value.key === parentKey && config.clearingActiveAt(parentKey))
-            .fold(prior) { outcome =>
-              MembershipClearing.recordRound(
-                prior,
-                SnapshotOrdinal.unsafeApply(parentKey),
+          MembershipClearing.candidate(
+            prior = state.lastOutcome.clearing.getOrElse(ClearingState.empty),
+            current = state.key,
+            committee = state.roundStartFacilitators.value.toSet,
+            embedded = lineage.map(_.parentOutcome).map { outcome =>
+              MembershipClearing.EmbeddedRound(
+                outcome.proposalQc.value.key,
                 outcome.proposalQc.value.roundStartFacilitators.toSortedSet.toSet,
-                outcome.commitQc.signatures.toSortedSet.toList.map(_.id.toPeerId).toSet,
-                state.key,
-                clearingParams
+                outcome.commitQc.signatures.toSortedSet.toList.map(_.id.toPeerId).toSet
               )
-            }
-          val committee = state.roundStartFacilitators.value.toSet
-          val seatedLedger = recorded.copy(members = recorded.members.filter { case (member, _) => committee.contains(member) })
-          recorded -> MembershipClearing.selectTarget(
-            seatedLedger,
-            MembershipClearing.intervalOf(state.key, clearingParams),
-            clearingParams
+            },
+            activeAt = config.clearingActiveAt,
+            params = clearingParams
           )
         }
 
-      /** The clearing target this round's transition carries: the candidate, when adding it to the proposal's certificate-driven membership
-        * change still yields a valid transition (unpaired above the floor, or paired with an admission).
-        */
+      /** The clearing target this round's transition carries (see MembershipClearing.eviction). */
       private def clearingEviction(
         state: GlobalSnapshotConsensusState,
         lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1],
         admittedPeers: Set[PeerId],
         certificateEvictions: Set[PeerId]
       ): Option[PeerId] =
-        clearingCandidate(state, lineage).flatMap(_._2).filter { target =>
-          CertifiedMembershipTransition
-            .validate(
-              state.roundStartFacilitators.value.toSet,
-              admittedPeers,
-              certificateEvictions + target,
-              config.activeAdmissionMaxExpansionPerRound,
-              config.unpairedEvictionFloorAt(state.key.value.value)
-            )
-            .isRight
-        }
+        MembershipClearing.eviction(
+          clearingCandidate(state, lineage).flatMap(_._2),
+          state.roundStartFacilitators.value.toSet,
+          admittedPeers,
+          certificateEvictions,
+          config.activeAdmissionMaxExpansionPerRound,
+          config.unpairedEvictionFloorAt(state.key.value.value)
+        )
 
       private def deriveGlobalOutcomeState(
         state: GlobalSnapshotConsensusState,

@@ -67,6 +67,47 @@ object MembershipClearing {
     if (intervalOf(current, params) > interval) closeAll(recorded, intervalOf(current, params), params) else recorded
   }
 
+  /** Round N's evidence as embedded in candidate N+1: its key, frozen committee, and commit-QC signers. */
+  final case class EmbeddedRound(key: Long, committee: Set[PeerId], commitSigners: Set[PeerId])
+
+  /** The ledger after recording the embedded parent round, and the single clearing candidate for round `current`.
+    *
+    * The embedded round is recorded only when it is exactly `current - 1` and clearing was active for it. The candidate is restricted to
+    * `committee` (the frozen committee of `current`).
+    */
+  def candidate(
+    prior: ClearingState,
+    current: SnapshotOrdinal,
+    committee: Set[PeerId],
+    embedded: Option[EmbeddedRound],
+    activeAt: Long => Boolean,
+    params: Params
+  ): (ClearingState, Option[PeerId]) = {
+    val parentKey = current.value.value - 1L
+    val recorded = embedded
+      .filter(round => round.key == parentKey && activeAt(parentKey))
+      .fold(prior)(round =>
+        recordRound(prior, SnapshotOrdinal.unsafeApply(parentKey), round.committee, round.commitSigners, current, params)
+      )
+    val seated = recorded.copy(members = recorded.members.filter { case (member, _) => committee.contains(member) })
+    recorded -> selectTarget(seated, intervalOf(current, params), params)
+  }
+
+  /** The clearing eviction the round's transition carries: the candidate, when adding it to the certificate-driven change still yields a
+    * valid transition (unpaired at or above the floor, or paired with an admission).
+    */
+  def eviction(
+    candidate: Option[PeerId],
+    committee: Set[PeerId],
+    admittedPeers: Set[PeerId],
+    certificateEvictions: Set[PeerId],
+    maxChanges: Int,
+    floor: Option[Int]
+  ): Option[PeerId] =
+    candidate.filter { target =>
+      CertifiedMembershipTransition.validate(committee, admittedPeers, certificateEvictions + target, maxChanges, floor).isRight
+    }
+
   /** The single member to clear in `currentInterval`, if any. */
   def selectTarget(state: ClearingState, currentInterval: Long, params: Params = DefaultParams): Option[PeerId] =
     if (state.clearedInterval.contains(currentInterval)) None

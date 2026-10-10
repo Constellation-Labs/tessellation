@@ -139,6 +139,47 @@ object MembershipClearingSuite extends FunSuite {
     expect.same(2, resumed.members(d).lowStreak) && expect.same(Some(2L), resumed.members(d).lastCountedInterval)
   }
 
+  // Leader-side decision seam: the same pure functions the advancer uses for proposal construction and derivation.
+  private val lowLedger = run(ClearingState.empty, 0L, 11L, signers = dSilent)
+  private val always: Long => Boolean = _ => true
+  private def embedded(key: Long, signers: Set[PeerId] = committee - d) = Some(EmbeddedRound(key, committee, signers))
+
+  test("candidate records the embedded parent round and selects the pending member") {
+    val (recorded, target) = candidate(lowLedger, ord(12L), committee, embedded(11L), always, params)
+    expect.same(3, recorded.members(d).lowStreak) && expect.same(Some(d), target)
+  }
+
+  test("candidate ignores a lineage whose key is not the parent round") {
+    val (recorded, target) = candidate(lowLedger, ord(12L), committee, embedded(10L), always, params)
+    expect.same(lowLedger, recorded) && expect.same(None, target)
+  }
+
+  test("candidate ignores a parent round below clearing activation") {
+    val (recorded, target) = candidate(lowLedger, ord(12L), committee, embedded(11L), _ >= 12L, params)
+    expect.same(lowLedger, recorded) && expect.same(None, target)
+  }
+
+  test("candidate is restricted to the current committee") {
+    val (_, target) = candidate(lowLedger, ord(12L), committee - d, embedded(11L), always, params)
+    expect.same(None, target)
+  }
+
+  test("an unpaired clearing eviction is carried only at or above the floor") {
+    val aboveFloor = eviction(Some(d), committee, Set.empty, Set.empty, maxChanges = 1, floor = Some(3))
+    val atFloor = eviction(Some(d), committee, Set.empty, Set.empty, maxChanges = 1, floor = Some(4))
+    val inactive = eviction(Some(d), committee, Set.empty, Set.empty, maxChanges = 1, floor = None)
+    expect.same(Some(d), aboveFloor) && expect.same(None, atFloor) && expect.same(None, inactive)
+  }
+
+  test("a clearing eviction blocked by the floor is carried when an admission pairs with it") {
+    val replacement = peer('e')
+    expect.same(Some(d), eviction(Some(d), committee, Set(replacement), Set.empty, maxChanges = 1, floor = Some(4)))
+  }
+
+  test("a certificate eviction occupying the single change slot excludes the clearing eviction") {
+    expect.same(None, eviction(Some(d), committee, Set(peer('e')), Set(c), maxChanges = 1, floor = Some(3)))
+  }
+
   test("default parameters match the design") {
     expect.same(2048L, IntervalLength) && expect.same(3, RequiredLowIntervals)
   }

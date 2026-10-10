@@ -97,6 +97,17 @@ object ConfigLoadSuite extends SimpleIOSuite {
     }
   }
 
+  test("every packaged network keeps the 2048-ordinal clearing interval") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      AppEnvironment.values.toList.foldLeft(success) { (acc, environment) =>
+        acc && expect.same(
+          Some(2048L),
+          SnapshotConfig.resolveEffectiveConsensusConfig(cfg.snapshot, environment).toOption.map(_.clearingIntervalOrdinals)
+        )
+      }
+    }
+  }
+
   test("min-committee-size below three is rejected and absence resolves to three") {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       val tooSmall = cfg.snapshot.copy(minCommitteeSize = Map(AppEnvironment.Testnet -> PosInt(2)))
