@@ -8,6 +8,7 @@ import io.constellationnetwork.node.shared.config.types.{SharedConfigReader, Sna
 import io.constellationnetwork.node.shared.ext.pureconfig._
 
 import eu.timepit.refined.pureconfig._
+import eu.timepit.refined.types.numeric.PosInt
 import pureconfig.ConfigSource
 import pureconfig.generic.auto._
 import pureconfig.module.catseffect.syntax._
@@ -69,6 +70,40 @@ object ConfigLoadSuite extends SimpleIOSuite {
           expect.same(None, effective.facilitatorSelectionMax) &&
             expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey)
       )
+    }
+  }
+
+  test("min-committee-size resolves per environment and is folded into the consensus hash") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val resolved = AppEnvironment.values.toList.map { environment =>
+        environment -> SnapshotConfig.resolveEffectiveConsensusConfig(cfg.snapshot, environment).toOption.map(_.minCommitteeSize)
+      }.toMap
+      val testnet = SnapshotConfig.resolveEffectiveConsensusConfig(cfg.snapshot, AppEnvironment.Testnet)
+      val larger = SnapshotConfig.resolveEffectiveConsensusConfig(
+        cfg.snapshot.copy(minCommitteeSize = cfg.snapshot.minCommitteeSize.updated(AppEnvironment.Testnet, PosInt(5))),
+        AppEnvironment.Testnet
+      )
+
+      expect.same(
+        Map[AppEnvironment, Option[Int]](
+          AppEnvironment.Mainnet -> Some(10),
+          AppEnvironment.Testnet -> Some(4),
+          AppEnvironment.Integrationnet -> Some(4),
+          AppEnvironment.Dev -> Some(3)
+        ),
+        resolved
+      ) &&
+      expect(testnet.toOption.map(_.deterministicConfigHash) != larger.toOption.map(_.deterministicConfigHash))
+    }
+  }
+
+  test("min-committee-size below three is rejected and absence resolves to three") {
+    source.loadF[IO, AppConfigReader]().map { cfg =>
+      val tooSmall = cfg.snapshot.copy(minCommitteeSize = Map(AppEnvironment.Testnet -> PosInt(2)))
+      val absent = cfg.snapshot.copy(minCommitteeSize = Map.empty)
+
+      expect(SnapshotConfig.resolveEffectiveConsensusConfig(tooSmall, AppEnvironment.Testnet).isLeft) &&
+      expect.same(Some(3), SnapshotConfig.resolveEffectiveConsensusConfig(absent, AppEnvironment.Testnet).toOption.map(_.minCommitteeSize))
     }
   }
 

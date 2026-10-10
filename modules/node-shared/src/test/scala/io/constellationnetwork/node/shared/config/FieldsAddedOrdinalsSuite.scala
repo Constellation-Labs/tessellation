@@ -55,8 +55,26 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
     "preventingAllowSpendResurrection" -> allEnvironments(6828500L, 0L, 0L),
     "fixingGlobalAllowSpendExpiration" -> allEnvironments(6828500L, 0L, 0L),
     "removingProcessedDelegatedStakeWithdrawals" -> allEnvironments(6176655L, 0L, 0L),
-    "tessellation41Migration" -> allEnvironments(9999999L, 0L, 0L)
+    "tessellation41Migration" -> allEnvironments(9999999L, 0L, 0L),
+    // Feature gate, not a cutover rule: disabled on every public network (testnet and integrationnet included) until
+    // it is scheduled. Do not "fix" testnet/integrationnet to 0.
+    "gl0Clearing" -> allEnvironments(9999999L, 9999999L, 9999999L)
   )
+
+  // Feature gates schedule new behavior after launch. They are disabled on every public network until scheduled, so the
+  // genesis and below-the-cutover invariants for historical cutover rules do not apply to them.
+  private val featureGates: Set[String] = Set("gl0Clearing")
+
+  test("feature gates are enabled only on dev until they are scheduled") {
+    IO {
+      val fields = ConfigSource.resources("application.conf").at("fields-added-ordinals").loadOrThrow[FieldsAddedOrdinals]
+      AppEnvironment.values.toList.foldMap { environment =>
+        val expected = if (environment == AppEnvironment.Dev) SnapshotOrdinal.MinValue else SnapshotOrdinal.unsafeApply(9999999L)
+        val gates = fields.resolvedThresholdsFor(environment).filter { case (name, _) => featureGates.contains(name) }
+        expect(gates.values.forall(_ == expected), s"${environment.entryName} feature gates: $gates")
+      }
+    }
+  }
 
   test("pins every packaged threshold and intentional absence in every environment") {
     IO {
@@ -152,7 +170,9 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       val kryo = source.at("last-kryo-hash-ordinal").loadOrThrow[Map[AppEnvironment, SnapshotOrdinal]]
       val nonMainnet = AppEnvironment.values.toList.filterNot(_ == AppEnvironment.Mainnet)
       nonMainnet.foldMap { environment =>
-        val late = fields.resolvedThresholdsFor(environment).filterNot { case (_, ordinal) => ordinal == SnapshotOrdinal.MinValue }
+        val late = fields.resolvedThresholdsFor(environment).filterNot {
+          case (name, ordinal) => ordinal == SnapshotOrdinal.MinValue || featureGates.contains(name)
+        }
         expect(late.isEmpty, s"${environment.entryName} thresholds not at genesis: $late")
           .and(expect(kryo.get(environment).contains(SnapshotOrdinal.MinValue), s"${environment.entryName} last-kryo-hash-ordinal: $kryo"))
           .and(
@@ -175,7 +195,9 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       val fields = ConfigSource.resources("application.conf").at("fields-added-ordinals").loadOrThrow[FieldsAddedOrdinals]
       AppEnvironment.values.toList.foldMap { environment =>
         val cutover = fields.tessellation41MigrationFor(environment)
-        val above = fields.resolvedThresholdsFor(environment).filter { case (_, ordinal) => ordinal > cutover }
+        val above = fields.resolvedThresholdsFor(environment).filter {
+          case (name, ordinal) => ordinal > cutover && !featureGates.contains(name)
+        }
         expect(above.isEmpty, s"${environment.entryName}: thresholds above the cutover $cutover: $above")
       }
     }
@@ -211,7 +233,8 @@ object FieldsAddedOrdinalsSuite extends SimpleIOSuite {
       fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawalsFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.tessellation41MigrationFor(AppEnvironment.Mainnet),
       fieldsAddedOrdinals.subTrieRootsFor(AppEnvironment.Mainnet),
-      fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet)
+      fieldsAddedOrdinals.fixingDelegatedStakeDoubleWithdrawalFor(AppEnvironment.Mainnet),
+      fieldsAddedOrdinals.gl0ClearingFor(AppEnvironment.Mainnet)
     )
 
     IO {
