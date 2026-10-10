@@ -52,7 +52,8 @@ object CertifiedNextRoundProjectorSuite extends FunSuite {
   test("an incumbent removed from the seedlist is an explicit deterministic exit") {
     val seedlist = committee.toSet - pid(2)
     val result = project(seedlist = seedlist)
-    expect.same(Right(committee.filterNot(_ == pid(2))), result.map(_.selectedCommittee))
+    expect
+      .same(Right(committee.filterNot(_ == pid(2))), result.map(_.selectedCommittee))
       .and(expect.same(Right(List(pid(2))), result.map(_.exits)))
   }
 
