@@ -633,4 +633,77 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
           rollbackRemovedInFlight.isEmpty
         )
   }
+
+  test("rollback lead adopts a warm peer's same-view QC over its own fresh prepare vote, but not a lower-view one") {
+    case (_, _, hasher, provider) =>
+      implicit val h: Hasher[IO] = hasher
+      implicit val sp: SecurityProvider[IO] = provider
+
+      for {
+        built <- certifiedQc
+        (qc, committee, corePairs) = built
+        lead = corePairs.head
+        leadId = PeerId.fromId(lead.getPublic.toId)
+        view = qc.value.committedView
+        exercise = (ownVoteView: Long) =>
+          for {
+            persisted <- Ref.of[IO, Option[CertifiedVoteLock]](None)
+            emitted <- Ref.of[IO, Boolean](false)
+            persistence = new CertifiedVoteLockPersistence[IO, SnapshotOrdinal] {
+              def read(key: SnapshotOrdinal): IO[Option[CertifiedVoteLock]] = persisted.get
+              def write(key: SnapshotOrdinal, lock: CertifiedVoteLock): IO[Unit] = persisted.set(lock.some)
+              def delete(key: SnapshotOrdinal): IO[Unit] = persisted.set(None)
+              def deleteAtOrBelow(key: SnapshotOrdinal): IO[Unit] = persisted.set(None)
+              def deleteAbove(key: SnapshotOrdinal): IO[Unit] = persisted.set(None)
+            }
+            consensus <- storage(persistence)
+            // Rollback to key10 - 1 erased the lead's records; it then prepared a fresh value for key10.
+            _ <- consensus.deleteCertifiedVoteLocksAbove(SnapshotOrdinal.unsafeApply(9L))
+            freshVote <- consensus.tryLockCertifiedVote(key10, ownVoteView, hashA, None)
+            resources <- ConsensusResources.empty[IO, String, String]
+            gossip = new Gossip[IO] {
+              def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = emitted.set(true)
+              def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = emitted.set(true)
+              def spreadDirect[A: TypeTag: Encoder](rumorContent: A, targets: Set[PeerId]): IO[Unit] = emitted.set(true)
+              def setDirectPushFn(fn: Gossip.DirectPushFn[IO]): IO[Unit] = IO.unit
+            }
+            // A later view carries the warm peer's QC; the lead re-proposes the certified value unchanged.
+            result <- CertifiedConsensusRound.prepare[IO, String, SnapshotOrdinal, String, Unit, String, TestOutcome, String](
+              key10,
+              qc.value,
+              qc.some,
+              resources,
+              committee,
+              committee,
+              fraction,
+              leadId,
+              lead,
+              consensus,
+              gossip
+            )
+            durable <- persisted.get
+            storedVotes <- consensus.getResources(key10).map(_.outcomeVotes)
+            didEmit <- emitted.get
+            // Restart from the journal: the adopted QC must still refuse a later conflicting prepare.
+            restarted <- storage(persistence)
+            restartedConflict <- restarted.tryLockCertifiedVote(key10, view + 2, hashB, None)
+          } yield (freshVote.isRight, result, durable, storedVotes.isEmpty, !didEmit, restartedConflict)
+        sameView <- exercise(view)
+        lowerView <- exercise(view + 1)
+        (sameFresh, sameResult, sameDurable, sameNoVotes, sameNoEmit, sameRestartedConflict) = sameView
+        (lowerFresh, lowerResult, lowerDurable, lowerNoVotes, lowerNoEmit, _) = lowerView
+      } yield
+        expect(sameFresh, "the fresh prepare vote must be recorded first")
+          .and(expect(sameResult.exists(p => p.proposalQc.contains(qc) && !p.voteEmitted), s"same-view prepare: $sameResult"))
+          .and(expect(sameDurable.flatMap(_.lockedQc).contains(qc), "adopted QC must be durable"))
+          .and(expect(sameDurable.flatMap(_.votedValueHashAtHighestView).contains(hashA), "own vote history must be kept"))
+          .and(expect(sameNoVotes && sameNoEmit, "adoption must not sign or spread an OutcomeVote"))
+          .and(
+            expect(sameRestartedConflict.left.exists(_.code === "locked_on_qc"), s"after restart: $sameRestartedConflict")
+          )
+          .and(expect(lowerFresh, "the higher-view prepare vote must be recorded first"))
+          .and(expect(lowerResult.left.exists(_.code === "lower_view"), s"lower-view prepare: $lowerResult"))
+          .and(expect(lowerDurable.flatMap(_.lockedQc).isEmpty, "a refused QC must not be locked"))
+          .and(expect(lowerNoVotes && lowerNoEmit, "a refused QC must not sign or spread an OutcomeVote"))
+  }
 }
