@@ -51,7 +51,7 @@ The detailed, code-accurate references for the rewritten subsystems live under `
 - [README.md](consensus/README.md) - the definitive consensus reference (round FSM, declarations, B1/B2 admission/eviction, recovery)
 - [committee-tiers.md](consensus/committee-tiers.md) - Core/Tier-1/Witness committees, active-set admission, witness pool, chronic classification
 - [timeout-certificate.md](consensus/timeout-certificate.md) - HotStuff-aligned Timeout Certificate (Track-2 view advance)
-- [quorum-shrink.md](consensus/quorum-shrink.md) - QuorumDenominatorShrink (v33) liveness rung
+- [quorum-shrink.md](consensus/quorum-shrink.md) - removed v33 QuorumDenominatorShrink liveness rung (stub; the ADR-0021 finality floor is kept in `FinalityQuorum`)
 - [signature-grace.md](consensus/signature-grace.md) - post-finalization signature grace
 - [self-health-throttle.md](consensus/self-health-throttle.md) and [view-from-time-anchor.md](consensus/view-from-time-anchor.md) - leader-pool health gating and the pacemaker time anchor
 
@@ -64,6 +64,7 @@ The detailed, code-accurate references for the rewritten subsystems live under `
 - [consensus-config-reference.md](operations/consensus-config-reference.md) - operator config knobs + `CL_` overrides
 - [v4-launch-runbook.md](release/v4-launch-runbook.md) - coordinated cold restart + gate-ordinal checklist
 - [ADR-0034](adr/0034-consensus-schema-change-governance.md) - mandatory runtime/replay/schema classification and cross-consumer schema-change package
+- [ADR-0035](adr/0035-v35-to-v41-mainnet-migration.md) - v3.5 to v4.1 mainnet migration: fresh-genesis test networks, the `tessellation-41-migration` cutover gate, recovery-seed activation at R
 
 **Decisions**: [docs/adr/](adr/) (0005/0006 are superseded by the tier/committee rewrite).
 
@@ -149,8 +150,8 @@ tessellation/
 | `infrastructure/consensus/FacilitatorSelector.scala` | Deterministic leader/subset selection (`selectLeaderWeighted`, self-health gating) |
 | `infrastructure/consensus/SignatureGraceDecision.scala` | Post-finalization signature-grace state machine |
 | `infrastructure/consensus/state/StateTransitions.scala` | Certificate-assembly hub (eviction / admission / view-change / timeout) |
-| `infrastructure/consensus/state/QuorumDenominatorShrink.scala` | v33 deterministic quorum-denominator shrink (liveness rung) |
-| `infrastructure/consensus/state/WitnessPool.scala` | Deterministic witness pool widening the signer / certificate set |
+| `infrastructure/consensus/state/FinalityQuorum.scala` | ADR-0021 finality floor: Core quorum for liveness certificates, frozen-committee supermajority floor for finalization |
+| `infrastructure/consensus/state/WitnessPool.scala` | Deterministic witness pool widening the eviction / admission certificate witness set (VCC/TC validation no longer uses it) |
 | `infrastructure/gossip/GossipDaemon.scala` | Anti-entropy gossip protocol |
 | `infrastructure/gossip/RumorHandler.scala` | Kleisli-based rumor processing |
 | `infrastructure/gossip/event/RecoveryPeerHint.scala` | Preferred-peer hint biasing recovery downloads |
@@ -433,7 +434,7 @@ sequenceDiagram
 1. FSM state + transitions: `consensus/state/ConsensusState.scala`, `state/StateTransitions.scala`
 2. Committee / tier / leader selection: `CommitteeBuilder.scala`, `TierTransitions.scala`, `FacilitatorSelector.scala`, `LeaderEligibility.scala`
 3. Certificates (eviction / admission / view-change / timeout): the `engine/*CertificateBuilder.scala` + `engine/*Voter.scala`, assembled in `state/StateTransitions.scala`
-4. Quorum sizing + liveness: `coreFacilitators` quorum + `state/QuorumDenominatorShrink.scala`; grace in `SignatureGraceDecision.scala`
+4. Quorum sizing + finality floor: `coreFacilitators` quorum + `state/FinalityQuorum.scala`; grace in `SignatureGraceDecision.scala`
 5. Declarations (wire shapes): `consensus/declaration.scala`
 6. Signed peer-behavior carry across cold restart: `schema/ConsensusOperationalState.scala`
 
@@ -476,4 +477,4 @@ just down                    # Stop environment
 
 ### Ordinal-Gated Rollouts (FieldsAddedOrdinals)
 
-New or changed deterministic behavior is fenced behind a per-environment activation ordinal (`FieldsAddedOrdinals`, a `Map[AppEnvironment, SnapshotOrdinal]` in `config/types.scala`): below the gate, already-signed history re-derives byte-identically; at or after it the new behavior applies. The code checks `ordinal >= gate`, never the environment. The values have no environment-variable overrides and are packaged into the assembly jar, so they must be finalized before assembly and deployed identically across the cluster. They are not part of `deterministicConfigHash`, and joining does not compare the advertised jar hash; a mismatch is not caught before the gate and can fork the chain. At launch, operators set each target-network gate (e.g. `sc-fee-balance-from-context`, `sub-trie-roots`) to the coordinated activation ordinal. See [operations/fields-added-ordinals.md](operations/fields-added-ordinals.md) and [release/v4-launch-runbook.md](release/v4-launch-runbook.md).
+New or changed deterministic behavior is fenced behind a per-environment activation ordinal (`FieldsAddedOrdinals`, a `Map[AppEnvironment, SnapshotOrdinal]` in `config/types.scala`): below the gate, already-signed history re-derives byte-identically; at or after it the new behavior applies. The code checks `ordinal >= gate`, never the environment. The values have no environment-variable overrides and are packaged into the assembly jar, so they must be finalized before assembly and deployed identically across the cluster. Both L0 applications fold the resolved thresholds (plus the dust-sweep schedule and the derived state-proof/staking boundaries) into `deterministicConfigHash` via `ordinalConfigHashFor`, so a peer with different resolved values is rejected at join; joining does not compare the advertised jar hash, and a unanimously wrong value is not caught. testnet and integrationnet are fresh-genesised on v4.1 (every threshold `0`); only mainnet carries v3.5 history. Every v4.1-only rule is folded into the single cutover gate `tessellation-41-migration` (C), which mainnet pins to R+1 together with `snapshot.certified-consensus-activation-ordinal` = R at the recovery-seed cutover (see [ADR-0035](adr/0035-v35-to-v41-mainnet-migration.md)). See [operations/fields-added-ordinals.md](operations/fields-added-ordinals.md) and [release/v4-launch-runbook.md](release/v4-launch-runbook.md).

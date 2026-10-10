@@ -3,7 +3,7 @@
 **Status:** SUPERSEDED / not adopted. Retained as historical context.
 **Author:** ottobot-ai (with @scasplte2)
 **Date:** 2026-05-07
-**Related:** `quorum-shrink.md` (the shipped liveness remedy), PR #1485 (fork-recovery followup), PR #1476 (B1 eviction mechanism)
+**Related:** [quorum-shrink.md](quorum-shrink.md) (the liveness remedy that shipped instead, itself removed by ADR-0035 / #1627), PR #1485 (fork-recovery followup), PR #1476 (B1 eviction mechanism)
 
 > **SUPERSEDED.** The recommended fix below (approach alpha: add
 > `appliedEvictionCerts: List[EvictionCertificate]` to the `Facility` declaration and
@@ -32,6 +32,12 @@
 > not into the eviction-assembly quorum: `checkEvictionAssembly` still computes its
 > threshold from the Core committee via `QuorumPolicy.fromFraction` (`StateTransitions.scala:1018-1019`).
 > See **[quorum-shrink.md](quorum-shrink.md)**.
+>
+> **Update (2026-10-10, ADR-0035 / #1627):** `QuorumDenominatorShrink` was itself removed
+> with the pre-v35 Global L0 engine. Certified consensus (ADR-0032) never lowers the quorum
+> denominator at a stuck key: VCC/TC are frozen-Core quorum certificates, and the ADR-0021
+> finality floor survives in `state/FinalityQuorum.scala`. The shrink-rung line anchors
+> above are historical.
 >
 > The body below is preserved for design-history context. Note that several inline
 > `declaration.scala` / `*StateAdvancer.scala` / `ConsensusStorage.scala` line anchors

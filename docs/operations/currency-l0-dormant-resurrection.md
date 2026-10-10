@@ -29,17 +29,19 @@ Two independent boundaries must not be confused:
 
 1. the release-version join gate and deterministic consensus-config hash fence all
    members of each L0 cluster at connection time; and
-2. `fields-added-ordinals.currency-snapshot-protocol-v1` is a GLOBAL L0 ordinal that
-   authorizes each Currency lineage's signed `0.0.1 -> 1.0.0` transition.
+2. the v4.1 cutover `fields-added-ordinals.tessellation-41-migration` (C; the former
+   separate `currency-snapshot-protocol-v1` gate was folded into it, accessor
+   `currencySnapshotProtocolV1For`) is a GLOBAL L0 ordinal that authorizes each Currency
+   lineage's signed `0.0.1 -> 1.0.0` transition.
 
 The jar's SemVer (`4.1.0-rc.X`, `4.1.0`, and later releases) is not written into the
 chain and does not select replay behavior. Historical replay reads the signed Currency
 snapshot version. Once a lineage reaches `1.0.0`, it cannot downgrade.
 
-Public environments deliberately omit the gate until an activation is announced;
-absence resolves to `SnapshotOrdinal.MaxValue` and remains legacy. Dev activates at
-global ordinal zero so the generated CI metagraph continuously exercises version
-`1.0.0`.
+Mainnet carries the cutover placeholder `9999999` (legacy) until C = R+1 is pinned at
+the v3.5 -> v4.1 cutover; an absent mapping resolves to `SnapshotOrdinal.MaxValue` and
+also remains legacy. Testnet, IntegrationNet and dev use `0` (fresh v4.1 genesis), so
+the generated CI metagraph continuously exercises version `1.0.0`.
 
 At the first eligible Currency snapshot, transition is delayed rather than guessed if
 signed Global Snapshot Info still reports an unresolved
@@ -131,7 +133,7 @@ recognizes and validates reset content independently. A reset requires:
 5. the declared Global L0 anchor ordinal/hash is canonical, recent, and not ahead of
    the consensus Global L0 parent;
 6. the target selected after `syncOffset` is in the retained window and is at or after
-   `currency-snapshot-protocol-v1` activation;
+   the v4.1 cutover C (`currencySnapshotProtocolV1For`);
 7. the metagraph's last Global L0 acceptance is older than the retained window;
 8. `unappliedGlobalChangeOrdinals` is empty;
 9. the signer passes existing signature, facilitator, seedlist, and allowance-list

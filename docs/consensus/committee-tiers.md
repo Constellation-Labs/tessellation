@@ -62,11 +62,11 @@ however, more than one-third silent frozen seats can halt Facility progression o
 finality. That fail-closed boundary is deliberate and requires operator recovery
 once participation is already below the current committee quorum.
 
-Snapshot finalization is a separate gate. During bootstrap it preserves the legacy
-Core-sized/strict-majority behavior. Outside bootstrap, finality uses the frozen
-`roundStartFacilitators` committee floor (`quorumFinalityDecision`), so a Core that has
-shrunk to a cluster minority can still rotate leaders or assemble liveness certificates
-but cannot finalize a divergent snapshot. The counted signer set is the frozen
+Snapshot finalization is a separate gate. Global L0 finality always uses the frozen
+`roundStartFacilitators` committee floor (`finalityQuorum` / `FinalityQuorum.required`,
+with `clusterFloorActive = true` in every round, including bootstrap, since ADR-0035 /
+#1627), so a Core that has shrunk to a cluster minority can still rotate leaders or
+assemble liveness certificates but cannot finalize a divergent snapshot. The counted signer set is the frozen
 committee, not a locally mutated post-eviction subset.
 
 ### Reward and signer pool
@@ -75,8 +75,7 @@ Delegated rewards go to the frozen round-start signing committee, not the proof
 subset. Core and Tier-1 peers split the static validator pool evenly; there is no
 Core-vs-Tier-1 stratification and no admission-score payout filter. Classic rewards
 retain the historical `lastArtifact.proofs.map(_.id)` signer rule. See
-[rewards.md](rewards.md) for activation gates, including the full-committee correction
-ordinal, and diagnostics.
+[rewards.md](rewards.md) for the reward-path gates and diagnostics.
 
 ---
 
@@ -107,11 +106,11 @@ scores each peer from recent-signer evidence and `peerQuality`. It produces an
   [section 5](#5-participation-evidence-and-chronic-classification).
 - `BeyondTarget` -- a qualified peer outside the controller's Core-classification
   target. It remains eligible for a Tier-1 signing lease.
-- `CertifiedTimeoutMissing` -- used by the `fromCertifiedTimeout` path
-  (`ActiveFacilitatorAdmission.scala:242-285`), which shrinks the active set to
-  the certified timeout voters plus a deterministic recent-signer fill when a
-  quorum has independently timed out. This ties admission to the
-  Timeout-Certificate view-advance path.
+- `CertifiedTimeoutMissing` -- produced by `ActiveFacilitatorAdmission.fromCertifiedTimeout`,
+  which shrinks an active set to the certified timeout voters plus a deterministic
+  recent-signer fill. No production code path calls it any more: Global L0's
+  `RetainSigningLeases` policy never shrinks on a timeout certificate (see
+  [timeout-certificate.md](timeout-certificate.md)).
 
 Two controller lanes widen the Core-eligible classification beyond the sticky
 recent-signer pool:
@@ -149,9 +148,9 @@ shipped Global-L0 config). Before voting, each Core node also requires its actua
 local parent proof set, intersected with the current committee, to satisfy the
 finality floor for `current committee size + 1`. That proof-dependent check is local
 vote-emission policy only; it is never proposal validation or state derivation. It
-starts outside bootstrap, alongside the full-committee finality floor. Bootstrap keeps
-the legacy Core-only finality gate, so a new Tier-1 seat does not raise the active
-requirement and singleton committees remain able to grow under unanimity. The
+applies in every certified round (`OpenAdmissionPolicy.headroomRequired`) except the
+exact first 1 -> 2 expansion of a certified-from-genesis singleton lineage, which cannot
+prove headroom for a seat that does not exist yet. The
 certificate is the state-transition authority, so a recovered node without the
 ephemeral nominee can still accept it. The shipped budget remains one. Monitor ticks
 cannot walk to a second candidate after the budget is spent. Probation readmission
@@ -283,8 +282,14 @@ round's view of who is Core vs Tier 1 vs Witness, and is carried forward via
 ## 4. The Witness Pool
 
 `WitnessPool` (`state/WitnessPool.scala:5-62`) is the deterministic set of peers
-allowed to **witness** (validly sign) a B1 eviction / B2 admission / view-change /
-timeout certificate, without entering the certificate's quorum denominator.
+allowed to **witness** (validly sign) a B1 eviction or B2 readmission certificate
+without entering the certificate's quorum denominator. On Global L0 it is now largely
+historical: view-change and timeout certificates count only frozen-Core voters
+(`StateTransitions.certificateQuorum`, ADR-0035 / #1627), and under the only Global L0
+membership policy, `RetainSigningLeases` (`allowsCertifiedAtomicReplacement = true`),
+admission certificates (probation included) and atomic-replacement evictions are
+Core-attested. The wider pool is still the voter pool `EvictionVoterPool` selects for a
+standalone Core-target eviction, which `RetainSigningLeases` does not accept.
 
 In the canonical "committee = signers of the previous snapshot" pattern, when a
 supermajority of the committee is offline or stuck in `WaitingForDownload`, the
@@ -306,15 +311,16 @@ The pool is the **union** of two consensus-agreed sources
 
 For a target-keyed cert (B1/B2), `forTarget` additionally removes the `target` so a
 peer cannot witness its own eviction or admission
-(`state/WitnessPool.scala:44-50`). The non-keyed `all` is used for VCC view-change.
+(`state/WitnessPool.scala:44-50`). The non-keyed `all` was used for VCC/TC before
+ADR-0035 and has no production caller now.
 Two deliberately narrower selectors sit in front of that wider pool. Open admission
 is Core-attested. Before v35, probation readmission and Core-target stall eviction
-preserve the wider recovery lane while Tier-1 finality-participation eviction is
-Core-attested. Under v35, every health-derived Core or Tier-1 replacement target is
+preserved the wider recovery lane while Tier-1 finality-participation eviction was
+Core-attested; that pre-v35 engine was removed by ADR-0035. Under v35, every health-derived Core or Tier-1 replacement target is
 Core-attested and must be paired one-for-one with a Core-attested open ReadyAtTip
 admission. Assembly and Proposal validation select the same lane. The target cannot
-certify its own replacement, while Currency L0 and legacy Global-L0 recovery retain
-their separately specified wider witness behavior.
+certify its own replacement, while Currency L0 retains its separately specified
+behavior.
 
 Determinism contract (`state/WitnessPool.scala:16-34`): both inputs are
 consensus-agreed (signed in the previous snapshot), and `minParticipationObservations`
@@ -515,10 +521,10 @@ completion-ratio tiering within the pool and uses rendezvous score plus
 
 Rewards are distributed by the delegated-rewards path from the frozen round-start
 signing committee. In the current tier-transition path that set is Core + Tier 1;
-Witness is observation-only and is not seated. At and after the
-`delegated-rewards-full-committee` ordinal, every seated Core and Tier-1 peer is a
-validator recipient. Before that ordinal, the legacy score-qualified recipient rule
-is retained strictly for historical replay. The payout formula is unchanged.
+Witness is observation-only and is not seated. Every seated Core and Tier-1 peer is a
+validator recipient. The former `delegated-rewards-full-committee` gate and the legacy
+score-qualified recipient rule it selected below the gate were deleted by ADR-0035 /
+#1627 because that rule never produced mainnet history.
 
 There is no per-seat reward rotation. An earlier bounded one-slot Tier-1 rotation
 lane was removed. Reward breadth instead comes from retaining every otherwise
