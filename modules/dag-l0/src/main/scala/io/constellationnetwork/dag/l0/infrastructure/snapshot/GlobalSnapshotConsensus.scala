@@ -217,9 +217,6 @@ object GlobalSnapshotConsensus {
       ]
       // Node-local proof-miss streaks are intentionally not restored. A restart starts at zero,
       // delaying certified signing-seat replacement until three new consecutive misses are locally observed.
-      finalityParticipationMissHistoryRef <- Ref.of[F, FinalityParticipationAuditor.MissHistory](
-        FinalityParticipationAuditor.MissHistory.empty
-      )
 
       rawEvictionVoter = new GossipingEvictionVoter[
         F,
@@ -370,7 +367,6 @@ object GlobalSnapshotConsensus {
           eventMempool,
           rawEvictionVoter,
           consensusQueue,
-          finalityParticipationMissHistoryRef,
           HealthDerivedMembershipPolicy.RetainSigningLeases
         )
 
@@ -515,7 +511,6 @@ object GlobalSnapshotConsensus {
           isGlobalBootstrap,
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
-          (o: GlobalConsensusOutcome) => o.certifiedRoundCommittee.getOrElse(Set.empty[PeerId]),
           (key: GlobalSnapshotKey) =>
             AdmissionCadence.expansionAllowedAtOrdinal(
               key.value.value,

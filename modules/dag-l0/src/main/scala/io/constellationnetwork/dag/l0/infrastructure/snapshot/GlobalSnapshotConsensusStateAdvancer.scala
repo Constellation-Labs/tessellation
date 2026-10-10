@@ -2601,7 +2601,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 )
               else if (committee.contains(cert.targetPeer))
                 Left(ProposalRejection(s"acs_target_already_in_committee target=${cert.targetPeer.show.take(8)}"))
-              else if (OpenAdmissionPolicy.penaltyBlocksCertificate(cert.targetPeer, probation, penalized))
+              else if (OpenAdmissionPolicy.penaltyBlocksCertificate(cert.targetPeer, penalized))
                 Left(ProposalRejection(s"acs_target_penalized target=${cert.targetPeer.show.take(8)}"))
               // The parent nominee coordinates vote emission; the quorum certificate is the
               // authorization applied to state. Open admission is Core-certified. Legacy probation

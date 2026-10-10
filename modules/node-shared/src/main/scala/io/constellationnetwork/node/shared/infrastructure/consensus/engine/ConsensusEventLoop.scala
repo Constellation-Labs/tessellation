@@ -286,9 +286,6 @@ object ConsensusEventLoop {
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
     admissionNomineesOf: Outcome => Set[PeerId],
-    // Canonical parent-round committee used to reproduce the signing-participation
-    // auditor's deterministic target when authorizing a paired atomic admission vote.
-    parentRoundCommitteeOf: Outcome => Set[PeerId],
     openAdmissionCadenceOf: Key => Boolean,
     // Round index (snapshot ordinal) for the round-robin LeaderSchedule.
     roundIndexOf: Key => Long,
@@ -405,7 +402,6 @@ object ConsensusEventLoop {
         admissionVoter,
         probationPeersOf,
         admissionNomineesOf,
-        parentRoundCommitteeOf,
         openAdmissionCadenceOf,
         locallyObservedParentSignersOf,
         expandedBeyondSingletonOf,

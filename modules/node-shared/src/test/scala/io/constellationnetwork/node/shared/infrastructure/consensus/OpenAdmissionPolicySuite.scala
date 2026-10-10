@@ -378,14 +378,14 @@ object OpenAdmissionPolicySuite extends FunSuite {
     expect(OpenAdmissionPolicy.certificateAllowed(openTarget, Set(probationTarget), openCadenceAllowed = true))
   }
 
-  test("active penalties block open certificates but not consensus-agreed probation recovery") {
+  test("an active penalty or clearing cooldown blocks every certificate, probation recovery included") {
     val probationTarget = peer('a')
     val openTarget = peer('b')
     val activePenaltyPeers = Set(probationTarget, openTarget)
 
-    expect(!OpenAdmissionPolicy.penaltyBlocksCertificate(probationTarget, Set(probationTarget), activePenaltyPeers)) &&
-    expect(OpenAdmissionPolicy.penaltyBlocksCertificate(openTarget, Set(probationTarget), activePenaltyPeers)) &&
-    expect(!OpenAdmissionPolicy.penaltyBlocksCertificate(peer('c'), Set(probationTarget), activePenaltyPeers))
+    expect(OpenAdmissionPolicy.penaltyBlocksCertificate(probationTarget, activePenaltyPeers)) &&
+    expect(OpenAdmissionPolicy.penaltyBlocksCertificate(openTarget, activePenaltyPeers)) &&
+    expect(!OpenAdmissionPolicy.penaltyBlocksCertificate(peer('c'), activePenaltyPeers))
   }
 
   test("probation alone opens a bounded grace before the first vote on an off-cadence round") {
