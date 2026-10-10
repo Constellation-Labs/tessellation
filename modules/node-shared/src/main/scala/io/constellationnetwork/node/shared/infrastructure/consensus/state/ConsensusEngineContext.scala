@@ -110,7 +110,6 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Returns an empty map if the outcome carries no peerQuality (genesis / pre-v8 outcomes),
   // in which case the wider-pool reduces to `eligibleFacilitators` and preserves prior
   // behavior.
-  peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
   // Layer-specific extraction of the consensus-agreed Key of the carried outcome (the
   // last finalized snapshot ordinal). Used by `StallDetector`'s alpha.98 round-start
   // feasibility check: a peer whose locally-observed tip is < `lastOutcomeKeyOf(state.lastOutcome)`
@@ -194,7 +193,6 @@ object ConsensusEngineContext {
     isInBootstrap: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
     probationPeersOf: Outcome => Set[PeerId],
-    peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
     roundIndexOf: Key => Long,
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
@@ -239,7 +237,6 @@ object ConsensusEngineContext {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        peerQualityOf,
         lastOutcomeKeyOf,
         roundIndexOf,
         lastOutcomeEndTimeMsOf,

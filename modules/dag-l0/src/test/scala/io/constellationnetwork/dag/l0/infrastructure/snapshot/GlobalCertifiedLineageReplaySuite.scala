@@ -89,8 +89,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     artifactBytes: Vector[Byte],
     rewardsBytes: Vector[Byte],
     nextFacilitators: List[PeerId],
-    nextCore: List[PeerId],
-    nextTier1: List[PeerId],
     expandedBeyondSingleton: Boolean
   )
 
@@ -348,7 +346,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
           snapshotHash
         ),
         readmissionCountdown = SortedMap(peer(pairs(2)) -> 2),
-        peerTiers = SortedMap(peer(pairs.head) -> TierTransitions.Core),
         expandedBeyondSingleton = None
       )
   }
@@ -520,24 +517,14 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         .fromCertifiedParent[IO](
           key = ordinal.next,
           parentValue = provisionalValue,
-          parentRecentSigners = provisionalDerived.recentSigners,
-          parentControllerEvidence = provisionalDerived.controllerEvidence.getOrElse(SortedMap.empty),
-          parentCarried = CertifiedRoundCommitteeProjector.CarriedControllerState(
-            activeScores = provisionalDerived.activeAdmissionScores.toMap,
-            peerQuality = provisionalDerived.peerQuality.toMap,
-            peerTiers = provisionalDerived.peerTiers,
-            viewChanges = provisionalDerived.peerViewChanges.toMap,
-            selfHealth = provisionalDerived.peerSelfHealth.toMap
-          ),
           config = config,
-          coreCommitteeSize = 3,
           seedlistPeerIds = Set.empty,
           isContextEligible = _ => IO.pure(true),
           facilitatorSelector = FacilitatorSelector.make(None)
         )
         .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      finalFull = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.signingFacilitators))
-      finalCore = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.committees.core))
+      finalFull = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.votingCommittee))
+      finalCore = finalFull
       finalAuthority <- CertifiedConsensus.roundAuthority[IO](finalFull, finalCore)
       operationalStateHash <- Hasher[IO].hash(provisionalDerived.toOperationalState)
       value = provisionalValue.copy(
@@ -707,14 +694,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       next <- IO.fromOption(stateAdvancer.getConsensusOutcome(state).map(_._2))(
         new IllegalStateException("production DAG outcome transition rejected frame")
       )
-      committees = CommitteeBuilder.build(
-        next.facilitators.value,
-        next.peerTiers,
-        next.peerQuality,
-        coreFloor = 2,
-        minObservations = config.minParticipationObservations,
-        minRatio = config.minParticipationRatio
-      )
       proposalBytes <- serializer.serialize(value)
       outcomeBytes <- serializer.serialize(next)
       artifactBytes <- serializer.serialize(frame.artifact)
@@ -728,8 +707,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         artifactBytes.toVector,
         rewardsBytes.toVector,
         next.facilitators.value,
-        committees.core,
-        committees.tier1,
         next.expandedBeyondSingleton.contains(true)
       )
   }
@@ -799,9 +776,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         runs.warm.size === scripts.size,
         runs.warm.last.expandedBeyondSingleton,
         !laterSingletonBypass,
-        finalOutcome.recentSigners.size <= config.tighteningWindow,
         finalOutcome.recentRoundEndTimes.size <= config.tighteningWindow,
-        finalOutcome.controllerEvidence.exists(_.size <= config.tighteningWindow),
         finalOutcome.readmissionCountdown.get(peer(res.pairs(2))).isEmpty
       )
   }

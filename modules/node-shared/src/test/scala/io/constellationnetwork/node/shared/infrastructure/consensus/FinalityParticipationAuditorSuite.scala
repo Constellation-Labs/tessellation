@@ -67,8 +67,8 @@ object FinalityParticipationAuditorSuite extends FunSuite {
     expect(first.decision.exists(d => d.consecutiveMisses == 1 && !d.shouldVote)) &&
     expect(second.history.consecutiveMisses.values.forall(_ == 2)) &&
     expect(second.decision.exists(d => d.consecutiveMisses == 2 && !d.shouldVote)) &&
-    expect(third.history.consecutiveMisses.values.forall(_ == TierTransitions.DemotionConsecutiveMisses)) &&
-    expect(third.decision.exists(d => d.consecutiveMisses == TierTransitions.DemotionConsecutiveMisses && d.shouldVote))
+    expect(third.history.consecutiveMisses.values.forall(_ == FinalityParticipationAuditor.DefaultRequiredConsecutiveMisses)) &&
+    expect(third.decision.exists(d => d.consecutiveMisses == FinalityParticipationAuditor.DefaultRequiredConsecutiveMisses && d.shouldVote))
   }
 
   test("three misses do not emit an eviction vote while next-seat finality headroom remains") {

@@ -396,7 +396,6 @@ object GlobalCertifiedDownloadValidator {
           )
           _ <- Either.cond(candidate.finished.snapshotHash === value.artifactHash, (), "terminal_snapshot_hash_mismatch")
           _ <- Either.cond(candidate.finished.certifiedOutcome.contains(certified), (), "terminal_certificate_mismatch")
-          _ <- Either.cond(candidate.peerSelfHealth === value.observedSelfHealth, (), "terminal_self_health_mismatch")
           _ <- Either.cond(
             candidate.lastTimeoutCertificateVoters === value.timeoutVoters,
             (),

@@ -298,7 +298,6 @@ object ConsensusEventLoop {
     // singleton before its first 1 -> 2 expansion.
     expandedBeyondSingletonOf: Outcome => Boolean,
     lastSnapshotHashOf: Outcome => Hash,
-    peerQualityOf: Outcome => Map[PeerId, (Int, Int)],
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     getPeerChainTips: F[Map[PeerId, ChainTip]],
     // Optional local-only, lane-typed readiness probes. Global L0 keeps open admission Ready-only while allowing carried probation peers to
@@ -366,7 +365,6 @@ object ConsensusEventLoop {
         isInBootstrap,
         lastSnapshotHashOf,
         probationPeersOf,
-        peerQualityOf,
         _key.get _,
         roundIndexOf,
         lastOutcomeEndTimeMsOf,

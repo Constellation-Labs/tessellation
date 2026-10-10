@@ -18,6 +18,9 @@ import io.constellationnetwork.security.hash.Hash
   */
 object FinalityParticipationAuditor {
 
+  /** Consecutive locally observed signature misses before a node may vote to replace a signing member. */
+  val DefaultRequiredConsecutiveMisses: Int = 3
+
   final case class ObservedParent(ordinal: Long, hash: Hash)
 
   final case class MissHistory(
@@ -97,7 +100,7 @@ object FinalityParticipationAuditor {
     requiredMissDuration: FiniteDuration,
     inBootstrap: Boolean,
     previous: MissHistory,
-    requiredConsecutiveMisses: Int = TierTransitions.DemotionConsecutiveMisses
+    requiredConsecutiveMisses: Int = DefaultRequiredConsecutiveMisses
   ): Observation = {
     val required = math.max(1, requiredConsecutiveMisses)
 

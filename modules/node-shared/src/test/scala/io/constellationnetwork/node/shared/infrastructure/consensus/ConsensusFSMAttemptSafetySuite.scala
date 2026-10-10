@@ -221,7 +221,6 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         isInBootstrap = _ => false,
         lastSnapshotHashOf = _ => Hash.fromBytes("parent".getBytes("UTF-8")),
         probationPeersOf = _ => Set.empty,
-        peerQualityOf = _ => Map.empty,
         lastOutcomeKeyOf = _.key,
         roundIndexOf = _.value.value,
         lastOutcomeEndTimeMsOf = _ => None,

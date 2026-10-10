@@ -94,7 +94,7 @@ class StateTransitions[
   outcomeTrigger: Lens[Outcome, ConsensusTrigger]
 ) {
 
-  import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, peerQualityOf, queue, remover, storage, updater}
+  import ctx.{advancer, config, facilitatorSelector, gossip, logger => log, queue, remover, storage, updater}
   import io.constellationnetwork.node.shared.infrastructure.consensus.message.ConsensusAssembledVcc
 
   private def runOutcomeHook(stage: String, outcome: Outcome)(hook: Outcome => F[Unit]): F[Unit] =
@@ -111,42 +111,6 @@ class StateTransitions[
         _ => Async[F].unit
       )
     } yield ()
-
-  /** Deterministic witness pool for B1/B2/VCC certificate assembly.
-    *
-    * The pool unions consensus-agreed sets, then removes `target`:
-    *
-    *   1. `state.roundStartFacilitators` -- the frozen committee for this round. 2. `state.eligibleFacilitators` -- peers eligible to
-    *      facilitate THIS round (chronic-filtered subset of the previous outcome's participants). Always non-empty for active rounds. 3.
-    *      Peers in `lastOutcome.peerQuality` with `participated >= minParticipationObservations` -- anyone who has actually voted in at
-    *      least the observation-floor number of past rounds, regardless of whether they're currently in the chronic-excluded set.
-    *
-    * Determinism guarantees: both inputs are projections of `lastOutcome` which is signed and propagated as part of the previous snapshot.
-    * `minParticipationObservations` is in `ConsensusConfig.deterministicConfigHash`. Every honest node therefore computes the
-    * byte-identical witness pool from the same lastOutcome. The set semantics (Set[PeerId]) eliminates ordering as a determinism concern;
-    * cert builders sort the resulting votes into a SortedSet so serialization is stable downstream.
-    *
-    * Why widen at all: in the canonical "committee = previous signers" pattern, when 4 of 6 committee members are offline or stuck in
-    * `WaitingForDownload`, the round can't progress AND the eviction/admission cert that would normally rotate the committee also can't
-    * assemble (same supermajority gate). Letting peers with proven prior participation witness the cert -- without giving them a vote in
-    * the round itself -- breaks the deadlock without weakening the round's BFT guarantee. The wider pool only matters when there ARE peers
-    * outside the committee with peerQuality history; in normal ops with a healthy committee it has no practical effect because the
-    * committee dominates the union.
-    *
-    * Why this doesn't drift in steady state: peerQuality grows monotonically (entries are added, counters increment); it does not
-    * arbitrarily reshape. The wider pool is therefore a monotone function of round history and consensus-agreed observations.
-    *
-    * Returns the EXCLUSIVE pool (target removed). Callers do not need to filter again.
-    */
-  private[state] def widerWitnessPool(state: ConsensusState[Key, Status, Outcome, Kind], target: PeerId): Set[PeerId] =
-    WitnessPool
-      .forTarget(
-        state.eligibleFacilitators.value.toSet,
-        peerQualityOf(state.lastOutcome),
-        config.minParticipationObservations,
-        target
-      )
-      .union(state.roundStartFacilitators.value.toSet - target)
 
   /** The one certificate-voter universe: VCC/TC certificates are made only from uniquely identified frozen-Core voters and require the same
     * BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in the shared state machine prevents the VCC and TC
@@ -1180,15 +1144,7 @@ class StateTransitions[
                     // prevents a damaged Core committee from making its own repair impossible.
                     // The shared selector is also used by both proposal validators so assembly
                     // and acceptance cannot drift.
-                    val witnessPool =
-                      if (atomicReplacement) state.votingCommittee.toSet - target
-                      else
-                        EvictionVoterPool.select(
-                          target,
-                          false,
-                          state.votingCommittee.toSet,
-                          widerWitnessPool(state, target)
-                        )
+                    val witnessPool = EvictionVoterPool.select(target, state.votingCommittee.toSet)
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
                     EvictionCertificateBuilder
                       .build(target, singleReason, facHash, expectedLastSnap, matchingVotes, q, witnessPool) match {
@@ -1279,26 +1235,14 @@ class StateTransitions[
           // full rationale on decoupling the Core-sized liveness quorum from the broad
           // signing committee. Integer math via `QuorumPolicy.fromFraction`.
           val n = state.votingCommittee.size
-          val requiresCoreAdmissionCertification =
-            ctx.membershipPolicy.allowsCertifiedAtomicReplacement
-          val q = AdmissionVoterPool.requiredQuorum(
-            n,
-            config.quorumThresholdFraction,
-            requiresCoreAdmissionCertification
-          )
+          val q = AdmissionVoterPool.requiredQuorum(n, config.quorumThresholdFraction)
           // Open expansion is certified by Core only: Tier 1 remains outside the liveness
           // machinery and cannot become necessary for committee growth. The legacy probation
           // path retains its wider deterministic witness pool. Under certified atomic membership,
           // however, every admission-only transition changes the Core-certified proposal value,
           // so probation ACS assembly is Core-certified too.
           val isProbationReadmission = ctx.probationPeersOf(state.lastOutcome).contains(target)
-          val voterPool = AdmissionVoterPool.select(
-            target,
-            isProbationReadmission,
-            requiresCoreAdmissionCertification,
-            state.votingCommittee.toSet,
-            widerWitnessPool(state, target)
-          )
+          val voterPool = AdmissionVoterPool.select(target, state.votingCommittee.toSet)
           val eligibleVotes = votes.filter { case (voter, _) => voterPool.contains(voter) }
 
           if (eligibleVotes.size >= q) {

@@ -13,7 +13,7 @@ import io.constellationnetwork.security.hash.Hash
   */
 object AdmissionProofHistory {
 
-  val RequiredConsecutiveParents: Int = TierTransitions.DemotionConsecutiveMisses
+  val RequiredConsecutiveParents: Int = 3
 
   final case class ParentProofs(ordinal: Long, hash: Hash, signers: Set[PeerId])
 

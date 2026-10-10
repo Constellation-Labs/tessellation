@@ -195,10 +195,6 @@ object GlobalSnapshotConsensus {
           loggerBundle
         )
 
-      // Startup resolves this exact object once for both the join fence and live engine. Every
-      // downstream component reads the same projection; the fallback is retained defensively.
-      resolvedCoreCommitteeSize = effectiveConsensusConfig.coreCommitteeSize.getOrElse(3)
-
       certifiedVoteLockPersistence <- CertifiedVoteLockPersistence.forSnapshotOrdinal[F](
         appConfig.snapshot.snapshotPath / "certifiedVoteLocks"
       )
@@ -376,10 +372,6 @@ object GlobalSnapshotConsensus {
           peerQualityTracker,
           eventMempool,
           sharedServices.localHealthMonitor,
-          // v19 per-environment Core floor. v20 routes the env-resolved value through
-          // `effectiveConsensusConfig.coreCommitteeSize`, so this single binding is what
-          // both the state creator and `deterministicConfigHash` see.
-          resolvedCoreCommitteeSize,
           rawEvictionVoter,
           consensusQueue,
           finalityParticipationMissHistoryRef,
@@ -529,7 +521,7 @@ object GlobalSnapshotConsensus {
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
           (o: GlobalConsensusOutcome) => o.certifiedRoundCommittee.getOrElse(Set.empty[PeerId]),
           (key: GlobalSnapshotKey) =>
-            ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
+            AdmissionCadence.expansionAllowedAtOrdinal(
               key.value.value,
               effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
             ),
@@ -543,7 +535,6 @@ object GlobalSnapshotConsensus {
               o.expandedBeyondSingleton
             ),
           (o: GlobalConsensusOutcome) => o.finished.snapshotHash,
-          (o: GlobalConsensusOutcome) => o.peerQuality.toMap,
           (o: GlobalConsensusOutcome) => o.recentRoundEndTimes.lastOption.map(_._2),
           getPeerChainTips,
           admissionCandidateTipProbe.some,

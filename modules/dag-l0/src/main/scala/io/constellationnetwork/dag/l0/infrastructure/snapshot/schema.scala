@@ -6,7 +6,6 @@ import cats.syntax.show._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
-import io.constellationnetwork.node.shared.infrastructure.consensus.ControllerEvidenceDerivation
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
@@ -135,129 +134,18 @@ object schema {
     withdrawnFacilitators: WithdrawnFacilitators,
     eligibleFacilitators: EligibleFacilitators,
     finished: Finished,
+    // Exponential removal penalties for certificate-applied evictions (rounds remaining).
     removalPenalties: SortedMap[PeerId, Int] = SortedMap.empty,
-    deferralCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
-    peerQuality: SortedMap[PeerId, (Int, Int)] = SortedMap.empty,
-    // Lifetime count of times this peer was evicted/removed. Used to scale the
-    // `removalPenaltyRounds` exponentially so repeat offenders get progressively
-    // longer bans. Persisted in the signed outcome → consensus-agreed → all nodes
-    // compute the same penalty. Default empty is construction-only, not decode (see the type scaladoc).
     cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
-    // Sliding window of (ordinal -> proofs.size) for the last ~10 ordinals. Used to
-    // classify whether the chain has completed initial bootstrap (any entry >=
-    // bootstrapCompleteProofsThreshold => post-bootstrap). While in bootstrap,
-    // penalty accrual is suppressed so slow peers aren't ejected during the
-    // solo->multi transition. Chain-derived: seeded from `lastNGlobalSnapshotStorage`
-    // on rollback init, rolls forward one entry per outcome. Non-monotonic by
-    // design — if the cluster degrades to solo for > lookback ordinals, warmup
-    // re-engages, which is appropriate for re-stabilizing after mass peer loss.
+    // Canonical committee size per recent round.
     recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty,
-    // B2 re-admission gate: peers whose `removalPenalty` expired enter this map
-    // at `readmissionProbationRounds` and count down one per finished round. While
-    // the entry exists, the peer is excluded from both `fullBase` and
-    // `potentiallyCompeting` in state creation (non-bypassable, even on the
-    // withoutPenaltiesOnly path). Removal from this map happens when the advancer
-    // observes the peer in a quorum-certified AdmissionCertificate embedded in a
-    // proposal (re-admitted via consensus-witnessed current-tip participation).
-    // Consensus-agreed → deterministic across all peers.
+    // B2 sticky probation: peers awaiting a quorum-certified AdmissionCertificate.
     readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
-    // Self-health throttle: each peer's last-known `SelfHealthHint`
-    // copied from the accepted Proposal's `observedSelfHealth`. Read by the next round's
-    // `selectLeaderWeighted` to demote Degraded peers to tier 1 and Critical peers to
-    // tier 2 (strong demote, not hard exclude -- keeps liveness if all peers report Critical).
-    // Peers absent from the map default to `Healthy` at read time. Not persisted into the
-    // snapshot operational state (see docs/consensus/self-health-throttle.md, open decision
-    // 4): a freshly-restarted cluster picks leaders without hints until the first round of
-    // facilities arrives.
-    peerSelfHealth: SortedMap[PeerId, SelfHealthHint] = SortedMap.empty,
-    // Cumulative per-peer count of view changes this peer caused as a
-    // failed leader-of-the-view. Derived at round finalization by the StateAdvancer from
-    // (roundStartFacilitators, entropy, finalView, prior peerQuality, prior peerSelfHealth,
-    // prior peerViewChanges) -- all consensus-agreed inputs -- by recomputing
-    // selectLeaderWeighted at each view v in [0, state.viewNumber) and crediting the
-    // resulting peer with one view-change-caused. Used by the next round's
-    // selectLeaderWeighted to compute a fork-safe integer qualityScore =
-    // completed * (participated - viewChangesCaused) / participated^2 and hard-exclude
-    // peers below the configured floor. Default empty is construction-only; deployment-time schema
-    // separation relies on the advertised `versionHash` (see the type scaladoc), while historical
-    // decoding still requires the explicit compatibility rules above.
-    // Persisted via v20/v21
-    // PerPeerOperationalRecord so the chronic-leader filter survives cold-restart.
-    peerViewChanges: SortedMap[PeerId, Long] = SortedMap.empty,
-    // v22: rolling K-round signer-set window of (ordinal -> proofs-signer-set) for the
-    // last `tighteningWindow` outcomes. Repopulated every round (the just-completed
-    // round's signer set is appended) and used as the INPUT to the tier-demotion
-    // hysteresis: `TierTransitions.computeNextTiers` reads this window, and a Core peer
-    // absent from the most-recent `TierTransitions.DemotionConsecutiveMisses` signer
-    // sets is demoted to Tier 1. Window grows by one entry per round; entries older than
-    // K are dropped at outcome finalization. Each entry is the just-completed round's
-    // canonical signer set (ControllerEvidenceDerivation.canonicalCompletedSigners:
-    // round-start committee restricted to the accepted proposal's observedResponders,
-    // minus certificate-applied evictions), byte-identically derived on every honest
-    // node because every input is round-start-frozen or quorum-accepted-proposal data.
-    // Persisted via toOperationalState below; survives cold-restart
-    // so a freshly-rebooted cluster doesn't lose K rounds of demotion history. Default
-    // empty: outcomes that pre-date the window have no signer history, treated as a
-    // bootstrap window (the window-deep-enough guard in computeNextTiers suppresses
-    // demotion until the window fills).
-    recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]] = SortedMap.empty,
-    // v19/v22 multi-committee tier classification per peer. Computed at round-finalize by
-    // `TierTransitions.computeNextTiers(priorTiers, roundStartFacilitators,
-    // recentSignersWindow, roundCompleted)`, which per peer demotes a Core peer that was in
-    // roundStart but absent from the most-recent `DemotionConsecutiveMisses` signer sets.
-    // Consensus-agreed: all inputs are deterministic outcome fields, so every honest node
-    // produces the byte-identical map.
-    //
-    // Tier 2 (Core): full facilitator, in the LIVENESS quorum.
-    // Tier 1: witness-eligible, not in the LIVENESS quorum.
-    // Tier 0 (Witness): open membership, observation only.
-    //
-    // Persisted via `toOperationalState` -> `PerPeerOperationalRecord.tier`; restored on
-    // cold-restart at Main.scala. Default empty: pre-v19 outcomes have no tier history. At
-    // committee-derivation time `CommitteeBuilder` defaults an absent peer to Tier 1 (not
-    // Core) unless `peerQuality` proves it above the ratio bar -- the replacement for the
-    // original "everyone defaults to Core" bootstrap that let unclassified peers wedge the
-    // cluster.
-    peerTiers: SortedMap[PeerId, Int] = SortedMap.empty,
-    // v27 consensus peer controller score: bounded integral state for admitting peers into
-    // rewards-affecting active roles. Updated only from finalized evidence and persisted via
-    // peerHistory so a restart cannot promote a no-evidence peer.
-    activeAdmissionScores: SortedMap[PeerId, Int] = SortedMap.empty,
-    // v28 controller evidence: voters from the TimeoutCertificate embedded in the
-    // accepted proposal for the just-finalized round. This field is not a long-lived
-    // history window; the bounded integral `activeAdmissionScores` is the durable
-    // controller state. Persisting this one-round set makes the -D timeout-missing
-    // penalty an outcome-derived fact instead of a local timeout-cache observation.
     lastTimeoutCertificateVoters: SortedSet[PeerId] = SortedSet.empty,
-    // v19 phase 2 view-from-time anchor: sliding window of (ordinal -> consensusEndTime).
-    // `consensusEndTime` = `max(median(Facility.proposerClockMs), parent.consensusEndTime + 1)`,
-    // computed from the consensus-agreed Facility set at outcome finalization. Bounded by
-    // the same `tighteningWindow` as `recentSigners`. Consumed by the next round's
-    // view-from-time mechanism. Persisted via `toOperationalState` (Option-wrapped at the
-    // snapshot boundary for derevo back-compat with pre-v19 snapshots). Default empty:
-    // window has not yet been populated; view derivation falls back to phase 1
-    // `viewChangeVotes.maxToView`.
+    // View-from-time anchors.
     recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty,
-    // Controller evidence stage 1 (write-only, no consumer yet): bounded window of
-    // (ordinal -> ControllerEvidenceEntry) recording the canonical facts of each finalized
-    // round -- round-start committee, completed signer set, certified timeout voters,
-    // certified admissions, certified evictions. Bounded by the same `tighteningWindow`
-    // as `recentSigners`. This is the signed-chain evidence that
-    // `ControllerEvidenceDerivation` recomputes per-peer scores / tiers / quality from,
-    // replacing (at stage 4) the carried maps above that a divergent restart seed can
-    // poison (the alpha.92/129/147 wedge class). Option-wrapped for circe back-compat:
-    // outcomes written before this field decode the missing key to None.
-    controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]] = None,
-    // Controller evidence stage 3 (write-only, no consumer yet): cert-anchored absolute
-    // penalty horizon per peer. An EvictionCertificate applied at ordinal N writes
-    // `target -> N + penaltyDurationOrdinals`; an AdmissionCertificate clears the entry;
-    // expired entries (<= current key) are dropped at finalization. Pure ordinal
-    // comparisons only -- no per-round countdown mutation that a restart could observe
-    // half-applied. Option-wrapped for circe back-compat like `controllerEvidence`.
+    // Certificate-anchored absolute penalty horizons.
     penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None,
-    // V35 monotonic lineage fact. False only on the canonical from-genesis singleton root;
-    // once a certified committee reaches two members this remains true forever, including
-    // after later degradation. Option preserves historical outcome decoding.
     expandedBeyondSingleton: Option[Boolean] = None
   ) {
 
@@ -269,48 +157,24 @@ object schema {
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
       else facilitators.value
 
-    // v20: package the consensus-derived peer-behavior counters for persistence
-    // on the next round's incremental snapshot.
-    //
-    // This is the FULL operational state (written to the snapshot / PeerHistorySidecar
-    // after finalization). The signed-artifact path is narrower: `signedArtifactPeerHistory`
-    // below carries the deterministic chain-derived fields ONLY (recentProofSizes,
-    // recentSigners, controllerEvidence, penaltyUntil -- fully sorted, byte-identical
-    // across honest nodes) and keeps the locally-divergent `perPeer` /
-    // `recentRoundEndTimes` out of the proposal-critical bytes.
-    //
-    // v21/v27 layout: peer-keyed dimensions collapsed into a single map keyed by
-    // PeerId so each id appears once. The union of keys across the peer-keyed
-    // source maps becomes the per-peer map's key set;
-    // absent peers contribute `PerPeerOperationalRecord.empty` semantics on the consumer side.
     def toOperationalState: ConsensusOperationalState =
       GlobalConsensusOutcome.operationalState(
         removalPenalties,
-        deferralCountdown,
-        peerQuality,
         cumulativeMissCounts,
         recentProofSizes,
         readmissionCountdown,
-        peerViewChanges,
-        recentSigners,
-        peerTiers,
-        activeAdmissionScores,
         recentRoundEndTimes,
-        controllerEvidence,
         penaltyUntil
       )
 
-    // Stage 4: the peerHistory payload packed into SIGNED artifact bytes at proposal build
-    // and validateArtifact re-execution. Evidence-only: `perPeer` and `recentRoundEndTimes`
-    // (the locally-divergent fields behind the alpha.92/129/147 wedges) are excluded;
-    // delegation to the shared helper keeps the dag-l0 / currency-l0 signed subsets from
-    // drifting apart.
+    /** The deterministic, chain-derived subset packed into the next artifact's signed `peerHistory`. Per-peer bookkeeping is node-local and
+      * stays out of signed bytes.
+      */
     def signedArtifactPeerHistory: ConsensusOperationalState =
-      ControllerEvidenceDerivation.signedArtifactOperationalState(
+      ConsensusOperationalState(
+        perPeer = SortedMap.empty,
         recentProofSizes = recentProofSizes,
-        recentSigners = recentSigners,
-        controllerEvidence = controllerEvidence,
-        penaltyUntil = penaltyUntil
+        penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
   }
 
@@ -327,77 +191,34 @@ object schema {
 
   object GlobalConsensusOutcome {
 
-    /** Pack the post-round operational state once for both the persisted outcome and the v35 QC commitment. Keeping this as the single
-      * constructor prevents proposal-time certification from drifting away from `GlobalConsensusOutcome.toOperationalState`.
-      */
+    /** Pack the post-round operational state once for both the persisted outcome and the certified commitment. */
     def operationalState(
       removalPenalties: SortedMap[PeerId, Int],
-      deferralCountdown: SortedMap[PeerId, Int],
-      peerQuality: SortedMap[PeerId, (Int, Int)],
       cumulativeMissCounts: SortedMap[PeerId, Long],
       recentProofSizes: SortedMap[SnapshotOrdinal, Int],
       readmissionCountdown: SortedMap[PeerId, Int],
-      peerViewChanges: SortedMap[PeerId, Long],
-      recentSigners: SortedMap[SnapshotOrdinal, SortedSet[PeerId]],
-      peerTiers: SortedMap[PeerId, Int],
-      activeAdmissionScores: SortedMap[PeerId, Int],
       recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
-      controllerEvidence: Option[SortedMap[SnapshotOrdinal, ControllerEvidenceEntry]],
       penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]]
     ): ConsensusOperationalState = {
-      val keys: Set[PeerId] =
-        peerQuality.keySet |
-          removalPenalties.keySet |
-          cumulativeMissCounts.keySet |
-          readmissionCountdown.keySet |
-          deferralCountdown.keySet |
-          peerViewChanges.keySet |
-          peerTiers.keySet |
-          activeAdmissionScores.keySet
+      val keys: Set[PeerId] = removalPenalties.keySet | cumulativeMissCounts.keySet | readmissionCountdown.keySet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
         SortedMap.from(
           keys.iterator.map { pid =>
             pid -> PerPeerOperationalRecord(
-              quality = peerQuality.getOrElse(pid, (0, 0)),
               removalPenalty = removalPenalties.getOrElse(pid, 0),
               cumulativeMissCount = cumulativeMissCounts.getOrElse(pid, 0L),
-              readmissionCountdown = ReadmissionMaintenance.persistenceValue(readmissionCountdown, pid),
-              deferralCountdown = deferralCountdown.getOrElse(pid, 0),
-              // v16: Option-wrap so absent peers / pre-v16 readers see no key under
-              // dropNullValues=true. Some(0) would render as "0" and break byte-stable
-              // back-compat; only emit Some when there is actual history to persist.
-              viewChangesCaused = peerViewChanges.get(pid).filter(_ > 0L),
-              // v19: only emit Some when there is an actual tier classification on this
-              // peer. Absent peers / no-history readers see no key under dropNullValues=true,
-              // and CommitteeBuilder defaults `None` to bootstrap-Tier-2 at consume time.
-              tier = peerTiers.get(pid),
-              activeAdmissionScore = activeAdmissionScores.get(pid).filter(_ > 0)
+              readmissionCountdown = ReadmissionMaintenance.persistenceValue(readmissionCountdown, pid)
             )
           }
         )
       ConsensusOperationalState(
         perPeer = perPeer,
         recentProofSizes = recentProofSizes,
-        // Emit `Some(nonEmptyMap)` so `dropNullValues=true` keeps the field out of
-        // byte-stable encodings written before this field existed; emit `None` while
-        // the window is empty (bootstrap, rollback to an old snapshot) so the restored
-        // window stays empty and the tier-demotion hysteresis stays in its bootstrap
-        // (no-demote) regime until the window refills.
-        recentSigners = if (recentSigners.nonEmpty) Some(recentSigners) else None,
-        // v19 phase 2: same Option-wrap pattern as recentSigners. None at the snapshot
-        // boundary means the cluster has not yet produced a round whose Facility set
-        // carried enough `proposerClockMs` values to compute the median (bootstrap or
-        // partial-deploy); view derivation falls back to phase 1 vote-driven tick.
         recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None,
-        // Stage 4: persist the evidence window + cert-anchored penalties so a cold restart
-        // re-seeds them from the sidecar / snapshot.peerHistory and the evidence-derived
-        // controller state survives the restart boundary. Same non-empty Option-wrap as
-        // recentSigners (the outcome already holds None-while-empty; filter defends the
-        // Some(empty) case so dropNullValues byte-stability is preserved).
-        controllerEvidence = controllerEvidence.filter(_.nonEmpty),
         penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
     }
+
     implicit val _artifact: Lens[GlobalConsensusOutcome, Signed[GlobalSnapshotArtifact]] =
       GenLens[GlobalConsensusOutcome](_.finished.signedMajorityArtifact)
     implicit val _context: Lens[GlobalConsensusOutcome, GlobalSnapshotContext] =

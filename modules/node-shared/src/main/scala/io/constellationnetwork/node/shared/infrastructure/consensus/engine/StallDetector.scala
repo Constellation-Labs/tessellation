@@ -1523,7 +1523,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       ctx.membershipPolicy.allowsCertifiedAtomicReplacement
     val selfIsCore = core.contains(selfId)
     val admissionVoteAuthority =
-      AdmissionVoterPool.allowsVoteEmission(selfId, requireCoreCertification, core)
+      AdmissionVoterPool.allowsVoteEmission(selfId, core)
     // Preserve the cached gossip-tip policy for callers without a direct probe. Global L0
     // open and probation lanes use fresh exact observations below.
     // Certified atomic replacement deliberately tightens the legacy cache predicate without

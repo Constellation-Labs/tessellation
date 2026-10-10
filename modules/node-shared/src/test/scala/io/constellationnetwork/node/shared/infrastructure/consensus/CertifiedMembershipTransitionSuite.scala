@@ -255,23 +255,13 @@ object CertifiedMembershipTransitionSuite extends FunSuite {
       maxChanges = 1
     )
     val replacement = CertifiedMembershipTransition.applyTo(current, Set(admitted), Set(silent), maxChanges = 1)
-    val committees = CommitteeBuilder.build(
-      candidates = replacement.toOption.get,
-      priorTiers = scala.collection.immutable.SortedMap(current.map(_ -> TierTransitions.Core): _*),
-      peerQuality = Map.empty,
-      coreFloor = 3,
-      minObservations = 3,
-      minRatio = 2.0 / 3.0,
-      forcedTier1Peers = Set(admitted)
-    )
 
     expect.same(3, headroom.currentFinalityFloor) &&
     expect.same(4, headroom.nextFinalityFloor) &&
     expect(!expansionVote) &&
     expect(replacementVote) &&
     expect(replacement.exists(_.size == 4)) &&
-    expect(committees.tier1.contains(admitted)) &&
-    expect(!committees.core.contains(admitted)) &&
+    expect(replacement.exists(_.contains(admitted)), "the admitted replacement votes in the single committee") &&
     expect.same(3, FinalityHeadroom.evaluate(replacement.toOption.get.toSet, observed, quorumFraction).currentFinalityFloor) &&
     expect(CertifiedMembershipTransition.validate(current.toSet, Set.empty, Set(silent), 1).isLeft)
   }
