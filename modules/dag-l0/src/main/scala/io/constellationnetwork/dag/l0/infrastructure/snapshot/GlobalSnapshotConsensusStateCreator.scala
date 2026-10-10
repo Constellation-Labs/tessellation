@@ -246,6 +246,7 @@ object GlobalSnapshotConsensusStateCreator {
               locallyObservedParentSigners,
               lastOutcome.key.value.value,
               lastOutcome.finished.snapshotHash,
+              DeterministicRotation.opportunityIndex(key.value.value, config.activeAdmissionExpansionIntervalRounds),
               observedAt,
               requiredMissDuration,
               inBootstrap,

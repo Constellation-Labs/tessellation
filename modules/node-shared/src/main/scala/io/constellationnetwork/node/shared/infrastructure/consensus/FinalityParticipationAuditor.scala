@@ -1,7 +1,5 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus
 
-import cats.Order
-
 import scala.concurrent.duration.{Duration, FiniteDuration}
 
 import io.constellationnetwork.schema.peer.PeerId
@@ -73,16 +71,9 @@ object FinalityParticipationAuditor {
   def selectTarget(
     auditablePeers: Set[PeerId],
     parentRoundCommittee: Set[PeerId],
-    entropy: Hash
-  ): Option[PeerId] = {
-    implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
-
-    auditablePeers
-      .intersect(parentRoundCommittee)
-      .toList
-      .sorted(scoreOrder.toOrdering)
-      .headOption
-  }
+    rotationIndex: Long
+  ): Option[PeerId] =
+    DeterministicRotation.rotated(auditablePeers.intersect(parentRoundCommittee), rotationIndex).headOption
 
   /** Advance local proof-miss history once for the finalized parent and evaluate this round's consensus-agreed audit target.
     *
@@ -99,6 +90,9 @@ object FinalityParticipationAuditor {
     locallyObservedParentSigners: Set[PeerId],
     parentOrdinal: Long,
     entropy: Hash,
+    // Audit-target rotation index derived from the current round ordinal (DeterministicRotation.opportunityIndex). Must match the
+    // StallDetector replacement pairing so every node audits the same target.
+    rotationIndex: Long,
     observedAt: FiniteDuration,
     requiredMissDuration: FiniteDuration,
     inBootstrap: Boolean,
@@ -141,7 +135,7 @@ object FinalityParticipationAuditor {
       val nextHistory = MissHistory(Some(observedParent), nextMisses, nextMissStartedAt)
       val decision = Option
         .when(currentCore.contains(selfId)) {
-          selectTarget(auditablePeers, parentRoundCommittee, entropy)
+          selectTarget(auditablePeers, parentRoundCommittee, rotationIndex)
         }
         .flatten
         .map { target =>

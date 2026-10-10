@@ -22,7 +22,9 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
   private val parentCommittee = committee
   private val parentHash = Hash.fromBytes("parent".getBytes("UTF-8"))
   private val facilitatorsHash = Hash.fromBytes("frozen-facilitators".getBytes("UTF-8"))
-  private val target = FinalityParticipationAuditor.selectTarget(committee, parentCommittee, parentHash).get
+  // Index 1 so the deterministic target is another committee member, not this voter.
+  private val auditIndex = 1L
+  private val target = FinalityParticipationAuditor.selectTarget(committee, parentCommittee, auditIndex).get
   private val exactVote = EvictionVote(target, EvictionReason.Silent, facilitatorsHash, parentHash)
 
   private def signed(voter: PeerId, vote: EvictionVote): Signed[EvictionVote] =
@@ -49,7 +51,7 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
       selfEvictionVotes = votes,
       expectedFacilitatorsHash = expectedFacilitatorsHash,
       expectedParentHash = expectedParentHash,
-      entropy = parentHash,
+      rotationIndex = auditIndex,
       maxTargets = maxTargets
     )
 
@@ -82,7 +84,7 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
   }
 
   test("a self-target eviction intent cannot authorize its paired admission lane") {
-    val selfOnlyTarget = FinalityParticipationAuditor.selectTarget(Set(self), Set(self), parentHash).get
+    val selfOnlyTarget = FinalityParticipationAuditor.selectTarget(Set(self), Set(self), 0L).get
     val selfVote = EvictionVote(self, EvictionReason.Silent, facilitatorsHash, parentHash)
 
     expect.same(
@@ -110,7 +112,7 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
       committee = committee,
       probation = Set(candidate),
       alreadyVotedBySelf = Set.empty,
-      entropy = parentHash,
+      rotationIndex = auditIndex,
       maxOpenAdmissions = 1,
       selfIsCore = true
     )

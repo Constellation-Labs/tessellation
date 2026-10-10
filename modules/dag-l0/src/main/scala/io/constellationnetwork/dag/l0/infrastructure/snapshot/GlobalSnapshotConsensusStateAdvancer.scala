@@ -1448,7 +1448,11 @@ object GlobalSnapshotConsensusStateAdvancer {
 
         Option
           .when(config.activeAdmissionMaxExpansionPerRound > 0)(
-            AdmissionNomineeSelector.select(candidates, excluded, state.entropy)
+            AdmissionNomineeSelector.select(
+              candidates,
+              excluded,
+              DeterministicRotation.nominationIndex(state.key.value.value, config.activeAdmissionExpansionIntervalRounds)
+            )
           )
           .flatten
       }
@@ -1529,14 +1533,14 @@ object GlobalSnapshotConsensusStateAdvancer {
             AdmissionCertificateSelector.selectOpenReadyForReplacement(
               cadenceEligible,
               config.activeAdmissionMaxExpansionPerRound,
-              state.entropy,
+              DeterministicRotation.opportunityIndex(state.key.value.value, config.activeAdmissionExpansionIntervalRounds),
               probation
             )
           else
             AdmissionCertificateSelector.selectForProposal(
               cadenceEligible,
               config.activeAdmissionMaxExpansionPerRound,
-              state.entropy,
+              DeterministicRotation.opportunityIndex(state.key.value.value, config.activeAdmissionExpansionIntervalRounds),
               probation
             )
         val cadenceSuppressed = assembled -- cadenceEligible

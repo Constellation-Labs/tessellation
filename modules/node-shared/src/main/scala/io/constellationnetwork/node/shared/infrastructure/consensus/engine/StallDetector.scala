@@ -1572,6 +1572,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val selfEvictionVotes = resources.evictionVotes.iterator.flatMap {
       case (target, voters) => voters.get(selfId).map(vote => target -> vote)
     }.toMap
+    val admissionRotationIndex =
+      DeterministicRotation.opportunityIndex(ctx.roundIndexOf(state.key), config.activeAdmissionExpansionIntervalRounds)
     val atomicReplacementIntentTargets = StallDetector.atomicReplacementIntentTargets(
       selfId = selfId,
       selfIsCore = selfIsCore,
@@ -1582,7 +1584,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       selfEvictionVotes = selfEvictionVotes,
       expectedFacilitatorsHash = roundStartFacilitatorsHash,
       expectedParentHash = expectedTip,
-      entropy = expectedTip,
+      rotationIndex = admissionRotationIndex,
       maxTargets = configuredMaxAdmissions
     )
     val hasAtomicReplacementIntent = atomicReplacementIntentTargets.nonEmpty
@@ -1602,7 +1604,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       committee = committee,
       probation = probation,
       alreadyVotedBySelf = alreadyVotedBySelf,
-      entropy = expectedTip,
+      rotationIndex = admissionRotationIndex,
       maxOpenAdmissions = maxOpenAdmissions,
       selfIsCore = selfIsCore
     )
@@ -1701,7 +1703,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         // target after failure. A caller that supplies no probe retains the cached-mesh
         // compatibility behavior.
         val fixedProbationTarget =
-          admissionCandidateTipProbe.flatMap(_ => AdmissionCandidateTipProbe.probationTargetForRound(probation, expectedTip))
+          admissionCandidateTipProbe.flatMap(_ =>
+            AdmissionCandidateTipProbe.probationTargetForRound(probation, ctx.roundIndexOf(state.key))
+          )
         val probationProbeTarget = for {
           _ <- admissionCandidateTipProbe
           target <- fixedProbationTarget
@@ -2087,13 +2091,13 @@ object StallDetector {
     selfEvictionVotes: Map[PeerId, Signed[EvictionVote]],
     expectedFacilitatorsHash: Hash,
     expectedParentHash: Hash,
-    entropy: Hash,
+    rotationIndex: Long,
     maxTargets: Int
   ): List[PeerId] =
     if (!atomicReplacementEnabled || !selfIsCore || !cadenceAllowed || maxTargets <= 0) List.empty
     else
       FinalityParticipationAuditor
-        .selectTarget(currentCommittee, parentRoundCommittee, entropy)
+        .selectTarget(currentCommittee, parentRoundCommittee, rotationIndex)
         .filter { target =>
           target =!= selfId &&
           currentCommittee.contains(target) &&
@@ -2167,7 +2171,7 @@ object StallDetector {
     committee: Set[PeerId],
     probation: Set[PeerId],
     alreadyVotedBySelf: Set[PeerId],
-    entropy: Hash,
+    rotationIndex: Long,
     maxOpenAdmissions: Int,
     selfIsCore: Boolean
   ): List[PeerId] = {
@@ -2177,12 +2181,8 @@ object StallDetector {
 
     if (!selfIsCore || remainingBudget == 0) List.empty
     else {
-      implicit val scoreOrder: Order[PeerId] = FacilitatorSelector.orderByScore(entropy)
-      val fixedRoundTargets = candidates.iterator
-        .filterNot(pid => committee.contains(pid) || probation.contains(pid))
-        .toList
-        .distinct
-        .sorted(scoreOrder.toOrdering)
+      val fixedRoundTargets = DeterministicRotation
+        .rotated(candidates.iterator.filterNot(pid => committee.contains(pid) || probation.contains(pid)).toList, rotationIndex)
         .take(budget)
 
       fixedRoundTargets.filterNot(alreadyVotedBySelf.contains).take(remainingBudget)

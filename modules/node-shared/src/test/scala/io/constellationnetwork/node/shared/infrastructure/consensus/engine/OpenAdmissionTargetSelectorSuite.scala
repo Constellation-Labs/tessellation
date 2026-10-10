@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.infrastructure.consensus.engine
 
-import io.constellationnetwork.node.shared.infrastructure.consensus.{AdmissionNomineeSelector, FacilitatorSelector}
+import io.constellationnetwork.node.shared.infrastructure.consensus.{AdmissionNomineeSelector, DeterministicRotation}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -15,7 +15,7 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
   private val b = peer('b')
   private val c = peer('c')
   private val d = peer('d')
-  private val entropy = Hash.fromBytes("accepted-parent-entropy".getBytes("UTF-8"))
+  private val rotationIndex = 3L
   private val candidates = List(a, b, c, d)
 
   private def select(
@@ -31,12 +31,12 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
       committee = committee,
       probation = probation,
       alreadyVotedBySelf = alreadyVoted,
-      entropy = entropy,
+      rotationIndex = rotationIndex,
       maxOpenAdmissions = budget,
       selfIsCore = selfIsCore
     )
 
-  test("candidate input permutations converge on one rendezvous-ranked target") {
+  test("candidate input permutations converge on one rotation-selected target") {
     val selections = candidates.permutations.map(permutation => select(input = permutation)).toList
     expect(selections.nonEmpty).and(forEach(selections)(selection => expect.same(selections.head, selection)))
   }
@@ -47,8 +47,7 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
   }
 
   test("selection fixes the target before local readiness can cause an abstention") {
-    implicit val order = FacilitatorSelector.orderByScore(entropy)
-    val ranked = candidates.sorted(order.toOrdering)
+    val ranked = DeterministicRotation.rotated(candidates, rotationIndex)
 
     // The caller may find ranked.head absent from its local at-tip map. It receives no
     // alternative here, so filtering that target locally yields abstention, not ranked(1).
@@ -71,7 +70,7 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
     val leaderLocal = List(a, b, c)
     val followerALocal = List(a, b)
     val followerBLocal = List(c, d)
-    val nominee = AdmissionNomineeSelector.select(leaderLocal, Set.empty, entropy).toList
+    val nominee = AdmissionNomineeSelector.select(leaderLocal, Set.empty, rotationIndex).toList
 
     val followerA = select(input = nominee)
     val followerB = select(input = nominee)
