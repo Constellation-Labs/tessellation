@@ -138,7 +138,7 @@ object GlobalSnapshotConsensusStateAdvancer {
     evictedPeers: Set[PeerId],
     removalPenalties: SortedMap[PeerId, Int],
     cumulativeMissCounts: SortedMap[PeerId, Long],
-    recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+    recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int],
     readmissionCountdown: SortedMap[PeerId, Int],
     lastTimeoutCertificateVoters: SortedSet[PeerId],
     recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
@@ -149,7 +149,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       GlobalConsensusOutcome.operationalState(
         removalPenalties,
         cumulativeMissCounts,
-        recentProofSizes,
+        recentCommitteeSizes,
         readmissionCountdown,
         recentRoundEndTimes,
         penaltyUntil
@@ -285,11 +285,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       private case class Transition(newState: GlobalSnapshotConsensusState, sideEffect: F[Unit])
 
       override def isBootstrapActive(lastOutcome: GlobalConsensusOutcome): Boolean =
-        !lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
-
-      // Certified consensus always applies the committee-supermajority finality floor over the frozen round committee
-      // (see FinalityQuorum / ConsensusStateAdvancer.clusterFloorActive), including during bootstrap.
-      override protected def clusterFloorActive(state: GlobalSnapshotConsensusState): Boolean = true
+        !BootstrapCommittee.reached(lastOutcome.recentCommitteeSizes.values)
 
       private def deriveGlobalOutcomeState(
         state: GlobalSnapshotConsensusState,
@@ -391,12 +387,12 @@ object GlobalSnapshotConsensusStateAdvancer {
             }
 
             // Bootstrap warmup: classify the chain as post-bootstrap once a recent round
-            // has committee size >= bootstrapCompleteProofsThreshold. Uses
+            // has committee size >= BootstrapCommittee.MinimumSize. Uses
             // `state.facilitators.value.size` (consensus-agreed) rather than
             // `f.signedMajorityArtifact.proofs.size` (local-observed) so all nodes reach
             // the same bootstrap/post-bootstrap classification deterministically.
             val isInBootstrap =
-              !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
+              !BootstrapCommittee.reached(state.lastOutcome.recentCommitteeSizes.values)
 
             // Penalize only consensus-agreed evictions (facility fork-eviction).
             val penalizedThisRound =
@@ -430,8 +426,8 @@ object GlobalSnapshotConsensusStateAdvancer {
             val bootstrapLookbackOrdinals = 10L
             val currentOrdValue = state.key.value.value
             val minOrdinalValue = math.max(0L, currentOrdValue - bootstrapLookbackOrdinals)
-            val newRecentProofSizes: SortedMap[SnapshotOrdinal, Int] =
-              state.lastOutcome.recentProofSizes
+            val newRecentCommitteeSizes: SortedMap[SnapshotOrdinal, Int] =
+              state.lastOutcome.recentCommitteeSizes
                 .updated(state.key, canonicalCommitteeForRound.size)
                 .filter { case (ord, _) => ord.value.value >= minOrdinalValue }
 
@@ -470,7 +466,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               evictedPeers = evictedPeers,
               removalPenalties = finalPenalties,
               cumulativeMissCounts = newCumulative,
-              recentProofSizes = newRecentProofSizes,
+              recentCommitteeSizes = newRecentCommitteeSizes,
               readmissionCountdown = finalReadmission,
               lastTimeoutCertificateVoters = state.acceptedTimeoutCertificateVoters,
               recentRoundEndTimes = newRecentRoundEndTimes,
@@ -520,7 +516,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 f,
                 removalPenalties = derived.removalPenalties,
                 cumulativeMissCounts = derived.cumulativeMissCounts,
-                recentProofSizes = derived.recentProofSizes,
+                recentCommitteeSizes = derived.recentCommitteeSizes,
                 readmissionCountdown = derived.readmissionCountdown,
                 lastTimeoutCertificateVoters = derived.lastTimeoutCertificateVoters,
                 recentRoundEndTimes = derived.recentRoundEndTimes,
@@ -2254,11 +2250,11 @@ object GlobalSnapshotConsensusStateAdvancer {
           .pure[F]
 
       // Phase B1 bootstrap gate. Mirrors Phase 4's penalty-accrual suppression: while the chain
-      // has not yet produced a snapshot with >= bootstrapCompleteProofsThreshold signers, the
+      // has not yet had a round whose committee reached BootstrapCommittee.MinimumSize, the
       // cluster is still stabilizing and any B1 activity is unsafe (causes cascading committee
       // splits as observed in early fork-recovery E2E runs).
       private def isInBootstrap(state: GlobalSnapshotConsensusState): Boolean =
-        !state.lastOutcome.recentProofSizes.values.exists(_ >= config.bootstrapCompleteProofsThreshold)
+        !BootstrapCommittee.reached(state.lastOutcome.recentCommitteeSizes.values)
 
       /** Validate structural invariants on every embedded `EvictionCertificate`:
         *   - reject entirely if the node is still in bootstrap (honest leaders must not embed certs before the cluster has stabilized)
@@ -3212,7 +3208,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             s"peerHistory.present(leader=${leader.isDefined},own=${own.isDefined})"
           ),
           Option.when(leader.map(_.perPeer) =!= own.map(_.perPeer))("peerHistory.perPeerDiffer"),
-          Option.when(leader.map(_.recentProofSizes) =!= own.map(_.recentProofSizes))("peerHistory.recentProofSizesDiffer"),
+          Option.when(leader.map(_.recentCommitteeSizes) =!= own.map(_.recentCommitteeSizes))("peerHistory.recentCommitteeSizesDiffer"),
           Option.when(leader.flatMap(_.recentRoundEndTimes) =!= own.flatMap(_.recentRoundEndTimes))(
             "peerHistory.recentRoundEndTimesDiffer"
           ),
@@ -3328,7 +3324,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           "nodeCollateralWithdrawals" -> serializedFieldDigest(artifact.nodeCollateralWithdrawals),
           "peerHistory" -> serializedFieldDigest(artifact.peerHistory),
           "peerHistory.perPeer" -> serializedFieldDigest(artifact.peerHistory.map(_.perPeer)),
-          "peerHistory.recentProofSizes" -> serializedFieldDigest(artifact.peerHistory.map(_.recentProofSizes)),
+          "peerHistory.recentCommitteeSizes" -> serializedFieldDigest(artifact.peerHistory.map(_.recentCommitteeSizes)),
           "peerHistory.recentRoundEndTimes" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.recentRoundEndTimes)),
           "peerHistory.penaltyUntil" -> serializedFieldDigest(artifact.peerHistory.flatMap(_.penaltyUntil)),
           "version" -> serializedFieldDigest(artifact.version)
@@ -3735,7 +3731,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             val fullCommitteeSigned = validSignatures.size >= fullCommittee
             // The finalization gate is the LAST quorum chokepoint: signers must reach the committee-supermajority
             // finality floor over the frozen round committee, so a minority Core can never finalize.
-            val actualFinalityRequired = finalityQuorum(state)
+            val actualFinalityRequired = committeeQuorum(state)
             val canFinalize = validSignatures.size >= actualFinalityRequired
             for {
               // Hash over canonical committee: this hash lands in Finished (and
@@ -3884,7 +3880,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
               // v32 (stage 4): sign ONLY the deterministic chain-derived windows
-              // (recentProofSizes, recentSigners, controllerEvidence, penaltyUntil).
+              // (recentCommitteeSizes, recentSigners, controllerEvidence, penaltyUntil).
               // perPeer / recentRoundEndTimes are locally divergent (the alpha.92/129/147
               // wedge class) and stay out of the signed bytes; see
               // GlobalConsensusOutcome.signedArtifactPeerHistory.

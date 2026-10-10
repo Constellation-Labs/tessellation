@@ -34,7 +34,7 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
   pureTest("schema v37 golden: the default deterministicConfigHash is pinned") {
     // Re-approve deliberately whenever a deterministicConfigHash input or consensusSchemaVersion changes.
     expect.same(37, baseConfig.consensusSchemaVersion) &&
-    expect.same("03dcc3dc8b909c92a2159fd260ef6fdc305f136558e76b86986dfc9725c5f2c0", baseConfig.deterministicConfigHash.value)
+    expect.same("7aceffe3e851a67fa059f8ca410c52e21196c09f16ee2ef0d98994c15e6c0ff8", baseConfig.deterministicConfigHash.value)
   }
 
   pureTest("divergent quorum threshold between operators is detected before consensus") {
@@ -66,12 +66,10 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(short.deterministicConfigHash != long.deterministicConfigHash)
   }
 
-  pureTest("signatureGracePeriod is NOT in deterministicConfigHash (timing-only)") {
-    // The canonical snapshotHash is the agreed ARTIFACT hash, not the signed-artifact hash, so divergent
-    // grace values produce the same downstream hash and must NOT enter the config hash.
+  pureTest("signatureGracePeriod is in deterministicConfigHash (it bounds the certified commit evidence)") {
     val a = baseConfig.copy(signatureGracePeriod = 3.seconds)
-    val b = baseConfig.copy(signatureGracePeriod = 9.seconds)
-    expect.same(a.deterministicConfigHash, b.deterministicConfigHash)
+    val b = baseConfig.copy(signatureGracePeriod = 500.milliseconds)
+    expect(a.deterministicConfigHash != b.deterministicConfigHash)
   }
 
   pureTest("EventTrigger batching and cooldown are NOT in deterministicConfigHash (local scheduling only)") {

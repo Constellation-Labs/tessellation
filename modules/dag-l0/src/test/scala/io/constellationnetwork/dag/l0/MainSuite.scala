@@ -74,7 +74,7 @@ object MainSuite extends SimpleIOSuite {
 
   pureTest("ordinary rollback preserves operational history while a recovery seed flushes it") {
     val restored = ConsensusOperationalState.empty.copy(
-      recentProofSizes = SortedMap(SnapshotOrdinal.unsafeApply(100L) -> 7)
+      recentCommitteeSizes = SortedMap(SnapshotOrdinal.unsafeApply(100L) -> 7)
     )
 
     expect.same(restored, Main.rollbackOperationalSeed(restored, recoveryOverrideActive = false)) &&

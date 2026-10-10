@@ -21,7 +21,7 @@ object ConsensusOperationalStateSuite extends SimpleIOSuite {
     val c = PerPeerOperationalRecord(removalPenalty = 3, cumulativeMissCount = 0L, readmissionCountdown = 4)
     ConsensusOperationalState(
       perPeer = SortedMap(peer('a') -> a, peer('b') -> b, peer('c') -> c),
-      recentProofSizes = SortedMap(
+      recentCommitteeSizes = SortedMap(
         SnapshotOrdinal.unsafeApply(100L) -> 7,
         SnapshotOrdinal.unsafeApply(101L) -> 6
       ),
@@ -32,7 +32,7 @@ object ConsensusOperationalStateSuite extends SimpleIOSuite {
 
   pureTest("empty has empty maps") {
     val e = ConsensusOperationalState.empty
-    expect.all(e.perPeer.isEmpty, e.recentProofSizes.isEmpty, e.recentRoundEndTimes.isEmpty, e.penaltyUntil.isEmpty)
+    expect.all(e.perPeer.isEmpty, e.recentCommitteeSizes.isEmpty, e.recentRoundEndTimes.isEmpty, e.penaltyUntil.isEmpty)
   }
 
   pureTest("PerPeerOperationalRecord.empty has all-zero fields") {
@@ -81,7 +81,7 @@ object ConsensusOperationalStateSuite extends SimpleIOSuite {
       a.cumulativeMissCount == 2L,
       b.cumulativeMissCount == 1L,
       c.readmissionCountdown == 4,
-      populated.recentProofSizes(SnapshotOrdinal.unsafeApply(100L)) == 7
+      populated.recentCommitteeSizes(SnapshotOrdinal.unsafeApply(100L)) == 7
     )
   }
 

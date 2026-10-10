@@ -32,7 +32,7 @@ object GlobalRecoverySeedOutcome {
       WithdrawnFacilitators.empty,
       EligibleFacilitators(committee.toList),
       Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, snapshotHash),
-      recentProofSizes = SortedMap(snapshot.ordinal -> committee.size)
+      recentCommitteeSizes = SortedMap(snapshot.ordinal -> committee.size)
     )
 
   /** Recognize the canonical synthetic-root shape.

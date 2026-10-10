@@ -206,9 +206,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         observedResourceGeneration
       )
 
-      // v4.1.0 cluster-majority floor: the committee-floored finality quorum. Used ONLY by the terminal halt diagnostic below; the
-      // abandon/eviction feasibility gates use the Core-sized quorum.
-      finalityQuorum = ctx.advancer.finalityQuorum(state)
+      // Committee quorum for the terminal halt diagnostic below.
+      finalityQuorum = ctx.advancer.committeeQuorum(state)
 
       info = getResourcesInfo(state, resources)
       statusChanged = !ms.lastStatus.contains(state.status)
@@ -788,7 +787,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       baseDeclarationTimeout <- getCurrentDeclarationTimeout
       // Phase 4: during bootstrap, fresh-start peers need extra headroom before StallDetector
       // fires view change or eviction. Post-bootstrap, we want tighter liveness. The bootstrap
-      // classification is consensus-agreed (derived from `recentProofSizes`, a chain-consensus
+      // classification is consensus-agreed (derived from `recentCommitteeSizes`, a chain-consensus
       // field in the outcome), so all nodes apply the same multiplier deterministically.
       bootstrapActive = ctx.advancer.isBootstrapActive(state.lastOutcome)
       declarationTimeout =

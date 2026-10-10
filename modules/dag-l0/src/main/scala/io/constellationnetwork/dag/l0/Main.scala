@@ -1001,8 +1001,8 @@ object Main
                   // Recent-proof window: prefer the persisted history (so the bootstrap-vs-post
                   // classification matches the running cluster), otherwise seed with the rollback
                   // snapshot's proof count -- preserves pre-v20 behavior.
-                  seedRecentProofSizes =
-                    if (seedOperational.recentProofSizes.nonEmpty) seedOperational.recentProofSizes
+                  seedRecentCommitteeSizes =
+                    if (seedOperational.recentCommitteeSizes.nonEmpty) seedOperational.recentCommitteeSizes
                     else SortedMap(snapshot.ordinal -> rollbackProofSize)
                   // v19 phase 2: view-from-time window unwrapped from the Option. Snapshots
                   // written before the field existed decode None -> empty map; the next
@@ -1020,7 +1020,7 @@ object Main
                     Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty, hashedSnapshot.hash),
                     removalPenalties = seedRemovalPenalties,
                     cumulativeMissCounts = seedCumulativeMissCounts,
-                    recentProofSizes = seedRecentProofSizes,
+                    recentCommitteeSizes = seedRecentCommitteeSizes,
                     readmissionCountdown = seedReadmissionCountdown,
                     recentRoundEndTimes = seedRecentRoundEndTimes,
                     penaltyUntil = seedPenaltyUntil
@@ -1031,7 +1031,7 @@ object Main
                   normalRollbackStartPolicy <- {
                     val committee = SortedSet.from(rollbackOutcome.facilitators.value)
                     val postBootstrap =
-                      rollbackOutcome.recentProofSizes.values.exists(_ >= loadedConsensusConfig.bootstrapCompleteProofsThreshold)
+                      BootstrapCommittee.reached(rollbackOutcome.recentCommitteeSizes.values)
 
                     if (recoveryCommittee.nonEmpty || !postBootstrap)
                       (RollbackStartPolicy.LegacyDeferred: RollbackStartPolicy).pure[IO]
@@ -1138,7 +1138,7 @@ object Main
                                 // Genesis path — a fresh chain start, always classify as bootstrap.
                                 // Seed window with the genesis snapshot's proof count (typically 1 for
                                 // genesis, which correctly triggers warmup for the initial cluster bring-up).
-                                genesisRecentProofSizes = SortedMap(
+                                genesisRecentCommitteeSizes = SortedMap(
                                   signedFirstIncrementalSnapshot.ordinal -> signedFirstIncrementalSnapshot.proofs.size.toInt
                                 )
                                 _ <- services.consensus.manager
@@ -1158,7 +1158,7 @@ object Main
                                         Hash.empty,
                                         hashedSnapshot.hash
                                       ),
-                                      recentProofSizes = genesisRecentProofSizes
+                                      recentCommitteeSizes = genesisRecentCommitteeSizes
                                     ),
                                     // Genesis is also a checkpoint-serving bootstrap. If the
                                     // genesis node starts round 2 immediately, it can finalize a

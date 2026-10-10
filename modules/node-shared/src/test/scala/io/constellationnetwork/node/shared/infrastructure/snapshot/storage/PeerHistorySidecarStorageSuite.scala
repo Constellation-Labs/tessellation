@@ -41,7 +41,7 @@ object PeerHistorySidecarStorageSuite extends MutableIOSuite {
   private def sample(perPeer: (PeerId, PerPeerOperationalRecord)*): ConsensusOperationalState =
     ConsensusOperationalState(
       perPeer = SortedMap.from(perPeer),
-      recentProofSizes = SortedMap(ord100 -> 3, ord200 -> 5),
+      recentCommitteeSizes = SortedMap(ord100 -> 3, ord200 -> 5),
       penaltyUntil = SortedMap[PeerId, SnapshotOrdinal](peerA -> ord200).some,
       recentRoundEndTimes = SortedMap(ord100 -> 1_700_000_000_000L).some
     )

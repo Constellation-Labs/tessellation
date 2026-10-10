@@ -48,7 +48,7 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
   private val c = peer('c')
 
   private val penaltyUntil: SortedMap[PeerId, SnapshotOrdinal] = SortedMap(c -> ord(120L))
-  private val recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap(ord(13L) -> 3, ord(14L) -> 3)
+  private val recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap(ord(13L) -> 3, ord(14L) -> 3)
 
   private def mkFinished(implicit sp: SecurityProvider[IO], h: Hasher[IO], js: JsonSerializer[IO]): IO[Finished] =
     for {
@@ -75,7 +75,7 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
       eligibleFacilitators = EligibleFacilitators(List(a, b, c)),
       finished = finished,
       removalPenalties = removalPenalties,
-      recentProofSizes = recentProofSizes,
+      recentCommitteeSizes = recentCommitteeSizes,
       readmissionCountdown = readmissionCountdown,
       recentRoundEndTimes = recentRoundEndTimes,
       penaltyUntil = Some(penaltyUntil)
@@ -107,7 +107,7 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
       expect(oneBytes.toVector == otherBytes.toVector, "signed peerHistory must not depend on node-local per-peer state") &&
         expect(one.signedArtifactPeerHistory.perPeer.isEmpty) &&
         expect(one.signedArtifactPeerHistory.recentRoundEndTimes.isEmpty) &&
-        expect.same(recentProofSizes, one.signedArtifactPeerHistory.recentProofSizes) &&
+        expect.same(recentCommitteeSizes, one.signedArtifactPeerHistory.recentCommitteeSizes) &&
         expect.same(Some(penaltyUntil), one.signedArtifactPeerHistory.penaltyUntil)
   }
 }

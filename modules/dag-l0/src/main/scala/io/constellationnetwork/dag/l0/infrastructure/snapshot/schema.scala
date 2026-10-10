@@ -126,7 +126,7 @@ object schema {
     removalPenalties: SortedMap[PeerId, Int] = SortedMap.empty,
     cumulativeMissCounts: SortedMap[PeerId, Long] = SortedMap.empty,
     // Canonical committee size per recent round.
-    recentProofSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty,
+    recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int] = SortedMap.empty,
     // B2 sticky probation: peers awaiting a quorum-certified AdmissionCertificate.
     readmissionCountdown: SortedMap[PeerId, Int] = SortedMap.empty,
     lastTimeoutCertificateVoters: SortedSet[PeerId] = SortedSet.empty,
@@ -149,7 +149,7 @@ object schema {
       GlobalConsensusOutcome.operationalState(
         removalPenalties,
         cumulativeMissCounts,
-        recentProofSizes,
+        recentCommitteeSizes,
         readmissionCountdown,
         recentRoundEndTimes,
         penaltyUntil
@@ -161,7 +161,7 @@ object schema {
     def signedArtifactPeerHistory: ConsensusOperationalState =
       ConsensusOperationalState(
         perPeer = SortedMap.empty,
-        recentProofSizes = recentProofSizes,
+        recentCommitteeSizes = recentCommitteeSizes,
         penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )
   }
@@ -183,7 +183,7 @@ object schema {
     def operationalState(
       removalPenalties: SortedMap[PeerId, Int],
       cumulativeMissCounts: SortedMap[PeerId, Long],
-      recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+      recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int],
       readmissionCountdown: SortedMap[PeerId, Int],
       recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
       penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]]
@@ -201,7 +201,7 @@ object schema {
         )
       ConsensusOperationalState(
         perPeer = perPeer,
-        recentProofSizes = recentProofSizes,
+        recentCommitteeSizes = recentCommitteeSizes,
         recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None,
         penaltyUntil = penaltyUntil.filter(_.nonEmpty)
       )

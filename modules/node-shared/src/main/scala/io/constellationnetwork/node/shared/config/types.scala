@@ -406,11 +406,9 @@ object types {
     // `signedArtifact.proofs` set matches the full committee rather than dropping
     // the last 1-2 peers that crossed quorum by milliseconds. Complements the local
     // self-store of the signer's own signature (which closes the self-race
-    // deterministically). Timing-only: NOT included in deterministicConfigHash
-    // because nodes with different grace periods still produce the same downstream
-    // snapshotHash (the artifact hash, not the signed-artifact hash, is used
-    // canonically — see buildFinishedTransition). Tune down if round throughput
-    // becomes a bottleneck; tune up if network jitter routinely drops late signers.
+    // deterministically). The window also bounds which commit signatures land in the
+    // certified commit evidence, which membership clearing counts, so it is one
+    // cluster-wide value: included in deterministicConfigHash.
     signatureGracePeriod: FiniteDuration = 3.seconds,
     // Delay between assembling/receiving a certified view-change and locally applying it
     // to reset the round into the next view. The VCC is still stored and gossiped immediately;
@@ -461,7 +459,7 @@ object types {
     // `tighteningWindow` is LIVE: it is the size (in ordinals) of the rolling `recentSigners`
     // window the StateAdvancers maintain. As of v22 that window feeds the tier-demotion
     // hysteresis (`TierTransitions` reads the most-recent `DemotionConsecutiveMisses` entries of
-    // it) and is pinned to the same horizon as `recentProofSizes`.
+    // it) and is pinned to the same horizon as `recentCommitteeSizes`.
     //
     // `activeFacilitatorFloor` is the emergency bypass threshold for active admission and is also
     // read by the rollback/ready-participation gates. Admission score gating remains enabled at
@@ -490,20 +488,7 @@ object types {
     quorumThresholdFraction: Double = 1.0,
     exponentialPenaltyBase: Int = 2,
     maxRemovalPenaltyRounds: Int = 10000,
-    // Bootstrap warmup threshold: minimum proofs.size in any recent snapshot required to classify the chain as
-    // post-bootstrap. While bootstrap is active (no recent snapshot meets this threshold), penalty accrual is
-    // suppressed to avoid ejecting slow peers during the solo->multi transition. Consensus-critical because it
-    // determines `penalizedThisRound` in the outcome; included in `deterministicConfigHash`.
-    //
-    // OPERATOR NOTE: this default (3) assumes the cluster will eventually reach a committee size >= 3.
-    // For small deployments (single-node test rigs, 2-validator metagraphs), no recent snapshot will
-    // ever meet the threshold and `isBootstrapActive` stays `true` for the cluster's lifetime —
-    // silently disabling quality scoring (`penalizedThisRound` stays empty), exponential penalties,
-    // and readmission machinery. Operators of small clusters should override this to match their
-    // expected steady-state committee size (e.g. 2 for a 2-validator metagraph). Note that changing
-    // this value bumps `deterministicConfigHash`, so all peers in the cluster must agree.
-    bootstrapCompleteProofsThreshold: Int = 3,
-    // Adaptive declaration timeout: during bootstrap (recentProofSizes shows no round >= bootstrapCompleteProofsThreshold),
+    // Adaptive declaration timeout: during bootstrap (no recent round's committee reached `BootstrapCommittee.MinimumSize`),
     // the `declarationTimeout` is multiplied by this factor so fresh-start peers have more time to respond before
     // StallDetector fires view change / eviction. Post-bootstrap, the multiplier is 1.0 (tighter liveness).
     // Consensus-critical because it affects stall-cycle cadence, which in turn affects view-change emission and
@@ -944,7 +929,7 @@ object types {
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `forceViewChangeAbandonments`: defensive force-VCV threshold (bypasses missing-still-responsive gate after N same-key abandons)
-      *   - `tighteningWindow`: size of the rolling round-history windows (`recentProofSizes`, `recentRoundEndTimes`)
+      *   - `tighteningWindow`: size of the rolling round-history windows (`recentCommitteeSizes`, `recentRoundEndTimes`)
       *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `maxRoundDuration`: v35 bounds the committed leader-proposed consensus end time; before v35 it was only a local watchdog
@@ -963,6 +948,7 @@ object types {
         s"maxFacilitatorCount=${maxFacilitatorCount.map(_.value)}," +
           s"facilitatorSelectionMax=${facilitatorSelectionMax.map(_.toString).getOrElse("none")}," +
           s"maxStallCycles=$maxStallCycles," +
+          s"signatureGracePeriodMs=${signatureGracePeriod.toMillis}," +
           s"removalPenaltyRounds=$removalPenaltyRounds," +
           s"candidateDeferralRounds=$candidateDeferralRounds," +
           s"readmissionProbationRounds=$readmissionProbationRounds," +
@@ -988,7 +974,6 @@ object types {
           s"activeFacilitatorFloor=$activeFacilitatorFloor," +
           s"activeAdmissionMaxExpansionPerRound=$activeAdmissionMaxExpansionPerRound," +
           s"activeAdmissionExpansionIntervalRounds=$activeAdmissionExpansionIntervalRounds," +
-          s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
           s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier," +
           // v32 (stage 4): cert-anchored penalty duration. Read by the StateCreators'
           // penaltyUntil eligibility filtering and the advancers' penaltyUntil writes;

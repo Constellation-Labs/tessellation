@@ -26,7 +26,7 @@ object PerPeerOperationalRecord {
 /** Post-round operational state. Packed into the signed `peerHistory` of the next artifact (see the dag-l0 packer) and committed by the
   * certified `nextOperationalStateHash`.
   *
-  *   - `recentProofSizes`: canonical committee size per recent round.
+  *   - `recentCommitteeSizes`: canonical committee size per recent round.
   *   - `recentRoundEndTimes`: per-round `consensusEndTime` anchors for view-from-time.
   *   - `penaltyUntil`: certificate-anchored absolute penalty horizons.
   *
@@ -35,7 +35,7 @@ object PerPeerOperationalRecord {
 @derive(eqv, show, encoder, decoder)
 final case class ConsensusOperationalState(
   perPeer: SortedMap[PeerId, PerPeerOperationalRecord],
-  recentProofSizes: SortedMap[SnapshotOrdinal, Int],
+  recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int],
   recentRoundEndTimes: Option[SortedMap[SnapshotOrdinal, Long]] = None,
   penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None
 )
@@ -44,7 +44,7 @@ object ConsensusOperationalState {
   val empty: ConsensusOperationalState =
     ConsensusOperationalState(
       perPeer = SortedMap.empty,
-      recentProofSizes = SortedMap.empty,
+      recentCommitteeSizes = SortedMap.empty,
       recentRoundEndTimes = None,
       penaltyUntil = None
     )

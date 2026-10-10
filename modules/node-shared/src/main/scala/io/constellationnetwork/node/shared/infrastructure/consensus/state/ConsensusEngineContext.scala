@@ -80,7 +80,7 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // Boundary for Global L0 health-derived membership removal. The deployed policy retains signing leases.
   membershipPolicy: HealthDerivedMembershipPolicy,
   // Phase B1 gate: returns true while the cluster has not yet produced a snapshot with committee
-  // size >= config.bootstrapCompleteProofsThreshold (matches Phase 4's warmup-for-penalty-accrual).
+  // size >= BootstrapCommittee.MinimumSize (matches Phase 4's warmup-for-penalty-accrual).
   // All B1 activity (emission, cert assembly, validation, embedding, application) is suppressed
   // while this returns true -- evictions during bootstrap caused cascading committee splits in
   // the early fork-recovery E2E failures.

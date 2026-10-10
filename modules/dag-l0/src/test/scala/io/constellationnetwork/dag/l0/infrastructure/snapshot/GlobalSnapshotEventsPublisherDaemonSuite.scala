@@ -17,9 +17,7 @@ object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
   private val peerC = peer('c')
   private val formerPeer = peer('d')
   private def ordinal(value: Long): SnapshotOrdinal = SnapshotOrdinal(NonNegLong.unsafeFrom(value))
-  private val integrationnetMinimum = GlobalSnapshotEventsPublisherDaemon.minimumEventTriggerParticipants(
-    bootstrapCompleteProofsThreshold = 3
-  )
+  private val integrationnetMinimum = GlobalSnapshotEventsPublisherDaemon.minimumEventTriggerParticipants
 
   pureTest("silent retained seats do not count as EventTrigger participants") {
     val participants = GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(
@@ -51,7 +49,7 @@ object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
     expect(!GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(participants, integrationnetMinimum))
   }
 
-  pureTest("two current artifact signers remain TimeTrigger-paced at IntegrationNet's bootstrap threshold") {
+  pureTest("two current artifact signers remain TimeTrigger-paced at the bootstrap committee size") {
     val participants = GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(
       facilitators = Set(peerA, peerB, peerC),
       proofSigners = Set(peerA, peerB, formerPeer)
@@ -61,7 +59,7 @@ object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
     expect(!GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(participants, integrationnetMinimum))
   }
 
-  pureTest("three current artifact signers enable EventTrigger at IntegrationNet's bootstrap threshold") {
+  pureTest("three current artifact signers enable EventTrigger at the bootstrap committee size") {
     val participants = GlobalSnapshotEventsPublisherDaemon.participatingFacilitatorCount(
       facilitators = Set(peerA, peerB, peerC),
       proofSigners = Set(peerA, peerB, peerC, formerPeer)
@@ -71,22 +69,9 @@ object GlobalSnapshotEventsPublisherDaemonSuite extends SimpleIOSuite {
     expect(GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(participants, integrationnetMinimum))
   }
 
-  pureTest("a two-validator deployment can reuse its configured bootstrap threshold") {
-    val twoValidatorMinimum = GlobalSnapshotEventsPublisherDaemon.minimumEventTriggerParticipants(
-      bootstrapCompleteProofsThreshold = 2
-    )
-
-    expect.same(2, twoValidatorMinimum) &&
-    expect(GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(2, twoValidatorMinimum))
-  }
-
-  pureTest("the EventTrigger participant threshold can never permit a solo producer") {
-    val misconfiguredMinimum = GlobalSnapshotEventsPublisherDaemon.minimumEventTriggerParticipants(
-      bootstrapCompleteProofsThreshold = 1
-    )
-
-    expect.same(2, misconfiguredMinimum) &&
-    expect(!GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(1, misconfiguredMinimum))
+  pureTest("the EventTrigger participant threshold is the bootstrap committee size and never permits a solo producer") {
+    expect.same(3, integrationnetMinimum) &&
+    expect(!GlobalSnapshotEventsPublisherDaemon.hasSufficientEventTriggerParticipation(1, integrationnetMinimum))
   }
 
   pureTest("follower headroom uses a supermajority of every responsive peer, including unknown keys") {

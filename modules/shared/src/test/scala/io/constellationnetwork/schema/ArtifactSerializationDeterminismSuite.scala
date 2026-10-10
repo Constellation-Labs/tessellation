@@ -120,7 +120,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
   ): ConsensusOperationalState =
     ConsensusOperationalState(
       perPeer = SortedMap.from(perPeerOrder),
-      recentProofSizes = SortedMap.from(proofOrder),
+      recentCommitteeSizes = SortedMap.from(proofOrder),
       recentRoundEndTimes = Some(SortedMap.from(endTimeOrder)),
       penaltyUntil = Some(SortedMap.from(penaltyOrder))
     )
@@ -362,7 +362,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
   //
   //    ConsensusOperationalState (peerHistory):
   //      perPeer                     SortedMap[PeerId, PerPeerOperationalRecord]                 SORTED  (safe; empty in signed bytes)
-  //      recentProofSizes            SortedMap[SnapshotOrdinal, Int]                             SORTED  (safe, exercised)
+  //      recentCommitteeSizes            SortedMap[SnapshotOrdinal, Int]                             SORTED  (safe, exercised)
   //      penaltyUntil                Option[SortedMap[PeerId, SnapshotOrdinal]]                  SORTED  (safe, exercised)
   //      recentRoundEndTimes         Option[SortedMap[SnapshotOrdinal, Long]]                    SORTED  (safe; was an offender, now sorted + stripped from signed bytes)
   //
@@ -386,7 +386,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
     val delegateRev: SortedMap[PeerId, SortedMap[Address, Amount]] =
       SortedMap.from(delegateRewardPairs.reverse.map { case (p, m) => p -> SortedMap.from(m.reverse) })
 
-    // recentProofSizes : SortedMap[SnapshotOrdinal, Int]
+    // recentCommitteeSizes : SortedMap[SnapshotOrdinal, Int]
     val proofsFwd: SortedMap[SnapshotOrdinal, Int] = SortedMap.from(proofSizePairs)
     val proofsRev: SortedMap[SnapshotOrdinal, Int] = SortedMap.from(proofSizePairs.reverse)
 
@@ -418,7 +418,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
     } yield
       expect(rf == rr, "rewards SortedSet diverged across order")
         .and(expect(df == dr, "delegateRewards nested SortedMap diverged across order"))
-        .and(expect(pf == pr, "recentProofSizes SortedMap diverged across order"))
+        .and(expect(pf == pr, "recentCommitteeSizes SortedMap diverged across order"))
         .and(expect(sf == sr, "penaltyUntil SortedMap diverged across order"))
         .and(expect(ef == er, "recentRoundEndTimes SortedMap diverged across order"))
         .and(expect(ppf == ppr, "perPeer SortedMap diverged across order"))
@@ -481,7 +481,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
 
   test("golden anchor: ConsensusOperationalState serialized hash is pinned") { res =>
     implicit val (j, h) = res
-    val expected = Hash("e47ff6ca5fe7e30f400f266eb51dbc19a40a92506a701124f8d2545e3571f297")
+    val expected = Hash("3f524dd63cd1a27cc5ce57f15e138bb8020fbf5cc9cec5245a843a7d2ff15c69")
     h.hash(operationalForward).map { actual =>
       expect.same(expected, actual)
     }
@@ -489,7 +489,7 @@ object ArtifactSerializationDeterminismSuite extends MutableIOSuite {
 
   test("golden anchor: GlobalIncrementalSnapshot serialized hash is pinned") { res =>
     implicit val (j, h) = res
-    val expected = Hash("84a994482cf6c955d77663bc34984a2518fd4b5d7cf77df94ba9c995a10094ba")
+    val expected = Hash("4374e0471683db48971c611edbb393f9c533a70a93ec4db78627882983de8a20")
     h.hash(snapshotForward).map { actual =>
       expect.same(expected, actual)
     }

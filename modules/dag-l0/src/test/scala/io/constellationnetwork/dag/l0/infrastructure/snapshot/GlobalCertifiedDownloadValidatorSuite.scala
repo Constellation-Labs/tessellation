@@ -79,7 +79,7 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
       wrongEligible =
         root.copy(eligibleFacilitators = io.constellationnetwork.node.shared.infrastructure.consensus.state.EligibleFacilitators.empty)
       wrongHash = root.copy(finished = root.finished.copy(facilitatorsHash = Hash.fromBytes(Array[Byte](1))))
-      missingProofWindow = root.copy(recentProofSizes = scala.collection.immutable.SortedMap.empty)
+      missingProofWindow = root.copy(recentCommitteeSizes = scala.collection.immutable.SortedMap.empty)
       substitutedCommittee = root.copy(
         facilitators = Facilitators(List(substitute)),
         eligibleFacilitators = EligibleFacilitators(List(substitute))

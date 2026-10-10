@@ -161,7 +161,7 @@ object GlobalSnapshotConsensusStateCreator {
       val locallyObservedParentSigners =
         lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
       val inBootstrap =
-        !lastOutcome.recentProofSizes.values.exists(_ >= consensusConfig.bootstrapCompleteProofsThreshold)
+        !BootstrapCommittee.reached(lastOutcome.recentCommitteeSizes.values)
       val outcomeLabel = Metrics.unsafeLabelName("outcome")
 
       parentRoundCommittee match {
