@@ -247,7 +247,8 @@ object CertifiedConsensus {
     committedView: Long,
     trigger: ConsensusTrigger,
     proposal: declaration.Proposal,
-    consensusEndTime: Option[Long]
+    consensusEndTime: Option[Long],
+    derivedEvictions: Set[PeerId] = Set.empty
   ): F[ProposalValue] = {
     val timeoutVoters = proposal.timeoutCertificate
       .fold(SortedSet.empty[PeerId])(tc => SortedSet.from(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)))
@@ -272,7 +273,7 @@ object CertifiedConsensus {
         trigger = trigger,
         admissionNominee = proposal.admissionNominee,
         admittedPeers = SortedSet.from(proposal.admissionCertificates.map(_.targetPeer)),
-        evictedPeers = SortedSet.from(proposal.evictionCertificates.map(_.targetPeer)),
+        evictedPeers = SortedSet.from(proposal.evictionCertificates.map(_.targetPeer)) ++ derivedEvictions,
         timeoutVoters = timeoutVoters,
         consensusEndTime = consensusEndTime
       )

@@ -140,6 +140,6 @@ object MembershipClearingSuite extends FunSuite {
   }
 
   test("default parameters match the design") {
-    expect.same(2048L, IntervalLength) && expect.same(3, RequiredLowIntervals) && expect.same(2048L, CooldownOrdinals)
+    expect.same(2048L, IntervalLength) && expect.same(3, RequiredLowIntervals)
   }
 }

@@ -901,7 +901,10 @@ object types {
     // below this size waits unless it is paired with a replacement admission. It never blocks admission, and a
     // committee still growing toward it (for example a recovery-seed root of 3) can only replace, not shrink.
     // Env-resolved from SnapshotConfig.minCommitteeSize; validated >= 3; in deterministicConfigHash.
-    minCommitteeSize: Int = 3
+    minCommitteeSize: Int = 3,
+    // Length (in ordinals) of a membership-clearing interval and of the post-clearing cooldown. Fixed at 2048 for every
+    // packaged network; configurable only so tests can exercise whole intervals. In deterministicConfigHash.
+    clearingIntervalOrdinals: Long = 2048L
   ) {
     def withSharedConfig(sharedConfig: SharedConfig): ConsensusConfig =
       withSharedConfig(sharedConfig, sharedConfig.environment)
@@ -923,6 +926,10 @@ object types {
 
     def clearingActiveAt(key: Long): Boolean =
       key >= gl0ClearingActivationOrdinal
+
+    /** The floor a single unpaired clearing eviction must respect at `key`; None while clearing is inactive. */
+    def unpairedEvictionFloorAt(key: Long): Option[Int] =
+      Option.when(clearingActiveAt(key))(minCommitteeSize)
 
     /** Deterministic hash of consensus-critical config values.
       *
@@ -998,6 +1005,7 @@ object types {
           s"currencySnapshotProtocolV1ActivationOrdinal=$currencySnapshotProtocolV1ActivationOrdinal," +
           s"ordinalConfigHash=${ordinalConfigHash.fold("unresolved")(_.value)}," +
           s"minCommitteeSize=$minCommitteeSize," +
+          s"clearingIntervalOrdinals=$clearingIntervalOrdinals," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))

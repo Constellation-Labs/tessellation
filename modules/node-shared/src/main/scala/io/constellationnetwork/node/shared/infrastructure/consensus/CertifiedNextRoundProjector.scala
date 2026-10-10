@@ -26,9 +26,10 @@ object CertifiedNextRoundProjector {
     roundStartCommittee: List[PeerId],
     admittedPeers: Set[PeerId],
     evictedPeers: Set[PeerId],
-    maxChanges: Int
+    maxChanges: Int,
+    unpairedEvictionFloor: Option[Int] = None
   ): Either[String, List[PeerId]] =
-    CertifiedMembershipTransition.applyTo(roundStartCommittee, admittedPeers, evictedPeers, maxChanges)
+    CertifiedMembershipTransition.applyTo(roundStartCommittee, admittedPeers, evictedPeers, maxChanges, unpairedEvictionFloor)
 
   /** Admissions a proposal may carry without the successor exceeding max(cap, |B|). `removedCount` = |E u D|, the incumbents leaving
     * through certified evictions or deterministic exits; each frees one seat, so one-for-one replacements always fit.
@@ -45,9 +46,10 @@ object CertifiedNextRoundProjector {
     maxChanges: Int,
     seedlistPeerIds: Set[PeerId],
     isContextEligible: PeerId => F[Boolean],
-    facilitatorSelector: FacilitatorSelector
+    facilitatorSelector: FacilitatorSelector,
+    unpairedEvictionFloor: Option[Int] = None
   ): F[Either[String, Projection]] =
-    projectTransition(roundStartCommittee, admittedPeers, evictedPeers, maxChanges).traverse { projected =>
+    projectTransition(roundStartCommittee, admittedPeers, evictedPeers, maxChanges, unpairedEvictionFloor).traverse { projected =>
       projected
         .filterA(pid =>
           (seedlistPeerIds.isEmpty || seedlistPeerIds.contains(pid)).pure[F].flatMap {

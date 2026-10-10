@@ -8,20 +8,19 @@ import io.constellationnetwork.schema.{ClearingRecord, ClearingState, SnapshotOr
 /** Deterministic membership-clearing ledger (ADR-0036 clearing follow-up).
   *
   * Evidence is the commit QC of round N as embedded in the certified child N+1. When N+1 is derived, every member of round N's frozen
-  * committee gains one seated round and, if it signed that embedded commit QC, one present round. Intervals are absolute:
-  * `interval(N) = N / intervalLength`. An interval counts for a member only if it was seated for every round of it (`seated ==
-  * intervalLength`), so partial intervals after activation, a recovery root or an admission are never counted. A counted interval with
-  * `present * 10 < seated` extends the member's low-presence streak; any other counted interval resets it.
+  * committee gains one seated round and, if it signed that embedded commit QC, one present round. Intervals are absolute: `interval(N) = N
+  * / intervalLength`. An interval counts for a member only if it was seated for every round of it (`seated == intervalLength`), so partial
+  * intervals after activation, a recovery root or an admission are never counted. A counted interval with `present * 10 < seated` extends
+  * the member's low-presence streak; any other counted interval resets it.
   *
-  * A member with a streak of at least `requiredLowIntervals` is pending. At most one clearing executes per interval: the pending member with
-  * the lowest presence ratio in its last counted interval, then the lowest PeerId. Whether it may leave without a paired replacement is
-  * decided by the caller against the contraction floor. Records exist only for seated members.
+  * A member with a streak of at least `requiredLowIntervals` is pending. At most one clearing executes per interval: the pending member
+  * with the lowest presence ratio in its last counted interval, then the lowest PeerId. Whether it may leave without a paired replacement
+  * is decided by the caller against the contraction floor. Records exist only for seated members.
   */
 object MembershipClearing {
 
   val IntervalLength: Long = 2048L
   val RequiredLowIntervals: Int = 3
-  val CooldownOrdinals: Long = 2048L
 
   final case class Params(intervalLength: Long, requiredLowIntervals: Int)
 
@@ -54,8 +53,8 @@ object MembershipClearing {
     val updated = committee.toList.map { member =>
       val base = state.members.get(member) match {
         case Some(record) if record.currentInterval < interval => closeInterval(record, params).copy(currentInterval = interval)
-        case Some(record)                                     => record
-        case None                                             => freshRecord(round, interval)
+        case Some(record)                                      => record
+        case None                                              => freshRecord(round, interval)
       }
       member -> base.copy(
         seated = base.seated + 1,
@@ -72,7 +71,9 @@ object MembershipClearing {
   def selectTarget(state: ClearingState, currentInterval: Long, params: Params = DefaultParams): Option[PeerId] =
     if (state.clearedInterval.contains(currentInterval)) None
     else
-      pending(state, params).sortWith { case ((idA, a), (idB, b)) => lowerPresence(a, b) || (samePresence(a, b) && Ordering[PeerId].lt(idA, idB)) }.headOption
+      pending(state, params).sortWith {
+        case ((idA, a), (idB, b)) => lowerPresence(a, b) || (samePresence(a, b) && Ordering[PeerId].lt(idA, idB))
+      }.headOption
         .map(_._1)
 
   /** Members whose low-presence streak reached the threshold, in PeerId order. */

@@ -34,7 +34,7 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
   pureTest("schema v37 golden: the default deterministicConfigHash is pinned") {
     // Re-approve deliberately whenever a deterministicConfigHash input or consensusSchemaVersion changes.
     expect.same(37, baseConfig.consensusSchemaVersion) &&
-    expect.same("a014ebd1067ec533ddfddd9c9042ef6996635c490cb507fed60c855b83c0a90f", baseConfig.deterministicConfigHash.value)
+    expect.same("3ca9ee25fff9db5f3889b2713ade1d0cb965ee7892da0a42db3a318db6ffbab9", baseConfig.deterministicConfigHash.value)
   }
 
   pureTest("divergent quorum threshold between operators is detected before consensus") {

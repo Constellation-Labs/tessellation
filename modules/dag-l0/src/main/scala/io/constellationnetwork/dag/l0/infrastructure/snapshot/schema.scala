@@ -134,7 +134,9 @@ object schema {
     recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long] = SortedMap.empty,
     // Certificate-anchored absolute penalty horizons.
     penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]] = None,
-    expandedBeyondSingleton: Option[Boolean] = None
+    expandedBeyondSingleton: Option[Boolean] = None,
+    // Membership-clearing ledger; absent before clearing activation.
+    clearing: Option[ClearingState] = None
   ) {
 
     /** The frozen voting committee of this outcome's round, as certified by its proposal QC. None at the recovery-seed root. */
@@ -152,7 +154,8 @@ object schema {
         recentCommitteeSizes,
         readmissionCountdown,
         recentRoundEndTimes,
-        penaltyUntil
+        penaltyUntil,
+        clearing
       )
 
     /** The deterministic, chain-derived subset packed into the next artifact's signed `peerHistory`. Per-peer bookkeeping is node-local and
@@ -162,7 +165,8 @@ object schema {
       ConsensusOperationalState(
         perPeer = SortedMap.empty,
         recentCommitteeSizes = recentCommitteeSizes,
-        penaltyUntil = penaltyUntil.filter(_.nonEmpty)
+        penaltyUntil = penaltyUntil.filter(_.nonEmpty),
+        clearing = clearing
       )
   }
 
@@ -186,7 +190,8 @@ object schema {
       recentCommitteeSizes: SortedMap[SnapshotOrdinal, Int],
       readmissionCountdown: SortedMap[PeerId, Int],
       recentRoundEndTimes: SortedMap[SnapshotOrdinal, Long],
-      penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]]
+      penaltyUntil: Option[SortedMap[PeerId, SnapshotOrdinal]],
+      clearing: Option[ClearingState]
     ): ConsensusOperationalState = {
       val keys: Set[PeerId] = removalPenalties.keySet | cumulativeMissCounts.keySet | readmissionCountdown.keySet
       val perPeer: SortedMap[PeerId, PerPeerOperationalRecord] =
@@ -203,7 +208,8 @@ object schema {
         perPeer = perPeer,
         recentCommitteeSizes = recentCommitteeSizes,
         recentRoundEndTimes = if (recentRoundEndTimes.nonEmpty) Some(recentRoundEndTimes) else None,
-        penaltyUntil = penaltyUntil.filter(_.nonEmpty)
+        penaltyUntil = penaltyUntil.filter(_.nonEmpty),
+        clearing = clearing
       )
     }
 
