@@ -1347,17 +1347,17 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     state: ConsensusState[Key, Status, Outcome, Kind],
     resources: ConsensusResources[Artifact, Kind]
   ): ResourcesInfo = {
-    // Count against the round's facilitators without subtracting local withdrawals: a withdrawn member that has not
-    // declared is missing. Withdrawal timing is node-local, and subtracting it made nodes disagree on progress,
-    // timeout extension, and abandon feasibility.
-    val active = StallDetector.declarationUniverse(state.facilitators.value.toSet)
+    // Count against the frozen round committee: a withdrawn member that has not declared is missing. `state.facilitators`
+    // already drops local withdrawals (ConsensusStateUpdater), and withdrawal timing is node-local, so using it made nodes
+    // disagree on progress, timeout extension, and abandon feasibility.
+    val active = StallDetector.declarationUniverse(state.roundStartFacilitators.value.toSet)
     ops.maybeCollectingKind(state.status) match {
       case Some(kind) =>
         val getter = ops.kindGetter(kind)
-        val respondedPeers = resources.peerDeclarationsMap.collect {
-          case (pid, decls) if active.contains(pid) && getter(decls).isDefined => pid
-        }.toSet
-        val missing = active -- respondedPeers
+        val (respondedPeers, missing) = StallDetector.declarationAccounting(
+          active,
+          resources.peerDeclarationsMap.collect { case (pid, decls) if getter(decls).isDefined => pid }.toSet
+        )
         ResourcesInfo(
           hash = respondedPeers.hashCode(),
           declaredCount = respondedPeers.size,
@@ -2281,8 +2281,19 @@ object StallDetector {
     )
   }
 
-  /** Peers whose declarations a stall check waits for. Deliberately independent of locally observed withdrawals. */
-  private[consensus] def declarationUniverse(facilitators: Set[PeerId]): Set[PeerId] = facilitators
+  /** Peers whose declarations a stall check waits for: the frozen round committee, independent of locally observed withdrawals. */
+  private[consensus] def declarationUniverse(roundStartFacilitators: Set[PeerId]): Set[PeerId] = roundStartFacilitators
+
+  /** (responded, missing) over the frozen committee. A withdrawn member that declared before withdrawing counts as responded; one that did
+    * not is missing. Local withdrawal observations never shrink the universe.
+    */
+  private[consensus] def declarationAccounting(
+    universe: Set[PeerId],
+    declaredPeers: Set[PeerId]
+  ): (Set[PeerId], Set[PeerId]) = {
+    val responded = universe.intersect(declaredPeers)
+    (responded, universe -- responded)
+  }
 
   /** Outcome of the alpha.98 ready-participation feasibility check. Pure data so the gate can be exercised in unit tests without a live
     * consensus context. `behindNonReady` is a diagnostic subset (count of `notReadyCore` peers whose observed tip is also behind our last

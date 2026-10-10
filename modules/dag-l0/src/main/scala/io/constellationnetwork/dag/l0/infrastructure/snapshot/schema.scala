@@ -260,6 +260,11 @@ object schema {
     // after later degradation. Option preserves historical outcome decoding.
     expandedBeyondSingleton: Option[Boolean] = None
   ) {
+
+    /** The frozen voting committee of this outcome's round, as certified by its proposal QC. None at the recovery-seed root. */
+    def certifiedRoundCommittee: Option[Set[PeerId]] =
+      finished.certifiedOutcome.map(_.proposalQc.value.roundStartFacilitators.toSortedSet.toSet)
+
     def eligibleOrFacilitators: List[PeerId] =
       if (eligibleFacilitators.value.nonEmpty) eligibleFacilitators.value
       else facilitators.value

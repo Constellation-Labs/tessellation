@@ -82,6 +82,24 @@ object GlobalSnapshotConsensusStateCreator {
       .raiseError[F, Unit]
       .unlessA(config.certifiedConsensusActiveAt(key.value.value))
 
+  /** A certified parent authority whose Core differs from its full committee was produced by the retired tiered rules. This build has a
+    * single voting set; continuing from such a parent would make creation, voting, and replay disagree, so fail closed and require the
+    * recovery-seed root (whose Core is the complete committee).
+    */
+  final case class SplitCertifiedAuthorityUnsupported(key: GlobalSnapshotKey, facilitators: Int, core: Int) extends NoStackTrace {
+    override def getMessage: String =
+      s"Refusing to produce GL0 snapshot ordinal=${key.value.value}: inherited certified authority has core=$core of " +
+        s"facilitators=$facilitators. This build uses one voting set; enter certified consensus through the recovery-seed rollback."
+  }
+
+  private[snapshot] def requireSingleVotingSetAuthority[F[_]: MonadThrow](
+    key: GlobalSnapshotKey,
+    authority: CertifiedConsensus.CertifiedRoundAuthorityV1
+  ): F[Unit] =
+    SplitCertifiedAuthorityUnsupported(key, authority.facilitators.length, authority.core.length)
+      .raiseError[F, Unit]
+      .unlessA(authority.core === authority.facilitators)
+
   private[snapshot] final case class EvictionVoteRetransmission(
     target: PeerId,
     vote: io.constellationnetwork.security.signature.Signed[
@@ -164,18 +182,18 @@ object GlobalSnapshotConsensusStateCreator {
       observedAt: FiniteDuration,
       cadenceAllowed: Boolean
     ): F[F[Unit]] = {
-      val parentEvidence = lastOutcome.controllerEvidence.flatMap(_.get(lastOutcome.key))
+      // Parent round committee from the certified parent QC, not from controller evidence.
+      val parentRoundCommittee = lastOutcome.certifiedRoundCommittee
       val locallyObservedParentSigners =
         lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
       val inBootstrap =
         !lastOutcome.recentProofSizes.values.exists(_ >= consensusConfig.bootstrapCompleteProofsThreshold)
       val outcomeLabel = Metrics.unsafeLabelName("outcome")
 
-      parentEvidence match {
+      parentRoundCommittee match {
         case None =>
-          // Recovery from a snapshot whose one-round operational sidecar is unavailable can
-          // temporarily lack the exact parent round-start committee. Clear local streaks and
-          // skip rather than bridging an unknown round into a false consecutive-miss sequence.
+          // The recovery-seed root has no certified parent round. Clear local streaks and skip rather than bridging an
+          // unknown round into a false consecutive-miss sequence.
           (finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
             Metrics[F]
               .incrementCounter(
@@ -184,7 +202,7 @@ object GlobalSnapshotConsensusStateCreator {
               )
               .whenA(!inBootstrap && currentCore.contains(selfId))).as(Sync[F].unit)
 
-        case Some(evidence) =>
+        case Some(parentCommittee) =>
           val currentCommittee = currentSigningCommittee
           val finalityHeadroom = FinalityHeadroom.evaluate(
             currentCommittee,
@@ -242,7 +260,7 @@ object GlobalSnapshotConsensusStateCreator {
               selfId,
               currentCore,
               currentSigningCommittee,
-              evidence.roundStartFacilitators.toSet,
+              parentCommittee,
               locallyObservedParentSigners,
               lastOutcome.key.value.value,
               lastOutcome.finished.snapshotHash,
@@ -398,6 +416,7 @@ object GlobalSnapshotConsensusStateCreator {
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
         certifiedNextRoundAuthority = lastOutcome.finished.certifiedOutcome
           .map(_.proposalQc.value.nextRoundAuthority)
+        _ <- certifiedNextRoundAuthority.traverse_(requireSingleVotingSetAuthority[F](key, _))
         certifiedRoundProjection = certifiedNextRoundAuthority.map { authority =>
           val committee = CertifiedRoundCommitteeProjector.fromCertifiedAuthority(
             key = key,
@@ -810,7 +829,8 @@ object GlobalSnapshotConsensusStateCreator {
         // StateTransitions uses for VCC/TC view changes), indexed by ordinal and view. No hash, quality, or
         // leader-reported input can change who leads.
         coreList = committees.core
-        leaderPool = if (coreList.nonEmpty) coreList else signingFacilitators
+        // The frozen round committee: the same pool StateTransitions uses for VCC/TC view changes.
+        leaderPool = signingFacilitators
         // Deterministic GL0 view seed:
         // `timeView` remains computed from the timestamp window, but it is treated as a pacemaker
         // timeout hint, not as unilateral proposal-critical state. A local wall clock must not pick

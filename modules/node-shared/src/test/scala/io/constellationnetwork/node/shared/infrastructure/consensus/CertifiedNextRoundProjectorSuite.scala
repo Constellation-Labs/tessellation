@@ -75,4 +75,20 @@ object CertifiedNextRoundProjectorSuite extends FunSuite {
     val result = project(admitted = Set(pid(5)), evicted = Set(pid(1)))
     expect.same(Right(List(pid(2), pid(3), pid(4), pid(5))), result.map(_.selectedCommittee))
   }
+
+  test("admission capacity: at the cap no expansion fits, replacements always fit, grandfathered committees cannot grow") {
+    expect
+      .same(0, CertifiedNextRoundProjector.admissionCapacity(4, 0, Some(4)))
+      .and(expect.same(1, CertifiedNextRoundProjector.admissionCapacity(4, 1, Some(4))))
+      .and(expect.same(1, CertifiedNextRoundProjector.admissionCapacity(4, 0, Some(5))))
+      .and(expect.same(0, CertifiedNextRoundProjector.admissionCapacity(6, 0, Some(4))))
+      .and(expect.same(1, CertifiedNextRoundProjector.admissionCapacity(6, 1, Some(4))))
+      .and(expect.same(Int.MaxValue, CertifiedNextRoundProjector.admissionCapacity(4, 0, None)))
+  }
+
+  test("admissions trimmed to capacity always project successfully") {
+    val capacity = CertifiedNextRoundProjector.admissionCapacity(committee.size, 0, Some(4))
+    val admitted = Set(pid(5)).take(capacity)
+    expect(project(admitted = admitted, cap = Some(4)).isRight)
+  }
 }

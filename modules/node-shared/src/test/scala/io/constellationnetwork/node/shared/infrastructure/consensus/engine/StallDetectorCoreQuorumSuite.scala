@@ -256,4 +256,23 @@ object StallDetectorCoreQuorumSuite extends FunSuite {
       .and(expect.same(3, status.coreRequired))
       .and(expect(status.quorumInfeasible, "2 of 4 frozen Core can vote; quorum 3 is infeasible"))
   }
+
+  test("updater-dropped withdrawals stay in the frozen accounting: withdrawn without a declaration is missing") {
+    // Frozen {core1, core2, core3, tier1a}; declarations from core1, core2; tier1a withdrew (the updater removed it from
+    // state.facilitators) without declaring; core3 is silent. Two of four can vote, so quorum 3 is infeasible.
+    val frozen = core3of3 + tier1a
+    val (responded, missing) = StallDetector.declarationAccounting(StallDetector.declarationUniverse(frozen), Set(core1, core2))
+    val status = StallDetector.computeCoreQuorumStatus(frozen, missing, Supermajority)
+    expect
+      .same(Set(core1, core2), responded)
+      .and(expect.same(Set(core3, tier1a), missing))
+      .and(expect(status.quorumInfeasible, "2 of 4 frozen members can vote"))
+  }
+
+  test("a withdrawn member that declared before withdrawing still counts as responded") {
+    val frozen = core3of3 + tier1a
+    val (responded, missing) =
+      StallDetector.declarationAccounting(StallDetector.declarationUniverse(frozen), Set(core1, core2, tier1a))
+    expect.same(Set(core1, core2, tier1a), responded).and(expect.same(Set(core3), missing))
+  }
 }

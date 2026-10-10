@@ -857,6 +857,60 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       )
   }
 
+  test("C-1: leader-reported responders and self-health cannot change certified authority or the leader schedule") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    val growth = List(
+      Script(responders = Set(0), admitted = Some(1)),
+      Script(responders = Set(0, 1)),
+      Script(responders = Set(0, 1), admitted = Some(2)),
+      Script(responders = Set(0, 1, 2))
+    )
+    // Truthful leader: everyone responded. Lying leader: reports only itself (false omission of the others)
+    // and marks them Critical.
+    val truthful = Script(responders = Set(0, 1, 2))
+    val lying = Script(
+      responders = Set(0),
+      selfHealth = SortedMap(1 -> SelfHealthHint.Critical, 2 -> SelfHealthHint.Critical)
+    )
+
+    for {
+      root <- signedRoot(res.pairs)
+      stateAdvancer = advancer(res.pairs.head)
+      prior <- growth.foldM(root) { (state, script) =>
+        buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
+      }
+      honestFrame <- buildFrame(prior, truthful, res.pairs)
+      lyingFrame <- buildFrame(prior, lying, res.pairs)
+      honestNext <- derive(prior, honestFrame, stateAdvancer).map(_._1)
+      lyingNext <- derive(prior, lyingFrame, stateAdvancer).map(_._1)
+      // Carry both histories forward one more round with an ordinary truthful script.
+      honestAfter <- buildFrame(honestNext, truthful, res.pairs)
+      lyingAfter <- buildFrame(lyingNext, truthful, res.pairs)
+    } yield {
+      val honestAuthority = honestFrame.certifiedOutcome.proposalQc.value.nextRoundAuthority
+      val lyingAuthority = lyingFrame.certifiedOutcome.proposalQc.value.nextRoundAuthority
+      val nextKey = honestNext.key.value.value + 1L
+      val views = 0L until 6L
+      val honestLeaders = views.map(v => LeaderSchedule.leader(honestAuthority.facilitators.toSortedSet, nextKey, v))
+      val lyingLeaders = views.map(v => LeaderSchedule.leader(lyingAuthority.facilitators.toSortedSet, nextKey, v))
+
+      expect(honestAuthority === lyingAuthority, "certified next-round authority must not depend on leader reports") &&
+      expect.same(honestAuthority.facilitators, honestAuthority.core) &&
+      expect.same(honestNext.facilitators, lyingNext.facilitators) &&
+      expect.same(honestLeaders, lyingLeaders) &&
+      expect.same(honestAfter.roundStartFacilitators, lyingAfter.roundStartFacilitators) &&
+      expect(
+        honestAfter.certifiedOutcome.proposalQc.value.nextRoundAuthority ===
+          lyingAfter.certifiedOutcome.proposalQc.value.nextRoundAuthority,
+        "the following round's authority must also be unaffected"
+      )
+    }
+  }
+
   test("production download validator reconstructs public root-to-tip DAG lineage and fails closed on a missing interior artifact") { res =>
     implicit val serializer: JsonSerializer[IO] = res.serializer
     implicit val hasher: Hasher[IO] = res.hasher

@@ -527,7 +527,7 @@ object GlobalSnapshotConsensus {
           isGlobalBootstrap,
           (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
-          (o: GlobalConsensusOutcome) => o.controllerEvidence.flatMap(_.get(o.key)).fold(Set.empty[PeerId])(_.roundStartFacilitators.toSet),
+          (o: GlobalConsensusOutcome) => o.certifiedRoundCommittee.getOrElse(Set.empty[PeerId]),
           (key: GlobalSnapshotKey) =>
             ActiveFacilitatorAdmission.expansionAllowedAtOrdinal(
               key.value.value,

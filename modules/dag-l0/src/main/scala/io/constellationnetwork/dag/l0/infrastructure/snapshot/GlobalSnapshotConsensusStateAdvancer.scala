@@ -1613,6 +1613,15 @@ object GlobalSnapshotConsensusStateAdvancer {
               maxChanges = config.activeAdmissionMaxExpansionPerRound,
               allowSingletonBootstrapExpansion = allowsSingletonGenesisBootstrapExpansion(state)
             )
+            // Never carry an admission the successor cannot seat: a pure expansion past max(cap, |B|) would make the
+            // projection reject this leader's proposal. Excess admissions are dropped so the leader still proposes.
+            val capacity = CertifiedNextRoundProjector.admissionCapacity(
+              state.roundStartFacilitators.value.size,
+              selection.evictions.size,
+              facilitatorSelector.getMaxCount
+            )
+            val seatedAdmissions = selection.admissions.take(capacity)
+            val capSuppressed = selection.admissions.size - seatedAdmissions.size
             val suppressedEvictions = assembledEvictions.size - selection.evictions.size
             val suppressedAdmissions = admissions.size - selection.admissions.size
 
@@ -1629,8 +1638,15 @@ object GlobalSnapshotConsensusStateAdvancer {
                   suppressedAdmissions.toLong,
                   Seq(Metrics.unsafeLabelName("reason") -> "local_headroom")
                 )
-                .whenA(suppressedAdmissions > 0)
-                .as(selection.evictions -> selection.admissions)
+                .whenA(suppressedAdmissions > 0) >>
+              Metrics[F]
+                .incrementCounterBy(
+                  "dag_consensus_admission_cert_suppressed_total",
+                  capSuppressed.toLong,
+                  Seq(Metrics.unsafeLabelName("reason") -> "successor_cap")
+                )
+                .whenA(capSuppressed > 0)
+                .as(selection.evictions -> seatedAdmissions)
           } else
             Metrics[F]
               .incrementCounterBy(

@@ -77,7 +77,8 @@ object C1ClosureSuite extends FunSuite {
   private val attacked = projectWith(captured, poisonedCarried)
 
   test("leader-reported content cannot change who votes") {
-    expect.same(committee.sorted, baseline.committees.core)
+    expect
+      .same(committee.sorted, baseline.committees.core)
       .and(expect.same(baseline.committees.core, attacked.committees.core))
       .and(expect.same(List.empty[PeerId], attacked.committees.tier1))
       .and(expect.same(baseline.signingFacilitators.sorted, attacked.signingFacilitators.sorted))
@@ -93,7 +94,8 @@ object C1ClosureSuite extends FunSuite {
     val views = 0L until (2L * committee.size)
     val baselineLeaders = views.map(v => LeaderSchedule.leader(baseline.committees.core, 20L, v))
     val attackedLeaders = views.map(v => LeaderSchedule.leader(attacked.committees.core, 20L, v))
-    expect.same(baselineLeaders, attackedLeaders)
+    expect
+      .same(baselineLeaders, attackedLeaders)
       .and(expect(honest.subsetOf(attackedLeaders.toSet), "honest members keep their leader turns"))
   }
 
