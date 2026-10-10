@@ -81,6 +81,11 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   */
 object GlobalSnapshotConsensus {
 
+  /** Peers whose admission certificates are rejected at `key`: a counting-down removal penalty or an absolute horizon not yet reached. */
+  private[snapshot] def activeAdmissionPenaltyPeersAt(outcome: GlobalConsensusOutcome, key: Long): Set[PeerId] =
+    outcome.removalPenalties.filter(_._2 > 0).keySet ++
+      outcome.penaltyUntil.getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal]).filter { case (_, until) => until.value.value > key }.keySet
+
   /** Operator view of the committed membership-clearing ledger: pending members, each member's presence in its last counted interval (alert
     * below 50), and the last interval in which a clearing executed (-1 when none).
     */
@@ -532,7 +537,10 @@ object GlobalSnapshotConsensus {
           rawEvictionVoter,
           admissionVoter,
           isGlobalBootstrap,
-          (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
+          // Probation peers still under an active penalty or clearing cooldown are not vote targets: followers reject their
+          // certificates until the horizon passes (OpenAdmissionPolicy.penaltyBlocksCertificate).
+          (o: GlobalConsensusOutcome) =>
+            ReadmissionMaintenance.probationPeers(o.readmissionCountdown) -- activeAdmissionPenaltyPeersAt(o, o.key.value.value + 1L),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
           (key: GlobalSnapshotKey) =>
             AdmissionCadence.expansionAllowedAtOrdinal(

@@ -297,15 +297,17 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def clearingParams: MembershipClearing.Params =
         MembershipClearing.Params(config.clearingIntervalOrdinals, MembershipClearing.RequiredLowIntervals)
 
+      /** `scope` is the frozen committee minus deterministic exits (members leaving through `D` cannot consume the interval's clearing). */
       private def clearingCandidate(
         state: GlobalSnapshotConsensusState,
-        lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1]
+        lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1],
+        scope: Set[PeerId]
       ): Option[(ClearingState, Option[PeerId])] =
         Option.when(config.clearingActiveAt(state.key.value.value)) {
           MembershipClearing.candidate(
             prior = state.lastOutcome.clearing.getOrElse(ClearingState.empty),
             current = state.key,
-            committee = state.roundStartFacilitators.value.toSet,
+            committee = state.roundStartFacilitators.value.toSet.intersect(scope),
             embedded = lineage.map(_.parentOutcome).map { outcome =>
               MembershipClearing.EmbeddedRound(
                 outcome.proposalQc.value.key,
@@ -323,16 +325,23 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1],
         admittedPeers: Set[PeerId],
-        certificateEvictions: Set[PeerId]
+        certificateEvictions: Set[PeerId],
+        scope: Set[PeerId]
       ): Option[PeerId] =
         MembershipClearing.eviction(
-          clearingCandidate(state, lineage).flatMap(_._2),
+          clearingCandidate(state, lineage, scope).flatMap(_._2),
           state.roundStartFacilitators.value.toSet,
           admittedPeers,
           certificateEvictions,
           config.activeAdmissionMaxExpansionPerRound,
           config.unpairedEvictionFloorAt(state.key.value.value)
         )
+
+      /** The clearing scope a certified value implies: members still seated next round or leaving through its evicted set. Members leaving
+        * only through deterministic exits are outside it. Equals the construction-time scope (eligible members plus certificate evictions).
+        */
+      private def valueClearingScope(state: GlobalSnapshotConsensusState, value: ProposalValue): Set[PeerId] =
+        state.roundStartFacilitators.value.toSet.intersect(value.nextRoundAuthority.facilitators.toSortedSet.toSet ++ value.evictedPeers)
 
       private def deriveGlobalOutcomeState(
         state: GlobalSnapshotConsensusState,
@@ -505,12 +514,15 @@ object GlobalSnapshotConsensusStateAdvancer {
             // Membership clearing: the candidate leaves only when it is in the certified evicted set. Its cooldown is the clearing
             // cooldown, and the ledger drops it and marks the interval.
             val clearingInterval = MembershipClearing.intervalOf(state.key, clearingParams)
-            val clearing = clearingCandidate(state, lineage)
+            val clearingScope = certifiedValue.fold(state.roundStartFacilitators.value.toSet)(valueClearingScope(state, _))
+            // The actual successor: the certified authority already excludes deterministic exits.
+            val successor = certifiedValue.fold(nextCommittee.toSet)(_.nextRoundAuthority.facilitators.toSortedSet.toSet)
+            val clearing = clearingCandidate(state, lineage, clearingScope)
             val cleared = clearing.flatMap(_._2).filter(evictedPeers.contains)
             val nextClearing = clearing.map {
               case (recorded, _) =>
                 val marked = cleared.fold(recorded)(MembershipClearing.markCleared(recorded, _, clearingInterval))
-                MembershipClearing.retainSeated(marked, nextCommittee.toSet)
+                MembershipClearing.retainSeated(marked, successor)
             }
               .orElse(state.lastOutcome.clearing)
             val penaltyUntilWithCooldown = cleared.fold(newPenaltyUntil) { target =>
@@ -898,7 +910,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           state,
           artifactInfo.artifact.certifiedLineage,
           value.admittedPeers.toSet,
-          proposal.evictionCertificates.map(_.targetPeer).toSet
+          proposal.evictionCertificates.map(_.targetPeer).toSet,
+          valueClearingScope(state, value)
         ).exists(value.evictedPeers.contains)
 
         Either.cond(offCadenceOpen.isEmpty || paired, (), "clearing_replacement_requires_paired_clearing_eviction")
@@ -913,14 +926,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         state.lastOutcome.finished.candidates.value -- committee -- probation -- penalized
       }
 
-      private def activeAdmissionPenaltyPeers(state: GlobalSnapshotConsensusState): Set[PeerId] = {
-        val countdown = state.lastOutcome.removalPenalties.filter(_._2 > 0).keySet
-        val absolute = state.lastOutcome.penaltyUntil
-          .getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal])
-          .filter { case (_, until) => until.value.value > state.key.value.value }
-          .keySet
-        countdown ++ absolute
-      }
+      private def activeAdmissionPenaltyPeers(state: GlobalSnapshotConsensusState): Set[PeerId] =
+        GlobalSnapshotConsensus.activeAdmissionPenaltyPeersAt(state.lastOutcome, state.key.value.value)
 
       private def allowsSingletonGenesisBootstrapExpansion(state: GlobalSnapshotConsensusState): Boolean =
         CertifiedConsensusGenesis.allowsSingletonBootstrapExpansion(
@@ -1011,8 +1018,7 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def projectNextRoundAuthority(
         state: GlobalSnapshotConsensusState,
         value: ProposalValue,
-        artifactInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
-        derived: DerivedGlobalOutcomeState
+        artifactInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext]
       )(implicit hasher: Hasher[F]): F[Either[String, CertifiedConsensus.CertifiedRoundAuthorityV1]] = {
         val nextKey = BigInt(state.key.value.value) + 1
 
@@ -1060,50 +1066,54 @@ object GlobalSnapshotConsensusStateAdvancer {
       )(implicit hasher: Hasher[F]): F[Either[String, ProposalValue]] = {
         val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
 
+        val certificateEvictions = proposal.evictionCertificates.map(_.targetPeer).toSet
+
         certified.fold(
-          CertifiedConsensus.roundAuthority[F](full).flatMap { placeholderAuthority =>
-            CertifiedConsensus
-              .proposalValue[F, GlobalSnapshotContext](
-                domain = CertifiedConsensus.ConsensusDomain.DagL0,
-                networkId = networkId,
-                key = state.key.value.value,
-                parentArtifactHash = state.lastOutcome.finished.snapshotHash,
-                artifactHash = artifactInfo.hash,
-                context = artifactInfo.context,
-                roundStartFacilitators = full,
-                nextRoundAuthority = placeholderAuthority,
-                nextOperationalStateHash = Hash.empty,
-                committedView = committedView,
-                trigger = trigger,
-                proposal = proposal,
-                consensusEndTime = proposedEndTime,
-                derivedEvictions = clearingEviction(
-                  state,
-                  artifactInfo.artifact.certifiedLineage,
-                  proposal.admissionCertificates.map(_.targetPeer).toSet,
-                  proposal.evictionCertificates.map(_.targetPeer).toSet
-                ).toSet
-              )
-              .flatMap { provisional =>
-                deriveCertifiedContinuation(state, provisional, artifactInfo.artifact.certifiedLineage) match {
+          for {
+            placeholderAuthority <- CertifiedConsensus.roundAuthority[F](full)
+            // Construction-time clearing scope: members that stay eligible (the projector's seedlist and context predicate) plus
+            // certificate evictions. It equals valueClearingScope of the resulting value, which followers and replay use.
+            eligible <- state.roundStartFacilitators.value.filterA { pid =>
+              if (seedlistPeerIds.nonEmpty && !seedlistPeerIds.contains(pid)) false.pure[F]
+              else consensusFns.facilitatorEligible(artifactInfo.context, pid)
+            }
+            provisional <- CertifiedConsensus.proposalValue[F, GlobalSnapshotContext](
+              domain = CertifiedConsensus.ConsensusDomain.DagL0,
+              networkId = networkId,
+              key = state.key.value.value,
+              parentArtifactHash = state.lastOutcome.finished.snapshotHash,
+              artifactHash = artifactInfo.hash,
+              context = artifactInfo.context,
+              roundStartFacilitators = full,
+              nextRoundAuthority = placeholderAuthority,
+              nextOperationalStateHash = Hash.empty,
+              committedView = committedView,
+              trigger = trigger,
+              proposal = proposal,
+              consensusEndTime = proposedEndTime,
+              derivedEvictions = clearingEviction(
+                state,
+                artifactInfo.artifact.certifiedLineage,
+                proposal.admissionCertificates.map(_.targetPeer).toSet,
+                certificateEvictions,
+                eligible.toSet ++ certificateEvictions
+              ).toSet
+            )
+            authority <- projectNextRoundAuthority(state, provisional, artifactInfo)
+            result <- authority match {
+              case Left(error)          => error.asLeft[ProposalValue].pure[F]
+              case Right(nextAuthority) =>
+                // Derive with the real successor authority, exactly as followers and replay derive the finished value.
+                val withAuthority = provisional.copy(nextRoundAuthority = nextAuthority)
+                deriveCertifiedContinuation(state, withAuthority, artifactInfo.artifact.certifiedLineage) match {
                   case Left(error) => error.asLeft[ProposalValue].pure[F]
                   case Right(derived) =>
-                    (
-                      projectNextRoundAuthority(state, provisional, artifactInfo, derived),
-                      Hasher[F].hash(derived.operationalState)
-                    ).mapN {
-                      case (Left(error), _) => error.asLeft[ProposalValue]
-                      case (Right(authority), operationalStateHash) =>
-                        provisional
-                          .copy(
-                            nextRoundAuthority = authority,
-                            nextOperationalStateHash = operationalStateHash
-                          )
-                          .asRight[String]
-                    }
+                    Hasher[F]
+                      .hash(derived.operationalState)
+                      .map(operationalStateHash => withAuthority.copy(nextOperationalStateHash = operationalStateHash).asRight[String])
                 }
-              }
-          }
+            }
+          } yield result
         )(value =>
           CertifiedConsensus
             .rederiveCertifiedValue[F, GlobalSnapshotContext](
@@ -1157,7 +1167,16 @@ object GlobalSnapshotConsensusStateAdvancer {
                           config.activeAdmissionMaxExpansionPerRound,
                           config.unpairedEvictionFloorAt(state.key.value.value)
                         )
-                        .flatMap(_ => validateClearingReplacementPairing(state, actual, artifactInfo, proposal)) match {
+                        .flatMap(_ => validateClearingReplacementPairing(state, actual, artifactInfo, proposal))
+                        .flatMap(_ =>
+                          // The replacement lane is checked against the complete derived evicted set, clearing included: a
+                          // probation certificate (possibly pre-Ready) never supplies the replacement for an evicted seat.
+                          CertifiedMembershipTransition.validateReplacementAdmissionLane(
+                            actual.admittedPeers.toSet,
+                            actual.evictedPeers.toSet,
+                            ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+                          )
+                        ) match {
                         case Left(error) => error.asLeft[ProposalValue].pure[F]
                         case Right(_) =>
                           CertifiedConsensus.validateValue[F](
@@ -1305,7 +1324,12 @@ object GlobalSnapshotConsensusStateAdvancer {
       ): F[List[AdmissionCertificate]] = {
         val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
         val openAllowed = openExpansionAllowedAt(state)
-        val cadenceEligible = assembled.filter(cert => OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed))
+        val penalized = activeAdmissionPenaltyPeers(state)
+        // Followers reject a certificate whose target is under an active penalty or cooldown; never select one.
+        val cadenceEligible = assembled.filter(cert =>
+          OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed) &&
+            !OpenAdmissionPolicy.penaltyBlocksCertificate(cert.targetPeer, penalized)
+        )
         // Partition before applying the one-seat cap. Probation normally has priority, but it
         // cannot occupy the ACS half of an atomic replacement because it may still be pre-Ready.
         // If an open pair is available, select only from exact ReadyAtTip/open certificates.
@@ -1363,10 +1387,12 @@ object GlobalSnapshotConsensusStateAdvancer {
           cert.reason === AdmissionReason.ReadyAtTip &&
           OpenAdmissionPolicy.certificateAllowed(cert.targetPeer, probation, openAllowed)
         }
+        // A floor-blocked clearing target needs an open ReadyAtTip replacement, so select open-first before the one-seat cap
+        // rather than letting a probation certificate take the only seat.
         val preferOpenForReplacement =
           atomicReplacementActive &&
-            pairableSilentEvictions &&
-            hasPairableOpenAdmission
+            hasPairableOpenAdmission &&
+            (pairableSilentEvictions || clearingReplacementTarget(state).nonEmpty)
 
         capAssembledAdmissionCertificates(state, assembledAdmissions, preferOpenForReplacement).flatMap { admissions =>
           if (membershipPolicy.acceptsEvictionCertificates)
@@ -1712,7 +1738,8 @@ object GlobalSnapshotConsensusStateAdvancer {
           sp <- mptStore.savepoint
           _ <- proposalSavepointRef.set((state.key, sp).some)
 
-          (artifact, context, returnedEvents) <- createArtifact(state, effectiveTrigger, mempoolEvents)
+          parentLineage <- parentLineageFor(state, earlyCarriedQc.toOption.flatten)
+          (artifact, context, returnedEvents) <- createArtifact(state, effectiveTrigger, mempoolEvents, parentLineage)
 
           // Do not remove accepted events at proposal time. A proposal can lose the round, or
           // different facilitators can propose the same event at adjacent ordinals. Events are
@@ -3982,15 +4009,51 @@ object GlobalSnapshotConsensusStateAdvancer {
       private def hashArtifact(artifact: GlobalSnapshotArtifact): F[Hash] =
         HasherSelector[F].withCurrent(implicit h => artifact.hash)
 
+      /** The parent certificate the child artifact carries. A carried-QC reproposal reuses the certified artifact's own lineage so the
+        * artifact bytes do not change across views. A fresh proposal rebuilds the parent commit QC from every valid commit this node holds
+        * for the parent round: commits that arrived after this node finalized the parent still count as clearing evidence.
+        */
+      private def parentLineageFor(
+        state: GlobalSnapshotConsensusState,
+        carried: Option[CertifiedProposalQC]
+      ): F[Option[CertifiedConsensus.CertifiedLineageEvidenceV1]] =
+        state.lastOutcome.finished.certifiedOutcome.traverse { parent =>
+          carried match {
+            case Some(qc) =>
+              consensusStorage
+                .getResources(state.key)
+                .map(_.artifacts.get(qc.value.artifactHash).flatMap(_.certifiedLineage).map(_.parentOutcome).getOrElse(parent))
+            case None =>
+              consensusStorage.getResources(state.lastOutcome.key).flatMap { resources =>
+                val commits = SortedMap.from(resources.peerDeclarationsMap.toList.flatMap {
+                  case (peerId, declarations) =>
+                    declarations.signature
+                      .filter(_.proposalValueHash.contains(parent.proposalQc.valueHash))
+                      .flatMap(_.commit)
+                      .map(peerId -> _)
+                })
+                HasherSelector[F].withCurrent { implicit hasher =>
+                  CertifiedConsensus
+                    .mergeCommitQc[F](
+                      parent.proposalQc,
+                      parent.commitQc,
+                      commits,
+                      parent.proposalQc.value.roundStartFacilitators.toSortedSet.toSet
+                    )
+                    .map(commitQc => parent.copy(commitQc = commitQc))
+                }
+              }
+          }
+        }.map(_.map(CertifiedConsensus.CertifiedLineageEvidenceV1(_)))
+
       private def createArtifact(
         state: GlobalSnapshotConsensusState,
         trigger: ConsensusTrigger,
-        events: Set[GlobalSnapshotEvent]
+        events: Set[GlobalSnapshotEvent],
+        certifiedLineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1]
       ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] =
         HasherSelector[F].withCurrent { implicit hasher =>
           val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
-          val certifiedLineage = state.lastOutcome.finished.certifiedOutcome
-            .map(CertifiedConsensus.CertifiedLineageEvidenceV1(_))
           lastArtifact.toHashed.flatMap { hashed =>
             consensusFns.createProposalArtifact(
               state.key,

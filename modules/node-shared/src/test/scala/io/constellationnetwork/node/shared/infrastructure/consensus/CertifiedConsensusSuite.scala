@@ -820,6 +820,41 @@ object CertifiedConsensusSuite extends MutableIOSuite {
     } yield expect.all(commitQcEither.isRight, verified === Right(()), reusedResult.exists(_.isLeft))
   }
 
+  test("a late valid commit extends the commit QC; outsider, wrong-statement and duplicate commits are ignored") { res =>
+    implicit val hasher: Hasher[IO] = res._1
+    implicit val provider: SecurityProvider[IO] = res._2
+
+    for {
+      pairs <- keyPairs(5)
+      ids = pairs.take(4).map(peerId)
+      outsider = peerId(pairs(4))
+      value <- withCommittee(ids)
+      votes <- pairs.take(3).traverse(signOutcomeVote[IO](value, _).map(_._2))
+      proposalQc <- buildProposalQc[IO](value, SortedMap.from(ids.take(3).zip(votes)), ids.toSet, 2.0 / 3.0)
+        .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      commits <- pairs.take(3).traverse(signCommit[IO](proposalQc, _))
+      finalized <- buildCommitQc[IO](proposalQc, SortedMap.from(ids.take(3).zip(commits)), ids.toSet, 2.0 / 3.0)
+        .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
+      late <- signCommit[IO](proposalQc, pairs(3))
+      outsiderCommit <- signCommit[IO](proposalQc, pairs(4))
+      wrongStatement <- signOutcomeVote[IO](value, pairs(3)).map(_._2)
+      merged <- mergeCommitQc[IO](
+        proposalQc,
+        finalized,
+        SortedMap(ids.head -> commits.head, ids(3) -> late, outsider -> outsiderCommit),
+        ids.toSet
+      )
+      rejectedWrong <- mergeCommitQc[IO](proposalQc, finalized, SortedMap(ids(3) -> wrongStatement), ids.toSet)
+      verified <- verifyCommitQc[IO](proposalQc, merged, ids.toSet, 2.0 / 3.0)
+    } yield {
+      val signers = merged.signatures.toSortedSet.map(_.id.toPeerId)
+      expect.same(ids.toSet, signers) &&
+      expect(!signers.contains(outsider)) &&
+      expect.same(finalized, rejectedWrong) &&
+      expect(verified === Right(()))
+    }
+  }
+
   test("QC-bearing codecs are safe under concurrent first touch") { res =>
     implicit val hasher: Hasher[IO] = res._1
     implicit val provider: SecurityProvider[IO] = res._2

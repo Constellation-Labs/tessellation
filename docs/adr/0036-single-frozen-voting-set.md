@@ -66,14 +66,16 @@ epoch.
    deterministically:
    - **Evidence.** When round N+1 is derived, every member of round N's frozen committee gains one seated round and,
      if it signed round N's commit QC *as embedded in N+1's `certifiedLineage`*, one present round. No locally
-     assembled QC is ever used. The commit QC keeps every valid commit received before finalization, bounded by the
-     cluster-wide `signatureGracePeriod`.
+     assembled QC is ever used to read it. The proposer of a fresh child rebuilds round N's commit QC from every valid
+     commit it holds when it builds the child (a superset of its finalized commit QC); a carried-QC reproposal reuses
+     the certified artifact's lineage unchanged.
    - **Intervals.** `interval(N) = N / 2048`. An interval counts for a member only if it was seated for every round of
      it. A counted interval with `present * 10 < seated` extends the member's low-presence streak; any other resets
      it. Records exist only while a member is seated; re-admission starts a fresh record.
    - **Clearing.** A member with a streak of 3 is pending. At most one member is cleared per interval: lowest presence
-     ratio, then lowest PeerId. The target is a derived part of the `ProposalValue`'s `evictedPeers`; followers
-     re-derive it, so a leader can neither skip an eligible target nor substitute another.
+     ratio, then lowest PeerId, among members that are not leaving through deterministic exits. The target is a
+     derived part of the `ProposalValue`'s `evictedPeers`; followers re-derive it, so a leader can neither skip an
+     eligible target nor substitute another.
    - **Floor.** `min-committee-size` (mainnet 10, testnet 4, integrationnet 4, dev 3; at least 3) bounds contraction
      only. Above the floor the target leaves unpaired. At the floor it waits for one open ReadyAtTip replacement,
      which may be admitted off-cadence and without expansion headroom because the size is unchanged; a value that
