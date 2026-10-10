@@ -1,4 +1,10 @@
-# Self-health throttle for leader rotation
+# Self-health throttle for leader rotation (retired)
+
+**Status: Retired (superseded by [ADR-0036](../adr/0036-single-frozen-voting-set.md)).** `Facility.selfHealthHint`, `Proposal.observedSelfHealth`, `peerSelfHealth` and health-gated leader selection are deleted. Leaders follow the round-robin `LeaderSchedule`. `LocalHealthMonitor` remains only as operator gauges (`dag_node_self_health`) with no consensus effect.
+
+## Historical content
+
+Everything below describes a removed mechanism and is kept for context only. Do not cite it as current behavior.
 
 **Status:** Implemented and live. Landed as the consensusSchemaVersion v15
 tiering; the live schema is now 33 (`config/types.scala:830`). The mechanism

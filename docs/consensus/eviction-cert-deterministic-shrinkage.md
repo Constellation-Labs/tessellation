@@ -1,4 +1,10 @@
-# Deterministic eviction-cert-driven committee shrinkage
+# Deterministic eviction-cert-driven committee shrinkage (retired)
+
+**Status: Retired (superseded by [ADR-0036](../adr/0036-single-frozen-voting-set.md)).** This proposal was not adopted, and the quorum-shrink mechanism it refers to as the shipped remedy has been removed. Committee changes now follow the certified successor rule `(B \ (D u E)) u A`; clearing persistently absent members is a planned follow-up, not yet implemented.
+
+## Historical content
+
+Everything below describes a removed mechanism and is kept for context only. Do not cite it as current behavior.
 
 **Status:** SUPERSEDED / not adopted. Retained as historical context.
 **Author:** ottobot-ai (with @scasplte2)

@@ -134,15 +134,15 @@ digraph StallDetector {
         style=dashed;
         fontsize=10;
 
-        QuorumNote [shape=plaintext, label="clusterSize = max(readyPeerCount + 1, totalFacilitators)\nminQuorum = max(1, ceil(totalFacilitators * quorumThresholdFraction))\nselectEvictionTargets caps emission at committee.size - minQuorum\nso aggregate certified evictions cannot shrink committee below quorum."];
+        QuorumNote [shape=plaintext, label="n = |roundStartFacilitators| (frozen; withdrawals do not shrink it)\nminQuorum = max(1, ceil(n * quorumThresholdFraction))\nselectEvictionTargets caps emission at committee.size - minQuorum\nso aggregate certified evictions cannot shrink committee below quorum."];
     }
 
     subgraph cluster_witness {
-        label="Witness Pool (B1/B2 cert assembly)";
+        label="Voter Pool (B1/B2 cert assembly)";
         style=dashed;
         fontsize=10;
 
-        WitnessNote [shape=plaintext, label="witnessPool = state.eligibleFacilitators - target  (v9 widening)\nQuorum still pegged to roundStartFacilitators size."];
+        WitnessNote [shape=plaintext, label="voterPool = roundStartFacilitators - target\nQuorum = FinalityQuorum.of(|roundStartFacilitators|)"];
     }
 
     subgraph cluster_v13 {

@@ -63,57 +63,48 @@ for i in 0 1 2 3 4; do printf "gl0-%s " "$i"; curl -s --max-time 3 "localhost:90
 for i in 0 1 2 3 4; do echo "gl0-$i $(docker logs --tail 400 "gl0-$i" 2>&1 | grep -c ERROR)"; done
 ```
 
-## Reconstructing committee, tier and score for an ordinal
+## Reconstructing the committee for an ordinal
 
-The signed artifact carries everything; no debug endpoint needed.
+The signed artifacts carry everything; no debug endpoint needed. Global L0 has one frozen voting
+set per round and no tiers or scores ([ADR-0036](../adr/0036-single-frozen-voting-set.md)).
 
 ```bash
 O=66
-curl -s "localhost:9000/global-snapshots/$O"       | jq '.value | {ordinal, epochProgress, rewards}'
-curl -s "localhost:9000/global-snapshots/$((O+1))" | jq ".value.peerHistory.controllerEvidence[\"$O\"]"
+curl -s "localhost:9000/global-snapshots/$O" | jq '.value | {ordinal, epochProgress, rewards}'
+# round O's certified value (committee, successor, admissions, evictions) rides in snapshot O+1
+curl -s "localhost:9000/global-snapshots/$((O+1))" \
+  | jq '.value.certifiedLineage.parentOutcome.proposalQc.value
+        | {roundStartFacilitators, next: .nextRoundAuthority, admittedPeers, evictedPeers, timeoutVoters}'
 ```
 
 Two off-by-ones that will mislead you:
 
-- **The committee for ordinal N lives in snapshot N+1** (`controllerEvidence[N].roundStartFacilitators`).
-  Snapshot N's own `peerHistory` is the outcome as of round N's *proposal* -- entries up to N-1.
-- **Trigger type is not serialized.** N was TimeTrigger iff `epochProgress[N] > epochProgress[N-1]`.
-  Static validator rewards mint only on TimeTrigger rounds, so `rewards: []` is usually an
-  EventTrigger round, not a bug.
+- **The certified value for ordinal N lives in snapshot N+1** (`certifiedLineage.parentOutcome`).
+  Snapshot N carries round N-1's certified outcome. The child of a recovery-seed root has an empty
+  `certifiedLineage`, because the root itself was not certified.
+- **Trigger type is not serialized in the artifact.** N was TimeTrigger iff
+  `epochProgress[N] > epochProgress[N-1]`. Static validator rewards mint only on TimeTrigger
+  rounds, so `rewards: []` is usually an EventTrigger round, not a bug.
 
-Neither per-peer tier nor controller score is exposed over HTTP (`peerHistory.perPeer` is
-deliberately blanked). Derive them the way the node does:
+Things to know when reading the committee:
 
-- **Derived tier**: a seated peer absent from the last `TierTransitions.DemotionConsecutiveMisses`
-  (3) entries of `recentSigners` derives Tier 1; otherwise Core. The admission pool uses a *wider*
-  window (`effectiveRecentSignerWindow`) than this tier rule -- do not conflate them.
-- **FINAL tier is not the derived tier.** `CommitteeBuilder` can promote a derived-Tier-1 peer back
-  into Core: both the one-for-one replacement of chronic Core members and the Core-floor top-up draw
-  from `corePromotablePool = rawTier1.filterNot(isChronic || nonCorePeers)`. To conclude a peer ended
-  the round as Tier 1 you also need it to be **chronic** (trailing seated-but-missed streak >=
-  `ChronicMissThreshold`, which bars both mechanisms) AND at least `MinViableCoreSize` (2) healthy
-  Core members remaining, which zeroes the step-5 liveness fallback -- the only path that re-admits a
-  chronic peer. Cross-check against the log line, which prints the committee the node actually built.
-- **Score**: `+20` per entry in `completedSigners`, `-15` per entry it was seated but absent from
-  `completedSigners`, `+10` per `admittedPeers`/`timeoutVoters` appearance, clamped `[0,150]`, over
-  `snapshot[N].peerHistory.controllerEvidence`.
-- **`completedSigners` is NOT "who signed".** `canonicalCompletedSigners` intersects the committee
-  with `observedResponders` -- the leader's record of who sent a **Facility** during the facility
-  phase -- deliberately, because the locally-observed proofs set diverges across honest nodes. So a
-  peer can appear in `snapshot[N].proofs` (it did sign, within the grace window) and still be absent
-  from `controllerEvidence[N].completedSigners` (its Facility reached the leader too late). Measured
-  on a loaded 5-node rig: the two late joiners were seated 8 and 13 times over 63 ordinals and
-  recorded as signers **zero** times, while Ready and at tip. Consequence: such a peer never gains
-  score, goes chronic, is dropped from the committee, and is re-admitted -- permanent churn rather
-  than graduation. Rewards are unaffected (payout follows `roundStartFacilitators`).
-  **Diagnostic:** if a peer looks like it "isn't signing", compare `proofs` against
-  `completedSigners` before concluding anything about the node.
+- **Round N+1's committee is `nextRoundAuthority` of round N**, computed by the successor rule
+  `(B \ (D u E)) u A` (B = round N's `roundStartFacilitators`, E = `evictedPeers`, A =
+  `admittedPeers`, D = members that left the seedlist or lost collateral). Nothing else changes
+  membership; an offline member keeps its seat until it leaves through one of those sets.
+- **The leader is computable.** `LeaderSchedule.leader`: sort the committee by PeerId and take index
+  `(N + view) mod n`. `committedView` in the certified value is the view that finalized.
+- **`proofs` is not the committee.** `snapshot[N].proofs` holds whoever signed within the grace
+  window; it varies across honest nodes and does not decide membership or delegated rewards (payout
+  follows `roundStartFacilitators`). If a peer looks like it "isn't signing", compare `proofs`
+  against `roundStartFacilitators` and check the node's own logs before concluding anything.
 
 Cross-check against the node's own view:
 
 ```bash
-docker logs gl0-0 2>&1 | grep -o 'core=[0-9]* tier1=[0-9]* witness=[0-9]*' | tail -5
-curl -s localhost:9000/metrics | grep -E 'dag_consensus_committee_(core_size|tier_size|core_floor)'
+docker logs gl0-0 2>&1 | grep 'FacilitatorsFinalized' | tail -5   # votingCommittee=, leader=
+curl -s localhost:9000/metrics | grep -E 'dag_consensus_committee_size'
+curl -s localhost:9000/cluster/info | jq '.[] | {id, peerCommittee}'  # seated / probation / cooldown
 ```
 
 ## Write a replication script; do not eyeball JSON
@@ -168,9 +159,12 @@ into `deterministicConfigHash`.
 
 ## Two traps specific to the local rig
 
-- **Committee-sizing config has no `CL_` override by design** (`core-committee-size`,
-  `active-facilitator-target`, `active-facilitator-max`, probation slots). Changing them means
-  editing `dag-l0.conf` and **rebuilding the jar** -- drop `--skip-assembly`.
-- **Scores are noisy on a laptop.** A `-15` penalty per unsigned round means peers cross thresholds
-  constantly under load. Any test criterion requiring several peers above a threshold
-  *simultaneously* is flaky here by construction; prefer criteria the node itself uses.
+- **Some consensus config has no `CL_` override** (`max-facilitator-count`,
+  `certified-consensus-activation-ordinal`). Changing it means editing `dag-l0.conf` and
+  **rebuilding the jar** -- drop `--skip-assembly`. The tier-era sizing keys
+  (`core-committee-size`, `active-facilitator-target`, `active-facilitator-max`, probation slots)
+  no longer exist.
+- **Proof sets are noisy on a laptop.** Under load, late signers miss the grace window and drop out
+  of `proofs` even though they are seated and at tip. Any test criterion built on who appears in
+  `proofs` is flaky here by construction; prefer criteria the node itself uses (committee
+  membership, certified admissions/evictions).

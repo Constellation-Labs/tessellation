@@ -1,4 +1,10 @@
-# Quorum-denominator shrink (v33 liveness rung)
+# Quorum-denominator shrink (v33 liveness rung) (retired)
+
+**Status: Retired (superseded by [ADR-0036](../adr/0036-single-frozen-voting-set.md)).** `QuorumDenominatorShrink` and `quorum-shrink-activation-views` are deleted. Every gate uses one quorum over the frozen round committee, and under more than `f` failures the round halts instead of lowering the denominator; recovery uses the permissioned recovery-seed procedure. Current behavior: [README sec 5](README.md#5-consensus-round-phases).
+
+## Historical content
+
+Everything below describes a removed mechanism and is kept for context only. Do not cite it as current behavior.
 
 **Status:** Removed (ADR-0035 / #1627, 2026-10-10). Retained as a stub so existing links
 resolve.

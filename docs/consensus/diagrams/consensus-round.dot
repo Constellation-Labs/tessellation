@@ -16,9 +16,9 @@ digraph ConsensusRound {
         style=rounded;
 
         CollectingFacilities [label="CollectingFacilities\n\nAll active peers gossip:\n• Event hashes\n• Candidates\n• Trigger\n• facilitatorsHash (round-start)\n• lastSnapshotHash", style="rounded,filled", fillcolor="lightblue"];
-        CollectingProposals [label="CollectingProposals\n\nLeader builds artifact +\n  embeds VCC / EvictionCerts / AdmissionCerts\n  + observedResponders\nValidators verify and gossip Proposal", style="rounded,filled", fillcolor="lightyellow"];
+        CollectingProposals [label="CollectingProposals\n\nLeader builds artifact +\n  embeds VCC / EvictionCerts / AdmissionCerts\n  + admission nominee\nValidators verify and gossip Proposal", style="rounded,filled", fillcolor="lightyellow"];
         CollectingSignatures [label="CollectingSignatures\n\nAll sign majority hash:\n• MajoritySignature\n• signatureGracePeriod for stragglers", style="rounded,filled", fillcolor="lightpink"];
-        Finished [label="Finished\n\nOutcome persisted with\nfacilitators / removed / admitted /\npeerQuality / readmissionCountdown", style="rounded,filled", fillcolor="lightgreen"];
+        Finished [label="Finished\n\nOutcome persisted with\nfacilitators / removed / admitted /\nrecentCommitteeSizes / readmissionCountdown", style="rounded,filled", fillcolor="lightgreen"];
     }
 
     // Transitions: quorum-based, not all-N (default fraction = 1.0 still equals all)

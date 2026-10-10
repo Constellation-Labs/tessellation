@@ -24,8 +24,20 @@ Passing this repository's tests does not satisfy those independent release gates
 > pinned A-1 SnapshotInfo) was deleted; a non-genesis activation is replayed only from a
 > public recovery root (`certified_recovery_root_required` otherwise). The separate
 > Currency protocol-v1 gate was folded into the v4.1 cutover, and
-> `consensusSchemaVersion` is now `36`. Steps below that describe the bridge or legacy
+> `consensusSchemaVersion` became `36` (ADR-0036 below moves it to `37`). Steps below that describe the bridge or legacy
 > progress below the key are retained only where marked as historical.
+>
+> **Committee model update (ADR-0036).** [ADR-0036](../adr/0036-single-frozen-voting-set.md)
+> replaced the Core / Tier-1 / Witness committee with one frozen voting set per round
+> (`roundStartFacilitators`); there is one quorum for QCs and artifact finality, and the
+> former `CoreCommitQC` is now `CommitQC`
+> (`CertifiedConsensusSchema` v36, `consensusSchemaVersion` 37). Signed controller evidence was
+> deleted; a non-genesis activation enters the certified path through the recovery-seed root with
+> the rollback anchor equal to the activation key (see
+> [global-l0-recovery-seed-committee.md](global-l0-recovery-seed-committee.md) and the
+> `certified-consensus-activation-ordinal` comment in `dag-l0.conf`). Checklist steps that seed the
+> activation committee from legacy controller evidence describe the earlier bridge and need to be
+> re-validated against that procedure before use.
 
 ## Scheduled activations
 
@@ -119,11 +131,11 @@ and is therefore fenced independently as well.
    majority equals the certified trigger. One malformed statement must be ignored when
    a valid leader-bearing quorum remains, while an actually under-quorum valid set must
    hold the phase fail-closed. Local rc.10 event-pacing state must never participate.
-8. Exercise both Tier-1 and Core atomic replacement: three consecutive elapsed proof
-   misses, Core-quorum Silent and ReadyAtTip certificates, one ProposalQC carrying equal
-   admitted/evicted sets, unchanged committee cardinality, and no standalone ECS acceptance.
-9. Load test broad Core+Tier-1 signing and record round-duration p50/p95, ProposalQC
-   and CoreCommitQC formation, artifact proof margin, view changes, reward breadth, and
+8. Exercise atomic replacement: three consecutive elapsed proof misses, committee-quorum
+   Silent and ReadyAtTip certificates, one ProposalQC carrying equal admitted/evicted sets,
+   unchanged committee cardinality, and no standalone ECS acceptance.
+9. Load test full-committee signing and record round-duration p50/p95, ProposalQC
+   and CommitQC formation, artifact proof margin, view changes, reward breadth, and
    `dag_consensus_outcome_hook_duration_seconds` p95.
 10. Inventory every active metagraph. Require upgraded Currency L0 jars/configs and
     rebuilt SDK-based Currency L1/data L1 applications before the announced global
@@ -199,12 +211,12 @@ and is therefore fenced independently as well.
     tagging the activating release.
 14. Verify authenticated policy effects. Live nodes are still fenced to one advertised
     version and deterministic config while they execute current committee policy. The QC
-    for round N must authenticate both N's exact full/Core authority and the exact
+    for round N must authenticate both N's exact frozen-committee authority and the exact
     `nextRoundAuthority` for N+1, plus the post-round operational-state commitment.
     Historical replay must use the fixed BFT floor and consume those certified effects;
-    it must not execute the joining binary's current quorum fraction, Core sizing,
+    it must not execute the joining binary's current quorum fraction,
     selector, seedlist, allowance, or collateral policy against old rounds. Exercise a
-    fresh root-to-tip downloader after changing current quorum/Core policy and removing an
+    fresh root-to-tip downloader after changing current quorum policy and removing an
     old member from the current seedlist/allowance inputs; canonical history must still
     verify. Separately prove that the newly joined live cluster uses its current fenced
     policy only when proposing a future `nextRoundAuthority`.
@@ -247,7 +259,7 @@ The reproducible `CertifiedConsensusSuite` production-JSON measurement at 73 sea
 TriggerStatement quorum evidence  34,938 bytes  (consensus message only)
 ProposalValue                     23,289 bytes
 ProposalQC                        26,203 bytes
-CoreCommitQC                       2,993 bytes
+CommitQC                           2,993 bytes
 CertifiedOutcome                  29,227 bytes  (persisted/child-carried)
 ```
 
@@ -293,8 +305,8 @@ blocker.
    `dag_consensus_recovery_seed_boundary_publicly_durable == 1`, then unset the env var on
    the sources. Community validators re-join through ordinary download from the public
    recovery root and certified open admission; they do not sign or earn until admitted.
-6. After the boundary, verify frozen full/Core hashes,
-   ProposalQC, CoreCommitQC, full artifact finality floor, persisted certified sidecar,
+6. After the boundary, verify the frozen committee hash,
+   ProposalQC, CommitQC, full artifact finality floor, persisted certified sidecar,
    child-carried parent certificate, and identical semantic value/derived operational
    outcome on multiple nodes. Raw sidecar files and equivalent carried QCs may contain
    different valid signature subsets and need not be byte-identical.
@@ -359,7 +371,7 @@ Before activation, verify the ordinary-download lineage boundary on every source
 - full snapshot types remain frozen. A future long-range checkpoint must be a separate,
   versioned, content-addressed manifest paired with an ordinary combined incremental
   checkpoint, never a field on `GlobalSnapshot` or `CurrencySnapshot`. It must bind the
-  layer/network, ordinal, artifact and context hashes, certified full/Core authority,
+  layer/network, ordinal, artifact and context hashes, certified committee authority,
   certified tip, and minimal operational continuation state. Authority must come from an independently
   announced manifest hash; neither an embedded committee nor the existing best-effort
   `.meta` sidecar can self-authorize it. The v35 path deliberately relies on retained
@@ -403,9 +415,9 @@ recovery-seed cold restart (or genesis).
 
 ## Availability and rollback
 
-V35 does not shrink the current-round safety universe. Loss of the configured Core
-quorum prevents the prepare/commit certificate; loss of the configured full-committee
-quorum prevents artifact finality. Either condition may require a coordinated restart.
+V35 does not shrink the current-round safety universe. Loss of the committee quorum
+prevents the prepare/commit certificates and artifact finality (one quorum over the frozen
+committee, ADR-0036). This may require a coordinated restart.
 
 Certified consensus is deliberately halt-safe. The certified vote-lock journal prevents a
 node that has voted at a key from voting for a conflicting value, and under
@@ -417,7 +429,7 @@ restart/recovery. This is the accepted availability-for-safety trade, not a moni
 to restart one node independently.
 
 Global L0 replacement is preventive, not subquorum recovery. It runs only while the
-original frozen Core can still certify the complete N-to-N transition. Operators must
+original frozen committee can still certify the complete N-to-N transition. Operators must
 alert on any proposal where admitted and evicted counts differ; honest nodes reject it.
 
 If activation fails:

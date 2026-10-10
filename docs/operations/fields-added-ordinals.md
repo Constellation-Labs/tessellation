@@ -173,7 +173,7 @@ val removingProcessedWithdrawals =
 
 A consensus knob that is testnet-only in HOCON (so mainnet silently falls to a no-op default) **violates this principle**, because the per-environment behavior difference then lives in a runtime branch rather than in consensus-agreed state, and a future contributor cannot see, from the gate, that mainnet behaves differently. The correct way to express a per-environment consensus difference is a `Map[AppEnvironment, T]` config value that is resolved ONCE at the construction site and folded into `deterministicConfigHash` (see below). That way a divergent operator value is rejected during L0 joining rather than producing a silent fork.
 
-The same discipline applies to env-keyed consensus knobs that are not ordinal gates (for example `coreCommitteeSize`, `activeAdmissionMinProbationReentrySlots`, `certifiedConsensusActivationKey`): they are resolved per environment at one construction point and folded into `deterministicConfigHash` (`types.scala`), so the per-environment value is part of the consensus contract, not a runtime branch.
+The same discipline applies to env-keyed consensus knobs that are not ordinal gates (for example `certifiedConsensusActivationKey`; earlier examples such as `coreCommitteeSize` and `activeAdmissionMinProbationReentrySlots` were deleted with the tier model, ADR-0036): they are resolved per environment at one construction point and folded into `deterministicConfigHash` (`types.scala`), so the per-environment value is part of the consensus contract, not a runtime branch.
 
 ## Protocol and replay fences operators must not conflate
 

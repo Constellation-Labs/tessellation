@@ -1,104 +1,80 @@
 # Signature Grace Window
 
-`SignatureGraceDecision` is a small, pure state machine that lets a consensus
-round keep collecting `MajoritySignature` declarations for a bounded window
-*after* it has already crossed the finalization quorum, instead of committing the
-instant quorum is reached. Without it, a round that crosses quorum in the first
-1-3ms on a small cluster would finalize with a truncated proof and participation-
-evidence set. Delegated rewards do not follow proofs; they follow frozen round
-membership. The window length is chosen three ways depending on which signatures are
-still outstanding, balancing finalization liveness against evidence completeness.
-Source of truth: `SignatureGraceDecision.scala:5-83`.
+`SignatureGraceDecision` is a small, pure state machine that lets a Global L0
+consensus round keep collecting `MajoritySignature` declarations for a bounded
+window *after* it has already crossed the finalization quorum, instead of
+committing the instant quorum is reached. Without it, a round that crosses quorum
+in the first 1-3ms on a small cluster would finalize with a truncated proof set and
+truncated commit evidence. Delegated rewards do not follow proofs; they follow frozen
+round membership. Source of truth: `SignatureGraceDecision.scala`.
 
 This belongs to the same `CollectingSignatures -> Finished` transition described
 in [README sec 5](README.md#5-consensus-round-phases) and the finalization
 threshold in [README sec 15](README.md#15-signature-threshold). The threshold
 decides *whether* the round may finalize; the grace window decides *when*.
 
-## The three-way decision
+Before [ADR-0036](../adr/0036-single-frozen-voting-set.md) the decision had three
+cases (a short Tier-1 window once Core had signed, and a full window otherwise).
+With one frozen voting set there is no Core and no Tier 1, so the decision is
+two-way and uses one window.
+
+## The two-way decision
 
 `SignatureGraceDecision.evaluate` is invoked on every signatures-phase tick and
-returns an `Eval`. The decision tree (`SignatureGraceDecision.scala:58-82`):
+returns an `Eval`:
 
 | Case | Condition | Behavior |
 |------|-----------|----------|
-| Not yet at quorum | `!canFinalize` | `Leave` the stamp untouched, do not finalize (the round simply has not crossed quorum yet). |
+| Not yet at quorum | `!canFinalize` | `Leave` the stamp untouched, do not finalize (the round has not crossed quorum yet). |
 | Full committee signed | `fullCommitteeSigned` | `Clear` the stamp and finalize immediately. Nothing more can arrive, so any wait is pure latency. |
-| Core complete, committee not full | `coreComplete` | Wait the SHORT `tier1Window`, measured from when Core *first* completed, then finalize. Only Tier-1 (non-quorum) signatures are outstanding; give them a brief, bounded chance to land in the artifact and participation evidence. |
-| Core incomplete | otherwise | Wait the FULL `fullWindow`, measured from first quorum, for the missing quorum-bearing Core signer. This is the liveness-relevant case. |
+| Quorum, committee not full | otherwise | Wait `window` (`signatureGracePeriod`), measured from when quorum was first seen, then finalize. |
 
 `Eval.waitMore` is the load-bearing output: `true` means "do not finalize this
-tick, keep collecting." It is computed as `(now - graceStart) < window`
-(`SignatureGraceDecision.scala:81`), where `graceStart` and `window` are the
-anchor/length pair selected by the case above.
-
-### Why the Tier-1 window is anchored at Core-complete, not first-quorum
-
-In the Core-complete case the window is measured from `coreCompleteFirstSeen`,
-the monotonic time at which every Core member had first signed
-(`SignatureGraceDecision.scala:75-79`), NOT from `quorumFirstSeen`. If a round's
-Core completes late -- more than `tier1Window` after quorum was first crossed --
-anchoring the Tier-1 collection at first-quorum would make the window already
-expired by the time Core finishes, so the round would skip Tier-1 collection
-entirely. This is the alpha.153 proof/evidence regression the Core-complete anchor
-fixes (`SignatureGraceDecision.scala:13-15`).
+tick, keep collecting." In the third case it is `(now - quorumFirstSeen) < window`.
 
 ## State: the per-round Stamp
 
 The object itself is pure and stateless. The caller owns a per-round `Stamp`
 held in a `Ref`-backed map keyed by round key, and applies the returned
-`StampUpdate` to it. The `Stamp` carries three fields
-(`SignatureGraceDecision.scala:32-36`):
+`StampUpdate` to it. The `Stamp` carries two fields:
 
 - `quorumFirstSeen` -- monotonic time the round first crossed the finalization
-  quorum (the Core-incomplete window anchor).
+  quorum (the window anchor).
 - `firstCount` -- signature count observed at `quorumFirstSeen` (diagnostic; used
   to derive the late-added count).
-- `coreCompleteFirstSeen: Option[FiniteDuration]` -- monotonic time every Core
-  member had first signed; `None` until Core completes (the Tier-1 window anchor).
 
-`evaluate` returns one of three `StampUpdate`s the caller folds into its map
-(`SignatureGraceDecision.scala:39-42`):
+`evaluate` returns one of three `StampUpdate`s the caller folds into its map:
 
 - `Leave` -- leave the map unchanged (round not at quorum yet).
 - `Clear` -- remove this round's stamp (full committee signed, finalizing now).
 - `Set(stamp)` -- store/refresh this round's stamp while still waiting.
 
-Keeping the decision pure makes the state machine directly unit-testable; the
-alpha.153 grace failure had no direct coverage when the logic lived inline. The
-tests live in `SignatureGraceDecisionSuite.scala`.
+Keeping the decision pure makes it directly unit-testable; the tests live in
+`SignatureGraceDecisionSuite.scala`.
 
 ## How it wires into the round
 
-The only caller is the global L0 advancer's `CollectingSignatures -> Finished`
-transition, `GlobalSnapshotConsensusStateAdvancer.scala`. The per-key stamp map
-is a field on the advancer:
+The only caller is the Global L0 advancer's `CollectingSignatures -> Finished`
+transition (`buildFinishedTransition` in `GlobalSnapshotConsensusStateAdvancer.scala`).
+The per-key stamp map is a field on the advancer:
 
 ```scala
 private val signatureQuorumFirstSeenRef
   : Ref[F, Map[GlobalSnapshotKey, SignatureGraceDecision.Stamp]] = Ref.unsafe(Map.empty)
 ```
 
-(`GlobalSnapshotConsensusStateAdvancer.scala:163`.)
+On each signatures-phase tick the advancer derives the inputs from the frozen
+round committee and the valid signatures collected so far:
 
-On each signatures-phase tick the advancer derives the inputs from the canonical
-round-start committee and the valid signatures collected so far
-(`GlobalSnapshotConsensusStateAdvancer.scala:3196-3203`):
-
-- `fullCommittee = state.roundStartFacilitators.value.size` (the full canonical
-  committee: Core + Tier-1).
-- `coreSize = state.coreFacilitators.value.size`.
-- `coreComplete` -- every Core member has signed.
-- `fullCommitteeSigned` -- `validSignatures.size >= fullCommittee`.
-- `canFinalize` -- the current finality gate admits the signer set. During bootstrap
-  this is the legacy Core-sized / strict-majority path. Outside bootstrap it is the
-  committee-floored `quorumFinalityDecision`: the signer set is counted over the frozen
-  `roundStartFacilitators` committee, and the required quorum cannot shrink below that
-  frozen-committee floor.
+- `fullCommitteeSigned` -- `validSignatures.size >= state.roundStartFacilitators.value.size`.
+- `canFinalize` -- `validSignatures.size >= committeeQuorum(state)`, where
+  `committeeQuorum` is `FinalityQuorum.of(|roundStartFacilitators|, quorumThresholdFraction)`.
+  This is the same quorum every phase gate and certificate uses; there is no
+  separate bootstrap finality path.
 
 It then calls `evaluate` inside `signatureQuorumFirstSeenRef.modify`, folding the
-returned `StampUpdate` into the map and reading `waitMore` /`firstObserved` /
-`graceStart` back out (`GlobalSnapshotConsensusStateAdvancer.scala:3261-3282`):
+returned `StampUpdate` into the map and reading `waitMore` / `firstObserved` /
+`graceStart` back out:
 
 ```scala
 val eval = SignatureGraceDecision.evaluate(
@@ -106,45 +82,40 @@ val eval = SignatureGraceDecision.evaluate(
   validCount = validSignatures.size,
   canFinalize = canFinalize,
   fullCommitteeSigned = fullCommitteeSigned,
-  coreComplete = coreComplete,
   existing = m.get(state.key),
-  tier1Window = config.tier1SignatureGracePeriod,
-  fullWindow = config.signatureGracePeriod
+  window = config.signatureGracePeriod
 )
 ```
 
 If `waitMore` is true the transition returns `none[Transition]` -- the round
-stays in `CollectingSignatures` and re-evaluates on the next tick
-(`...Advancer.scala:3311-3312`). The signatures-phase heartbeat that drives those
-ticks comes from `StallDetector`, which re-queues `CheckUpdate` every tick while
-in any signatures-collecting phase precisely so this gate is re-evaluated without
-waiting for a new signature to arrive (see [README sec 11](README.md#11-stall-detection--eviction)).
-When the window has elapsed and `canFinalize` holds, the transition clears the
-stamp (`signatureQuorumFirstSeenRef.update(_ - state.key)`) and builds the
-`Signed[Artifact]` from all collected proofs (`...Advancer.scala:3313-3320`).
+stays in `CollectingSignatures` and re-evaluates on the next tick. The
+signatures-phase heartbeat that drives those ticks comes from `StallDetector`,
+which re-queues `CheckUpdate` every tick while in any signatures-collecting phase
+so this gate is re-evaluated without waiting for a new signature to arrive (see
+[README sec 11](README.md#11-stall-detection--eviction)). When the window has
+elapsed and `canFinalize` holds, the transition clears the stamp and builds the
+`Signed[Artifact]` and the certified `CommitQC` from all collected signatures.
 
 ## Configuration
 
-Two `ConsensusConfig` durations supply the window lengths
-(`config/types.scala:238-251`):
+| Config field | HOCON key | Default | Role |
+|--------------|-----------|---------|------|
+| `signatureGracePeriod` | `snapshot.consensus.signature-grace-period` (`CL_SIGNATURE_GRACE_PERIOD`) | `3 seconds` | The one grace window, measured from first quorum. |
 
-| Config field | Default | Role |
-|--------------|---------|------|
-| `signatureGracePeriod` | `3.seconds` | `fullWindow` -- the Core-incomplete case, measured from first quorum. |
-| `tier1SignatureGracePeriod` | `750.milliseconds` | `tier1Window` -- the Core-complete case, measured from first Core completion (roughly `signatureGracePeriod / 4`). |
+`signatureGracePeriod` is **consensus-critical**: it is folded into
+`ConsensusConfig.deterministicConfigHash` (as `signatureGracePeriodMs`). The
+window bounds which commit signatures land in the certified commit evidence, and
+the planned membership-clearing change (not yet implemented) will count that
+evidence, so per-node windows would bias it. Every node in a cluster must run the
+same value, and the L0 join fence rejects a peer whose effective hash differs.
+Changing it is a coordinated cold-restart change.
 
-Both are timing-only and are deliberately NOT folded into
-`deterministicConfigHash` (`config/types.scala:245-250`). The canonical
-`snapshotHash` is the agreed *artifact* hash, not the signed-artifact hash, so two
-nodes running different grace periods still produce the same downstream
-`snapshotHash`. This lever only changes which proofs ride along on the signed
-artifact, never the delegated reward split or another consensus-decided value, so it
-does not need to match cluster-wide and a divergent value will not fork.
+The former `tier-1-signature-grace-period` / `tier1SignatureGracePeriod` key is
+deleted.
 
 ## Observability
 
-The advancer emits grace-specific metrics around the `evaluate` call
-(`GlobalSnapshotConsensusStateAdvancer.scala:3283-3318`):
+The advancer emits grace-specific metrics around the `evaluate` call:
 
 - `dag_consensus_signature_quorum_reached_total` -- incremented on the first tick
   quorum is observed (`firstObserved`).
@@ -152,5 +123,6 @@ The advancer emits grace-specific metrics around the `evaluate` call
   `dag_consensus_signature_grace_wait_time` -- recorded while `waitMore` holds.
 - `dag_consensus_signature_grace_current_valid_count` /
   `dag_consensus_signature_grace_committee_size` gauges during the wait.
+- `dag_consensus_signature_grace_final_wait_time` -- total wait at finalize.
 - `dag_consensus_signature_late_added_count` -- on finalize, signatures collected
   during the grace window beyond the first-quorum count.

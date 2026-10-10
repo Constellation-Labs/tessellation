@@ -96,11 +96,13 @@ constructor. The resulting outcome:
 - contains the real signed anchor artifact, context, and ordinal-selected hash;
 - sets `facilitators` and `eligibleFacilitators` to the canonical environment
   committee;
-- clears removal, withdrawal, penalty, probation, tier, quality, signer, and
-  controller-evidence windows that could filter the operator-selected cohort;
-  and
-- seeds `recentProofSizes` with the selected committee size, matching rc.8's
+- clears removal, withdrawal, penalty, and probation state that could filter
+  the operator-selected cohort; and
+- seeds `recentCommitteeSizes` with the selected committee size, matching rc.8's
   canonical committee-size bootstrap semantics.
+
+(Before ADR-0036 the reseed also cleared tier, quality, signer and
+controller-evidence windows; those no longer exist.)
 
 Named validators download the real anchor normally, independently reconstruct
 that exact typed outcome, check collateral, and reject any different value.
@@ -177,8 +179,7 @@ Snapshot Streaming. The launch topology remains unchanged: one controlled
 
 Each re-armed start is a complete synthetic operational reseed, not merely a
 preferred-leader hint. It replaces the anchor proof committee with the selected
-set and clears the operational tier, penalty, probation, quality, signer, and
-controller-evidence windows listed above. Community membership and reward
+set and clears the operational penalty and probation state listed above. Community membership and reward
 breadth must therefore regrow from the selected cohort after every such start.
 
 An isolated external restart of one selected source while the variable remains
@@ -445,7 +446,7 @@ v3.5 -> v4.1 cutover the anchor equals the activation key (`R = A`), and
 `fields-added-ordinals.tessellation-41-migration.mainnet = R+1`. The selected nodes still require exact env-derived
 outcome equality and the all-member barrier. The first successor's ordinary
 v35 QC then binds the public parent hash, network/domain, exact frozen
-committee, Core set, and proposal value. That QC is terminal/private at `R+1`;
+committee, and proposal value. That QC is terminal/private at `R+1`;
 the public chain carries it at `R+2`. Do not release community validators or
 restart automation until the public-durability gauge confirms that second
 successor.
@@ -458,10 +459,10 @@ successor.
 The live cluster's version, deterministic-config, and allowance hashes remain
 mandatory join fences. They authenticate which implementation may participate
 in the current session; they are not historical policy identifiers. Each v35 QC
-instead authenticates its current full/Core authority, the exact
+instead authenticates its current frozen-committee authority, the exact
 `nextRoundAuthority`, and the post-round operational-state commitment. A fresh
 node verifies those effects with the fixed BFT floor and never applies today's
-quorum fraction, Core sizing, seedlist, allowance, or collateral rules to an old
+quorum fraction, seedlist, allowance, or collateral rules to an old
 round. A future change to the meaning or safety rules of those signed fields
 requires a new schema/activation rather than a SemVer interpretation of v35.
 
@@ -471,8 +472,7 @@ canonical root from that child's QC plus the independently validated public
 parent, and replays the contiguous reset-to-tip segment through the ordinary
 QC and artifact-proof validators. It needs neither the env, a signed recovery
 plan, a private recovery artifact, nor the seedlist that happened to be current
-when the reset occurred. A committee of fewer than three, a Core set different
-from the complete recovery committee, a mismatched parent, an invalid or
+when the reset occurred. A committee of fewer than three, a mismatched parent, an invalid or
 under-floor QC, invalid artifact proofs, broken authority continuity, or a
 non-identical terminal operational-state commitment fails closed. Repeated
 recoveries supersede older epochs: only the latest publicly certified reset-to-

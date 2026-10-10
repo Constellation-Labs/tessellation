@@ -8,7 +8,7 @@ round emits *both* a `ViewChangeVote` (Track 1, VCC) and a signed `TimeoutVote`
 (Track 2, TC), and whichever certificate assembles first deterministically advances
 the round's view. A formed TC carries the highest known `ProposalQC` so the next
 leader inherits any vote-locked proposal hash, and it is re-validated against the same
-frozen-Core quorum / hash invariants both when it assembles locally and when it
+quorum / voter-pool / hash invariants both when it assembles locally and when it
 arrives embedded in a leader's `Proposal`. A view greater than 0 must be justified by
 exactly one of a VCC or a TC; the two are mutually exclusive on any single proposal.
 This document describes the TC pipeline and how it wires into the round FSM and the
@@ -92,13 +92,11 @@ FSM is mid-phase on the same round). Assembly:
 2. Groups them by `reason` and processes each reason group independently.
 3. For a reason group, all votes must agree on a single `facilitatorsHash`. Multiple
    distinct hashes log `timeout_divergent_facilitators_hash` and are not certified.
-4. Computes the quorum with `certificateQuorum`: only single-proof votes whose signer
-   matches the origin and belongs to the frozen `coreFacilitators` are counted, and the
-   required size is `CertifiedConsensus.requiredCoreQuorum(coreSize,
-   quorumThresholdFraction)`, the same function used by ProposalQC / CoreCommitQC. See
-   [section 6](#6-relationship-to-the-retired-quorum-shrink).
-5. Calls `TimeoutCertificateBuilder.build(...)`
-   (`engine/TimeoutCertificateBuilder.scala:19`).
+4. Computes the required quorum with `certificateQuorum(state, votes)`: only single-signer
+   votes from members of the frozen `roundStartFacilitators` count, and the required count
+   is the one committee quorum (`max(1, ceil(n * quorumThresholdFraction))`). There is no
+   shrink (see [section 6](#6-quorum-is-never-lowered)).
+5. Calls `TimeoutCertificateBuilder.build(...)` (`engine/TimeoutCertificateBuilder.scala`).
 
 `TimeoutCertificateBuilder.build` validates, in order:
 
@@ -106,8 +104,7 @@ FSM is mid-phase on the same round). Assembly:
   (`FacilitatorsHashMismatch`),
 - every vote's `lastSnapshotHash` matches (`LastSnapshotHashMismatch`),
 - every vote's `reason` matches (`ReasonMismatch`),
-- only signers in the voter pool passed by the caller (the frozen Core) are counted;
-  deduplicated by signer
+- only signers in the **voter pool** are counted; deduplicated by signer
   (`bySigner` keeps one vote per signer),
 - the number of distinct in-pool signers is at least `quorumSize` (`UnderQuorum`),
 - the carried `highestKnownQc`s do not diverge: if two QCs at the same view name
@@ -116,11 +113,11 @@ FSM is mid-phase on the same round). Assembly:
 On success it returns `TimeoutCertificate(fromView, toView, facilitatorsHash,
 lastSnapshotHash, reason, votes)` (`declaration.scala:247-254`).
 
-The voter pool passed to the builder is the frozen Core (`certificateQuorum` in
-`StateTransitions`); VCC uses the same function. The former wider witness pool
-(`WitnessPool.all` unioned with `roundStartFacilitators`) is no longer used for VCC/TC;
-it remains only for Core-target eviction and probation-readmission certificates
-(`EvictionVoterPool`, `AdmissionVoterPool`).
+The voter pool passed to the builder is the frozen round committee
+(`roundStartFacilitators`). The VCC builder uses the same pool; the B1/B2 builders use
+the committee minus the target. The earlier wider witness pool (eligible-but-not-active
+and quality-proven historical peers) was removed with the tier model
+([ADR-0036](../adr/0036-single-frozen-voting-set.md)).
 
 When the build succeeds, the FSM:
 
@@ -145,15 +142,14 @@ which short-circuits to a stale outcome if the round already finished or
 it loads the stored certificate and calls `applyCertifiedTimeoutCertificate`.
 
 Apply **re-runs** `TimeoutCertificateBuilder.build` against the freshly recomputed
-frozen-Core quorum, so an apply never trusts the stored certificate blindly. If the
+quorum and voter pool, so an apply never trusts the stored certificate blindly. If the
 certificate still validates, the transition:
 
-1. Asks the layer's `HealthDerivedMembershipPolicy.timeoutMembership`. Global L0 uses
-   `RetainSigningLeases`, which never shrinks: the active set is canonicalized back to
-   the frozen `roundStartFacilitators`, Core is unchanged, and the leader pool is the
-   frozen Core (round-start committee only if Core is empty).
-2. Selects the new leader deterministically over that pool:
-   `facilitatorSelector.selectLeader(leaderPool, state.entropy, toView)`.
+1. Keeps the round's membership. Global L0 runs the `RetainSigningLeases` membership
+   policy: the active facilitator view is canonicalized back to the frozen
+   `roundStartFacilitators`, and the TC voters never shrink it.
+2. Selects the new leader with the round-robin schedule over the frozen committee:
+   `LeaderSchedule.leader(roundStartFacilitators, ordinal, toView)`.
 3. Atomically advances the round under a `condModifyState` guard that only fires when
    `s.viewNumber == fromView` (so a concurrent VCC/TC apply can win the race without
    double-advancing): sets `viewNumber = toView`, sets the new `leader`, resets
@@ -188,44 +184,44 @@ hash or abort and let the next view retry (`tcMismatch`,
 
 Followers re-validate the proposal-carried TC in `ProposalVccValidator`
 (`state/ProposalVccValidator.scala:178-236`). A view greater than 0 proposal must carry
-exactly one of `vcc` / `timeoutCertificate`: neither (outside the solo-Core and
+exactly one of `vcc` / `timeoutCertificate`: neither (outside the solo-committee and
 round-start-view exceptions) is rejected `view{N}_proposal_missing_view_cert`, and both
 is rejected `view{N}_proposal_multiple_view_certs`
 (`state/ProposalVccValidator.scala:106-114`). The TC branch checks:
 
 - `tc.toView == proposalView` and `tc.fromView == proposalView - 1`
   (`tc_view_mismatch`),
-- distinct signers are a subset of the frozen Core and meet the Core quorum
-  (`tc_under_quorum`; a signer outside the frozen Core also rejects here -- the former
-  `tc_voter_not_in_pool` rejection no longer exists),
+- quorum met over the frozen committee (`tc_under_quorum`; `certQuorumMet`),
 - `tc.facilitatorsHash == facilitatorsHash` (`tc_facilitators_mismatch`),
 - `tc.lastSnapshotHash == lastSnapshotHash` plus the per-vote last-snapshot agreement
   (`tc_last_snapshot_mismatch` / `tc_vote_last_snapshot_mismatch`),
+- every voter is a member of the frozen committee (`certQuorumMet` requires the signer
+  set to be a subset of it),
 - the highest carried QC does not diverge and, if present, matches the proposal hash
   (`tc_divergent_highest_qc` / `tc_highest_qc_carry_forward_violation`).
 
 The voters of an accepted proposal-carried TC are recorded as
-`state.acceptedTimeoutCertificateVoters` and feed forward into the next round's
-active-facilitator admission scoring (`GlobalSnapshotConsensusStateAdvancer.scala:509`,
-`:542`, `:690`). A peer that should have produced a timeout vote but did not can be
-demoted via the `CertifiedTimeoutMissing` admission exclusion.
+`state.acceptedTimeoutCertificateVoters`, certified as `ProposalValue.timeoutVoters`, and
+carried into the outcome's `lastTimeoutCertificateVoters`. They are record-only: there is
+no admission scoring, and which timeout voters a leader reports has no effect on who
+votes, who leads or the quorum (ADR-0036; pinned by `GlobalCertifiedLineageReplaySuite`).
 
-## 6. Relationship to the retired quorum shrink
+## 6. Quorum is never lowered
 
-Earlier builds computed the TC quorum through the v33 quorum-denominator shrink rung
-(`QuorumDenominatorShrink`) and could shrink the round-local active set to the TC voters
-on apply. Both were removed with the pre-v35 Global L0 engine (ADR-0035 / #1627; see
-[quorum-shrink.md](quorum-shrink.md) and the ADR-0021 amendment). The TC is now a plain
-frozen-Core quorum certificate; the ADR-0021 finality floor that governs commit is kept
-in `FinalityQuorum`.
+TC assembly and apply both use the one committee quorum over the frozen round
+committee. The former v33 quorum-denominator shrink, which could relax the TC quorum and
+shrink the round-local active set to the TC voters, is deleted
+([ADR-0036](../adr/0036-single-frozen-voting-set.md); retired doc
+[quorum-shrink.md](quorum-shrink.md)). If more than `f` members are silent, no TC forms
+and the round halts.
 
 ## 7. How it relates to abandonment and recovery
 
 The TC and VCC paths are the *liveness-preserving* response to a stall: they rotate the
 leader and keep the round alive at a new view. They do not evict facilitators from the
-committed committee and, on Global L0, do not shrink the round-local active set either.
-If neither certificate ever assembles -- too few responsive frozen-Core peers to reach
-quorum -- the round makes no progress and `StallDetector` eventually hands off to
+committed committee (committee changes go through the certified successor rule; see
+[README section 9](README.md#9-facilitator-selection)). If neither certificate ever
+assembles - too few responsive committee members to reach quorum - the round makes no progress and `StallDetector` eventually hands off to
 `AbandonmentTracker`, which abandons the round and, after enough consecutive
 non-retriable abandonments, triggers a recovery download. See
 [README section 11](README.md#11-stall-detection--eviction) and
@@ -243,7 +239,7 @@ non-retriable abandonments, triggers a recovery download. See
 | Certificate builder | `engine/TimeoutCertificateBuilder.scala:19` |
 | Inbound vote handling | `state/RumorHandler.scala:200-203` |
 | FSM dispatch | `state/ConsensusFSM.scala:89-90` |
-| Assembly | `StateTransitions.checkTimeoutCertificateAssembly`, `certificateQuorum` |
-| Apply (view advance) | `StateTransitions.checkTimeoutCertificateApply`, `applyCertifiedTimeoutCertificate` |
+| Assembly | `state/StateTransitions.scala` (`checkTimeoutCertificateAssembly`) |
+| Apply (view advance) | `state/StateTransitions.scala` (`checkTimeoutCertificateApply`, `applyCertifiedTimeoutCertificate`) |
 | Follower re-validation of proposal-carried TC | `state/ProposalVccValidator.scala:178-236` |
 | Leader embeds TC / QC carry-forward | `dag-l0/.../GlobalSnapshotConsensusStateAdvancer.scala:1221-1262` |

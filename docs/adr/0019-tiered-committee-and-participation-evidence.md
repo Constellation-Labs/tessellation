@@ -4,7 +4,9 @@ Date: 2026-06-30
 
 ## Status
 
-Accepted
+Superseded
+
+> Superseded by [ADR-0036](0036-single-frozen-voting-set.md): Global L0 uses one frozen voting set; tiers and participation evidence are removed.
 
 ## Context
 

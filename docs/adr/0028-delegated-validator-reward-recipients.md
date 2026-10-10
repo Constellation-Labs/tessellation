@@ -6,6 +6,8 @@ Date: 2026-07-16
 
 Accepted; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
+> Amended by [ADR-0036](0036-single-frozen-voting-set.md): the frozen committee is a single voting set; there is no Core/Tier-1 distinction among recipients.
+
 ## Context
 
 Classic rewards historically split validator rewards across

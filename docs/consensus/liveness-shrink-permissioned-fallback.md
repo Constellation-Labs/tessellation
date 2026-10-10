@@ -1,4 +1,10 @@
-# Liveness Shrink: permissioned-fallback committee reduction
+# Liveness Shrink: permissioned-fallback committee reduction (retired)
+
+**Status: Retired (superseded by [ADR-0036](../adr/0036-single-frozen-voting-set.md)).** This proposal was never built, and the shipped alternative it was compared with (quorum shrink) has also been removed. Global L0 now never shrinks the quorum; a stalled cluster halts and is recovered with the permissioned recovery-seed procedure.
+
+## Historical content
+
+Everything below describes a removed mechanism and is kept for context only. Do not cite it as current behavior.
 
 **Status:** Removed (ADR-0035 / #1627, 2026-10-10). Already SUPERSEDED and never
 implemented; retained as a stub so existing links (including ADR-0018's list of rejected
