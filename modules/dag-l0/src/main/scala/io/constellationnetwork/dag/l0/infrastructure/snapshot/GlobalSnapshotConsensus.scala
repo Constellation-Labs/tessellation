@@ -2,11 +2,11 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
 
-import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
+import cats.{Monad, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -80,6 +80,29 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *   ConsensusEventLoop for FSM and command processing
   */
 object GlobalSnapshotConsensus {
+
+  /** Operator view of the committed membership-clearing ledger: pending members, each member's presence in its last counted interval (alert
+    * below 50), and the last interval in which a clearing executed (-1 when none).
+    */
+  private[snapshot] def recordClearingMetrics[F[_]: Monad: Metrics](outcome: GlobalConsensusOutcome): F[Unit] =
+    outcome.clearing.traverse_ { ledger =>
+      val peerId = Metrics.unsafeLabelName("peer_id")
+      Metrics[F].updateGauge(
+        "dag_consensus_clearing_pending_members",
+        ledger.members.count { case (_, record) => record.lowStreak >= MembershipClearing.RequiredLowIntervals }
+      ) >>
+        Metrics[F].updateGauge("dag_consensus_clearing_last_cleared_interval", ledger.clearedInterval.getOrElse(-1L)) >>
+        ledger.members.toList.traverse_ {
+          case (member, record) =>
+            Metrics[F]
+              .updateGauge(
+                "dag_consensus_clearing_member_presence_percent",
+                if (record.lastCountedSeated > 0) record.lastCountedPresent * 100 / record.lastCountedSeated else 0,
+                Seq(peerId -> ConsensusLog.pid(member))
+              )
+              .whenA(record.lastCountedInterval.nonEmpty)
+        }
+    }
 
   /** Extract the established anchor committee without duplicating bootstrap semantics in the shared engine. */
   private[snapshot] def normalFirstRoundCommittee(
@@ -538,7 +561,8 @@ object GlobalSnapshotConsensus {
                 certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key, Set.empty) >>
                 consensusStorage.deleteCertifiedVoteLock(outcome.key)
             ) >>
-              peerHistorySidecar.write(outcome.key, outcome.toOperationalState)
+              peerHistorySidecar.write(outcome.key, outcome.toOperationalState) >>
+              recordClearingMetrics[F](outcome)
           ),
           Some((outcome: GlobalConsensusOutcome) =>
             certifiedOutcomeSidecar.deleteAbove(outcome.key) >>

@@ -16,7 +16,7 @@ Every consensus knob lives in `ConsensusConfig` (`config/types.scala`). At const
 2. Per-environment knobs live one level up under `snapshot { ... }` as `Map[AppEnvironment, T]`. The only one left on Global L0 is `certified-consensus-activation-ordinal`. `SnapshotConfig.resolveEffectiveConsensusConfig` resolves the current environment once (and copies the scalar `max-facilitator-count` into `facilitatorSelectionMax`) and returns the exact `ConsensusConfig` object used by startup, joining, and live consensus.
 3. `ConsensusConfig.deterministicConfigHash` concatenates the consensus-critical fields into a stable string and hashes it. L0 advertises that exact effective hash in `RegistrationRequest`; unequal or one-sided values are rejected during joining. It is also compared during `Facility` processing for post-join diagnostics. Operators must still verify one effective hash before launch so a misconfigured fleet fails preflight instead of fragmenting during startup.
 
-A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. The current string covers: `maxFacilitatorCount`, `facilitatorSelectionMax`, `maxStallCycles`, `signatureGracePeriodMs`, `removalPenaltyRounds`, `candidateDeferralRounds`, `readmissionProbationRounds`, `quorumThresholdFraction`, `exponentialPenaltyBase`, `maxRemovalPenaltyRounds`, `forceViewChangeAbandonments`, `viewIntervalMs`, `maxRoundDurationMs`, `tighteningWindow`, `activeFacilitatorFloor`, `activeAdmissionMaxExpansionPerRound`, `activeAdmissionExpansionIntervalRounds`, `bootstrapDeclarationTimeoutMultiplier`, `penaltyDurationOrdinals`, `certifiedConsensusActivationKey`, `lastGlobalSnapshotSyncOffset`, `lastGlobalSnapshotsInMemory`, `currencySnapshotProtocolV1ActivationOrdinal`, `ordinalConfigHash` and `consensusSchemaVersion` (now `37`). Timing-only fields (the view-apply delay, trigger cadence, declaration timeouts) are excluded. `signature-grace-period` and `max-round-duration` are hashed even though they are durations: the grace window bounds which commit signatures land in the certified commit evidence, and `max-round-duration` bounds the leader-proposed, committee-certified consensus end time.
+A field is consensus-critical if and only if it appears in the `deterministicConfigHash` string. The current string covers: `maxFacilitatorCount`, `facilitatorSelectionMax`, `maxStallCycles`, `signatureGracePeriodMs`, `removalPenaltyRounds`, `candidateDeferralRounds`, `readmissionProbationRounds`, `quorumThresholdFraction`, `exponentialPenaltyBase`, `maxRemovalPenaltyRounds`, `forceViewChangeAbandonments`, `viewIntervalMs`, `maxRoundDurationMs`, `tighteningWindow`, `activeFacilitatorFloor`, `activeAdmissionMaxExpansionPerRound`, `activeAdmissionExpansionIntervalRounds`, `bootstrapDeclarationTimeoutMultiplier`, `penaltyDurationOrdinals`, `certifiedConsensusActivationKey`, `lastGlobalSnapshotSyncOffset`, `lastGlobalSnapshotsInMemory`, `currencySnapshotProtocolV1ActivationOrdinal`, `ordinalConfigHash`, `minCommitteeSize`, `clearingIntervalOrdinals` and `consensusSchemaVersion` (now `37`). Timing-only fields (the view-apply delay, trigger cadence, declaration timeouts) are excluded. `signature-grace-period` and `max-round-duration` are hashed even though they are durations: the grace window bounds which commit signatures land in the certified commit evidence, and `max-round-duration` bounds the leader-proposed, committee-certified consensus end time.
 
 ---
 
@@ -43,7 +43,7 @@ These are folded into `deterministicConfigHash`. Divergent effective values are 
 
 `view-interval` (the view-from-time pacemaker divisor) is consensus-critical (`viewIntervalMs`) but has **no HOCON key**: it is a compiled-in default of `60.seconds`. Changing it requires a code change plus a coordinated cold restart.
 
-Compiled-in hashed fields with no HOCON key: `readmissionProbationRounds` (`3`, seeds the B2 sticky-probation countdown), `bootstrapDeclarationTimeoutMultiplier` (`2.0`, declaration-timeout multiplier while the chain is in bootstrap, i.e. while no recent round's committee reached `BootstrapCommittee.MinimumSize` = 3), `penaltyDurationOrdinals` (`100`, certificate-anchored `penaltyUntil` horizon), and `consensusSchemaVersion` (`37`).
+Compiled-in hashed fields with no HOCON key: `readmissionProbationRounds` (`3`, seeds the B2 sticky-probation countdown), `bootstrapDeclarationTimeoutMultiplier` (`2.0`, declaration-timeout multiplier while the chain is in bootstrap, i.e. while no recent round's committee reached `BootstrapCommittee.MinimumSize` = 3), `penaltyDurationOrdinals` (`100`, certificate-anchored `penaltyUntil` horizon), `clearingIntervalOrdinals` (`2048`, membership-clearing interval and cooldown; set by no packaged config, overridable only in tests), and `consensusSchemaVersion` (`37`).
 
 ### Per-environment knobs (`dag-l0.conf` -> `snapshot`, `Map[AppEnvironment, ...]`)
 
@@ -52,6 +52,9 @@ An **absent env entry** has the behavior in the table's "Absent-entry behavior" 
 | HOCON key | Type | Values | Absent-entry behavior | Meaning |
 |-----------|------|--------|-----------------------|---------|
 | `certified-consensus-activation-ordinal` | `Map[Env, SnapshotOrdinal]` | testnet, integrationnet, dev `0` (certified from genesis); mainnet `9999999` placeholder, set to the final v3.5 ordinal R at the v4.1 cutover | **Global L0 startup fails** (`CertifiedConsensusActivationUnconfigured`, `Main.scala`) | **Global L0-only** certified-consensus boundary, interpreted in Global snapshot ordinal space. This build has no pre-v35 engine: a node downloads/replays keys below activation but refuses to produce one (`CertifiedConsensusNotActiveForProduction`), and a rollback anchor below activation is rejected. The resolved key is hash-folded and must be identical cluster-wide; see [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md) for the mainnet cutover. Currency L0 has no configured v35 key and never switches its flat synchronous engine on this value; its shared `ConsensusConfig` projection retains only the disabled `Long.MaxValue` sentinel. |
+| `min-committee-size` | `Map[Env, PosInt]` | mainnet `10`, testnet `4`, integrationnet `4`, dev `3` | resolves to `3`; values below `3` are rejected at startup | Contraction floor for **membership clearing only**. A clearing removal that would leave the next committee below this size waits for a paired replacement admission. It never blocks admission. Hash-folded as `minCommitteeSize`. |
+
+The clearing activation itself is a shared threshold, `fields-added-ordinals.gl0-clearing` in `application.conf` (dev `0`, every public network `9999999` until scheduled). It enters the hash through `ordinalConfigHash` and resolves into `ConsensusConfig.gl0ClearingActivationOrdinal`.
 
 ### Cross-layer hashed values
 
@@ -92,11 +95,10 @@ same current round. Cached nearby-tip evidence cannot suppress or replace the fr
 direct probe. These local checks prevent a Ready follower whose consensus FSM is one
 round behind from entering the next finality denominator. This is deliberately not part
 of proposal validation or state derivation, because valid proof subsets can differ
-between honest nodes. Under v35, atomic replacement uses node-local actual-proof history
-(`FinalityParticipationAuditor`, `DefaultRequiredConsecutiveMisses` = `3`, plus an
-elapsed-time floor); no operator knob exists for it. The resulting eviction evidence is
-valid only when paired one-for-one with a committee-certified ReadyAtTip admission, so
-this policy cannot shrink the committee.
+between honest nodes. Health-based removal is membership clearing only: it is derived
+from the certified commit evidence, not from node-local proof history, and a clearing
+target blocked by `min-committee-size` may be replaced by one off-cadence ReadyAtTip
+admission (see `min-committee-size` above and ADR-0036 item 8).
 
 ---
 
