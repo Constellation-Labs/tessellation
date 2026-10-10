@@ -128,6 +128,27 @@ object MembershipClearing {
       if CertifiedMembershipTransition.validate(committee, Set.empty, Set(target), maxChanges, Some(f)).isLeft
     } yield target
 
+  /** Whether a proposal carrying `admitted` passes the checks followers apply once the derived clearing eviction is added: the structural
+    * transition, the replacement admission lane (probation never supplies a replacement), and the off-cadence rule (an off-cadence open
+    * admission is valid only while the clearing pair is actually carried). `candidate` is the round's clearing candidate within `scope`.
+    */
+  def admissionsAcceptable(
+    candidate: Option[PeerId],
+    committee: Set[PeerId],
+    probation: Set[PeerId],
+    certificateEvictions: Set[PeerId],
+    admitted: Set[PeerId],
+    onCadence: Boolean,
+    maxChanges: Int,
+    floor: Option[Int]
+  ): Boolean = {
+    val clearing = eviction(candidate, committee, admitted, certificateEvictions, maxChanges, floor)
+    val evicted = certificateEvictions ++ clearing
+    CertifiedMembershipTransition.validate(committee, admitted, evicted, maxChanges, floor).isRight &&
+    CertifiedMembershipTransition.validateReplacementAdmissionLane(admitted, evicted, probation).isRight &&
+    (onCadence || (admitted -- probation).isEmpty || clearing.isDefined)
+  }
+
   /** The single member to clear in `currentInterval`, if any. */
   def selectTarget(state: ClearingState, currentInterval: Long, params: Params = DefaultParams): Option[PeerId] =
     if (state.clearedInterval.contains(currentInterval)) None

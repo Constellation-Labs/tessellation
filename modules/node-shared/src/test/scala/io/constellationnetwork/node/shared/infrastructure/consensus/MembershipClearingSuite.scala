@@ -197,6 +197,29 @@ object MembershipClearingSuite extends FunSuite {
     expect.same(None, replacementTarget(Some(clearedThisInterval), committee, ord(12L), maxChanges = 1, floor = Some(4), params))
   }
 
+  // Construction-to-validation consistency (Codex PR 2 re-review findings 1 and 3).
+  private val probationPeer = peer('p')
+  private val openPeer = peer('o')
+
+  test("above the floor a probation admission cannot accompany a clearing eviction; dropping it clears unpaired") {
+    def ok(admitted: Set[PeerId]) =
+      admissionsAcceptable(Some(d), committee, Set(probationPeer), Set.empty, admitted, onCadence = true, maxChanges = 1, floor = Some(3))
+    expect(!ok(Set(probationPeer))) && expect(ok(Set.empty))
+  }
+
+  test("an off-cadence open admission is valid only while the clearing pair is carried") {
+    def ok(candidate: Option[PeerId]) =
+      admissionsAcceptable(candidate, committee, Set.empty, Set.empty, Set(openPeer), onCadence = false, maxChanges = 1, floor = Some(4))
+    // T leaves via a deterministic exit, so it is outside the clearing scope and there is no candidate to pair with.
+    expect(ok(Some(d))) && expect(!ok(None))
+  }
+
+  test("an on-cadence open admission paired with a floor-blocked clearing is a valid replacement") {
+    expect(
+      admissionsAcceptable(Some(d), committee, Set.empty, Set.empty, Set(openPeer), onCadence = true, maxChanges = 1, floor = Some(4))
+    )
+  }
+
   test("default parameters match the design") {
     expect.same(2048L, IntervalLength) && expect.same(3, RequiredLowIntervals)
   }

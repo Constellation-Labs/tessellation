@@ -263,6 +263,22 @@ object GlobalSnapshotConsensusStateAdvancer {
       // otherwise reset on round cleanup).
       private val signatureQuorumFirstSeenRef: Ref[F, Map[GlobalSnapshotKey, SignatureGraceDecision.Stamp]] = Ref.unsafe(Map.empty)
 
+      /** Parent lineage of every child artifact this node created or validated at the current key, by artifact hash. Retry cleanup clears
+        * resource artifacts but keeps certified QCs, so a carried-QC reproposal needs this to rebuild the exact certified bytes. Entries
+        * for older keys are dropped on each record.
+        */
+      private val childLineageByArtifactRef: Ref[F, Map[Hash, (GlobalSnapshotKey, Option[CertifiedConsensus.CertifiedLineageEvidenceV1])]] =
+        Ref.unsafe(Map.empty)
+
+      private def recordChildLineage(
+        key: GlobalSnapshotKey,
+        artifactHash: Hash,
+        lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1]
+      ): F[Unit] =
+        childLineageByArtifactRef.update { cache =>
+          cache.filter { case (_, (cachedKey, _)) => cachedKey.value.value >= key.value.value }.updated(artifactHash, key -> lineage)
+        }
+
       /** Tracks consecutive validation failures (stateProofDiffers) at the same ordinal. When a node's local state diverges (e.g., after
         * network isolation), every validation attempt fails with the same MPT root mismatch. Neither consensus fork detection (requires
         * completed round) nor gossip fork detection (compares hashes at same ordinal, but node is 1 behind) catches this. After
@@ -1375,7 +1391,8 @@ object GlobalSnapshotConsensusStateAdvancer {
         state: GlobalSnapshotConsensusState,
         assembledEvictions: Set[EvictionCertificate],
         assembledAdmissions: Set[AdmissionCertificate],
-        context: GlobalSnapshotContext
+        context: GlobalSnapshotContext,
+        lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1]
       ): F[(List[EvictionCertificate], List[AdmissionCertificate])] = {
         val atomicReplacementActive =
           membershipPolicy.allowsCertifiedAtomicReplacement
@@ -1468,8 +1485,9 @@ object GlobalSnapshotConsensusStateAdvancer {
                       capSuppressed.toLong,
                       Seq(Metrics.unsafeLabelName("reason") -> "successor_cap")
                     )
-                    .whenA(capSuppressed > 0)
-                    .as(selection.evictions -> seatedAdmissions)
+                    .whenA(capSuppressed > 0) >>
+                  clearingConsistentAdmissions(state, context, lineage, selection.evictions, seatedAdmissions)
+                    .map(selection.evictions -> _)
               }
           } else
             Metrics[F]
@@ -1480,6 +1498,55 @@ object GlobalSnapshotConsensusStateAdvancer {
               )
               .whenA(assembledEvictions.nonEmpty)
               .as(List.empty[EvictionCertificate] -> admissions)
+        }
+      }
+
+      /** Keep proposal construction consistent with the clearing eviction proposalValueFor will derive. The selected admissions must pass
+        * the same checks followers apply to the finished value (structural transition, replacement admission lane, and the off-cadence
+        * pairing rule). When they do not but an admission-free value would, drop the admissions: a probation certificate cannot accompany a
+        * clearing eviction, and an off-cadence replacement is only valid while the clearing pair is actually carried.
+        */
+      private def clearingConsistentAdmissions(
+        state: GlobalSnapshotConsensusState,
+        context: GlobalSnapshotContext,
+        lineage: Option[CertifiedConsensus.CertifiedLineageEvidenceV1],
+        evictions: List[EvictionCertificate],
+        admissions: List[AdmissionCertificate]
+      ): F[List[AdmissionCertificate]] = {
+        val committee = state.roundStartFacilitators.value
+        val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+        val certificateEvictions = evictions.map(_.targetPeer).toSet
+
+        committee.filterA { pid =>
+          if (seedlistPeerIds.nonEmpty && !seedlistPeerIds.contains(pid)) false.pure[F]
+          else consensusFns.facilitatorEligible(context, pid)
+        }.flatMap { eligible =>
+          val scope = eligible.toSet ++ certificateEvictions
+
+          val candidate = clearingCandidate(state, lineage, scope).flatMap(_._2)
+
+          def acceptable(selected: List[AdmissionCertificate]): Boolean =
+            MembershipClearing.admissionsAcceptable(
+              candidate,
+              committee.toSet,
+              probation,
+              certificateEvictions,
+              selected.map(_.targetPeer).toSet,
+              onAdmissionCadence(state),
+              config.activeAdmissionMaxExpansionPerRound,
+              config.unpairedEvictionFloorAt(state.key.value.value)
+            )
+
+          if (admissions.isEmpty || acceptable(admissions)) admissions.pure[F]
+          else if (acceptable(List.empty))
+            Metrics[F]
+              .incrementCounterBy(
+                "dag_consensus_admission_cert_suppressed_total",
+                admissions.size.toLong,
+                Seq(Metrics.unsafeLabelName("reason") -> "clearing_consistency")
+              )
+              .as(List.empty[AdmissionCertificate])
+          else admissions.pure[F]
         }
       }
 
@@ -1759,6 +1826,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             )
             .whenA(heldDagHashes.nonEmpty)
           hash <- hashArtifact(artifact)
+          _ <- recordChildLineage(state.key, hash, artifact.certifiedLineage)
           admissionNominee = selectAdmissionNominee(state, candidates)
           _ <- checkFollowerExit(state)
           isLeader = selfId === state.leader
@@ -1937,7 +2005,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   if (isInBootstrap(state)) Set.empty[EvictionCertificate].pure[F]
                   else consensusStorage.getAssembledEvictionCertificates(state.key)
                 assembledAcs <- consensusStorage.getAssembledAdmissionCertificates(state.key)
-                membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs, context)
+                membership <- membershipCertificatesForProposal(state, assembledEcs, assembledAcs, context, artifact.certifiedLineage)
               } yield membership
             else (List.empty[EvictionCertificate], List.empty[AdmissionCertificate]).pure[F]
           (leaderEcs, leaderAcs) = leaderEvidence
@@ -2102,7 +2170,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                         state,
                         assembledEcs,
                         assembledAcs,
-                        status.proposalArtifactInfo.context
+                        status.proposalArtifactInfo.context,
+                        status.proposalArtifactInfo.artifact.certifiedLineage
                       )
                       (ecs, acs) = membership
                     } yield (maybeVcc, maybeTc, ecs, acs)).flatMap {
@@ -3184,6 +3253,10 @@ object GlobalSnapshotConsensusStateAdvancer {
                   // proof subsets are never substituted into the child's signed bytes.
                   certifiedLineage
                 )
+                .flatTap {
+                  case Right((validatedArtifact, _)) => recordChildLineage(state.key, hash, validatedArtifact.certifiedLineage)
+                  case Left(_)                       => Applicative[F].unit
+                }
                 .map {
                   case Right((validatedArtifact, context)) =>
                     ArtifactInfo(validatedArtifact, context, hash).asRight[InvalidArtifact]
@@ -4020,9 +4093,15 @@ object GlobalSnapshotConsensusStateAdvancer {
         state.lastOutcome.finished.certifiedOutcome.traverse { parent =>
           carried match {
             case Some(qc) =>
-              consensusStorage
-                .getResources(state.key)
-                .map(_.artifacts.get(qc.value.artifactHash).flatMap(_.certifiedLineage).map(_.parentOutcome).getOrElse(parent))
+              (consensusStorage.getResources(state.key), childLineageByArtifactRef.get).mapN { (resources, cached) =>
+                resources.artifacts
+                  .get(qc.value.artifactHash)
+                  .map(_.certifiedLineage)
+                  .orElse(cached.get(qc.value.artifactHash).collect { case (key, lineage) if key === state.key => lineage })
+                  .flatten
+                  .map(_.parentOutcome)
+                  .getOrElse(parent)
+              }
             case None =>
               consensusStorage.getResources(state.lastOutcome.key).flatMap { resources =>
                 val commits = SortedMap.from(resources.peerDeclarationsMap.toList.flatMap {
