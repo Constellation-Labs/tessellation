@@ -590,7 +590,20 @@ object GlobalSnapshotConsensus {
           },
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
           recoverySeedCommittee = Some(recoverySeedCommittee),
-          normalFirstRoundAlignment = normalFirstRoundAlignment.some
+          normalFirstRoundAlignment = normalFirstRoundAlignment.some,
+          clearingReplacementTargetsOf = (outcome: GlobalConsensusOutcome) => {
+            val nextKey = SnapshotOrdinal.unsafeApply(outcome.key.value.value + 1L)
+            MembershipClearing
+              .replacementTarget(
+                outcome.clearing,
+                outcome.facilitators.value.toSet,
+                nextKey,
+                effectiveConsensusConfig.activeAdmissionMaxExpansionPerRound,
+                effectiveConsensusConfig.unpairedEvictionFloorAt(nextKey.value.value),
+                MembershipClearing.Params(effectiveConsensusConfig.clearingIntervalOrdinals, MembershipClearing.RequiredLowIntervals)
+              )
+              .toSet
+          }
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

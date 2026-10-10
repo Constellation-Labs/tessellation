@@ -74,7 +74,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
   // Actual finalized parent proof subsets are node-local and therefore live outside Outcome.
   // This bounded history controls vote emission only; AdmissionCertificate validation and apply
   // remain independent of it.
-  admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History]
+  admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History],
+  // Membership clearing: the committed pending target blocked by the contraction floor. While set, one open ReadyAtTip replacement may be
+  // voted off-cadence and without expansion headroom; the certified value must pair it with the derived clearing eviction.
+  clearingReplacementTargetsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId]
 ) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
@@ -1568,12 +1571,16 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       rotationIndex = admissionRotationIndex,
       maxTargets = configuredMaxAdmissions
     )
-    val hasAtomicReplacementIntent = atomicReplacementIntentTargets.nonEmpty
+    val clearingReplacementTargets =
+      if (selfIsMember) clearingReplacementTargetsOf(state.lastOutcome).intersect(committee).toList.sorted.take(configuredMaxAdmissions)
+      else List.empty
+    val replacementTargets = (atomicReplacementIntentTargets ++ clearingReplacementTargets).distinct.take(configuredMaxAdmissions)
+    val hasAtomicReplacementIntent = replacementTargets.nonEmpty
     val atomicReplacementAdmissionAllowed =
       hasAtomicReplacementIntent
     val maxOpenAdmissions =
       if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxAdmissions
-      else atomicReplacementIntentTargets.size
+      else replacementTargets.size
     val canonicalNominees = admissionNomineesOf(state.lastOutcome)
     // Open expansion has a fixed per-voter target set for the entire round. Selection happens
     // before the local at-tip check, so a missing observation is an abstention rather than a walk
@@ -1581,7 +1588,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val openAdmissionTargets = StallDetector.openAdmissionTargets(
       // A replacement target and admission candidate must be distinct. This remains true even
       // if a malformed/stale parent happened to carry the evicted peer as its nominee.
-      candidates = StallDetector.excludeAtomicReplacementTargets(canonicalNominees, atomicReplacementIntentTargets),
+      candidates = StallDetector.excludeAtomicReplacementTargets(canonicalNominees, replacementTargets),
       committee = committee,
       probation = probation,
       alreadyVotedBySelf = alreadyVotedBySelf,

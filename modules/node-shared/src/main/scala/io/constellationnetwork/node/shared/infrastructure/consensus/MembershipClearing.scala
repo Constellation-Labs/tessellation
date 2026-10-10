@@ -108,6 +108,26 @@ object MembershipClearing {
       CertifiedMembershipTransition.validate(committee, admittedPeers, certificateEvictions + target, maxChanges, floor).isRight
     }
 
+  /** The pending clearing target, from the committed ledger, that cannot leave unpaired at round `nextKey` because the floor blocks it.
+    * Admission voters and the leader may then admit one open ReadyAtTip replacement off-cadence and without expansion headroom; the
+    * committee size is unchanged, and the proposal must carry the paired clearing eviction.
+    */
+  def replacementTarget(
+    state: Option[ClearingState],
+    committee: Set[PeerId],
+    nextKey: SnapshotOrdinal,
+    maxChanges: Int,
+    floor: Option[Int],
+    params: Params
+  ): Option[PeerId] =
+    for {
+      f <- floor
+      ledger <- state
+      seated = ledger.copy(members = ledger.members.filter { case (member, _) => committee.contains(member) })
+      target <- selectTarget(seated, intervalOf(nextKey, params), params)
+      if CertifiedMembershipTransition.validate(committee, Set.empty, Set(target), maxChanges, Some(f)).isLeft
+    } yield target
+
   /** The single member to clear in `currentInterval`, if any. */
   def selectTarget(state: ClearingState, currentInterval: Long, params: Params = DefaultParams): Option[PeerId] =
     if (state.clearedInterval.contains(currentInterval)) None

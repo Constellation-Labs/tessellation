@@ -180,6 +180,23 @@ object MembershipClearingSuite extends FunSuite {
     expect.same(None, eviction(Some(d), committee, Set(peer('e')), Set(c), maxChanges = 1, floor = Some(3)))
   }
 
+  private val pendingLedger = run(ClearingState.empty, 0L, 12L, signers = dSilent)
+
+  test("a pending target blocked by the floor needs a paired replacement") {
+    expect.same(Some(d), replacementTarget(Some(pendingLedger), committee, ord(12L), maxChanges = 1, floor = Some(4), params))
+  }
+
+  test("no replacement is needed above the floor, while clearing is inactive, or without a ledger") {
+    expect.same(None, replacementTarget(Some(pendingLedger), committee, ord(12L), maxChanges = 1, floor = Some(3), params)) &&
+    expect.same(None, replacementTarget(Some(pendingLedger), committee, ord(12L), maxChanges = 1, floor = None, params)) &&
+    expect.same(None, replacementTarget(None, committee, ord(12L), maxChanges = 1, floor = Some(4), params))
+  }
+
+  test("no replacement is requested once the interval's clearing has executed") {
+    val clearedThisInterval = pendingLedger.copy(clearedInterval = Some(3L))
+    expect.same(None, replacementTarget(Some(clearedThisInterval), committee, ord(12L), maxChanges = 1, floor = Some(4), params))
+  }
+
   test("default parameters match the design") {
     expect.same(2048L, IntervalLength) && expect.same(3, RequiredLowIntervals)
   }

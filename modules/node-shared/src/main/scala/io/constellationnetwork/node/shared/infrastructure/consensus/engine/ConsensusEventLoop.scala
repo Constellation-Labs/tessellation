@@ -326,7 +326,8 @@ object ConsensusEventLoop {
     onOutcomeRollbackInitialized: Option[(Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit]] = None,
     initiallyHoldFirstRound: Boolean = false,
     recoverySeedCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
-    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None,
+    clearingReplacementTargetsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -413,7 +414,8 @@ object ConsensusEventLoop {
         admissionCandidateTipProbe,
         healthRef,
         b2AtTipStreakRef,
-        admissionProofHistoryRef
+        admissionProofHistoryRef,
+        clearingReplacementTargetsOf
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
       cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)

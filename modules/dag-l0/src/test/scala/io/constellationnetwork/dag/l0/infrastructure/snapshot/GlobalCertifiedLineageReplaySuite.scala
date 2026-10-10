@@ -926,6 +926,48 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     }
   }
 
+  test("at the floor a pending member cannot leave unpaired but leaves when an admission replaces it") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    // Committee of three equals min-committee-size, so clearing may only replace.
+    val growth = List(Script(admitted = Some(1)), Script(), Script(admitted = Some(2)), Script())
+    val stateAdvancer = advancer(res.pairs.head)
+    val silent = peer(res.pairs(2))
+    val replacement = peer(res.pairs(3))
+
+    def step(state: GlobalConsensusOutcome, script: Script): IO[GlobalConsensusOutcome] =
+      buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
+
+    def streak(outcome: GlobalConsensusOutcome): Int =
+      outcome.clearing.flatMap(_.members.get(silent)).fold(0)(_.lowStreak)
+
+    for {
+      root <- signedRoot(res.pairs)
+      grown <- growth.foldM(root)(step)
+      pendingOutcome <- (grown, 0).tailRecM[IO, (GlobalConsensusOutcome, Int)] {
+        case (state, rounds) =>
+          if (streak(state) >= MembershipClearing.RequiredLowIntervals || rounds >= 30) IO.pure(Right((state, rounds)))
+          else step(state, Script(commitExclude = Set(2))).map(next => Left((next, rounds + 1)))
+      }
+      (pending, _) = pendingOutcome
+      unpaired <- buildFrame(pending, Script(evicted = Some(2), commitExclude = Set(2)), res.pairs).attempt
+      replaced <- step(pending, Script(admitted = Some(3), evicted = Some(2), commitExclude = Set(2)))
+    } yield
+      expect.same(3, grown.facilitators.value.size) &&
+        expect.same(MembershipClearing.RequiredLowIntervals, streak(pending)) &&
+        expect(unpaired.isLeft, "an unpaired clearing at the floor must be refused") &&
+        expect.same(3, replaced.facilitators.value.size) &&
+        expect(!replaced.facilitators.value.contains(silent)) &&
+        expect(replaced.facilitators.value.contains(replacement)) &&
+        expect.same(
+          Some(SnapshotOrdinal.unsafeApply(replaced.key.value.value + config.clearingIntervalOrdinals)),
+          replaced.penaltyUntil.flatMap(_.get(silent))
+        )
+  }
+
   test("production download validator reconstructs public root-to-tip DAG lineage and fails closed on a missing interior artifact") { res =>
     implicit val serializer: JsonSerializer[IO] = res.serializer
     implicit val hasher: Hasher[IO] = res.hasher

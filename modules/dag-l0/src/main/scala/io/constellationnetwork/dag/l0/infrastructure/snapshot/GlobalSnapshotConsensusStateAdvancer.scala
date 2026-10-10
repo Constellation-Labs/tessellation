@@ -863,11 +863,46 @@ object GlobalSnapshotConsensusStateAdvancer {
 
       private val AdmissionPreProposalGrace: FiniteDuration = 1500.millis
 
+      /** Open admission is on cadence, or a floor-blocked clearing target is waiting for its paired replacement. The second case admits
+        * exactly the one replacement; validateClearingReplacementPairing rejects a value that uses it without the paired clearing eviction.
+        */
       private def openExpansionAllowedAt(state: GlobalSnapshotConsensusState): Boolean =
+        onAdmissionCadence(state) || clearingReplacementTarget(state).nonEmpty
+
+      private def onAdmissionCadence(state: GlobalSnapshotConsensusState): Boolean =
         AdmissionCadence.expansionAllowedAtOrdinal(
           state.key.value.value,
           config.activeAdmissionExpansionIntervalRounds
         )
+
+      private def clearingReplacementTarget(state: GlobalSnapshotConsensusState): Option[PeerId] =
+        MembershipClearing.replacementTarget(
+          state.lastOutcome.clearing,
+          state.roundStartFacilitators.value.toSet,
+          state.key,
+          config.activeAdmissionMaxExpansionPerRound,
+          config.unpairedEvictionFloorAt(state.key.value.value),
+          clearingParams
+        )
+
+      /** An off-cadence open admission is valid only as the replacement paired with this round's derived clearing eviction. */
+      private def validateClearingReplacementPairing(
+        state: GlobalSnapshotConsensusState,
+        value: ProposalValue,
+        artifactInfo: ArtifactInfo[GlobalSnapshotArtifact, GlobalSnapshotContext],
+        proposal: Proposal
+      ): Either[String, Unit] = {
+        val probation = ReadmissionMaintenance.probationPeers(state.lastOutcome.readmissionCountdown)
+        val offCadenceOpen = if (onAdmissionCadence(state)) Set.empty[PeerId] else value.admittedPeers.toSet -- probation
+        val paired = clearingEviction(
+          state,
+          artifactInfo.artifact.certifiedLineage,
+          value.admittedPeers.toSet,
+          proposal.evictionCertificates.map(_.targetPeer).toSet
+        ).exists(value.evictedPeers.contains)
+
+        Either.cond(offCadenceOpen.isEmpty || paired, (), "clearing_replacement_requires_paired_clearing_eviction")
+      }
 
       private def openAdmissionNominees(
         state: GlobalSnapshotConsensusState
@@ -1121,7 +1156,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                           actual.evictedPeers.toSet,
                           config.activeAdmissionMaxExpansionPerRound,
                           config.unpairedEvictionFloorAt(state.key.value.value)
-                        ) match {
+                        )
+                        .flatMap(_ => validateClearingReplacementPairing(state, actual, artifactInfo, proposal)) match {
                         case Left(error) => error.asLeft[ProposalValue].pure[F]
                         case Right(_) =>
                           CertifiedConsensus.validateValue[F](
@@ -1342,21 +1378,33 @@ object GlobalSnapshotConsensusStateAdvancer {
                   .filter(cert => cert.reason === EvictionReason.Silent)
                   .sorted(EvictionCertificate.ordering)
               else List.empty
-            val selection = CertifiedMembershipTransition.selectForProposal(
-              roundStartCommittee = state.roundStartFacilitators.value.toSet,
-              locallyObservedParentSigners = state.lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet,
-              admissions = admissions,
-              evictions = candidates,
-              admissionTarget = (certificate: AdmissionCertificate) => certificate.targetPeer,
-              evictionTarget = (certificate: EvictionCertificate) => certificate.targetPeer,
-              quorumThresholdFraction = config.quorumThresholdFraction,
-              maxChanges = config.activeAdmissionMaxExpansionPerRound,
-              allowSingletonBootstrapExpansion = allowsSingletonGenesisBootstrapExpansion(state)
-            )
+            // A floor-blocked clearing target pairs with one open ReadyAtTip admission. The committee size is unchanged, so no
+            // expansion headroom applies; proposalValueFor adds the derived clearing eviction that pairs with it.
+            val clearingReplacement = clearingReplacementTarget(state).filter(_ => candidates.isEmpty)
+            val selection = clearingReplacement.fold(
+              CertifiedMembershipTransition.selectForProposal(
+                roundStartCommittee = state.roundStartFacilitators.value.toSet,
+                locallyObservedParentSigners = state.lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet,
+                admissions = admissions,
+                evictions = candidates,
+                admissionTarget = (certificate: AdmissionCertificate) => certificate.targetPeer,
+                evictionTarget = (certificate: EvictionCertificate) => certificate.targetPeer,
+                quorumThresholdFraction = config.quorumThresholdFraction,
+                maxChanges = config.activeAdmissionMaxExpansionPerRound,
+                allowSingletonBootstrapExpansion = allowsSingletonGenesisBootstrapExpansion(state)
+              )
+            ) { _ =>
+              CertifiedMembershipTransition.ProposalSelection(
+                admissions
+                  .filter(cert => !probation.contains(cert.targetPeer) && cert.reason === AdmissionReason.ReadyAtTip)
+                  .take(math.min(1, config.activeAdmissionMaxExpansionPerRound)),
+                List.empty[EvictionCertificate]
+              )
+            }
             // Never carry an admission the successor cannot seat: a pure expansion past max(cap, |B|) would make the
             // projection reject this leader's proposal. Seats freed by certified evictions and by deterministic exits
             // (computed with the same seedlist and candidate-context predicate the projection uses) count as capacity.
-            val evictedTargets = selection.evictions.map(_.targetPeer).toSet
+            val evictedTargets = selection.evictions.map(_.targetPeer).toSet ++ clearingReplacement.toSet
             val remaining = state.roundStartFacilitators.value.filterNot(evictedTargets.contains)
             remaining
               .filterA(pid =>
