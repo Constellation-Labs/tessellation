@@ -330,7 +330,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         TierTransitions.computeNextTiers(
           priorTiers = state.lastOutcome.peerTiers,
           roundStartFacilitators = state.roundStartFacilitators.value.toSet,
-          roundStartCoreFacilitators = state.coreFacilitators.value.toSet,
+          roundStartCoreFacilitators = state.votingCommittee.toSet,
           recentSignersWindow = newRecentSigners,
           roundCompleted = true
         )
@@ -731,7 +731,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             // Per-peer cumulative view-change-caused credits: for each view v in [0, committedView) credit the leader the
             // round-robin LeaderSchedule assigned at that view, over the same pool StateTransitions uses for view changes.
             val priorLeaderPool =
-              if (state.coreFacilitators.value.nonEmpty) state.coreFacilitators.value else state.roundStartFacilitators.value
+              if (state.votingCommittee.nonEmpty) state.votingCommittee else state.roundStartFacilitators.value
             val committedViewNumber = certifiedValue.fold(state.viewNumber)(_.committedView.toInt)
             val viewChangeCredits: SortedMap[PeerId, Long] =
               if (committedViewNumber <= 0 || priorLeaderPool.isEmpty) SortedMap.empty[PeerId, Long]
@@ -842,11 +842,11 @@ object GlobalSnapshotConsensusStateAdvancer {
         HasherSelector[F].withCurrent { implicit hasher =>
           val value = certified.proposalQc.value
           val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
-          val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
+          val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.votingCommittee))
           val frozenCommittee = full.toSortedSet.toSet
           val requiredArtifactProofs = CertifiedConsensus.requiredArtifactQuorum(
             frozenCommittee.size,
-            state.coreFacilitators.value.size,
+            state.votingCommittee.size,
             config.quorumThresholdFraction
           )
 
@@ -1111,7 +1111,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         ActiveFacilitatorAdmission.activeAdmissionTarget(
           config.activeFacilitatorTarget,
           config.coreCommitteeSize,
-          state.coreFacilitators.value.size
+          state.votingCommittee.size
         )
 
       private def openExpansionAllowedAt(state: GlobalSnapshotConsensusState): Boolean =
@@ -1164,7 +1164,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             state.lastOutcome.finished.snapshotHash
           ),
           state.roundStartFacilitators.value.toSet,
-          state.coreFacilitators.value.toSet,
+          state.votingCommittee.toSet,
           config.quorumThresholdFraction
         )
 
@@ -1281,7 +1281,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         certified: Option[ProposalValue] = None
       )(implicit hasher: Hasher[F]): F[Either[String, ProposalValue]] = {
         val full = NonEmptySet.fromSetUnsafe(SortedSet.from(state.roundStartFacilitators.value))
-        val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.coreFacilitators.value))
+        val core = NonEmptySet.fromSetUnsafe(SortedSet.from(state.votingCommittee))
 
         certified.fold(
           CertifiedConsensus.roundAuthority[F](full, core).flatMap { placeholderAuthority =>
@@ -1386,7 +1386,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                             config.viewInterval,
                             config.maxRoundDuration,
                             state.roundStartFacilitators.value.toSet,
-                            state.coreFacilitators.value.toSet,
+                            state.votingCommittee.toSet,
                             config.quorumThresholdFraction
                           )
                       }
@@ -1428,7 +1428,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   state.roundStartFacilitators.value.toSet,
                   CertifiedConsensus.requiredArtifactQuorum(
                     state.roundStartFacilitators.value.size,
-                    state.coreFacilitators.value.size,
+                    state.votingCommittee.size,
                     config.quorumThresholdFraction
                   ),
                   value.trigger,
@@ -1657,7 +1657,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                 state.roundStartFacilitators.value.toSet,
                 CertifiedConsensus.requiredArtifactQuorum(
                   state.roundStartFacilitators.value.size,
-                  state.coreFacilitators.value.size,
+                  state.votingCommittee.size,
                   config.quorumThresholdFraction
                 ),
                 state.leader
@@ -1971,8 +1971,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               "parentFacilitatorsHash" -> state.lastOutcome.finished.facilitatorsHash.show.take(8),
               "parentKey" -> state.lastOutcome.key.show,
               "roundStartFacilitators" -> state.roundStartFacilitators.value.size.toString,
-              "coreFacilitators" -> state.coreFacilitators.value.size.toString,
-              "tier1Facilitators" -> state.tier1Facilitators.value.size.toString
+              "votingCommittee" -> state.votingCommittee.size.toString
             ) ++ (if (withdrawnCount > 0) Seq("withdrawn" -> withdrawnCount.toString) else Seq.empty)): _*
           )
           _ <- ConsensusLog.debug(
@@ -2038,7 +2037,7 @@ object GlobalSnapshotConsensusStateAdvancer {
           // a momentary solo state after self-rejoin or community-peer drop-off (overnight
           // alpha.88 monitor saw repeated `ROUND_STARTED facs=1 leader=e2f4496e view=0` with
           // vcc_missing_for_view_gt_0 on every retry).
-          isSoloCore = state.coreFacilitators.value.size <= 1
+          isSoloCore = state.votingCommittee.size <= 1
           // A round-start seed view is accepted without consulting a locally cached VCC. Once
           // `viewNumber > initialViewNumber`, a real view-change has occurred and the VCC
           // requirement re-engages.
@@ -2577,10 +2576,10 @@ object GlobalSnapshotConsensusStateAdvancer {
             proposalVcc = proposal.vcc,
             proposalTimeoutCertificate = proposal.timeoutCertificate,
             initialViewNumber = state.initialViewNumber,
-            coreSize = state.coreFacilitators.value.size,
+            coreSize = state.votingCommittee.size,
             facilitatorsHash = facilitatorsHash,
             lastSnapshotHash = state.lastOutcome.finished.snapshotHash,
-            certifiedCore = state.coreFacilitators.value.toSet,
+            certifiedCore = state.votingCommittee.toSet,
             quorumThresholdFraction = config.quorumThresholdFraction
           )
           .pure[F]
@@ -2624,7 +2623,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // rationale. Both the assembly site and this re-validation must agree on the witness
         // pool, otherwise leaders would assemble certs that followers reject. Integer math via
         // `QuorumPolicy.fromFraction`.
-        val n = state.coreFacilitators.value.size
+        val n = state.votingCommittee.size
         val q =
           if (atomicReplacement) CertifiedConsensus.requiredCoreQuorum(n, config.quorumThresholdFraction)
           else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
@@ -2692,12 +2691,12 @@ object GlobalSnapshotConsensusStateAdvancer {
                       )
                       .union(state.roundStartFacilitators.value.toSet - cert.targetPeer)
                     val witnessPool =
-                      if (atomicReplacement) state.coreFacilitators.value.toSet - cert.targetPeer
+                      if (atomicReplacement) state.votingCommittee.toSet - cert.targetPeer
                       else
                         EvictionVoterPool.select(
                           cert.targetPeer,
-                          state.tier1Facilitators.value.contains(cert.targetPeer),
-                          state.coreFacilitators.value.toSet,
+                          false,
+                          state.votingCommittee.toSet,
                           widerWitnessPool
                         )
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !witnessPool.contains(sv.proofs.head.id.toPeerId))
@@ -2790,7 +2789,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         // v19: quorum threshold computed against the Core committee only -- see
         // validateProposalEcs for the full decoupled-threshold-vs-membership rationale.
         // Integer math via `QuorumPolicy.fromFraction`.
-        val n = state.coreFacilitators.value.size
+        val n = state.votingCommittee.size
         val requiresCoreAdmissionCertification =
           membershipPolicy.allowsCertifiedAtomicReplacement
         val q = AdmissionVoterPool.requiredQuorum(
@@ -2882,7 +2881,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                       cert.targetPeer,
                       probation.contains(cert.targetPeer),
                       requiresCoreAdmissionCertification,
-                      state.coreFacilitators.value.toSet,
+                      state.votingCommittee.toSet,
                       widerWitnessPool
                     )
                     val nonWitnessPoolVoter = cert.votes.toList.find(sv => !voterPool.contains(sv.proofs.head.id.toPeerId))
@@ -3175,7 +3174,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               case Right(_) =>
                 // v19: observedResponders quorum gate computed against the Core committee.
                 // Integer math via `QuorumPolicy.fromFraction`.
-                val n = state.coreFacilitators.value.size
+                val n = state.votingCommittee.size
                 val q = math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
                 val below = leaderProposal.observedResponders.size < q && !isInBootstrap(state)
                 ConsensusLog
@@ -3909,7 +3908,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             carriedQc,
             resources,
             state.roundStartFacilitators.value.toSet,
-            state.coreFacilitators.value.toSet,
+            state.votingCommittee.toSet,
             config.quorumThresholdFraction,
             selfId,
             keyPair,
@@ -3977,7 +3976,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         proposalQc: CertifiedProposalQC
       )(implicit hasher: Hasher[F]): F[Option[Transition]] = {
         val value = proposalQc.value
-        val core = state.coreFacilitators.value.toSet
+        val core = state.votingCommittee.toSet
         val isCore = core.contains(selfId)
 
         for {
@@ -4128,7 +4127,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               commitQc <- CertifiedConsensus.buildCoreCommitQc[F](
                 proposalQc,
                 commits,
-                state.coreFacilitators.value.toSet,
+                state.votingCommittee.toSet,
                 config.quorumThresholdFraction
               )
               result <- commitQc match {
@@ -4143,7 +4142,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                         Event.RoundBlockedByState,
                         "reason" -> s"core_commit_qc:$error",
                         "coreCommits" -> commits.size.toString,
-                        "core" -> state.coreFacilitators.value.size.toString,
+                        "core" -> state.votingCommittee.size.toString,
                         "valueHash" -> valueHash.show.take(8)
                       )
                       .as(none[Transition])
@@ -4203,9 +4202,9 @@ object GlobalSnapshotConsensusStateAdvancer {
             // and committee 3<->7 oscillation) while restoring Tier 1 proof inclusion. `fullCommittee`
             // now drives both the immediate-finalize check and the signature-count log display below.
             val canonicalCommitteeSize = state.roundStartFacilitators.value.size
-            val coreSize = state.coreFacilitators.value.size
+            val coreSize = state.votingCommittee.size
             val fullCommittee = canonicalCommitteeSize
-            val coreSet = state.coreFacilitators.value.toSet
+            val coreSet = state.votingCommittee.toSet
             val coreSignedCount = validSignatures.count(p => coreSet.contains(p.id.toPeerId))
             val coreComplete = coreSignedCount >= coreSize
             val fullCommitteeSigned = validSignatures.size >= fullCommittee

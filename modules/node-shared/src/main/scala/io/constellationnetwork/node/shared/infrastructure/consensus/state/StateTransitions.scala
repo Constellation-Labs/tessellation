@@ -156,7 +156,7 @@ class StateTransitions[
     state: ConsensusState[Key, Status, Outcome, Kind],
     votes: Map[PeerId, Signed[A]]
   ): StateTransitions.CertificateQuorum[A] = {
-    val core = state.coreFacilitators.value.toSet
+    val core = state.votingCommittee.toSet
     val coreVotes = votes.collect {
       case (origin, signed)
           if signed.proofs.size === 1L &&
@@ -708,7 +708,7 @@ class StateTransitions[
       .exists(kind =>
         resources.peerDeclarationsMap.exists {
           case (peerId, declarations) =>
-            state.coreFacilitators.value.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
+            state.votingCommittee.contains(peerId) && ctx.ops.kindGetter(kind)(declarations).isDefined
         }
       )
     val localProgress = phaseIndex == 2 || (ctx.ops.isProposalPhase(state.status) && currentKindHasCoreDeclarations)
@@ -780,11 +780,7 @@ class StateTransitions[
                 )
             case Right(vcc) =>
               val viewMembershipPolicy = ctx.membershipPolicy
-              val leaderPool = viewMembershipPolicy.certifiedViewChangeLeaderPool(
-                state.coreFacilitators.value,
-                state.facilitators.value,
-                state.roundStartFacilitators.value
-              )
+              val leaderPool = viewMembershipPolicy.certifiedViewChangeLeaderPool(state.roundStartFacilitators.value)
               val newLeader = LeaderSchedule.leader(leaderPool, ctx.roundIndexOf(state.key), toView.toLong)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
@@ -839,7 +835,7 @@ class StateTransitions[
                     "toView" -> toView.toString,
                     "votes" -> votes.size.toString,
                     "quorum" -> q.toString,
-                    "leaderPool" -> (if (leaderPool == state.coreFacilitators.value) "core" else "facilitators_fallback"),
+                    "leaderPool" -> (if (leaderPool == state.votingCommittee) "core" else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
                     "statusReset" -> resetStatus.isDefined.toString
@@ -936,7 +932,6 @@ class StateTransitions[
               val viewMembershipPolicy = ctx.membershipPolicy
               val timeoutMembership = viewMembershipPolicy.timeoutMembership(
                 facilitators = currentActive,
-                coreFacilitators = state.coreFacilitators.value,
                 roundStartFacilitators = state.roundStartFacilitators.value,
                 timeoutVoters = reasonVotes.keySet,
                 shrinkFloor = shrinkFloor
@@ -960,12 +955,7 @@ class StateTransitions[
                           activeAfterCertifiedShrink,
                           s.roundStartFacilitators.value
                         )
-                        val coreAfterCertifiedShrink =
-                          if (timeoutMembership.shrinkApplied) timeoutMembership.coreFacilitators else s.coreFacilitators.value
-                        val membershipState = s.copy(
-                          facilitators = Facilitators(canonicalFacilitators),
-                          coreFacilitators = CoreFacilitators(coreAfterCertifiedShrink)
-                        )
+                        val membershipState = s.copy(facilitators = Facilitators(canonicalFacilitators))
                         val updated: ConsensusState[Key, Status, Outcome, Kind] = resetStatus match {
                           case Some(fresh) =>
                             membershipState.copy(
@@ -1008,7 +998,7 @@ class StateTransitions[
                     "votes" -> reasonVotes.size.toString,
                     "quorum" -> q.toString,
                     "leaderPool" -> (if (shrunk) "certified_shrink"
-                                     else if (leaderPool == state.coreFacilitators.value) "core"
+                                     else if (leaderPool == state.votingCommittee) "core"
                                      else "facilitators_fallback"),
                     "leaderPoolSize" -> leaderPool.size.toString,
                     "newLeader" -> ConsensusLog.pid(newLeader),
@@ -1162,7 +1152,7 @@ class StateTransitions[
           // participants from peerQuality), but the LIVENESS denominator is Core-sized so
           // a leader assembling with q Core-derived signatures will validate against
           // every follower's matching denominator. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.coreFacilitators.value.size
+          val n = state.votingCommittee.size
           val atomicReplacement =
             ctx.membershipPolicy.allowsCertifiedAtomicReplacement
           val q =
@@ -1191,12 +1181,12 @@ class StateTransitions[
                     // The shared selector is also used by both proposal validators so assembly
                     // and acceptance cannot drift.
                     val witnessPool =
-                      if (atomicReplacement) state.coreFacilitators.value.toSet - target
+                      if (atomicReplacement) state.votingCommittee.toSet - target
                       else
                         EvictionVoterPool.select(
                           target,
-                          state.tier1Facilitators.value.contains(target),
-                          state.coreFacilitators.value.toSet,
+                          false,
+                          state.votingCommittee.toSet,
                           widerWitnessPool(state, target)
                         )
                     val expectedLastSnap = ctx.lastSnapshotHashOf(state.lastOutcome)
@@ -1288,7 +1278,7 @@ class StateTransitions[
           // mirrors `validateProposalAcs` in the advancer. See ECS assembly above for the
           // full rationale on decoupling the Core-sized liveness quorum from the broad
           // signing committee. Integer math via `QuorumPolicy.fromFraction`.
-          val n = state.coreFacilitators.value.size
+          val n = state.votingCommittee.size
           val requiresCoreAdmissionCertification =
             ctx.membershipPolicy.allowsCertifiedAtomicReplacement
           val q = AdmissionVoterPool.requiredQuorum(
@@ -1306,7 +1296,7 @@ class StateTransitions[
             target,
             isProbationReadmission,
             requiresCoreAdmissionCertification,
-            state.coreFacilitators.value.toSet,
+            state.votingCommittee.toSet,
             widerWitnessPool(state, target)
           )
           val eligibleVotes = votes.filter { case (voter, _) => voterPool.contains(voter) }

@@ -132,14 +132,14 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     * finalization is floored (see `finalityQuorum`).
     */
   def livenessQuorum(state: ConsensusState[Key, Status, Outcome, Kind]): Int =
-    FinalityQuorum.coreQuorum(state.coreFacilitators.value.size, config.quorumThresholdFraction)
+    FinalityQuorum.coreQuorum(state.votingCommittee.size, config.quorumThresholdFraction)
 
   /** FINALITY quorum: carries the cluster-majority floor over the FROZEN round committee outside bootstrap. Used only where a snapshot is
     * committed -- the phase gate `maybeGetAllDeclarations` and the dag-l0 finalization gate.
     */
   def finalityQuorum(state: ConsensusState[Key, Status, Outcome, Kind]): Int =
     FinalityQuorum.required(
-      state.coreFacilitators.value.size,
+      state.votingCommittee.size,
       state.roundStartFacilitators.value.size,
       clusterFloorActive(state),
       config.quorumThresholdFraction
@@ -168,7 +168,7 @@ trait ConsensusStateAdvancer[F[_], Key, Artifact, Context, Status, Outcome, Kind
     //
     // Collection: iterate the active set so Tier 1 declarations land in the result (rewards).
     val activeFacilitators = state.facilitators.value
-    val coreSet = state.coreFacilitators.value.toSet
+    val coreSet = state.votingCommittee.toSet
     val floorActive = clusterFloorActive(state)
     val gateSet = if (floorActive) state.roundStartFacilitators.value.toSet else coreSet
     val gateSize = gateSet.size

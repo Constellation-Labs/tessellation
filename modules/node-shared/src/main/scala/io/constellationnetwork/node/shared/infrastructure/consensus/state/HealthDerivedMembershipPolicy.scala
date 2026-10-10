@@ -56,16 +56,11 @@ sealed trait HealthDerivedMembershipPolicy extends Product with Serializable {
   final def canonicalFacilitators(activeFacilitators: List[PeerId], roundStartFacilitators: List[PeerId]): List[PeerId] =
     if (allowsAutomaticRemoval) activeFacilitators else roundStartFacilitators
 
-  /** Leader pool after a certified VCC/TC. GL0 must not narrow frozen Core with node-local withdrawal observations. */
-  def certifiedViewChangeLeaderPool(
-    coreFacilitators: List[PeerId],
-    activeFacilitators: List[PeerId],
-    roundStartFacilitators: List[PeerId]
-  ): List[PeerId]
+  /** Leader pool after a certified VCC/TC: the frozen round committee, never narrowed by node-local withdrawal observations. */
+  def certifiedViewChangeLeaderPool(roundStartFacilitators: List[PeerId]): List[PeerId]
 
   def timeoutMembership(
     facilitators: List[PeerId],
-    coreFacilitators: List[PeerId],
     roundStartFacilitators: List[PeerId],
     timeoutVoters: Set[PeerId],
     shrinkFloor: Int
@@ -76,7 +71,6 @@ object HealthDerivedMembershipPolicy {
 
   final case class TimeoutMembership(
     facilitators: List[PeerId],
-    coreFacilitators: List[PeerId],
     leaderPool: List[PeerId],
     evaluatedActive: List[PeerId],
     shrinkApplied: Boolean,
@@ -97,15 +91,10 @@ object HealthDerivedMembershipPolicy {
     val acceptsCertifiedNextRoundEvictions: Boolean = false
     val supportsCertifiedAtomicReplacement: Boolean = true
 
-    def certifiedViewChangeLeaderPool(
-      coreFacilitators: List[PeerId],
-      activeFacilitators: List[PeerId],
-      roundStartFacilitators: List[PeerId]
-    ): List[PeerId] = leaderPool(coreFacilitators, roundStartFacilitators)
+    def certifiedViewChangeLeaderPool(roundStartFacilitators: List[PeerId]): List[PeerId] = roundStartFacilitators
 
     def timeoutMembership(
       facilitators: List[PeerId],
-      coreFacilitators: List[PeerId],
       roundStartFacilitators: List[PeerId],
       timeoutVoters: Set[PeerId],
       shrinkFloor: Int
@@ -113,10 +102,9 @@ object HealthDerivedMembershipPolicy {
       val canonical = canonicalFacilitators(facilitators, roundStartFacilitators)
       TimeoutMembership(
         facilitators = canonical,
-        coreFacilitators = coreFacilitators,
         // Do not filter frozen Core through the node-local active/withdrawn view. A dead slot may
         // consume a view, but all nodes rotate through the same leader pool.
-        leaderPool = certifiedViewChangeLeaderPool(coreFacilitators, facilitators, roundStartFacilitators),
+        leaderPool = certifiedViewChangeLeaderPool(roundStartFacilitators),
         evaluatedActive = canonical,
         shrinkApplied = false,
         shrinkEvaluated = false,
@@ -126,6 +114,4 @@ object HealthDerivedMembershipPolicy {
     }
   }
 
-  private def leaderPool(coreFacilitators: List[PeerId], facilitators: List[PeerId]): List[PeerId] =
-    if (coreFacilitators.nonEmpty) coreFacilitators else facilitators
 }

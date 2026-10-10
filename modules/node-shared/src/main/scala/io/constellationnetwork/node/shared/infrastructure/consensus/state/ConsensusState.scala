@@ -69,26 +69,6 @@ object EligibleFacilitators {
   def empty: EligibleFacilitators = EligibleFacilitators(List.empty)
 }
 
-/** v19 multi-committee: peers in the active LIVENESS quorum (Tier 2 Core). Quorum threshold across the round is computed against
-  * `coreFacilitators.value.size`; demotions out of Core never change the active quorum denominator without consensus-agreement on a new
-  * outcome. Set deterministically by `CommitteeBuilder.build` at state creation; frozen for the lifetime of the round.
-  */
-@derive(eqv, encoder, decoder)
-case class CoreFacilitators(value: List[PeerId])
-object CoreFacilitators {
-  def empty: CoreFacilitators = CoreFacilitators(List.empty)
-}
-
-/** v19 multi-committee: Tier 1 peers eligible for B1/B2/VCC witness pools but NOT in the active LIVENESS quorum. Demoted from Core by
-  * `TierTransitions.computeNextTier` after a completed round where the peer was in `roundStartFacilitators` but not in `recentSigners`. Set
-  * deterministically by `CommitteeBuilder.build` at state creation.
-  */
-@derive(eqv, encoder, decoder)
-case class Tier1Facilitators(value: List[PeerId])
-object Tier1Facilitators {
-  def empty: Tier1Facilitators = Tier1Facilitators(List.empty)
-}
-
 @derive(eqv, encoder, decoder)
 case class RemovedFacilitators(value: Set[PeerId])
 object RemovedFacilitators {
@@ -202,18 +182,6 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // `acceptedTimeoutCertificateVoters`. Defaulted to empty so pre-existing construction
   // sites continue to compile.
   certifiedEvictionTargets: SortedSet[PeerId] = SortedSet.empty,
-  // v19 multi-committee partition of `roundStartFacilitators`. `coreFacilitators` is the
-  // active LIVENESS quorum -- the quorum threshold across the round is computed against
-  // `coreFacilitators.value.size`, NOT `facilitators.value.size` / `roundStartFacilitators.value.size`.
-  // `tier1Facilitators` covers witness-eligible peers for B1/B2/VCC certs that are NOT in
-  // the active quorum. Both are set at round creation by `CommitteeBuilder.build`.
-  // `roundStartFacilitators` remains the canonical immutable set used for hashes/outcomes.
-  // `coreFacilitators` may be narrowed only by a quorum-signed TimeoutCertificate in
-  // StateTransitions as a round-local certified shrink/yield; that does not mutate the
-  // committed committee or tier state. Defaulted to empty so all pre-v19 ConsensusState
-  // construction sites continue to compile; the new state-creator wiring populates them.
-  coreFacilitators: CoreFacilitators = CoreFacilitators.empty,
-  tier1Facilitators: Tier1Facilitators = Tier1Facilitators.empty,
   // v19 phase 2 view-from-time anchor: derived from the accepted Facility set when the
   // round transitions from CollectingFacilities to CollectingProposals. See
   // `ConsensusEndTime.compute`. Stored on state (not status) so it survives the
@@ -242,7 +210,11 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // currency-l0 state creators populate it.
   initialViewNumber: Int = 0,
   entropy: Hash
-)
+) {
+
+  /** The single frozen voting set for this round: every quorum, eligibility, emission, assembly, and verification uses it. */
+  def votingCommittee: List[PeerId] = roundStartFacilitators.value
+}
 
 object ConsensusState {
   implicit def showInstance[K: Show, S: Show, O, Kind: Show]: Show[ConsensusState[K, S, O, Kind]] = { cs =>

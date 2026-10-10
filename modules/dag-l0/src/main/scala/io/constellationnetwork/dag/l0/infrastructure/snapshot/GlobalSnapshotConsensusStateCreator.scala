@@ -856,8 +856,6 @@ object GlobalSnapshotConsensusStateCreator {
           time,
           withdrawnFacilitators = WithdrawnFacilitators.empty,
           eligibleFacilitators = EligibleFacilitators(allEligible),
-          coreFacilitators = CoreFacilitators(committees.core),
-          tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
           // Round-start view = certified initial view. MUST match the
           // `initialView` argument passed to LeaderSchedule above so the

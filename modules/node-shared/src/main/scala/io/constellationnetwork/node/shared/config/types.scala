@@ -881,7 +881,7 @@ object types {
     //     Tier 1 (Witness-eligible), Witness (Tier 0) -- derived per round by
     //     `CommitteeBuilder.build` from the consensus-agreed `lastOutcome.peerTiers`
     //     map. Quorum sites switch from `state.facilitators.value.size` /
-    //     `state.roundStartFacilitators.value.size` to `state.coreFacilitators.value.size`,
+    //     `state.roundStartFacilitators.value.size` to `state.votingCommittee.size`,
     //     so the LIVENESS denominator is now the Core committee only. Per-peer tier
     //     is carried via `Option[Int]` on `PerPeerOperationalRecord` (Option-wrapped
     //     for derevo back-compat); absent peers default to Tier 2 (Core) at consume

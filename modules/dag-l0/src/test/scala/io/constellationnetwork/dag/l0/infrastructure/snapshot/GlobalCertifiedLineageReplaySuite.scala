@@ -699,8 +699,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
         acceptedTimeoutCertificateVoters = value.timeoutVoters,
         certifiedEvictionTargets = value.evictedPeers,
-        coreFacilitators = CoreFacilitators(core),
-        tier1Facilitators = Tier1Facilitators(roundStart.filterNot(core.toSet)),
         outcomeEndTime = value.consensusEndTime,
         leader = roundStart.head,
         viewNumber = value.committedView.toInt,

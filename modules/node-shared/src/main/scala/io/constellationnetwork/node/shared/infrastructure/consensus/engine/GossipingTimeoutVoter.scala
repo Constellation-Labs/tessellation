@@ -57,7 +57,7 @@ class GossipingTimeoutVoter[F[
           .pacemakerVoteTargets(
             selfId,
             state.roundStartFacilitators.value.toSet,
-            state.coreFacilitators.value.toSet
+            state.votingCommittee.toSet
           )
           .fold(
             ConsensusLog
@@ -82,7 +82,7 @@ class GossipingTimeoutVoter[F[
                     .verifyPersistedLockedQc[F](
                       certifiedLock,
                       state.roundStartFacilitators.value.toSet,
-                      state.coreFacilitators.value.toSet,
+                      state.votingCommittee.toSet,
                       configuredFraction
                     )
                     .flatMap {
