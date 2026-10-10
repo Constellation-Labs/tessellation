@@ -18,18 +18,12 @@ object FieldsAddedOrdinalsFixtures {
     updatingCombineFunctionSpendActions = active,
     fixingAllowSpendExpiration = active,
     fixingAllowSpendAndTokenLockValidation = active,
-    setSumFix = active,
-    scFeeBalanceFromContext = active,
-    subTrieRoots = active,
-    delegatedRewardsFullCommittee = active,
-    feeTransactionSecurity = active,
     fixingFeeTransactionBalanceOverflow = active,
-    currencySnapshotProtocolV1 = active,
     fixingDataApplicationFeeValidation = active,
     fixingAllowSpendDestinationCredit = active,
     preventingAllowSpendResurrection = active,
     fixingGlobalAllowSpendExpiration = active,
-    fixingDelegatedStakeDoubleWithdrawal = active,
-    fixingSpendActionAggregateBalance = active
+    removingProcessedDelegatedStakeWithdrawals = active,
+    tessellation41Migration = active
   )
 }

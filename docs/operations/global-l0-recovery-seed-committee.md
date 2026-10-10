@@ -12,9 +12,12 @@ or a consensus message. Authorization is the operator's control of the selected
 source-node launch environment and the coordinated cold restart.
 
 The feature is inert when the environment variable is absent. Env-based seeding
-changes no public schema and needs no activation beyond the scheduled v35
-boundary. Post-v35 public verification uses the v35 certificate lineage and is
-therefore unavailable before that coordinated activation. The override does
+changes no public schema. Public verification uses the v35 certificate lineage.
+Since [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md) / #1627 this build has
+no pre-v35 Global L0 engine: every rollback anchor, with or without the env seed,
+must be at or after `certified-consensus-activation-ordinal`
+(`RollbackAnchorBelowCertifiedActivation` otherwise). This path is also how
+mainnet enters certified consensus: activation `A = R`, the final v3.5 ordinal. The override does
 change initial consensus behavior when armed, so every node in the fleet must
 run the same distinctly tagged release and effective consensus configuration.
 The feature first shipped in rc.9; any later release carrying it must still be
@@ -62,9 +65,8 @@ recovery-reset key-2 child have the same public lineage shape, so community
 validators could not distinguish the authority safely. Startup rejects this
 case before rollback storage mutation. If no successor was ever produced,
 restart genesis normally; otherwise select a verified incremental anchor at
-ordinal 2 or later. A future ordinal-gated activation is not subject to this
-one genesis-boundary restriction, but still follows the activation-spacing
-preflight below.
+ordinal 2 or later. A non-genesis activation (mainnet, `A = R`) is not subject
+to this one genesis-boundary restriction.
 
 Example:
 
@@ -150,9 +152,7 @@ path: remove the env from that validator's launch environment and restart it as
 committed. Never leave that missed validator armed while the source lineage
 advances.
 
-Before v35 activation, an accepted successor is immediately usable under the
-legacy artifact-proof rules. At or after v35 activation, the synthetic recovery
-root `R` is deliberately uncertified. Its first successor `R+1` forms the
+The synthetic recovery root `R` is deliberately uncertified. Its first successor `R+1` forms the
 ordinary QC for `R+1`, but that QC remains terminal/private on the source cohort.
 Only `R+2` carries the complete `R+1` QC in its public `certifiedLineage`, making
 the reset boundary reconstructible by an env-free validator after every source
@@ -265,8 +265,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    proof set directly. On every continuously running recovery-origin process,
    verify `dag_consensus_recovery_seed_headroom_ready == 1`, headroom deficit
    `== 0`, and `dag_consensus_recovery_seed_boundary_publicly_durable == 1`.
-   Before v35 activation the durability gauge becomes ready with the first
-   successor. At/after activation it must remain `0` for `R+1` and become `1`
+   The durability gauge must remain `0` for `R+1` and become `1`
    only after `R+2` publicly carries the `R+1` QC. Do not infer public durability
    from a source-private terminal outcome or sidecar.
    A live recovery source can serve the terminal `R+1` QC directly, so an
@@ -400,9 +399,8 @@ New rc.9 metrics:
   resource is released;
 - `dag_consensus_recovery_seed_boundary_publicly_durable` — latches to `1`
   when an env-free validator can reconstruct the recovery boundary using public
-  chain data alone. This is immediate on the first legacy successor, but at/after
-  v35 activation it stays `0` at `R+1` and becomes `1` only after `R+2` carries
-  the complete `R+1` QC;
+  chain data alone. It stays `0` at `R+1` and becomes `1` only after `R+2`
+  carries the complete `R+1` QC;
 - `dag_consensus_recovery_seed_configured_total{role}` — startup count for
   `rollback_lead` or `selected_validator`;
 - `dag_consensus_recovery_seed_disarmed_total` — successful invocation-local
@@ -447,10 +445,11 @@ condition.
 
 ## Compatibility with certified consensus
 
-Before v35 activation, a recovery anchor must be at most `activation - 3` so
-the signed controller-evidence window is rebuilt before the boundary. At or
-after activation, the same env flow starts a fresh certified epoch without a
-second operator artifact. The selected nodes still require exact env-derived
+A recovery anchor below activation is rejected at startup; there is no legacy
+engine to produce rounds below it. An anchor at or after activation starts a
+fresh certified epoch without a second operator artifact. For the mainnet
+v3.5 -> v4.1 cutover the anchor equals the activation key (`R = A`), and
+`fields-added-ordinals.tessellation-41-migration.mainnet = R+1`. The selected nodes still require exact env-derived
 outcome equality and the all-member barrier. The first successor's ordinary
 v35 QC then binds the public parent hash, network/domain, exact frozen
 committee, Core set, and proposal value. That QC is terminal/private at `R+1`;
@@ -458,15 +457,10 @@ the public chain carries it at `R+2`. Do not release community validators or
 restart automation until the public-durability gauge confirms that second
 successor.
 
-> **ACTIVATION-BOUNDARY TRAP:** If the first certified round at key `A` never
-> finalizes, the public tip remains `A-1`, but an env recovery from `A-1` or
-> `A-2` is deliberately rejected. The activation bridge at `A` must derive its
-> authority from the signed legacy controller-evidence window; a synthetic root
-> inside that window would be ambiguous and then overwritten by the bridge.
-> Recover from an explicitly reconciled anchor at or before `A-3`, rebuild the
-> legacy window, and cross `A` again—or withdraw/defer the activation before the
-> fleet reaches it. Rehearse this path with Snapshot Streaming reconciliation
-> before announcing the key.
+> **Historical (removed in #1627):** the former activation-boundary trap
+> (recovery seeds at `A-1`/`A-2` rejected, recover at or before `A-3` and rebuild
+> the legacy controller-evidence window) applied only to the exact-key activation
+> bridge, which was deleted together with the pre-v35 engine.
 
 The live cluster's version, deterministic-config, and allowance hashes remain
 mandatory join fences. They authenticate which implementation may participate

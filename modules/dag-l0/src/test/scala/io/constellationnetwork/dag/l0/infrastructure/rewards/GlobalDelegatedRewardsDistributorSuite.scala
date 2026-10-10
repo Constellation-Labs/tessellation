@@ -44,6 +44,18 @@ import weaver.scalacheck.Checkers
 
 object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
 
+  // Total issued by a distribution round: reserved + node-operator + delegator rewards (withdrawals are not new issuance).
+  private def emittedAmount(
+    reserved: SortedSet[RewardTransaction],
+    nodeOperators: SortedSet[RewardTransaction],
+    delegators: SortedMap[PeerId, SortedMap[Address, Amount]]
+  ): Long =
+    reserved.toList.map(_.amount.value.value).sum + nodeOperators.toList.map(_.amount.value.value).sum +
+      delegators.values.flatMap(_.values).map(_.value.value).sum
+
+  private def emitted(result: DelegatedRewardsResult): Long =
+    emittedAmount(result.reservedAddressRewards, result.nodeOperatorRewards, result.delegatorRewardsMap)
+
   def createTestDelegationRewardsResult(amount: Amount): DelegatedRewardsResult = {
     val address1 = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
     val address2 = Address("DAG07tqNLYW8jHU9emXcRTT3CfgCUoumwcLghopd")
@@ -83,8 +95,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       updatedWithdrawDelegatedStakes = SortedMap.empty,
       nodeOperatorRewards = rewardTxs,
       reservedAddressRewards = SortedSet.empty,
-      withdrawalRewardTxs = SortedSet.empty,
-      totalEmittedRewardsAmount = amount
+      withdrawalRewardTxs = SortedSet.empty
     )
   }
 
@@ -391,7 +402,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       )
     } yield
       // Check if the distribution includes expected components
-      expect(result.totalEmittedRewardsAmount.value.value == 2_000_000L) &&
+      expect(emitted(result) == 2_000_000L) &&
         expect(result.delegatorRewardsMap.nonEmpty) &&
         expect(result.updatedCreateDelegatedStakes.nonEmpty) &&
         // No withdrawals, so this should be empty
@@ -738,7 +749,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       )
     } yield
       // Check if the distribution includes expected components
-      expect(result.totalEmittedRewardsAmount.value.value == 2_000_000L + 20_000_000L) &&
+      expect(emitted(result) == 2_000_000L + 20_000_000L) &&
         expect(result.delegatorRewardsMap.nonEmpty) &&
         expect(result.updatedCreateDelegatedStakes.nonEmpty) &&
         // No withdrawals, so this should be empty
@@ -822,7 +833,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         partitionedUpdates
       )
     } yield
-      expect(result.totalEmittedRewardsAmount == Amount.empty) &&
+      expect(emitted(result) == 0L) &&
         expect(result.delegatorRewardsMap.isEmpty) &&
         expect(result.updatedCreateDelegatedStakes.isEmpty) &&
         expect(result.updatedWithdrawDelegatedStakes.isEmpty) &&
@@ -962,8 +973,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       )
     } yield
       // Test the accumulated total rewards - simpler and more reliable
-      expect(result1.totalEmittedRewardsAmount.value.value > 0) &&
-        expect(result2.totalEmittedRewardsAmount.value.value > 0)
+      expect(emitted(result1) > 0) &&
+        expect(emitted(result2) > 0)
   }
 
   test("distribute should handle both distribution mechanisms when migrating from classic to delegated") {
@@ -1086,8 +1097,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // Verify reward amounts are correctly calculated
       // Verify node operator rewards are present
 
-      expect(resultAtTransition.totalEmittedRewardsAmount.value.value > 0) && // Dynamic amount from emission formula
-        expect(resultAfterTransition.totalEmittedRewardsAmount.value.value > 0) && // Dynamic amount from emission formula
+      expect(emitted(resultAtTransition) > 0) && // Dynamic amount from emission formula
+        expect(emitted(resultAfterTransition) > 0) && // Dynamic amount from emission formula
         expect(resultAtTransition.nodeOperatorRewards.nonEmpty) &&
         expect(resultAfterTransition.nodeOperatorRewards.nonEmpty) &&
         expect(resultAtTransition.delegatorRewardsMap.nonEmpty) &&
@@ -1279,10 +1290,10 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       // With zero stakes, there should be no delegator rewards
       // With empty context, there should be no delegator rewards
 
-      expect(resultZeroStakes.totalEmittedRewardsAmount.value.value > 0) &&
+      expect(emitted(resultZeroStakes) > 0) &&
         expect(resultZeroStakes.delegatorRewardsMap.isEmpty) &&
         expect(resultZeroStakes.nodeOperatorRewards.nonEmpty) &&
-        expect(resultEmptyContext.totalEmittedRewardsAmount.value.value > 0) &&
+        expect(emitted(resultEmptyContext) > 0) &&
         expect(resultEmptyContext.delegatorRewardsMap.isEmpty) &&
         expect(resultEmptyContext.nodeOperatorRewards.nonEmpty)
   }
@@ -1557,8 +1568,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
                 _,
                 nodeOperatorRewards,
                 reservedAddressRewards,
-                _,
-                totalEmittedRewardsAmount
+                _
               ) =>
             val getReservedReward =
               (addr: Address) => reservedAddressRewards.find(_.destination == addr).map(_.amount.value.value).getOrElse(0L)
@@ -1582,7 +1592,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
               pctDiff <= 0.0000001
             }
 
-            val totalEmitted = totalEmittedRewardsAmount.value.value
+            val totalEmitted = emittedAmount(reservedAddressRewards, nodeOperatorRewards, delegatorRewardsMap)
 
             val stardustReward = getReservedReward(stardustAddress)
             val protocolReward = getReservedReward(protocolAddress)

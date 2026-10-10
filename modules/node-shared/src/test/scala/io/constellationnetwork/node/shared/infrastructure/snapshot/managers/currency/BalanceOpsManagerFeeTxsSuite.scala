@@ -1,17 +1,17 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency
 
 import cats.data.{NonEmptyList, NonEmptySet}
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
-import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator.{
   FeeTransactionValidationErrorOr,
   SameSourceAndDestinationAddress
 }
+import io.constellationnetwork.node.shared.domain.transaction.{FeeTransactionSignerPolicy, FeeTransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.currency.BalanceOpsManager.applyFeeTransactions
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -192,14 +192,51 @@ object BalanceOpsManagerFeeTxsSuite extends SimpleIOSuite with Checkers {
 
     def validate(
       signedTransaction: Signed[FeeTransaction],
-      enforceWalletAuthorization: Boolean
+      signerPolicy: FeeTransactionSignerPolicy
     ): IO[FeeTransactionValidationErrorOr[Signed[FeeTransaction]]] = verdict(signedTransaction).pure[IO]
 
     def validate(
       signedTransactions: NonEmptyList[Signed[FeeTransaction]],
-      enforceWalletAuthorization: Boolean
+      signerPolicy: FeeTransactionSignerPolicy
     ): IO[FeeTransactionValidationErrorOr[NonEmptyList[Signed[FeeTransaction]]]] =
       signedTransactions.traverse(verdict).pure[IO]
+  }
+
+  private def policyRecordingValidator(seen: Ref[IO, List[FeeTransactionSignerPolicy]]): FeeTransactionValidator[IO] =
+    new FeeTransactionValidator[IO] {
+      def validate(
+        signedTransaction: Signed[FeeTransaction],
+        signerPolicy: FeeTransactionSignerPolicy
+      ): IO[FeeTransactionValidationErrorOr[Signed[FeeTransaction]]] =
+        seen.update(signerPolicy :: _).as(signedTransaction.validNec)
+
+      def validate(
+        signedTransactions: NonEmptyList[Signed[FeeTransaction]],
+        signerPolicy: FeeTransactionSignerPolicy
+      ): IO[FeeTransactionValidationErrorOr[NonEmptyList[Signed[FeeTransaction]]]] =
+        seen.update(signerPolicy :: _).as(signedTransactions.validNec)
+    }
+
+  // Release/mainnet #1577 ties proof verification to fixing-data-application-fee-validation, the drop boundary.
+  // fee-transaction-security (folded into the v4.1 cutover) supersedes it with source-authorized co-signers.
+  test("selects the release/mainnet signer policy on each side of the fee validation boundaries") {
+    List(
+      (false, false, FeeTransactionSignerPolicy.LegacyExclusiveSource),
+      (false, true, FeeTransactionSignerPolicy.VerifiedExclusiveSource),
+      (true, true, FeeTransactionSignerPolicy.VerifiedSourceAuthorized)
+    ).traverse {
+      case (walletAuthorization, drop, expected) =>
+        for {
+          seen <- Ref.of[IO, List[FeeTransactionSignerPolicy]](List.empty)
+          _ <- new BalanceOpsManager[IO](policyRecordingValidator(seen))
+            .validateFeeTxs(SortedSet(validTx).some, enforceWalletAuthorization = walletAuthorization, dropInvalidTransactions = drop)
+          policies <- seen.get
+        } yield
+          expect(
+            policies == List(expected),
+            s"walletAuthorization=$walletAuthorization drop=$drop should select $expected, got $policies"
+          )
+    }.map(_.combineAll)
   }
 
   private val balanceOps = new BalanceOpsManager[IO](stubValidator)

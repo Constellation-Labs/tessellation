@@ -511,8 +511,7 @@ object ConsensusEventLoop {
                         ctx.storage.getState(key).map(_.isDefined),
                         nodeStorage.getNodeState,
                         // AbandonmentTracker now clears resources inside condModifyState before the state removal commits. If the state is
-                        // absent here cleanup already succeeded with the exact round's ViewSafetyMode; re-deriving it after removal would
-                        // cross the activation boundary incorrectly.
+                        // absent here cleanup already succeeded.
                         Async[F].unit,
                         ctx.storage.getRoundAttemptId.flatMap(id => queue.offer(ConsensusCommand.RoundCompleted(id))),
                         queue.offer(ConsensusCommand.TimeTick)

@@ -2,7 +2,7 @@
 
 Date: 2026-08-20
 
-Status: Proposed
+Status: Proposed; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
 ## Context
 
@@ -128,3 +128,11 @@ upgrade before returning after activation.
 - **Process-local migration cache:** restart history is not consensus data.
 - **Immediate transition with non-empty unapplied history:** cannot be proven from legacy
   signed state and risks duplicate spend application.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+`fields-added-ordinals.currency-snapshot-protocol-v1` is folded into the v4.1 cutover
+`fields-added-ordinals.tessellation-41-migration` (C). `currencySnapshotProtocolV1For` resolves to C,
+so decision 2 is authorized by the same GLOBAL L0 ordinal as every other v4.1-only rule. Dev, testnet
+and integrationnet use `0` (fresh v4.1 genesis); mainnet sets C to R + 1 at the cutover, R being the
+final v3.5 global snapshot. The derivation, delay and replay rules above are unchanged.

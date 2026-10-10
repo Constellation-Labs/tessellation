@@ -3,7 +3,6 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import java.security.KeyPair
 
 import cats.MonadThrow
-import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.kernel.{Clock, Ref, Sync}
 import cats.effect.std.Queue
@@ -11,6 +10,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.concurrent.duration.FiniteDuration
+import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l0.infrastructure.mempool.DagAwaitingParentConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
@@ -34,9 +34,8 @@ import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealth
 import io.constellationnetwork.schema.ID.IdOps
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{ControllerEvidenceEntry, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
+import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -65,54 +64,23 @@ object GlobalSnapshotConsensusStateCreator {
   ): F[Unit] =
     (if (alreadyVoted) Sync[F].unit else emitVote) >> checkAssembly
 
-  private def resetLegacyOutcomeToAuthenticatedSeed[F[_]: cats.Functor: Hasher](
-    outcome: GlobalConsensusOutcome,
-    seed: List[PeerId]
-  ): F[GlobalConsensusOutcome] =
-    seed.hash.map { seedHash =>
-      outcome.copy(
-        facilitators = Facilitators(seed),
-        removedFacilitators = RemovedFacilitators.empty,
-        withdrawnFacilitators = WithdrawnFacilitators.empty,
-        eligibleFacilitators = EligibleFacilitators.empty,
-        finished = outcome.finished.copy(candidates = Candidates.empty, facilitatorsHash = seedHash),
-        removalPenalties = SortedMap.empty,
-        deferralCountdown = SortedMap.empty,
-        peerQuality = SortedMap.empty,
-        cumulativeMissCounts = SortedMap.empty,
-        recentProofSizes = SortedMap.empty,
-        readmissionCountdown = SortedMap.empty,
-        peerSelfHealth = SortedMap.empty,
-        peerViewChanges = SortedMap.empty,
-        recentSigners = SortedMap.empty,
-        peerTiers = SortedMap.empty,
-        activeAdmissionScores = SortedMap.empty,
-        lastTimeoutCertificateVoters = SortedSet.empty,
-        recentRoundEndTimes = SortedMap.empty,
-        controllerEvidence = SortedMap.empty[SnapshotOrdinal, ControllerEvidenceEntry].some,
-        penaltyUntil = SortedMap.empty[PeerId, SnapshotOrdinal].some,
-        // An ordinal-gated activation is a mature lineage. It must never inherit the
-        // from-genesis singleton exception, even if the activation committee later shrinks.
-        expandedBeyondSingleton = true.some
-      )
-    }
-
-  /** Reconstruct the public activation root without executing the downloader's current liveness policy. The seed is authenticated by the
-    * locally validated legacy artifact's signed controller evidence; live activation performs the additional current-policy viability and
-    * eligibility checks before any vote is emitted.
+  /** This build contains no pre-v35 Global L0 engine. Keys below the certified-consensus activation are replayed or downloaded, never
+    * produced; a node asked to facilitate one fails closed instead of signing with retired rules.
     */
-  private[snapshot] def resetLegacyOutcomeForHistoricalReplay[F[_]: MonadThrow: Hasher](
-    key: GlobalSnapshotKey,
-    outcome: GlobalConsensusOutcome
-  ): F[GlobalConsensusOutcome] =
-    ControllerEvidenceDerivation
-      .certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
-      .liftTo[F](
-        new IllegalStateException(
-          s"Cannot replay certified consensus from DAG ordinal=${key.value.value}: signed controller evidence is absent"
-        )
-      )
-      .flatMap(resetLegacyOutcomeToAuthenticatedSeed[F](outcome, _))
+  final case class CertifiedConsensusNotActiveForProduction(key: GlobalSnapshotKey, activationKey: Long) extends NoStackTrace {
+    override def getMessage: String =
+      s"Refusing to produce GL0 snapshot ordinal=${key.value.value}: certified-consensus activation=$activationKey has not been " +
+        "reached and this build has no pre-v35 consensus engine. Pin snapshot.certified-consensus-activation-ordinal to the recovery " +
+        "anchor and enter certified consensus through the recovery-seed rollback."
+  }
+
+  private[snapshot] def requireCertifiedProduction[F[_]: MonadThrow](
+    config: ConsensusConfig,
+    key: GlobalSnapshotKey
+  ): F[Unit] =
+    CertifiedConsensusNotActiveForProduction(key, config.certifiedConsensusActivationKey)
+      .raiseError[F, Unit]
+      .unlessA(config.certifiedConsensusActiveAt(key.value.value))
 
   private[snapshot] final case class EvictionVoteRetransmission(
     target: PeerId,
@@ -144,86 +112,6 @@ object GlobalSnapshotConsensusStateCreator {
       }
       .nextOption()
 
-  /** Canonical DAG bridge used exactly once at the v35 activation key.
-    *
-    * Kept as a package-visible pure-by-input helper so the activation regression can start from deliberately divergent legacy operational
-    * windows and prove that both nodes derive the same parent outcome. The seed and its hash still come from the signed artifact; no local
-    * sidecar field is accepted as an input.
-    */
-  private[snapshot] def resetLegacyOutcome[F[_]: MonadThrow: Hasher](
-    key: GlobalSnapshotKey,
-    outcome: GlobalConsensusOutcome,
-    quorumThresholdFraction: Double
-  ): F[GlobalConsensusOutcome] =
-    ControllerEvidenceDerivation
-      .certifiedActivationCommittee(outcome.finished.signedMajorityArtifact.value.peerHistory)
-      .liftTo[F](
-        new IllegalStateException(
-          s"Cannot activate certified consensus at DAG ordinal=${key.value.value}: signed controller evidence is absent"
-        )
-      )
-      .flatMap { seed =>
-        val nextSeatQuorum = QuorumPolicy.fromFraction(seed.size + 1, quorumThresholdFraction)
-        val activationViable =
-          key.value.value == 0L ||
-            (CommitteeViability.supportsCoordination(seed.size) &&
-              CommitteeViability.canProveNextSeat(seed.size, quorumThresholdFraction))
-        new IllegalStateException(
-          s"Cannot activate certified consensus at DAG ordinal=${key.value.value}: canonical signed committee size=${seed.size}, " +
-            s"minimum coordinated size=${CommitteeViability.MinimumCoordinatedCommitteeSize}, " +
-            s"next-seat quorum=$nextSeatQuorum, quorumFraction=$quorumThresholdFraction"
-        ).raiseError[F, Unit].unlessA(activationViable) >>
-          resetLegacyOutcomeToAuthenticatedSeed[F](outcome, seed)
-      }
-
-  /** Preserve legacy self-fallback outside activation, but fail closed at the exact certified boundary. A singleton activation committee
-    * can finalize yet can never satisfy next-seat headroom, while node-local self fallback would make different nodes freeze different
-    * committees. Seedlist/collateral filtering must therefore leave at least the protocol-derived self-healing minimum.
-    */
-  private[snapshot] def finalizeEligibleCommitteeAtActivation(
-    key: GlobalSnapshotKey,
-    certifiedConsensusActivatesAtKey: Boolean,
-    eligible: List[PeerId],
-    selfId: PeerId,
-    quorumThresholdFraction: Double
-  ): Either[IllegalStateException, List[PeerId]] =
-    validateActivationCommittee(
-      key,
-      certifiedConsensusActivatesAtKey,
-      "seedlist/collateral eligible",
-      eligible,
-      quorumThresholdFraction
-    ).map(_ => if (eligible.isEmpty) List(selfId) else eligible)
-
-  /** Recheck the final selected/signing roster because max-facilitator-count and the committee projector run after eligibility validation.
-    * A valid two-member input truncated to one at a non-genesis activation is still the same terminal fixed point.
-    */
-  private[snapshot] def validateActivationCommittee(
-    key: GlobalSnapshotKey,
-    certifiedConsensusActivatesAtKey: Boolean,
-    stage: String,
-    committee: Iterable[PeerId],
-    quorumThresholdFraction: Double
-  ): Either[IllegalStateException, Unit] = {
-    val size = committee.size
-    val nextSeatQuorum = QuorumPolicy.fromFraction(size + 1, quorumThresholdFraction)
-    val activationViable =
-      key.value.value == 0L ||
-        (CommitteeViability.supportsCoordination(size) &&
-          CommitteeViability.canProveNextSeat(size, quorumThresholdFraction))
-
-    if (certifiedConsensusActivatesAtKey && !activationViable)
-      Left(
-        new IllegalStateException(
-          s"Cannot activate certified consensus at DAG ordinal=${key.value.value}: $stage committee size=$size, " +
-            s"minimum coordinated size=${CommitteeViability.MinimumCoordinatedCommitteeSize}, " +
-            s"next-seat quorum=$nextSeatQuorum, quorumFraction=$quorumThresholdFraction; " +
-            s"refusing local self fallback or admission fixed point"
-        )
-      )
-    else Right(())
-  }
-
   def make[F[_]: Async: Metrics: HasherSelector: SecurityProvider](
     consensusFns: GlobalSnapshotConsensusFunctions[F],
     consensusStorage: GlobalConsensusStorage[F],
@@ -236,7 +124,6 @@ object GlobalSnapshotConsensusStateCreator {
     consensusConfigHash: Hash,
     consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
-    tcaFilter: TrailingCommonAncestorFilter[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
     localHealthMonitor: LocalHealthMonitor[F],
     // v19 multi-committee floor for the Core committee. The Core committee is the
@@ -259,21 +146,6 @@ object GlobalSnapshotConsensusStateCreator {
 
     private val dagAwaitingParentConfig = DagAwaitingParentConfig.default
     private val maxAwaitingParentReactivationPerRound = 128
-
-    /** V35 activation bridge from a legacy outcome.
-      *
-      * The latest controller-evidence transition inside the signed DAG artifact's PeerHistory supplies the one source-of-truth committee.
-      * The historical `nextFacilitators` field is a singleton compatibility value and must not be used here. Every controller/evidence
-      * window that could have come from a node-local legacy sidecar is discarded at the exact activation key. The public artifact/context
-      * bytes are untouched.
-      */
-    private def resetLegacyOutcomeAtActivation(
-      key: GlobalSnapshotKey,
-      outcome: GlobalConsensusOutcome
-    ): F[GlobalConsensusOutcome] =
-      if (!config.certifiedConsensusActivatesAt(key.value.value)) outcome.pure[F]
-      else
-        HasherSelector[F].withCurrent(implicit hasher => resetLegacyOutcome[F](key, outcome, consensusConfig.quorumThresholdFraction))
 
     /** Track every auditable parent-round signing-committee member from actual local snapshot proofs and audit one deterministic target.
       * Reuse the existing B1 vote path only after the round-count and elapsed-time miss floors, on the existing membership-change cadence,
@@ -475,7 +347,8 @@ object GlobalSnapshotConsensusStateCreator {
       priorAbandonmentCount: Int,
       expectedRoundStartFacilitators: Option[SortedSet[PeerId]]
     ): F[StateCreateResult] =
-      consensusStorage.resumePendingStateEffect(key) >>
+      requireCertifiedProduction[F](config, key) >>
+        consensusStorage.resumePendingStateEffect(key) >>
         consensusStorage
           .condModifyStateWithSideEffect(key)(
             toCreateStateFn(
@@ -512,27 +385,18 @@ object GlobalSnapshotConsensusStateCreator {
 
     private def facilitateConsensus(
       key: GlobalSnapshotKey,
-      providedLastOutcome: GlobalConsensusOutcome,
+      lastOutcome: GlobalConsensusOutcome,
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
       priorAbandonmentCount: Int
     ): F[(GlobalSnapshotConsensusState, F[Unit])] =
       for {
-        lastOutcome <- resetLegacyOutcomeAtActivation(key, providedLastOutcome)
         candidates <- consensusStorage.getCandidates(key.next)
         previousEligible = lastOutcome.eligibleOrFacilitators
         approvedCandidates = lastOutcome.finished.candidates.value
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
-        activatesCertifiedConsensus = config.certifiedConsensusActivatesAt(key.value.value)
-        activationRoundAuthority <-
-          if (!activatesCertifiedConsensus) none[CertifiedConsensus.CertifiedRoundAuthorityV1].pure[F]
-          else {
-            val seed = NonEmptySet.fromSetUnsafe(SortedSet.from(lastOutcome.facilitators.value))
-            HasherSelector[F].withCurrent(implicit hasher => CertifiedConsensus.roundAuthority[F](seed, seed).flatMap(_.some.pure[F]))
-          }
         certifiedNextRoundAuthority = lastOutcome.finished.certifiedOutcome
           .map(_.proposalQc.value.nextRoundAuthority)
-          .orElse(activationRoundAuthority)
         certifiedRoundProjection = certifiedNextRoundAuthority.map { authority =>
           val committee = CertifiedRoundCommitteeProjector.fromCertifiedAuthority(
             key = key,
@@ -563,13 +427,10 @@ object GlobalSnapshotConsensusStateCreator {
         // `finished.candidates` carries the accepted Proposal's open-admission nominee for vote
         // convergence; nomination alone is not membership authority. Only a quorum-certified
         // admission may change this base.
-        fullBase =
-          if (activatesCertifiedConsensus) lastOutcome.facilitators.value
-          else
-            ConsensusPeerController.canonicalFacilitatorBase(
-              parentFacilitators = lastOutcome.facilitators.value,
-              seedlistPeerIds = seedlistPeerIds
-            )
+        fullBase = ConsensusPeerController.canonicalFacilitatorBase(
+          parentFacilitators = lastOutcome.facilitators.value,
+          seedlistPeerIds = seedlistPeerIds
+        )
 
         _ <- logger.debug(
           s"Facilitator selection for key=$key: " +
@@ -578,52 +439,8 @@ object GlobalSnapshotConsensusStateCreator {
             s"fullBase=${fullBase.size}"
         )
 
-        // TCA (Trailing Common Ancestor): exclude degraded peers. Degraded = peers who were
-        // facilitators in the previous round but got evicted via the consensus-agreed facility-phase
-        // fork-eviction (stored in `state.removedFacilitators`). Previously this compared against
-        // `signedMajorityArtifact.proofs` (who actually signed), but THAT set is per-node-local:
-        // each node's signed snapshot carries only the proofs it collected before CASing. Fast
-        // finalizers stop at quorum; slower finalizers see more. Using it here caused different
-        // nodes to derive different degraded sets → different committees → cascading divergence.
-        //
-        // Now we derive degraded purely from consensus-agreed state: `lastFacilitators -
-        // removedFacilitators`. A peer that participated and wasn't fork-evicted is "presumed to
-        // have signed" for TCA purposes, matching the Phase 3 canonical-signers philosophy.
-        lastFacilitators = lastOutcome.facilitators.value.toSet
-        // A bridge node may start from an rc.6 anchor that already carries health-derived
-        // `removedFacilitators`. Retain mode must neutralize those inherited removals too;
-        // otherwise the first rc.7 round would contract before the new emission/apply gates
-        // get a chance to take effect. Currency keeps consuming the carried set unchanged.
-        carriedFacilityRemovals = membershipPolicy.persistentFacilityRemovals(lastOutcome.removedFacilitators.value)
-        lastSigners = lastFacilitators -- carriedFacilityRemovals
-        tcaDegraded <- tcaFilter.degradedPeers(lastFacilitators, lastSigners)
-        tcaFilteredBase =
-          if (activatesCertifiedConsensus) fullBase
-          else
-            tcaDegraded match {
-              case Some(degraded) =>
-                val filtered = fullBase.filterNot(degraded.contains)
-                if (filtered.isEmpty) fullBase
-                else filtered
-              case None => fullBase
-            }
-
-        _ <- tcaDegraded.traverse_ { degraded =>
-          ConsensusLog.debug(
-            logger,
-            Facilitator,
-            key.show,
-            "n/a",
-            TcaFilterApplied,
-            "tcaDegraded" -> degraded.size.toString,
-            "fullBase" -> fullBase.size.toString,
-            "tcaFiltered" -> tcaFilteredBase.size.toString,
-            "degradedPeers" -> degraded.toList.map(_.value.value.take(8)).mkString(",")
-          )
-        }
-
         // All eligible after collateral filtering (includes previously removed peers so they can re-enter)
-        collateralEligible <- tcaFilteredBase.filterA { peerId =>
+        collateralEligible <- fullBase.filterA { peerId =>
           val seedlistAllows = seedlistPeerIds.isEmpty || seedlistPeerIds.contains(peerId)
           consensusFns
             .facilitatorFilter(
@@ -633,24 +450,7 @@ object GlobalSnapshotConsensusStateCreator {
             )
             .map(seedlistAllows && _)
         }
-        allEligible <- finalizeEligibleCommitteeAtActivation(
-          key,
-          config.certifiedConsensusActivatesAt(key.value.value),
-          collateralEligible,
-          selfId,
-          config.quorumThresholdFraction
-        ).liftTo[F]
-        _ <- Either
-          .cond(
-            !activatesCertifiedConsensus || allEligible.toSet === fullBase.toSet,
-            (),
-            new IllegalStateException(
-              s"Cannot activate certified consensus at DAG ordinal=${key.value.value}: " +
-                s"the authenticated root committee is not wholly seedlist/collateral eligible " +
-                s"(root=${fullBase.size},eligible=${allEligible.size})"
-            )
-          )
-          .liftTo[F]
+        allEligible = if (collateralEligible.isEmpty) List(selfId) else collateralEligible
 
         filteredOutByCollateral = fullBase.filterNot(allEligible.contains)
         _ <- filteredOutByCollateral.traverse_ { peerId =>
@@ -765,13 +565,6 @@ object GlobalSnapshotConsensusStateCreator {
           .map(_._1)
           .getOrElse(facilitatorSelector.select(eligibleThisRound, entropy))
         expansionIntervalRounds = math.max(1, config.activeAdmissionExpansionIntervalRounds)
-        locallyBufferedWithdrawals = selectedFacilitators.iterator
-          .filter(peerId => resources.withdrawalsMap.get(peerId).contains(GlobalConsensusKind.Facility))
-          .toSet
-        withdrawnPeers = CertifiedRoundCommitteeProjector.roundStartWithdrawals(
-          config.certifiedConsensusActiveAt(key.value.value),
-          locallyBufferedWithdrawals
-        )
         membershipProjection = certifiedRoundProjection.fold(
           CertifiedRoundCommitteeProjector.project(
             key = key,
@@ -788,7 +581,9 @@ object GlobalSnapshotConsensusStateCreator {
             config = config,
             coreCommitteeSize = coreCommitteeSize,
             forcedTier1Peers = Set.empty,
-            withdrawnPeers = withdrawnPeers
+            // Buffered withdrawal rumors are not certified and can arrive before state creation on one node but after it on
+            // another. The frozen round-start/QC committee therefore ignores that local timing input.
+            withdrawnPeers = Set.empty
           )
         )(_._2)
         admissionSizing = membershipProjection.admissionSizing
@@ -800,13 +595,6 @@ object GlobalSnapshotConsensusStateCreator {
         activeFacilitators = signingMembership.retained
         committees = membershipProjection.committees
         signingFacilitators = membershipProjection.signingFacilitators
-        _ <- validateActivationCommittee(
-          key,
-          config.certifiedConsensusActivatesAt(key.value.value),
-          "final selected/signing",
-          signingFacilitators,
-          config.quorumThresholdFraction
-        ).liftTo[F]
         _ <- logger.debug(
           s"Controller inputs for key=$key: " + (
             if (controllerInputs.evidenceRounds === 0) "controller_evidence=empty fallback=carried"
@@ -945,12 +733,6 @@ object GlobalSnapshotConsensusStateCreator {
             activeExclusionCounts.getOrElse(reason.label, 0).toLong,
             Seq(admissionReasonLabel -> reason.label)
           )
-        }
-
-        withdrawn = activeFacilitators.filter(withdrawnPeers.contains)
-
-        _ <- withdrawn.traverse_ { peerId =>
-          logger.info(s"Facilitator ${peerId.show} has withdrawn from consensus at key=$key")
         }
 
         time <- Clock[F].monotonic
@@ -1133,11 +915,10 @@ object GlobalSnapshotConsensusStateCreator {
             lastOutcome.finished.snapshotHash
           ),
           time,
-          withdrawnFacilitators = WithdrawnFacilitators(withdrawn.toSet),
+          withdrawnFacilitators = WithdrawnFacilitators.empty,
           eligibleFacilitators = EligibleFacilitators(allEligible),
           coreFacilitators = CoreFacilitators(committees.core),
           tier1Facilitators = Tier1Facilitators(committees.tier1),
-          certifiedConsensusActive = config.certifiedConsensusActiveAt(key.value.value),
           leader = leader,
           // Round-start view = certified initial view. MUST match the
           // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the
@@ -1173,8 +954,7 @@ object GlobalSnapshotConsensusStateCreator {
             "nowMs" -> nowMs.toString
           )
           val optionalPairs =
-            (if (withdrawn.nonEmpty) Seq("withdrawn" -> withdrawn.size.toString) else Seq.empty) ++
-              (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
+            (if (penalizedPeers.nonEmpty) Seq("penalized" -> penalizedPeers.size.toString) else Seq.empty) ++
               (if (probationPeers.nonEmpty) Seq("probation" -> probationPeers.size.toString) else Seq.empty) ++
               (if (abandonedMissing.nonEmpty) Seq("abandonedMissing" -> abandonedMissing.size.toString) else Seq.empty) ++
               (if (priorAbandonmentCount > 0) Seq("suppressedRetryViewSeed" -> priorAbandonmentCount.toString) else Seq.empty)
@@ -1202,7 +982,7 @@ object GlobalSnapshotConsensusStateCreator {
               Metrics[F].incrementCounter("dag_consensus_eviction_vote_retransmitted_total")
           }
         roundStartMembershipEffect <-
-          if (membershipPolicy.allowsCertifiedAtomicReplacement(config.certifiedConsensusActiveAt(key.value.value)))
+          if (membershipPolicy.allowsCertifiedAtomicReplacement)
             auditSigningFinalityParticipation(
               key,
               lastOutcome,
@@ -1241,24 +1021,22 @@ object GlobalSnapshotConsensusStateCreator {
         // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
         proposerClockMs <- Clock[F].realTime.map(_.toMillis)
         triggerStatement <-
-          if (state.certifiedConsensusActive)
-            HasherSelector[F].withCurrent { implicit hasher =>
-              state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
-                CertifiedConsensus.signTriggerStatement[F](
-                  CertifiedConsensus.triggerStatement(
-                    CertifiedConsensus.ConsensusDomain.DagL0,
-                    networkId,
-                    key.value.value,
-                    lastOutcome.finished.snapshotHash,
-                    roundStartHash,
-                    consensusConfigHash,
-                    maybeTrigger
-                  ),
-                  keyPair
-                )
-              }
-            }.map(_.some)
-          else none[io.constellationnetwork.security.signature.Signed[CertifiedConsensus.TriggerStatement]].pure[F]
+          HasherSelector[F].withCurrent { implicit hasher =>
+            state.roundStartFacilitators.value.hash.flatMap { roundStartHash =>
+              CertifiedConsensus.signTriggerStatement[F](
+                CertifiedConsensus.triggerStatement(
+                  CertifiedConsensus.ConsensusDomain.DagL0,
+                  networkId,
+                  key.value.value,
+                  lastOutcome.finished.snapshotHash,
+                  roundStartHash,
+                  consensusConfigHash,
+                  maybeTrigger
+                ),
+                keyPair
+              )
+            }
+          }.map(_.some)
         facility = Facility(
           eventHashes,
           candidates,

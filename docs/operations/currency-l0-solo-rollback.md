@@ -96,7 +96,7 @@ outcome facilitator list and actual snapshot proofs.
   ProposalQC, certified admission, certified Currency lineage, or v35 pacemaker.
 - Currency snapshot protocol `1.0.0` is a separate deterministic-history transition. Its
   existing signed `CurrencyIncrementalSnapshot.version` changes at the announced **Global
-  L0 ordinal** from ADR-0033; the jar's SemVer is not stamped into the chain.
+  L0 ordinal** from ADR-0033 (the v4.1 cutover C); the jar's SemVer is not stamped into the chain.
 - Runtime flags are not connection-handshake inputs. Operational control of the one
   rollback lead is therefore a load-bearing safety boundary.
 - Deploy one immutable compatible version to the complete metagraph cohort before

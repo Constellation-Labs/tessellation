@@ -155,8 +155,8 @@ window.
 
 ### 3. Consensus schema version bump
 
-This shipped at `consensusSchemaVersion` v19; the live value is now 34
-(`config/types.scala:830`). The schema value is folded into
+This shipped at `consensusSchemaVersion` v19; the current value is 36
+(`config/types.scala:1018`). The schema value is folded into
 `deterministicConfigHash`; that hash and the reported release-version hashes
 fence peer connections. The advertised jar hash is not compared
 (`consensus/declaration.scala:67-72` notes the field was `Option`-wrapped for

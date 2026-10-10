@@ -52,6 +52,12 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
       eventCutter = eventCutter
     )
 
+  pureTest("schema v36 golden: the default deterministicConfigHash is pinned") {
+    // Re-approve deliberately whenever a deterministicConfigHash input or consensusSchemaVersion changes.
+    expect.same(36, baseConfig.consensusSchemaVersion) &&
+    expect.same("5240746a5033f805a57529448c4a4a5306cd2f8abe1c066c74a0a147190d4f31", baseConfig.deterministicConfigHash.value)
+  }
+
   pureTest("same coreCommitteeSize -> identical deterministicConfigHash") {
     val a = baseConfig.copy(coreCommitteeSize = Some(5))
     val b = baseConfig.copy(coreCommitteeSize = Some(5))
@@ -92,13 +98,13 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
   }
 
-  pureTest("v35 activation key is a deterministic-config fence and activates at the exact key") {
+  pureTest("v35 activation key is a deterministic-config fence and is active from the key onward") {
     val first = baseConfig.copy(certifiedConsensusActivationKey = 100L)
     val second = baseConfig.copy(certifiedConsensusActivationKey = 101L)
 
     expect(first.deterministicConfigHash != second.deterministicConfigHash)
       .and(expect(!first.certifiedConsensusActiveAt(99L)))
-      .and(expect(first.certifiedConsensusActivatesAt(100L)))
+      .and(expect(first.certifiedConsensusActiveAt(100L)))
       .and(expect(first.certifiedConsensusActiveAt(101L)))
   }
 
@@ -106,7 +112,6 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
     expect
       .same(Long.MaxValue, baseConfig.certifiedConsensusActivationKey)
       .and(expect(!baseConfig.certifiedConsensusActiveAt(0L)))
-      .and(expect(!baseConfig.certifiedConsensusActivatesAt(0L)))
   }
 
   pureTest("maxRoundDuration joins the deterministic hash when it bounds certified end time") {

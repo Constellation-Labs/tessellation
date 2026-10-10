@@ -4,7 +4,7 @@ Date: 2026-08-04
 
 Updated: 2026-08-10
 
-Status: Accepted
+Status: Accepted; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
 ## Context
 
@@ -210,3 +210,18 @@ authoritative.
   published artifact/state-proof schema and calculation are unchanged.
 - The existing five-round controller expansion cadence, 1.5-second admission
   grace, public configuration values, and reward gate remain unchanged.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+- Decision 8: `delegated-rewards-full-committee` and the legacy recipient filter are deleted.
+  Every frozen Core + Tier-1 member is a validator recipient in every produced snapshot; Witness is
+  not. See the ADR-0028 amendment.
+- Decision 9 and the version fence: `consensusSchemaVersion` is now 36. v36 changes only
+  `deterministicConfigHash` inputs (retired knobs removed, scalar `max-facilitator-count`).
+- `active-admission-recent-signer-window` is now the scalar `10` on every environment (with the
+  `CL_ACTIVE_ADMISSION_RECENT_SIGNER_WINDOW` override) and `max-facilitator-count` is the scalar
+  `1000`.
+- Certified rounds always enforce next-seat headroom in `OpenAdmissionPolicy`, except the exact
+  1 -> 2 genesis singleton expansion. Probation readmission is unchanged.
+- After the mainnet v3.5 -> v4.1 cutover, validators outside the recovery-seed committee enter
+  through this canonical open admission.

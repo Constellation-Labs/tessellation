@@ -2,9 +2,10 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.data.NonEmptySet
 
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration._
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusKind
+import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusResources
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.{EvictionCertificate, EvictionReason, EvictionVote}
 import io.constellationnetwork.schema.ID.Id
@@ -15,6 +16,8 @@ import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
 import weaver.FunSuite
 
 object GlobalSnapshotConsensusStateCreatorSuite extends FunSuite {
@@ -73,66 +76,28 @@ object GlobalSnapshotConsensusStateCreatorSuite extends FunSuite {
     expect(afterAssembly.isEmpty)
   }
 
-  test("exact activation refuses all-ineligible or singleton committees instead of falling back to local self") {
-    val self = peer(1)
-    val other = peer(2)
+  test("a key below certified activation is refused for production; keys at or above it proceed") {
+    val config = ConsensusConfig(
+      timeTriggerInterval = 10.seconds,
+      declarationTimeout = 10.seconds,
+      declarationRangeLimit = 100L,
+      lockDuration = 10.seconds,
+      eventCutter = EventCutterConfig(PosInt(1024), PosInt(1024)),
+      certifiedConsensusActivationKey = 100L
+    )
+    def attempt(key: Long): Either[Throwable, Unit] =
+      GlobalSnapshotConsensusStateCreator.requireCertifiedProduction[Either[Throwable, *]](config, SnapshotOrdinal.unsafeApply(key))
 
-    val empty = GlobalSnapshotConsensusStateCreator.finalizeEligibleCommitteeAtActivation(
-      SnapshotOrdinal.unsafeApply(100L),
-      certifiedConsensusActivatesAtKey = true,
-      eligible = List.empty,
-      self,
-      quorumThresholdFraction = 2.0 / 3.0
+    expect(attempt(99L).left.exists(_.isInstanceOf[GlobalSnapshotConsensusStateCreator.CertifiedConsensusNotActiveForProduction])) &&
+    expect(attempt(100L).isRight) &&
+    expect(attempt(101L).isRight) &&
+    expect(
+      GlobalSnapshotConsensusStateCreator
+        .requireCertifiedProduction[Either[Throwable, *]](
+          config.copy(certifiedConsensusActivationKey = Long.MaxValue),
+          SnapshotOrdinal.unsafeApply(5L)
+        )
+        .isLeft
     )
-    val singleton = GlobalSnapshotConsensusStateCreator.finalizeEligibleCommitteeAtActivation(
-      SnapshotOrdinal.unsafeApply(100L),
-      certifiedConsensusActivatesAtKey = true,
-      eligible = List(other),
-      self,
-      quorumThresholdFraction = 2.0 / 3.0
-    )
-    val viable = GlobalSnapshotConsensusStateCreator.finalizeEligibleCommitteeAtActivation(
-      SnapshotOrdinal.unsafeApply(100L),
-      certifiedConsensusActivatesAtKey = true,
-      eligible = List(self, other),
-      self,
-      quorumThresholdFraction = 2.0 / 3.0
-    )
-    val legacyFallback = GlobalSnapshotConsensusStateCreator.finalizeEligibleCommitteeAtActivation(
-      SnapshotOrdinal.unsafeApply(99L),
-      certifiedConsensusActivatesAtKey = false,
-      eligible = List.empty,
-      self,
-      quorumThresholdFraction = 2.0 / 3.0
-    )
-    val finalSelectorSingleton = GlobalSnapshotConsensusStateCreator.validateActivationCommittee(
-      SnapshotOrdinal.unsafeApply(100L),
-      certifiedConsensusActivatesAtKey = true,
-      stage = "final selected/signing",
-      committee = List(self),
-      quorumThresholdFraction = 2.0 / 3.0
-    )
-    val genesisSingleton = GlobalSnapshotConsensusStateCreator.validateActivationCommittee(
-      SnapshotOrdinal.MinValue,
-      certifiedConsensusActivatesAtKey = true,
-      stage = "genesis",
-      committee = List(self),
-      quorumThresholdFraction = 1.0
-    )
-    val unanimityCannotGrow = GlobalSnapshotConsensusStateCreator.validateActivationCommittee(
-      SnapshotOrdinal.unsafeApply(100L),
-      certifiedConsensusActivatesAtKey = true,
-      stage = "unanimity",
-      committee = List(self, other),
-      quorumThresholdFraction = 1.0
-    )
-
-    expect(empty.isLeft) &&
-    expect(singleton.isLeft) &&
-    expect.same(Right(List(self, other)), viable) &&
-    expect.same(Right(List(self)), legacyFallback) &&
-    expect(finalSelectorSingleton.left.exists(_.getMessage.contains("final selected/signing committee size=1"))) &&
-    expect(genesisSingleton.isRight) &&
-    expect(unanimityCannotGrow.left.exists(_.getMessage.contains("next-seat quorum=3")))
   }
 }

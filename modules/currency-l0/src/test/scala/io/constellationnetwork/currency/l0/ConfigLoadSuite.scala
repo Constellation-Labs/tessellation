@@ -19,20 +19,19 @@ object ConfigLoadSuite extends SimpleIOSuite {
   private val source =
     ConfigSource.resources("currency-l0.conf").withFallback(ConfigSource.default)
 
-  test("the packaged Currency L0 config preserves distinct selector and controller caps in the join hash") {
+  test("the packaged Currency L0 config resolves only its flat-engine knobs into the join hash") {
     source.loadF[IO, AppConfigReader]().map { cfg =>
       SnapshotConfig
         .resolveEffectiveConsensusConfig(cfg.snapshot, AppEnvironment.Integrationnet)
         .fold(
           error => failure(error.getMessage),
           effective =>
-            expect.same(Some(1000), effective.facilitatorSelectionMax) &&
+            expect.same(Some(20), effective.facilitatorSelectionMax) &&
               expect.same(Some(20), effective.maxFacilitatorCount.map(_.value)) &&
-              expect.same(Some(9), effective.coreCommitteeSize) &&
-              expect.same(0, effective.quorumShrinkActivationViews) &&
+              expect.same(Some(3), effective.coreCommitteeSize) &&
               expect.same(Long.MaxValue, effective.certifiedConsensusActivationKey) &&
-              expect.same(9, effective.activeAdmissionMinProbationReentrySlots) &&
-              expect.same(10, effective.activeAdmissionRecentSignerWindow)
+              expect.same(0, effective.activeAdmissionMinProbationReentrySlots) &&
+              expect.same(3, effective.activeAdmissionRecentSignerWindow)
         )
     }
   }

@@ -4,7 +4,7 @@ Date: 2026-07-16
 
 ## Status
 
-Accepted
+Accepted; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
 ## Context
 
@@ -56,3 +56,14 @@ in [the rewards mechanism reference](../consensus/rewards.md).
   not a delegated reward-fairness mechanism.
 
 This ADR clarifies and amends the reward wording in ADR-0018 and ADR-0019.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+The full-committee rule is now unconditional. `fields-added-ordinals.delegated-rewards-full-committee`
+and the legacy evidence-score recipient filter (`legacyRewardQualifiedFacilitators`) are deleted.
+The filter only produced history on alpha-era networks: testnet and integrationnet restart from a
+fresh v4.1 genesis, so the IntegrationNet `5,880,000` activation above describes history that no
+longer exists, and mainnet's v3.5 history was never produced by develop's filter. The recipient
+selection runs only when a node produces a snapshot; followers and replay accept the signed reward
+transactions rather than re-deriving recipients (`GlobalSnapshotConsensusFunctions.scala`).
+Delegated validator rewards always pay every member of the frozen Core + Tier-1 committee.

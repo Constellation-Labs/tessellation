@@ -442,8 +442,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
               updatedWithdrawDelegatedStakes = SortedMap.empty,
               nodeOperatorRewards = SortedSet.empty,
               reservedAddressRewards = SortedSet.empty,
-              withdrawalRewardTxs = SortedSet.empty,
-              totalEmittedRewardsAmount = Amount(100L)
+              withdrawalRewardTxs = SortedSet.empty
             )
 
         case _ =>
@@ -454,8 +453,7 @@ object DelegatedRewardsDistributorSuite extends SimpleIOSuite with Checkers {
               updatedWithdrawDelegatedStakes = SortedMap.empty,
               nodeOperatorRewards = SortedSet.empty,
               reservedAddressRewards = SortedSet.empty,
-              withdrawalRewardTxs = SortedSet.empty,
-              totalEmittedRewardsAmount = Amount(0L)
+              withdrawalRewardTxs = SortedSet.empty
             )
           )
       }

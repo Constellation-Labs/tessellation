@@ -78,7 +78,7 @@ class GossipingEvictionVoter[F[
               // Transport recipients are layer/epoch policy only; vote authority stays in the signed content.
               val targets = MembershipVoteGossipRecipients.select(
                 selfId,
-                membershipPolicy.allowsCertifiedAtomicReplacement(state.certifiedConsensusActive),
+                membershipPolicy.allowsCertifiedAtomicReplacement,
                 state.facilitators.value.toSet,
                 state.roundStartFacilitators.value.toSet
               )

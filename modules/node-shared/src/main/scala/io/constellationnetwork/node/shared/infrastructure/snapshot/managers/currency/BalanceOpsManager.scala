@@ -8,7 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.collection.mutable
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
-import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
+import io.constellationnetwork.node.shared.domain.transaction.{FeeTransactionSignerPolicy, FeeTransactionValidator}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.transaction.RewardTransaction
@@ -62,9 +62,10 @@ class BalanceOpsManager[F[_]: Async](
     * the same subset.
     *
     * A drop is safe only because the data application layer already rejects, with the same rules for the same parent Global ordinal, every
-    * fee transaction this validator would drop: source != destination, and the signer policy selected by fee-transaction-security
-    * (exclusively the source before it, source plus valid co-signers after it). Its data update is therefore never combined without the
-    * fee. Keep both layers aligned when changing either rule.
+    * fee transaction this validator would drop: source != destination, verified proofs, and the signer policy selected by
+    * fee-transaction-security (exclusively the source before it, source plus valid co-signers after it). Its data update is therefore never
+    * combined without the fee. Keep both layers aligned when changing either rule. The Global L0 currency-snapshot validator has no data
+    * application layer, so there this method is the only fee check and must match release/mainnet on its own.
     *
     * Without it, any invalid transaction fails the whole set. Callers clear it below fixing-data-application-fee-validation, where the data
     * application layer does not check source != destination and a drop could leave a combined data update unpaid.
@@ -76,10 +77,14 @@ class BalanceOpsManager[F[_]: Async](
     maybeTxs: Option[SortedSet[Signed[FeeTransaction]]],
     enforceWalletAuthorization: Boolean,
     dropInvalidTransactions: Boolean
-  ): F[Option[SortedSet[Signed[FeeTransaction]]]] =
+  ): F[Option[SortedSet[Signed[FeeTransaction]]]] = {
+    // Proof verification follows fixing-data-application-fee-validation, the same boundary as the drop, exactly as
+    // release/mainnet #1577 ties verifySignatures to it. Below it the earlier rule replays unchanged.
+    val signerPolicy = FeeTransactionSignerPolicy.select(enforceWalletAuthorization, dropInvalidTransactions)
+
     if (!dropInvalidTransactions)
       NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(maybeTxs.pure[F]) { nonEmptyTxs =>
-        feeTransactionValidator.validate(nonEmptyTxs, enforceWalletAuthorization).flatMap {
+        feeTransactionValidator.validate(nonEmptyTxs, signerPolicy).flatMap {
           case Validated.Valid(_) =>
             maybeTxs.pure[F]
           case Validated.Invalid(errors) =>
@@ -90,7 +95,7 @@ class BalanceOpsManager[F[_]: Async](
     else
       maybeTxs.traverse { txs =>
         txs.toList.traverseFilter { signedTx =>
-          feeTransactionValidator.validate(signedTx, enforceWalletAuthorization).flatMap {
+          feeTransactionValidator.validate(signedTx, signerPolicy).flatMap {
             case Validated.Valid(_) =>
               signedTx.some.pure[F]
             case Validated.Invalid(errors) =>
@@ -106,6 +111,7 @@ class BalanceOpsManager[F[_]: Async](
           txs.filter(keptTxs.contains)
         }
       }
+  }
 
   def acceptFeeTxs(
     balances: SortedMap[Address, Balance],

@@ -100,14 +100,20 @@ object MainSuite extends SimpleIOSuite {
     expect(Main.rollbackAnchorHasCollateral(Some(Balance(100L)), required))
   }
 
-  pureTest("recovery seed needs three legacy rounds before activation or starts a new certified epoch") {
+  pureTest("every rollback anchor must be at or after certified activation") {
     val activation = SnapshotOrdinal.unsafeApply(2000L)
 
-    expect(Main.validateRecoverySeedActivationSpacing(SnapshotOrdinal.unsafeApply(1997L), activation).isRight) &&
-    expect(Main.validateRecoverySeedActivationSpacing(SnapshotOrdinal.unsafeApply(1998L), activation).isLeft) &&
-    expect(Main.validateRecoverySeedActivationSpacing(SnapshotOrdinal.unsafeApply(1999L), activation).isLeft) &&
-    expect(Main.validateRecoverySeedActivationSpacing(activation, activation).isRight) &&
-    expect(Main.validateRecoverySeedActivationSpacing(SnapshotOrdinal.unsafeApply(2001L), activation).isRight)
+    expect(Main.validateRollbackAnchorAtOrAfterActivation(SnapshotOrdinal.unsafeApply(1997L), activation).isLeft) &&
+    expect(Main.validateRollbackAnchorAtOrAfterActivation(SnapshotOrdinal.unsafeApply(1999L), activation).isLeft) &&
+    expect(Main.validateRollbackAnchorAtOrAfterActivation(activation, activation).isRight) &&
+    expect(Main.validateRollbackAnchorAtOrAfterActivation(SnapshotOrdinal.unsafeApply(2001L), activation).isRight)
+  }
+
+  pureTest("run-genesis requires certified consensus from genesis") {
+    expect(Main.validateGenesisCertifiedActivation(SnapshotOrdinal.MinValue).isRight) &&
+    expect(Main.validateGenesisCertifiedActivation(CertifiedConsensusGenesis.FirstIncrementalOrdinal).isRight) &&
+    expect(Main.validateGenesisCertifiedActivation(SnapshotOrdinal.unsafeApply(2L)).isLeft) &&
+    expect(Main.validateGenesisCertifiedActivation(SnapshotOrdinal.unsafeApply(9999999L)).isLeft)
   }
 
   pureTest("recovery seed rejects only the ambiguous certified-from-genesis root boundary") {
@@ -130,7 +136,7 @@ object MainSuite extends SimpleIOSuite {
     expect.same(Set(root), Main.protectedCertifiedSnapshotInfoOrdinals(SnapshotOrdinal.MinValue.value.value)) &&
     expect.same(Set(root), Main.protectedCertifiedSnapshotInfoOrdinals(root.value.value)) &&
     expect.same(
-      Set(SnapshotOrdinal.unsafeApply(futureActivation - 1L)),
+      Set(SnapshotOrdinal.unsafeApply(futureActivation)),
       Main.protectedCertifiedSnapshotInfoOrdinals(futureActivation)
     )
   }

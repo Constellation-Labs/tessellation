@@ -13,6 +13,12 @@ True bootstrap and Currency L0 retain their existing behavior. Explicit Global
 L0 `CL_GL0_RECOVERY_SEED_COMMITTEE` starts retain their stronger all-member
 barrier and take precedence over this normal path.
 
+Update 2026-10-10 ([ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md) /
+#1627): every rollback anchor, with or without the recovery seed, must be at or
+after `certified-consensus-activation-ordinal`; an earlier anchor is rejected at
+startup (`RollbackAnchorBelowCertifiedActivation`). The mainnet v3.5 -> v4.1
+cutover therefore uses the recovery-seed path, not this normal path.
+
 ## The failure it closes
 
 Normal rollback seeds its synthetic parent outcome from the selected
@@ -20,9 +26,10 @@ incremental anchor's artifact proof signers. Before rc.12, the rollback lead
 counted arbitrary `Ready` peers and started after at most two TimeTrigger
 intervals, while each validator independently slept one TimeTrigger interval
 after its own download completed. A staggered fleet could therefore create and
-vote in different views of the same first key. The legacy `FreezeAfterVote`
-bridge then correctly refused unsafe cross-view re-voting, but no view could
-collect quorum.
+vote in different views of the same first key. The then-active legacy
+`FreezeAfterVote` bridge (removed with the pre-v35 engine in #1627; certified
+vote locks now refuse conflicting votes) correctly refused unsafe cross-view
+re-voting, but no view could collect quorum.
 
 The rc.11 deployment supplied the natural experiment: the same 29-member
 anchor committee and jar deadlocked after a staggered rollout, then finalized

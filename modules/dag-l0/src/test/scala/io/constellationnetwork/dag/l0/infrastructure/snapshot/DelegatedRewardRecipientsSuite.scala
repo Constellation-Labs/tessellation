@@ -1,6 +1,5 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
 
@@ -18,13 +17,6 @@ object DelegatedRewardRecipientsSuite extends SimpleIOSuite {
     val recipients = GlobalSnapshotConsensusFunctions.delegatedRewardRecipients(Set(c, a, b))
 
     expect.same(List(a, b, c), recipients)
-  }
-
-  pureTest("full-committee reward policy activates inclusively at its replay gate") {
-    val activation = SnapshotOrdinal.unsafeApply(100L)
-
-    expect(!GlobalSnapshotConsensusFunctions.usesFullCommitteeRewards(SnapshotOrdinal.unsafeApply(99L), activation)) &&
-    expect(GlobalSnapshotConsensusFunctions.usesFullCommitteeRewards(activation, activation))
   }
 
   pureTest("the frozen reward committee is broad Core plus Tier 1, never Witness") {

@@ -80,7 +80,7 @@ case class MerkleTreeResult(
 
 case class ArtifactValidationResult(
   acceptedSpendActions: Map[Address, List[SpendAction]],
-  rejectedSpendActions: Map[Address, (SpendAction, List[SpendActionValidationError])],
+  rejectedSpendActions: Map[Address, List[(SpendAction, List[SpendActionValidationError])]],
   acceptedPricingUpdates: List[PricingUpdate],
   rejectedPricingUpdates: List[(PricingUpdate, List[PricingUpdateValidationError])]
 )
@@ -156,6 +156,38 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
 object GlobalSnapshotAcceptanceManager {
 
   private case object InvalidMerkleTree extends NoStackTrace
+
+  /** Release/mainnet #1498: expired withdrawals whose token lock is still active, plus the (address, tokenLockRef) pairs of the orphans
+    * left out. Unlock generation must skip orphans: their lock was already unlocked in an earlier snapshot.
+    */
+  private[global] def partitionBackedWithdrawals(
+    expired: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+    activeTokenLocksByRef: Map[Hash, Signed[TokenLock]]
+  ): (SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]], List[(Address, Hash)]) = {
+    val backed = expired.map {
+      case (address, withdrawals) => address -> withdrawals.filter(w => activeTokenLocksByRef.contains(w.tokenLockRef))
+    }.filter { case (_, withdrawals) => withdrawals.nonEmpty }
+    val orphans = expired.toList.flatMap {
+      case (address, withdrawals) =>
+        withdrawals.toList.collect { case w if !activeTokenLocksByRef.contains(w.tokenLockRef) => address -> w.tokenLockRef }
+    }
+    (backed, orphans)
+  }
+
+  /** Release/mainnet #1498: once a withdrawal has expired (processed or orphaned), no pending withdrawal of the same address may keep
+    * referencing its token lock. Scoped per address exactly as on mainnet, whichever path (producer or replay) built `pending`.
+    */
+  private[global] def removeProcessedWithdrawals(
+    pending: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]],
+    expired: SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]]
+  ): SortedMap[Address, SortedSet[PendingDelegatedStakeWithdrawal]] = {
+    val processedRefsByAddress = expired.view.mapValues(_.map(_.tokenLockRef).toSet).toMap
+    pending.map {
+      case (address, withdrawals) =>
+        val processedRefs = processedRefsByAddress.getOrElse(address, Set.empty[Hash])
+        address -> withdrawals.filterNot(w => processedRefs.contains(w.tokenLockRef))
+    }.filter { case (_, withdrawals) => withdrawals.nonEmpty }
+  }
 
   private[global] def filterExpiredGlobalAllowSpends[F[_]: Async](
     allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
@@ -681,6 +713,9 @@ object GlobalSnapshotAcceptanceManager {
         val fixingAllowSpendAndTokenLockValidation =
           fieldsAddedOrdinals.fixingAllowSpendAndTokenLockValidationFor(environment)
 
+        val removingProcessedWithdrawals =
+          ordinal >= fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawalsFor(environment)
+
         loggerBundle.app.withOrdinal(ordinal) {
           for {
             _ <- loggerBundle.app.debug(
@@ -831,8 +866,7 @@ object GlobalSnapshotAcceptanceManager {
               updatedWithdrawDelegatedStakes,
               nodeOperatorRewards,
               reservedAddressRewards,
-              withdrawalRewardTxs,
-              _
+              withdrawalRewardTxs
             ) <- calculateRewards(
               ordinal,
               epochProgress,
@@ -1016,9 +1050,20 @@ object GlobalSnapshotAcceptanceManager {
               lastSnapshotContext
             )
 
+            (backedExpiredWithdrawals, orphanWithdrawals) =
+              if (removingProcessedWithdrawals)
+                partitionBackedWithdrawals(initialData.existingStakes.expired, globalActiveTokenLocksByRef)
+              else (initialData.existingStakes.expired, List.empty[(Address, Hash)])
+            _ <- loggerBundle.app
+              .warn(
+                s"[ORDINAL=$ordinal] Skipping token unlock generation for orphan delegated stake withdrawals " +
+                  s"(token lock already removed in a prior snapshot). Pairs: $orphanWithdrawals"
+              )
+              .whenA(orphanWithdrawals.nonEmpty)
+
             generatedTokenUnlocks <- tokenLockStateManager
               .generateTokenUnlocks(
-                initialData.existingStakes.expired,
+                backedExpiredWithdrawals,
                 acceptedGlobalTokenLocks,
                 globalActiveTokenLocksByRef,
                 withdrawalSettlement.fold[TokenLockStateManager.UnlockMode](TokenLockStateManager.UnlockMode.Legacy)(
@@ -1115,13 +1160,24 @@ object GlobalSnapshotAcceptanceManager {
               updatedLastCurrencySnapshots
             )
 
+            // Producer and replay build updatedWithdrawDelegatedStakes on different paths, so the settled-copy retirement (#1593)
+            // and the processed-reference removal (#1498) are both enforced here, where the two paths meet. Settlement only
+            // retires backed references; #1498 additionally drops orphans, which is what mainnet has done since 6176655.
+            withdrawalsAfterSettlement = withdrawalSettlement.fold(updatedWithdrawDelegatedStakes)(
+              _.removeSettled(updatedWithdrawDelegatedStakes)
+            )
+            pendingDelegatedStakeWithdrawals =
+              if (removingProcessedWithdrawals)
+                removeProcessedWithdrawals(withdrawalsAfterSettlement, initialData.existingStakes.expired)
+              else withdrawalsAfterSettlement
+
             // Clean state maps and compute removed keys in a single pass
             cleanedMapsResult = cleanStateMaps(
               updatedAllowSpends,
               updatedTokenLockBalances,
               updatedGlobalTokenLocks,
               updatedCreateDelegatedStakes,
-              updatedWithdrawDelegatedStakes,
+              pendingDelegatedStakeWithdrawals,
               updatedCreateNodeCollaterals,
               updatedWithdrawNodeCollaterals,
               // Previous state for computing removed keys

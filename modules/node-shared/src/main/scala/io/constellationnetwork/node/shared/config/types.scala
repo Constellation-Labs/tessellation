@@ -37,8 +37,9 @@ object types {
       ordinals.getOrElse(environment, SnapshotOrdinal.MaxValue)
   }
 
-  // SDK consumers construct this positionally, so append new gates at the end and never reorder. Every new field also
-  // needs a named entry in fieldsAddedOrdinalsReader (ext.pureconfig) and in resolvedThresholdsFor.
+  // Every field needs a named entry in fieldsAddedOrdinalsReader (ext.pureconfig) and in resolvedThresholdsFor. The v4.1
+  // migration removed several gates, so positional construction from older SDK code no longer compiles; use named
+  // arguments.
   case class FieldsAddedOrdinals(
     tessellation3Migration: Map[AppEnvironment, SnapshotOrdinal],
     tessellation301Migration: Map[AppEnvironment, SnapshotOrdinal],
@@ -49,21 +50,6 @@ object types {
     updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
     fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
-    setSumFix: Map[AppEnvironment, SnapshotOrdinal],
-    // Ordinal-gated balance source for state-channel fee affordability (commit dd6e83a19). At/after this ordinal the fee
-    // check reads the metagraph owner's balance from the deterministic accept() context (lastGlobalSnapshotInfo.balances);
-    // below it from the pre-fix mptStore.getBalance path, so already-signed history re-derives byte-identically. Per-env
-    // activation ordinals live in the `fields-added-ordinals` HOCON (see docs/operations/fields-added-ordinals.md): testnet
-    // activates at its v4.0.0->alpha.0 cutover ordinal, dev at 0 (genesis-fresh), mainnet/integrationnet are placeholders.
-    scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // Ordinal-gated per-field MPT sub-trie roots in GlobalSnapshotStateProof. This changes signed proof bytes, so it must
-    // stay fail-closed until each public network deliberately activates it at a coordinated cold-restart ordinal.
-    subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this ordinal delegated validator rewards use the full frozen signing committee. Below it, replay the
-    // short-lived evidence-score filter exactly as deployed, so already-signed reward transactions remain reproducible.
-    delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this global ordinal, fee transactions require cryptographic authorization by their source wallet.
-    feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal, acceptFeeTxs applies fee transactions through checked Balance arithmetic. Below it, the
     // original wrapping fold is replayed so already-signed history re-derives byte-identically -- the fix changes what a
     // snapshot contains, so an ungated rollout diverges any node syncing from genesis. Mainnet activates at the mint ordinal.
@@ -73,15 +59,9 @@ object types {
     // the separate `versionHash` checks the advertised software version. Default empty: no entry means no sweep.
     // See `DustSweep` and `GlobalSnapshotDustSweep`.
     dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
-    // Appended to preserve positional source compatibility for existing SDK consumers.
-    // At/after this GLOBAL L0 ordinal a Currency snapshot lineage may transition from
-    // snapshot protocol 0.0.1 to 1.0.0. The signed CurrencySnapshot.version then keeps
-    // historical replay self-describing. Public environments stay absent until the
-    // coordinated v35 rollout; dev activates from genesis so CI exercises the new path.
-    currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal every fee transaction in a data envelope is validated, and a data block whose
-    // fees cannot be applied is rejected. Deliberately NOT feeTransactionSecurity: that gate is already open on
-    // integrationnet at 5880000, so widening what it controls would change how signed history there replays.
+    // fees cannot be applied is rejected. Live on mainnet since 6818000; distinct from the v4.1 cutover, which also
+    // enables source-authorized fee co-signers (feeTransactionSecurityFor).
     fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
     // At/after this global ordinal an allow spend no longer credits its destination at block acceptance; the
     // destination is credited only when a SpendAction consumes the allowance.
@@ -93,15 +73,15 @@ object types {
     // At/after this global ordinal, an expired global AllowSpend consumed in the same snapshot is settled once
     // instead of also being refunded to its source. The separate gate preserves already-signed history.
     fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this global ordinal, delegated-stake withdrawal acceptance prevents two stake records from scheduling
-    // the same effective token lock for unlock. Shared settlement pays lock-owned rewards with checked arithmetic,
-    // retires all settled pending copies and deduplicates withdrawal/replacement principal. Natural expiry suppresses
-    // generated unlocks to prevent double balance credit. Public environments remain absent until coordinated activation.
-    fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-    // At/after this global ordinal, Global L0 debits each metagraph's direct SpendAction legs from a running balance while
-    // validating, so the accepted legs cannot together exceed the metagraph's balance. Below it each leg is only compared
-    // with the starting balance, and an over-committed batch fails the round when the legs are applied.
-    fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    // At/after this global ordinal (mainnet 6176655, release/mainnet #1498) an expired delegated-stake withdrawal whose
+    // token lock is no longer active (an orphan) is skipped by unlock generation instead of failing the snapshot, and
+    // every expired withdrawal's token-lock reference is removed from that address's pending withdrawals.
+    removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // The v3.5 -> v4.1 cutover C: the first global ordinal produced by v4.1. Every v4.1-only replay/state-transition rule
+    // switches on here (see the named accessors below), and the legacy state-proof and staking boundaries are derived
+    // from it (lastLegacyStateProofOrdinalFor / incrementalDelegatedStakingStartingOrdinalFor = C-1). Mainnet sets it to
+    // R+1 at the cold-restart cutover, R being the final v3.5 snapshot; networks born on v4.1 use 0.
+    tessellation41Migration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -131,20 +111,24 @@ object types {
     def fixingAllowSpendAndTokenLockValidationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingAllowSpendAndTokenLockValidation, environment)
 
-    def setSumFixFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(setSumFix, environment)
+    def tessellation41MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(tessellation41Migration, environment)
 
-    def scFeeBalanceFromContextFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(scFeeBalanceFromContext, environment)
+    /** Last ordinal of v3.5 history: C-1, or 0 when C is 0. At C = 0 the genesis snapshot itself stays on the legacy side of `<=`/`>`
+      * comparators, as dev always ran. A disabled cutover (MaxValue) keeps every ordinal legacy, so it stays MaxValue.
+      */
+    def tessellation41LastLegacyOrdinalFor(environment: AppEnvironment): SnapshotOrdinal = {
+      val cutover = tessellation41MigrationFor(environment)
+      if (cutover.value.value == 0L) SnapshotOrdinal.MinValue
+      else if (cutover == SnapshotOrdinal.MaxValue) SnapshotOrdinal.MaxValue
+      else SnapshotOrdinal.unsafeApply(cutover.value.value - 1L)
+    }
 
-    def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(subTrieRoots, environment)
+    // Per-field MPT sub-trie roots in GlobalSnapshotStateProof (signed proof bytes). v4.1 cutover.
+    def subTrieRootsFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
-    def delegatedRewardsFullCommitteeFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(delegatedRewardsFullCommittee, environment)
-
-    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(feeTransactionSecurity, environment)
+    // Cryptographic fee-transaction authorization with source-authorized co-signers. v4.1 cutover.
+    def feeTransactionSecurityFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def fixingFeeTransactionBalanceOverflowFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingFeeTransactionBalanceOverflow, environment)
@@ -152,8 +136,8 @@ object types {
     def dustSweepFor(environment: AppEnvironment, ordinal: SnapshotOrdinal): Option[DustSweep] =
       dustSweeps.get(environment).flatMap(_.get(ordinal))
 
-    def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(currencySnapshotProtocolV1, environment)
+    // Currency snapshot protocol 0.0.1 -> 1.0.0 transition, keyed by the GLOBAL ordinal. v4.1 cutover.
+    def currencySnapshotProtocolV1For(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
     def fixingDataApplicationFeeValidationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingDataApplicationFeeValidation, environment)
@@ -167,11 +151,15 @@ object types {
     def fixingGlobalAllowSpendExpirationFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(fixingGlobalAllowSpendExpiration, environment)
 
-    def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(fixingDelegatedStakeDoubleWithdrawal, environment)
+    // Unique delegated-stake withdrawal settlement (#1593), composed with removingProcessedDelegatedStakeWithdrawals. v4.1 cutover.
+    def fixingDelegatedStakeDoubleWithdrawalFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
 
-    def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(fixingSpendActionAggregateBalance, environment)
+    // Running-balance validation of direct SpendAction legs (#1619): below it each leg is only compared with the starting
+    // balance and an over-committed batch fails the round when applied. Never ran on mainnet. v4.1 cutover.
+    def fixingSpendActionAggregateBalanceFor(environment: AppEnvironment): SnapshotOrdinal = tessellation41MigrationFor(environment)
+
+    def removingProcessedDelegatedStakeWithdrawalsFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(removingProcessedDelegatedStakeWithdrawals, environment)
 
     /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
     def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
@@ -185,19 +173,13 @@ object types {
         "updatingCombineFunctionSpendActions" -> updatingCombineFunctionSpendActionsFor(environment),
         "fixingAllowSpendExpiration" -> fixingAllowSpendExpirationFor(environment),
         "fixingAllowSpendAndTokenLockValidation" -> fixingAllowSpendAndTokenLockValidationFor(environment),
-        "setSumFix" -> setSumFixFor(environment),
-        "scFeeBalanceFromContext" -> scFeeBalanceFromContextFor(environment),
-        "subTrieRoots" -> subTrieRootsFor(environment),
-        "delegatedRewardsFullCommittee" -> delegatedRewardsFullCommitteeFor(environment),
-        "feeTransactionSecurity" -> feeTransactionSecurityFor(environment),
         "fixingFeeTransactionBalanceOverflow" -> fixingFeeTransactionBalanceOverflowFor(environment),
-        "currencySnapshotProtocolV1" -> currencySnapshotProtocolV1For(environment),
         "fixingDataApplicationFeeValidation" -> fixingDataApplicationFeeValidationFor(environment),
         "fixingAllowSpendDestinationCredit" -> fixingAllowSpendDestinationCreditFor(environment),
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
-        "fixingDelegatedStakeDoubleWithdrawal" -> fixingDelegatedStakeDoubleWithdrawalFor(environment),
-        "fixingSpendActionAggregateBalance" -> fixingSpendActionAggregateBalanceFor(environment)
+        "removingProcessedDelegatedStakeWithdrawals" -> removingProcessedDelegatedStakeWithdrawalsFor(environment),
+        "tessellation41Migration" -> tessellation41MigrationFor(environment)
       )
   }
 
@@ -252,18 +234,19 @@ object types {
     def lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
     def fieldsAddedOrdinals: FieldsAddedOrdinals
     def lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
-    def lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal]
-    def incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal]
 
     // These are last-legacy boundaries, not first-active thresholds. Preserve their existing defaults.
     def lastKryoHashOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
       lastKryoHashOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
 
+    // Derived from the v4.1 cutover C, never configured separately: v3.5 history (<= C-1) has legacy state proofs and no
+    // incremental delegated-staking fields; v4.1 (>= C) has MPT proofs and incremental staking. Comparators: state proof
+    // `<=` is legacy; incremental staking `>` is active. A missing cutover (MaxValue) keeps both legacy forever.
     def lastLegacyStateProofOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
-      lastLegacyStateProofOrdinal.getOrElse(environment, SnapshotOrdinal.MaxValue)
+      fieldsAddedOrdinals.tessellation41LastLegacyOrdinalFor(environment)
 
     def incrementalDelegatedStakingStartingOrdinalFor(environment: AppEnvironment): SnapshotOrdinal =
-      SnapshotOrdinalGate.resolveOrDisabled(incrementalDelegatedStakingStartingOrdinal, environment)
+      fieldsAddedOrdinals.tessellation41LastLegacyOrdinalFor(environment)
 
     def ordinalConfigHashFor(environment: AppEnvironment): Hash = {
       val thresholds = fieldsAddedOrdinals
@@ -296,8 +279,6 @@ object types {
     feeConfigs: Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]],
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
@@ -324,8 +305,6 @@ object types {
     snapshotSize: SnapshotSizeConfig,
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    lastLegacyStateProofOrdinal: Map[AppEnvironment, SnapshotOrdinal],
-    incrementalDelegatedStakingStartingOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
@@ -403,10 +382,8 @@ object types {
     lockDuration: FiniteDuration,
     eventCutter: EventCutterConfig,
     maxFacilitatorCount: Option[PosInt] = None,
-    // Environment-resolved cap consumed by FacilitatorSelector. This is deliberately distinct
-    // from maxFacilitatorCount above, whose scalar value also serves legacy controller sizing.
-    // Populated only by SnapshotConfig.resolveEffectiveConsensusConfig
-    // so the join/Facility fingerprint binds the cap actually used by the selector.
+    // Cap consumed by FacilitatorSelector. Populated only by SnapshotConfig.resolveEffectiveConsensusConfig
+    // from `maxFacilitatorCount` so the join/Facility fingerprint binds the cap actually used by the selector.
     facilitatorSelectionMax: Option[Int] = None,
     reStallTimeout: Option[FiniteDuration] = None,
     noProgressTimeout: Option[FiniteDuration] = None,
@@ -499,22 +476,12 @@ object types {
     // hysteresis (`TierTransitions` reads the most-recent `DemotionConsecutiveMisses` entries of
     // it) and is pinned to the same horizon as `recentProofSizes`.
     //
-    // `minParticipationInWindow` is INERT (dead config). It parameterized the original v19
-    // active-set tightening FILTER -- "narrow the round N+1 committee to peers who signed M of
-    // the last K outcomes" -- which was RETIRED when the multi-committee tier partition
-    // (`TierTransitions` + `CommitteeBuilder`) replaced it. No code reads it today; it survives
-    // only in this field, the `deterministicConfigHash` string, and the conf files. Kept (not
-    // removed) so the schema/hash is unchanged; a hard removal is deferred to a future schema
-    // cleanup. The v22 demotion hysteresis does NOT use it -- it uses the compiled-in
-    // `TierTransitions.DemotionConsecutiveMisses` constant instead.
-    //
     // `activeFacilitatorFloor` is the emergency bypass threshold for active admission and is also
     // read by the rollback/ready-participation gates. Admission score gating remains enabled at
     // and above this floor; below it the full selected pool is admitted for bootstrap/collapse
     // recovery. All three values are consensus-critical (in `deterministicConfigHash`) so
     // divergent operator values are rejected at handshake.
     tighteningWindow: Int = 10,
-    minParticipationInWindow: Int = 6,
     activeFacilitatorFloor: Int = 4,
     // Deterministic GL0 controller target. Recent signers are preferred; additional selected peers
     // are ranked by consensus-agreed peerQuality and stable peer id. It classifies Core eligibility
@@ -561,10 +528,9 @@ object types {
     // `TierTransitions.DemotionConsecutiveMisses` = 3 and independently keeps non-recent signers out
     // of Core). On Global L0 this does not cap the separate Tier-1 signing lease; Currency L0
     // retains its active-set interpretation.
-    // Env-resolved at the consensus construction site from
-    // `SnapshotConfig.activeAdmissionRecentSignerWindow.get(env)` (the coreCommitteeSize pattern),
-    // floored to DemotionConsecutiveMisses. Default 3 preserves the pre-change lookback; testnet
-    // widens to the full persisted `recentSigners` window (`tighteningWindow`). Consensus-critical:
+    // Floored to DemotionConsecutiveMisses by SnapshotConfig.resolveEffectiveConsensusConfig. Default 3
+    // preserves the pre-change lookback; the packaged GL0 config uses the full persisted
+    // `recentSigners` window (`tighteningWindow`) on every environment. Consensus-critical:
     // it changes deterministic tier/controller derivation, so it is folded into
     // `deterministicConfigHash` and divergent operator values handshake-reject.
     activeAdmissionRecentSignerWindow: Int = 3,
@@ -670,10 +636,6 @@ object types {
     // reinstatement round from the consensus-agreed key value and sort chronic set.
     // 0 disables reinstatement (peers stay chronic until manual intervention).
     chronicReinstatementInterval: Int = 100,
-    // Phase 2 cold-restart protocol version flag. Included in `deterministicConfigHash` so pre-Phase-2 peers are
-    // excluded from facilitator selection via the config-hash check. Set to 2 to enable the quorum-certified
-    // view-change + local vote-lock protocol.
-    lockOnVoteProtocolVersion: Int = 2,
     // Bootstrap warmup threshold: minimum proofs.size in any recent snapshot required to classify the chain as
     // post-bootstrap. While bootstrap is active (no recent snapshot meets this threshold), penalty accrual is
     // suppressed to avoid ejecting slow peers during the solo->multi transition. Consensus-critical because it
@@ -1048,7 +1010,12 @@ object types {
     //     checkpoint. Below activation drop-null encoding preserves legacy incremental JSON
     //     bytes. Snapshot-info and state-proof schemas/calculation remain unchanged. Public
     //     activation never crosses the retired Kryo boundary.
-    consensusSchemaVersion: Int = 35,
+    //     v36: the pre-v35 GL0 engine is removed; every produced key is certified. Hash inputs
+    //     drop the retired `minParticipationInWindow`, `lockOnVoteProtocolVersion` and
+    //     `quorumShrinkActivationViews` knobs, and the selector cap now resolves from the
+    //     scalar `maxFacilitatorCount`. The signed/wire schema is unchanged; the version moves
+    //     because `deterministicConfigHash` inputs changed.
+    consensusSchemaVersion: Int = 36,
     // DAG/Global-L0 activation key for v35 certified outcomes. Currency L0 deliberately
     // remains on its flat synchronous protocol and never consults this key. SnapshotConfig
     // resolves the current environment's value once at the GL0 consensus construction site.
@@ -1086,18 +1053,6 @@ object types {
     // different hashes and reject each other at L0 joining. Facility comparison remains diagnostic.
     // The separate `versionHash` hashes the advertised version string (or `CL_VERSION_HASH`), not jar bytes.
     coreCommitteeSize: Option[Int] = None,
-    // v33 quorum-denominator shrink rung (QuorumDenominatorShrink): number of `viewInterval`
-    // units of wall silence since the parent outcome's `consensusEndTime` after which the
-    // escalating quorum shrink begins. `0` (default) disables the rung entirely. Env-resolved
-    // at the consensus construction site from `SnapshotConfig.quorumShrinkActivationViews.get(env)`
-    // (the coreCommitteeSize pattern); testnet runs an aggressive value, mainnet stays disabled.
-    // Measured in views rather than abandonment counts deliberately: one abandonment cycle is
-    // ~1 viewInterval of silence, but the local abandonment counters are node-local Refs that
-    // reset on restart and must never gate cross-node acceptance (the alpha.104 lesson). The
-    // ViewFromTime anchor gives the same escalation cadence from data all nodes share.
-    // Consensus-critical: changes cert/phase acceptance thresholds at the stuck key, so it is
-    // included in `deterministicConfigHash` -- divergent operator values handshake-reject.
-    quorumShrinkActivationViews: Int = 0,
     // Cross-layer historical-dependency boundary. These values already decide Currency L0
     // GlobalSnapshotSync target selection and protocol-v1 reset acceptance. They are copied from
     // SharedConfig.lastGlobalSnapshotsSync at each L0 construction site so a misconfigured
@@ -1128,16 +1083,13 @@ object types {
     def certifiedConsensusActiveAt(key: Long): Boolean =
       key >= certifiedConsensusActivationKey
 
-    def certifiedConsensusActivatesAt(key: Long): Boolean =
-      key == certifiedConsensusActivationKey
-
     /** Deterministic hash of consensus-critical config values.
       *
       * All nodes in a consensus round MUST have the same config to produce the same results. L0 advertises this hash during joining and
       * requires exact equality before peering. It is also included in Facility declarations as a post-join structured diagnostic.
       *
       * '''Consensus-critical fields''' (included in hash):
-      *   - `maxFacilitatorCount`: legacy controller-sizing scalar
+      *   - `maxFacilitatorCount`: selector cap (resolved into `facilitatorSelectionMax`) and controller-sizing fallback
       *   - `facilitatorSelectionMax`: environment-resolved live selector cap
       *   - `maxStallCycles`: affects when rounds are abandoned (triggers recovery)
       *   - `removalPenaltyRounds`: affects facilitator eligibility after eviction
@@ -1154,8 +1106,6 @@ object types {
       *   - `minObservationHistoryFloor`: minimum participated count before chronic classification can fire
       *   - `forceViewChangeAbandonments`: defensive force-VCV threshold (bypasses missing-still-responsive gate after N same-key abandons)
       *   - `tighteningWindow`: size of the rolling `recentSigners` window; as of v22 it feeds the tier-demotion hysteresis (LIVE)
-      *   - `minParticipationInWindow`: INERT (dead config) -- parameterized the retired v19 active-set tightening filter; kept in the hash
-      *     only to avoid a schema change, read by no logic (the v22 hysteresis uses `TierTransitions.DemotionConsecutiveMisses`)
       *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
       *   - `activeFacilitatorTarget` / `activeFacilitatorMax`: GL0 Core-controller expansion and cap; retained but behaviorally inert in
       *     Currency L0's flat synchronous engine
@@ -1219,7 +1169,6 @@ object types {
           // committee membership; divergent operator values would produce silently-
           // divergent facilitator sets and fork the cluster.
           s"tighteningWindow=$tighteningWindow," +
-          s"minParticipationInWindow=$minParticipationInWindow," +
           s"activeFacilitatorFloor=$activeFacilitatorFloor," +
           s"activeFacilitatorTarget=${activeFacilitatorTarget.getOrElse(coreCommitteeSize.getOrElse(3))}," +
           s"activeFacilitatorMax=${activeFacilitatorMax.map(_.toString).getOrElse("none")}," +
@@ -1246,7 +1195,6 @@ object types {
           // silently fork. Floored to DemotionConsecutiveMisses (3) at the construction site.
           s"activeAdmissionRecentSignerWindow=$activeAdmissionRecentSignerWindow," +
           s"chronicReinstatementInterval=$chronicReinstatementInterval," +
-          s"lockOnVoteProtocolVersion=$lockOnVoteProtocolVersion," +
           s"bootstrapCompleteProofsThreshold=$bootstrapCompleteProofsThreshold," +
           s"bootstrapDeclarationTimeoutMultiplier=$bootstrapDeclarationTimeoutMultiplier," +
           // v7 (codex turn 2 fix): qualityDecayThreshold mutates consensus-agreed peerQuality
@@ -1262,10 +1210,6 @@ object types {
           // penaltyUntil eligibility filtering and the advancers' penaltyUntil writes;
           // divergent operator values would derive divergent committees and silently fork.
           s"penaltyDurationOrdinals=$penaltyDurationOrdinals," +
-          // v33: quorum-denominator shrink activation threshold. Changes the effective
-          // cert/phase acceptance quorum at a wedged key; divergent operator values would
-          // make one node accept a shrunken VCC/TC that another rejects.
-          s"quorumShrinkActivationViews=$quorumShrinkActivationViews," +
           // v35: exact local snapshot key where certified outcome semantics and the
           // canonical legacy-evidence reset begin.
           s"certifiedConsensusActivationKey=$certifiedConsensusActivationKey," +
@@ -1383,7 +1327,6 @@ object types {
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,
-    maxFacilitatorCount: Map[AppEnvironment, PosInt] = Map.empty,
     // V35 DAG/Global-L0 certified-outcome activation, keyed by environment and interpreted
     // in the Global snapshot-ordinal space. Currency L0 does not use certified outcomes.
     // Absent means disabled.
@@ -1404,14 +1347,6 @@ object types {
     // preserved -- env resolution still happens at the GL0 construction site; only the resolved scalar is
     // additionally threaded into the hash.
     coreCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
-    // v33 quorum-denominator shrink activation threshold, keyed by AppEnvironment (the
-    // coreCommitteeSize pattern: env resolution happens once at the construction site and the
-    // resolved scalar is threaded into `ConsensusConfig.quorumShrinkActivationViews`, which
-    // folds into `deterministicConfigHash`). 0 (or an absent env) DISABLES the rung for that
-    // environment, matching the resolved scalar's `<= 0` disable. Same Int shape as the sibling
-    // activeAdmission* knobs below. Testnet runs an aggressive value; mainnet/integrationnet/dev
-    // are 0 -- the deep stage trades partition safety for liveness and is opted into per env.
-    quorumShrinkActivationViews: Map[AppEnvironment, Int] = Map.empty,
     // Bounded probation re-entry lane, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved scalar is threaded
     // into `ConsensusConfig.activeAdmissionMinProbationReentrySlots`, which folds into
@@ -1420,16 +1355,6 @@ object types {
     // responsive climbers retain bounded priority until they reach the retain band. `Int` (not
     // `PosInt`) keeps 0 available as an explicit disable.
     activeAdmissionMinProbationReentrySlots: Map[AppEnvironment, Int] = Map.empty,
-    // Recent-signer pool lookback depth (in ordinals), keyed by AppEnvironment (the coreCommitteeSize
-    // pattern: env resolution happens once at the consensus construction site and the resolved scalar
-    // is threaded into `ConsensusConfig.activeAdmissionRecentSignerWindow`, which folds into
-    // `deterministicConfigHash`). Controls how long an intermittently-signing peer keeps a sticky
-    // controller classification before churning through expansion/reserve. An absent env entry resolves to the
-    // DemotionConsecutiveMisses floor (3 = the pre-change lookback). Testnet widens to the full
-    // persisted `recentSigners` window (`tighteningWindow`); mainnet/dev/integrationnet absent on
-    // purpose. This does not cap a retained Tier-1 signing lease. Currency L0's synchronous
-    // engine does not consume the controller setting.
-    activeAdmissionRecentSignerWindow: Map[AppEnvironment, Int] = Map.empty,
     // Core-controller target, keyed by AppEnvironment (the coreCommitteeSize pattern: env
     // resolution happens once at the consensus construction site and the resolved value is threaded
     // into `ConsensusConfig.activeFacilitatorTarget`, which folds into `deterministicConfigHash`).
@@ -1482,12 +1407,11 @@ object types {
         .value
 
       val effective = snapshot.consensus.copy(
-        facilitatorSelectionMax = snapshot.maxFacilitatorCount.get(environment).map(_.value),
+        facilitatorSelectionMax = snapshot.consensus.maxFacilitatorCount.map(_.value),
         coreCommitteeSize = Some(coreCommitteeSize),
-        quorumShrinkActivationViews = snapshot.quorumShrinkActivationViews.get(environment).getOrElse(0),
         certifiedConsensusActivationKey = certifiedConsensusActivationKey,
         activeAdmissionMinProbationReentrySlots = snapshot.activeAdmissionMinProbationReentrySlots.get(environment).getOrElse(0),
-        activeAdmissionRecentSignerWindow = math.max(3, snapshot.activeAdmissionRecentSignerWindow.get(environment).getOrElse(3)),
+        activeAdmissionRecentSignerWindow = math.max(3, snapshot.consensus.activeAdmissionRecentSignerWindow),
         activeFacilitatorTarget = activeFacilitatorTarget,
         activeFacilitatorMax = activeFacilitatorMax
       )

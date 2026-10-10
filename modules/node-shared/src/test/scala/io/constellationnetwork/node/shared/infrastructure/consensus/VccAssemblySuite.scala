@@ -13,51 +13,12 @@ import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
-import io.chrisdavenport.mapref.MapRef
 import weaver.{FunSuite, SimpleIOSuite}
 
-/** Phase 2: integration-shaped tests around VoteLock, VCC assembly, and lock cleanup on recovery. The full ConsensusStorage wiring is
-  * prohibitively heavy for unit tests (many type-class witnesses), so these suites drive the same invariants against the MapRef/VoteLock
-  * machinery directly — identical in shape to how ConsensusStorage uses it.
-  */
-
 // ---------------------------------------------------------------------------------------------------
-// DoubleSignRaceSuite: two concurrent vote-lock attempts can never both succeed for differing hashes.
+// VccTransitionIsolationSuite: VCC assembly never mixes votes from different view transitions.
 // ---------------------------------------------------------------------------------------------------
-object DoubleSignRaceSuite extends SimpleIOSuite {
-
-  private val hashA: Hash = Hash.fromBytes("dsr_A".getBytes("UTF-8"))
-  private val hashB: Hash = Hash.fromBytes("dsr_B".getBytes("UTF-8"))
-
-  private def tryLockVote(
-    voteLocksR: MapRef[IO, Long, Option[VoteLock]],
-    key: Long,
-    view: Long,
-    proposalHash: Hash,
-    effectiveLockedQc: Option[ProposalQC]
-  ): IO[Either[VoteRejection, VoteLock]] =
-    voteLocksR(key).modify { maybeLock =>
-      val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
-        case Right(newLock) => (newLock.some, Right(newLock))
-        case Left(reason)   => (maybeLock, Left(reason))
-      }
-    }
-
-  test("concurrent view-change races: VoteLock rejects the second signing attempt for a different hash at the same view") {
-    MapRef.ofConcurrentHashMap[IO, Long, VoteLock]().flatMap { voteLocksR =>
-      val key = 1L
-      val viewN = 2L
-      for {
-        outcomes <- IO.both(
-          tryLockVote(voteLocksR, key, viewN, hashA, None),
-          tryLockVote(voteLocksR, key, viewN, hashB, None)
-        )
-        (r1, r2) = outcomes
-        exactlyOne = r1.isRight ^ r2.isRight
-      } yield expect(exactlyOne, s"expected exactly one concurrent lock to succeed, got r1=$r1 r2=$r2")
-    }
-  }
+object VccTransitionIsolationSuite extends SimpleIOSuite {
 
   test("assembled VCC can only come from one (fromView, toView) pair -- different transitions are isolated") {
     // Build votes for two different transitions; VCC.build must not mix them.
@@ -90,66 +51,6 @@ object DoubleSignRaceSuite extends SimpleIOSuite {
         .and(expect(vcc12.isRight, s"1->2 VCC should succeed, got $vcc12"))
         .and(expect(mixed.isLeft, s"mixed-transition build must fail, got $mixed"))
     )
-  }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// VccLateArrivalSuite: a VCC arriving after a node signed at view 0 only allows a higher-view vote
-// when the leader's proposal hash matches a prior lock (or lock is empty).
-// ---------------------------------------------------------------------------------------------------
-object VccLateArrivalSuite extends SimpleIOSuite {
-
-  private val hash1: Hash = Hash.fromBytes("late_P1".getBytes("UTF-8"))
-  private val hash2: Hash = Hash.fromBytes("late_P2".getBytes("UTF-8"))
-  private val facHash: Hash = Hash.fromBytes("late_FAC".getBytes("UTF-8"))
-
-  private def qc(view: Long, proposalHash: Hash): ProposalQC =
-    ProposalQC(view, proposalHash, facHash, NonEmptySet.of(SignatureProof(Id(Hex("00")), Signature(Hex("00")))))
-
-  private def tryLockVote(
-    voteLocksR: MapRef[IO, Long, Option[VoteLock]],
-    key: Long,
-    view: Long,
-    proposalHash: Hash,
-    effectiveLockedQc: Option[ProposalQC]
-  ): IO[Either[VoteRejection, VoteLock]] =
-    voteLocksR(key).modify { maybeLock =>
-      val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
-        case Right(newLock) => (newLock.some, Right(newLock))
-        case Left(reason)   => (maybeLock, Left(reason))
-      }
-    }
-
-  test("signed P1 at view 0, late VCC (highestQcInVcc=None) arrives: can re-sign at view 1 for any hash") {
-    MapRef.ofConcurrentHashMap[IO, Long, VoteLock]().flatMap { voteLocksR =>
-      val key = 10L
-      for {
-        // View 0: sign hash1.
-        v0 <- tryLockVote(voteLocksR, key, view = 0L, proposalHash = hash1, effectiveLockedQc = None)
-        // View 1 arrives. VCC has no highest QC → lockedQc stays None → vote for hash2 accepted.
-        v1 <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash2, effectiveLockedQc = None)
-      } yield
-        expect(v0.isRight, s"view 0 signing must succeed, got: $v0")
-          .and(expect(v1.isRight, s"view 1 signing with empty-highest-QC VCC must succeed, got: $v1"))
-    }
-  }
-
-  test("signed P1 at view 0, late VCC carries QC(view=0, hash=P1): can re-sign at view 1 only for P1") {
-    MapRef.ofConcurrentHashMap[IO, Long, VoteLock]().flatMap { voteLocksR =>
-      val key = 11L
-      val lockOnP1 = qc(view = 0L, proposalHash = hash1)
-      for {
-        v0 <- tryLockVote(voteLocksR, key, view = 0L, proposalHash = hash1, effectiveLockedQc = None)
-        // View 1 with VCC carrying QC on hash1; trying hash2 must fail.
-        v1Bad <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash2, effectiveLockedQc = lockOnP1.some)
-        // Trying hash1 succeeds.
-        v1Good <- tryLockVote(voteLocksR, key, view = 1L, proposalHash = hash1, effectiveLockedQc = lockOnP1.some)
-      } yield
-        expect(v0.isRight, s"view 0 signing must succeed, got: $v0")
-          .and(expect(v1Bad.isLeft, s"view 1 signing for different hash than lockedQc must fail, got: $v1Bad"))
-          .and(expect(v1Good.isRight, s"view 1 signing matching lockedQc must succeed, got: $v1Good"))
-    }
   }
 }
 
@@ -268,49 +169,5 @@ object ViewChangeAssemblySuite extends FunSuite {
     expect(result.isLeft, s"out-of-pool signer must not count toward quorum, got $result").and(
       expect(result.swap.exists(_.code.startsWith("under_quorum")), s"error should start with under_quorum, got $result")
     )
-  }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// RecoveryClearsLocksSuite: extends the existing lock-cleanup coverage with a
-// clearAllConsensusState-style batch clear that wipes all lock entries across all keys.
-// ---------------------------------------------------------------------------------------------------
-object RecoveryClearsLocksSuite extends SimpleIOSuite {
-
-  private val hashA: Hash = Hash.fromBytes("rec_A".getBytes("UTF-8"))
-  private val hashB: Hash = Hash.fromBytes("rec_B".getBytes("UTF-8"))
-
-  private def tryLockVote(
-    voteLocksR: MapRef[IO, Long, Option[VoteLock]],
-    key: Long,
-    view: Long,
-    proposalHash: Hash,
-    effectiveLockedQc: Option[ProposalQC]
-  ): IO[Either[VoteRejection, VoteLock]] =
-    voteLocksR(key).modify { maybeLock =>
-      val current = maybeLock.getOrElse(VoteLock.empty)
-      current.acceptVote(view, proposalHash, effectiveLockedQc, ViewSafetyMode.LegacyPreserve) match {
-        case Right(newLock) => (newLock.some, Right(newLock))
-        case Left(reason)   => (maybeLock, Left(reason))
-      }
-    }
-
-  private def clearAll(voteLocksR: MapRef[IO, Long, Option[VoteLock]]): IO[Unit] =
-    voteLocksR.keys.flatMap(_.traverse_(k => voteLocksR(k).set(none)))
-
-  test("clearAllConsensusState equivalent: all locks are cleared; a new tryLockVote with a different hash succeeds") {
-    MapRef.ofConcurrentHashMap[IO, Long, VoteLock]().flatMap { voteLocksR =>
-      val key = 100L
-      for {
-        _ <- tryLockVote(voteLocksR, key, view = 2L, proposalHash = hashA, effectiveLockedQc = None)
-        before <- voteLocksR(key).get
-        _ <- clearAll(voteLocksR)
-        after <- voteLocksR(key).get
-        relock <- tryLockVote(voteLocksR, key, view = 2L, proposalHash = hashB, effectiveLockedQc = None)
-      } yield
-        expect(before.isDefined, s"initial lock must exist, got $before")
-          .and(expect(after.isEmpty, s"after clear all locks must be empty, got $after"))
-          .and(expect(relock.isRight, s"after clear, new lock with different hash should succeed, got $relock"))
-    }
   }
 }

@@ -22,20 +22,14 @@ case class FieldsAddedOrdinals(
   updatingCombineFunctionSpendActions: Map[AppEnvironment, SnapshotOrdinal],
   fixingAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal],
   fixingAllowSpendAndTokenLockValidation: Map[AppEnvironment, SnapshotOrdinal],
-  setSumFix: Map[AppEnvironment, SnapshotOrdinal],
-  scFeeBalanceFromContext: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  subTrieRoots: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  delegatedRewardsFullCommittee: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  feeTransactionSecurity: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingFeeTransactionBalanceOverflow: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   dustSweeps: Map[AppEnvironment, SortedMap[SnapshotOrdinal, DustSweep]] = Map.empty,
-  currencySnapshotProtocolV1: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingDataApplicationFeeValidation: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingAllowSpendDestinationCredit: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   preventingAllowSpendResurrection: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
   fixingGlobalAllowSpendExpiration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  fixingDelegatedStakeDoubleWithdrawal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
-  fixingSpendActionAggregateBalance: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+  removingProcessedDelegatedStakeWithdrawals: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+  tessellation41Migration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
 )
 ```
 
@@ -56,37 +50,71 @@ remain explicit, and fresh-network tests explicitly select current behavior.
 
 The separate last-legacy boundaries have different semantics. `last-kryo-hash-ordinal` selects
 Kryo through the boundary (`<=`) and JSON above it; its existing missing default is `MinValue`
-(Kryo at zero, JSON above zero). `last-legacy-state-proof-ordinal` defaults to `MaxValue`, retaining
-legacy proofs. Preserve each boundary's established comparator and default rather than applying
-the first-active convention to it.
+(Kryo at zero, JSON above zero). Preserve that comparator and default rather than applying the
+first-active convention to it.
 
-The older top-level `incremental-delegated-staking-starting-ordinal` map is not part of
-`FieldsAddedOrdinals`, but it follows the same missing-means-disabled policy through
-`SnapshotOrdinalConfig.incrementalDelegatedStakingStartingOrdinalFor(environment)`. Its comparison is `ordinal > gate`,
-so an absent environment resolves to `SnapshotOrdinal.MaxValue`. All shipped environments have an
-explicit historical value; this fallback only prevents an incomplete config from enabling the
-record transformation at genesis.
+The legacy state-proof boundary and the incremental delegated-staking boundary are no longer
+configured. Both are derived from the v4.1 cutover `tessellation-41-migration` (C):
+`lastLegacyStateProofOrdinalFor(env)` and `incrementalDelegatedStakingStartingOrdinalFor(env)` return
+`C - 1` (`0` when C is `0`). State proofs use `ordinal <= boundary` for the legacy format and
+incremental staking uses `ordinal > boundary`, so both switch exactly at C. v3.5 never produced MPT
+proofs or `currentTokenLockRef`/`currentAmount`; the old explicit mainnet value `5960000` came from
+an aborted v4 hardfork and would have mis-replayed mainnet history. A missing cutover resolves to
+`MaxValue`, which keeps both legacy forever.
 
 Per-environment activation ordinals differ because the same fix crosses different points of different chains. The behavior itself is identical code on every network; only WHEN it activates is per-environment. Examples from `application.conf`:
 
+testnet and integrationnet are fresh-genesised on v4.1 and carry no older history, so every
+threshold is `0` there, exactly like dev; only mainnet carries v3.5 history. The mainnet values
+below are signed history and must never move. `FieldsAddedOrdinalsSuite` asserts that every
+non-mainnet threshold, the Kryo boundary and the fee schedule start at genesis.
+
 | Gate | mainnet | testnet | integrationnet | dev |
 |------|---------|---------|----------------|-----|
-| `tessellation-3-migration` | 4409045 | 2497000 | 3330000 | 0 |
-| `fixing-allow-spend-and-token-lock-validation` | 5058096 | 9999999 | 5880000 | 0 |
-| `set-sum-fix` | 9999999 | 9999999 | 5880000 | 0 |
-| `sc-fee-balance-from-context` | 9999999 | 3101393 | 5880000 | 0 |
-| `sub-trie-roots` | 9999999 | 9999999 | 5880000 | 0 |
-| `delegated-rewards-full-committee` | 9999999 | 9999999 | 5880000 | 0 |
-| `fee-transaction-security` | 9999999 | 9999999 | 5880000 | 0 |
-| `currency-snapshot-protocol-v1` | absent | absent | absent | 0 |
-| `fixing-fee-transaction-balance-overflow` | 6814499 | 3255000 | 9999999 | 0 |
-| `fixing-data-application-fee-validation` | 6818000 | 9999999 | 9999999 | 0 |
-| `fixing-allow-spend-destination-credit` | 6818000 | 9999999 | 9999999 | 0 |
-| `preventing-allow-spend-resurrection` | 6828500 | 9999999 | 9999999 | 0 |
-| `fixing-global-allow-spend-expiration` | 6828500 | 9999999 | 9999999 | 0 |
-| `fixing-delegated-stake-double-withdrawal` | absent | absent | absent | 0 |
-| `fixing-spend-action-aggregate-balance` | 9999999 | 9999999 | 9999999 | 0 |
-| `dust-sweeps` | (none) | {3154700} | (none) | (none) |
+| `tessellation-3-migration` | 4409045 | 0 | 0 | 0 |
+| `tessellation-301-migration` | 4915254 | 0 | 0 | 0 |
+| `check-sync-global-snapshot-field` | 4488000 | 0 | 0 | 0 |
+| `metagraph-sync-data` | 4915254 | 0 | 0 | 0 |
+| `updated-last-sync-global-order` | 4915254 | 0 | 0 | 0 |
+| `updated-last-sync-global-from-peers-in-consensus` | 4915254 | 0 | 0 | 0 |
+| `updating-combine-function-spend-actions` | 4957662 | 0 | 0 | 0 |
+| `fixing-allow-spend-expiration` | 5033174 | 0 | 0 | 0 |
+| `fixing-allow-spend-and-token-lock-validation` | 5058096 | 0 | 0 | 0 |
+| `removing-processed-delegated-stake-withdrawals` | 6176655 | 0 | 0 | 0 |
+| `fixing-fee-transaction-balance-overflow` | 6814499 | 0 | 0 | 0 |
+| `fixing-data-application-fee-validation` | 6818000 | 0 | 0 | 0 |
+| `fixing-allow-spend-destination-credit` | 6818000 | 0 | 0 | 0 |
+| `preventing-allow-spend-resurrection` | 6828500 | 0 | 0 | 0 |
+| `fixing-global-allow-spend-expiration` | 6828500 | 0 | 0 | 0 |
+| `tessellation-41-migration` | 9999999 (set to R+1 at cutover) | 0 | 0 | 0 |
+| `dust-sweeps` | (none) | (none) | (none) | (none) |
+
+### The v4.1 cutover gate
+
+`tessellation-41-migration` is the cutover C: the first global ordinal produced by v4.1. Every
+v4.1-only replay/state-transition rule switches on there. The former separate gates
+`sub-trie-roots`, `fee-transaction-security`, `currency-snapshot-protocol-v1`,
+`fixing-delegated-stake-double-withdrawal` and `fixing-spend-action-aggregate-balance` were folded into it;
+their accessors (`subTrieRootsFor`, `feeTransactionSecurityFor`, `currencySnapshotProtocolV1For`,
+`fixingDelegatedStakeDoubleWithdrawalFor`, `fixingSpendActionAggregateBalanceFor`) remain and resolve to C. The legacy state-proof and
+incremental-staking boundaries are derived as `C - 1`.
+
+At the mainnet v3.5 -> v4.1 cold-restart cutover two ordinals are pinned, and they differ on purpose.
+Let R be the final v3.5 global snapshot (the rollback anchor):
+
+1. `fields-added-ordinals.tessellation-41-migration.mainnet = R + 1` (`application.conf`). R itself
+   replays as v3.5.
+2. `snapshot.certified-consensus-activation-ordinal.mainnet = R` (`dag-l0.conf`, exact key, at most
+   the rollback anchor).
+
+The restart uses the recovery-seed procedure (`CL_GL0_RECOVERY_SEED_COMMITTEE` = the source nodes,
+lead started with `run-rollback` at R). Until then the mainnet placeholder `9999999` keeps every
+v4.1-only rule off and every derived boundary on the legacy side.
+
+Gates whose legacy path never produced mainnet history were deleted rather than folded:
+`set-sum-fix` (its only output was never read), `sc-fee-balance-from-context` (state-channel fee
+and staking balances always come from the acceptance context, as on release/mainnet) and
+`delegated-rewards-full-committee` (delegated rewards always follow the frozen committee).
 
 A `9999999` entry is a not-yet-activated placeholder only while the chain remains below it. A `0`
 entry means the new path is active from genesis on that environment. An absent threshold mapping
@@ -96,8 +124,8 @@ exact-key sweep means no sweep is scheduled.
 ## Regression coverage and consumer alignment
 
 `FieldsAddedOrdinalsSuite` compares the packaged configuration with an independently reviewed
-expected table for every environment, including intentional absences, historical boundaries, and
-the complete dust schedule. New gates must be added to that table. The shared test fixture enables
+expected table for every environment, including intentional absences, historical boundaries, the
+derived cutover boundaries, and the complete dust schedule. New gates must be added to that table. The shared test fixture enables
 all current thresholds; tests of historical behavior must explicitly override their boundary.
 `ConsensusOrdinalConfigSuite` checks that changing or removing activation values changes the
 consensus hash, and that unrelated environments and configuration ordering do not.
@@ -108,26 +136,26 @@ named entry there as well as in `resolvedThresholdsFor`. `FieldsAddedOrdinalsRea
 field a distinct ordinal per environment and checks that each field is read from its own kebab-case
 key, that a missing key fails loading, and that unknown keys are ignored.
 
-Snapshot Streaming is updated separately after the node changes reach `develop`. Its current
-compatibility patch retains the older missing-environment defaults for four thresholds; this
-follow-up must align it with the SDK accessors and qualify the resulting indexer artifact. Existing
-explicit packaged values agree. This PR does not update or claim qualification of that consumer.
+Snapshot Streaming embeds the node libraries. The CI build applies
+`docker/snapshot-streaming/snapshot-streaming-state-proof.patch` (apply-or-fail), which reads the
+derived boundaries and the sub-trie activation through the same `*For` accessors as Global L0, so a
+missing environment resolves identically on both sides. Every public deployment of Snapshot Streaming
+still needs its own qualified artifact before the cutover.
 
 ## Reward gates: three values with different jobs
 
 Reward-path diagnosis requires an ordinal gate and an epoch gate. They must not be
 conflated with the later delegated-stake record gate:
 
-| Value | IntegrationNet | Comparison | Effect |
+| Value | Mainnet | Comparison | Effect |
 |---|---:|---|---|
-| `fields-added-ordinals.tessellation-3-migration` | 3,330,000 | `ordinal >= gate` | Allows `DelegateRewardsInput` and the delegated snapshot fields |
-| Delegated emission `asOfEpoch` | 751,085 | `epochProgress >= asOfEpoch` | Completes the classic-to-delegated reward switch |
-| `fields-added-ordinals.delegated-rewards-full-committee` | 5,880,000 | `ordinal >= gate` | Switches delegated recipients from historical evidence filtering to every Core + Tier-1 member |
-| `incremental-delegated-staking-starting-ordinal` | 5,075,000 | `ordinal > gate` | Populates `currentTokenLockRef` and `currentAmount` on incremental delegated-stake records only |
+| `fields-added-ordinals.tessellation-3-migration` | 4,409,045 | `ordinal >= gate` | Allows `DelegateRewardsInput` and the delegated snapshot fields |
+| Delegated emission `asOfEpoch` | 2,311,565 | `epochProgress >= asOfEpoch` | Completes the classic-to-delegated reward switch |
+| Incremental delegated-staking boundary (derived, `C - 1`) | placeholder | `ordinal > boundary` | Populates `currentTokenLockRef` and `currentAmount` on incremental delegated-stake records only |
 
 The delegated reward distributor runs only when the first two conditions hold. The
-third changes recipients within delegated rewards. The fourth does not select classic
-versus delegated rewards. See
+third does not select classic versus delegated rewards. Delegated rewards always pay every
+member of the frozen signing committee. See
 [Consensus reward recipients](../consensus/rewards.md).
 
 ## The no-env-gating principle
@@ -136,18 +164,16 @@ The load-bearing rule:
 
 > New consensus functionality is ALWAYS present in the code for every network. You gate WHEN it activates by ordinal, never branch consensus behavior on `AppEnvironment`. Per-environment differences belong in the shared per-environment ordinal map, finalized before assembly. The release version rejects different software versions; the consensus config hash also rejects disagreement about the resolved activation values. Neither proves that a value agreed by every node is historically correct.
 
-Concretely, the read sites compare `ordinal >= gate`, never `if (environment == Mainnet)`. See `GlobalSnapshotStateChannelEventsProcessor.scala`:
+Concretely, the read sites compare `ordinal >= gate`, never `if (environment == Mainnet)`. See `GlobalSnapshotAcceptanceManager.scala`:
 
 ```scala
-if (snapshotOrdinal >= scFeeBalanceFromContextOrdinal)
-  lastGlobalSnapshotInfo.balances.getOrElse(feeAddress, Balance.empty).pure[F]   // new path
-else
-  mptStore.getBalance(feeAddress).map(_.getOrElse(Balance.empty))               // old path
+val removingProcessedWithdrawals =
+  ordinal >= fieldsAddedOrdinals.removingProcessedDelegatedStakeWithdrawalsFor(environment)
 ```
 
 A consensus knob that is testnet-only in HOCON (so mainnet silently falls to a no-op default) **violates this principle**, because the per-environment behavior difference then lives in a runtime branch rather than in consensus-agreed state, and a future contributor cannot see, from the gate, that mainnet behaves differently. The correct way to express a per-environment consensus difference is a `Map[AppEnvironment, T]` config value that is resolved ONCE at the construction site and folded into `deterministicConfigHash` (see below). That way a divergent operator value is rejected during L0 joining rather than producing a silent fork.
 
-The same discipline applies to env-keyed consensus knobs that are not ordinal gates (for example `coreCommitteeSize`, `quorumShrinkActivationViews`, `rewardRotationEpochRounds`): they are resolved per environment at one construction point and folded into `deterministicConfigHash` (`types.scala`), so the per-environment value is part of the consensus contract, not a runtime branch.
+The same discipline applies to env-keyed consensus knobs that are not ordinal gates (for example `coreCommitteeSize`, `activeAdmissionMinProbationReentrySlots`, `certifiedConsensusActivationKey`): they are resolved per environment at one construction point and folded into `deterministicConfigHash` (`types.scala`), so the per-environment value is part of the consensus contract, not a runtime branch.
 
 ## Protocol and replay fences operators must not conflate
 
@@ -156,8 +182,8 @@ The same discipline applies to env-keyed consensus knobs that are not ordinal ga
 | **FieldsAddedOrdinals** | per-env activation ordinals for deterministic behavior changes | **Yes** | a mismatched ordinal changes artifact bytes at the boundary -> fork |
 | **Tessellation and metagraph version hashes** | hashes of the reported release versions | No | a divergent value is rejected during the join handshake |
 | **deterministicConfigHash** | a hash of the effective consensus settings, including the shared activation configuration added by `ConsensusConfig.withSharedConfig` | It binds live declarations/trigger statements; it does not select historical snapshot derivation | L0 requires presence and exact equality at join; Facility processing also reports a mismatch; it does NOT change replayed bytes |
-| **consensusSchemaVersion** | a single integer wire-version fence (currently `35`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
-| **certifiedConsensusActivationKey** | the environment-resolved v35 consensus behavior boundary, folded INTO `deterministicConfigHash` | Yes for active consensus behavior, but not a public snapshot field | a mismatched value fences at config/Facility checks; crossing the agreed key switches to the certified state machine and canonical legacy-window reset |
+| **consensusSchemaVersion** | a single integer wire-version fence (currently `36`), folded INTO `deterministicConfigHash` | No | a divergent value fences out mixed-wire-version peers at handshake; it is not signed into the snapshot artifact |
+| **certifiedConsensusActivationKey** | the environment-resolved first key Global L0 may produce (this build has no pre-v35 engine), folded INTO `deterministicConfigHash` | Yes for active consensus behavior, but not a public snapshot field | a mismatched value fences at config/Facility checks; keys below it are only downloaded/replayed, never produced, and a rollback anchor below it is rejected |
 | **currencySnapshotProtocolV1** | Global-ordinal authorization for the signed Currency snapshot `0.0.1 -> 1.0.0` semantics transition; its resolved value is copied into `ConsensusConfig` | **Yes** | divergent values are fenced at joining; crossing the agreed global key changes Currency artifact bytes and replay mode |
 | **RegistrationRequest.jar** | an advertised artifact hash stored as peer metadata | No | no protocol rejection: `Joining.validateHandshake` does not compare it |
 
@@ -194,23 +220,20 @@ The subtlety worth calling out: `lastTxRefs` is Address-keyed but is DELIBERATEL
 
 The `DustSweep` config carries the threshold and the disposition (`config/types.scala`): `collectionAddress = None` burns the collected sum (reported total supply drops), `Some(addr)` credits it to a treasury (total supply preserved).
 
-## Second example: scFeeBalanceFromContext
+## Second example: sub-trie roots (v4.1 cutover)
 
-`scFeeBalanceFromContext` (`config/types.scala`) is a threshold gate over the balance source used by the state-channel fee-affordability check. At and after the gate the check reads the metagraph owner's balance from the deterministic `accept()` context (`lastGlobalSnapshotInfo.balances`); below it from the pre-fix `mptStore.getBalance` path, so already-signed history re-derives byte-identically (`GlobalSnapshotStateChannelEventsProcessor.scala`). testnet is `3101393` -- the exact ordinal where testnet switched from the v4.0.0 `mptStore` build to the alpha.0 context build (it stalled at 3101392 on 2026-03-17 and resumed at 3101393 on 2026-04-02), so the v4.0.0 `mptStore` window below the gate replays correctly. IntegrationNet is scheduled for `5880000` with the other v4.1 gates. Mainnet retains the `9999999` placeholder until its own context-deploy ordinal is selected (`application.conf`).
-
-## Third example: subTrieRoots
-
-`subTrieRoots` (`config/types.scala`) is a threshold gate over the per-field MPT roots carried in `GlobalSnapshotStateProof`. Below the gate, MPT-format proofs keep the legacy shape: the overall `mptRoot` is present and the per-field proof slots remain empty. At and after the gate, those slots carry per-`GlobalStateFieldId` roots so a state-root mismatch can be localized to the divergent field (`GlobalSnapshotInfo.assembleMptProof`). This changes signed proof bytes, so each public network must retain `9999999` until a coordinated cold-restart ordinal and compatible Snapshot Streaming deployment are selected. IntegrationNet activated at `5880000`; do not move that gate forward, because replay of already-signed ordinals from `5880000` through the new gate would re-derive the old proof shape and fail validation. Moving it also cannot repair a stale indexer. `TessellationIOApp` resolves the environment entry once and passes it into `GlobalStateProofSelector`; absent environments fail closed to `SnapshotOrdinal.MaxValue`.
+`subTrieRootsFor` (`config/types.scala`) resolves to the v4.1 cutover and selects the per-field MPT roots carried in `GlobalSnapshotStateProof`. Below the gate, MPT-format proofs keep the legacy shape: the overall `mptRoot` is present and the per-field proof slots remain empty. At and after the gate, those slots carry per-`GlobalStateFieldId` roots so a state-root mismatch can be localized to the divergent field (`GlobalSnapshotInfo.assembleMptProof`). This changes signed proof bytes, so mainnet keeps its placeholder until the cutover is pinned and a compatible Snapshot Streaming deployment is ready. testnet and integrationnet start at genesis. `TessellationIOApp` resolves the environment entry once and passes it into `GlobalStateProofSelector`; absent environments fail closed to `SnapshotOrdinal.MaxValue`.
 
 Development activates this gate at ordinal `0` so CI exercises the signed proof shape. The Tessellation build applies the matching Snapshot Streaming compatibility patch: both SS entry points resolve the two-argument `GlobalStateProofSelector`, and proof validation reuses `GlobalSnapshotInfo.assembleMptProof` instead of constructing an mpt-root-only literal. This is compatibility evidence only; every public environment still requires a separately versioned, tested, and deployed Snapshot Streaming artifact before its gate is crossed (or before resuming from an already-post-gate checkpoint).
 
-## Fourth example: feeTransactionSecurity
+## Third example: fee transaction security (v4.1 cutover)
 
-`feeTransactionSecurity` gates cryptographic authorization of metagraph data-update
-`FeeTransaction`s. At and after the gate, every proof must verify over the exact bytes produced by
-`FeeTransaction.serialize`, signer identities must be unique, the source wallet must participate,
-and no more than 16 proofs are accepted. Below the gate, replay retains the historical
-identity-only source check.
+`feeTransactionSecurityFor` resolves to the v4.1 cutover and enables source-authorized co-signers
+on metagraph data-update `FeeTransaction`s. Proof verification itself started earlier on mainnet:
+from `fixing-data-application-fee-validation` (6818000, release/mainnet #1577) every proof must verify
+over the exact bytes produced by `FeeTransaction.serialize`, signer identities must be unique and no
+more than 16 proofs are accepted, and every proof must still belong to the source wallet. Below
+6818000, replay retains the historical identity-only source check.
 
 L1 submission and consensus use the latest Global Snapshot ordinal. ML0 data-block acceptance and
 final snapshot acceptance use the parent Currency Snapshot's signed `globalSyncView.ordinal`.
@@ -220,17 +243,11 @@ Currency Snapshot ordinals never activate this platform rule. See
 ## Operator checklist
 
 - Ordinal gates are **consensus-critical** and must match cluster-wide. They live in shared HOCON configuration packaged into the assembly. Deployments use one software version and a full-cluster cold restart; version mismatches are rejected at joining. The config hash additionally checks agreement among nodes running that version.
-- Before launch, replace every mainnet placeholder with the real coordinated launch ordinal:
-  - `sc-fee-balance-from-context.mainnet` (`9999999`, `application.conf`): set it to its context-deploy ordinal. testnet is pinned to its real cutover (`3101393`); IntegrationNet is scheduled for `5880000`. An unset env fails closed to the `mptStore` path.
-  - `sub-trie-roots.mainnet` and `.testnet` (`9999999`): set each to its proof-field activation ordinal only when that network is ready to change signed `GlobalSnapshotStateProof` bytes. IntegrationNet activated at `5880000` and requires matching Snapshot Streaming support for every current deployment. For a cold restart at checkpoint `N`, use `N + 1` only on a network that has not already crossed its selected gate.
-  - `delegated-rewards-full-committee.<env>`: set the deploying environment to the first ordinal produced by the corrected jar. Below it, the historical evidence-score filter must remain available for replay.
-  - `fee-transaction-security.<env>`: set the deploying environment to the first global ordinal observed only after every Currency L1 and ML0 node is upgraded. IntegrationNet is scheduled for `5880000`.
-  - `currency-snapshot-protocol-v1.<env>`: set one future GLOBAL L0 ordinal only after every active Currency stack is upgraded. Active lineages transition their existing signed `version` to `1.0.0`; dormant lineages must upgrade before returning. See [ADR-0033](../adr/0033-versioned-currency-snapshot-history.md).
-  - `fixing-delegated-stake-double-withdrawal.<env>`: set the deploying environment to the first Global Snapshot ordinal produced only after every Global L0 is upgraded. Before activation, historical acceptance, unlock, and reward behavior is retained exactly. At and after activation, creates and withdrawals cannot reuse a pending effective lock; reward/principal settlement uses one lock-owned result, checked reward/issuance sums and fail-on-overflow reward credits. All pending copies of a settled effective lock are retired, including later-cooldown copies whose cumulative entitlement participates in maximum selection. Withdrawal/replacement unlocks are deduplicated, and naturally expired locks (strictly `unlockEpoch < currentEpoch`) are excluded from generated unlocks to prevent a second **balance credit**, not just a duplicate artifact. Develop preserves replacement rollover: R unlocks OLD and carries the rewritten NEW withdrawal; R+1 settles NEW. Missing-lock records otherwise remain pending. See [the settlement audit checklist](delegated-stake-settlement-audit.md) before selecting a public ordinal.
-  - `fixing-spend-action-aggregate-balance.<env>` (`9999999`): set the deploying environment to the first Global Snapshot ordinal produced only after every Global L0 is upgraded. Below it, each direct SpendAction leg is compared only with the metagraph's starting balance, so legs that together exceed it are accepted and then fail the round when applied. At and after it, Global L0 debits direct legs from a running balance per metagraph and token and rejects, as a whole, any action that would overdraw it. Allow-spend-settled legs are unaffected. The running balance ignores credits, so this is stricter than applying the legs. Before the gate, a direct leg could spend a credit that an earlier leg in the same snapshot paid to the metagraph's address: an allow-spend-settled leg or another metagraph's leg. At and after the gate, that action is rejected with `NotEnoughCurrencyIdBalance` unless the metagraph's starting balance covers it. For metagraph-token legs the starting balance comes from the metagraph's last currency snapshot included in this Global Snapshot. The metagraph applies the legs some currency ordinals later, and its own transactions in between can still drain that balance. The gate narrows that halt but does not close it.
-  - `dust-sweeps` has no mainnet entry yet (`application.conf`). If a mainnet sweep is intended, add one.
+- At the mainnet v3.5 -> v4.1 cutover, pin the two cutover ordinals described in "The v4.1 cutover gate": `tessellation-41-migration.mainnet = R + 1` and `certified-consensus-activation-ordinal.mainnet = R`. That single change activates sub-trie roots, fee transaction security, Currency snapshot protocol 1.0.0, unique delegated-stake settlement (#1593, composed with the #1498 processed-withdrawal removal), MPT state proofs and incremental staking.
+- Remaining per-gate placeholders:
+  - `dust-sweeps` has no entry on any network (`application.conf`). If a sweep is intended, add one.
 - For the dust sweep specifically, FINALIZE the ordinal right before deploy: it must be an ordinal the chain reaches AFTER the deflating jar is live cluster-wide. A too-early crossing on the old jar misses the sweep until a rollback re-crosses it (`application.conf`). Bump it up if the chain nears it before the coordinated cold restart completes.
-- Every resolved threshold in `FieldsAddedOrdinals`, the full dust-sweep schedule (ordinals, thresholds, and burn/credit destinations), and the three shared hashing/state-proof/staking boundaries enter both L0 config hashes. Only the running environment is included. Currency protocol-v1 retains its existing explicit activation field as well. The advertised jar metadata hash is still not a substitute for either the release-version gate or this config fence. A unanimously wrong ordinal remains dangerous even when every node reports the same hash, so verify gates by inspection before assembly and deploy the identical artifact cluster-wide.
+- Every resolved threshold in `FieldsAddedOrdinals`, the full dust-sweep schedule (ordinals, thresholds, and burn/credit destinations), the Kryo boundary and the two derived state-proof/staking boundaries enter both L0 config hashes. Only the running environment is included. Currency protocol-v1 retains its existing explicit activation field as well. The advertised jar metadata hash is still not a substitute for either the release-version gate or this config fence. A unanimously wrong ordinal remains dangerous even when every node reports the same hash, so verify gates by inspection before assembly and deploy the identical artifact cluster-wide.
 
 ## Key code references
 
@@ -241,12 +258,12 @@ Currency Snapshot ordinals never activate this platform rule. See
 | HOCON block | `application.conf` |
 | Dust sweep transform | `GlobalSnapshotDustSweep.scala` |
 | Dust sweep acceptance wiring + `syncFull` | `GlobalSnapshotAcceptanceManager.scala` |
-| `scFeeBalanceFromContext` read site | `GlobalSnapshotStateChannelEventsProcessor.scala` |
-| `scFeeBalanceFromContext` resolution | `GlobalSnapshotConsensus.scala`, `SharedServices.scala` |
-| `subTrieRoots` proof assembly | `GlobalSnapshotInfo.scala` |
-| `subTrieRoots` selector wiring | `TessellationIOApp.scala`, `StateProofSelector.scala` |
-| `feeTransactionSecurity` signature validation | `FeeTransactionSignatureValidator.scala` |
-| `feeTransactionSecurity` ML0 final-acceptance gate | `CurrencySnapshotAcceptanceManager.scala` |
+| v4.1 cutover and derived boundaries | `config/types.scala` (`tessellation41MigrationFor`, `tessellation41LastLegacyOrdinalFor`) |
+| Sub-trie proof assembly | `GlobalSnapshotInfo.scala` |
+| Sub-trie selector wiring | `TessellationIOApp.scala`, `StateProofSelector.scala` |
+| Fee transaction signature validation | `FeeTransactionSignatureValidator.scala`, node-shared `FeeTransactionValidator.scala` (`FeeTransactionSignerPolicy`) |
+| Fee transaction ML0 final-acceptance gate | `CurrencySnapshotAcceptanceManager.scala`, `BalanceOpsManager.scala` |
+| Processed delegated-stake withdrawal removal (#1498) | `GlobalSnapshotAcceptanceManager.scala`, `DelegatedStakeStateManager.scala` |
 | Currency snapshot protocol transition | `CurrencySnapshotSemantics.scala`, `CurrencySnapshotAcceptanceManager.scala` |
 | `deterministicConfigHash` folded string | `config/types.scala` (`ConsensusConfig.deterministicConfigHash`) |
 | `consensusSchemaVersion` | `config/types.scala` (`ConsensusConfig`) |
