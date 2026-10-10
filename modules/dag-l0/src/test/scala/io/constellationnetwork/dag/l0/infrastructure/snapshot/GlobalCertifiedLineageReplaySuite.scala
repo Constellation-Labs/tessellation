@@ -868,10 +868,9 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
 
     val scripts = List(
       Script(responders = Set(0), admitted = Some(1)),
-      // A newly admitted signer is forced into Tier 1 for its first round. The public
-      // replay projector must reconstruct this exact Core/Tier-1 split from the certified
-      // parent instead of trusting a locally inferred all-Core committee.
-      Script(responders = Set(0, 1), forceCore = Some(List(0)), proofRotation = 1)
+      // Single voting set: a newly admitted signer votes from its first round, so the
+      // public replay projector must reconstruct the certified all-member committee.
+      Script(responders = Set(0, 1), proofRotation = 1)
     )
 
     for {

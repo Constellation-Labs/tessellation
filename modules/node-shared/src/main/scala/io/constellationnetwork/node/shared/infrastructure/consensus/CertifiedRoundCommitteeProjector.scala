@@ -229,17 +229,16 @@ object CertifiedRoundCommitteeProjector {
     )
     val signingMembership = ConsensusPeerController.retainSelectedForSigning(selectedFacilitators, activeAdmission)
     val active = signingMembership.retained.filterNot(withdrawnPeers.contains)
-    val committees = CommitteeBuilder.build(
-      candidates = active,
-      priorTiers = controllerInputs.peerTiers,
-      peerQuality = controllerInputs.peerQuality,
-      coreFloor = coreCommitteeSize,
-      minObservations = config.minParticipationObservations,
-      minRatio = config.minParticipationRatio,
-      nonCorePeers = signingMembership.nonCore.intersect(active.toSet),
-      forcedTier1Peers = forcedTier1Peers.intersect(active.toSet),
-      chronicMisses = controllerInputs.chronicMisses,
-      activeScores = controllerInputs.activeScores
+    // Single voting set: every retained signing member votes. There is no Core/Tier-1 partition, so no controller score,
+    // quality ratio, chronic mark, or leader-reported observation can remove a member's authority.
+    val committees = CommitteeBuilder.Committees(
+      core = active.sorted,
+      tier1 = List.empty,
+      witness = List.empty,
+      effectiveTiers = SortedMap.from(active.iterator.map(_ -> TierTransitions.Core)),
+      chronicExcluded = List.empty,
+      chronicReplacements = List.empty,
+      chronicReadmitted = List.empty
     )
     val signingSet = committees.core.toSet ++ committees.tier1.toSet
 
