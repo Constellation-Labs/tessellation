@@ -35,9 +35,8 @@ Passing this repository's tests does not satisfy those independent release gates
 > deleted; a non-genesis activation enters the certified path through the recovery-seed root with
 > the rollback anchor equal to the activation key (see
 > [global-l0-recovery-seed-committee.md](global-l0-recovery-seed-committee.md) and the
-> `certified-consensus-activation-ordinal` comment in `dag-l0.conf`). Checklist steps that seed the
-> activation committee from legacy controller evidence describe the earlier bridge and need to be
-> re-validated against that procedure before use.
+> `certified-consensus-activation-ordinal` comment in `dag-l0.conf`). Every rollback anchor must be at or
+> after the activation ordinal (`Main.validateRollbackAnchorAtOrAfterActivation`).
 
 ## Scheduled activations
 
@@ -194,8 +193,8 @@ and is therefore fenced independently as well.
     ordinary no-reorg upgrade, deliberate full replay/rebuild, or canonical rollback
     divergent-suffix repair. Do not let a deployment script's default full rebuild stand in
     for an explicit mode/owner decision.
-13. Verify public certified-lineage retention. From the recovery root R (or the canonical
-    first incremental root for certification-from-genesis) through the current tip, every signed
+13. Verify public certified-lineage retention. From the activation root `R` (or the canonical first
+    incremental root for certification-from-genesis) through the current tip, every signed
     incremental artifact must be readable after a process restart. The independently
     trusted root and downloaded terminal must also have their complete SnapshotInfo/context
     so their state proofs can be validated. Interior SnapshotInfo follows the ordinary
@@ -239,15 +238,18 @@ and is therefore fenced independently as well.
     sources but is not yet publicly durable; then prove `R+2` carries the complete
     `R+1` QC. Stop every source, remove every private outcome/sidecar, and require a
     fresh env-free validator to reconstruct and adopt from public `R/R+1/R+2` data.
-    The negative `R+1`-only/all-source-loss case must fail closed. For the mainnet
-    cutover the anchor is the final v3.5 ordinal and `R = A`; assert that any anchor
-    below activation is rejected (`RollbackAnchorBelowCertifiedActivation`). Complete a
-    later full cold restart with the env absent before declaring recovery activation-ready.
+    The negative `R+1`-only/all-source-loss case must fail closed. Repeat across the
+    exact activation boundary. In particular, assert that an anchor below the activation
+    ordinal is rejected at startup
+    (`RollbackAnchorBelowCertifiedActivation`); prevent `R+1` from finalizing, then recover again from
+    the same anchor `R` and reach `R+2` public durability. Complete a later full cold restart
+    with the env absent before declaring recovery activation-ready.
 
 Capacity-plan the added certificate history before activation. At the measured 73-seat
 committee, `CertifiedOutcome` is approximately 29 KiB per round, or roughly 21 GiB/year at a
 sustained 43-second cadence, before filesystem/JSON overhead. Signed incremental artifacts were
-already retained and interior SnapshotInfo remains logarithmically retained,
+already retained; interior SnapshotInfo remains logarithmically retained, while the exact activation-root
+(`R`) SnapshotInfo is explicitly pinned for the lifetime of that configured activation,
 so v35 does not add the rejected
 approximately 1.2-TB/year contiguous-context history or an O(epoch)-per-round cutoff scan. Record
 the actual certificate/artifact disk-growth rate and free-space runway during the IntegrationNet
@@ -328,9 +330,18 @@ blocker.
 
 Before activation, verify the ordinary-download lineage boundary on every source node:
 
-- every public network's activation root is already in the JSON-serde era; no v35 field
-  has a Kryo fallback or compatibility path. A non-genesis activation has no ordinary
-  replay root of its own: the download validator requires the public recovery root
+- the recovery-seed root is the activation snapshot `R` itself, loaded from the locally
+  stored, state-proof-checked artifact. State-proof/file validation uses the ordinal-selected
+  historical rules; the root's committee hash uses the current consensus hasher. The `R`
+  artifact's embedded ordinal must equal the requested index, its signature is verified with
+  that ordinal's hasher, proof signer IDs must be unique, and the context-derived state proof
+  must equal the artifact state proof. Live activation has already applied the then-current
+  join-fenced seedlist/collateral policy. A later historical replay deliberately does not apply
+  today's mutable seedlist to that canonical root. The `R` SnapshotInfo is permanently
+  protected from ordinary logarithmic pruning (`Main.protectedCertifiedSnapshotInfoOrdinals`). Every public
+  network's activation root is already in the JSON-serde era; no v35 field has a Kryo
+  fallback or compatibility path. A non-genesis activation has no ordinary replay root of its
+  own: the download validator requires the public recovery root
   (`certified_recovery_root_required` otherwise);
 - predecessor validation is read-only: it reconstructs and checks the persisted state
   proof without synchronizing/rewinding the MPT and without deleting snapshot files;
@@ -343,7 +354,7 @@ Before activation, verify the ordinary-download lineage boundary on every source
   authority through the same typed committee projector; historical adoption verifies
   the fixed-floor QC and its certified authority effect without re-running current policy;
 - each public child at N+1 carries N's complete `CertifiedOutcome`. A downloader starts
-  from its independently validated recovery/genesis root and walks every public signed
+  from its independently validated recovery (`R`) or genesis root and walks every public signed
   incremental artifact in order. The prior QC fixes the authority for N; N's QC fixes the
   authority for N+1 and commits the terminal operational-state preimage. Historical
   verification uses the fixed BFT floor rather than current policy. Artifact signatures,
