@@ -2,7 +2,7 @@
 
 Date: 2026-08-11
 
-Status: Proposed
+Status: Proposed; amended by [ADR-0035](0035-v35-to-v41-mainnet-migration.md)
 
 ## Context
 
@@ -300,3 +300,37 @@ not because Currency carries a v35 certificate.
   BFT safety floor. This closes the historical-policy blocker without making SemVer or a
   self-declared policy identifier into consensus authority. A future change to signed-field
   meaning or QC safety rules requires a new schema variant and coordinated activation.
+
+## Amendment (2026-10-10, ADR-0035 / #1627)
+
+No network will cross the activation key from legacy rounds: dev, testnet and integrationnet are
+certified from genesis (activation `0`), and mainnet enters through the env-only recovery seed with
+activation A equal to the rollback anchor R (the final v3.5 global snapshot). This build therefore
+contains no pre-v35 Global L0 engine. The following parts of this ADR are superseded; the rest
+(certified outcomes, QCs, lineage, sidecars, `CertifiedVoteLock` persistence, Currency L0's flat
+protocol) is unchanged.
+
+- Decision 7: the quorum-denominator shrink no longer exists on any path (see the ADR-0021
+  amendment). The legacy view-change policy and the pre-v35 health-derived contraction choice
+  (`forCertifiedView`) are gone; `RetainSigningLeases` and the certified atomic replacement apply in
+  every Global L0 round.
+- Decision 8, the exact-key activation bridge, is removed. It reconstructed the first certified
+  committee from the signed legacy artifact's `PeerHistory` at A-1, but v3.5 snapshots carry no
+  `PeerHistory`, so it could never fire on mainnet. `resetLegacyOutcome*`, the activation committee
+  checks and `certifiedActivationCommittee` are deleted. The first certified committee is the
+  recovery-seed committee (`CL_GL0_RECOVERY_SEED_COMMITTEE`).
+- Decision 9 roots: an ordinary downloader starts from the canonical first incremental genesis root
+  or from a public recovery root. There is no A-1 activation-parent root;
+  `GlobalCertifiedDownloadValidator.replayRoot` reports `certified_recovery_root_required` for a
+  non-genesis activation.
+- Activation and compatibility: `consensusSchemaVersion` is now 36. An absent environment entry no
+  longer resolves to disabled: startup fails (`CertifiedConsensusActivationUnconfigured`). Below
+  activation a node downloads and replays history but refuses to produce a round
+  (`CertifiedConsensusNotActiveForProduction`); there is no legacy logic to run. The mainnet
+  boundary is crossed by a coordinated recovery-seed cold restart at R, with
+  `fields-added-ordinals.tessellation-41-migration = R + 1`, not by an announced future key on a
+  running cluster.
+- Consequences: the bullet on authenticating the A-1 artifact envelope applies to code that no
+  longer exists. Pre-activation recovery ("three legacy rounds to rebuild controller evidence") is
+  impossible: every rollback anchor must be at or after activation
+  (`RollbackAnchorBelowCertifiedActivation`). Recovery at or after activation is unchanged.
