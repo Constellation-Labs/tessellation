@@ -113,8 +113,7 @@ object CertifiedRoundCommitteeProjector {
     coreCommitteeSize: Int,
     seedlistPeerIds: Set[PeerId],
     isContextEligible: PeerId => F[Boolean],
-    facilitatorSelector: FacilitatorSelector,
-    parentArtifactHash: Hash
+    facilitatorSelector: FacilitatorSelector
   ): F[Either[String, FromCertifiedParent]] =
     CertifiedNextRoundProjector
       .project[F](
@@ -124,8 +123,7 @@ object CertifiedRoundCommitteeProjector {
         config.activeAdmissionMaxExpansionPerRound,
         seedlistPeerIds,
         isContextEligible,
-        facilitatorSelector,
-        parentArtifactHash
+        facilitatorSelector
       )
       .map(
         _.map(

@@ -879,8 +879,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               config.activeAdmissionMaxExpansionPerRound,
               seedlistPeerIds,
               consensusFns.facilitatorEligible(context, _),
-              facilitatorSelector,
-              artifactHash
+              facilitatorSelector
             )
             structure = for {
               _ <- CertifiedMembershipTransition
@@ -1254,20 +1253,27 @@ object GlobalSnapshotConsensusStateAdvancer {
               coreCommitteeSize = config.coreCommitteeSize.getOrElse(3),
               seedlistPeerIds = seedlistPeerIds,
               isContextEligible = consensusFns.facilitatorEligible(artifactInfo.context, _),
-              facilitatorSelector = facilitatorSelector,
-              parentArtifactHash = artifactInfo.hash
+              facilitatorSelector = facilitatorSelector
             )
             .flatMap {
               case Left(error) => error.asLeft[CertifiedConsensus.CertifiedRoundAuthorityV1].pure[F]
               case Right(projected) =>
                 val full = NonEmptySet.fromSet(SortedSet.from(projected.committee.signingFacilitators))
                 val core = NonEmptySet.fromSet(SortedSet.from(projected.committee.committees.core))
+                val exits = projected.nextRound.exits
+                // Deterministic exits (seedlist removal or lost collateral) are explicit operator-visible membership changes.
+                val recordExits =
+                  (Metrics[F].incrementCounterBy("dag_consensus_deterministic_exit_total", exits.size) >>
+                    logger.info(
+                      s"Next-round committee drops ${exits.size} member(s) no longer seedlisted or collateral-eligible: " +
+                        exits.map(_.value.value.take(8)).mkString(",")
+                    )).whenA(exits.nonEmpty)
 
-                (full, core).tupled match {
+                recordExits >> ((full, core).tupled match {
                   case None => "certified_next_round_authority_empty".asLeft[CertifiedConsensus.CertifiedRoundAuthorityV1].pure[F]
                   case Some((nextFull, nextCore)) =>
                     CertifiedConsensus.roundAuthority[F](nextFull, nextCore).map(_.asRight[String])
-                }
+                })
             }
       }
 

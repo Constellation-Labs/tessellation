@@ -533,8 +533,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
           coreCommitteeSize = 3,
           seedlistPeerIds = Set.empty,
           isContextEligible = _ => IO.pure(true),
-          facilitatorSelector = FacilitatorSelector.make(None),
-          parentArtifactHash = artifactHash
+          facilitatorSelector = FacilitatorSelector.make(None)
         )
         .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
       finalFull = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.signingFacilitators))
