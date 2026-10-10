@@ -36,14 +36,14 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
     parentRoundCommittee: Set[PeerId] = parentCommittee,
     expectedFacilitatorsHash: Hash = facilitatorsHash,
     expectedParentHash: Hash = parentHash,
-    selfIsCore: Boolean = true,
+    selfIsMember: Boolean = true,
     enabled: Boolean = true,
     cadenceAllowed: Boolean = true,
     maxTargets: Int = 1
   ): List[PeerId] =
     StallDetector.atomicReplacementIntentTargets(
       selfId = self,
-      selfIsCore = selfIsCore,
+      selfIsMember = selfIsMember,
       atomicReplacementEnabled = enabled,
       cadenceAllowed = cadenceAllowed,
       currentCommittee = currentCommittee,
@@ -98,7 +98,7 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
   }
 
   test("non-Core, disabled, off-cadence, and zero-budget voters fail closed") {
-    expect(select(selfIsCore = false).isEmpty) &&
+    expect(select(selfIsMember = false).isEmpty) &&
     expect(select(enabled = false).isEmpty) &&
     expect(select(cadenceAllowed = false).isEmpty) &&
     expect(select(maxTargets = 0).isEmpty)
@@ -114,7 +114,7 @@ object StallDetectorAtomicReplacementIntentSuite extends FunSuite {
       alreadyVotedBySelf = Set.empty,
       rotationIndex = auditIndex,
       maxOpenAdmissions = 1,
-      selfIsCore = true
+      selfIsMember = true
     )
 
     expect(!candidates.contains(target)) && expect(selected.isEmpty)

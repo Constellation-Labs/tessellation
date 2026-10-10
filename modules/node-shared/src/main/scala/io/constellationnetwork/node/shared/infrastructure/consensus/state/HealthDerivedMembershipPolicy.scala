@@ -81,10 +81,10 @@ object HealthDerivedMembershipPolicy {
 
   /** Conservative Global L0 bridge.
     *
-    * A timeout certificate advances the view, but the frozen signing leases and Core classification remain unchanged. The next leader comes
-    * from frozen Core, with the frozen round-start committee as fallback only when Core is empty. A locally withdrawn or silent Core peer
-    * may therefore consume a view, but every honest node retains the same deterministic leader pool and facilitator-hash source. Filtering
-    * Core or signature membership through the mutable active set would let withdrawal-observation timing split nodes.
+    * A timeout certificate advances the view, but the frozen committee is unchanged. The next leader comes from the frozen round-start
+    * committee. A locally withdrawn or silent member may therefore consume a view, but every honest node retains the same deterministic
+    * leader pool and facilitator-hash source. Filtering membership through the mutable active set would let withdrawal-observation timing
+    * split nodes.
     */
   case object RetainSigningLeases extends HealthDerivedMembershipPolicy {
     val allowsAutomaticRemoval: Boolean = false
@@ -102,7 +102,7 @@ object HealthDerivedMembershipPolicy {
       val canonical = canonicalFacilitators(facilitators, roundStartFacilitators)
       TimeoutMembership(
         facilitators = canonical,
-        // Do not filter frozen Core through the node-local active/withdrawn view. A dead slot may
+        // Do not filter the frozen committee through the node-local active/withdrawn view. A dead slot may
         // consume a view, but all nodes rotate through the same leader pool.
         leaderPool = certifiedViewChangeLeaderPool(roundStartFacilitators),
         evaluatedActive = canonical,

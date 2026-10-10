@@ -3692,7 +3692,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               )
               result <- commitQc match {
                 case Left(error) =>
-                  Metrics[F].updateGauge("dag_consensus_core_commit_unique_signers", commits.size.toLong) >>
+                  Metrics[F].updateGauge("dag_consensus_commit_unique_signers", commits.size.toLong) >>
                     ConsensusLog
                       .info(
                         logger,
@@ -3880,7 +3880,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               state.roundStartFacilitators.value.toSet,
               getGlobalSnapshotByOrdinal,
               // v32 (stage 4): sign ONLY the deterministic chain-derived windows
-              // (recentCommitteeSizes, recentSigners, controllerEvidence, penaltyUntil).
+              // (recentCommitteeSizes, penaltyUntil).
               // perPeer / recentRoundEndTimes are locally divergent (the alpha.92/129/147
               // wedge class) and stay out of the signed bytes; see
               // GlobalConsensusOutcome.signedArtifactPeerHistory.

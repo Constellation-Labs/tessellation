@@ -479,7 +479,7 @@ object declaration {
     // written before B2 round-trip with an empty admission list.
     admissionCertificates: List[AdmissionCertificate] = List.empty,
     // Canonical open-admission nomination for the NEXT round. The leader chooses one
-    // entropy-ranked peer from the candidate advertisements in the Facilities it collected;
+    // rotation-selected peer (DeterministicRotation) from the candidate advertisements in the Facilities it collected;
     // followers adopt this exact value on Proposal acceptance. Carrying one nominee avoids
     // asking next-round voters to rank node-local candidate universes, which can differ at
     // quorum-crossing time. None is the backward-compatible/pre-upgrade value.
@@ -489,7 +489,7 @@ object declaration {
     // does not re-litigate a new Facility subset, so the field is absent on that path. Option
     // preserves the exact pre-v35 JSON shape under dropNullValues.
     triggerEvidence: Option[List[Signed[TriggerStatement]]] = None,
-    // v35: complete, view-independent semantics certified by the frozen round-start Core.
+    // v35: complete, view-independent semantics certified by the frozen round-start committee.
     // None decodes legacy/pre-activation proposals; v35 validation rejects None.
     proposalValue: Option[ProposalValue] = None
   ) extends PeerDeclaration

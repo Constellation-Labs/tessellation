@@ -44,7 +44,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
     // readyPeerIds passed in is {ready}. The helper MUST add self before filtering or
     // it will classify self as not-Ready and false-fire infeasible.
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, ready),
+      committeeMembers = Set(self, ready),
       readyPeerIds = Set(ready),
       selfId = self,
       peerCurrentKeysContains = alwaysKnown,
@@ -52,9 +52,9 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(2, status.coreSize)
+      .same(2, status.memberCount)
       .and(expect.same(2, status.activeReady))
-      .and(expect.same(2, status.coreQuorum))
+      .and(expect.same(2, status.memberQuorum))
       .and(expect.same(0, status.notReadyCore))
       .and(expect.same(0, status.behindNonReady))
       .and(expect(!status.infeasible, "self + 1 Ready peer should NOT be flagged infeasible in a 2-Core round"))
@@ -68,7 +68,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
     // 3-Core round, one Core peer in WFR. quorum=ceil(3*2/3)=2, activeReady=2 (self + ready).
     // 2 == 2, NOT infeasible.
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, ready, wfr),
+      committeeMembers = Set(self, ready, wfr),
       readyPeerIds = Set(ready),
       selfId = self,
       peerCurrentKeysContains = alwaysKnown,
@@ -76,18 +76,18 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(3, status.coreSize)
+      .same(3, status.memberCount)
       .and(expect.same(2, status.activeReady))
-      .and(expect.same(2, status.coreQuorum))
+      .and(expect.same(2, status.memberQuorum))
       .and(expect.same(1, status.notReadyCore))
       .and(expect(!status.infeasible, "3-Core with 1 non-Ready peer (self + 1 Ready) hits quorum exactly, not infeasible"))
   }
 
   test("two non-Ready Core peers in a 3-Core round drop active=1 below quorum=2, INFEASIBLE fires") {
-    // 3-Core round, two Core peers in WFR. activeReady=1 (just self), coreQuorum=2.
+    // 3-Core round, two Core peers in WFR. activeReady=1 (just self), memberQuorum=2.
     // 1 < 2 -> infeasible.
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, wfr, another),
+      committeeMembers = Set(self, wfr, another),
       readyPeerIds = Set.empty,
       selfId = self,
       peerCurrentKeysContains = alwaysKnown,
@@ -95,16 +95,16 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(3, status.coreSize)
+      .same(3, status.memberCount)
       .and(expect.same(1, status.activeReady))
-      .and(expect.same(2, status.coreQuorum))
+      .and(expect.same(2, status.memberQuorum))
       .and(expect.same(2, status.notReadyCore))
       .and(expect(status.infeasible, "3-Core with 2 non-Ready peers leaves only self active; below quorum=2"))
   }
 
   test("in a 2-Core round where the non-self peer is non-Ready, active=1 < quorum=2 -> INFEASIBLE") {
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, wfr),
+      committeeMembers = Set(self, wfr),
       readyPeerIds = Set.empty,
       selfId = self,
       peerCurrentKeysContains = alwaysKnown,
@@ -112,9 +112,9 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(2, status.coreSize)
+      .same(2, status.memberCount)
       .and(expect.same(1, status.activeReady))
-      .and(expect.same(2, status.coreQuorum))
+      .and(expect.same(2, status.memberQuorum))
       .and(expect.same(1, status.notReadyCore))
       .and(expect(status.infeasible, "2-Core with 1 non-Ready peer leaves only self active; below quorum=2"))
   }
@@ -128,7 +128,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
     // unable to sign/lead. The v1 check (exclude only if !Ready AND behind) would have
     // missed this. v2 excludes ALL non-Ready peers; behindNonReady is just a diagnostic.
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, ready, wfr),
+      committeeMembers = Set(self, ready, wfr),
       readyPeerIds = Set(ready),
       selfId = self,
       peerCurrentKeysContains = alwaysKnown,
@@ -144,7 +144,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
 
   test("WFR peer that is also behind shows up in behindNonReady diagnostic") {
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, ready, wfr),
+      committeeMembers = Set(self, ready, wfr),
       readyPeerIds = Set(ready),
       selfId = self,
       peerCurrentKeysContains = alwaysKnown,
@@ -158,7 +158,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
 
   test("WFR peer that is absent from peerCurrentKeys also shows up in behindNonReady diagnostic") {
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self, ready, wfr),
+      committeeMembers = Set(self, ready, wfr),
       readyPeerIds = Set(ready),
       selfId = self,
       peerCurrentKeysContains = neverKnown, // no observation of wfr's tip
@@ -171,16 +171,16 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
   }
 
   // ---------------------------------------------------------------------------
-  // Solo-core guard: coreSize < 2 NEVER fires infeasible (single-node testnet bootstrap)
+  // Solo-core guard: memberCount < 2 NEVER fires infeasible (single-node testnet bootstrap)
   // ---------------------------------------------------------------------------
 
-  test("solo-Core (coreSize=1) never fires infeasible regardless of state") {
+  test("solo-Core (memberCount=1) never fires infeasible regardless of state") {
     // Even if self is somehow not in readyPeerIds, a 1-Core round is a degenerate case
     // (single-node testnet bootstrap, solo block-production) and the existing solo-core
     // bypass elsewhere in the FSM handles it. We guard against firing infeasible at
-    // coreSize < 2 to avoid interfering.
+    // memberCount < 2 to avoid interfering.
     val status = StallDetector.computeReadyParticipationStatus(
-      coreFacilitators = Set(self),
+      committeeMembers = Set(self),
       readyPeerIds = Set.empty,
       selfId = self,
       peerCurrentKeysContains = neverKnown,
@@ -188,14 +188,14 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(1, status.coreSize)
-      .and(expect(!status.infeasible, "coreSize=1 must never be flagged infeasible; solo-core is the FSM's responsibility"))
+      .same(1, status.memberCount)
+      .and(expect(!status.infeasible, "memberCount=1 must never be flagged infeasible; solo-core is the FSM's responsibility"))
   }
 
   // ---------------------------------------------------------------------------
   // Codex invariant 4: this suite tests the pure helper; the committee/hash invariance
   // is enforced at the call site (StallDetector inlines this helper and does NOT
-  // mutate state.coreFacilitators, state.roundStartFacilitators, or anything
+  // mutate state.committeeMembers, state.roundStartFacilitators, or anything
   // facilitator-hash-related). The behavioural contract of `computeReadyParticipationStatus`
   // (above) plus the lack of any such mutation in `StallDetector.runMonitorCycle` is
   // the proof.

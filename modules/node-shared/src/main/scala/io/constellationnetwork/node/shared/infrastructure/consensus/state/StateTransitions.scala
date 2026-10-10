@@ -3053,8 +3053,8 @@ object StateTransitions {
   /** View-change certificates use a Core-sized quorum, so the certified next leader must come from Core as well. The fallback preserves
     * startup/fork-recovery behavior if a malformed or transitional state has not populated Core yet.
     */
-  private[consensus] def viewChangeLeaderPool(coreFacilitators: List[PeerId], facilitators: List[PeerId]): List[PeerId] =
-    if (coreFacilitators.nonEmpty) coreFacilitators else facilitators
+  private[consensus] def viewChangeLeaderPool(committeeMembers: List[PeerId], facilitators: List[PeerId]): List[PeerId] =
+    if (committeeMembers.nonEmpty) committeeMembers else facilitators
 
   private[consensus] def readyPromotionQuorum(peerCountIncludingSelf: Int, quorumThresholdFraction: Double): Int =
     math.max(2, math.max(1, QuorumPolicy.fromFraction(peerCountIncludingSelf, quorumThresholdFraction)))

@@ -488,12 +488,12 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       // observable state.
       //
       // Safety constraint: this is purely a local "yield this round" decision. It does NOT
-      // mutate `roundStartFacilitators`, `coreFacilitators`, the facilitator hash, the
+      // mutate `roundStartFacilitators`, `committeeMembers`, the facilitator hash, the
       // quorum derivation, or proposal validity. Other peers may make different decisions
       // based on their own local observations; that's fine because the abandon emits no
       // cross-peer state. Determinism of committee derivation is preserved.
       //
-      // Condition (codex 2026-05-22 v2 review): peer is in `coreFacilitators` AND not in
+      // Condition (codex 2026-05-22 v2 review): peer is in `committeeMembers` AND not in
       // `readyPeerIdsWithSelf` (current cluster Ready set + selfId; `getResponsivePeers`
       // does not return self, so we MUST add selfId explicitly to avoid classifying self
       // as not-Ready and false-abandoning healthy 2-Core rounds). Once-Ready check is the
@@ -501,11 +501,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       // so excluding them is correct (codex's WFR-promotion-starvation point). The
       // peer-tip-behind subset is computed only as a diagnostic dimension for the log.
       //
-      // After excluding non-Ready Core peers, if `activeReady < coreQuorum`, emit
+      // After excluding non-Ready Core peers, if `activeReady < memberQuorum`, emit
       // `ReadyParticipationQuorumInfeasible`.
       lastOutcomeKey = ctx.lastOutcomeKeyOf(state.lastOutcome)
       readyParticipationStatus = StallDetector.computeReadyParticipationStatus(
-        coreFacilitators = state.roundStartFacilitators.value.toSet,
+        committeeMembers = state.roundStartFacilitators.value.toSet,
         readyPeerIds = readyPeerIds,
         selfId = selfId,
         peerCurrentKeysContains = peerCurrentKeys.contains _,
@@ -551,9 +551,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           selfRole(state),
           LogEvent.StallDetected,
           "trigger" -> "ready_participation_quorum_infeasible",
-          "coreSize" -> readyParticipationStatus.coreSize.toString,
+          "memberCount" -> readyParticipationStatus.memberCount.toString,
           "activeReady" -> readyParticipationStatus.activeReady.toString,
-          "coreQuorum" -> readyParticipationStatus.coreQuorum.toString,
+          "memberQuorum" -> readyParticipationStatus.memberQuorum.toString,
           "notReadyCore" -> readyParticipationStatus.notReadyCore.toString,
           "behindNonReady" -> readyParticipationStatus.behindNonReady.toString,
           "joiningGrace" -> readyParticipationDuringJoiningGrace.toString,
@@ -606,7 +606,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         else if (readyParticipationShouldAbandon)
           AbandonReason.ReadyParticipationQuorumInfeasible(
             readyParticipationStatus.activeReady,
-            readyParticipationStatus.coreQuorum,
+            readyParticipationStatus.memberQuorum,
             readyParticipationStatus.notReadyCore
           )
         else if (quorumInfeasible)
@@ -929,22 +929,22 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         // Feasibility is judged against the frozen round Core, the same denominator certificates use.
         // `missingPeers` already counts a withdrawn member that has not declared (see `getResourcesInfo`),
         // so a local withdrawal never shrinks the denominator.
-        val frozenCore = state.roundStartFacilitators.value.toSet
-        val missingCore = frozenCore.intersect(missingPeers)
-        val coreStatus = StallDetector.computeCoreQuorumStatus(
-          activeCore = frozenCore,
+        val frozenMembers = state.roundStartFacilitators.value.toSet
+        val missingMembers = frozenMembers.intersect(missingPeers)
+        val committeeStatus = StallDetector.computeCommitteeQuorumStatus(
+          frozenMembers = frozenMembers,
           missingPeers = missingPeers,
           quorumThresholdFraction = config.quorumThresholdFraction
         )
-        val coreSize = coreStatus.coreSize
-        val coreRemaining = coreStatus.coreRemaining
-        val coreQuorum = coreStatus.coreRequired
+        val memberCount = committeeStatus.memberCount
+        val membersRemaining = committeeStatus.membersRemaining
+        val memberQuorum = committeeStatus.membersRequired
         // Backwards-compatible alias for the surrounding code that still reports against
         // `minQuorum` in logs / `StallResult.quorumSize`. The Core-only value is what gates
         // the abandon decision; the field name is retained to keep AbandonReason call sites
         // and downstream metrics labels stable.
-        val minQuorum = coreQuorum
-        val quorumInfeasible = coreStatus.quorumInfeasible
+        val minQuorum = memberQuorum
+        val quorumInfeasible = committeeStatus.quorumInfeasible
         // Quorum floor uses the MINIMUM of cluster-wide and round-level quorum:
         //
         // - Cluster quorum (Ready peers): prevents eviction cascades from shrinking quorum
@@ -990,10 +990,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                 "progress" -> s"$declaredCount/$activeCount",
                 "missing" -> missingPeers.size.toString,
                 "missingPeers" -> ConsensusLog.pids(missingPeers),
-                "coreActive" -> coreSize.toString,
-                "coreRemaining" -> coreRemaining.toString,
-                "coreRequired" -> coreQuorum.toString,
-                "coreMissing" -> ConsensusLog.pids(missingCore),
+                "coreActive" -> memberCount.toString,
+                "membersRemaining" -> membersRemaining.toString,
+                "membersRequired" -> memberQuorum.toString,
+                "coreMissing" -> ConsensusLog.pids(missingMembers),
                 "view" -> state.viewNumber.toString,
                 "action" -> "waiting one more cycle before eviction"
               ) >>
@@ -1042,9 +1042,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                   // feasibility and would only penalise them for missing a non-Core signing
                   // opportunity. Per codex's alpha.91 dual-set guidance: keep the
                   // full-facilitator `missingPeers` set for observability, but feed only
-                  // `missingCore` into the eviction/VCV-targeting path.
+                  // `missingMembers` into the eviction/VCV-targeting path.
                   val unresponsiveMissing = {
-                    val clusterUnresponsive = missingCore.filterNot(responsiveIds.contains)
+                    val clusterUnresponsive = missingMembers.filterNot(responsiveIds.contains)
                     if (inGracePeriod) clusterUnresponsive.filterNot(gossipingTips.contains)
                     else clusterUnresponsive
                   }
@@ -1064,7 +1064,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                       "progress" -> s"$declaredCount/$activeCount",
                       "missing" -> missingPeers.size.toString,
                       "missingPeers" -> ConsensusLog.pids(missingPeers),
-                      "coreMissing" -> ConsensusLog.pids(missingCore),
+                      "coreMissing" -> ConsensusLog.pids(missingMembers),
                       "view" -> state.viewNumber.toString,
                       "stallCount" -> stallCount.toString,
                       "reason" -> "WAITING_MISSING_STILL_RESPONSIVE",
@@ -1083,10 +1083,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                         "phase" -> statusName,
                         "elapsed" -> s"${statusDuration.toSeconds}s",
                         "progress" -> s"$declaredCount/$activeCount",
-                        "coreActive" -> coreSize.toString,
-                        "coreRemaining" -> coreRemaining.toString,
-                        "coreRequired" -> coreQuorum.toString,
-                        "coreMissing" -> ConsensusLog.pids(missingCore),
+                        "coreActive" -> memberCount.toString,
+                        "membersRemaining" -> membersRemaining.toString,
+                        "membersRequired" -> memberQuorum.toString,
+                        "coreMissing" -> ConsensusLog.pids(missingMembers),
                         "facilitatorActive" -> totalFacilitators.toString,
                         "facilitatorRemaining" -> remaining.toString,
                         "facilitatorMissing" -> ConsensusLog.pids(missingPeers),
@@ -1149,7 +1149,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                               // Eviction cap from the UNSHRUNK supermajority, not the shrunk quorum: a
                               // liveness shrink must not raise the cap and let the committee be evicted
                               // below the supermajority budget. The abandon gate still uses the shrunk value.
-                              minQuorum = coreStatus.baseRequired
+                              minQuorum = committeeStatus.baseRequired
                             )
                             newTargets.traverse_ { target =>
                               evictionVoter.emitEvictionVote(key, target, EvictionReason.Silent) >>
@@ -1168,8 +1168,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                               StallResult(
                                 didStall = true,
                                 quorumInfeasible = true,
-                                activeFacilitators = coreRemaining,
-                                quorumSize = coreQuorum,
+                                activeFacilitators = membersRemaining,
+                                quorumSize = memberQuorum,
                                 clusterSize = clusterSize,
                                 evictionEscalated = false,
                                 pacemakerRequestEnqueued = enqueued
@@ -1256,8 +1256,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                     StallResult(
                       didStall = true,
                       quorumInfeasible = quorumInfeasible,
-                      activeFacilitators = coreRemaining,
-                      quorumSize = coreQuorum,
+                      activeFacilitators = membersRemaining,
+                      quorumSize = memberQuorum,
                       clusterSize = clusterSize,
                       pacemakerRequestEnqueued = enqueued
                     )
@@ -1520,7 +1520,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val core = state.roundStartFacilitators.value.toSet
     val requireCoreCertification =
       ctx.membershipPolicy.allowsCertifiedAtomicReplacement
-    val selfIsCore = core.contains(selfId)
+    val selfIsMember = core.contains(selfId)
     val admissionVoteAuthority =
       AdmissionVoterPool.allowsVoteEmission(selfId, core)
     // Preserve the cached gossip-tip policy for callers without a direct probe. Global L0
@@ -1529,8 +1529,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     // allowing a failed direct response to fall back to cached evidence.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
       AdmissionTipReadiness.isCachedReady(tip, expectedTip, expectedOrdinal, requireCoreCertification)
-    val coreSize = math.max(1, state.roundStartFacilitators.value.size)
-    val voteQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, config.quorumThresholdFraction))
+    val memberCount = math.max(1, state.roundStartFacilitators.value.size)
+    val voteQuorum = math.max(1, QuorumPolicy.fromFraction(memberCount, config.quorumThresholdFraction))
     val bootstrapActive = ctx.isInBootstrap(state.lastOutcome)
     val locallyObservedParentSigners = locallyObservedParentSignersOf(state.lastOutcome)
     val configuredMaxAdmissions = math.max(0, config.activeAdmissionMaxExpansionPerRound)
@@ -1575,7 +1575,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       DeterministicRotation.opportunityIndex(ctx.roundIndexOf(state.key), config.activeAdmissionExpansionIntervalRounds)
     val atomicReplacementIntentTargets = StallDetector.atomicReplacementIntentTargets(
       selfId = selfId,
-      selfIsCore = selfIsCore,
+      selfIsMember = selfIsMember,
       atomicReplacementEnabled = requireCoreCertification,
       cadenceAllowed = openAdmissionPolicy.cadenceAllowed,
       currentCommittee = committee,
@@ -1605,7 +1605,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       alreadyVotedBySelf = alreadyVotedBySelf,
       rotationIndex = admissionRotationIndex,
       maxOpenAdmissions = maxOpenAdmissions,
-      selfIsCore = selfIsCore
+      selfIsMember = selfIsMember
     )
     val probationAdmissionVoteAllowed =
       openAdmissionPolicy.allowsProbationAdmission && admissionVoteAuthority
@@ -2078,11 +2078,11 @@ object StallDetector {
     *
     * Every payload binding is checked rather than merely looking for `selfId` in the voter map. In particular, stale votes from another
     * parent or committee cannot authorize the bypass, and a generic stall-path vote for a different peer cannot be mistaken for the
-    * rendezvous-selected auditor target.
+    * rotation-selected auditor target.
     */
   private[consensus] def atomicReplacementIntentTargets(
     selfId: PeerId,
-    selfIsCore: Boolean,
+    selfIsMember: Boolean,
     atomicReplacementEnabled: Boolean,
     cadenceAllowed: Boolean,
     currentCommittee: Set[PeerId],
@@ -2093,7 +2093,7 @@ object StallDetector {
     rotationIndex: Long,
     maxTargets: Int
   ): List[PeerId] =
-    if (!atomicReplacementEnabled || !selfIsCore || !cadenceAllowed || maxTargets <= 0) List.empty
+    if (!atomicReplacementEnabled || !selfIsMember || !cadenceAllowed || maxTargets <= 0) List.empty
     else
       FinalityParticipationAuditor
         .selectTarget(currentCommittee, parentRoundCommittee, rotationIndex)
@@ -2162,8 +2162,8 @@ object StallDetector {
     * prefix means a voter that already voted for its target is done for the round, and a voter that cannot locally verify that target
     * abstains instead of walking to a different peer.
     *
-    * Candidate order is rendezvous-hashed from the accepted parent snapshot hash, with PeerId as the final tie-break. Candidate input order
-    * therefore cannot affect the result.
+    * Candidates are sorted by PeerId and rotated by `rotationIndex` (DeterministicRotation). Candidate input order therefore cannot affect
+    * the result.
     */
   private[consensus] def openAdmissionTargets(
     candidates: Iterable[PeerId],
@@ -2172,13 +2172,13 @@ object StallDetector {
     alreadyVotedBySelf: Set[PeerId],
     rotationIndex: Long,
     maxOpenAdmissions: Int,
-    selfIsCore: Boolean
+    selfIsMember: Boolean
   ): List[PeerId] = {
     val budget = math.max(0, maxOpenAdmissions)
     val openVotesAlreadyUsed = (alreadyVotedBySelf -- probation).size
     val remainingBudget = math.max(0, budget - openVotesAlreadyUsed)
 
-    if (!selfIsCore || remainingBudget == 0) List.empty
+    if (!selfIsMember || remainingBudget == 0) List.empty
     else {
       val fixedRoundTargets = DeterministicRotation
         .rotated(candidates.iterator.filterNot(pid => committee.contains(pid) || probation.contains(pid)).toList, rotationIndex)
@@ -2238,45 +2238,38 @@ object StallDetector {
   /** Outcome of the Core-only quorum infeasibility check performed inside `handleStall`. Pure data so the gate can be exercised in unit
     * tests without a live consensus context.
     */
-  private[consensus] case class CoreQuorumStatus(
-    coreSize: Int,
-    coreRemaining: Int,
-    coreRequired: Int,
-    // Unshrunk supermajority (before any quorum-denominator-shrink override). The eviction cap MUST be
-    // derived from this, never from the shrunk `coreRequired`, so a liveness shrink cannot raise the cap
-    // and let the committee be voted below the supermajority safety budget (cap = committee.size - f).
+  private[consensus] case class CommitteeQuorumStatus(
+    memberCount: Int,
+    membersRemaining: Int,
+    membersRequired: Int,
+    // Supermajority of the frozen committee; the eviction cap (committee.size - f) is derived from it.
     baseRequired: Int,
     quorumInfeasible: Boolean
   )
 
-  /** Pure helper for the alpha.91 Core-only quorum-infeasibility gate.
+  /** Pure helper for the quorum-infeasibility gate.
     *
-    * Mirrors the inline computation in `handleStall`: from `activeCore` and `missingPeers` (the full-facilitator missing set, which we
-    * intersect with Core), produce the `(coreSize, coreRemaining, coreRequired, quorumInfeasible)` tuple that drives the abandon decision.
-    * Tier 1 peers outside Core appear in `missingPeers` for observability but do NOT affect the gate, matching
-    * `ConsensusStateAdvancer.maybeGetAllDeclarations` (alpha.89) and `StateTransitions.checkViewChangeAssembly` (alpha.89).
-    *
-    * Pre-alpha.91 the gate was `state.facilitators.value.size - missingPeers.size <
-    * QuorumPolicy.fromFraction(state.facilitators.value.size, fraction)`, which abandoned rounds with healthy Core (3/3) when Tier 1 was
-    * silent -- observed post-alpha.90 at ord 3127058. Codex flagged this as task #123 in the user tracker.
+    * From the frozen committee and `missingPeers` (which also counts a withdrawn member that has not declared), produce the `(memberCount,
+    * membersRemaining, membersRequired, quorumInfeasible)` tuple that drives the abandon decision. The denominator is the frozen committee,
+    * the same one certificates use.
     *
     * Exposed for unit testing; the production gate inlines the same arithmetic.
     */
-  private[consensus] def computeCoreQuorumStatus(
-    activeCore: Set[PeerId],
+  private[consensus] def computeCommitteeQuorumStatus(
+    frozenMembers: Set[PeerId],
     missingPeers: Set[PeerId],
     quorumThresholdFraction: Double
-  ): CoreQuorumStatus = {
-    val coreSize = activeCore.size
-    val missingCore = activeCore.intersect(missingPeers)
-    val coreRemaining = coreSize - missingCore.size
-    val baseRequired = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
-    CoreQuorumStatus(
-      coreSize = coreSize,
-      coreRemaining = coreRemaining,
-      coreRequired = baseRequired,
+  ): CommitteeQuorumStatus = {
+    val memberCount = frozenMembers.size
+    val missingMembers = frozenMembers.intersect(missingPeers)
+    val membersRemaining = memberCount - missingMembers.size
+    val baseRequired = math.max(1, QuorumPolicy.fromFraction(memberCount, quorumThresholdFraction))
+    CommitteeQuorumStatus(
+      memberCount = memberCount,
+      membersRemaining = membersRemaining,
+      membersRequired = baseRequired,
       baseRequired = baseRequired,
-      quorumInfeasible = coreRemaining < baseRequired
+      quorumInfeasible = membersRemaining < baseRequired
     )
   }
 
@@ -2299,17 +2292,17 @@ object StallDetector {
     * outcome key); it does not affect the abandon decision -- that depends only on `notReadyCore`.
     */
   private[consensus] case class ReadyParticipationStatus(
-    coreSize: Int,
+    memberCount: Int,
     activeReady: Int,
-    coreQuorum: Int,
+    memberQuorum: Int,
     notReadyCore: Int,
     behindNonReady: Int,
     infeasible: Boolean
   )
 
   /** Pure helper for the alpha.98 ready-participation feasibility check. From the Core committee, the cluster's currently-Ready peer ids,
-    * self's id, and per-peer observed tip keys, produce the (activeReady, coreQuorum, notReadyCore, behindNonReady, infeasible) tuple that
-    * drives the new abandon path in `StallDetector`.
+    * self's id, and per-peer observed tip keys, produce the (activeReady, memberQuorum, notReadyCore, behindNonReady, infeasible) tuple
+    * that drives the new abandon path in `StallDetector`.
     *
     * Codex's v2 review notes the two subtle invariants this helper locks down:
     *   1. self MUST be counted as Ready/current. `getResponsivePeers` does not return self; checking `!readyPeerIds.contains(selfId)`
@@ -2324,28 +2317,28 @@ object StallDetector {
     * sets; that disagreement only changes WHEN each peer abandons locally, never WHAT the committee looks like.
     */
   private[consensus] def computeReadyParticipationStatus(
-    coreFacilitators: Set[PeerId],
+    committeeMembers: Set[PeerId],
     readyPeerIds: Set[PeerId],
     selfId: PeerId,
     peerCurrentKeysContains: PeerId => Boolean,
     peerCurrentKeyAtOrAfter: PeerId => Boolean,
     quorumThresholdFraction: Double
   ): ReadyParticipationStatus = {
-    val coreSize = coreFacilitators.size
+    val memberCount = committeeMembers.size
     val readyPeerIdsWithSelf = readyPeerIds + selfId
-    val notReadyCore = coreFacilitators.filterNot(readyPeerIdsWithSelf.contains)
+    val notReadyCore = committeeMembers.filterNot(readyPeerIdsWithSelf.contains)
     val behindNonReady = notReadyCore.count { peerId =>
       !peerCurrentKeysContains(peerId) || !peerCurrentKeyAtOrAfter(peerId)
     }
-    val activeReady = coreSize - notReadyCore.size
-    val coreQuorum = math.max(1, QuorumPolicy.fromFraction(coreSize, quorumThresholdFraction))
+    val activeReady = memberCount - notReadyCore.size
+    val memberQuorum = math.max(1, QuorumPolicy.fromFraction(memberCount, quorumThresholdFraction))
     ReadyParticipationStatus(
-      coreSize = coreSize,
+      memberCount = memberCount,
       activeReady = activeReady,
-      coreQuorum = coreQuorum,
+      memberQuorum = memberQuorum,
       notReadyCore = notReadyCore.size,
       behindNonReady = behindNonReady,
-      infeasible = coreSize >= 2 && activeReady < coreQuorum
+      infeasible = memberCount >= 2 && activeReady < memberQuorum
     )
   }
 

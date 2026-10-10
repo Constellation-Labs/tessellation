@@ -55,8 +55,8 @@ import monocle.macros.GenLens
   *
   * ==View Change==
   *
-  * When the leader fails to propose within the timeout, the view number is incremented and a new leader is selected using rendezvous
-  * hashing with the round's entropy. This avoids the complexity of the previous lock/unlock/ACK voting mechanism.
+  * When the leader fails to propose within the timeout, the view number is incremented and the next leader comes from the round-robin
+  * `LeaderSchedule` over the frozen committee. This avoids the complexity of the previous lock/unlock/ACK voting mechanism.
   */
 
 @derive(eqv, encoder, decoder)
@@ -121,13 +121,8 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   // completedFacilitators derivation, Finished.facilitatorsHash, VCV/eviction
   // vote facilitatorsHash. Read-sites that MUST keep `facilitators`: in-round
   // liveness observability (StallDetector full-facilitator `missingPeers`,
-  // gossip spread targets, active-committee validation). NOTE: post-alpha.91
-  // the quorum-threshold calculation in StallDetector ALSO gates on
-  // `coreFacilitators` (mirroring `ConsensusStateAdvancer.maybeGetAllDeclarations`
-  // from alpha.89 and `StateTransitions.checkViewChangeAssembly`). StallDetector
-  // keeps the full-facilitator set only for observability logging and PeerQuality
-  // bookkeeping; the abandon decision and eviction-target candidate set are
-  // Core-only.
+  // gossip spread targets, active-committee validation). Every quorum, including
+  // the StallDetector abandon decision, counts over this frozen set.
   roundStartFacilitators: Facilitators,
   status: Status,
   createdAt: FiniteDuration,

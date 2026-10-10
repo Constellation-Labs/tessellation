@@ -24,7 +24,7 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
     probation: Set[PeerId] = Set.empty,
     alreadyVoted: Set[PeerId] = Set.empty,
     budget: Int = 1,
-    selfIsCore: Boolean = true
+    selfIsMember: Boolean = true
   ): List[PeerId] =
     StallDetector.openAdmissionTargets(
       candidates = input,
@@ -33,7 +33,7 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
       alreadyVotedBySelf = alreadyVoted,
       rotationIndex = rotationIndex,
       maxOpenAdmissions = budget,
-      selfIsCore = selfIsCore
+      selfIsMember = selfIsMember
     )
 
   test("candidate input permutations converge on one rotation-selected target") {
@@ -63,7 +63,7 @@ object OpenAdmissionTargetSelectorSuite extends FunSuite {
   }
 
   test("only Core emits open-expansion votes") {
-    expect.same(List.empty[PeerId], select(selfIsCore = false))
+    expect.same(List.empty[PeerId], select(selfIsMember = false))
   }
 
   test("followers with different local candidate sets vote for the proposal-carried nominee") {

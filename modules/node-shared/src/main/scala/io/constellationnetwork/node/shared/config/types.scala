@@ -454,18 +454,10 @@ object types {
     // paths remain a faster backstop. Watch round duration: if it creeps toward 60s under load, move
     // to an adaptive interval (codex pacemaker item #4) rather than another fixed bump.
     viewInterval: FiniteDuration = 60.seconds,
-    // Signer-history window parameters.
-    //
-    // `tighteningWindow` is LIVE: it is the size (in ordinals) of the rolling `recentSigners`
-    // window the StateAdvancers maintain. As of v22 that window feeds the tier-demotion
-    // hysteresis (`TierTransitions` reads the most-recent `DemotionConsecutiveMisses` entries of
-    // it) and is pinned to the same horizon as `recentCommitteeSizes`.
-    //
-    // `activeFacilitatorFloor` is the emergency bypass threshold for active admission and is also
-    // read by the rollback/ready-participation gates. Admission score gating remains enabled at
-    // and above this floor; below it the full selected pool is admitted for bootstrap/collapse
-    // recovery. All three values are consensus-critical (in `deterministicConfigHash`) so
-    // divergent operator values are rejected at handshake.
+    // `tighteningWindow` is the size (in ordinals) of the `recentRoundEndTimes` window.
+    // `activeFacilitatorFloor` is the minimum ready participation the rollback / first-round gates
+    // require. Both are consensus-critical (in `deterministicConfigHash`) so divergent operator
+    // values are rejected at handshake.
     tighteningWindow: Int = 10,
     activeFacilitatorFloor: Int = 4,
     activeAdmissionMaxExpansionPerRound: Int = 1,
@@ -720,7 +712,7 @@ object types {
     //     Tier 1 (Witness-eligible), Witness (Tier 0) -- derived per round by
     //     `CommitteeBuilder.build` from the consensus-agreed `lastOutcome.peerTiers`
     //     map. Quorum sites switch from `state.facilitators.value.size` /
-    //     `state.roundStartFacilitators.value.size` to `state.roundStartFacilitators.value.size`,
+    //     `state.roundStartFacilitators.value.size` to the Core committee size,
     //     so the LIVENESS denominator is now the Core committee only. Per-peer tier
     //     is carried via `Option[Int]` on `PerPeerOperationalRecord` (Option-wrapped
     //     for derevo back-compat); absent peers default to Tier 2 (Core) at consume
@@ -929,7 +921,7 @@ object types {
       *   - `exponentialPenaltyBase`: base for scaling removalPenaltyRounds per repeat eviction
       *   - `maxRemovalPenaltyRounds`: cap on total penalty so it doesn't overflow Int
       *   - `forceViewChangeAbandonments`: defensive force-VCV threshold (bypasses missing-still-responsive gate after N same-key abandons)
-      *   - `tighteningWindow`: size of the rolling round-history windows (`recentCommitteeSizes`, `recentRoundEndTimes`)
+      *   - `tighteningWindow`: size of the `recentRoundEndTimes` window
       *   - `activeFacilitatorFloor`: active-admission emergency bypass and rollback / ready-participation floor
       *   - `bootstrapDeclarationTimeoutMultiplier`: affects phase-transition timing during bootstrap
       *   - `maxRoundDuration`: v35 bounds the committed leader-proposed consensus end time; before v35 it was only a local watchdog

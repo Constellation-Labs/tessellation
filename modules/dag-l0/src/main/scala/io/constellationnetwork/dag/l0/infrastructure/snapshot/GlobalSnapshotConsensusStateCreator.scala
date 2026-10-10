@@ -144,8 +144,9 @@ object GlobalSnapshotConsensusStateCreator {
       * and in the exact dead band where the current committee remains finalizable but one additional seat is unsupported.
       *
       * The local proof subset, monotonic time, and resulting headroom decision are evidence for local vote emission only. They never enter
-      * the outcome, artifact, committee hash, or state proof. The Core-quorum EvictionCertificate has no standalone removal authority on
-      * this path: it must be paired one-for-one with a Core-quorum open ReadyAtTip AdmissionCertificate in the certified ProposalValue.
+      * the outcome, artifact, committee hash, or state proof. The committee-quorum EvictionCertificate has no standalone removal authority
+      * on this path: it must be paired one-for-one with a committee-quorum open ReadyAtTip AdmissionCertificate in the certified
+      * ProposalValue.
       */
     private def auditSigningFinalityParticipation(
       key: GlobalSnapshotKey,
@@ -437,11 +438,8 @@ object GlobalSnapshotConsensusStateCreator {
 
         // Multi-round removal penalty (the security tier of the eligibility pipeline). Peers
         // evicted via consensus-witnessed fork-eviction stay excluded for `removalPenaltyRounds`
-        // rounds before they can re-enter at all. v19 cleanup: this is the ONLY behavioural
-        // filter remaining; chronic-non-signer / prior-round-missing / tightening-window /
-        // candidate-deferral filters were retired in favour of CommitteeBuilder's tier-aware
-        // partition (peers with degraded peerQuality land in Tier 1, still sign, no longer
-        // gate the liveness quorum). Deterministic: derived from consensus-agreed lastOutcome.
+        // rounds before they can re-enter at all. This is the only behavioural filter; there is
+        // no score or tier partition. Deterministic: derived from consensus-agreed lastOutcome.
         // Stage 4 cert-anchored penalties: a peer with `penaltyUntil(peer) > key` is excluded
         // by pure ordinal comparison against the consensus-agreed key -- no per-round countdown
         // that a restart could observe half-decremented. Unioned into `penalizedPeers` so the
@@ -502,13 +500,7 @@ object GlobalSnapshotConsensusStateCreator {
           )
           .whenA(abandonedMissing.nonEmpty)
 
-        // Eligibility: penalty + probation are the only behavioural gates. Everything else
-        // that was previously filtered out (chronic non-signers, prior-round-missing,
-        // tightening-window exclusions, new-peer deferrals) is now handled at CommitteeBuilder
-        // by partitioning into Core / Tier 1 / Witness rather than excluding -- Tier 1 peers
-        // sign and earn but do not count toward the Core liveness quorum, so chronic peers cannot
-        // wedge leader/VC certificate progress by being absent. The separate frozen-committee
-        // finality floor remains unchanged. The final allEligible fallback preserves rc.6's
+        // Eligibility: penalty + probation are the only behavioural gates. The final allEligible fallback preserves rc.6's
         // last-resort probation bypass; it is safe only when anchor preflight proves a viable
         // non-probation first-round committee and therefore never reaches that rung.
         eligibleThisRound = {
