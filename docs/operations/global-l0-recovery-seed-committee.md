@@ -253,7 +253,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    removing the env; it must download the canonical successor before community
    release.
 11. Keep community nodes and restart automation held while the source cohort
-   establishes next-seat headroom **and**, in the v35 epoch, public recovery
+   establishes next-seat headroom **and** public recovery
    durability. For a three-node IntegrationNet seed, headroom means one accepted
    snapshot with proofs from all three sources. Inspect that canonical accepted
    proof set directly. On every continuously running recovery-origin process,
@@ -278,7 +278,7 @@ coordinated external cold starts, not unobserved single-node cycling.
    the terminal QC; repeated source loss/download failures may force-leave it.
    Do not restart-loop it or diagnose that as a broken source recovery. Hold it
    until `R+2` carries the successor QC publicly. Full-FSM automatic rejoin after
-   an early release remains a pre-activation test gate.
+   an early release remains a test gate before community release.
 12. Start or release all community nodes as ordinary `run-validator` processes
     with no recovery environment. Verify admission grows from the healthy base
     under rc.8's sustained-signing headroom gate.
@@ -439,17 +439,35 @@ condition.
 
 ## Compatibility with certified consensus
 
-A recovery anchor below activation is rejected at startup; there is no legacy
-engine to produce rounds below it. An anchor at or after activation starts a
-fresh certified epoch without a second operator artifact. For the mainnet
-v3.5 -> v4.1 cutover the anchor equals the activation key (`R = A`), and
-`fields-added-ordinals.tessellation-41-migration.mainnet = R+1`. The selected nodes still require exact env-derived
-outcome equality and the all-member barrier. The first successor's ordinary
-v35 QC then binds the public parent hash, network/domain, exact frozen
-committee, and proposal value. That QC is terminal/private at `R+1`;
-the public chain carries it at `R+2`. Do not release community validators or
-restart automation until the public-durability gauge confirms that second
-successor.
+This build has no pre-v35 Global L0 engine, so every rollback anchor, with or
+without the recovery seed, must be **at or after** the certified-consensus
+activation ordinal (`Main.validateRollbackAnchorAtOrAfterActivation`). Startup
+rejects an anchor below activation before rollback storage is touched. The first
+produced round is always `R+1`, and it is certified.
+
+At the mainnet v3.5 -> v4.1 cutover the anchor `R` is the final v3.5 snapshot and
+the activation ordinal is set to `R` itself
+(`snapshot.certified-consensus-activation-ordinal.mainnet = R`, with
+`fields-added-ordinals.tessellation-41-migration.mainnet = R+1`; see the comments
+in `dag-l0.conf`). Any later recovery uses an anchor `R' >= activation` and the
+same env flow. A certified-from-genesis chain additionally cannot use ordinal 1
+as the anchor (see above).
+
+The env flow starts a fresh certified epoch without a second operator artifact.
+The selected nodes still require exact env-derived outcome equality and the
+all-member barrier. The first successor's ordinary v35 QC then binds the public
+parent hash, network/domain, exact frozen committee, and proposal value. That QC
+is terminal/private at `R+1`; the public chain carries it at `R+2`. Do not release
+community validators or restart automation until the public-durability gauge
+confirms that second successor.
+
+> **FIRST-ROUND TRAP:** If `R+1` never finalizes, the public tip stays at `R`.
+> Recover again from the same anchor `R` (it is still `>= activation`) after
+> fixing the cause; do not pick an earlier anchor, which startup rejects. If `R+1`
+> finalized on the sources but `R+2` never carried its QC, treat `R+1` as
+> source-private: either recover from `R` again or, when every source holds the
+> same `R+1`, from `R+1`. Rehearse this path with Snapshot Streaming
+> reconciliation before announcing the activation ordinal.
 
 > **Historical (removed in #1627):** the former activation-boundary trap
 > (recovery seeds at `A-1`/`A-2` rejected, recover at or before `A-3` and rebuild
