@@ -728,58 +728,18 @@ object GlobalSnapshotConsensusStateAdvancer {
               admittedThisRound = admittedThisRound,
               probationRounds = config.readmissionProbationRounds
             )
-            // Per-peer cumulative view-change-caused credits.
-            //
-            // For each view v in [0, state.viewNumber) the round attempted, recompute the
-            // deterministic leader using the SAME inputs `selectLeaderWeighted` was called
-            // with at round-start: state.lastOutcome.peerQuality, state.lastOutcome.peerSelfHealth,
-            // state.lastOutcome.peerViewChanges, and a leaderPool derived from
-            // state.coreFacilitators via the same graduation rule the creator applied.
-            // Each resulting peer is credited with one view-change-caused. All inputs are
-            // consensus-agreed (lastOutcome is signed, coreFacilitators is canonical at
-            // round-start via CommitteeBuilder, entropy is derived from the prior snapshot hash,
-            // config is deterministicConfigHash-gated), so every honest node computes the same
-            // credit map byte-identically.
-            //
-            // v19: prior to multi-committee, this used `state.roundStartFacilitators` because
-            // the leader pool was derived from the full round-start committee. In v19 the
-            // creator restricts the leader pool to the Core committee, so the credit re-derivation
-            // here switches to `state.coreFacilitators` for the same determinism contract.
-            //
-            // Determinism contract: the leaderPool re-derivation here MUST mirror the
-            // creator's logic at GlobalSnapshotConsensusStateCreator. If the creator changes
-            // the graduation rule, this credit logic MUST change in lockstep, or the
-            // selectLeaderWeighted recomputation here will return a different peer than the
-            // one the round actually elected at the same view -- producing a credit miss.
-            val priorPeerQuality = state.lastOutcome.peerQuality
-            val priorActive = state.coreFacilitators.value
-            val priorGraduated = priorActive.filter { pid =>
-              val (completed, participated) = priorPeerQuality.getOrElse(pid, (0, 0))
-              participated >= config.minParticipationObservations && completed >= 1
-            }
-            val priorLeaderPool = if (priorGraduated.size >= 2) priorGraduated else priorActive
+            // Per-peer cumulative view-change-caused credits: for each view v in [0, committedView) credit the leader the
+            // round-robin LeaderSchedule assigned at that view, over the same pool StateTransitions uses for view changes.
+            val priorLeaderPool =
+              if (state.coreFacilitators.value.nonEmpty) state.coreFacilitators.value else state.roundStartFacilitators.value
             val committedViewNumber = certifiedValue.fold(state.viewNumber)(_.committedView.toInt)
             val viewChangeCredits: SortedMap[PeerId, Long] =
               if (committedViewNumber <= 0 || priorLeaderPool.isEmpty) SortedMap.empty[PeerId, Long]
-              else {
-                val priorPeerQualityMap: Map[PeerId, (Int, Int)] = priorPeerQuality.toMap
-                val priorPeerSelfHealthMap = state.lastOutcome.peerSelfHealth.toMap
-                val priorPeerViewChangesMap = state.lastOutcome.peerViewChanges.toMap
+              else
                 (0 until committedViewNumber).foldLeft(SortedMap.empty[PeerId, Long]) { (acc, v) =>
-                  val failedLeader = facilitatorSelector.selectLeaderWeighted(
-                    priorLeaderPool,
-                    state.entropy,
-                    viewNumber = v,
-                    qualityScores = priorPeerQualityMap,
-                    selfHealthHints = priorPeerSelfHealthMap,
-                    peerViewChanges = priorPeerViewChangesMap,
-                    minLeaderRatioPct = config.leaderRotationMinRatioPct,
-                    hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
-                    minLeaderPoolSize = config.minLeaderPoolSize
-                  )
+                  val failedLeader = LeaderSchedule.leader(priorLeaderPool, state.key.value.value, v.toLong)
                   acc.updated(failedLeader, acc.getOrElse(failedLeader, 0L) + 1L)
                 }
-              }
             val accumulatedPeerViewChanges: SortedMap[PeerId, Long] = {
               val priorMap = state.lastOutcome.peerViewChanges
               val allKeys = (priorMap.keysIterator ++ viewChangeCredits.keysIterator).toSet

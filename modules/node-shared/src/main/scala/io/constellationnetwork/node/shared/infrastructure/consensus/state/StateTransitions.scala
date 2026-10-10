@@ -785,7 +785,7 @@ class StateTransitions[
                 state.facilitators.value,
                 state.roundStartFacilitators.value
               )
-              val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
+              val newLeader = LeaderSchedule.leader(leaderPool, ctx.roundIndexOf(state.key), toView.toLong)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
                 new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {
@@ -944,7 +944,7 @@ class StateTransitions[
               val effectiveActive = timeoutMembership.evaluatedActive
               val shrunk = timeoutMembership.shrinkApplied
               val leaderPool = timeoutMembership.leaderPool
-              val newLeader = facilitatorSelector.selectLeader(leaderPool, state.entropy, toView.toInt)
+              val newLeader = LeaderSchedule.leader(leaderPool, ctx.roundIndexOf(state.key), toView.toLong)
               val resetStatus = ctx.ops.freshCollectingFacilities(state.status)
               val modify: ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] =
                 new ConsensusStorage.ModifyStateFn[F, Key, Status, Outcome, Kind, Boolean] {

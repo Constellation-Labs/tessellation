@@ -118,6 +118,8 @@ final case class ConsensusEngineContext[F[_], Event, Key, Artifact, Context, Sta
   // this round. Local guard only -- decision does not mutate the round committee or the
   // facilitator hash, so determinism is preserved.
   lastOutcomeKeyOf: Outcome => Key,
+  // Round index (snapshot ordinal) used by the round-robin LeaderSchedule.
+  roundIndexOf: Key => Long,
   // Layer-specific extraction of the consensus-agreed end timestamp for the carried outcome.
   // The timestamp is used only as pacemaker evidence: once the local clock observes that the
   // current view has exceeded the parent outcome's end-time + viewInterval budget,
@@ -194,6 +196,7 @@ object ConsensusEngineContext {
     probationPeersOf: Outcome => Set[PeerId],
     peerQualityOf: Outcome => Map[PeerId, (Int, Int)] = (_: Outcome) => Map.empty[PeerId, (Int, Int)],
     lastOutcomeKeyOf: Outcome => Key,
+    roundIndexOf: Key => Long,
     lastOutcomeEndTimeMsOf: Outcome => Option[Long],
     onOutcomeFinalized: Outcome => F[Unit],
     onOutcomeInitialized: Outcome => F[Unit],
@@ -238,6 +241,7 @@ object ConsensusEngineContext {
         probationPeersOf,
         peerQualityOf,
         lastOutcomeKeyOf,
+        roundIndexOf,
         lastOutcomeEndTimeMsOf,
         onOutcomeFinalized,
         onOutcomeInitialized,

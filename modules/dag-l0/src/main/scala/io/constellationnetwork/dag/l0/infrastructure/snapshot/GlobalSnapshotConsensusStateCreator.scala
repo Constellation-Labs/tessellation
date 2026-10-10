@@ -805,57 +805,11 @@ object GlobalSnapshotConsensusStateCreator {
         )
         _ <- Metrics[F].updateGauge("dag_consensus_committee_core_floor", coreCommitteeSize.toLong)
 
-        // Quality-weighted leader selection: use consensus-agreed quality scores
-        // so all nodes compute the same leader deterministically.
-        // Pass raw (completed, participated) integers -- the selector uses integer-only
-        // tier computation (tier = participated - completed = failure count) to avoid
-        // platform-dependent float-to-long conversion differences.
-        //
-        // v19: leader selection draws ONLY from the Core committee. Tier 1 and Witness
-        // peers are not eligible to lead -- they observe and witness, but the LIVENESS
-        // quorum is gated on Core. This makes Core both the quorum denominator and the
-        // leader pool, so a peer that loses its Core seat also loses its ability to lead.
-        //
-        // Graduation filter (unchanged from v18): restrict the leader pool to peers with
-        // `participated >= minParticipationObservations` AND `completed >= 1` in the
-        // consensus-agreed peerQuality outcome. The graduated pool must contain at least
-        // 2 peers for view rotation to be meaningful -- with a single peer,
-        // `viewNumber % 1 = 0` always returns the same peer and view change becomes a no-op.
-        // At genesis / cold start, OR in a solo-bootstrap tail (only one peer graduated),
-        // fall back to the full Core committee.
+        // Leader = round-robin over the frozen leader pool (Core, or the round committee when Core is empty: the same pool
+        // StateTransitions uses for VCC/TC view changes), indexed by ordinal and view. No hash, quality, or
+        // leader-reported input can change who leads.
         coreList = committees.core
-        leaderEligibility = LeaderEligibility.fromRecentSigners(
-          core = coreList,
-          peerQuality = controllerInputs.peerQuality,
-          recentSigners = lastOutcome.recentSigners,
-          minParticipationObservations = config.minParticipationObservations,
-          minLeaderPoolSize = config.minLeaderPoolSize
-        )
-        leaderPool = leaderEligibility.leaderPool
-        exclusionReasonLabel = Metrics.unsafeLabelName("reason")
-        exclusionDecisionLabel = Metrics.unsafeLabelName("decision")
-        _ <- leaderEligibility.exclusions
-          .groupBy(_.reason.label)
-          .toList
-          .traverse_ {
-            case (reason, exclusions) =>
-              Metrics[F].incrementCounterBy(
-                "dag_consensus_leader_eligibility_total",
-                exclusions.size,
-                Seq(
-                  exclusionDecisionLabel -> "excluded",
-                  exclusionReasonLabel -> reason
-                )
-              )
-          }
-        _ <- Metrics[F].incrementCounterBy(
-          "dag_consensus_leader_eligibility_total",
-          leaderPool.size,
-          Seq(
-            exclusionDecisionLabel -> "eligible",
-            exclusionReasonLabel -> "selected_pool"
-          )
-        )
+        leaderPool = if (coreList.nonEmpty) coreList else signingFacilitators
         // Deterministic GL0 view seed:
         // `timeView` remains computed from the timestamp window, but it is treated as a pacemaker
         // timeout hint, not as unilateral proposal-critical state. A local wall clock must not pick
@@ -868,17 +822,7 @@ object GlobalSnapshotConsensusStateCreator {
         // diagnostic, and `timeView` is only a pacemaker hint for signed VCV emission. Neither is
         // quorum evidence, so neither may directly seed proposal-critical view/leader selection.
         initialView = 0
-        leader = facilitatorSelector.selectLeaderWeighted(
-          leaderPool,
-          entropy,
-          viewNumber = initialView,
-          qualityScores = controllerInputs.peerQuality,
-          selfHealthHints = controllerInputs.selfHealth,
-          peerViewChanges = controllerInputs.viewChanges,
-          minLeaderRatioPct = config.leaderRotationMinRatioPct,
-          hardLeaderQualityScorePct = config.hardLeaderQualityScorePct,
-          minLeaderPoolSize = config.minLeaderPoolSize
-        )
+        leader = LeaderSchedule.leader(leaderPool, key.value.value, initialView.toLong)
 
         _ <- ConsensusLog.info(
           logger,
@@ -893,11 +837,6 @@ object GlobalSnapshotConsensusStateCreator {
           "recentSignerActivePool" -> activeAdmission.recentSignerPoolSize.toString,
           "recentSignerActiveFilterApplied" -> activeAdmission.recentFilterApplied.toString,
           "activeExclusions" -> activeAdmission.exclusions.size.toString,
-          "graduatedLeaderPool" -> leaderEligibility.graduatedPoolSize.toString,
-          "recentSignerLeaderPool" -> leaderEligibility.recentSignerPoolSize.toString,
-          "recentSignerWindow" -> leaderEligibility.recentWindowSize.toString,
-          "recentSignerFilterApplied" -> leaderEligibility.recentFilterApplied.toString,
-          "leaderExclusions" -> leaderEligibility.exclusions.size.toString,
           "excluded" -> (allEligible.size - eligibleThisRound.size).toString,
           "leader" -> ConsensusLog.pid(leader)
         )
@@ -921,7 +860,7 @@ object GlobalSnapshotConsensusStateCreator {
           tier1Facilitators = Tier1Facilitators(committees.tier1),
           leader = leader,
           // Round-start view = certified initial view. MUST match the
-          // `viewNumber = initialView` argument passed to selectLeaderWeighted above so the
+          // `initialView` argument passed to LeaderSchedule above so the
           // leader the round believes it has at view=N matches the leader the selector returns
           // at view=N. View-change continues monotonically from certified VCC advancement.
           viewNumber = initialView,

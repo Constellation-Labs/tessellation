@@ -223,6 +223,7 @@ object ConsensusFSMAttemptSafetySuite extends SimpleIOSuite {
         probationPeersOf = _ => Set.empty,
         peerQualityOf = _ => Map.empty,
         lastOutcomeKeyOf = _.key,
+        roundIndexOf = _.value.value,
         lastOutcomeEndTimeMsOf = _ => None,
         onOutcomeFinalized = _ => IO.unit,
         onOutcomeInitialized = _ => IO.unit,

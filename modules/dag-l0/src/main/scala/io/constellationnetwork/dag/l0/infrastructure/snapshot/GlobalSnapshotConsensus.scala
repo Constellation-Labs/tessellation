@@ -533,6 +533,7 @@ object GlobalSnapshotConsensus {
               key.value.value,
               effectiveConsensusConfig.activeAdmissionExpansionIntervalRounds
             ),
+          (key: GlobalSnapshotKey) => key.value.value,
           (o: GlobalConsensusOutcome) => Some(o.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet),
           (o: GlobalConsensusOutcome) =>
             CertifiedConsensusGenesis.hasExpandedBeyondSingleton(

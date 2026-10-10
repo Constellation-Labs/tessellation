@@ -230,23 +230,10 @@ object ControllerEvidenceDivergenceSuite extends SimpleIOSuite {
       chronicMisses = inputs.chronicMisses,
       activeScores = inputs.activeScores
     )
-    val eligibility = LeaderEligibility.fromRecentSigners(
-      core = committees.core,
-      peerQuality = inputs.peerQuality,
-      recentSigners = recentSignersOf(fixture.controllerEvidence),
-      minParticipationObservations = 3,
-      minLeaderPoolSize = 2
-    )
-    val leader = facilitatorSelector.selectLeaderWeighted(
-      eligibility.leaderPool,
-      Hash.empty,
-      viewNumber = 0,
-      qualityScores = inputs.peerQuality,
-      selfHealthHints = inputs.selfHealth,
-      peerViewChanges = inputs.viewChanges
-    )
+    val leaderPool = if (committees.core.nonEmpty) committees.core else admission.active
+    val leader = LeaderSchedule.leader(leaderPool, 0L, 0L)
 
-    RoundDerivation(admission.active, committees.core, committees.tier1, eligibility.leaderPool, leader)
+    RoundDerivation(admission.active, committees.core, committees.tier1, leaderPool, leader)
   }
 
   pureTest("stage-4 wiring: poisoned carried maps cannot diverge admission, committees, leader pool, leader, or facilitators") {
