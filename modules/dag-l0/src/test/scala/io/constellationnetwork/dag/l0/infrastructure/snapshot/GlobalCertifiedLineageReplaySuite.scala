@@ -30,7 +30,6 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.event.EventGoss
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.node.shared.logger.LoggerBundle
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -78,8 +77,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     context: GlobalSnapshotInfo,
     certifiedOutcome: CertifiedOutcome,
     triggerEvidence: List[Signed[TriggerStatement]],
-    roundStartFacilitators: NonEmptySet[PeerId],
-    roundStartCore: NonEmptySet[PeerId]
+    roundStartFacilitators: NonEmptySet[PeerId]
   )
 
   private final case class Observation(
@@ -93,15 +91,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
   )
 
   private final case class Script(
-    responders: Set[Int],
-    selfHealth: SortedMap[Int, SelfHealthHint] = SortedMap.empty,
     admitted: Option[Int] = None,
     evicted: Option[Int] = None,
     timeoutVoters: Set[Int] = Set.empty,
     view: Long = 0L,
     triggerTime: Boolean = false,
     forceRoundStart: Option[List[Int]] = None,
-    forceCore: Option[List[Int]] = None,
     proofRotation: Int = 0
   )
 
@@ -389,16 +384,15 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
   private def certifyValue(
     value: ProposalValue,
     roundStart: List[PeerId],
-    core: List[PeerId],
     byId: Map[PeerId, KeyPair],
     rotation: Int
   )(
     implicit hasher: Hasher[IO],
     provider: SecurityProvider[IO]
   ): IO[CertifiedOutcome] = {
-    val required = requiredCoreQuorum(core.size, config.quorumThresholdFraction)
-    val preparePairs = selectRotated(core.map(byId), required, rotation)
-    val commitPairs = selectRotated(core.map(byId), required, rotation + 1)
+    val required = requiredQuorum(roundStart.size, config.quorumThresholdFraction)
+    val preparePairs = selectRotated(roundStart.map(byId), required, rotation)
+    val commitPairs = selectRotated(roundStart.map(byId), required, rotation + 1)
 
     for {
       prepareVotes <- preparePairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
@@ -406,14 +400,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         value,
         SortedMap.from(preparePairs.map(peer).zip(prepareVotes)),
         roundStart.toSet,
-        core.toSet,
         config.quorumThresholdFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      commits <- commitPairs.traverse(signCoreCommit[IO](proposalQc, _))
-      commitQc <- buildCoreCommitQc[IO](
+      commits <- commitPairs.traverse(signCommit[IO](proposalQc, _))
+      commitQc <- buildCommitQc[IO](
         proposalQc,
         SortedMap.from(commitPairs.map(peer).zip(commits)),
-        core.toSet,
+        roundStart.toSet,
         config.quorumThresholdFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
     } yield CertifiedOutcome(proposalQc, commitQc)
@@ -434,24 +427,14 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     val inherited = prior.facilitators.value
     val roundStart = script.forceRoundStart.fold(inherited)(_.map(ids))
     val roundStartSet = roundStart.toSet
-    val inheritedCore = prior.finished.certifiedOutcome
-      .map(_.proposalQc.value.nextRoundAuthority.core.toSortedSet.toList)
-      .getOrElse(roundStart)
-    val inheritedCoreAtRoundStart = inheritedCore.filter(roundStartSet.contains)
-    val defaultCore = if (inheritedCoreAtRoundStart.nonEmpty) inheritedCoreAtRoundStart else roundStart
-    val core = script.forceCore.fold(defaultCore)(_.map(ids))
     val admitted = script.admitted.map(ids).toSet
     val evicted = script.evicted.map(ids).toSet
     val ordinal = prior.key.next
     val context = GlobalSnapshotInfo.empty
-    val responders = script.responders.toList.map(ids).toSet.intersect(roundStartSet)
-    val health = SortedMap.from(script.selfHealth.toList.map { case (index, hint) => ids(index) -> hint }).filter {
-      case (id, _) => responders.contains(id)
-    }
     val timeoutVoters = script.timeoutVoters.toList.map(ids).toSet.intersect(roundStartSet)
     val trigger = if (script.triggerTime) TimeTrigger else EventTrigger
     val artifactValue = artifact(ordinal, prior.finished.snapshotHash, prior, roundStart)
-    val artifactQuorum = requiredArtifactQuorum(roundStart.size, core.size, config.quorumThresholdFraction)
+    val artifactQuorum = requiredArtifactQuorum(roundStart.size, config.quorumThresholdFraction)
     val artifactPairs = selectRotated(roundStart.map(byId), artifactQuorum, script.proofRotation)
     val nextRound = SortedSet.from((roundStartSet -- evicted) ++ admitted)
     val nextAuthority = NonEmptySet.fromSetUnsafe(nextRound)
@@ -461,7 +444,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       artifactHash <- Hasher[IO].hash(artifactValue)
       contextHash <- Hasher[IO].hash(context)
       fullHash <- Hasher[IO].hash(nonEmpty(roundStart))
-      coreHash <- Hasher[IO].hash(nonEmpty(core))
       nextHash <- Hasher[IO].hash(nextAuthority)
       provisionalValue = ProposalValue(
         schemaVersion = SchemaVersion,
@@ -473,21 +455,17 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         contextHash = contextHash,
         roundStartFacilitators = nonEmpty(roundStart),
         roundStartFacilitatorsHash = fullHash,
-        roundStartCore = nonEmpty(core),
-        roundStartCoreHash = coreHash,
-        nextRoundAuthority = CertifiedRoundAuthorityV1(nextAuthority, nextHash, nextAuthority, nextHash),
+        nextRoundAuthority = CertifiedRoundAuthorityV1(nextAuthority, nextHash),
         nextOperationalStateHash = Hash.empty,
         committedView = script.view,
         trigger = trigger,
         admissionNominee = script.admitted.map(ids),
         admittedPeers = SortedSet.from(admitted),
         evictedPeers = SortedSet.from(evicted),
-        observedResponders = SortedSet.from(responders),
-        observedSelfHealth = health,
         timeoutVoters = SortedSet.from(timeoutVoters),
         consensusEndTime = Some(1000000L + ordinal.value.value)
       )
-      provisionalOutcome <- certifyValue(provisionalValue, roundStart, core, byId, script.proofRotation)
+      provisionalOutcome <- certifyValue(provisionalValue, roundStart, byId, script.proofRotation)
       triggerStatements <- roundStart
         .map(byId)
         .traverse(pair =>
@@ -509,8 +487,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         context,
         provisionalOutcome,
         triggerStatements,
-        nonEmpty(roundStart),
-        nonEmpty(core)
+        nonEmpty(roundStart)
       )
       provisionalDerived <- derive(prior, provisionalFrame, advancer(allPairs.head)).map(_._1)
       projected <- CertifiedRoundCommitteeProjector
@@ -524,15 +501,14 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         )
         .flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
       finalFull = NonEmptySet.fromSetUnsafe(SortedSet.from(projected.committee.votingCommittee))
-      finalCore = finalFull
-      finalAuthority <- CertifiedConsensus.roundAuthority[IO](finalFull, finalCore)
+      finalAuthority <- CertifiedConsensus.roundAuthority[IO](finalFull)
       operationalStateHash <- Hasher[IO].hash(provisionalDerived.toOperationalState)
       value = provisionalValue.copy(
         nextRoundAuthority = finalAuthority,
         nextOperationalStateHash = operationalStateHash
       )
-      outcome <- certifyValue(value, roundStart, core, byId, script.proofRotation)
-    } yield PublicFrame(signedArtifact, context, outcome, triggerStatements, nonEmpty(roundStart), nonEmpty(core))
+      outcome <- certifyValue(value, roundStart, byId, script.proofRotation)
+    } yield PublicFrame(signedArtifact, context, outcome, triggerStatements, nonEmpty(roundStart))
   }
 
   /** Replace only the two QC proof envelopes while retaining the exact artifact, ProposalValue, trigger evidence and round authority. This
@@ -548,11 +524,10 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
   ): IO[PublicFrame] = {
     val byId = allPairs.map(pair => peer(pair) -> pair).toMap
     val full = frame.roundStartFacilitators.toSortedSet.toList
-    val core = frame.roundStartCore.toSortedSet.toList
     val value = frame.certifiedOutcome.proposalQc.value
-    val required = requiredCoreQuorum(core.size, config.quorumThresholdFraction)
-    val preparePairs = selectRotated(core.map(byId), required, rotation)
-    val commitPairs = selectRotated(core.map(byId), required, rotation + 1)
+    val required = requiredQuorum(full.size, config.quorumThresholdFraction)
+    val preparePairs = selectRotated(full.map(byId), required, rotation)
+    val commitPairs = selectRotated(full.map(byId), required, rotation + 1)
 
     for {
       prepareVotes <- preparePairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
@@ -560,14 +535,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         value,
         SortedMap.from(preparePairs.map(peer).zip(prepareVotes)),
         full.toSet,
-        core.toSet,
         config.quorumThresholdFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      commits <- commitPairs.traverse(signCoreCommit[IO](proposalQc, _))
-      commitQc <- buildCoreCommitQc[IO](
+      commits <- commitPairs.traverse(signCommit[IO](proposalQc, _))
+      commitQc <- buildCommitQc[IO](
         proposalQc,
         SortedMap.from(commitPairs.map(peer).zip(commits)),
-        core.toSet,
+        full.toSet,
         config.quorumThresholdFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
     } yield frame.copy(certifiedOutcome = CertifiedOutcome(proposalQc, commitQc))
@@ -584,7 +558,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
   ): IO[(GlobalConsensusOutcome, Observation)] = {
     val value = frame.certifiedOutcome.proposalQc.value
     val roundStart = frame.roundStartFacilitators.toSortedSet.toList
-    val core = frame.roundStartCore.toSortedSet.toList
     val admitted = value.admittedPeers.toSet
     val evicted = value.evictedPeers.toSet
     val artifactSigners = prior.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId).toSet
@@ -610,7 +583,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         artifactHash,
         frame.context,
         frame.roundStartFacilitators,
-        frame.roundStartCore,
         config.quorumThresholdFraction,
         prior.recentRoundEndTimes.lastOption.map(_._2),
         config.viewInterval,
@@ -625,14 +597,14 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         value.roundStartFacilitatorsHash,
         config.deterministicConfigHash,
         roundStart.toSet,
-        requiredArtifactQuorum(roundStart.size, core.size, config.quorumThresholdFraction),
+        requiredArtifactQuorum(roundStart.size, config.quorumThresholdFraction),
         value.trigger,
         roundStart.head
       )
       artifactProofs <- verifyArtifactProofs[IO, GlobalIncrementalSnapshot](
         frame.artifact,
         roundStart.toSet,
-        requiredArtifactQuorum(roundStart.size, core.size, config.quorumThresholdFraction)
+        requiredArtifactQuorum(roundStart.size, config.quorumThresholdFraction)
       )
       parentLineageValidation <- verifyCarriedParentOutcome[IO](
         frame.artifact.value.certifiedLineage,
@@ -681,8 +653,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         createdAt = Duration.Zero,
         removedFacilitators = RemovedFacilitators(evicted),
         admittedFacilitators = AdmittedFacilitators(admitted),
-        observedResponders = ObservedResponders(value.observedResponders.toSet),
-        observedSelfHealth = ObservedSelfHealth(value.observedSelfHealth),
         acceptedTimeoutCertificateVoters = value.timeoutVoters,
         certifiedEvictionTargets = value.evictedPeers,
         outcomeEndTime = value.consensusEndTime,
@@ -718,19 +688,15 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     implicit val provider: SecurityProvider[IO] = res.provider
 
     val scripts = List(
-      Script(responders = Set(0), admitted = Some(1)),
+      Script(admitted = Some(1)),
       Script(
-        responders = Set(0, 1),
-        selfHealth = SortedMap(0 -> SelfHealthHint.Healthy, 1 -> SelfHealthHint.Degraded),
         timeoutVoters = Set(0),
         view = 1L,
         triggerTime = true,
         proofRotation = 1
       ),
-      Script(responders = Set(0, 1), admitted = Some(2), proofRotation = 1),
+      Script(admitted = Some(2), proofRotation = 1),
       Script(
-        responders = Set(0, 2),
-        selfHealth = SortedMap(2 -> SelfHealthHint.Critical),
         admitted = Some(3),
         evicted = Some(1),
         timeoutVoters = Set(0, 2),
@@ -738,10 +704,10 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         triggerTime = true,
         proofRotation = 2
       ),
-      Script(responders = Set(0, 2, 3), proofRotation = 1),
+      Script(proofRotation = 1),
       // Public eligibility/selection may later reduce the next round to a singleton. The
       // monotonic fact must stay true and therefore cannot re-arm the 1 -> 2 bootstrap bypass.
-      Script(responders = Set(0), forceRoundStart = Some(List(0)), proofRotation = 0)
+      Script(forceRoundStart = Some(List(0)), proofRotation = 0)
     )
 
     for {
@@ -791,13 +757,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     // admission is preceded by a completed round proving the larger signer headroom. Three seats
     // are sufficient to produce two different valid 2-of-3 QC subsets.
     val growth = List(
-      Script(responders = Set(0), admitted = Some(1)),
-      Script(responders = Set(0, 1)),
-      Script(responders = Set(0, 1), admitted = Some(2)),
+      Script(admitted = Some(1)),
+      Script(),
+      Script(admitted = Some(2)),
       // The admission round deliberately places the new seat in Tier 1. Complete
       // one ordinary round so current policy can promote all three into Core;
       // only then do two distinct 2-of-3 QC subsets exist.
-      Script(responders = Set(0, 1, 2))
+      Script()
     )
 
     for {
@@ -806,7 +772,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       prior <- growth.foldM(root) { (state, script) =>
         buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
       }
-      base <- buildFrame(prior, Script(responders = Set(0, 1, 2)), res.pairs)
+      base <- buildFrame(prior, Script(), res.pairs)
       first <- withCertificateRotation(base, res.pairs, rotation = 0)
       second <- withCertificateRotation(base, res.pairs, rotation = 1)
       firstDerived <- derive(prior, first, stateAdvancer).map(_._1)
@@ -832,26 +798,23 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       )
   }
 
-  test("C-1: leader-reported responders and self-health cannot change certified authority or the leader schedule") { res =>
+  test("C-1: leader-chosen signer subsets and timeout voters cannot change certified authority or the leader schedule") { res =>
     implicit val serializer: JsonSerializer[IO] = res.serializer
     implicit val hasher: Hasher[IO] = res.hasher
     implicit val hasherSelector: HasherSelector[IO] = res.selector
     implicit val provider: SecurityProvider[IO] = res.provider
 
     val growth = List(
-      Script(responders = Set(0), admitted = Some(1)),
-      Script(responders = Set(0, 1)),
-      Script(responders = Set(0, 1), admitted = Some(2)),
-      Script(responders = Set(0, 1, 2))
+      Script(admitted = Some(1)),
+      Script(),
+      Script(admitted = Some(2)),
+      Script()
     )
-    val truthful = Script(responders = Set(0, 1, 2))
-    // Separate perturbations of everything a leader reports: false omission of honest responders, and Critical
-    // self-health hints for responders that really are healthy.
-    val omitting = Script(responders = Set(0))
-    val smearing = Script(
-      responders = Set(0, 1, 2),
-      selfHealth = SortedMap(1 -> SelfHealthHint.Critical, 2 -> SelfHealthHint.Critical)
-    )
+    val honest = Script()
+    // The leader still chooses which quorum of signatures to embed and which timeout voters to report.
+    // Neither choice may feed membership or leader selection.
+    val rotated = Script(proofRotation = 2)
+    val reportedTimeouts = Script(timeoutVoters = Set(1, 2), view = 1L)
 
     for {
       root <- signedRoot(res.pairs)
@@ -859,41 +822,38 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       prior <- growth.foldM(root) { (state, script) =>
         buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
       }
-      honestFrame <- buildFrame(prior, truthful, res.pairs)
-      omittingFrame <- buildFrame(prior, omitting, res.pairs)
-      smearingFrame <- buildFrame(prior, smearing, res.pairs)
+      honestFrame <- buildFrame(prior, honest, res.pairs)
+      rotatedFrame <- buildFrame(prior, rotated, res.pairs)
+      timeoutFrame <- buildFrame(prior, reportedTimeouts, res.pairs)
       honestNext <- derive(prior, honestFrame, stateAdvancer).map(_._1)
-      omittingNext <- derive(prior, omittingFrame, stateAdvancer).map(_._1)
-      smearingNext <- derive(prior, smearingFrame, stateAdvancer).map(_._1)
+      rotatedNext <- derive(prior, rotatedFrame, stateAdvancer).map(_._1)
+      timeoutNext <- derive(prior, timeoutFrame, stateAdvancer).map(_._1)
       // Restart: a fresh advancer instance re-derives the perturbed round from the same public inputs.
-      restartedNext <- derive(prior, smearingFrame, advancer(res.pairs.head)).map(_._1)
-      honestAfter <- buildFrame(honestNext, truthful, res.pairs)
-      omittingAfter <- buildFrame(omittingNext, truthful, res.pairs)
-      smearingAfter <- buildFrame(smearingNext, truthful, res.pairs)
+      restartedNext <- derive(prior, timeoutFrame, advancer(res.pairs.head)).map(_._1)
+      honestAfter <- buildFrame(honestNext, honest, res.pairs)
+      rotatedAfter <- buildFrame(rotatedNext, honest, res.pairs)
+      timeoutAfter <- buildFrame(timeoutNext, honest, res.pairs)
     } yield {
       def value(frame: PublicFrame) = frame.certifiedOutcome.proposalQc.value
+      def signers(frame: PublicFrame) = frame.certifiedOutcome.proposalQc.signatures.toSortedSet.map(_.id)
       val honestAuthority = value(honestFrame).nextRoundAuthority
       val nextKey = honestNext.key.value.value + 1L
       def schedule(authority: CertifiedConsensus.CertifiedRoundAuthorityV1) =
         (0L until 6L).map(v => LeaderSchedule.leader(authority.facilitators.toSortedSet, nextKey, v))
-      val quorum = (n: Int) => QuorumPolicy.fromFraction(n, config.quorumThresholdFraction)
 
-      expect(value(omittingFrame) =!= value(honestFrame), "the omission perturbation must reach the certified payload") &&
-      expect(value(smearingFrame).observedSelfHealth.nonEmpty, "the self-health perturbation must reach the certified payload") &&
-      expect(value(omittingFrame).nextRoundAuthority === honestAuthority, "omission cannot change next-round authority") &&
-      expect(value(smearingFrame).nextRoundAuthority === honestAuthority, "self-health cannot change next-round authority") &&
-      expect.same(honestAuthority.facilitators, honestAuthority.core) &&
-      expect.same(honestNext.facilitators, omittingNext.facilitators) &&
-      expect.same(honestNext.facilitators, smearingNext.facilitators) &&
-      expect.same(smearingNext.facilitators, restartedNext.facilitators) &&
-      expect.same(schedule(honestAuthority), schedule(value(omittingFrame).nextRoundAuthority)) &&
-      expect.same(schedule(honestAuthority), schedule(value(smearingFrame).nextRoundAuthority)) &&
-      expect.same(value(honestFrame).roundStartFacilitators, value(omittingFrame).roundStartFacilitators) &&
-      expect.same(quorum(value(honestFrame).roundStartFacilitators.length), quorum(value(smearingFrame).roundStartFacilitators.length)) &&
-      expect.same(honestAfter.roundStartFacilitators, omittingAfter.roundStartFacilitators) &&
-      expect.same(honestAfter.roundStartFacilitators, smearingAfter.roundStartFacilitators) &&
-      expect(value(honestAfter).nextRoundAuthority === value(omittingAfter).nextRoundAuthority) &&
-      expect(value(honestAfter).nextRoundAuthority === value(smearingAfter).nextRoundAuthority)
+      expect(signers(rotatedFrame) =!= signers(honestFrame), "the signer perturbation must reach the certificate") &&
+      expect(value(timeoutFrame).timeoutVoters.nonEmpty, "the timeout-voter perturbation must reach the certified payload") &&
+      expect(value(rotatedFrame).nextRoundAuthority === honestAuthority, "signer choice cannot change next-round authority") &&
+      expect(value(timeoutFrame).nextRoundAuthority === honestAuthority, "timeout voters cannot change next-round authority") &&
+      expect.same(honestNext.facilitators, rotatedNext.facilitators) &&
+      expect.same(honestNext.facilitators, timeoutNext.facilitators) &&
+      expect.same(timeoutNext.facilitators, restartedNext.facilitators) &&
+      expect.same(schedule(honestAuthority), schedule(value(rotatedFrame).nextRoundAuthority)) &&
+      expect.same(schedule(honestAuthority), schedule(value(timeoutFrame).nextRoundAuthority)) &&
+      expect.same(honestAfter.roundStartFacilitators, rotatedAfter.roundStartFacilitators) &&
+      expect.same(honestAfter.roundStartFacilitators, timeoutAfter.roundStartFacilitators) &&
+      expect(value(honestAfter).nextRoundAuthority === value(rotatedAfter).nextRoundAuthority) &&
+      expect(value(honestAfter).nextRoundAuthority === value(timeoutAfter).nextRoundAuthority)
     }
   }
 
@@ -904,10 +864,10 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     implicit val provider: SecurityProvider[IO] = res.provider
 
     val scripts = List(
-      Script(responders = Set(0), admitted = Some(1)),
+      Script(admitted = Some(1)),
       // Single voting set: a newly admitted signer votes from its first round, so the
       // public replay projector must reconstruct the certified all-member committee.
-      Script(responders = Set(0, 1), proofRotation = 1)
+      Script(proofRotation = 1)
     )
 
     for {
@@ -1043,13 +1003,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     implicit val provider: SecurityProvider[IO] = res.provider
 
     val growToThree = List(
-      Script(responders = Set(0), admitted = Some(1)),
-      Script(responders = Set(0, 1)),
-      Script(responders = Set(0, 1), admitted = Some(2))
+      Script(admitted = Some(1)),
+      Script(),
+      Script(admitted = Some(2))
     )
     val afterRecovery = List(
-      Script(responders = Set(0, 1, 2)),
-      Script(responders = Set(0, 1, 2), proofRotation = 1)
+      Script(),
+      Script(proofRotation = 1)
     )
 
     for {
@@ -1217,7 +1177,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         genesisCommittee
       )
       stateAdvancer = advancer(res.pairs.head)
-      parentFrame <- buildFrame(root, Script(responders = Set(0)), res.pairs)
+      parentFrame <- buildFrame(root, Script(), res.pairs)
       publicParent <- derive(root, parentFrame, stateAdvancer).map(_._1)
       undersized = SortedSet.from(res.pairs.take(2).map(peer))
       invalidRecoveryRoot = GlobalRecoverySeedOutcome.seed(
@@ -1226,7 +1186,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         publicParent.finished.snapshotHash,
         undersized
       )
-      recoveryFrame <- buildFrame(invalidRecoveryRoot, Script(responders = Set(0, 1)), res.pairs)
+      recoveryFrame <- buildFrame(invalidRecoveryRoot, Script(), res.pairs)
       candidate <- derive(invalidRecoveryRoot, recoveryFrame, stateAdvancer).map(_._1)
       artifacts = Map(
         publicParent.key -> publicParent.finished.signedMajorityArtifact,
@@ -1243,52 +1203,6 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     } yield expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_committee_too_small:2")))
   }
 
-  test("public recovery authority requires the complete recovery committee to certify as Core") { res =>
-    implicit val serializer: JsonSerializer[IO] = res.serializer
-    implicit val hasher: Hasher[IO] = res.hasher
-    implicit val hasherSelector: HasherSelector[IO] = res.selector
-    implicit val provider: SecurityProvider[IO] = res.provider
-
-    for {
-      seededRoot <- signedRoot(res.pairs)
-      genesisCommittee = SortedSet.from(seededRoot.finished.signedMajorityArtifact.proofs.toSortedSet.toList.map(_.id.toPeerId))
-      root = GlobalRecoverySeedOutcome.seed(
-        seededRoot.finished.signedMajorityArtifact,
-        seededRoot.finished.context,
-        seededRoot.finished.snapshotHash,
-        genesisCommittee
-      )
-      stateAdvancer = advancer(res.pairs.head)
-      parentFrame <- buildFrame(root, Script(responders = Set(0)), res.pairs)
-      publicParent <- derive(root, parentFrame, stateAdvancer).map(_._1)
-      recoveryCommittee = SortedSet.from(res.pairs.take(3).map(peer))
-      invalidRecoveryRoot = GlobalRecoverySeedOutcome.seed(
-        publicParent.finished.signedMajorityArtifact,
-        publicParent.finished.context,
-        publicParent.finished.snapshotHash,
-        recoveryCommittee
-      )
-      recoveryFrame <- buildFrame(
-        invalidRecoveryRoot,
-        Script(responders = Set(0, 1, 2), forceCore = Some(List(0, 1))),
-        res.pairs
-      )
-      candidate <- derive(invalidRecoveryRoot, recoveryFrame, stateAdvancer).map(_._1)
-      artifacts = Map(
-        publicParent.key -> publicParent.finished.signedMajorityArtifact,
-        recoveryFrame.artifact.ordinal -> recoveryFrame.artifact
-      )
-      contexts = Map(recoveryFrame.artifact.ordinal -> recoveryFrame.context)
-      validator = GlobalCertifiedDownloadValidator.make[IO](
-        config = config,
-        networkId = "integrationnet",
-        seedlistPeerIds = res.pairs.map(peer).toSet,
-        snapshotDownloadStorage = publicDownloadStorage(artifacts, contexts)
-      )
-      rejected <- validator(candidate).attempt
-    } yield expect(rejected.left.exists(_.getMessage.contains("recovery_seed_boundary_requires_full_committee_core")))
-  }
-
   test("mainnet cutover shape: activation == recovery anchor R without peerHistory certifies R+1 and replays via the recovery root") {
     res =>
       implicit val serializer: JsonSerializer[IO] = res.serializer
@@ -1297,13 +1211,13 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       implicit val provider: SecurityProvider[IO] = res.provider
 
       val growToThree = List(
-        Script(responders = Set(0), admitted = Some(1)),
-        Script(responders = Set(0, 1)),
-        Script(responders = Set(0, 1), admitted = Some(2))
+        Script(admitted = Some(1)),
+        Script(),
+        Script(admitted = Some(2))
       )
       val afterRecovery = List(
-        Script(responders = Set(0, 1, 2)),
-        Script(responders = Set(0, 1, 2), proofRotation = 1)
+        Script(),
+        Script(proofRotation = 1)
       )
 
       for {

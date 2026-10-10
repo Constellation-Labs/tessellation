@@ -371,7 +371,6 @@ object GlobalSnapshotConsensus {
           effectiveConsensusConfig,
           peerQualityTracker,
           eventMempool,
-          sharedServices.localHealthMonitor,
           rawEvictionVoter,
           consensusQueue,
           finalityParticipationMissHistoryRef,

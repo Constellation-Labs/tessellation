@@ -58,7 +58,8 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
       lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](signedGenesis.value)
       signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
       snapshotHash <- signedLastArtifact.toHashed.map(_.hash)
-    } yield Finished(signedLastArtifact, signedGenesis.value.info.toGlobalSnapshotInfo, EventTrigger, Candidates.empty, Hash.empty, snapshotHash)
+    } yield
+      Finished(signedLastArtifact, signedGenesis.value.info.toGlobalSnapshotInfo, EventTrigger, Candidates.empty, Hash.empty, snapshotHash)
 
   private def mkOutcome(
     finished: Finished,
@@ -87,10 +88,11 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
       outcome = mkOutcome(finished, SortedMap(c -> 2), SortedMap(b -> 3), SortedMap(ord(14L) -> 1700000000000L))
       operational = outcome.toOperationalState
       decoded = decode[ConsensusOperationalState](operational.asJson.noSpaces)
-    } yield expect(decoded.contains(operational), s"round trip changed the operational state: $decoded") &&
-      expect.same(Some(penaltyUntil), decoded.toOption.flatMap(_.penaltyUntil)) &&
-      expect.same(Some(3), decoded.toOption.flatMap(_.perPeer.get(b)).map(_.readmissionCountdown)) &&
-      expect.same(Some(2), decoded.toOption.flatMap(_.perPeer.get(c)).map(_.removalPenalty))
+    } yield
+      expect(decoded.contains(operational), s"round trip changed the operational state: $decoded") &&
+        expect.same(Some(penaltyUntil), decoded.toOption.flatMap(_.penaltyUntil)) &&
+        expect.same(Some(3), decoded.toOption.flatMap(_.perPeer.get(b)).map(_.readmissionCountdown)) &&
+        expect.same(Some(2), decoded.toOption.flatMap(_.perPeer.get(c)).map(_.removalPenalty))
   }
 
   test("node-local per-peer bookkeeping never reaches the signed peerHistory bytes") { res =>
@@ -101,10 +103,11 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
       other = mkOutcome(finished, SortedMap(a -> 9), SortedMap.empty, SortedMap(ord(14L) -> 2L))
       oneBytes <- JsonSerializer[IO].serialize(one.signedArtifactPeerHistory)
       otherBytes <- JsonSerializer[IO].serialize(other.signedArtifactPeerHistory)
-    } yield expect(oneBytes.toVector == otherBytes.toVector, "signed peerHistory must not depend on node-local per-peer state") &&
-      expect(one.signedArtifactPeerHistory.perPeer.isEmpty) &&
-      expect(one.signedArtifactPeerHistory.recentRoundEndTimes.isEmpty) &&
-      expect.same(recentProofSizes, one.signedArtifactPeerHistory.recentProofSizes) &&
-      expect.same(Some(penaltyUntil), one.signedArtifactPeerHistory.penaltyUntil)
+    } yield
+      expect(oneBytes.toVector == otherBytes.toVector, "signed peerHistory must not depend on node-local per-peer state") &&
+        expect(one.signedArtifactPeerHistory.perPeer.isEmpty) &&
+        expect(one.signedArtifactPeerHistory.recentRoundEndTimes.isEmpty) &&
+        expect.same(recentProofSizes, one.signedArtifactPeerHistory.recentProofSizes) &&
+        expect.same(Some(penaltyUntil), one.signedArtifactPeerHistory.penaltyUntil)
   }
 }

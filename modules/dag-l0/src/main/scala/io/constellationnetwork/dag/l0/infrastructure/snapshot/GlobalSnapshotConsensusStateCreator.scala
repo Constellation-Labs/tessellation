@@ -30,7 +30,6 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.mempool.EventMempool
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.LocalHealthMonitor
 import io.constellationnetwork.schema.ID.IdOps
 import io.constellationnetwork.schema.mpt.GlobalStateKey
 import io.constellationnetwork.schema.peer.PeerId
@@ -82,24 +81,6 @@ object GlobalSnapshotConsensusStateCreator {
       .raiseError[F, Unit]
       .unlessA(config.certifiedConsensusActiveAt(key.value.value))
 
-  /** A certified parent authority whose Core differs from its full committee was produced by the retired tiered rules. This build has a
-    * single voting set; continuing from such a parent would make creation, voting, and replay disagree, so fail closed and require the
-    * recovery-seed root (whose Core is the complete committee).
-    */
-  final case class SplitCertifiedAuthorityUnsupported(key: GlobalSnapshotKey, facilitators: Int, core: Int) extends NoStackTrace {
-    override def getMessage: String =
-      s"Refusing to produce GL0 snapshot ordinal=${key.value.value}: inherited certified authority has core=$core of " +
-        s"facilitators=$facilitators. This build uses one voting set; enter certified consensus through the recovery-seed rollback."
-  }
-
-  private[snapshot] def requireSingleVotingSetAuthority[F[_]: MonadThrow](
-    key: GlobalSnapshotKey,
-    authority: CertifiedConsensus.CertifiedRoundAuthorityV1
-  ): F[Unit] =
-    SplitCertifiedAuthorityUnsupported(key, authority.facilitators.length, authority.core.length)
-      .raiseError[F, Unit]
-      .unlessA(authority.core === authority.facilitators)
-
   private[snapshot] final case class EvictionVoteRetransmission(
     target: PeerId,
     vote: io.constellationnetwork.security.signature.Signed[
@@ -143,7 +124,6 @@ object GlobalSnapshotConsensusStateCreator {
     consensusConfig: ConsensusConfig,
     peerQualityTracker: PeerQualityTracker[F],
     eventMempool: EventMempool[F, GlobalSnapshotEvent, GlobalStateKey],
-    localHealthMonitor: LocalHealthMonitor[F],
     evictionVoter: EvictionVoter[F, GlobalSnapshotKey],
     consensusQueue: Queue[
       F,
@@ -410,7 +390,6 @@ object GlobalSnapshotConsensusStateCreator {
         seedlistPeerIds = seedlist.fold(List.empty[PeerId])(_.toList.map(_.peerId))
         certifiedNextRoundAuthority = lastOutcome.finished.certifiedOutcome
           .map(_.proposalQc.value.nextRoundAuthority)
-        _ <- certifiedNextRoundAuthority.traverse_(requireSingleVotingSetAuthority[F](key, _))
         certifiedRoundProjection = certifiedNextRoundAuthority.map { authority =>
           val committee = CertifiedRoundCommitteeProjector.fromCertifiedAuthority(key, authority, config)
 
@@ -724,7 +703,6 @@ object GlobalSnapshotConsensusStateCreator {
         }
         _ <- DagAwaitingParentQueue.evictPermanentlyRejected(eventMempool, lastOutcome.finished.context, logger).void
         eventHashes <- eventMempool.getEventHashes
-        selfHealth <- localHealthMonitor.current
         // v19 phase 2: wall-clock millis at signing time. Raw, no bucketing; the
         // round-finalize median absorbs outliers and the consume-site clamp pins
         // monotonicity against the parent. See docs/consensus/view-from-time-anchor.md.
@@ -754,7 +732,6 @@ object GlobalSnapshotConsensusStateCreator {
           lastOutcome.key,
           lastOutcome.finished.snapshotHash,
           consensusConfigHash = consensusConfigHash.some,
-          selfHealthHint = selfHealth.some,
           proposerClockMs = proposerClockMs.some,
           triggerStatement = triggerStatement
         )

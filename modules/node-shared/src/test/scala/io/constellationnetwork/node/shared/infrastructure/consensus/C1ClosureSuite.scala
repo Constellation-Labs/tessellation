@@ -48,8 +48,6 @@ object C1ClosureSuite extends FunSuite {
   test("the inherited certified authority projects to the same voting committee") {
     val authority = CertifiedConsensus.CertifiedRoundAuthorityV1(
       cats.data.NonEmptySet.fromSetUnsafe(scala.collection.immutable.SortedSet.from(committee)),
-      io.constellationnetwork.security.hash.Hash.empty,
-      cats.data.NonEmptySet.fromSetUnsafe(scala.collection.immutable.SortedSet.from(committee)),
       io.constellationnetwork.security.hash.Hash.empty
     )
     expect.same(

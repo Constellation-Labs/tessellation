@@ -44,7 +44,6 @@ object CertifiedConsensusRound {
     carriedQc: Option[CertifiedProposalQC],
     resources: ConsensusResources[Artifact, Kind],
     frozenCommittee: Set[PeerId],
-    frozenCore: Set[PeerId],
     configuredFraction: Double,
     selfId: PeerId,
     keyPair: KeyPair,
@@ -62,23 +61,22 @@ object CertifiedConsensusRound {
         value,
         carriedQc.toList ++ persistedLock.flatMap(_.lockedQc).toList ++ resources.certifiedProposalQcs.values.toList ++ relayed,
         frozenCommittee,
-        frozenCore,
         configuredFraction
       )
-      isCore = frozenCore.contains(selfId)
+      isMember = frozenCommittee.contains(selfId)
       lockResult <-
-        if (existingQc.isEmpty && (!isCore || !allowVoteEmission)) ().asRight[VoteRejection].pure[F]
+        if (existingQc.isEmpty && (!isMember || !allowVoteEmission)) ().asRight[VoteRejection].pure[F]
         else
           // A verified carried/assembled QC is a new safety fact for every recipient, including a
-          // non-Core follower or a Core peer abstaining under a local-only admission headroom gate.
-          // Check it against the restored lock before it can drive artifact/CoreCommit progression.
+          // non-member follower or a member abstaining under a local-only admission headroom gate.
+          // Check it against the restored lock before it can drive artifact/Commit progression.
           // Only a path with no QC and no locally eligible vote has no safety fact to persist.
           storage
             .tryLockCertifiedVote(key, value.committedView, valueHash, existingQc)
             .map(_.void)
       voteResult <- lockResult match {
         case Left(rejection) => rejection.asLeft[(Boolean, F[Unit])].pure[F]
-        case Right(_) if existingQc.isDefined || !isCore || !allowVoteEmission =>
+        case Right(_) if existingQc.isDefined || !isMember || !allowVoteEmission =>
           (false -> Async[F].unit).asRight[VoteRejection].pure[F]
         case Right(_) =>
           storage.getResources(key).flatMap { current =>
@@ -91,7 +89,7 @@ object CertifiedConsensusRound {
                     .addOutcomeVote(selfId, key, vote)
                     .void
                     .as(
-                      (true -> gossip.spreadDirect(ConsensusPeerOutcomeVote(key, vote), frozenCore - selfId))
+                      (true -> gossip.spreadDirect(ConsensusPeerOutcomeVote(key, vote), frozenCommittee - selfId))
                         .asRight[VoteRejection]
                     )
               }
@@ -107,7 +105,7 @@ object CertifiedConsensusRound {
                 refreshed.outcomeVotes.getOrElse((value.committedView, valueHash), Map.empty)
               )
               CertifiedConsensus
-                .buildProposalQc[F](value, voteMap, frozenCommittee, frozenCore, configuredFraction)
+                .buildProposalQc[F](value, voteMap, frozenCommittee, configuredFraction)
                 .map(_.toOption)
             }(_.some.pure[F])
             _ <- assembledQc.traverse_ { qc =>

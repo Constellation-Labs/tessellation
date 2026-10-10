@@ -25,7 +25,7 @@ object AdmissionVoterPoolSuite extends FunSuite {
   test("admission quorum matches the certified committee quorum in every supported mode") {
     val size = 6
     expect.same(4, AdmissionVoterPool.requiredQuorum(size, 2.0 / 3.0)) &&
-    expect.same(CertifiedConsensus.requiredCoreQuorum(size, 2.0 / 3.0), AdmissionVoterPool.requiredQuorum(size, 2.0 / 3.0)) &&
+    expect.same(CertifiedConsensus.requiredQuorum(size, 2.0 / 3.0), AdmissionVoterPool.requiredQuorum(size, 2.0 / 3.0)) &&
     expect.same(size, AdmissionVoterPool.requiredQuorum(size, 1.0))
   }
 }

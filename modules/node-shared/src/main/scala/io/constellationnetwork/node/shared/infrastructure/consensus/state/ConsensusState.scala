@@ -8,7 +8,6 @@ import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.node.shared.infrastructure.consensus.PeerDeclarations
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.PeerDeclaration
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 
@@ -92,37 +91,6 @@ object AdmittedFacilitators {
   def empty: AdmittedFacilitators = AdmittedFacilitators(Set.empty)
 }
 
-/** v7 (flaky-byzantine): leader's positive observation of which round-start facilitators sent a Facility declaration during this round's
-  * facility-collection window. Carried on the round's accepted Proposal and persisted here for the duration of the round so that the
-  * outcome-extraction step can credit `peerQuality.completed` only for peers who actually participated, not for any non-fork-evicted
-  * facilitator (the v3-codex-flagged "silent peers score (1,1)" blindness).
-  *
-  * '''REPLACE semantics on accept''', NOT union. The field is canonically the latest accepted proposal's observedResponders; view-N
-  * accepting a new proposal must REPLACE state.observedResponders, never `++`. Otherwise an honest view change would over-credit late peers
-  * from view-K-1.
-  *
-  * Determinism source: leader's signed rumor envelope (RumorValidator.scala:50 enforces signers.contains(rumor.origin)) cryptographically
-  * binds the leader to their stated set under the trusted-allowlist + flaky-byzantine threat model.
-  */
-@derive(eqv, encoder, decoder)
-case class ObservedResponders(value: Set[PeerId])
-object ObservedResponders {
-  def empty: ObservedResponders = ObservedResponders(Set.empty)
-}
-
-/** Self-health throttle: leader's canonical view of each observed responder's `SelfHealthHint`, copied into local state when a Proposal is
-  * accepted. Carried forward into the next round's Outcome (`peerSelfHealth`) which then feeds `selectLeaderWeighted` to demote Degraded
-  * peers to tier 1 and Critical peers to tier 2.
-  *
-  * REPLACE semantics on accept (mirrors `ObservedResponders` REPLACE rationale): an honest view change adopts the new proposal's map; old
-  * view's hints are discarded so a stale Healthy claim cannot bleed into view-N+1 selection.
-  */
-@derive(eqv, encoder, decoder)
-case class ObservedSelfHealth(value: SortedMap[PeerId, SelfHealthHint])
-object ObservedSelfHealth {
-  def empty: ObservedSelfHealth = ObservedSelfHealth(SortedMap.empty)
-}
-
 @derive(eqv, encoder, decoder, show)
 case class Candidates(value: Set[PeerId])
 object Candidates {
@@ -167,8 +135,6 @@ case class ConsensusState[Key, Status, Outcome, Kind](
   withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
   eligibleFacilitators: EligibleFacilitators = EligibleFacilitators.empty,
   admittedFacilitators: AdmittedFacilitators = AdmittedFacilitators.empty,
-  observedResponders: ObservedResponders = ObservedResponders.empty,
-  observedSelfHealth: ObservedSelfHealth = ObservedSelfHealth.empty,
   // V28 controller evidence: voters from the TimeoutCertificate carried by the
   // accepted proposal. Set only after proposal validation/signature verification,
   // then consumed at round finalization to penalize active peers that were missing

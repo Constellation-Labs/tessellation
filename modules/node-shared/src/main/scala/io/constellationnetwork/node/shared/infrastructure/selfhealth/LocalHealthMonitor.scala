@@ -15,12 +15,9 @@ import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics.unsafe
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-/** Polls local JVM and OS health signals on a background fiber and exposes a `SelfHealthHint` for consensus to consult.
+/** Polls local JVM and OS health signals on a background fiber and exposes a local `SelfHealthHint`.
   *
-  * Used in two paths:
-  *   - Read directly when building a Facility declaration so the peer's current hint travels to other peers (Phase B /
-  *     consensusSchemaVersion 15).
-  *   - Exported to Prometheus for operator dashboards and alerting (Phase A, observational only).
+  * Observational only: the hint is exported to Prometheus for operator dashboards and alerting and never enters consensus.
   *
   * Signals (Phase A):
   *   - Max GC pause (across all collectors) observed in the configured history window (default 5 min). Source:

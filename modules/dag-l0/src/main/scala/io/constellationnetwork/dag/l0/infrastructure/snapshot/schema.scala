@@ -8,7 +8,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.node.shared.infrastructure.consensus.CertifiedConsensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.state._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
@@ -44,13 +43,11 @@ object schema {
             candidates,
             facilitatorsHash,
             lastSnapshotHash,
-            observedResponders,
-            observedSelfHealth,
             _,
             _,
             _
           ) =>
-        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}, observedRespondersCount=${observedResponders.size}, observedSelfHealthCount=${observedSelfHealth.size}}"
+        s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash, lastSnapshotHash, _, _) =>
         s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}, lastSnapshotHash=${lastSnapshotHash.show}}"
       case Finished(_, _, majorityTrigger, candidates, facilitatorsHash, snapshotHash, _) =>
@@ -70,21 +67,12 @@ object schema {
     candidates: Candidates,
     facilitatorsHash: Hash,
     lastSnapshotHash: Hash,
-    // v7 (codex turn 2 fix #2): leader's observedResponders frozen at proposal-build time
-    // so leader re-spread (advancer:889 → spreadProposal:2098) reads from this immutable
-    // status field instead of recomputing from current resources. Without this, every
-    // re-spread could produce a different observedResponders set, breaking determinism.
-    observedResponders: List[PeerId],
-    // v15: same byte-identical-re-spread rationale as observedResponders. The aggregated
-    // selfHealth map is frozen here at proposal-build time so any retransmit reproduces the
-    // original Proposal payload exactly. SortedMap so circe encodes in deterministic key order.
-    observedSelfHealth: SortedMap[PeerId, SelfHealthHint],
     // Frozen leader-selected Facility trigger evidence for byte-identical re-spread.
     triggerEvidence: List[Signed[TriggerStatement]] = List.empty,
     // Exact local candidate used if this node is the leader and must re-spread.
     proposedValue: Option[ProposalValue] = None,
     // Leader value already validated by this node. While populated, the state stays in
-    // CollectingProposals until a frozen-Core prepare QC is available.
+    // CollectingProposals until a frozen-committee prepare QC is available.
     acceptedValue: Option[ProposalValue] = None
   ) extends GlobalConsensusStep
 

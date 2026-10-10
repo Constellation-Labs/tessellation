@@ -103,11 +103,8 @@ object SharedServices {
       now <- Async[F].monotonic
       stateEntryAtRef <- Ref.of[F, FiniteDuration](now)
 
-      // Phase A self-health throttle (docs/consensus/self-health-throttle.md). Polls JVM GC
-      // pauses and OS load average; exposes `current: F[SelfHealthHint]` and Prometheus gauges
-      // dag_node_self_health{state} + signal gauges. In Phase A this is observational only; in
-      // Phase B (consensusSchemaVersion 15) the Facility builder reads `current` to attach the
-      // hint to outgoing declarations.
+      // Local health gauges (dag_node_self_health{state} + signal gauges). Observational only;
+      // the hint never enters consensus.
       localHealthMonitor <- LocalHealthMonitor.make[F](cfg.localHealthMonitor)
 
       cluster = Cluster

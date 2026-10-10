@@ -113,8 +113,8 @@ class StateTransitions[
     } yield ()
 
   /** The one certificate-voter universe: VCC/TC certificates are made only from uniquely identified frozen-Core voters and require the same
-    * BFT quorum function as ProposalQC/CoreCommitQC. Keeping this selection generic in the shared state machine prevents the VCC and TC
-    * paths from drifting onto different safety universes.
+    * BFT quorum function as ProposalQC/CommitQC. Keeping this selection generic in the shared state machine prevents the VCC and TC paths
+    * from drifting onto different safety universes.
     */
   private def certificateQuorum[A](
     state: ConsensusState[Key, Status, Outcome, Kind],
@@ -128,7 +128,7 @@ class StateTransitions[
             core.contains(origin) =>
         origin -> signed
     }
-    val required = CertifiedConsensus.requiredCoreQuorum(core.size, config.quorumThresholdFraction)
+    val required = CertifiedConsensus.requiredQuorum(core.size, config.quorumThresholdFraction)
 
     StateTransitions.CertificateQuorum(coreVotes, core, required, coreVotes.size >= required)
   }
@@ -1120,7 +1120,7 @@ class StateTransitions[
           val atomicReplacement =
             ctx.membershipPolicy.allowsCertifiedAtomicReplacement
           val q =
-            if (atomicReplacement) CertifiedConsensus.requiredCoreQuorum(n, config.quorumThresholdFraction)
+            if (atomicReplacement) CertifiedConsensus.requiredQuorum(n, config.quorumThresholdFraction)
             else math.max(1, QuorumPolicy.fromFraction(n, config.quorumThresholdFraction))
           if (votes.size >= q) {
             // All votes for a given target must agree on facilitatorsHash; otherwise some
@@ -1467,20 +1467,6 @@ class StateTransitions[
           unsafeLabelName("active_size") -> newState.facilitators.value.size.toString
         )
       )
-      responders = newState.observedResponders.value.toSet
-      committee = newState.roundStartFacilitators.value
-      _ <-
-        if (responders.isEmpty || committee.isEmpty) Async[F].unit
-        else {
-          val peerIdLabel = unsafeLabelName("peer_id")
-          committee.toList.traverse_ { pid =>
-            val labels: Metrics.TagSeq = Seq(peerIdLabel -> ConsensusLog.pid(pid))
-            if (responders.contains(pid))
-              Metrics[F].incrementCounter("dag_consensus_observed_responders_credited_total", labels)
-            else
-              Metrics[F].incrementCounter("dag_consensus_observed_responders_omitted_total", labels)
-          }
-        }
     } yield ()
   }
 

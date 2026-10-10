@@ -25,7 +25,6 @@ object ConsensusEndTimeSuite extends SimpleIOSuite {
       lastGlobalSnapshotOrdinal = SnapshotOrdinal.MinValue,
       lastSnapshotHash = Hash.empty,
       consensusConfigHash = None,
-      selfHealthHint = None,
       proposerClockMs = clockMs
     )
 

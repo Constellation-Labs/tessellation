@@ -35,11 +35,11 @@ import eu.timepit.refined.auto._
   *     publicly, plus the independently validated public parent selected by the permissioned recovery procedure.
   *
   * It then folds the relevant contiguous public artifact chain and each child-carried parent certificate. Every QC authenticates both the
-  * authority that certified its round and the exact full/Core authority allowed to certify the next round, so historical replay never
-  * executes a joiner's current committee policy against old data. Interior SnapshotInfo/context preimages may follow ordinary logarithmic
-  * retention: their hashes are certified, while complete state-proof/context validation remains mandatory at the independently trusted root
-  * and downloaded terminal. For a later recovery only the latest reset-to-tip segment is required; older recovery epochs are superseded.
-  * The terminal certificate comes from the authenticated peer outcome. No prefix is installed until the complete fold authenticates that
+  * authority that certified its round and the exact committee allowed to certify the next round, so historical replay never executes a
+  * joiner's current committee policy against old data. Interior SnapshotInfo/context preimages may follow ordinary logarithmic retention:
+  * their hashes are certified, while complete state-proof/context validation remains mandatory at the independently trusted root and
+  * downloaded terminal. For a later recovery only the latest reset-to-tip segment is required; older recovery epochs are superseded. The
+  * terminal certificate comes from the authenticated peer outcome. No prefix is installed until the complete fold authenticates that
   * terminal outcome and its certified operational-state commitment.
   *
   * The resulting frozen state is passed to the ordinary `CertifiedConsensus` verifier. No alternate encoder, canonicalizer, hash, QC
@@ -57,26 +57,18 @@ object GlobalCertifiedDownloadValidator {
   )(step: Cursor => F[Either[Cursor, Result]]): F[Result] =
     Monad[F].tailRecM(initial)(step)
 
-  /** A historical QC may advance authority only from the exact full/Core sets certified by its already-authenticated predecessor. This is
+  /** A historical QC may advance authority only from the exact committee certified by its already-authenticated predecessor. This is
     * deliberately independent of the joining node's current membership policy.
     */
   private[snapshot] def validateAuthorityContinuity(
     value: ProposalValue,
     inherited: CertifiedConsensus.CertifiedRoundAuthorityV1
   ): Either[String, Unit] =
-    Either
-      .cond(
-        value.roundStartFacilitators === inherited.facilitators,
-        (),
-        "certified_authority_full_continuity_mismatch"
-      )
-      .productL(
-        Either.cond(
-          value.roundStartCore === inherited.core,
-          (),
-          "certified_authority_core_continuity_mismatch"
-        )
-      )
+    Either.cond(
+      value.roundStartFacilitators === inherited.facilitators,
+      (),
+      "certified_authority_continuity_mismatch"
+    )
 
   /** Independently authenticated replay root. It is intentionally compact: historical authority needs the parent identity, carried
     * committee, and prior certificate only; it never needs a retained historical state-context preimage.
@@ -173,15 +165,15 @@ object GlobalCertifiedDownloadValidator {
         .void
 
     /** The independently validated genesis artifact authenticates its canonical carried committee. The first certified round uses that
-      * exact set as both full and Core authority; live policy may change the following authority only through the first QC. A historical
-      * downloader therefore never needs the old seedlist, collateral policy, selector, or Core sizing implementation.
+      * exact set as its authority; live policy may change the following authority only through the first QC. A historical downloader
+      * therefore never needs the old seedlist, collateral policy, or selector implementation.
       */
     def authorizedRootAuthority(
       trustedParent: GlobalConsensusOutcome
     )(implicit hasher: io.constellationnetwork.security.Hasher[F]): F[Either[String, CertifiedConsensus.CertifiedRoundAuthorityV1]] =
       NonEmptySet.fromSet(SortedSet.from(trustedParent.facilitators.value)) match {
         case None            => "trusted_root_authority_empty".asLeft[CertifiedConsensus.CertifiedRoundAuthorityV1].pure[F]
-        case Some(authority) => CertifiedConsensus.roundAuthority[F](authority, authority).flatMap(_.asRight[String].pure[F])
+        case Some(authority) => CertifiedConsensus.roundAuthority[F](authority).flatMap(_.asRight[String].pure[F])
       }
 
     def trustedParentFromOutcome(
@@ -301,7 +293,6 @@ object GlobalCertifiedDownloadValidator {
       val certified = authority.parentOutcome
       val value = certified.proposalQc.value
       val inheritedFull = trusted.authorityForNextRound.facilitators
-      val inheritedCore = trusted.authorityForNextRound.core
       val fullSet = inheritedFull.toSortedSet.toSet
       val structural = for {
         _ <- validateAuthorityContinuity(value, trusted.authorityForNextRound)
@@ -327,8 +318,7 @@ object GlobalCertifiedDownloadValidator {
               trusted.artifactHash,
               artifactHash,
               contextHash,
-              inheritedFull,
-              inheritedCore
+              inheritedFull
             )
             artifactProofs <- CertifiedConsensus.verifyArtifactProofs[F, GlobalIncrementalSnapshot](
               round.artifact,
@@ -426,8 +416,8 @@ object GlobalCertifiedDownloadValidator {
       * procedure itself: one controlled rollback lead, the env-selected cohort, the live seedlist/collateral preflight, an all-member
       * first-round barrier, and a coordinated full-fleet restart. Historical replay cannot re-check that event against today's mutable
       * seedlist without making later policy changes invalidate canonical history. It therefore verifies the exact canonical parent plus an
-      * ordinary fixed-floor QC from the complete recovery Core. A community operator can already misuse run-rollback; that remains an
-      * attributable operational fault in this permissioned network, not authority inferred from a self-declared policy hash.
+      * ordinary QC from the complete recovery committee. A community operator can already misuse run-rollback; that remains an attributable
+      * operational fault in this permissioned network, not authority inferred from a self-declared policy hash.
       */
     def publicRecoveryRoot(
       round: PublicRound,
@@ -447,11 +437,6 @@ object GlobalCertifiedDownloadValidator {
           (),
           s"recovery_seed_boundary_committee_too_small:${committee.size}"
         )
-        _ <- Either.cond(
-          value.roundStartCore.toSortedSet === committee,
-          (),
-          "recovery_seed_boundary_requires_full_committee_core"
-        )
         parentOrdinal <- Either.cond(
           round.key.value.value > 0L,
           SnapshotOrdinal.unsafeApply(round.key.value.value - 1L),
@@ -469,10 +454,7 @@ object GlobalCertifiedDownloadValidator {
               HasherSelector[F].withCurrent { implicit hasher =>
                 for {
                   snapshotHash <- GlobalSnapshotArtifactHasher.currentHash[F](snapshot.value)
-                  authority <- CertifiedConsensus.roundAuthority[F](
-                    value.roundStartFacilitators,
-                    value.roundStartCore
-                  )
+                  authority <- CertifiedConsensus.roundAuthority[F](value.roundStartFacilitators)
                 } yield
                   for {
                     _ <- Either.cond(snapshot.value.ordinal === parentOrdinal, (), "recovery_seed_boundary_parent_ordinal_mismatch")
@@ -533,7 +515,7 @@ object GlobalCertifiedDownloadValidator {
               case Right(round) =>
                 // An empty child lineage is the public reset-epoch marker, not a
                 // self-authenticating permissionless root. The canonical public parent,
-                // complete recovery-Core QC, artifact proofs, and the permissioned
+                // complete recovery-committee QC, artifact proofs, and the permissioned
                 // one-lead/full-fleet recovery procedure jointly authorize this boundary.
                 // Reapplying today's mutable seedlist here would invalidate canonical
                 // history after an ordinary operator policy change.

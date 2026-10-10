@@ -193,15 +193,14 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         expect.same(Left("genesis_artifact_not_locally_validated"), locallyBound)
   }
 
-  test("historical authority continuity rejects independently valid full and Core substitutions") { implicit res =>
+  test("historical authority continuity rejects an independently valid committee substitution") { implicit res =>
     implicit val (jsonSerializer, hasher, securityProvider) = res
 
     for {
       pairs <- List.fill(4)(KeyPairGenerator.makeKeyPair[IO]).sequence
       ids = pairs.map(keyPair => PeerId.fromPublic(keyPair.getPublic))
       full = NonEmptySet.fromSetUnsafe(SortedSet.from(ids))
-      core = NonEmptySet.fromSetUnsafe(SortedSet.from(ids.take(3)))
-      authority <- CertifiedConsensus.roundAuthority[IO](full, core)
+      authority <- CertifiedConsensus.roundAuthority[IO](full)
       value = ProposalValue(
         SchemaVersion,
         ConsensusDomain.DagL0,
@@ -212,8 +211,6 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         Hash.empty,
         full,
         authority.facilitatorsHash,
-        core,
-        authority.coreHash,
         authority,
         Hash.empty,
         0L,
@@ -221,27 +218,19 @@ object GlobalCertifiedDownloadValidatorSuite extends MutableIOSuite {
         None,
         SortedSet.empty,
         SortedSet.empty,
-        SortedSet.from(ids),
-        SortedMap.empty,
         SortedSet.empty,
         None
       )
       substitutedFull = NonEmptySet.fromSetUnsafe(SortedSet.from(ids.dropRight(1)))
-      substitutedCore = NonEmptySet.fromSetUnsafe(SortedSet.from(ids.drop(1)))
       valid = GlobalCertifiedDownloadValidator.validateAuthorityContinuity(value, authority)
       wrongFull = GlobalCertifiedDownloadValidator.validateAuthorityContinuity(
         value.copy(roundStartFacilitators = substitutedFull),
         authority
       )
-      wrongCore = GlobalCertifiedDownloadValidator.validateAuthorityContinuity(
-        value.copy(roundStartCore = substitutedCore),
-        authority
-      )
     } yield
       expect.all(
         valid === Right(()),
-        wrongFull === Left("certified_authority_full_continuity_mismatch"),
-        wrongCore === Left("certified_authority_core_continuity_mismatch")
+        wrongFull === Left("certified_authority_continuity_mismatch")
       )
   }
 

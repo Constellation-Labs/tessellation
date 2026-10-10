@@ -60,7 +60,7 @@ object ProposalVccValidator {
     *   the current parent snapshot hash as held by the validator.
     * @param certifiedCore
     *   The frozen Core voter universe. VCC/TC validation requires every distinct signer to belong to this exact set and applies the same
-    *   `max(BFT supermajority, configured fraction)` quorum used by ProposalQC/CoreCommitQC.
+    *   `max(BFT supermajority, configured fraction)` quorum used by ProposalQC/CommitQC.
     * @param quorumThresholdFraction
     *   `ConsensusConfig.quorumThresholdFraction`.
     */
@@ -77,7 +77,7 @@ object ProposalVccValidator {
     quorumThresholdFraction: Double
   ): Either[ProposalRejection, Unit] = {
     val n = coreSize
-    val q = CertifiedConsensus.requiredCoreQuorum(certifiedCore.size, quorumThresholdFraction)
+    val q = CertifiedConsensus.requiredQuorum(certifiedCore.size, quorumThresholdFraction)
 
     // Count DISTINCT signers, not raw votes. `ViewChangeVote.highestKnownQc`/`TimeoutVote` are part of
     // the vote identity, so one signer can contribute multiple distinct Signed votes that all survive in

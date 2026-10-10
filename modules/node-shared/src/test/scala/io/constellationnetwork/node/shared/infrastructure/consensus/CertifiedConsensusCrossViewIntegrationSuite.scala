@@ -122,17 +122,13 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         contextHash = contextHash,
         roundStartFacilitators = committee,
         roundStartFacilitatorsHash = committeeHash,
-        roundStartCore = committee,
-        roundStartCoreHash = committeeHash,
-        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash, committee, committeeHash),
+        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash),
         nextOperationalStateHash = Hash.fromBytes("next-operational-state".getBytes("UTF-8")),
         committedView = 0L,
         trigger = EventTrigger,
         admissionNominee = none,
         admittedPeers = SortedSet.empty,
         evictedPeers = SortedSet.empty,
-        observedResponders = SortedSet.from(world.committee),
-        observedSelfHealth = SortedMap.empty,
         timeoutVoters = SortedSet.empty,
         consensusEndTime = none
       )
@@ -151,11 +147,10 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         value,
         SortedMap.from(voters.map(_.peerId).zip(prepareVotes)),
         world.committee,
-        world.committee,
         configuredFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
-      commits <- voters.traverse(node => signCoreCommit[IO](proposalQc, node.keyPair))
-      commitQc <- buildCoreCommitQc[IO](
+      commits <- voters.traverse(node => signCommit[IO](proposalQc, node.keyPair))
+      commitQc <- buildCommitQc[IO](
         proposalQc,
         SortedMap.from(voters.map(_.peerId).zip(commits)),
         world.committee,
@@ -230,7 +225,7 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
       world <- mkWorld
       value0 <- proposalValue(world)
       certified0 <- buildCertifiedOutcome(world, value0)
-      verified0 <- verifyOutcome[IO](certified0, world.committee, world.committee, configuredFraction)
+      verified0 <- verifyOutcome[IO](certified0, world.committee, configuredFraction)
 
       // View 0: A finalizes the complete value. L learns the prepare QC but not the completed outcome.
       _ <- List(world.a, world.l).traverse_ { node =>
@@ -248,15 +243,14 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         proposalQcCandidates(vcc.some, none),
         CertifiedRoundIdentity.from(value0),
         world.committee,
-        world.committee,
         configuredFraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
       carriedQc <- IO.fromOption(carried)(new IllegalStateException("VCC did not carry the certified value"))
 
-      // Same artifact, different responder evidence: this is the exact Aug 11 divergence class.
+      // Same artifact, different leader-chosen metadata: this is the exact Aug 11 divergence class.
       divergent = value0.copy(
         committedView = 1L,
-        observedResponders = value0.observedResponders - world.a.peerId
+        consensusEndTime = value0.consensusEndTime.fold(1L)(_ + 1L).some
       )
       divergentHash <- valueHash[IO](divergent)
       divergentValidation <- validateValue[IO](
@@ -268,14 +262,13 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         viewInterval = 10.seconds,
         maxRoundDuration = 2.minutes.some,
         frozenCommittee = world.committee,
-        frozenCore = world.committee,
         configuredFraction = configuredFraction
       )
       lDivergentLock <- world.l.storage.tryLockCertifiedVote(roundKey, 1L, divergentHash, carriedQc.some)
       cDivergentLock <- world.c.storage.tryLockCertifiedVote(roundKey, 1L, divergentHash, carriedQc.some)
 
       // The later-view leader re-proposes the embedded value unchanged. The outer view advances;
-      // committedView intentionally remains the view whose Core QC certified the value.
+      // committedView intentionally remains the view whose QC certified the value.
       safeValidation <- validateValue[IO](
         actual = carriedQc.value,
         expected = value0,
@@ -285,7 +278,6 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         viewInterval = 10.seconds,
         maxRoundDuration = 2.minutes.some,
         frozenCommittee = world.committee,
-        frozenCore = world.committee,
         configuredFraction = configuredFraction
       )
       cSafeLock <- world.c.storage.tryLockCertifiedVote(
@@ -294,7 +286,7 @@ object CertifiedConsensusCrossViewIntegrationSuite extends MutableIOSuite {
         carriedQc.valueHash,
         carriedQc.some
       )
-      verifiedAtView1 <- verifyOutcome[IO](certified0, world.committee, world.committee, configuredFraction)
+      verifiedAtView1 <- verifyOutcome[IO](certified0, world.committee, configuredFraction)
       persistedAtView1 <- persist(world.c, carriedQc.value, certified0)
 
       aLast <- world.a.storage.getLastConsensusOutcome

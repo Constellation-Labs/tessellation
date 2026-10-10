@@ -9,7 +9,7 @@ object AdmissionVoterPool {
   def allowsVoteEmission(voter: PeerId, committee: Set[PeerId]): Boolean = committee.contains(voter)
 
   def requiredQuorum(committeeSize: Int, quorumThresholdFraction: Double): Int =
-    CertifiedConsensus.requiredCoreQuorum(committeeSize, quorumThresholdFraction)
+    CertifiedConsensus.requiredQuorum(committeeSize, quorumThresholdFraction)
 
   def select(target: PeerId, committee: Set[PeerId]): Set[PeerId] = committee - target
 }

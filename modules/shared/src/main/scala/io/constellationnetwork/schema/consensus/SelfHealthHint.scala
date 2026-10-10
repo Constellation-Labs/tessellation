@@ -7,11 +7,7 @@ import scala.util.Try
 import enumeratum._
 import io.circe._
 
-/** A peer's self-reported consensus health classification.
-  *
-  * The type is shared because it is part of v35 ProposalValue and trusted checkpoint state. Runtime health sampling remains node-shared;
-  * only the stable three-value wire vocabulary lives here.
-  */
+/** A node's local health classification, exported for operators only. It is not part of any consensus or wire type. */
 sealed trait SelfHealthHint extends EnumEntry {
   def label: String = entryName
 }

@@ -88,17 +88,13 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
         contextHash = Hash.fromBytes(s"context-$suffix".getBytes("UTF-8")),
         roundStartFacilitators = committee,
         roundStartFacilitatorsHash = committeeHash,
-        roundStartCore = committee,
-        roundStartCoreHash = committeeHash,
-        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash, committee, committeeHash),
+        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash),
         nextOperationalStateHash = Hash.fromBytes(s"next-operational-$suffix".getBytes("UTF-8")),
         committedView = 0L,
         trigger = EventTrigger,
         admissionNominee = none,
         admittedPeers = SortedSet.empty,
         evictedPeers = SortedSet.empty,
-        observedResponders = SortedSet(selfId),
-        observedSelfHealth = SortedMap.empty,
         timeoutVoters = SortedSet.empty,
         consensusEndTime = none
       ) -> selfId
@@ -124,17 +120,13 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
         contextHash = Hash.fromBytes("context".getBytes("UTF-8")),
         roundStartFacilitators = committee,
         roundStartFacilitatorsHash = committeeHash,
-        roundStartCore = committee,
-        roundStartCoreHash = committeeHash,
-        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash, committee, committeeHash),
+        nextRoundAuthority = CertifiedRoundAuthorityV1(committee, committeeHash),
         nextOperationalStateHash = Hash.fromBytes("next-operational".getBytes("UTF-8")),
         committedView = 0L,
         trigger = EventTrigger,
         admissionNominee = none,
         admittedPeers = SortedSet.empty,
         evictedPeers = SortedSet.empty,
-        observedResponders = SortedSet.from(ids),
-        observedSelfHealth = SortedMap.empty,
         timeoutVoters = SortedSet.empty,
         consensusEndTime = none
       )
@@ -143,7 +135,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
       qc <- buildProposalQc[IO](
         value,
         SortedMap.from(voters.map(pair => PeerId.fromId(pair.getPublic.toId)).zip(votes)),
-        ids.toSet,
         ids.toSet,
         fraction
       ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
@@ -228,7 +219,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
             None,
             resources,
             Set(selfId),
-            Set(selfId),
             fraction,
             selfId,
             pair,
@@ -285,7 +275,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
             value,
             None,
             resources,
-            Set(selfId),
             Set(selfId),
             fraction,
             selfId,
@@ -346,7 +335,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
             value,
             None,
             resources,
-            Set(selfId),
             Set(selfId),
             fraction,
             selfId,
@@ -454,7 +442,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
           qc.some,
           resources,
           committee,
-          committee,
           fraction,
           selfId,
           corePair,
@@ -495,7 +482,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
               .zip(conflictingVotes)
           ),
           committee,
-          committee,
           fraction
         ).flatMap(result => IO.fromEither(result.leftMap(new IllegalStateException(_))))
         outsider <- KeyPairGenerator.makeKeyPair[IO]
@@ -525,7 +511,6 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
               conflictingValue,
               conflictingQc.some,
               resources,
-              committee,
               committee,
               fraction,
               selfId,
@@ -577,7 +562,7 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
         journal2 <- CertifiedVoteLockPersistence.forSnapshotOrdinal[IO](path)
         restarted <- storage(journal2)
         restored <- restarted.getCertifiedVoteLock(key10)
-        offered <- verifyPersistedLockedQc[IO](restored, committee, committee, fraction)
+        offered <- verifyPersistedLockedQc[IO](restored, committee, fraction)
         vcv = ViewChangeVote(
           fromView = 0L,
           toView = 1L,

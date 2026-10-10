@@ -76,7 +76,7 @@ package object shared {
       classOf[ProposalValue] -> 548,
       classOf[CertificationStatement] -> 549,
       classOf[CertifiedProposalQC] -> 550,
-      classOf[CoreCommitQC] -> 551,
+      classOf[CommitQC] -> 551,
       classOf[ConsensusPeerOutcomeVote[_]] -> 552,
       CertificationPurpose.Prepare.getClass -> 553,
       CertificationPurpose.Commit.getClass -> 554,

@@ -5,7 +5,6 @@ import java.security.MessageDigest
 import cats.Order
 import cats.syntax.all._
 
-import io.constellationnetwork.node.shared.infrastructure.selfhealth.SelfHealthHint
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
