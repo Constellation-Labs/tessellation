@@ -58,6 +58,25 @@ object ConsensusOperationalStateSuite extends SimpleIOSuite {
     expect(decoded == Right(populated))
   }
 
+  pureTest("clearing state round-trips and is omitted from the encoding when absent") {
+    val record = ClearingRecord(
+      seatActivationOrdinal = SnapshotOrdinal.unsafeApply(10L),
+      currentInterval = 2L,
+      seated = 5,
+      present = 0,
+      lastCountedInterval = Some(1L),
+      lastCountedSeated = 2048,
+      lastCountedPresent = 3,
+      lowStreak = 2
+    )
+    val withClearing = populated.copy(clearing = Some(ClearingState(SortedMap(peer('a') -> record), Some(1L))))
+    val printer = Printer(dropNullValues = true, indent = "", sortKeys = true)
+    expect.all(
+      decode[ConsensusOperationalState](withClearing.asJson.noSpaces) == Right(withClearing),
+      !printer.print(populated.asJson).contains("clearing")
+    )
+  }
+
   pureTest("JSON encoding is byte-stable across repeats (determinism)") {
     val a = populated.asJson.noSpaces
     val b = populated.asJson.noSpaces
