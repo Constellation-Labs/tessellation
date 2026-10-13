@@ -1,7 +1,8 @@
 name: Nightly Deploy
 
 on:
-  # Deploy on every merge to develop so the nightly cluster always runs the latest code.
+  # Deploy on every push to these branches, building the pushed branch, so the nightly
+  # cluster runs the latest code. A manual run builds inputs.branch instead.
   # cancel-in-progress ensures rapid pushes don't pile up — only the latest deploy runs.
   push:
     branches:
@@ -56,7 +57,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch || 'release/testnet' }}
+          ref: ${{ inputs.branch || github.ref_name }}
           fetch-tags: true
 
       - name: Setup Java 21
@@ -90,10 +91,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sbt
 
-      # The build checkout above pins to release/testnet (the deploy branch), but
-      # snapshot-streaming.patch fixes and workflow-script changes typically land on
-      # develop or a feature branch first. Grab them from the triggering ref so
-      # feature branches can exercise fixes in CI before merging to release/testnet.
+      # A manual run can build a branch other than the triggering ref (e.g.
+      # release/testnet), but snapshot-streaming.patch fixes and workflow-script
+      # changes typically land on develop or a feature branch first. Grab them from
+      # the triggering ref so feature branches can exercise fixes in CI before
+      # merging to release/testnet.
       - name: Grab patch and workflow scripts from triggering ref
         uses: actions/checkout@v4
         with:
@@ -106,7 +108,7 @@ jobs:
 
       - name: Apply or disable snapshot-streaming patch
         env:
-          BUILD_BRANCH: ${{ inputs.branch || 'release/testnet' }}
+          BUILD_BRANCH: ${{ inputs.branch || github.ref_name }}
           TRIGGERING_REF: ${{ github.ref_name }}
         run: bash .patch-source/.github/workflows/scripts/nightly-deploy/apply-snapshot-streaming-patch.sh
 
@@ -147,7 +149,8 @@ jobs:
     steps:
       # Deploy uses tooling from the triggering ref (monitoring scripts, compose
       # files, action_scripts) — these may not exist on older release branches.
-      # JARs come from the build job's artifacts, built from inputs.branch.
+      # JARs come from the build job's artifacts, built from inputs.branch
+      # (or the pushed branch).
       - name: Checkout deploy tooling
         uses: actions/checkout@v4
         with:
