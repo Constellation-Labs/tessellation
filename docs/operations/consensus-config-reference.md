@@ -47,7 +47,7 @@ Compiled-in hashed fields with no HOCON key: `readmissionProbationRounds` (`3`, 
 
 ### Per-environment knobs (`dag-l0.conf` -> `snapshot`, `Map[AppEnvironment, ...]`)
 
-An **absent env entry** means the safe default (disabled), so adding or removing an entry is itself a consensus-critical, coordinated change.
+An **absent env entry** has the behavior in the table's "Absent-entry behavior" column (for `certified-consensus-activation-ordinal`, a Global L0 startup failure), so adding or removing an entry is itself a consensus-critical, coordinated change.
 
 | HOCON key | Type | Values | Absent-entry behavior | Meaning |
 |-----------|------|--------|-----------------------|---------|

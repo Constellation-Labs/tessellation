@@ -54,7 +54,7 @@ Passing this repository's tests does not satisfy those independent release gates
 
 ## Compatibility boundaries
 
-- `consensusSchemaVersion=36` is an immediate active-cluster compatibility fence.
+- `consensusSchemaVersion=37` is an immediate active-cluster compatibility fence.
 - `certified-consensus-activation-ordinal` is the first key a node may produce.
 - `fields-added-ordinals.tessellation-41-migration` (the v4.1 cutover C) authorizes the
   signed Currency artifact version transition from `0.0.1` to `1.0.0` using Global L0

@@ -6,8 +6,8 @@ The Timeout Certificate (TC) is a HotStuff-aligned, quorum-certified view-advanc
 mechanism. It runs alongside the older `ViewChangeCertificate` (VCC) path: a stalled
 round emits *both* a `ViewChangeVote` (Track 1, VCC) and a signed `TimeoutVote`
 (Track 2, TC), and whichever certificate assembles first deterministically advances
-the round's view. A formed TC carries the highest known `ProposalQC` so the next
-leader inherits any vote-locked proposal hash, and it is re-validated against the same
+the round's view. A formed TC carries no artifact-only `ProposalQC` (`highestKnownQc` is
+always `None`, see section 1); cross-view safety travels in `CertifiedVoteLock`. It is re-validated against the same
 quorum / voter-pool / hash invariants both when it assembles locally and when it
 arrives embedded in a leader's `Proposal`. A view greater than 0 must be justified by
 exactly one of a VCC or a TC; the two are mutually exclusive on any single proposal.
