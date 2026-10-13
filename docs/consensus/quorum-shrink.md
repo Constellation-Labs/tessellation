@@ -16,15 +16,14 @@ VCC/TC/eviction assembly and stall feasibility, without changing the persisted c
 It was enabled only on testnet (mainnet, integrationnet and dev configured `0`). It was
 removed together with the pre-v35 engine, the `quorum-shrink-activation-views` knob and the
 `dag_consensus_quorum_shrink_*` metrics. Certified consensus (ADR-0032) never lowers the
-quorum denominator at a stuck key: VCC and TC are frozen-Core quorum certificates.
+quorum denominator at a stuck key: VCC and TC are committee quorum certificates.
 
-The ADR-0021 finality floor survives. `FinalityQuorum.scala`
-(`modules/node-shared/.../infrastructure/consensus/state/FinalityQuorum.scala`) keeps the
-Core liveness quorum and the frozen-committee finality floor, and Global L0 sets
-`clusterFloorActive = true` in every round, including bootstrap
-(`GlobalSnapshotConsensusStateAdvancer.scala:388`).
+The ADR-0021 frozen-committee supermajority survives as the only quorum:
+`FinalityQuorum.of` (`modules/node-shared/.../infrastructure/consensus/state/FinalityQuorum.scala`)
+over the frozen `roundStartFacilitators`, in every round including bootstrap
+([ADR-0036](../adr/0036-single-frozen-voting-set.md)).
 
-See [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md) and the Amendment section of
+See [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md), [ADR-0036](../adr/0036-single-frozen-voting-set.md) and the Amendment section of
 [ADR-0021](../adr/0021-quorum-shrink-and-finality-floor.md). The full former text is in git
 history, for example `git show origin/develop:docs/consensus/quorum-shrink.md` (before
 #1627 merges) or `git log -- docs/consensus/quorum-shrink.md`.

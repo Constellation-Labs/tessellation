@@ -15,10 +15,9 @@ persistently down by certifying a reduction to a per-environment permissioned fa
 set (`LivenessShrink` vote and certificate). It was never built. The wedge class was
 instead addressed by the v33 quorum-denominator shrink rung
 ([quorum-shrink.md](quorum-shrink.md)), which was itself removed with the pre-v35 Global
-L0 engine. The ADR-0021 finality floor survives in `FinalityQuorum.scala`
-(`modules/node-shared/.../infrastructure/consensus/state/FinalityQuorum.scala`), and Global
-L0 sets `clusterFloorActive = true` in every round
-(`GlobalSnapshotConsensusStateAdvancer.scala:388`).
+L0 engine. The ADR-0021 frozen-committee supermajority survives as the only quorum,
+`FinalityQuorum.of` over `roundStartFacilitators`
+([ADR-0036](../adr/0036-single-frozen-voting-set.md)).
 
 See [ADR-0035](../adr/0035-v35-to-v41-mainnet-migration.md),
 [ADR-0018](../adr/0018-supermajority-quorum-and-between-round-eviction.md) and the Amendment
