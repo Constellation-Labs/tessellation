@@ -11,6 +11,7 @@ import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
@@ -2030,5 +2031,142 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
         expect(rewardsByAddress.get(address1).contains(150L)) &&
         // address2 is unaffected and not merged with address1.
         expect(rewardsByAddress.get(address2).contains(40L))
+  }
+
+  test("fixed-emission metanomics: constant 2% emission, new allocation, fixed 10% commission, no flat inflation") {
+    val epochsPerYear = 100L
+    val totalSupply = Amount(1_000_000_00000000L) // 1M DAG
+    val emissionPerEpoch = 200_00000000L // 1M * 2% / 100 epochs
+
+    val testConfig = delegatedRewardsConfig.copy(
+      flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // must be overridden to zero by the program
+      emissionConfig = Map(
+        AppEnvironment.Dev -> { _: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(epochsPerYear),
+            asOfEpoch = EpochProgress(100L),
+            iTarget = DefaultDelegatedRewardsConfigProvider.fixedEmissionRate,
+            iInitial = DefaultDelegatedRewardsConfigProvider.fixedEmissionRate,
+            lambda = NonNegFraction.unsafeFrom(25, 100),
+            iImpact = NonNegFraction.unsafeFrom(5, 10),
+            totalSupply = totalSupply,
+            dagPrices = SortedMap(EpochProgress(100L) -> NonNegFraction.unsafeFrom(10, 1)),
+            epochsPerMonth = NonNegLong(8L)
+          )
+        }
+      ),
+      percentDistribution = Map(AppEnvironment.Dev -> { _ =>
+        DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+      }),
+      priceOracleEpoch = Map(AppEnvironment.Dev -> EpochProgress(100L))
+    )
+
+    val nodeAAddress = Address("DAG011jH7FMDvKpdb7wewrMWwYtkwq56nHquAHdi")
+    val nodeBAddress = Address("DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf")
+    val nodeAId = Id(Hex("AAAAAAAAAAAAAAAA"))
+    val nodeBId = Id(Hex("BBBBBBBBBBBBBBBB"))
+
+    def stake(source: Address, nodeId: Id, amount: Long) = DelegatedStakeRecord(
+      Signed(
+        UpdateDelegatedStake.Create(source, nodeId.toPeerId, DelegatedStakeAmount(amount), DelegatedStakeFee(0L), Hash.empty),
+        NonEmptySet.one[SignatureProof](SignatureProof(nodeId, Signature(Hex(Hash.empty.value))))
+      ),
+      SnapshotOrdinal(1L),
+      Balance(0L),
+      none,
+      none
+    )
+
+    def nodeParams(address: Address, nodeId: Id, rewardFraction: Int) = Signed(
+      UpdateNodeParameters(
+        address,
+        DelegatedStakeRewardParameters(RewardFraction.unsafeFrom(rewardFraction)),
+        NodeMetadataParameters("", ""),
+        UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(nodeId, Signature(Hex(Hash.empty.value))))
+    )
+
+    val stakes = SortedMap(
+      address1 -> SortedSet(stake(address1, nodeAId, 1000_00000000L)),
+      address2 -> SortedSet(stake(address2, nodeBId, 3000_00000000L))
+    )
+
+    // Operator-configured commissions (80% and 0%) must be ignored in favour of the fixed 10%
+    val context = GlobalSnapshotInfo.empty.copy(
+      updateNodeParameters = SortedMap(
+        nodeAId -> (nodeParams(nodeAAddress, nodeAId, 80000000), SnapshotOrdinal.unsafeApply(1L)),
+        nodeBId -> (nodeParams(nodeBAddress, nodeBId, 0), SnapshotOrdinal.unsafeApply(1L))
+      ).some,
+      activeDelegatedStakes = stakes.some,
+      priceState = SortedMap(
+        TokenPair.DAG_USD -> PriceRecord(
+          currentPrice = PricingUpdate(PriceFraction(TokenPair.DAG_USD, NonNegFraction.unsafeFrom(5, 1))),
+          upcomingPrice = PricingUpdate.zero,
+          currentSum = PricingUpdate.zero,
+          currentNumEvents = PosInt(1),
+          nextWindowChange = EpochProgress(110L),
+          updatedAt = EpochProgress(106L)
+        )
+      ).some
+    )
+
+    val emptyAcceptanceResult = UpdateDelegatedStakeAcceptanceResult(SortedMap.empty, List.empty, SortedMap.empty, List.empty)
+    val partitionedUpdates = PartitionedStakeUpdates(stakes, SortedMap.empty, SortedMap.empty)
+    val facilitators = List((nodeAAddress, nodeAId.toPeerId), (nodeBAddress, nodeBId.toPeerId))
+
+    for {
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forAsync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, testConfig)
+
+      // emission is constant regardless of elapsed time and price movement
+      emissionAtStart <- distributor.calculateVariableInflation(EpochProgress(100L), context)
+      emissionLater <- distributor.calculateVariableInflation(EpochProgress(1100L), context)
+
+      result <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), facilitators, emptyAcceptanceResult, partitionedUpdates)
+    } yield {
+      val reserved = (addr: Address) => result.reservedAddressRewards.find(_.destination == addr).map(_.amount.value.value).getOrElse(0L)
+      val operator =
+        (addr: Address) => result.nodeOperatorRewards.toList.collect { case RewardTransaction(d, a) if d == addr => a.value.value }
+      val delegator =
+        (id: Id, addr: Address) => result.delegatorRewardsMap.get(id.toPeerId).flatMap(_.get(addr)).map(_.value.value).getOrElse(0L)
+
+      expect(emissionAtStart.value.value == emissionPerEpoch)
+        .and(expect(emissionLater.value.value == emissionPerEpoch))
+        .and(expect(reserved(MainnetRewardsConfig.protocolWalletMetanomics) == 60_00000000L)) // 30%
+        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.stardustTreasury) == 20_00000000L)) // 10%
+        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.aiInference) == 30_00000000L)) // 15%
+        .and(expect(result.reservedAddressRewards.size == 3))
+        // validators: 10% split evenly; plus 10% commission on their delegators' share of the 35% gross pool
+        .and(expect(operator(nodeAAddress).sorted == List(1_75000000L, 10_00000000L)))
+        .and(expect(operator(nodeBAddress).sorted == List(5_25000000L, 10_00000000L)))
+        // delegators: 90% of their node's share of the 35% gross pool, with no flat inflation on top
+        .and(expect(delegator(nodeAId, address1) == 15_75000000L))
+        .and(expect(delegator(nodeBId, address2) == 47_25000000L))
+        .and(expect(result.totalEmittedRewardsAmount.value.value == emissionPerEpoch))
+    }
+  }
+
+  pureTest("mainnet config switches to fixed-emission metanomics at mainnetMetanomicsV2Epoch") {
+    val config = DefaultDelegatedRewardsConfigProvider.getConfig()
+    val gate = DefaultDelegatedRewardsConfigProvider.mainnetMetanomicsV2Epoch
+    val before = EpochProgress(NonNegLong.unsafeFrom(gate.value.value - 1))
+    val emissionBefore = config.emissionConfig(AppEnvironment.Mainnet)(before)
+    val emissionAfter = config.emissionConfig(AppEnvironment.Mainnet)(gate)
+    val programBefore = config.percentDistribution(AppEnvironment.Mainnet)(before)
+    val programAfter = config.percentDistribution(AppEnvironment.Mainnet)(gate)
+    val totalWeight = programAfter.weights.values.map(_.toBigDecimal).sum +
+      programAfter.validatorsWeight.toBigDecimal + programAfter.delegatorsWeight.toBigDecimal
+
+    expect(emissionBefore.iInitial != emissionBefore.iTarget)
+      .and(expect(emissionAfter.iInitial == DefaultDelegatedRewardsConfigProvider.fixedEmissionRate))
+      .and(expect(emissionAfter.iTarget == DefaultDelegatedRewardsConfigProvider.fixedEmissionRate))
+      .and(expect(emissionAfter.copy(iInitial = emissionBefore.iInitial, iTarget = emissionBefore.iTarget) == emissionBefore))
+      .and(expect(programBefore.fixedCommission.isEmpty && programBefore.flatInflationRate.isEmpty))
+      .and(expect(programAfter == DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram))
+      .and(expect(totalWeight == BigDecimal(1)))
+      .and(expect(programAfter.fixedCommission.contains(NonNegFraction.unsafeFrom(10, 100))))
+      .and(expect(programAfter.flatInflationRate.contains(NonNegFraction.zero)))
   }
 }

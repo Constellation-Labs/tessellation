@@ -102,7 +102,8 @@ object GlobalDelegatedRewardsDistributor {
             List.empty,
             List.empty,
             BigDecimal(0L, mc),
-            BigDecimal(0L, mc)
+            BigDecimal(0L, mc),
+            None
           )
         case TimeTrigger =>
           for {
@@ -125,7 +126,8 @@ object GlobalDelegatedRewardsDistributor {
               reservedRewards,
               oneTimeRewards,
               facilitatorRewardPool,
-              delegatorRewardPool
+              delegatorRewardPool,
+              pctConfig.fixedCommission
             )
           } yield result
       }
@@ -145,7 +147,7 @@ object GlobalDelegatedRewardsDistributor {
         val delegatorsWeight = pctConfig.delegatorsWeight.toBigDecimal
         val totalWeight = reservedWeight + validatorsWeight + delegatorsWeight
 
-        val annualFlatInflationRate = delegatedRewardsConfig.flatInflationRate.toBigDecimal
+        val annualFlatInflationRate = pctConfig.flatInflationRate.getOrElse(delegatedRewardsConfig.flatInflationRate).toBigDecimal
 
         val reservedPercentage = reservedWeight / totalWeight
         val validatorsPercentage = validatorsWeight / totalWeight
@@ -284,7 +286,8 @@ object GlobalDelegatedRewardsDistributor {
       activeDelegatedStakes: SortedMap[Address, SortedSet[DelegatedStakeRecord]],
       nodeParametersMap: SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)],
       totalDelegationRewardPool: BigDecimal,
-      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+      fixedCommission: Option[NonNegFraction]
     ): F[SortedMap[PeerId, SortedMap[Address, Amount]]] =
       if (totalDelegationRewardPool === BigDecimal(0.0)) SortedMap.empty[PeerId, SortedMap[Address, Amount]].pure[F]
       else {
@@ -320,7 +323,9 @@ object GlobalDelegatedRewardsDistributor {
 
                     // Convert from RewardFraction (0-100M) to BigDecimal percentage (0-1)
                     // RewardFraction is operator cut, so delegators get (1 - operatorFraction)
-                    operatorFraction = BigDecimal(nodeRewardParams.rewardFraction, mc) / BigDecimal(100_000_000, mc)
+                    operatorFraction = fixedCommission
+                      .map(_.toBigDecimal)
+                      .getOrElse(BigDecimal(nodeRewardParams.rewardFraction, mc) / BigDecimal(100_000_000, mc))
                     delegatorRewardPercentage = BigDecimal(1, mc) - operatorFraction
 
                     _ <-
@@ -366,7 +371,8 @@ object GlobalDelegatedRewardsDistributor {
       facilitatorRewardPool: BigDecimal,
       delegatorRewardPool: BigDecimal,
       lastSnapshotContext: GlobalSnapshotInfo,
-      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]] = SortedMap.empty
+      acceptedCreates: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+      fixedCommission: Option[NonNegFraction]
     ): F[SortedSet[RewardTransaction]] = {
 
       val staticRewardsF = {
@@ -420,8 +426,9 @@ object GlobalDelegatedRewardsDistributor {
                 nodeParametersMap.get(nodeId.toId).flatMap {
                   case (params, _) =>
                     // RewardFraction is stored as a value from 0 to 100,000,000 representing 0% to 100%
-                    val operatorCommission = BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) /
-                      BigDecimal(100_000_000, mc)
+                    val operatorCommission = fixedCommission
+                      .map(_.toBigDecimal)
+                      .getOrElse(BigDecimal(params.value.delegatedStakeRewardParameters.rewardFraction, mc) / BigDecimal(100_000_000, mc))
 
                     val stakeRatio = stakeAmount / totalFacilitatorStake
                     val dynamicRewardBD = delegatorRewardPool * stakeRatio * operatorCommission
@@ -474,7 +481,8 @@ object GlobalDelegatedRewardsDistributor {
       reservedRewardDistribution: List[(Address, BigDecimal)],
       oneTimeRewards: List[OneTimeReward],
       facilitatorRewardPool: BigDecimal,
-      delegatorRewardPool: BigDecimal
+      delegatorRewardPool: BigDecimal,
+      fixedCommission: Option[NonNegFraction]
     ): F[DelegatedRewardsResult] =
       for {
         delegatorRewardsMap <-
@@ -482,7 +490,8 @@ object GlobalDelegatedRewardsDistributor {
             lastSnapshotContext.activeDelegatedStakes.getOrElse(SortedMap.empty),
             lastSnapshotContext.updateNodeParameters.getOrElse(SortedMap.empty),
             delegatorRewardPool,
-            delegatedStakeDiffs.acceptedCreates
+            delegatedStakeDiffs.acceptedCreates,
+            fixedCommission
           ).map(_.toSortedMap)
 
         nodeOperatorRewards <-
@@ -492,7 +501,8 @@ object GlobalDelegatedRewardsDistributor {
             facilitatorRewardPool,
             delegatorRewardPool,
             lastSnapshotContext,
-            delegatedStakeDiffs.acceptedCreates
+            delegatedStakeDiffs.acceptedCreates,
+            fixedCommission
           )
         oneTimeRewardsTxs = SortedSet.from(oneTimeRewards.map(otr => RewardTransaction(otr.address, otr.amount)))
         nodeOperatorRewardsTxs = nodeOperatorRewards ++ oneTimeRewardsTxs

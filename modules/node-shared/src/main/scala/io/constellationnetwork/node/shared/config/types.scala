@@ -1655,7 +1655,11 @@ object types {
   case class ProgramsDistributionConfig(
     weights: Map[Address, NonNegFraction],
     validatorsWeight: NonNegFraction,
-    delegatorsWeight: NonNegFraction
+    delegatorsWeight: NonNegFraction,
+    // when set, overrides DelegatedRewardsConfig.flatInflationRate for the epochs this program covers
+    flatInflationRate: Option[NonNegFraction] = None,
+    // when set, every node operator takes this commission on delegator rewards instead of its configured rewardFraction
+    fixedCommission: Option[NonNegFraction] = None
   )
 
   case class OneTimeReward(epoch: EpochProgress, address: Address, amount: TransactionAmount)
