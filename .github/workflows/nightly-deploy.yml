@@ -1,14 +1,12 @@
 name: Nightly Deploy
 
 on:
-  # Deploy on every push to these branches, building the pushed branch, so the nightly
-  # cluster runs the latest code. A manual run builds inputs.branch instead.
+  # Deploy on every merge to develop, building develop, so the nightly cluster always
+  # runs the latest code. A manual run builds inputs.branch instead.
   # cancel-in-progress ensures rapid pushes don't pile up — only the latest deploy runs.
   push:
     branches:
       - develop
-      - release/testnet
-      - nightly_monitoring_service
   workflow_dispatch:
     inputs:
       branch:
