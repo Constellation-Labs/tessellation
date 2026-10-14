@@ -11,8 +11,8 @@ import scala.math.BigDecimal.{RoundingMode, double2bigDecimal}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
