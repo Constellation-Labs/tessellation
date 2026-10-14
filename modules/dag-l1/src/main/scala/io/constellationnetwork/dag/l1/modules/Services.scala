@@ -99,7 +99,7 @@ object Services {
       val collateral = Collateral.makeForGlobalSnapshots[F](
         cfg.collateral,
         lastGlobalSnapshotStorage.getCombined.map(_.map {
-          case (snapshot, info) => (snapshot.ordinal, info.balances: Map[Address, Balance])
+          case (snapshot, info) => (snapshot.epochProgress, info.balances: Map[Address, Balance])
         }),
         rewardsEra
       )

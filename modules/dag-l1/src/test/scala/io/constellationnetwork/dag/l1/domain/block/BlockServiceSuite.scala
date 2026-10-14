@@ -1,6 +1,6 @@
 package io.constellationnetwork.dag.l1.domain.block
 
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
 import cats.syntax.either._
@@ -24,11 +24,15 @@ import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.transaction._
-import io.constellationnetwork.security.hash.ProofsHash
+import io.constellationnetwork.security.hash.{Hash, ProofsHash}
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 import io.constellationnetwork.security.{Hasher, _}
 
 import eu.timepit.refined.auto._
@@ -103,7 +107,13 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
         override def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
 
-        override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+        override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = {
+          implicit val hasher: Hasher[IO] = txHasher
+          GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)).map { snapshot =>
+            val proof = SignatureProof(Id(Hex("00")), Signature(Hex("00")))
+            Hashed(Signed(snapshot, NonEmptySet.one(proof)), Hash.empty, ProofsHash("head")).some
+          }
+        }
 
         override def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
 

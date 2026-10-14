@@ -11,7 +11,6 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
-import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -50,25 +49,25 @@ object TokenLockBlockService {
         implicit hasher: Hasher[F]
       ): F[Unit] =
         for {
-          (lastGlobalEpochProgress, collateralOrdinal) <- lastSnapshotStorage.get.map {
+          lastGlobalEpochProgress <- lastSnapshotStorage.get.map {
             case Some(snapshot) =>
               snapshot.signed.value match {
                 case cis: CurrencyIncrementalSnapshot =>
-                  (cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue), snapshotOrdinal.next)
+                  cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue)
                 case gis: GlobalIncrementalSnapshot =>
-                  (gis.epochProgress, gis.ordinal.next)
+                  gis.epochProgress
                 case _ =>
-                  (EpochProgress.MinValue, snapshotOrdinal.next)
+                  EpochProgress.MinValue
               }
             case None =>
-              (EpochProgress.MinValue, snapshotOrdinal.next)
+              EpochProgress.MinValue
           }
           result <- signedBlock.toHashed.flatMap { hashedBlock =>
             EitherT(
               tokenLockBlockAcceptanceManager
                 .acceptBlock(
                   signedBlock,
-                  context(collateralOrdinal),
+                  context(lastGlobalEpochProgress),
                   snapshotOrdinal,
                   shouldValidateCollateral = true,
                   lastGlobalEpochProgress.some
@@ -80,7 +79,7 @@ object TokenLockBlockService {
           }
         } yield result
 
-      private def context(ordinal: SnapshotOrdinal): TokenLockBlockAcceptanceContext[F] = new TokenLockBlockAcceptanceContext[F] {
+      private def context(epoch: EpochProgress): TokenLockBlockAcceptanceContext[F] = new TokenLockBlockAcceptanceContext[F] {
 
         def getBalance(address: Address): F[Option[Balance]] =
           addressStorage.getBalance(address).map(_.some)
@@ -91,7 +90,7 @@ object TokenLockBlockService {
         def getInitialTxRef: TokenLockReference =
           tokenLockStorage.getInitialTx.ref
 
-        def getCollateral: Amount = era.collateralAt(ordinal, collateral)
+        def getCollateral: Amount = era.collateralAt(epoch, collateral)
       }
 
       private def processAcceptanceSuccess(

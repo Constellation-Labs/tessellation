@@ -23,6 +23,8 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Json
 import io.circe.syntax._
 import org.http4s._
@@ -38,9 +40,9 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
     implicit0(json: JsonSerializer[IO]) <- Resource.eval(JsonSerializer.forSync[IO])
   } yield (json, Hasher.forJson[IO], sp)
 
-  private val activation = SnapshotOrdinal.unsafeApply(100L)
+  private val activation = EpochProgress(100L)
   private val era = DelegatedRewardsEra(activation, SortedMap.empty)
-  private type ValidationInput = (Signed[UpdateNodeParameters], GlobalSnapshotInfo, SnapshotOrdinal)
+  private type ValidationInput = (Signed[UpdateNodeParameters], GlobalSnapshotInfo, EpochProgress)
 
   test("raw signed GET retains 5% and its reference while the list shows effective 10% from activation") { res =>
     implicit val (json, hasher, sp) = res
@@ -61,10 +63,13 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
         Some(SortedMap(peerId.toId -> (signed, SnapshotOrdinal.unsafeApply(90L))))
       )
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue))
-      checks <- List(99L, 100L, 101L).traverse { ordinal =>
+      checks <- List(99L, 100L, 101L).traverse { epoch =>
         for {
           snapshot <- Signed
-            .forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(ordinal)), keyPair)
+            .forAsyncHasher[IO, GlobalIncrementalSnapshot](
+              base.copy(ordinal = SnapshotOrdinal.unsafeApply(epoch + 1000L), epochProgress = EpochProgress(NonNegLong.unsafeFrom(epoch))),
+              keyPair
+            )
           captured <- Ref.of[IO, Option[ValidationInput]](None)
           routes <- makeRoutes(snapshot, info, captured)
           raw <- routes.orNotFound.run(Request[IO](Method.GET, Uri.unsafeFromString(s"/node-params/${peerId.value.value}")))
@@ -79,7 +84,7 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
             .and(expect.same(Status.Ok, listed.status))
             .and(
               expect.same(
-                Right(if (ordinal < 100L) 5000000 else 10000000),
+                Right(if (epoch < 100L) 5000000 else 10000000),
                 listJson.hcursor.downArray.downField("delegatedStakeRewardParameters").get[Int]("rewardFraction")
               )
             )
@@ -87,7 +92,7 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
     } yield checks.reduce(_ and _)
   }
 
-  test("POST supplies next candidate ordinal and the same head context without rewriting signed commission") { res =>
+  test("POST uses finalized head epoch and preserves signed commission") { res =>
     implicit val (json, hasher, sp) = res
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -101,7 +106,10 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
         keyPair
       )
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue))
-      snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(99L)), keyPair)
+      snapshot <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](
+        base.copy(ordinal = SnapshotOrdinal.unsafeApply(1099L), epochProgress = EpochProgress(99L)),
+        keyPair
+      )
       info = GlobalSnapshotInfo.empty
       captured <- Ref.of[IO, Option[ValidationInput]](None)
       routes <- makeRoutes(snapshot, info, captured)
@@ -110,7 +118,7 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
     } yield
       expect
         .same(Status.Ok, response.status)
-        .and(expect.same(Some(activation), actual.map(_._3)))
+        .and(expect.same(Some(EpochProgress(99L)), actual.map(_._3)))
         .and(expect.same(Some(info), actual.map(_._2)))
         .and(expect.same(Some(signed.asJson), actual.map(_._1.asJson)))
   }
@@ -145,9 +153,9 @@ object NodeParametersRoutesSuite extends MutableIOSuite {
       def validate(
         signed: Signed[UpdateNodeParameters],
         context: GlobalSnapshotInfo,
-        ordinal: SnapshotOrdinal
+        epoch: EpochProgress
       ): IO[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
-        captured.set(Some((signed, context, ordinal))).as(signed.validNec)
+        captured.set(Some((signed, context, epoch))).as(signed.validNec)
     }
     for {
       node <- NodeStorage.make[IO]

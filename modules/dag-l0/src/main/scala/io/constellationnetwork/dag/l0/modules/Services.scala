@@ -118,7 +118,7 @@ object Services {
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)
       collateralService = Collateral.makeForGlobalSnapshots[F](
         cfg.collateral,
-        storages.globalSnapshot.head.map(_.map { case (snapshot, info) => (snapshot.ordinal, info.balances: Map[Address, Balance]) }),
+        storages.globalSnapshot.head.map(_.map { case (snapshot, info) => (snapshot.epochProgress, info.balances: Map[Address, Balance]) }),
         DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(cfg.environment, DelegatedRewardsEra.Disabled)
       )
       stateChannelService = StateChannelService

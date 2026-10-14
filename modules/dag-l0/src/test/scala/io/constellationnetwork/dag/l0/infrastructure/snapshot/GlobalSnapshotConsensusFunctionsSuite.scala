@@ -516,12 +516,19 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     } yield expectation
   }
 
-  test("all global block contexts and facilitator selection use the era collateral boundary, including historical replay") { res =>
+  test("global block contexts replay by epoch and facilitators follow finalized head epoch, including historical replay") { res =>
     implicit val (_, ks, j, h, sp, m) = res
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
-    val activation = SnapshotOrdinal.unsafeApply(100L)
+    val activation = EpochProgress(NonNegLong(100L))
     val era = DelegatedRewardsEra(activation, SortedMap.empty)
     val legacy = Amount(250_000_00000000L)
+    val cases = List(
+      (99L, EventTrigger: ConsensusTrigger),
+      (100L, EventTrigger: ConsensusTrigger),
+      (101L, EventTrigger: ConsensusTrigger),
+      (99L, TimeTrigger: ConsensusTrigger),
+      (99L, EventTrigger: ConsensusTrigger)
+    )
     for {
       observed <- Ref.of[IO, List[(String, SnapshotOrdinal, Amount)]](Nil)
       recordingBlocks = new BlockAcceptanceManager[IO] {
@@ -610,17 +617,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       peerId = PeerId.fromId(keyPair.getPublic.toId)
       genesis = GlobalSnapshot.mkGenesis(Map(keyPair.getPublic.toAddress -> Balance(500_000_00000000L)), EpochProgress.MinValue)
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
-      results <- List(99L, 100L, 101L, 99L).traverse { ordinal =>
+      results <- cases.traverse { case (epoch, trigger) =>
         for {
           previous <- Signed
-            .forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(ordinal - 1L)), keyPair)
+            .forAsyncHasher[IO, GlobalIncrementalSnapshot](
+              base.copy(ordinal = SnapshotOrdinal.unsafeApply(epoch + 1000L), epochProgress = EpochProgress(NonNegLong.unsafeFrom(epoch))),
+              keyPair
+            )
           allowed <- functions.facilitatorFilter(previous, genesis.info, peerId)
           result <- functions.createProposalArtifact(
             previous.ordinal,
             previous,
             genesis.info,
             h,
-            EventTrigger,
+            trigger,
             Set.empty,
             Set.empty,
             _ => IO.pure(None)
@@ -630,15 +640,16 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         } yield (allowed, result._1.stateProof, expect.same(result._2, replayed))
       }
       actual <- observed.get
-      expected = List(99L, 100L, 101L, 99L).flatMap { ordinal =>
+      expected = cases.flatMap { case (epoch, trigger) =>
+        val candidateEpoch = if (trigger == TimeTrigger) epoch + 1L else epoch
         List.fill(2)(List("block", "allow-spend", "token-lock")).flatten.map { kind =>
-          (kind, SnapshotOrdinal.unsafeApply(ordinal), if (ordinal < 100L) legacy else DelegatedRewardsEra.MinimumNodeCollateral)
+          (kind, SnapshotOrdinal.unsafeApply(epoch + 1001L), if (candidateEpoch < 100L) legacy else DelegatedRewardsEra.MinimumNodeCollateral)
         }
       }
     } yield
       expect
-        .same(expected.sortBy(v => (v._1, v._2.value.value)), actual.sortBy(v => (v._1, v._2.value.value)))
-        .and(expect.same(List(true, false, false, true), results.map(_._1)))
+        .same(expected.sortBy(v => (v._1, v._2.value.value, v._3.value.value)), actual.sortBy(v => (v._1, v._2.value.value, v._3.value.value)))
+        .and(expect.same(List(true, false, false, true, true), results.map(_._1)))
         .and(expect.same(results.head._2, results.last._2))
         .and(results.map(_._3).reduce(_ and _))
   }

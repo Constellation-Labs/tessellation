@@ -54,18 +54,19 @@ object L1CollateralServiceSuite extends MutableIOSuite {
 
   private val legacy = Amount(250_000_00000000L)
   private val minimum = DelegatedRewardsEra.MinimumNodeCollateral
-  private val era = DelegatedRewardsEra(SnapshotOrdinal.unsafeApply(100L), SortedMap.empty)
+  private val era = DelegatedRewardsEra(EpochProgress(100L), SortedMap.empty)
   private case object ContextObserved extends RuntimeException("Acceptance context captured") with NoStackTrace
   private case class Observation(kind: String, required: Amount, enoughCollateral: Boolean)
 
-  test("all L1 admissions switch operator collateral for the next global ordinal") { res =>
+  test("all L1 admissions switch operator collateral at the finalized global epoch, independently of ordinal") { res =>
     implicit val (hasher, sp, random) = res
     List(
-      (98L, legacy.value.value, legacy, true),
-      (99L, legacy.value.value, minimum, false)
+      (99L, legacy.value.value, legacy, true),
+      (100L, legacy.value.value, minimum, false),
+      (101L, minimum.value.value, minimum, true)
     ).traverse {
-      case (headOrdinal, balance, expectedRequired, expectedEnough) =>
-        observeServices(headOrdinal, balance, era).map { observations =>
+      case (headEpoch, balance, expectedRequired, expectedEnough) =>
+        observeServices(headEpoch, balance, era).map { observations =>
           expect.same(
             List("block", "allow-spend", "token-lock").map(Observation(_, expectedRequired, expectedEnough)),
             observations
@@ -74,7 +75,7 @@ object L1CollateralServiceSuite extends MutableIOSuite {
     }.map(_.reduce(_ and _))
   }
 
-  private def observeServices(headOrdinal: Long, operatorBalance: Long, policy: DelegatedRewardsEra)(
+  private def observeServices(headEpoch: Long, operatorBalance: Long, policy: DelegatedRewardsEra)(
     implicit hasher: Hasher[IO],
     sp: SecurityProvider[IO],
     random: Random[IO]
@@ -88,7 +89,10 @@ object L1CollateralServiceSuite extends MutableIOSuite {
       genesis = GlobalSnapshot.mkGenesis(Map(address -> balance), EpochProgress.MinValue)
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
       head <- Signed
-        .forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(headOrdinal)), keyPair)
+        .forAsyncHasher[IO, GlobalIncrementalSnapshot](
+          base.copy(ordinal = SnapshotOrdinal.unsafeApply(headEpoch + 1000L), epochProgress = EpochProgress(NonNegLong.unsafeFrom(headEpoch))),
+          keyPair
+        )
         .flatMap(_.toHashed[IO])
       headRef <- SignallingRef.of[IO, Option[(io.constellationnetwork.security.Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](
         Some(head -> GlobalSnapshotInfo.empty.copy(balances = SortedMap(address -> balance)))
@@ -196,7 +200,7 @@ object L1CollateralServiceSuite extends MutableIOSuite {
         policy
       )
       _ <- expectCapture(blockService.accept(block))
-      _ <- expectCapture(allowSpendService.accept(allowSpendBlock, SnapshotOrdinal.unsafeApply(headOrdinal)))
+      _ <- expectCapture(allowSpendService.accept(allowSpendBlock, SnapshotOrdinal.unsafeApply(headEpoch + 1000L)))
       // The production token-lock caller supplies MinValue; collateral must come from the actual global head.
       _ <- expectCapture(tokenLockService.accept(tokenLockBlock, SnapshotOrdinal.MinValue))
       result <- observed.get

@@ -78,7 +78,7 @@ object GlobalSnapshotConsensusFunctions {
       peerId.toAddress[F].map { address =>
         getBalances(lastContext)
           .getOrElse(address, Balance.empty)
-          .satisfiesCollateral(rewardsEra.collateralAt(lastSignedArtifact.ordinal.next, collateral))
+          .satisfiesCollateral(rewardsEra.collateralAt(lastSignedArtifact.epochProgress, collateral))
       }
 
     def getBalances(context: GlobalSnapshotContext): SortedMap[Address, Balance] = context.balances

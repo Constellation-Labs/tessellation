@@ -11,7 +11,6 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
-import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -19,6 +18,7 @@ import io.constellationnetwork.schema.Block.HashedOps
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -47,13 +47,13 @@ object BlockService {
       def accept(signedBlock: Signed[Block])(implicit hasher: Hasher[F]): F[Unit] =
         signedBlock.toHashed.flatMap { hashedBlock =>
           EitherT
-            .fromOptionF(lastGlobalSnapshotStorage.getOrdinal, SnapshotOrdinalUnavailable)
-            .flatMapF(ordinal => blockAcceptanceManager.acceptBlock(signedBlock, context(ordinal.next), ordinal))
+            .fromOptionF(lastGlobalSnapshotStorage.get, SnapshotOrdinalUnavailable)
+            .flatMapF(snapshot => blockAcceptanceManager.acceptBlock(signedBlock, context(snapshot.epochProgress), snapshot.ordinal))
             .leftSemiflatMap(processAcceptanceError(hashedBlock))
             .semiflatMap { case (contextUpdate, _) => processAcceptanceSuccess(hashedBlock)(contextUpdate) }
             .rethrowT
         }
-      private def context(ordinal: SnapshotOrdinal): BlockAcceptanceContext[F] = new BlockAcceptanceContext[F] {
+      private def context(epoch: EpochProgress): BlockAcceptanceContext[F] = new BlockAcceptanceContext[F] {
 
         def getBalance(address: Address): F[Option[Balance]] =
           addressStorage.getBalance(address).map(_.some)
@@ -67,7 +67,7 @@ object BlockService {
         def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
           blockStorage.getUsages(blockReference.hash)
 
-        def getCollateral: Amount = era.collateralAt(ordinal, collateral)
+        def getCollateral: Amount = era.collateralAt(epoch, collateral)
       }
 
       private def processAcceptanceSuccess(

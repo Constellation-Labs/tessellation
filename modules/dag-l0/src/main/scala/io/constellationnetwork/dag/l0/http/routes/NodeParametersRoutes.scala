@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.http4s.PeerIdVar
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
@@ -83,7 +82,7 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
             peerId = peerId,
             node = peerIdToPeerInfo.get(peerId),
             delegatedStakeRewardParameters =
-              if (era.isActive(snapshotWithInfo._1.ordinal)) DelegatedStakeRewardParameters(DelegatedRewardsEra.Commission)
+              if (era.isActive(snapshotWithInfo._1.epochProgress)) DelegatedStakeRewardParameters(DelegatedRewardsEra.Commission)
               else nodeParams.latest.delegatedStakeRewardParameters,
             nodeMetadataParameters = nodeParams.latest.nodeMetadataParameters,
             totalAmountDelegated = totalAmount,
@@ -195,7 +194,7 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
         case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateNodeParameters]]
-            result <- validator.validate(signed, info, snapshot.ordinal.next)
+            result <- validator.validate(signed, info, snapshot.epochProgress)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted node parameters from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

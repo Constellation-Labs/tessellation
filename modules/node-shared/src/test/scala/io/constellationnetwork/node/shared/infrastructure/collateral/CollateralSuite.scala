@@ -8,7 +8,7 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.CollateralConfig
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
-import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
@@ -16,6 +16,7 @@ import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hex.Hex
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -78,17 +79,17 @@ object CollateralSuite extends MutableIOSuite with Checkers {
       .map(expect.same(false, _))
   }
   private val legacyCollateral = Amount(250_000_00000000L)
-  private val era = DelegatedRewardsEra(SnapshotOrdinal.unsafeApply(100L), SortedMap.empty)
+  private val era = DelegatedRewardsEra(EpochProgress(100L), SortedMap.empty)
 
-  test("live DAG collateral uses next candidate ordinal and preserves the pre-era requirement on replay") { implicit sc =>
+  test("live DAG collateral uses finalized head epoch and preserves the pre-era requirement on replay") { implicit sc =>
     val balances = Map(address1 -> Balance(500_000_00000000L))
     for {
-      state <- Ref.of[IO, Option[(SnapshotOrdinal, Map[Address, Balance])]](None)
+      state <- Ref.of[IO, Option[(EpochProgress, Map[Address, Balance])]](None)
       reads <- Ref.of[IO, Int](0)
       collateral = Collateral.makeForGlobalSnapshots[IO](CollateralConfig(legacyCollateral), reads.update(_ + 1) >> state.get, era)
-      checks <- List(98L -> true, 99L -> false, 100L -> false, 98L -> true).traverse {
+      checks <- List(99L -> true, 100L -> false, 101L -> false, 99L -> true).traverse {
         case (head, expected) =>
-          state.set(Some(SnapshotOrdinal.unsafeApply(head) -> balances)) >> collateral.hasCollateral(peer1).map { actual =>
+          state.set(Some(EpochProgress(NonNegLong.unsafeFrom(head)) -> balances)) >> collateral.hasCollateral(peer1).map { actual =>
             expect.same(expected, actual)
           }
       }
@@ -102,7 +103,7 @@ object CollateralSuite extends MutableIOSuite with Checkers {
       case (amount, expected) =>
         val balances = amount.map(value => address1 -> Balance(eu.timepit.refined.types.numeric.NonNegLong.unsafeFrom(value))).toMap
         Collateral
-          .makeForGlobalSnapshots[IO](CollateralConfig(legacyCollateral), IO.pure(Some(SnapshotOrdinal.unsafeApply(99L) -> balances)), era)
+          .makeForGlobalSnapshots[IO](CollateralConfig(legacyCollateral), IO.pure(Some(EpochProgress(100L) -> balances)), era)
           .hasCollateral(peer1)
           .map(actual => expect.same(expected, actual))
     }.map(_.reduce(_ and _))
@@ -113,7 +114,7 @@ object CollateralSuite extends MutableIOSuite with Checkers {
       disabled <- Collateral
         .makeForGlobalSnapshots[IO](
           CollateralConfig(legacyCollateral),
-          IO.pure(Some(SnapshotOrdinal.unsafeApply(1000L) -> Map(address1 -> Balance(legacyCollateral.value)))),
+          IO.pure(Some(EpochProgress(1000L) -> Map(address1 -> Balance(legacyCollateral.value)))),
           DelegatedRewardsEra.Disabled
         )
         .hasCollateral(peer1)
