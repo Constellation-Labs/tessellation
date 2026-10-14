@@ -657,8 +657,11 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
               def deleteAbove(key: SnapshotOrdinal): IO[Unit] = persisted.set(None)
             }
             consensus <- storage(persistence)
+            // Before the rollback the lead voted for the warm peer's value; that vote helped form the QC.
+            preRollbackVote <- consensus.tryLockCertifiedVote(key10, view, qc.valueHash, None)
             // Rollback to key10 - 1 erased the lead's records; it then prepared a fresh value for key10.
             _ <- consensus.deleteCertifiedVoteLocksAbove(SnapshotOrdinal.unsafeApply(9L))
+            erased <- persisted.get
             freshVote <- consensus.tryLockCertifiedVote(key10, ownVoteView, hashA, None)
             resources <- ConsensusResources.empty[IO, String, String]
             gossip = new Gossip[IO] {
@@ -687,13 +690,23 @@ object CertifiedVoteLockPersistenceSuite extends MutableIOSuite {
             // Restart from the journal: the adopted QC must still refuse a later conflicting prepare.
             restarted <- storage(persistence)
             restartedConflict <- restarted.tryLockCertifiedVote(key10, view + 2, hashB, None)
-          } yield (freshVote.isRight, result, durable, storedVotes.isEmpty, !didEmit, restartedConflict)
+          } yield
+            (
+              preRollbackVote.isRight && erased.isEmpty,
+              freshVote.isRight,
+              result,
+              durable,
+              storedVotes.isEmpty,
+              !didEmit,
+              restartedConflict
+            )
         sameView <- exercise(view)
         lowerView <- exercise(view + 1)
-        (sameFresh, sameResult, sameDurable, sameNoVotes, sameNoEmit, sameRestartedConflict) = sameView
-        (lowerFresh, lowerResult, lowerDurable, lowerNoVotes, lowerNoEmit, _) = lowerView
+        (samePre, sameFresh, sameResult, sameDurable, sameNoVotes, sameNoEmit, sameRestartedConflict) = sameView
+        (lowerPre, lowerFresh, lowerResult, lowerDurable, lowerNoVotes, lowerNoEmit, _) = lowerView
       } yield
-        expect(sameFresh, "the fresh prepare vote must be recorded first")
+        expect(samePre && lowerPre, "the pre-rollback vote must be recorded and then erased by the rollback")
+          .and(expect(sameFresh, "the fresh prepare vote must be recorded first"))
           .and(expect(sameResult.exists(p => p.proposalQc.contains(qc) && !p.voteEmitted), s"same-view prepare: $sameResult"))
           .and(expect(sameDurable.flatMap(_.lockedQc).contains(qc), "adopted QC must be durable"))
           .and(expect(sameDurable.flatMap(_.votedValueHashAtHighestView).contains(hashA), "own vote history must be kept"))
