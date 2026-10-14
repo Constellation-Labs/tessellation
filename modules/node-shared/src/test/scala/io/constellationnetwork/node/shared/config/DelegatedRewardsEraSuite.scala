@@ -4,6 +4,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.security.hex.Hex
 
 import eu.timepit.refined.auto._
@@ -76,4 +77,14 @@ object DelegatedRewardsEraSuite extends SimpleIOSuite {
     expect(era.validatorsAt(SnapshotOrdinal.unsafeApply(200L)).isEmpty, "empty replacement must not fall back to an older list") and
     expect(era.validatorsAt(SnapshotOrdinal.unsafeApply(201L)).isEmpty, "empty replacement remains effective")
   }
+  pureTest("collateral preserves configured historical amounts and activates 1M exactly at the era boundary") {
+    val era = DelegatedRewardsEra(SnapshotOrdinal.unsafeApply(100L), SortedMap.empty)
+    val legacy = Amount(250_000_00000000L)
+    expect.same(legacy, era.collateralAt(SnapshotOrdinal.unsafeApply(99L), legacy)) and
+      expect.same(DelegatedRewardsEra.MinimumNodeCollateral, era.collateralAt(SnapshotOrdinal.unsafeApply(100L), legacy)) and
+      expect.same(DelegatedRewardsEra.MinimumNodeCollateral, era.collateralAt(SnapshotOrdinal.unsafeApply(101L), legacy)) and
+      expect.same(legacy, DelegatedRewardsEra.Disabled.collateralAt(SnapshotOrdinal.unsafeApply(100L), legacy)) and
+      expect.same(Amount.empty, DelegatedRewardsEra.Disabled.collateralAt(SnapshotOrdinal.unsafeApply(100L), Amount.empty))
+  }
+
 }

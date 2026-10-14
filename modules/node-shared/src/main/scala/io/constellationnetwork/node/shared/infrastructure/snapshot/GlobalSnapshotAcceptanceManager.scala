@@ -1147,7 +1147,7 @@ object GlobalSnapshotAcceptanceManager {
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTxRefs,
         tipUsages,
-        collateral,
+        rewardsEra.collateralAt(ordinal, collateral),
         TransactionReference.empty
       )
 
@@ -1165,7 +1165,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = AllowSpendBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastAllowSpendRefs.getOrElse(Map.empty),
-        collateral,
+        rewardsEra.collateralAt(snapshotOrdinal, collateral),
         AllowSpendReference.empty
       )
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {
@@ -1199,7 +1199,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTokenLockRefs.getOrElse(Map.empty),
-        collateral,
+        rewardsEra.collateralAt(snapshotOrdinal, collateral),
         TokenLockReference.empty
       )
       if (snapshotOrdinal > fixingAllowSpendAndTokenLockValidation) {

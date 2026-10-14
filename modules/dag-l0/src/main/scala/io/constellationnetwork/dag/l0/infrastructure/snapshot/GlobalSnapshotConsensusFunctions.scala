@@ -9,10 +9,12 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
+import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
@@ -65,7 +67,19 @@ object GlobalSnapshotConsensusFunctions {
     v3MigrationOrdinal: SnapshotOrdinal
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
+    private val rewardsEra = delegatedRewardsConfigProvider.getConfig().eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
+
     def getRequiredCollateral: Amount = collateral
+
+    override def facilitatorFilter(
+      lastSignedArtifact: Signed[GlobalSnapshotArtifact],
+      lastContext: GlobalSnapshotContext,
+      peerId: PeerId
+    ): F[Boolean] =
+      peerId.toAddress[F].map { address =>
+        getBalances(lastContext).getOrElse(address, Balance.empty)
+          .satisfiesCollateral(rewardsEra.collateralAt(lastSignedArtifact.ordinal.next, collateral))
+      }
 
     def getBalances(context: GlobalSnapshotContext): SortedMap[Address, Balance] = context.balances
 

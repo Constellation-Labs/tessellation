@@ -11,6 +11,8 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
+import io.constellationnetwork.ext.cats.syntax.next._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
@@ -41,7 +43,8 @@ object AllowSpendBlockService {
     allowSpendBlockStorage: AllowSpendBlockStorage[F],
     allowSpendStorage: AllowSpendStorage[F],
     collateral: Amount,
-    lastSnapshotStorage: LastSnapshotStorage[F, S, SI] with LatestBalances[F]
+    lastSnapshotStorage: LastSnapshotStorage[F, S, SI] with LatestBalances[F],
+    era: DelegatedRewardsEra
   ): AllowSpendBlockService[F] =
     new AllowSpendBlockService[F] {
 
@@ -49,23 +52,23 @@ object AllowSpendBlockService {
         implicit hasher: Hasher[F]
       ): F[Unit] =
         for {
-          lastGlobalEpochProgress <- lastSnapshotStorage.get.map {
+          (lastGlobalEpochProgress, collateralOrdinal) <- lastSnapshotStorage.get.map {
             case Some(snapshot) =>
               snapshot.signed.value match {
                 case cis: CurrencyIncrementalSnapshot =>
-                  cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue)
+                  (cis.globalSyncView.map(_.epochProgress).getOrElse(EpochProgress.MinValue), snapshotOrdinal.next)
                 case gis: GlobalIncrementalSnapshot =>
-                  gis.epochProgress
+                  (gis.epochProgress, gis.ordinal.next)
                 case _ =>
-                  EpochProgress.MinValue
+                  (EpochProgress.MinValue, snapshotOrdinal.next)
               }
             case None =>
-              EpochProgress.MinValue
+              (EpochProgress.MinValue, snapshotOrdinal.next)
           }
           result <- signedBlock.toHashed.flatMap { hashedBlock =>
             EitherT(
               allowSpendBlockAcceptanceManager
-                .acceptBlock(signedBlock, context, snapshotOrdinal, shouldValidateCollateral = true, lastGlobalEpochProgress.some)
+                .acceptBlock(signedBlock, context(collateralOrdinal), snapshotOrdinal, shouldValidateCollateral = true, lastGlobalEpochProgress.some)
             )
               .leftSemiflatMap(processAcceptanceError(hashedBlock))
               .semiflatMap(processAcceptanceSuccess(hashedBlock))
@@ -73,7 +76,7 @@ object AllowSpendBlockService {
           }
         } yield result
 
-      private val context: AllowSpendBlockAcceptanceContext[F] = new AllowSpendBlockAcceptanceContext[F] {
+      private def context(ordinal: SnapshotOrdinal): AllowSpendBlockAcceptanceContext[F] = new AllowSpendBlockAcceptanceContext[F] {
 
         def getBalance(address: Address): F[Option[Balance]] =
           addressStorage.getBalance(address).map(_.some)
@@ -84,7 +87,7 @@ object AllowSpendBlockService {
         def getInitialTxRef: AllowSpendReference =
           allowSpendStorage.getInitialTx.ref
 
-        def getCollateral: Amount = collateral
+        def getCollateral: Amount = era.collateralAt(ordinal, collateral)
       }
 
       private def processAcceptanceSuccess(

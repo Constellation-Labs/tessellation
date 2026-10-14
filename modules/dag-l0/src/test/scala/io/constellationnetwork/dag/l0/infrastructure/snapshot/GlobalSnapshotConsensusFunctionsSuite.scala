@@ -27,7 +27,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.DelegatedRewardsConfigProvider
+import io.constellationnetwork.node.shared.config.{DelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -251,7 +251,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def updateNodeParametersAcceptanceManager(implicit txHasher: Hasher[IO]) = {
     val updateNodeParametersValidator =
-      UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000), PosInt(140), None)
+      UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000), PosInt(140), None, DelegatedRewardsEra.Disabled)
     UpdateNodeParametersAcceptanceManager.make(updateNodeParametersValidator)
   }
 
@@ -348,7 +348,11 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   def mkGlobalSnapshotAcceptanceManager(
-    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam,
+    blockAcceptanceManager: BlockAcceptanceManager[IO] = bam,
+    tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[IO] = tlbam,
+    rewardsEra: DelegatedRewardsEra = DelegatedRewardsEra.Disabled,
+    legacyCollateral: Amount = collateral
   )(
     implicit sp: SecurityProvider[IO],
     h: Hasher[IO],
@@ -379,9 +383,9 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         ),
         MetagraphsSyncConfig(PosInt(100)),
         Dev,
-        bam,
+        blockAcceptanceManager,
         allowSpendBlockAcceptanceManager,
-        tlbam,
+        tokenLockBlockAcceptanceManager,
         scProcessor,
         updateNodeParametersAcceptanceManager,
         updateDelegatedStakeAcceptanceManager,
@@ -389,13 +393,18 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         spendActionValidator,
         pricingUpdateValidator,
         priceStateUpdater,
-        collateral,
-        EpochProgress(NonNegLong(136080L))
+        legacyCollateral,
+        EpochProgress(NonNegLong(136080L)),
+        rewardsEra
       )
   }
 
   def mkGlobalSnapshotConsensusFunctions(
-    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[IO] = asbam,
+    blockAcceptanceManager: BlockAcceptanceManager[IO] = bam,
+    tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[IO] = tlbam,
+    rewardsEra: DelegatedRewardsEra = DelegatedRewardsEra.Disabled,
+    legacyCollateral: Amount = collateral
   )(
     implicit ks: KryoSerializer[IO],
     j: JsonSerializer[IO],
@@ -403,7 +412,12 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     h: Hasher[IO],
     m: Metrics[IO]
   ): GlobalSnapshotConsensusFunctions[IO] = {
-    val snapshotAcceptanceManager = mkGlobalSnapshotAcceptanceManager(allowSpendBlockAcceptanceManager)
+    val snapshotAcceptanceManager = mkGlobalSnapshotAcceptanceManager(
+      allowSpendBlockAcceptanceManager, blockAcceptanceManager, tokenLockBlockAcceptanceManager, rewardsEra, legacyCollateral
+    )
+    val eraConfigProvider = new DelegatedRewardsConfigProvider {
+      def getConfig(): DelegatedRewardsConfig = delegatedRewardsConfigProvider.getConfig().copy(eras = Map(Dev -> rewardsEra))
+    }
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -416,13 +430,13 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     GlobalSnapshotConsensusFunctions
       .make[IO](
         snapshotAcceptanceManager,
-        collateral,
+        legacyCollateral,
         classicRewards,
         delegatorRewards,
         GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator),
         UpdateNodeParametersCutter.make(100),
         AppEnvironment.Dev,
-        delegatedRewardsConfigProvider,
+        eraConfigProvider,
         SnapshotOrdinal.MinValue
       )
   }
@@ -480,6 +494,85 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       actual = result.map(_._1.stateChannelSnapshots(scEvent.value.address))
       expectation = expect.same(true, result.isRight) && expect.same(expected, actual)
     } yield expectation
+  }
+
+  test("all global block contexts and facilitator selection use the era collateral boundary, including historical replay") { res =>
+    implicit val (_, ks, j, h, sp, m) = res
+    implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
+    val activation = SnapshotOrdinal.unsafeApply(100L)
+    val era = DelegatedRewardsEra(activation, SortedMap.empty)
+    val legacy = Amount(250_000_00000000L)
+    for {
+      observed <- Ref.of[IO, List[(String, SnapshotOrdinal, Amount)]](Nil)
+      recordingBlocks = new BlockAcceptanceManager[IO] {
+        def acceptBlock(block: Signed[Block], context: BlockAcceptanceContext[IO], ordinal: SnapshotOrdinal, shouldValidateCollateral: Boolean)
+          (implicit hasher: Hasher[IO]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] =
+          bam.acceptBlock(block, context, ordinal, shouldValidateCollateral)
+        def acceptBlocksIteratively(blocks: List[Signed[Block]], context: BlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean)(implicit hasher: Hasher[IO]): IO[BlockAcceptanceResult] =
+          observed.update(("block", ordinal, context.getCollateral) :: _) >> bam.acceptBlocksIteratively(blocks, context, ordinal, shouldValidateCollateral)
+      }
+      recordingAllowSpends = new AllowSpendBlockAcceptanceManager[IO] {
+        def acceptBlock(block: Signed[AllowSpendBlock], context: AllowSpendBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress], creditDestination: Boolean)
+          (implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] =
+          asbam.acceptBlock(block, context, ordinal, shouldValidateCollateral, epoch, creditDestination)
+        def acceptBlocksIteratively(blocks: List[Signed[AllowSpendBlock]], context: AllowSpendBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress], creditDestination: Boolean)
+          (implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
+          observed.update(("allow-spend", ordinal, context.getCollateral) :: _) >>
+            asbam.acceptBlocksIteratively(blocks, context, ordinal, shouldValidateCollateral, epoch, creditDestination)
+      }
+      recordingTokenLocks = new TokenLockBlockAcceptanceManager[IO] {
+        def acceptBlock(block: Signed[TokenLockBlock], context: TokenLockBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress])
+          (implicit hasher: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] =
+          tlbam.acceptBlock(block, context, ordinal, shouldValidateCollateral, epoch)
+        def acceptBlocksIteratively(blocks: List[Signed[TokenLockBlock]], context: TokenLockBlockAcceptanceContext[IO], ordinal: SnapshotOrdinal,
+          shouldValidateCollateral: Boolean, epoch: Option[EpochProgress])(implicit hasher: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] =
+          observed.update(("token-lock", ordinal, context.getCollateral) :: _) >>
+            tlbam.acceptBlocksIteratively(blocks, context, ordinal, shouldValidateCollateral, epoch)
+      }
+      functions = mkGlobalSnapshotConsensusFunctions(
+        allowSpendBlockAcceptanceManager = recordingAllowSpends,
+        blockAcceptanceManager = recordingBlocks,
+        tokenLockBlockAcceptanceManager = recordingTokenLocks,
+        rewardsEra = era,
+        legacyCollateral = legacy
+      )
+      replayAcceptance = mkGlobalSnapshotAcceptanceManager(
+        allowSpendBlockAcceptanceManager = recordingAllowSpends,
+        blockAcceptanceManager = recordingBlocks,
+        tokenLockBlockAcceptanceManager = recordingTokenLocks,
+        rewardsEra = era,
+        legacyCollateral = legacy
+      )
+      replayFunctions = GlobalSnapshotContextFunctions.make[IO](replayAcceptance, updateDelegatedStakeAcceptanceManager,
+        EpochProgress(NonNegLong(136080L)), SnapshotOrdinal.MinValue, SnapshotOrdinal.MinValue)
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      peerId = PeerId.fromId(keyPair.getPublic.toId)
+      genesis = GlobalSnapshot.mkGenesis(Map(keyPair.getPublic.toAddress -> Balance(500_000_00000000L)), EpochProgress.MinValue)
+      base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
+      results <- List(99L, 100L, 101L, 99L).traverse { ordinal =>
+        for {
+          previous <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](base.copy(ordinal = SnapshotOrdinal.unsafeApply(ordinal - 1L)), keyPair)
+          allowed <- functions.facilitatorFilter(previous, genesis.info, peerId)
+          result <- functions.createProposalArtifact(previous.ordinal, previous, genesis.info, h, EventTrigger, Set.empty, Set.empty, _ => IO.pure(None))
+          signedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](result._1, keyPair)
+          replayed <- replayFunctions.createContext(genesis.info, previous, signedArtifact, _ => IO.pure(None))
+        } yield (allowed, result._1.stateProof, expect.same(result._2, replayed))
+      }
+      actual <- observed.get
+      expected = List(99L, 100L, 101L, 99L).flatMap { ordinal =>
+        List.fill(2)(List("block", "allow-spend", "token-lock")).flatten.map { kind =>
+          (kind, SnapshotOrdinal.unsafeApply(ordinal), if (ordinal < 100L) legacy else DelegatedRewardsEra.MinimumNodeCollateral)
+        }
+      }
+    } yield
+      expect.same(expected.sortBy(v => (v._1, v._2.value.value)), actual.sortBy(v => (v._1, v._2.value.value))) and
+        expect.same(List(true, false, false, true), results.map(_._1)) and
+        expect.same(results.head._2, results.last._2) and
+        results.map(_._3).reduce(_ and _)
   }
 
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>

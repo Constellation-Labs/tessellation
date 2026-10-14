@@ -1,7 +1,12 @@
 package io.constellationnetwork.node.shared.infrastructure.collateral
 
-import cats.effect.{IO, Resource}
+import cats.effect.{IO, Ref, Resource}
+import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.node.shared.config.types.CollateralConfig
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.schema.address.Address
@@ -72,4 +77,44 @@ object CollateralSuite extends MutableIOSuite with Checkers {
       .hasCollateral(peer1)
       .map(expect.same(false, _))
   }
+  private val legacyCollateral = Amount(250_000_00000000L)
+  private val era = DelegatedRewardsEra(SnapshotOrdinal.unsafeApply(100L), SortedMap.empty)
+
+  test("live DAG collateral uses next candidate ordinal and preserves the pre-era requirement on replay") { implicit sc =>
+    val balances = Map(address1 -> Balance(500_000_00000000L))
+    for {
+      state <- Ref.of[IO, Option[(SnapshotOrdinal, Map[Address, Balance])]](None)
+      reads <- Ref.of[IO, Int](0)
+      collateral = Collateral.makeForGlobalSnapshots[IO](CollateralConfig(legacyCollateral), reads.update(_ + 1) >> state.get, era)
+      checks <- List(98L -> true, 99L -> false, 100L -> false, 98L -> true).traverse {
+        case (head, expected) =>
+          state.set(Some(SnapshotOrdinal.unsafeApply(head) -> balances)) >> collateral.hasCollateral(peer1).map { actual =>
+            expect.same(expected, actual)
+          }
+      }
+      count <- reads.get
+    } yield checks.reduce(_ and _) and expect.same(4, count)
+  }
+
+  test("new-era operator collateral enforces 1M datum boundaries without counting missing balances") { implicit sc =>
+    val minimum = DelegatedRewardsEra.MinimumNodeCollateral.value.value
+    List(None -> false, Some(minimum - 1L) -> false, Some(minimum) -> true, Some(minimum + 1L) -> true).traverse {
+      case (amount, expected) =>
+        val balances = amount.map(value => address1 -> Balance(eu.timepit.refined.types.numeric.NonNegLong.unsafeFrom(value))).toMap
+        Collateral.makeForGlobalSnapshots[IO](CollateralConfig(legacyCollateral), IO.pure(Some(SnapshotOrdinal.unsafeApply(99L) -> balances)), era)
+          .hasCollateral(peer1).map(actual => expect.same(expected, actual))
+    }.map(_.reduce(_ and _))
+  }
+
+  test("disabled policy retains configured collateral and missing head retains the existing startup behavior") { implicit sc =>
+    for {
+      disabled <- Collateral.makeForGlobalSnapshots[IO](
+        CollateralConfig(legacyCollateral),
+        IO.pure(Some(SnapshotOrdinal.unsafeApply(1000L) -> Map(address1 -> Balance(legacyCollateral.value)))),
+        DelegatedRewardsEra.Disabled
+      ).hasCollateral(peer1)
+      startup <- Collateral.makeForGlobalSnapshots[IO](CollateralConfig(legacyCollateral), IO.pure(None), era).hasCollateral(peer1)
+    } yield expect.same(true, disabled) and expect.same(true, startup)
+  }
+
 }

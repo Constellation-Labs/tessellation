@@ -19,6 +19,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
@@ -120,7 +121,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           transactionStorage,
           lastGlobalSnapshotStorage,
           Amount.empty,
-          txHasher
+          txHasher,
+          DelegatedRewardsEra.Disabled
         )
     }
   }

@@ -11,6 +11,8 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
+import io.constellationnetwork.ext.cats.syntax.next._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema.Block.HashedOps
@@ -37,7 +39,8 @@ object BlockService {
     transactionStorage: TransactionStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     collateral: Amount,
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    era: DelegatedRewardsEra
   ): BlockService[F] =
     new BlockService[F] {
 
@@ -45,12 +48,12 @@ object BlockService {
         signedBlock.toHashed.flatMap { hashedBlock =>
           EitherT
             .fromOptionF(lastGlobalSnapshotStorage.getOrdinal, SnapshotOrdinalUnavailable)
-            .flatMapF(blockAcceptanceManager.acceptBlock(signedBlock, context, _))
+            .flatMapF(ordinal => blockAcceptanceManager.acceptBlock(signedBlock, context(ordinal.next), ordinal))
             .leftSemiflatMap(processAcceptanceError(hashedBlock))
             .semiflatMap { case (contextUpdate, _) => processAcceptanceSuccess(hashedBlock)(contextUpdate) }
             .rethrowT
         }
-      private val context: BlockAcceptanceContext[F] = new BlockAcceptanceContext[F] {
+      private def context(ordinal: SnapshotOrdinal): BlockAcceptanceContext[F] = new BlockAcceptanceContext[F] {
 
         def getBalance(address: Address): F[Option[Balance]] =
           addressStorage.getBalance(address).map(_.some)
@@ -64,7 +67,7 @@ object BlockService {
         def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
           blockStorage.getUsages(blockReference.hash)
 
-        def getCollateral: Amount = collateral
+        def getCollateral: Amount = era.collateralAt(ordinal, collateral)
       }
 
       private def processAcceptanceSuccess(
