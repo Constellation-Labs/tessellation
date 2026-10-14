@@ -63,7 +63,7 @@ object GlobalDelegatedRewardsDistributor {
           program <- getDistributionProgram(epochProgress)
           budget <- trigger match {
             case EventTrigger => Amount.empty.pure[F]
-            case TimeTrigger => calculateVariableInflation(epochProgress, lastSnapshotContext)
+            case TimeTrigger  => calculateVariableInflation(epochProgress, lastSnapshotContext)
           }
           oneTimeRewards <- trigger match {
             case EventTrigger => List.empty[OneTimeReward].pure[F]
@@ -117,11 +117,11 @@ object GlobalDelegatedRewardsDistributor {
           val perEpoch = BigInt(supply.value.value) * rate.numerator.value / (BigInt(rate.denominator.value) * era.epochsPerYear.value)
           Amount(NonNegLong.unsafeFrom(perEpoch.toLong))
         }
-      else for {
-        emConfig <- getEmissionConfig(epochProgress)
-        result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
-      } yield result
-
+      else
+        for {
+          emConfig <- getEmissionConfig(epochProgress)
+          result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
+        } yield result
 
     /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
       * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.

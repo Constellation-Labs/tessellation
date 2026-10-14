@@ -8,6 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.UpdateDelegatedStakeValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -31,7 +32,9 @@ import eu.timepit.refined.internal.Adjacent.integralAdjacent
 trait UpdateDelegatedStakeValidator[F[_]] {
   def validateCreateDelegatedStake(
     signed: Signed[UpdateDelegatedStake.Create],
-    lastContext: GlobalSnapshotInfo
+    lastContext: GlobalSnapshotInfo,
+    epochProgress: EpochProgress,
+    ordinal: SnapshotOrdinal
   ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]]
 
   def validateWithdrawDelegatedStake(
@@ -43,13 +46,16 @@ trait UpdateDelegatedStakeValidator[F[_]] {
 object UpdateDelegatedStakeValidator {
   def make[F[_]: Async: SecurityProvider](
     signedValidator: SignedValidator[F],
-    seedlist: Option[Set[SeedlistEntry]]
+    seedlist: Option[Set[SeedlistEntry]],
+    era: DelegatedRewardsEra
   )(implicit hasher: Hasher[F]): UpdateDelegatedStakeValidator[F] =
     new UpdateDelegatedStakeValidator[F] {
 
       def validateCreateDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Create],
-        lastContext: GlobalSnapshotInfo
+        lastContext: GlobalSnapshotInfo,
+        epochProgress: EpochProgress,
+        ordinal: SnapshotOrdinal
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           numberOfSignaturesV <- validateNumberOfSignatures(signed)
@@ -59,7 +65,7 @@ object UpdateDelegatedStakeValidator {
           isSignedExclusivelyBySource <- signedValidator
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
-          authorizedNodeIdV = validateAuthorizedNodeId(signed)
+          authorizedNodeIdV = validateAuthorizedNodeId(signed, epochProgress, ordinal)
           nodeIdV = validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
@@ -123,13 +129,19 @@ object UpdateDelegatedStakeValidator {
           }
 
       private def validateAuthorizedNodeId(
-        signed: Signed[UpdateDelegatedStake.Create]
-      ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
-        if (seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
+        signed: Signed[UpdateDelegatedStake.Create],
+        epochProgress: EpochProgress,
+        ordinal: SnapshotOrdinal
+      ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] = {
+        val authorized =
+          if (era.isActive(epochProgress)) era.validatorsAt(ordinal).contains(signed.nodeId)
+          else seedlist.forall(_.exists(_.peerId === signed.nodeId))
+        if (authorized) {
           signed.validNec
         } else {
           UnauthorizedNode(signed.nodeId).invalidNec
         }
+      }
 
       private def validateNodeId(
         signed: Signed[UpdateDelegatedStake.Create],

@@ -18,7 +18,8 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
 
   pureTest("Mainnet inherits the proposed epoch without inventing a validator membership list") {
     val era = config.eras(AppEnvironment.Mainnet)
-    expect.same(activation, provider.mainnetMetanomicsV2Epoch)
+    expect
+      .same(activation, provider.mainnetMetanomicsV2Epoch)
       .and(expect.same(activation, era.activationEpoch))
       .and(expect(!era.isActive(before), "the preceding epoch retains legacy rules"))
       .and(expect(era.isActive(activation), "the proposed epoch is the first active epoch"))
@@ -49,7 +50,8 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
       fixedCommission = Some(NonNegFraction.unsafeFrom(10, 100))
     )
     val programAt = config.percentDistribution(AppEnvironment.Mainnet)
-    expect.same(historical, programAt(before))
+    expect
+      .same(historical, programAt(before))
       .and(expect.same(newProgram, programAt(activation)))
       .and(expect.same(newProgram, programAt(after)))
       .and(expect.same(historical, programAt(before)))
@@ -60,7 +62,8 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
     val emissionAt = config.emissionConfig(AppEnvironment.Mainnet)
     val historical = emissionAt(before)
     val active = emissionAt(activation)
-    expect.same(NonNegFraction.unsafeFrom(5, 1000), historical.iTarget)
+    expect
+      .same(NonNegFraction.unsafeFrom(5, 1000), historical.iTarget)
       .and(expect.same(NonNegFraction.unsafeFrom(6, 100), historical.iInitial))
       .and(expect.same(NonNegFraction.unsafeFrom(2, 100), active.iTarget))
       .and(expect.same(active.iTarget, active.iInitial))
@@ -130,7 +133,8 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
     val historicalEmission = config.emissionConfig(AppEnvironment.Mainnet)(before)
     val historicalProgram = config.percentDistribution(AppEnvironment.Mainnet)(before)
 
-    expect.same(DelegatedRewardsEra.Disabled, era)
+    expect
+      .same(DelegatedRewardsEra.Disabled, era)
       .and(expect(epochs.forall(epoch => !era.isActive(epoch)), "the disabled sentinel must never activate the policy"))
       .and(expect(emissions.forall(_ == historicalEmission), "disabled emission settings must retain the historical rate parameters"))
       .and(expect(programs.forall(_ == historicalProgram), "disabled distributions must retain the old weights and commission policy"))

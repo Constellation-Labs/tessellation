@@ -8,9 +8,9 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.CollateralConfig
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
-import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hex.Hex

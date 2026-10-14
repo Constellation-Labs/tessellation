@@ -28,7 +28,11 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsConfigProvider, DelegatedRewardsEra}
+import io.constellationnetwork.node.shared.config.{
+  DefaultDelegatedRewardsConfigProvider,
+  DelegatedRewardsConfigProvider,
+  DelegatedRewardsEra
+}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -617,38 +621,48 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       peerId = PeerId.fromId(keyPair.getPublic.toId)
       genesis = GlobalSnapshot.mkGenesis(Map(keyPair.getPublic.toAddress -> Balance(500_000_00000000L)), EpochProgress.MinValue)
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
-      results <- cases.traverse { case (epoch, trigger) =>
-        for {
-          previous <- Signed
-            .forAsyncHasher[IO, GlobalIncrementalSnapshot](
-              base.copy(ordinal = SnapshotOrdinal.unsafeApply(epoch + 1000L), epochProgress = EpochProgress(NonNegLong.unsafeFrom(epoch))),
-              keyPair
+      results <- cases.traverse {
+        case (epoch, trigger) =>
+          for {
+            previous <- Signed
+              .forAsyncHasher[IO, GlobalIncrementalSnapshot](
+                base
+                  .copy(ordinal = SnapshotOrdinal.unsafeApply(epoch + 1000L), epochProgress = EpochProgress(NonNegLong.unsafeFrom(epoch))),
+                keyPair
+              )
+            allowed <- functions.facilitatorFilter(previous, genesis.info, peerId)
+            result <- functions.createProposalArtifact(
+              previous.ordinal,
+              previous,
+              genesis.info,
+              h,
+              trigger,
+              Set.empty,
+              Set.empty,
+              _ => IO.pure(None)
             )
-          allowed <- functions.facilitatorFilter(previous, genesis.info, peerId)
-          result <- functions.createProposalArtifact(
-            previous.ordinal,
-            previous,
-            genesis.info,
-            h,
-            trigger,
-            Set.empty,
-            Set.empty,
-            _ => IO.pure(None)
-          )
-          signedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](result._1, keyPair)
-          replayed <- replayFunctions.createContext(genesis.info, previous, signedArtifact, _ => IO.pure(None))
-        } yield (allowed, result._1.stateProof, expect.same(result._2, replayed))
+            signedArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](result._1, keyPair)
+            replayed <- replayFunctions.createContext(genesis.info, previous, signedArtifact, _ => IO.pure(None))
+          } yield (allowed, result._1.stateProof, expect.same(result._2, replayed))
       }
       actual <- observed.get
-      expected = cases.flatMap { case (epoch, trigger) =>
-        val candidateEpoch = if (trigger == TimeTrigger) epoch + 1L else epoch
-        List.fill(2)(List("block", "allow-spend", "token-lock")).flatten.map { kind =>
-          (kind, SnapshotOrdinal.unsafeApply(epoch + 1001L), if (candidateEpoch < 100L) legacy else DelegatedRewardsEra.MinimumNodeCollateral)
-        }
+      expected = cases.flatMap {
+        case (epoch, trigger) =>
+          val candidateEpoch = if (trigger == TimeTrigger) epoch + 1L else epoch
+          List.fill(2)(List("block", "allow-spend", "token-lock")).flatten.map { kind =>
+            (
+              kind,
+              SnapshotOrdinal.unsafeApply(epoch + 1001L),
+              if (candidateEpoch < 100L) legacy else DelegatedRewardsEra.MinimumNodeCollateral
+            )
+          }
       }
     } yield
       expect
-        .same(expected.sortBy(v => (v._1, v._2.value.value, v._3.value.value)), actual.sortBy(v => (v._1, v._2.value.value, v._3.value.value)))
+        .same(
+          expected.sortBy(v => (v._1, v._2.value.value, v._3.value.value)),
+          actual.sortBy(v => (v._1, v._2.value.value, v._3.value.value))
+        )
         .and(expect.same(List(true, false, false, true, true), results.map(_._1)))
         .and(expect.same(results.head._2, results.last._2))
         .and(results.map(_._3).reduce(_ and _))
@@ -898,18 +912,23 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           )
         }),
         percentDistribution = Map(Dev -> { epoch: EpochProgress =>
-          if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram else
-          ProgramsDistributionConfig(
-            Map(
-              protocol -> NonNegFraction.unsafeFrom(30, 100),
-              treasury -> NonNegFraction.unsafeFrom(10, 100),
-              inference -> NonNegFraction.unsafeFrom(15, 100)
-            ),
-            NonNegFraction.unsafeFrom(10, 100),
-            NonNegFraction.unsafeFrom(35, 100)
-          )
+          if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+          else
+            ProgramsDistributionConfig(
+              Map(
+                protocol -> NonNegFraction.unsafeFrom(30, 100),
+                treasury -> NonNegFraction.unsafeFrom(10, 100),
+                inference -> NonNegFraction.unsafeFrom(15, 100)
+              ),
+              NonNegFraction.unsafeFrom(10, 100),
+              NonNegFraction.unsafeFrom(35, 100)
+            )
         }),
-        oneTimeRewards = Map(Dev -> List(99L, 100L, 101L).map(value => OneTimeReward(EpochProgress(NonNegLong.unsafeFrom(value)), protocol, TransactionAmount(3000L)))),
+        oneTimeRewards = Map(
+          Dev -> List(99L, 100L, 101L).map(value =>
+            OneTimeReward(EpochProgress(NonNegLong.unsafeFrom(value)), protocol, TransactionAmount(3000L))
+          )
+        ),
         priceOracleEpoch = Map(Dev -> EpochProgress.MaxValue),
         eras = Map(Dev -> era)
       )
@@ -1082,12 +1101,13 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             )
           }),
           percentDistribution = Map(Dev -> { epoch: EpochProgress =>
-          if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram else
-            ProgramsDistributionConfig(
-              Map(protocol -> NonNegFraction.unsafeFrom(55, 100)),
-              NonNegFraction.unsafeFrom(10, 100),
-              NonNegFraction.unsafeFrom(35, 100)
-            )
+            if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+            else
+              ProgramsDistributionConfig(
+                Map(protocol -> NonNegFraction.unsafeFrom(55, 100)),
+                NonNegFraction.unsafeFrom(10, 100),
+                NonNegFraction.unsafeFrom(35, 100)
+              )
           }),
           oneTimeRewards = Map(Dev -> List.empty),
           priceOracleEpoch = Map(Dev -> EpochProgress.MaxValue),

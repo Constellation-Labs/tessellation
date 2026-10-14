@@ -23,8 +23,8 @@ import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -57,7 +57,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     ts: MapRef[IO, Address, Option[SortedMap[TransactionOrdinal, StoredTransaction]]],
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None,
     txHasher: Hasher[IO]
-  ) = {
+  )(implicit snapshotHasher: Hasher[IO]) = {
 
     val blockAcceptanceManager = new BlockAcceptanceManager[IO]() {
 
@@ -107,13 +107,11 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
         override def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
 
-        override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = {
-          implicit val hasher: Hasher[IO] = txHasher
+        override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] =
           GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)).map { snapshot =>
             val proof = SignatureProof(Id(Hex("00")), Signature(Hex("00")))
             Hashed(Signed(snapshot, NonEmptySet.one(proof)), Hash.empty, ProofsHash("head")).some
           }
-        }
 
         override def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
 

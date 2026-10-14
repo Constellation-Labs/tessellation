@@ -51,7 +51,7 @@ object UpdateNodeParametersAcceptanceManagerSuite extends MutableIOSuite {
       acceptanceResult <- acceptanceManager.acceptUpdateNodeParameters(
         signedInvalidList ++ signedValidList,
         mkGlobalContext(),
-        SnapshotOrdinal.MinValue
+        EpochProgress.MinValue
       )
     } yield
       expect.same((signedValidList.reverse, signedInvalidList.reverse), (acceptanceResult.accepted, acceptanceResult.notAccepted.map(_._1)))

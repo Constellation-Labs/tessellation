@@ -32,7 +32,12 @@ object DelegatedRewardsEraSuite extends SimpleIOSuite {
 
     expect(era.isActive(genesis), "zero must be explicit for active-from-genesis behavior")
       .and(expect(era.isActive(EpochProgress(1L)), "the first successor uses the same era"))
-      .and(expect(era.validatorsAt(SnapshotOrdinal.MinValue) == SortedSet(originalValidator), "the genesis membership is available immediately"))
+      .and(
+        expect(
+          era.validatorsAt(SnapshotOrdinal.MinValue) == SortedSet(originalValidator),
+          "the genesis membership is available immediately"
+        )
+      )
   }
 
   pureTest("a future activation switches behavior exactly at A and remains active at A plus one") {
@@ -76,7 +81,12 @@ object DelegatedRewardsEraSuite extends SimpleIOSuite {
     expect(!era.isActive(EpochProgress(6L)), "a high snapshot ordinal cannot activate an earlier epoch")
       .and(expect(era.isActive(EpochProgress(7L)), "the policy activates by epoch"))
       .and(expect(era.validatorsAt(SnapshotOrdinal.unsafeApply(999_999L)).isEmpty, "membership does not activate by epoch"))
-      .and(expect.same(SortedSet(originalValidator), era.validatorsAt(SnapshotOrdinal.unsafeApply(1_000_000L))))
+      .and(
+        expect(
+          era.validatorsAt(SnapshotOrdinal.unsafeApply(1_000_000L)) == SortedSet(originalValidator),
+          "membership uses ordinal independently of activation epoch"
+        )
+      )
   }
 
   pureTest("a future validator list cannot grant rewards before its effective ordinal") {
@@ -89,7 +99,12 @@ object DelegatedRewardsEraSuite extends SimpleIOSuite {
     )
 
     expect(era.validatorsAt(SnapshotOrdinal.unsafeApply(99L)).isEmpty, "no membership applies before the first scheduled list")
-      .and(expect(era.validatorsAt(SnapshotOrdinal.unsafeApply(100L)).isEmpty, "an earlier snapshot ordinal must not apply a future list early"))
+      .and(
+        expect(
+          era.validatorsAt(SnapshotOrdinal.unsafeApply(100L)).isEmpty,
+          "an earlier snapshot ordinal must not apply a future list early"
+        )
+      )
       .and(expect(era.validatorsAt(SnapshotOrdinal.unsafeApply(119L)).isEmpty, "the first future list remains inactive until its boundary"))
       .and(
         expect(

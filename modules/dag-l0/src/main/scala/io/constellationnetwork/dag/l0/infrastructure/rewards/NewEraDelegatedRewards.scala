@@ -6,8 +6,8 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.config.types.{OneTimeReward, ProgramsDistributionConfig}
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.address.Address
@@ -38,16 +38,23 @@ private[rewards] object NewEraDelegatedRewards {
       DefaultDelegatedRewardsConfigProvider.stardustTreasury -> 1,
       DefaultDelegatedRewardsConfigProvider.aiInference -> 4
     )
-    val additional = program.weights.keys.toList.filterNot(canonicalReserved.map(_._1).contains).sorted.zipWithIndex
-      .map { case (address, index) => address -> (index + 5) }
+    val additional = program.weights.keys.toList.filterNot(canonicalReserved.map(_._1).contains).sorted.zipWithIndex.map {
+      case (address, index) => address -> (index + 5)
+    }
     val reserved = (canonicalReserved ++ additional).filter { case (address, _) => program.weights.contains(address) }
     val fractions = reserved.map { case (address, key) => key -> program.weights(address) } ++
       List(2 -> program.validatorsWeight, 3 -> program.delegatorsWeight)
-    val denominator = fractions.map { case (_, value) => BigInt(value.denominator.value) }.foldLeft(BigInt(1))((left, right) => left / left.gcd(right) * right)
+    val denominator = fractions.map { case (_, value) => BigInt(value.denominator.value) }.foldLeft(BigInt(1))((left, right) =>
+      left / left.gcd(right) * right
+    )
     val weights = fractions.map { case (key, value) => key -> (BigInt(value.numerator.value) * (denominator / value.denominator.value)) }
     for {
       _ <- Either.cond(weights.map(_._2).sum == denominator, (), InvalidProgram("Reward program weights must sum to one"))
-      _ <- Either.cond(program.flatInflationRate.exists(_.numerator.value == 0L), (), InvalidProgram("New-era delegation top-up must be explicitly zero"))
+      _ <- Either.cond(
+        program.flatInflationRate.exists(_.numerator.value == 0L),
+        (),
+        InvalidProgram("New-era delegation top-up must be explicitly zero")
+      )
       commission <- program.fixedCommission.toRight(InvalidProgram("New-era commission must be explicitly configured"))
       _ <- Either.cond(
         BigInt(commission.numerator.value) * DefaultDelegatedRewardsConfigProvider.fixedCommission.denominator.value ==
@@ -92,7 +99,7 @@ private[rewards] object NewEraDelegatedRewards {
     diffs: UpdateDelegatedStakeAcceptanceResult,
     partitioned: PartitionedStakeUpdates,
     oneTimeRewards: List[OneTimeReward],
-    program: ProgramsDistributionConfig = DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+    program: ProgramsDistributionConfig
   ): F[DelegatedRewardsResult] = {
     val active = partitioned.unexpiredCreateDelegatedStakes
     val modified = DelegatedRewardsDistributor.identifyModifiedStakes(active, diffs.acceptedCreates)

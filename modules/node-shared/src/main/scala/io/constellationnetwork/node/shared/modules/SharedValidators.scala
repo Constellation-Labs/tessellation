@@ -78,7 +78,11 @@ object SharedValidators {
       DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
     )
     val updateDelegatedStakeValidator =
-      UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
+      UpdateDelegatedStakeValidator.make[F](
+        signedValidator,
+        l0Seedlist,
+        DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
+      )
     val updateNodeCollateralValidator =
       UpdateNodeCollateralValidator.rejectAll[F]
 

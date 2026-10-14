@@ -108,7 +108,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
         },
         AppEnvironment.Mainnet -> { epoch: EpochProgress =>
           EmissionConfigEntry(
-            epochsPerYear = PosLong(485502L),
+            epochsPerYear = if (mainnetEra.isActive(epoch)) mainnetEra.epochsPerYear else PosLong(485502L),
             asOfEpoch = EpochProgress(2311565L),
             iTarget = if (mainnetEra.isActive(epoch)) fixedEmissionRate else NonNegFraction.unsafeFrom(5, 1000),
             iInitial = if (mainnetEra.isActive(epoch)) fixedEmissionRate else NonNegFraction.unsafeFrom(6, 100),

@@ -8,8 +8,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.config.types.{OneTimeReward, ProgramsDistributionConfig}
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra, MainnetRewardsConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -19,7 +19,7 @@ import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockAmount, TokenLockFee, TokenLockReference}
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.TransactionAmount
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
@@ -241,15 +241,17 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
-      legacy <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config.copy(eras = Map.empty)).distribute(
-        context,
-        TimeTrigger,
-        EpochProgress(99L),
-        List(address1 -> node1),
-        emptyDiffs,
-        partitioned,
-        SnapshotOrdinal.MinValue
-      )
+      legacy <- GlobalDelegatedRewardsDistributor
+        .make[IO](AppEnvironment.Dev, config.copy(eras = Map.empty))
+        .distribute(
+          context,
+          TimeTrigger,
+          EpochProgress(99L),
+          List(address1 -> node1),
+          emptyDiffs,
+          partitioned,
+          SnapshotOrdinal.MinValue
+        )
       before <- distributor.distribute(
         context,
         TimeTrigger,
@@ -259,7 +261,15 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
         partitioned,
         SnapshotOrdinal.unsafeApply(9000L)
       )
-      at <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(1L))
+      at <- distributor.distribute(
+        context,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1),
+        emptyDiffs,
+        partitioned,
+        SnapshotOrdinal.unsafeApply(1L)
+      )
       after <- distributor.distribute(
         context.copy(balances = SortedMap(address1 -> Balance(1000000L))),
         TimeTrigger,
@@ -294,8 +304,18 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       address2 -> SortedSet(stake(address2, node2, 3000L * dag))
     )
     val locks = SortedMap(
-      address1 -> SortedSet(signed(TokenLock(address1, TokenLockAmount(PosLong.unsafeFrom(1000L * dag)), TokenLockFee(0L), TokenLockReference.empty, None, None), node1)),
-      address2 -> SortedSet(signed(TokenLock(address2, TokenLockAmount(PosLong.unsafeFrom(3000L * dag)), TokenLockFee(0L), TokenLockReference.empty, None, None), node2))
+      address1 -> SortedSet(
+        signed(
+          TokenLock(address1, TokenLockAmount(PosLong.unsafeFrom(1000L * dag)), TokenLockFee(0L), TokenLockReference.empty, None, None),
+          node1
+        )
+      ),
+      address2 -> SortedSet(
+        signed(
+          TokenLock(address2, TokenLockAmount(PosLong.unsafeFrom(3000L * dag)), TokenLockFee(0L), TokenLockReference.empty, None, None),
+          node2
+        )
+      )
     )
     val info = context.copy(
       balances = SortedMap(address1 -> Balance(NonNegLong.unsafeFrom(996000L * dag))),
@@ -313,10 +333,18 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
       supply <- CurrentDagSupply.calculate(info).liftTo[IO]
       emission <- distributor.calculateVariableInflation(EpochProgress(100L), info)
-      refreshed <- distributor.calculateVariableInflation(EpochProgress(101L), info.copy(balances = SortedMap(address1 -> Balance(NonNegLong.unsafeFrom(1996000L * dag)))))
+      refreshed <- distributor.calculateVariableInflation(
+        EpochProgress(101L),
+        info.copy(balances = SortedMap(address1 -> Balance(NonNegLong.unsafeFrom(1996000L * dag))))
+      )
       result <- distributor.distribute(
-        info, TimeTrigger, EpochProgress(100L), List(address1 -> node1, address2 -> node2), emptyDiffs,
-        partitioned.copy(unexpiredCreateDelegatedStakes = fixtureStakes), SnapshotOrdinal.unsafeApply(1L)
+        info,
+        TimeTrigger,
+        EpochProgress(100L),
+        List(address1 -> node1, address2 -> node2),
+        emptyDiffs,
+        partitioned.copy(unexpiredCreateDelegatedStakes = fixtureStakes),
+        SnapshotOrdinal.unsafeApply(1L)
       )
       reserved = result.reservedAddressRewards.toList.map(r => r.destination -> r.amount.value.value).toMap
       operators = result.nodeOperatorRewards.toList.map(r => r.destination -> r.amount.value.value).toMap
@@ -337,7 +365,8 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
   test("new era consumes configured destinations and rejects commission inconsistent with its public policy") {
     val inherited = DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
     val treasuryWeight = inherited.weights(DefaultDelegatedRewardsConfigProvider.stardustTreasury)
-    val movedTreasury = inherited.copy(weights = inherited.weights - DefaultDelegatedRewardsConfigProvider.stardustTreasury + (address3 -> treasuryWeight))
+    val movedTreasury =
+      inherited.copy(weights = inherited.weights - DefaultDelegatedRewardsConfigProvider.stardustTreasury + (address3 -> treasuryWeight))
     val invalidCommission = inherited.copy(fixedCommission = NonNegFraction.unsafeFrom(1L, 5L).some)
     for {
       moved <- run(program = movedTreasury)
@@ -346,7 +375,12 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
     } yield
       expect(destinations.get(address3).contains(1000L), "Distribution reads the selected program's destination map")
         .and(expect(!destinations.contains(DefaultDelegatedRewardsConfigProvider.stardustTreasury), "Replaced destination is not paid"))
-        .and(expect(invalid == Left(NewEraDelegatedRewards.InvalidProgram("New-era commission must equal the fixed ten percent policy")), "Misconfigured commission fails before issuance"))
+        .and(
+          expect(
+            invalid == Left(NewEraDelegatedRewards.InvalidProgram("New-era commission must equal the fixed ten percent policy")),
+            "Misconfigured commission fails before issuance"
+          )
+        )
   }
 
   test("integer apportionment conserves every positive budget and is invariant to input order") {

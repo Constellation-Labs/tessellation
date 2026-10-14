@@ -250,7 +250,14 @@ object GlobalSnapshotAcceptanceManager {
         .getOrElse(environment, SnapshotOrdinal.unsafeApply(Long.MaxValue))
 
       for {
-        acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal, epochProgress)
+        acceptanceResult <- acceptBlocks(
+          blocksForAcceptance,
+          lastSnapshotContext,
+          lastActiveTips,
+          lastDeprecatedTips,
+          ordinal,
+          epochProgress
+        )
         delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
           cdsEvents,
           wdsEvents,

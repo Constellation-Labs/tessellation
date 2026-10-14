@@ -90,7 +90,10 @@ object L1CollateralServiceSuite extends MutableIOSuite {
       base <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](genesis)
       head <- Signed
         .forAsyncHasher[IO, GlobalIncrementalSnapshot](
-          base.copy(ordinal = SnapshotOrdinal.unsafeApply(headEpoch + 1000L), epochProgress = EpochProgress(NonNegLong.unsafeFrom(headEpoch))),
+          base.copy(
+            ordinal = SnapshotOrdinal.unsafeApply(headEpoch + 1000L),
+            epochProgress = EpochProgress(NonNegLong.unsafeFrom(headEpoch))
+          ),
           keyPair
         )
         .flatMap(_.toHashed[IO])

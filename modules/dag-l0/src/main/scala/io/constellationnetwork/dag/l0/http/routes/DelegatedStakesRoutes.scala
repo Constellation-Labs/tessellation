@@ -9,6 +9,7 @@ import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
@@ -174,9 +175,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
       (_, _, totalDelegateStake, legacyTotalSupply) <- processDelegations(lastSnapshotInfo)
       currentTotalSupply <-
-        if (era.isActive(lastSnapshot.ordinal)) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F]
+        if (era.isActive(lastSnapshot.epochProgress)) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F]
         else legacyTotalSupply.pure[F]
-      epochsPerYear = if (era.isActive(lastSnapshot.ordinal)) era.epochsPerYear else emissionConfig.epochsPerYear
+      epochsPerYear = if (era.isActive(lastSnapshot.epochProgress)) era.epochsPerYear else emissionConfig.epochsPerYear
       latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
 
       currentPrice <- toAmount(getCurrentDagPrice(lastSnapshotInfo))
@@ -246,7 +247,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             .longValue
     }
 
-    if (era.isActive(snapshot.ordinal)) {
+    if (era.isActive(snapshot.epochProgress)) {
       val netRewards = delegateRewards.valuesIterator.flatMap(_.valuesIterator).map(a => BigInt(a.value.value)).sum
       val estimatedGross = (netRewards * 10 + 4) / 9
       Either
@@ -322,10 +323,10 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
         case None => ServiceUnavailable()
-        case Some((_, info)) =>
+        case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateDelegatedStake.Create]]
-            result <- validator.validateCreateDelegatedStake(signed, info)
+            result <- validator.validateCreateDelegatedStake(signed, info, snapshot.epochProgress, snapshot.ordinal.next)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted create delegated stake from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>

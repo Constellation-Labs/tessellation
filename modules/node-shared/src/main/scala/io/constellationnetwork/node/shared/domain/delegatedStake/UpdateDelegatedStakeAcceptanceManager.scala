@@ -60,22 +60,23 @@ object UpdateDelegatedStakeAcceptanceManager {
           createDelegatedStakeAcceptanceResult <- creates.foldLeftM[F, CreateDelegatedStakeAcceptanceResult](
             CreateDelegatedStakeAcceptanceResult.empty
           ) { (acc, signed) =>
-            validator.validateCreateDelegatedStake(signed, lastSnapshotContext).map { validated =>
-              val (newAccepted, newRejected) = validated match {
-                case Valid(a) =>
-                  if (acc.parentRefsSeen(signed.parent)) {
-                    (acc.accepted, (signed, NonEmptyChain.of(DuplicatedParent(signed.parent))) :: acc.rejected)
-                  } else if (acc.tokenLockRefsSeen(signed.tokenLockRef)) {
-                    (acc.accepted, (signed, NonEmptyChain.of(DuplicatedTokenLock(signed.tokenLockRef))) :: acc.rejected)
-                  } else {
-                    (a :: acc.accepted, acc.rejected)
-                  }
-                case Invalid(e) => (acc.accepted, (signed, e) :: acc.rejected)
-              }
+            validator.validateCreateDelegatedStake(signed, lastSnapshotContext, currentGlobalEpochProgress, currentSnapshotOrdinal).map {
+              validated =>
+                val (newAccepted, newRejected) = validated match {
+                  case Valid(a) =>
+                    if (acc.parentRefsSeen(signed.parent)) {
+                      (acc.accepted, (signed, NonEmptyChain.of(DuplicatedParent(signed.parent))) :: acc.rejected)
+                    } else if (acc.tokenLockRefsSeen(signed.tokenLockRef)) {
+                      (acc.accepted, (signed, NonEmptyChain.of(DuplicatedTokenLock(signed.tokenLockRef))) :: acc.rejected)
+                    } else {
+                      (a :: acc.accepted, acc.rejected)
+                    }
+                  case Invalid(e) => (acc.accepted, (signed, e) :: acc.rejected)
+                }
 
-              val newParentRefsSeen = acc.parentRefsSeen + signed.parent
-              val newTokenLockRefsSeen = acc.tokenLockRefsSeen + signed.tokenLockRef
-              CreateDelegatedStakeAcceptanceResult(newAccepted, newRejected, newParentRefsSeen, newTokenLockRefsSeen)
+                val newParentRefsSeen = acc.parentRefsSeen + signed.parent
+                val newTokenLockRefsSeen = acc.tokenLockRefsSeen + signed.tokenLockRef
+                CreateDelegatedStakeAcceptanceResult(newAccepted, newRejected, newParentRefsSeen, newTokenLockRefsSeen)
             }
           }
           withdrawDelegatedStakeAcceptanceResult <- withdrawals.foldLeftM[F, WithdrawDelegatedStakeAcceptanceResult](
