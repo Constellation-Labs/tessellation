@@ -1,13 +1,13 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
+import cats.syntax.all._
+
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.RewardAcceptanceManager
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
-
-import cats.syntax.all._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
