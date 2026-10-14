@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator
@@ -71,21 +72,20 @@ object SharedValidators {
     val tokenLockChainValidator = TokenLockChainValidator.make[F]
     val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)
 
+    val metanomicsV2Active = (epoch: EpochProgress) => DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, epoch)
     val updateNodeParametersValidator = UpdateNodeParametersValidator.make(
       signedValidator,
       delegatedStaking.minRewardFraction,
       delegatedStaking.maxRewardFraction,
       delegatedStaking.maxMetadataFieldsChars,
       l0Seedlist,
-      DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, _)
+      metanomicsV2Active
     )
     val updateDelegatedStakeValidator = maybeMptStore match {
       case Some(mptStore) =>
-        UpdateDelegatedStakeValidator
-          .make[F](signedValidator, l0Seedlist, mptStore, DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, _))
+        UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist, mptStore, metanomicsV2Active)
       case None =>
-        UpdateDelegatedStakeValidator
-          .make[F](signedValidator, l0Seedlist, DefaultDelegatedRewardsConfigProvider.metanomicsV2Active(environment, _))
+        UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist, metanomicsV2Active)
     }
     val updateNodeCollateralValidator = maybeMptStore match {
       case Some(mptStore) => UpdateNodeCollateralValidator.make[F](signedValidator, l0Seedlist, mptStore)
