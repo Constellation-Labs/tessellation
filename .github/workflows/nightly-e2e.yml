@@ -27,10 +27,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Deploy pipeline can take up to 75 min (45 build + 30 deploy). Poll for 80 min.
+          # gh run list honours only one --workflow flag, so query each workflow separately.
+          count_running() {
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$1" \
+              --status in_progress --json databaseId --jq 'length' 2>/dev/null || echo 0
+          }
           for i in $(seq 1 160); do
-            running=$(gh run list --repo "$GITHUB_REPOSITORY" \
-              --workflow nightly-deploy.yml --workflow nightly-rebuild.yml \
-              --status in_progress --json databaseId --jq 'length' 2>/dev/null || echo 0)
+            running=$(( $(count_running nightly-deploy.yml) + $(count_running nightly-rebuild.yml) ))
             [ "$running" = "0" ] && echo "No deploy/rebuild running, proceeding" && exit 0
             echo "Deploy/rebuild in progress, waiting... ($i/160)"
             sleep 30
