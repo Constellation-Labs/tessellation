@@ -38,30 +38,18 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val fixedCommission: NonNegFraction = NonNegFraction.unsafeFrom(10, 100)
   val mainnetMetanomicsV2Epoch: EpochProgress = EpochProgress(2_990_000L) // Placeholder inherited from PR #1632.
 
-  def getConfig(): DelegatedRewardsConfig = DelegatedRewardsConfig(
-    eras = Map(AppEnvironment.Mainnet -> DelegatedRewardsEra(mainnetMetanomicsV2Epoch, SortedMap.empty)),
-    flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
-    emissionConfig = Map(
-      AppEnvironment.Dev -> { _: EpochProgress =>
-        EmissionConfigEntry(
-          epochsPerYear = PosLong(100L),
-          asOfEpoch = EpochProgress(0L),
-          iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
-          iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
-          iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
-          totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
-          dagPrices = SortedMap(
-            EpochProgress(0L) -> initialDagPrice
-          ),
-          epochsPerMonth = NonNegLong(10L)
-        )
-      },
-      AppEnvironment.Testnet -> {
-        case epoch if epoch < EpochProgress(1049436L) => // ~ 8 jul 2025
+  def getConfig(): DelegatedRewardsConfig = getConfig(mainnetMetanomicsV2Epoch)
+
+  def getConfig(mainnetActivationEpoch: EpochProgress): DelegatedRewardsConfig = {
+    val mainnetEra = DelegatedRewardsEra(mainnetActivationEpoch, SortedMap.empty)
+    DelegatedRewardsConfig(
+      eras = Map(AppEnvironment.Mainnet -> mainnetEra),
+      flatInflationRate = NonNegFraction.unsafeFrom(3, 100), // 3% flat inflation rate
+      emissionConfig = Map(
+        AppEnvironment.Dev -> { _: EpochProgress =>
           EmissionConfigEntry(
-            epochsPerYear = PosLong(732000L),
-            asOfEpoch = EpochProgress(997094L),
+            epochsPerYear = PosLong(100L),
+            asOfEpoch = EpochProgress(0L),
             iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
             iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
             lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
@@ -70,12 +58,43 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
             dagPrices = SortedMap(
               EpochProgress(0L) -> initialDagPrice
             ),
-            epochsPerMonth = NonNegLong(84L) // one hour
+            epochsPerMonth = NonNegLong(10L)
           )
-        case _ =>
+        },
+        AppEnvironment.Testnet -> {
+          case epoch if epoch < EpochProgress(1049436L) => // ~ 8 jul 2025
+            EmissionConfigEntry(
+              epochsPerYear = PosLong(732000L),
+              asOfEpoch = EpochProgress(997094L),
+              iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
+              iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
+              lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
+              iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
+              totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
+              dagPrices = SortedMap(
+                EpochProgress(0L) -> initialDagPrice
+              ),
+              epochsPerMonth = NonNegLong(84L) // one hour
+            )
+          case _ =>
+            EmissionConfigEntry(
+              epochsPerYear = PosLong(732000L),
+              asOfEpoch = EpochProgress(997094L),
+              iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
+              iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
+              lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
+              iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
+              totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
+              dagPrices = SortedMap(
+                EpochProgress(0L) -> initialDagPrice
+              ),
+              epochsPerMonth = NonNegLong(61000L) // 732000 / 12
+            )
+        },
+        AppEnvironment.Integrationnet -> { _: EpochProgress =>
           EmissionConfigEntry(
             epochsPerYear = PosLong(732000L),
-            asOfEpoch = EpochProgress(997094L),
+            asOfEpoch = EpochProgress(751085L),
             iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
             iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
             lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
@@ -86,68 +105,54 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
             ),
             epochsPerMonth = NonNegLong(61000L) // 732000 / 12
           )
-      },
-      AppEnvironment.Integrationnet -> { _: EpochProgress =>
-        EmissionConfigEntry(
-          epochsPerYear = PosLong(732000L),
-          asOfEpoch = EpochProgress(751085L),
-          iTarget = NonNegFraction.unsafeFrom(5, 1000), // 0.5% target inflation
-          iInitial = NonNegFraction.unsafeFrom(6, 100), // 6% initial inflation
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
-          iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
-          totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
-          dagPrices = SortedMap(
-            EpochProgress(0L) -> initialDagPrice
-          ),
-          epochsPerMonth = NonNegLong(61000L) // 732000 / 12
-        )
-      },
-      AppEnvironment.Mainnet -> { epoch: EpochProgress =>
-        EmissionConfigEntry(
-          epochsPerYear = PosLong(485502L),
-          asOfEpoch = EpochProgress(2311565L),
-          iTarget = if (epoch < mainnetMetanomicsV2Epoch) NonNegFraction.unsafeFrom(5, 1000) else fixedEmissionRate,
-          iInitial = if (epoch < mainnetMetanomicsV2Epoch) NonNegFraction.unsafeFrom(6, 100) else fixedEmissionRate,
-          lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
-          iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
-          totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
-          dagPrices = SortedMap(
-            EpochProgress(0L) -> initialDagPrice
-          ),
-          epochsPerMonth = NonNegLong(40458L) // 485502 / 12
-        )
-      }
-    ),
-    percentDistribution = Map(
-      AppEnvironment.Dev -> devnetDistributionProgram,
-      AppEnvironment.Testnet -> testnetDistributionProgram,
-      AppEnvironment.Integrationnet -> intnetDistributionProgram,
-      AppEnvironment.Mainnet -> mainnetDistributionProgram
-    ),
-    oneTimeRewards = Map(
-      AppEnvironment.Dev -> List(),
-      AppEnvironment.Testnet -> List(
-        OneTimeReward(
-          EpochProgress(1001105L), // approx. 2025-07-11 15:30:00 +UTC
-          Address("DAG0WJjvo8s1h2Mn8g9G3HXuSTN12UGF4RzF7whp"),
-          TransactionAmount(12_345_000_000_00L)
+        },
+        AppEnvironment.Mainnet -> { epoch: EpochProgress =>
+          EmissionConfigEntry(
+            epochsPerYear = PosLong(485502L),
+            asOfEpoch = EpochProgress(2311565L),
+            iTarget = if (mainnetEra.isActive(epoch)) fixedEmissionRate else NonNegFraction.unsafeFrom(5, 1000),
+            iInitial = if (mainnetEra.isActive(epoch)) fixedEmissionRate else NonNegFraction.unsafeFrom(6, 100),
+            lambda = NonNegFraction.unsafeFrom(1, 10), // 0.1 lambda parameter
+            iImpact = NonNegFraction.unsafeFrom(35, 100), // 0.35 impact factor
+            totalSupply = Amount(3693588685_00000000L), // Total supply with 10^8 scaling
+            dagPrices = SortedMap(
+              EpochProgress(0L) -> initialDagPrice
+            ),
+            epochsPerMonth = NonNegLong(40458L) // 485502 / 12
+          )
+        }
+      ),
+      percentDistribution = Map(
+        AppEnvironment.Dev -> devnetDistributionProgram,
+        AppEnvironment.Testnet -> testnetDistributionProgram,
+        AppEnvironment.Integrationnet -> intnetDistributionProgram,
+        AppEnvironment.Mainnet -> mainnetDistributionProgram(mainnetEra)
+      ),
+      oneTimeRewards = Map(
+        AppEnvironment.Dev -> List(),
+        AppEnvironment.Testnet -> List(
+          OneTimeReward(
+            EpochProgress(1001105L), // approx. 2025-07-11 15:30:00 +UTC
+            Address("DAG0WJjvo8s1h2Mn8g9G3HXuSTN12UGF4RzF7whp"),
+            TransactionAmount(12_345_000_000_00L)
+          )
+        ),
+        AppEnvironment.Integrationnet -> List(),
+        AppEnvironment.Mainnet -> List(
+          OneTimeReward(mintEpoch1, wallet1, TransactionAmount(22_088_904_680_692_84L)),
+          // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
+          OneTimeReward(mintEpoch1, wallet23, TransactionAmount(3_525_684_639_889_21L)),
+          OneTimeReward(mintEpoch1, wallet4, TransactionAmount(12_190_277_806_927_26L))
         )
       ),
-      AppEnvironment.Integrationnet -> List(),
-      AppEnvironment.Mainnet -> List(
-        OneTimeReward(mintEpoch1, wallet1, TransactionAmount(22_088_904_680_692_84L)),
-        // 3_168_965_177_964_44L + 356_719_461_924_77L = 3_525_684_639_889_21L
-        OneTimeReward(mintEpoch1, wallet23, TransactionAmount(3_525_684_639_889_21L)),
-        OneTimeReward(mintEpoch1, wallet4, TransactionAmount(12_190_277_806_927_26L))
+      priceOracleEpoch = Map(
+        AppEnvironment.Dev -> EpochProgress.MinValue,
+        AppEnvironment.Testnet -> EpochProgress(1001105L), // approx. 2025-07-11
+        AppEnvironment.Integrationnet -> EpochProgress(835520L), // approx. 07-22-2025
+        AppEnvironment.Mainnet -> EpochProgress.MaxValue
       )
-    ),
-    priceOracleEpoch = Map(
-      AppEnvironment.Dev -> EpochProgress.MinValue,
-      AppEnvironment.Testnet -> EpochProgress(1001105L), // approx. 2025-07-11
-      AppEnvironment.Integrationnet -> EpochProgress(835520L), // approx. 07-22-2025
-      AppEnvironment.Mainnet -> EpochProgress.MaxValue
     )
-  )
+  }
 
   private val devnetDistributionProgram: EpochProgress => ProgramsDistributionConfig =
     _ =>
@@ -198,8 +203,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
       fixedCommission = Some(fixedCommission)
     )
 
-  private val mainnetDistributionProgram: EpochProgress => ProgramsDistributionConfig = {
-    case epoch if epoch < mainnetMetanomicsV2Epoch =>
+  private def mainnetDistributionProgram(era: DelegatedRewardsEra): EpochProgress => ProgramsDistributionConfig = {
+    case epoch if !era.isActive(epoch) =>
       ProgramsDistributionConfig(
         weights = Map(
           stardustNewPrimary -> NonNegFraction.unsafeFrom(5L, 100L),

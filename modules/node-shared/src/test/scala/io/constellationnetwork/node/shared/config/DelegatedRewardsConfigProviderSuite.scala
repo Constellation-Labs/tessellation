@@ -78,4 +78,61 @@ object DelegatedRewardsConfigProviderSuite extends SimpleIOSuite {
       .and(expect(programs.forall(_.flatInflationRate.isEmpty), "legacy flat emissions still use the historical configuration"))
       .and(expect(programs.forall(_.fixedCommission.isEmpty), "legacy commission validation remains network-specific"))
   }
+
+  pureTest("delaying Mainnet activation keeps era, emissions, and distribution historical past the inherited placeholder") {
+    val delayedEpoch = EpochProgress(3_100_000L)
+    val delayed = provider.getConfig(delayedEpoch)
+    val era = delayed.eras(AppEnvironment.Mainnet)
+    val emissionAt = delayed.emissionConfig(AppEnvironment.Mainnet)
+    val programAt = delayed.percentDistribution(AppEnvironment.Mainnet)
+    val historicalEmission = config.emissionConfig(AppEnvironment.Mainnet)(before)
+    val historicalProgram = config.percentDistribution(AppEnvironment.Mainnet)(before)
+
+    expect(!era.isActive(activation), "the original placeholder must not activate a delayed policy")
+      .and(expect.same(historicalEmission, emissionAt(activation)))
+      .and(expect.same(historicalProgram, programAt(activation)))
+      .and(expect(!era.isActive(EpochProgress(3_099_999L)), "the preceding delayed epoch is still historical"))
+      .and(expect.same(historicalEmission, emissionAt(EpochProgress(3_099_999L))))
+      .and(expect.same(historicalProgram, programAt(EpochProgress(3_099_999L))))
+      .and(expect(era.isActive(delayedEpoch), "the delayed epoch activates the era"))
+      .and(expect.same(provider.fixedEmissionRate, emissionAt(delayedEpoch).iInitial))
+      .and(expect.same(provider.fixedEmissionRate, emissionAt(delayedEpoch).iTarget))
+      .and(expect.same(provider.metanomicsV2DistributionProgram, programAt(delayedEpoch)))
+  }
+
+  pureTest("an earlier Mainnet activation supplies the new program when the era first becomes active") {
+    val earlierEpoch = EpochProgress(2_900_000L)
+    val earlier = provider.getConfig(earlierEpoch)
+    val era = earlier.eras(AppEnvironment.Mainnet)
+    val emissionAt = earlier.emissionConfig(AppEnvironment.Mainnet)
+    val programAt = earlier.percentDistribution(AppEnvironment.Mainnet)
+    val precedingEpoch = EpochProgress(2_899_999L)
+    val followingEpoch = EpochProgress(2_900_001L)
+
+    expect(!era.isActive(precedingEpoch), "the preceding earlier epoch is still historical")
+      .and(expect.same(config.emissionConfig(AppEnvironment.Mainnet)(before), emissionAt(precedingEpoch)))
+      .and(expect.same(config.percentDistribution(AppEnvironment.Mainnet)(before), programAt(precedingEpoch)))
+      .and(expect(era.isActive(earlierEpoch), "the earlier epoch activates the era"))
+      .and(expect.same(provider.fixedEmissionRate, emissionAt(earlierEpoch).iInitial))
+      .and(expect.same(provider.fixedEmissionRate, emissionAt(earlierEpoch).iTarget))
+      .and(expect.same(provider.metanomicsV2DistributionProgram, programAt(earlierEpoch)))
+      .and(expect(era.isActive(followingEpoch), "the following epoch remains active"))
+      .and(expect.same(emissionAt(earlierEpoch), emissionAt(followingEpoch)))
+      .and(expect.same(programAt(earlierEpoch), programAt(followingEpoch)))
+  }
+
+  pureTest("disabling Mainnet through the builder disables both schedules even at the maximum epoch") {
+    val disabled = provider.getConfig(EpochProgress.MaxValue)
+    val era = disabled.eras(AppEnvironment.Mainnet)
+    val epochs = List(EpochProgress.MinValue, activation, EpochProgress.MaxValue)
+    val emissions = epochs.map(disabled.emissionConfig(AppEnvironment.Mainnet))
+    val programs = epochs.map(disabled.percentDistribution(AppEnvironment.Mainnet))
+    val historicalEmission = config.emissionConfig(AppEnvironment.Mainnet)(before)
+    val historicalProgram = config.percentDistribution(AppEnvironment.Mainnet)(before)
+
+    expect.same(DelegatedRewardsEra.Disabled, era)
+      .and(expect(epochs.forall(epoch => !era.isActive(epoch)), "the disabled sentinel must never activate the policy"))
+      .and(expect(emissions.forall(_ == historicalEmission), "disabled emission settings must retain the historical rate parameters"))
+      .and(expect(programs.forall(_ == historicalProgram), "disabled distributions must retain the old weights and commission policy"))
+  }
 }
