@@ -2034,7 +2034,6 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
   }
 
   test("fixed-emission metanomics: constant 2% emission, new allocation, fixed 10% commission, no flat inflation") {
-    val epochsPerYear = 100L
     val totalSupply = Amount(1_000_000_00000000L) // 1M DAG
     val emissionPerEpoch = 200_00000000L // 1M * 2% / 100 epochs
 
@@ -2043,7 +2042,7 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
       emissionConfig = Map(
         AppEnvironment.Dev -> { _: EpochProgress =>
           EmissionConfigEntry(
-            epochsPerYear = PosLong(epochsPerYear),
+            epochsPerYear = PosLong(100L),
             asOfEpoch = EpochProgress(100L),
             iTarget = DefaultDelegatedRewardsConfigProvider.fixedEmissionRate,
             iInitial = DefaultDelegatedRewardsConfigProvider.fixedEmissionRate,
@@ -2068,7 +2067,8 @@ object GlobalDelegatedRewardsDistributorSuite extends SimpleIOSuite with Checker
 
     def stake(source: Address, nodeId: Id, amount: Long) = DelegatedStakeRecord(
       Signed(
-        UpdateDelegatedStake.Create(source, nodeId.toPeerId, DelegatedStakeAmount(amount), DelegatedStakeFee(0L), Hash.empty),
+        UpdateDelegatedStake
+          .Create(source, nodeId.toPeerId, DelegatedStakeAmount(NonNegLong.unsafeFrom(amount)), DelegatedStakeFee(0L), Hash.empty),
         NonEmptySet.one[SignatureProof](SignatureProof(nodeId, Signature(Hex(Hash.empty.value))))
       ),
       SnapshotOrdinal(1L),
