@@ -1,12 +1,12 @@
 package io.constellationnetwork.node.shared.infrastructure.delegatedStake
 
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.IO
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.node.shared.config.types.EmissionConfigEntry
+import io.constellationnetwork.node.shared.config.types.{EmissionConfigEntry, ProgramsDistributionConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
@@ -19,11 +19,14 @@ import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -53,10 +56,15 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
     epochsPerMonth = NonNegLong(8L)
   )
 
-  def createMockDelegatedRewardsDistributor: DelegatedRewardsDistributor[IO] =
+  def createMockDelegatedRewardsDistributor: DelegatedRewardsDistributor[IO] = mockDistributor(None)
+
+  def mockDistributor(fixedCommission: Option[NonNegFraction]): DelegatedRewardsDistributor[IO] =
     new DelegatedRewardsDistributor[IO] {
       override def getEmissionConfig(epochProgress: EpochProgress): IO[EmissionConfigEntry] =
         testEmissionConfig.pure[IO]
+
+      override def getDistributionProgram(epochProgress: EpochProgress): IO[ProgramsDistributionConfig] =
+        ProgramsDistributionConfig(Map.empty, NonNegFraction.one, NonNegFraction.one, fixedCommission = fixedCommission).pure[IO]
 
       override def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): IO[Amount] =
         Amount.empty.pure[IO]
@@ -309,5 +317,79 @@ object RewardsInfoCalculatorSuite extends SimpleIOSuite {
           expect.same(rewardsInfo.totalRewardPerEpoch, Amount(PosLong(300L))) // 100 + 200 = 300
         case None => failure("Expected Some(RewardsInfo) but got None")
       }
+  }
+
+  test("the gross reward estimate uses the fixed commission instead of each node's signed commission once active") {
+    // peer1 signed an 80% commission; peer2 never registered parameters
+    val nodeParams = Signed(
+      UpdateNodeParameters(
+        testAddress1,
+        DelegatedStakeRewardParameters(RewardFraction.unsafeFrom(80000000)),
+        NodeMetadataParameters("", ""),
+        UpdateNodeParametersReference(UpdateNodeParametersOrdinal(NonNegLong.unsafeFrom(0)), Hash.empty)
+      ),
+      NonEmptySet.one[SignatureProof](SignatureProof(testPeerId1.toId, Signature(Hex(Hash.empty.value))))
+    )
+    val snapshot = GlobalIncrementalSnapshot(
+      ordinal = SnapshotOrdinal(1L),
+      height = Height(1L),
+      subHeight = SubHeight(1L),
+      lastSnapshotHash = Hash("test-hash"),
+      blocks = SortedSet.empty,
+      stateChannelSnapshots = SortedMap.empty,
+      rewards = SortedSet.empty,
+      delegateRewards = Some(
+        SortedMap(
+          testPeerId1 -> SortedMap(testAddress1 -> testAmount100),
+          testPeerId2 -> SortedMap(testAddress2 -> testAmount200)
+        )
+      ),
+      epochProgress = testEpochProgress,
+      nextFacilitators = NonEmptyList.of(testPeerId1),
+      tips = SnapshotTips(SortedSet.empty, SortedSet.empty),
+      stateProof = GlobalSnapshotStateProof(
+        lastStateChannelSnapshotHashesProof = Hash.empty,
+        lastTxRefsProof = Hash.empty,
+        balancesProof = Hash.empty,
+        lastCurrencySnapshotsProof = None,
+        activeAllowSpends = None,
+        activeTokenLocks = None,
+        tokenLockBalances = None,
+        lastAllowSpendRefs = None,
+        lastTokenLockRefs = None,
+        updateNodeParameters = None,
+        activeDelegatedStakes = None,
+        delegatedStakesWithdrawals = None,
+        activeNodeCollaterals = None,
+        nodeCollateralWithdrawals = None,
+        priceState = None,
+        lastGlobalSnapshotsWithCurrency = None,
+        mptRoot = None,
+        retiredAllowSpendRefs = None
+      ),
+      allowSpendBlocks = Some(SortedSet.empty),
+      tokenLockBlocks = Some(SortedSet.empty),
+      spendActions = Some(SortedMap.empty),
+      updateNodeParameters = Some(SortedMap.empty),
+      artifacts = Some(SortedSet.empty),
+      activeDelegatedStakes = Some(SortedMap.empty),
+      delegatedStakesWithdrawals = Some(SortedMap.empty),
+      activeNodeCollaterals = Some(SortedMap.empty),
+      nodeCollateralWithdrawals = Some(SortedMap.empty),
+      version = SnapshotVersion("0.0.1")
+    )
+    val snapshotInfo = GlobalSnapshotInfo.empty.copy(
+      updateNodeParameters = Some(SortedMap(testPeerId1.toId -> (nodeParams, SnapshotOrdinal(1L))))
+    )
+
+    for {
+      legacy <- RewardsInfoCalculator.make[IO](mockDistributor(None)).calculateRewardsInfo(snapshot, snapshotInfo)
+      fixed <- RewardsInfoCalculator
+        .make[IO](mockDistributor(Some(NonNegFraction.unsafeFrom(10, 100))))
+        .calculateRewardsInfo(snapshot, snapshotInfo)
+    } yield
+      // legacy: 100 / 0.2 + 200 / 1.0 = 700; fixed 10%: 100 / 0.9 + 200 / 0.9 = 111 + 222 = 333
+      expect(legacy.map(_.totalRewardPerEpoch) == Some(Amount(PosLong(700L))))
+        .and(expect(fixed.map(_.totalRewardPerEpoch) == Some(Amount(PosLong(333L)))))
   }
 }

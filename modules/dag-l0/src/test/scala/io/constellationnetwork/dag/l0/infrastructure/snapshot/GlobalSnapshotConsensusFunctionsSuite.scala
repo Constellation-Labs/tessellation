@@ -300,6 +300,9 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     (_, _, _, _, _, _) => IO(SortedSet.empty)
 
   val delegatorRewards: DelegatedRewardsDistributor[F] = new DelegatedRewardsDistributor[F] {
+    def getDistributionProgram(epochProgress: EpochProgress): F[ProgramsDistributionConfig] =
+      ProgramsDistributionConfig(Map.empty, NonNegFraction.one, NonNegFraction.one).pure[F]
+
     def calculateVariableInflation(
       epochProgress: EpochProgress,
       lastSnapshotContext: GlobalSnapshotContext

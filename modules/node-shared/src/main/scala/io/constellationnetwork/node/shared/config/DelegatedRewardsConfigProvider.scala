@@ -32,7 +32,7 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
   val mintEpoch1: EpochProgress = EpochProgress(NonNegLong.unsafeFrom(2_507_521L + 11_000L)) // approximately 11/6/2025
   val initialDagPrice: NonNegFraction = NonNegFraction.unsafeFrom(25, 1) // DAG per USD ($0.04 per DAG)
 
-  // Fixed-emission metanomics: a flat 2% of total supply per year, split by metanomicsV2DistributionProgram.
+  // Fixed-emission metanomics: a flat 2% per year of the DAG outstanding in the ledger, split by metanomicsV2DistributionProgram.
   val stardustTreasury: Address = Address("DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8")
   val aiInference: Address = Address("DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8")
   val fixedEmissionRate: NonNegFraction = NonNegFraction.unsafeFrom(2, 100)
@@ -116,7 +116,8 @@ object DefaultDelegatedRewardsConfigProvider extends DelegatedRewardsConfigProvi
           dagPrices = SortedMap(
             EpochProgress(0L) -> initialDagPrice
           ),
-          epochsPerMonth = NonNegLong(40458L) // 485502 / 12
+          epochsPerMonth = NonNegLong(40458L), // 485502 / 12
+          ledgerSupply = epoch >= mainnetMetanomicsV2Epoch
         )
       }
     ),

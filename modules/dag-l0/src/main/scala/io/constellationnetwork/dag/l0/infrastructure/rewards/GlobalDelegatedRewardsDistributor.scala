@@ -198,7 +198,6 @@ object GlobalDelegatedRewardsDistributor {
       val iImpact = emConfig.iImpact.toBigDecimal
       val epochsPerYear = BigDecimal(emConfig.epochsPerYear.value, mc)
       val transitionEpoch = BigDecimal(emConfig.asOfEpoch.value.value, mc)
-      val totalSupply = BigDecimal(emConfig.totalSupply.value, mc)
 
       if (emConfig.dagPrices.values.isEmpty) {
         Slf4jLogger.getLogger[F].error("Empty DAG price configuration").as(Amount.empty)
@@ -210,6 +209,10 @@ object GlobalDelegatedRewardsDistributor {
         val yearDiff = DecimalUtils.safeDivide(BigDecimal(epochProgress.value.value - transitionEpoch.toLong, mc), epochsPerYear)
 
         for {
+          totalSupplyAmount <-
+            if (emConfig.ledgerSupply) CurrentDagSupply.calculate(lastSnapshotContext).liftTo[F] else emConfig.totalSupply.pure[F]
+          totalSupply = BigDecimal(totalSupplyAmount.value.value, mc)
+
           // Current year
           currentYearFraction <- yearDiff.pure[F]
 
@@ -443,7 +446,10 @@ object GlobalDelegatedRewardsDistributor {
               }
           }.sequence
 
-          allRewards = SortedSet.from(staticRewards ++ dynamicRewards)
+          // Under a fixed commission a validator's static reward and its commission can be equal; a SortedSet would drop one.
+          allRewards <-
+            if (fixedCommission.isDefined) RewardTransactionAggregation.combine(staticRewards ++ dynamicRewards).liftTo[F]
+            else SortedSet.from(staticRewards ++ dynamicRewards).pure[F]
         } yield allRewards
       }
     }

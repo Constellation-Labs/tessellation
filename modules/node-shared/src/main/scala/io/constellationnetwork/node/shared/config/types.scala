@@ -1649,7 +1649,9 @@ object types {
     iImpact: NonNegFraction,
     totalSupply: Amount,
     dagPrices: Map[EpochProgress, NonNegFraction],
-    epochsPerMonth: NonNegLong
+    epochsPerMonth: NonNegLong,
+    // when true, totalSupply is ignored and the emission base is the outstanding DAG in the previous snapshot's ledger
+    ledgerSupply: Boolean = false
   )
 
   case class ProgramsDistributionConfig(
