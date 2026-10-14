@@ -6,8 +6,8 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
-import io.constellationnetwork.node.shared.config.types.OneTimeReward
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra, MainnetRewardsConfig}
+import io.constellationnetwork.node.shared.config.types.{OneTimeReward, ProgramsDistributionConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.address.Address
@@ -15,7 +15,7 @@ import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeRecord, DelegatedStakeReference}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 
 import eu.timepit.refined.auto._
@@ -27,10 +27,36 @@ private[rewards] object NewEraDelegatedRewards {
   case object DuplicateStake extends DistributionError("Multiple active stakes share a delegator and node")
   case object AmbiguousFacilitator extends DistributionError("A reward facilitator has multiple addresses")
   case object InconsistentAccrual extends DistributionError("Credited delegation rewards do not match the allocated reward budget")
+  final case class InvalidProgram(reason: String) extends DistributionError(reason)
 
-  private val protocol = Address("DAG86Joz5S7hkL8N9yqTuVs5vo1bzQLwF3MUTUMX")
-  private val treasury = Address("DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8")
-  private val inference = Address("DAG6CLeP4qepXq36xtzYEdKdn5NB1eDWF6ViJmH8")
+  private def programAllocation(
+    budget: Amount,
+    program: ProgramsDistributionConfig
+  ): Either[DistributionError, (Map[Int, BigInt], List[(Address, Int)], NonNegFraction)] = {
+    val canonicalReserved = List(
+      MainnetRewardsConfig.protocolWalletMetanomics -> 0,
+      DefaultDelegatedRewardsConfigProvider.stardustTreasury -> 1,
+      DefaultDelegatedRewardsConfigProvider.aiInference -> 4
+    )
+    val additional = program.weights.keys.toList.filterNot(canonicalReserved.map(_._1).contains).sorted.zipWithIndex
+      .map { case (address, index) => address -> (index + 5) }
+    val reserved = (canonicalReserved ++ additional).filter { case (address, _) => program.weights.contains(address) }
+    val fractions = reserved.map { case (address, key) => key -> program.weights(address) } ++
+      List(2 -> program.validatorsWeight, 3 -> program.delegatorsWeight)
+    val denominator = fractions.map { case (_, value) => BigInt(value.denominator.value) }.foldLeft(BigInt(1))((left, right) => left / left.gcd(right) * right)
+    val weights = fractions.map { case (key, value) => key -> (BigInt(value.numerator.value) * (denominator / value.denominator.value)) }
+    for {
+      _ <- Either.cond(weights.map(_._2).sum == denominator, (), InvalidProgram("Reward program weights must sum to one"))
+      _ <- Either.cond(program.flatInflationRate.exists(_.numerator.value == 0L), (), InvalidProgram("New-era delegation top-up must be explicitly zero"))
+      commission <- program.fixedCommission.toRight(InvalidProgram("New-era commission must be explicitly configured"))
+      _ <- Either.cond(
+        BigInt(commission.numerator.value) * DefaultDelegatedRewardsConfigProvider.fixedCommission.denominator.value ==
+          BigInt(DefaultDelegatedRewardsConfigProvider.fixedCommission.numerator.value) * commission.denominator.value,
+        (),
+        InvalidProgram("New-era commission must equal the fixed ten percent policy")
+      )
+    } yield (RewardApportionment.allocate(BigInt(budget.value.value), weights).toMap, reserved, commission)
+  }
 
   private def amount(value: BigInt): Either[DistributionError, Amount] =
     Either
@@ -65,7 +91,8 @@ private[rewards] object NewEraDelegatedRewards {
     facilitators: List[(Address, PeerId)],
     diffs: UpdateDelegatedStakeAcceptanceResult,
     partitioned: PartitionedStakeUpdates,
-    oneTimeRewards: List[OneTimeReward]
+    oneTimeRewards: List[OneTimeReward],
+    program: ProgramsDistributionConfig = DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
   ): F[DelegatedRewardsResult] = {
     val active = partitioned.unexpiredCreateDelegatedStakes
     val modified = DelegatedRewardsDistributor.identifyModifiedStakes(active, diffs.acceptedCreates)
@@ -73,13 +100,11 @@ private[rewards] object NewEraDelegatedRewards {
     val withdrawn = diffs.acceptedWithdrawals.values.flatten.map(_._1.stakeRef).toSet
     val eligibleFacilitators = facilitators.distinct.filter { case (_, id) => era.validatorsAt(ordinal).contains(id) }
     val parameters = context.updateNodeParameters.toList.flatMap(_.toList).toMap
-    val pools = RewardApportionment
-      .allocate(BigInt(budget.value.value), List(0 -> BigInt(30), 1 -> BigInt(10), 2 -> BigInt(10), 3 -> BigInt(35), 4 -> BigInt(15)))
-      .toMap
-    val grossDelegation = pools.getOrElse(3, BigInt(0))
-    val commission = grossDelegation / 10
-
     for {
+      allocation <- programAllocation(budget, program).liftTo[F]
+      (pools, reserved, commissionFraction) = allocation
+      grossDelegation = pools.getOrElse(3, BigInt(0))
+      commission = grossDelegation * commissionFraction.numerator.value / commissionFraction.denominator.value
       _ <- Async[F]
         .raiseError[Unit](AmbiguousFacilitator)
         .whenA(eligibleFacilitators.groupBy(_._2).exists(_._2.size > 1))
@@ -120,13 +145,7 @@ private[rewards] object NewEraDelegatedRewards {
           } ++
           oneTimeRewards.map(r => r.address -> BigInt(r.amount.value.value))
       )
-      reservedRewards <- transactions[F](
-        List(
-          protocol -> pools.getOrElse(0, BigInt(0)),
-          treasury -> pools.getOrElse(1, BigInt(0)),
-          inference -> pools.getOrElse(4, BigInt(0))
-        )
-      )
+      reservedRewards <- transactions[F](reserved.map { case (address, key) => address -> pools.getOrElse(key, BigInt(0)) })
       updatedCreates <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[F](delegationRewards, diffs, partitioned)
       baselineCreates <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[F](Map.empty, diffs, partitioned)
       creditedRewards = updatedCreates.values.flatten.map(r => BigInt(r.rewards.value.value)).sum -

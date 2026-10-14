@@ -28,7 +28,7 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.config.{DelegatedRewardsConfigProvider, DelegatedRewardsEra}
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
   UpdateDelegatedStakeAcceptanceManager,
@@ -266,7 +266,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def updateDelegatedStakeAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
     val validator =
-      UpdateDelegatedStakeValidator.make(signedValidator, None)
+      UpdateDelegatedStakeValidator.make(signedValidator, None, DelegatedRewardsEra.Disabled)
     UpdateDelegatedStakeAcceptanceManager.make(validator)
   }
 
@@ -871,7 +871,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   test("real reward acceptance and historical recreation preserve state across the rewards era boundary") { res =>
     implicit val (_, ks, j, h, sp, m) = res
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
-    val activation = SnapshotOrdinal.unsafeApply(100L)
+    val activation = EpochProgress(100L)
     val withdrawalDelay = EpochProgress(1L)
     val protocol = Address("DAG86Joz5S7hkL8N9yqTuVs5vo1bzQLwF3MUTUMX")
     val treasury = Address("DAG7BfLURyapaaLoJJtR1LndV1s7NnagS8eqZnQ8")
@@ -881,7 +881,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       address = keyPair.getPublic.toAddress
       node = PeerId.fromPublic(keyPair.getPublic)
-      era = DelegatedRewardsEra(activation, SortedMap(activation -> SortedSet(node)), PosLong(1L))
+      era = DelegatedRewardsEra(activation, SortedMap(SnapshotOrdinal.MinValue -> SortedSet(node)), PosLong(1L))
       config = DelegatedRewardsConfig(
         flatInflationRate = NonNegFraction.zero,
         emissionConfig = Map(Dev -> { _: EpochProgress =>
@@ -897,7 +897,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             epochsPerMonth = NonNegLong(1L)
           )
         }),
-        percentDistribution = Map(Dev -> { _: EpochProgress =>
+        percentDistribution = Map(Dev -> { epoch: EpochProgress =>
+          if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram else
           ProgramsDistributionConfig(
             Map(
               protocol -> NonNegFraction.unsafeFrom(30, 100),
@@ -908,7 +909,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             NonNegFraction.unsafeFrom(35, 100)
           )
         }),
-        oneTimeRewards = Map(Dev -> List(OneTimeReward(EpochProgress(100L), protocol, TransactionAmount(3000L)))),
+        oneTimeRewards = Map(Dev -> List(99L, 100L, 101L).map(value => OneTimeReward(EpochProgress(NonNegLong.unsafeFrom(value)), protocol, TransactionAmount(3000L)))),
         priceOracleEpoch = Map(Dev -> EpochProgress.MaxValue),
         eras = Map(Dev -> era)
       )
@@ -967,13 +968,13 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       recreation = GlobalSnapshotContextFunctions
         .make[IO](acceptance, updateDelegatedStakeAcceptanceManager, withdrawalDelay, SnapshotOrdinal.MinValue, SnapshotOrdinal.MinValue)
       expectations <- List(
-        SnapshotOrdinal.unsafeApply(99L) -> (TimeTrigger: ConsensusTrigger),
-        activation -> (TimeTrigger: ConsensusTrigger),
-        SnapshotOrdinal.unsafeApply(101L) -> (TimeTrigger: ConsensusTrigger),
-        activation -> (EventTrigger: ConsensusTrigger)
+        (SnapshotOrdinal.unsafeApply(9000L), EpochProgress(99L), TimeTrigger: ConsensusTrigger),
+        (SnapshotOrdinal.unsafeApply(1L), EpochProgress(100L), TimeTrigger: ConsensusTrigger),
+        (SnapshotOrdinal.unsafeApply(2L), EpochProgress(101L), TimeTrigger: ConsensusTrigger),
+        (SnapshotOrdinal.unsafeApply(3L), EpochProgress(100L), EventTrigger: ConsensusTrigger)
       ).traverse {
-        case (ordinal, trigger) =>
-          val previousEpoch = if (trigger == TimeTrigger) EpochProgress(99L) else EpochProgress(100L)
+        case (ordinal, epoch, trigger) =>
+          val previousEpoch = if (trigger == TimeTrigger) EpochProgress(NonNegLong.unsafeFrom(epoch.value.value - 1L)) else epoch
           for {
             genesis <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, previousEpoch))
             previousOrdinal = SnapshotOrdinal(NonNegLong.unsafeFrom(ordinal.value.value - 1L))
@@ -1000,7 +1001,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           } yield {
             val protocolPayout = artifact.rewards.filter(_.destination == protocol).toList.map(_.amount.value.value).sum
             val eraChecks =
-              if (!era.isActive(ordinal))
+              if (!era.isActive(epoch))
                 expect(protocolPayout == 3000L, "A-1 preserves legacy set union when one-time and protocol payouts coincide")
               else if (trigger == EventTrigger)
                 expect(protocolPayout == 0L, "EventTrigger issues no program or one-time reward")
@@ -1054,7 +1055,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     res =>
       implicit val (_, ks, j, h, sp, m) = res
       implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
-      val activation = SnapshotOrdinal.unsafeApply(100L)
+      val activation = EpochProgress(100L)
       val withdrawalDelay = EpochProgress(1L)
       val protocol = Address("DAG86Joz5S7hkL8N9yqTuVs5vo1bzQLwF3MUTUMX")
 
@@ -1064,7 +1065,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         operator = operatorKey.getPublic.toAddress
         delegator = delegatorKey.getPublic.toAddress
         node = PeerId.fromPublic(operatorKey.getPublic)
-        era = DelegatedRewardsEra(activation, SortedMap(activation -> SortedSet(node)), PosLong(1L))
+        era = DelegatedRewardsEra(activation, SortedMap(SnapshotOrdinal.MinValue -> SortedSet(node)), PosLong(1L))
         config = DelegatedRewardsConfig(
           flatInflationRate = NonNegFraction.zero,
           emissionConfig = Map(Dev -> { _: EpochProgress =>
@@ -1080,7 +1081,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
               epochsPerMonth = NonNegLong(1L)
             )
           }),
-          percentDistribution = Map(Dev -> { _: EpochProgress =>
+          percentDistribution = Map(Dev -> { epoch: EpochProgress =>
+          if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram else
             ProgramsDistributionConfig(
               Map(protocol -> NonNegFraction.unsafeFrom(55, 100)),
               NonNegFraction.unsafeFrom(10, 100),
@@ -1152,7 +1154,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           configProvider = provider,
           withdrawalDelay = withdrawalDelay
         )
-        genesis <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress(99L)))
+        genesis <- GlobalIncrementalSnapshot.fromGlobalSnapshot[IO](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress(98L)))
         initialOrdinal = SnapshotOrdinal.unsafeApply(98L)
         initialProof <- initialInfo.stateProof[IO](initialOrdinal)
         initialArtifact <- Signed

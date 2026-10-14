@@ -8,8 +8,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
-import io.constellationnetwork.node.shared.config.types.OneTimeReward
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra, MainnetRewardsConfig}
+import io.constellationnetwork.node.shared.config.types.{OneTimeReward, ProgramsDistributionConfig}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -19,8 +19,9 @@ import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockAmount, TokenLockFee, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionAmount
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, NonNegFraction, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -43,7 +44,15 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
   private val node2 = PeerId(Hex("02"))
   private val excluded = PeerId(Hex("03"))
   private val activation = SnapshotOrdinal.unsafeApply(100L)
-  private val era = DelegatedRewardsEra(activation, SortedMap(activation -> SortedSet(node1, node2)), PosLong(1L))
+  private val era = DelegatedRewardsEra(EpochProgress(100L), SortedMap(SnapshotOrdinal.MinValue -> SortedSet(node1, node2)), PosLong(1L))
+
+  private def eraConfig = GlobalDelegatedRewardsDistributorSuite.simpleEmissionConfig.copy(
+    eras = Map(AppEnvironment.Dev -> era),
+    percentDistribution = Map(AppEnvironment.Dev -> { epoch: EpochProgress =>
+      if (era.isActive(epoch)) DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+      else GlobalDelegatedRewardsDistributorSuite.simpleEmissionConfig.percentDistribution(AppEnvironment.Dev)(epoch)
+    })
+  )
 
   private def signed[A](value: A, node: PeerId): Signed[A] =
     Signed(value, NonEmptySet.one(SignatureProof(node.toId, Signature(Hex(Hash.empty.value)))))
@@ -93,13 +102,14 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
     signers: List[(Address, PeerId)] = List(address1 -> node1, address3 -> excluded),
     diffs: UpdateDelegatedStakeAcceptanceResult = emptyDiffs,
     updates: PartitionedStakeUpdates = partitioned,
-    budget: Long = 10000L
+    budget: Long = 10000L,
+    program: ProgramsDistributionConfig = DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
   ): IO[DelegatedRewardsResult] =
     for {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       result <- NewEraDelegatedRewards
-        .distribute[IO](info, activation, era, Amount(NonNegLong.unsafeFrom(budget)), signers, diffs, updates, Nil)
+        .distribute[IO](info, activation, era, Amount(NonNegLong.unsafeFrom(budget)), signers, diffs, updates, Nil, program)
     } yield result
 
   test("all delegations earn fixed net rewards; only eligible signers receive direct rewards and redistributed commission") {
@@ -226,15 +236,15 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
   }
 
   test("epoch emission refreshes finalized supply and is active at A and A+1 while A-1 remains exactly legacy") {
-    val config = GlobalDelegatedRewardsDistributorSuite.simpleEmissionConfig.copy(eras = Map(AppEnvironment.Dev -> era))
+    val config = eraConfig
     for {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
       distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
-      legacy <- distributor.distribute(
+      legacy <- GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config.copy(eras = Map.empty)).distribute(
         context,
         TimeTrigger,
-        EpochProgress(100L),
+        EpochProgress(99L),
         List(address1 -> node1),
         emptyDiffs,
         partitioned,
@@ -243,13 +253,13 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
       before <- distributor.distribute(
         context,
         TimeTrigger,
-        EpochProgress(100L),
+        EpochProgress(99L),
         List(address1 -> node1),
         emptyDiffs,
         partitioned,
-        SnapshotOrdinal.unsafeApply(99L)
+        SnapshotOrdinal.unsafeApply(9000L)
       )
-      at <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, activation)
+      at <- distributor.distribute(context, TimeTrigger, EpochProgress(100L), List(address1 -> node1), emptyDiffs, partitioned, SnapshotOrdinal.unsafeApply(1L))
       after <- distributor.distribute(
         context.copy(balances = SortedMap(address1 -> Balance(1000000L))),
         TimeTrigger,
@@ -257,7 +267,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
         List(address1 -> node1),
         emptyDiffs,
         partitioned,
-        SnapshotOrdinal.unsafeApply(101L)
+        SnapshotOrdinal.unsafeApply(2L)
       )
       event <- distributor.distribute(
         context,
@@ -277,6 +287,68 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
         .and(expect(event.totalEmittedRewardsAmount == Amount.empty, "EventTrigger mints no reward budget"))
   }
 
+  test("inherited Metanomics V2 numeric fixture uses refreshed current supply and ignores operator commission settings") {
+    val dag = 100000000L
+    val fixtureStakes = SortedMap(
+      address1 -> SortedSet(stake(address1, node1, 1000L * dag)),
+      address2 -> SortedSet(stake(address2, node2, 3000L * dag))
+    )
+    val locks = SortedMap(
+      address1 -> SortedSet(signed(TokenLock(address1, TokenLockAmount(PosLong.unsafeFrom(1000L * dag)), TokenLockFee(0L), TokenLockReference.empty, None, None), node1)),
+      address2 -> SortedSet(signed(TokenLock(address2, TokenLockAmount(PosLong.unsafeFrom(3000L * dag)), TokenLockFee(0L), TokenLockReference.empty, None, None), node2))
+    )
+    val info = context.copy(
+      balances = SortedMap(address1 -> Balance(NonNegLong.unsafeFrom(996000L * dag))),
+      activeTokenLocks = locks.some,
+      activeDelegatedStakes = fixtureStakes.some,
+      updateNodeParameters = SortedMap(
+        node1.toId -> parameters(address1, node1, 80000000),
+        node2.toId -> parameters(address2, node2, 0)
+      ).some
+    )
+    val config = eraConfig.copy(eras = Map(AppEnvironment.Dev -> era.copy(epochsPerYear = PosLong(100L))))
+    for {
+      implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
+      implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
+      distributor = GlobalDelegatedRewardsDistributor.make[IO](AppEnvironment.Dev, config)
+      supply <- CurrentDagSupply.calculate(info).liftTo[IO]
+      emission <- distributor.calculateVariableInflation(EpochProgress(100L), info)
+      refreshed <- distributor.calculateVariableInflation(EpochProgress(101L), info.copy(balances = SortedMap(address1 -> Balance(NonNegLong.unsafeFrom(1996000L * dag)))))
+      result <- distributor.distribute(
+        info, TimeTrigger, EpochProgress(100L), List(address1 -> node1, address2 -> node2), emptyDiffs,
+        partitioned.copy(unexpiredCreateDelegatedStakes = fixtureStakes), SnapshotOrdinal.unsafeApply(1L)
+      )
+      reserved = result.reservedAddressRewards.toList.map(r => r.destination -> r.amount.value.value).toMap
+      operators = result.nodeOperatorRewards.toList.map(r => r.destination -> r.amount.value.value).toMap
+    } yield
+      expect(supply.value.value == 1000000L * dag, "Current supply includes locked principal exactly once")
+        .and(expect(emission.value.value == 200L * dag, "Two percent nominal annual emission is divided over 100 epochs"))
+        .and(expect(refreshed.value.value == 400L * dag, "Public emission calculator refreshes from the supplied finalized ledger"))
+        .and(expect(reserved(MainnetRewardsConfig.protocolWalletMetanomics) == 60L * dag, "Protocol receives thirty percent"))
+        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.stardustTreasury) == 20L * dag, "Treasury receives ten percent"))
+        .and(expect(reserved(DefaultDelegatedRewardsConfigProvider.aiInference) == 30L * dag, "AI program receives fifteen percent"))
+        .and(expect(operators(address1) == 1175000000L, "First operator receives ten DAG direct plus 1.75 commission"))
+        .and(expect(operators(address2) == 1525000000L, "Second operator receives ten DAG direct plus 5.25 commission"))
+        .and(expect(result.delegatorRewardsMap(node1)(address1).value.value == 1575000000L, "First delegation receives 15.75 DAG net"))
+        .and(expect(result.delegatorRewardsMap(node2)(address2).value.value == 4725000000L, "Second delegation receives 47.25 DAG net"))
+        .and(expect(result.totalEmittedRewardsAmount == emission, "All allocations exactly conserve the refreshed budget"))
+  }
+
+  test("new era consumes configured destinations and rejects commission inconsistent with its public policy") {
+    val inherited = DefaultDelegatedRewardsConfigProvider.metanomicsV2DistributionProgram
+    val treasuryWeight = inherited.weights(DefaultDelegatedRewardsConfigProvider.stardustTreasury)
+    val movedTreasury = inherited.copy(weights = inherited.weights - DefaultDelegatedRewardsConfigProvider.stardustTreasury + (address3 -> treasuryWeight))
+    val invalidCommission = inherited.copy(fixedCommission = NonNegFraction.unsafeFrom(1L, 5L).some)
+    for {
+      moved <- run(program = movedTreasury)
+      invalid <- run(program = invalidCommission).attempt
+      destinations = moved.reservedAddressRewards.toList.map(r => r.destination -> r.amount.value.value).toMap
+    } yield
+      expect(destinations.get(address3).contains(1000L), "Distribution reads the selected program's destination map")
+        .and(expect(!destinations.contains(DefaultDelegatedRewardsConfigProvider.stardustTreasury), "Replaced destination is not paid"))
+        .and(expect(invalid == Left(NewEraDelegatedRewards.InvalidProgram("New-era commission must equal the fixed ten percent policy")), "Misconfigured commission fails before issuance"))
+  }
+
   test("integer apportionment conserves every positive budget and is invariant to input order") {
     forall(Gen.zip(Gen.chooseNum(0L, 1000000L), Gen.listOfN(5, Gen.chooseNum(1L, 1000000L)))) {
       case (budget, values) =>
@@ -294,8 +366,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
   }
 
   test("one-time issuance remains explicit, additive and time-triggered at its configured epoch") {
-    val config = GlobalDelegatedRewardsDistributorSuite.simpleEmissionConfig.copy(
-      eras = Map(AppEnvironment.Dev -> era),
+    val config = eraConfig.copy(
       oneTimeRewards = Map(AppEnvironment.Dev -> List(OneTimeReward(EpochProgress(100L), address1, TransactionAmount(350L))))
     )
     for {
@@ -342,7 +413,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
   }
 
   test("serialized producer rewards reconstruct the same balances and state proof through the shared replay helpers across activation") {
-    val config = GlobalDelegatedRewardsDistributorSuite.simpleEmissionConfig.copy(eras = Map(AppEnvironment.Dev -> era))
+    val config = eraConfig
     for {
       implicit0(serializer: JsonSerializer[IO]) <- JsonSerializer.forSync[IO]
       implicit0(hasher: Hasher[IO]) = Hasher.forJson[IO]
@@ -355,7 +426,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
           produced <- distributor.distribute(
             context,
             TimeTrigger,
-            EpochProgress(100L),
+            EpochProgress(ordinal.value),
             List(address1 -> node1),
             diffs,
             partitioned,
@@ -366,7 +437,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
           replayedCreates <- DelegatedRewardsDistributor.getUpdatedCreateDelegatedStakes[IO](recordedRewards, diffs, partitioned)
           replayedWithdrawals <- DelegatedRewardsDistributor.getUpdatedWithdrawalDelegatedStakes[IO](context, diffs, partitioned)
           producerImmediate <-
-            if (era.isActive(ordinal))
+            if (era.isActive(EpochProgress(ordinal.value)))
               RewardTransactionAggregation
                 .combine(
                   produced.nodeOperatorRewards.toList ++ produced.reservedAddressRewards.toList ++ produced.withdrawalRewardTxs.toList
@@ -377,7 +448,7 @@ object NewEraDelegatedRewardsSuite extends SimpleIOSuite with Checkers {
             producerImmediate.asJson.noSpaces
           ).liftTo[IO]
           replayImmediate <-
-            if (era.isActive(ordinal)) RewardTransactionAggregation.combine(recordedImmediate.toList).liftTo[IO]
+            if (era.isActive(EpochProgress(ordinal.value))) RewardTransactionAggregation.combine(recordedImmediate.toList).liftTo[IO]
             else IO.pure(recordedImmediate)
           producerBalances <- producerImmediate.toList.foldLeftM(context.balances) { (balances, reward) =>
             balances

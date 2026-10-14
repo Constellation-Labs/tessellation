@@ -58,15 +58,12 @@ object GlobalDelegatedRewardsDistributor {
       partitionedRecords: PartitionedStakeUpdates,
       ordinal: SnapshotOrdinal
     ): F[DelegatedRewardsResult] =
-      if (era.isActive(ordinal)) {
+      if (era.isActive(epochProgress)) {
         for {
+          program <- getDistributionProgram(epochProgress)
           budget <- trigger match {
             case EventTrigger => Amount.empty.pure[F]
-            case TimeTrigger =>
-              CurrentDagSupply.calculate(lastSnapshotContext).liftTo[F].map { supply =>
-                val perEpoch = BigInt(supply.value.value) * 2 / (BigInt(100) * era.epochsPerYear.value)
-                Amount(NonNegLong.unsafeFrom(perEpoch.toLong))
-              }
+            case TimeTrigger => calculateVariableInflation(epochProgress, lastSnapshotContext)
           }
           oneTimeRewards <- trigger match {
             case EventTrigger => List.empty[OneTimeReward].pure[F]
@@ -80,7 +77,8 @@ object GlobalDelegatedRewardsDistributor {
             facilitators,
             delegatedStakeDiffs,
             partitionedRecords,
-            oneTimeRewards
+            oneTimeRewards,
+            program
           )
         } yield result
       } else distributeLegacy(lastSnapshotContext, trigger, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
@@ -112,10 +110,18 @@ object GlobalDelegatedRewardsDistributor {
 
     /** Calculate the variable amount of rewards to mint for this epoch based on the config and epoch progress.
       */
-    def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount] = for {
-      emConfig <- getEmissionConfig(epochProgress)
-      result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
-    } yield result
+    def calculateVariableInflation(epochProgress: EpochProgress, lastSnapshotContext: GlobalSnapshotInfo): F[Amount] =
+      if (era.isActive(epochProgress))
+        CurrentDagSupply.calculate(lastSnapshotContext).liftTo[F].map { supply =>
+          val rate = DefaultDelegatedRewardsConfigProvider.fixedEmissionRate
+          val perEpoch = BigInt(supply.value.value) * rate.numerator.value / (BigInt(rate.denominator.value) * era.epochsPerYear.value)
+          Amount(NonNegLong.unsafeFrom(perEpoch.toLong))
+        }
+      else for {
+        emConfig <- getEmissionConfig(epochProgress)
+        result <- calculateEmissionRewards(epochProgress, emConfig, lastSnapshotContext)
+      } yield result
+
 
     /** Implements the distribute method that encapsulates all reward calculation logic for a consensus cycle. This method replaces the
       * reward calculation functionality that was previously spread across the GlobalSnapshotAcceptanceManager.
