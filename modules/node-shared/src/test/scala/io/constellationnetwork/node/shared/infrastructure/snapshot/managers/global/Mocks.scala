@@ -199,7 +199,7 @@ object Mocks {
         ).pure[IO]
     }
 
-    val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, _ => false)
+    val updateDelegatedStakeValidator = UpdateDelegatedStakeValidator.make[IO](SignedValidator.make[IO], None, (_: EpochProgress) => false)
     val updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make[IO](
       updateDelegatedStakeValidator,
       fixingDelegatedStakeDoubleWithdrawalOrdinal

@@ -261,7 +261,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def updateDelegatedStakeAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
     val validator =
-      UpdateDelegatedStakeValidator.make(signedValidator, None, _ => false)
+      UpdateDelegatedStakeValidator.make(signedValidator, None, (_: EpochProgress) => false)
     UpdateDelegatedStakeAcceptanceManager.make(validator, SnapshotOrdinal.MinValue)
   }
 

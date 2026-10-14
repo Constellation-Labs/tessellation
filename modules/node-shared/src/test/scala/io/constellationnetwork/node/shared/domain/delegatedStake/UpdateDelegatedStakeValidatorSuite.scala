@@ -623,7 +623,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     UpdateDelegatedStakeValidator.make[IO](
       signedValidator,
       seedlist,
-      _ => metanomicsV2Active
+      (_: EpochProgress) => metanomicsV2Active
     )
   }
 
