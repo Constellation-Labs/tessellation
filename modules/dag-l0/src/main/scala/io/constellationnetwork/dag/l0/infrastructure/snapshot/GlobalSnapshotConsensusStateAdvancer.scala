@@ -347,6 +347,7 @@ object GlobalSnapshotConsensusStateAdvancer {
         MembershipClearing.eviction(
           clearingCandidate(state, lineage, scope).flatMap(_._2),
           state.roundStartFacilitators.value.toSet,
+          scope,
           admittedPeers,
           certificateEvictions,
           config.activeAdmissionMaxExpansionPerRound,
@@ -1529,6 +1530,7 @@ object GlobalSnapshotConsensusStateAdvancer {
             MembershipClearing.admissionsAcceptable(
               candidate,
               committee.toSet,
+              scope,
               probation,
               certificateEvictions,
               selected.map(_.targetPeer).toSet,

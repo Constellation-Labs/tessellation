@@ -86,26 +86,36 @@ object GlobalSnapshotConsensus {
     outcome.removalPenalties.filter(_._2 > 0).keySet ++
       outcome.penaltyUntil.getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal]).filter { case (_, until) => until.value.value > key }.keySet
 
-  /** Operator view of the committed membership-clearing ledger: pending members, each member's presence in its last counted interval (alert
-    * below 50), and the last interval in which a clearing executed (-1 when none).
+  /** Operator view of the committed membership-clearing ledger: pending members, each member's presence in its last counted interval, and
+    * the last interval in which a clearing executed (-1 when none). A member that leaves the ledger (cleared, evicted, deterministic exit)
+    * has its presence series set to -1, because gauges cannot be removed; alert on `0 <= presence < 50`. `exported` holds the members whose
+    * presence series this node has written.
     */
-  private[snapshot] def recordClearingMetrics[F[_]: Monad: Metrics](outcome: GlobalConsensusOutcome): F[Unit] =
+  private[snapshot] def recordClearingMetrics[F[_]: Monad: Metrics](
+    outcome: GlobalConsensusOutcome,
+    exported: Ref[F, Set[PeerId]]
+  ): F[Unit] =
     outcome.clearing.traverse_ { ledger =>
       val peerId = Metrics.unsafeLabelName("peer_id")
+      val reported = ledger.members.collect { case (member, record) if record.lastCountedInterval.nonEmpty => member -> record }
+
       Metrics[F].updateGauge(
         "dag_consensus_clearing_pending_members",
         ledger.members.count { case (_, record) => record.lowStreak >= MembershipClearing.RequiredLowIntervals }
       ) >>
         Metrics[F].updateGauge("dag_consensus_clearing_last_cleared_interval", ledger.clearedInterval.getOrElse(-1L)) >>
-        ledger.members.toList.traverse_ {
+        reported.toList.traverse_ {
           case (member, record) =>
-            Metrics[F]
-              .updateGauge(
-                "dag_consensus_clearing_member_presence_percent",
-                if (record.lastCountedSeated > 0) record.lastCountedPresent * 100 / record.lastCountedSeated else 0,
-                Seq(peerId -> ConsensusLog.pid(member))
-              )
-              .whenA(record.lastCountedInterval.nonEmpty)
+            Metrics[F].updateGauge(
+              "dag_consensus_clearing_member_presence_percent",
+              if (record.lastCountedSeated > 0) record.lastCountedPresent * 100 / record.lastCountedSeated else 0,
+              Seq(peerId -> ConsensusLog.pid(member))
+            )
+        } >>
+        exported.getAndSet(reported.keySet).flatMap { previous =>
+          (previous -- reported.keySet).toList.traverse_ { departed =>
+            Metrics[F].updateGauge("dag_consensus_clearing_member_presence_percent", -1, Seq(peerId -> ConsensusLog.pid(departed)))
+          }
         }
     }
 
@@ -236,15 +246,14 @@ object GlobalSnapshotConsensus {
         GlobalConsensusKind
       ](effectiveConsensusConfig, certifiedVoteLockPersistence)
 
-      // Global L0 injects the command queue so the round-creation signing-participation audit can
-      // enqueue the existing certificate-assembly command before sending its first Facility.
+      // Global L0 injects the command queue so round creation can re-enqueue certificate assembly for
+      // retransmitted eviction votes and the certified preflight can schedule a soft-reset restart.
       // Currency L0 and generic callers continue to let ConsensusEventLoop allocate internally.
       consensusQueue <- Queue.unbounded[
         F,
         ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
       ]
-      // Node-local proof-miss streaks are intentionally not restored. A restart starts at zero,
-      // delaying certified signing-seat replacement until three new consecutive misses are locally observed.
+      clearingPresenceExported <- Ref.of[F, Set[PeerId]](Set.empty)
 
       rawEvictionVoter = new GossipingEvictionVoter[
         F,
@@ -570,7 +579,7 @@ object GlobalSnapshotConsensus {
                 consensusStorage.deleteCertifiedVoteLock(outcome.key)
             ) >>
               peerHistorySidecar.write(outcome.key, outcome.toOperationalState) >>
-              recordClearingMetrics[F](outcome)
+              recordClearingMetrics[F](outcome, clearingPresenceExported)
           ),
           Some((outcome: GlobalConsensusOutcome) =>
             certifiedOutcomeSidecar.deleteAbove(outcome.key) >>

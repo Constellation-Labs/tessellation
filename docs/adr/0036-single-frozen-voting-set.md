@@ -70,31 +70,43 @@ epoch.
      commit it holds when it builds the child (a superset of its finalized commit QC); a carried-QC reproposal reuses
      the certified artifact's lineage unchanged.
    - **Intervals.** `interval(N) = N / 2048`. An interval counts for a member only if it was seated for every round of
-     it. A counted interval with `present * 10 < seated` extends the member's low-presence streak; any other resets
-     it. Records exist only while a member is seated; re-admission starts a fresh record.
+     it. A counted interval with `present * 10 < seated` extends the member's low-presence streak; any other counted
+     interval resets it. An uncounted (partial) interval never extends the streak; it resets it when the member was
+     present for at least a tenth of a full interval, and otherwise leaves it unchanged, so a rollback gap neither
+     clears nor rescues a member on missing evidence. Records exist only while a member is seated; re-admission starts
+     a fresh record.
    - **Clearing.** A member with a streak of 3 is pending. At most one member is cleared per interval: lowest presence
      ratio, then lowest PeerId, among members that are not leaving through deterministic exits. The target is a
      derived part of the `ProposalValue`'s `evictedPeers`; followers re-derive it, so a leader can neither skip an
      eligible target nor substitute another.
    - **Floor.** `min-committee-size` (mainnet 10, testnet 4, integrationnet 4, dev 3; at least 3) bounds contraction
-     only. Above the floor the target leaves unpaired. At the floor it waits for one open ReadyAtTip replacement,
+     only. Above the floor the target leaves unpaired, provided the actual successor, after this round's
+     deterministic exits, stays at or above the floor; exits alone may take the committee below it, clearing never
+     does. At the floor it waits for one open ReadyAtTip replacement,
      which may be admitted off-cadence and without expansion headroom because the size is unchanged; a value that
      uses that exception without the paired clearing eviction is invalid. The floor never blocks admission.
    - **Cooldown.** A cleared member's `penaltyUntil` is one interval (2048 ordinals). Active penalties now block every
      admission certificate, probation recovery included; both horizons expire by ordinal comparison.
    - **Retired.** The fast finality-participation auditor and its paired atomic-replacement intent are removed;
-     clearing is the only health-based removal path.
+     clearing is the only health-based removal path. The auditor removed a member only in the floor dead band and
+     only paired with a ready replacement, but on a network where `gl0-clearing` is not yet scheduled nothing removes
+     a member that stops signing while keeping its seedlist slot and collateral. Scheduling `gl0-clearing` is a
+     decision for each network's cutover (for mainnet, the third ordinal next to the certified activation and
+     `tessellation-41-migration`).
    - **Omission bound.** Leaders rotate over every member, so a coalition must both omit an honest member's commits
-     and author at least 90% of finalized children for three consecutive intervals (6,144 rounds) to clear it. This
+     and author at least 90% of finalized children in three counted intervals with no intervening recovery evidence
+     (6,144 consecutive rounds when recording is uninterrupted) to clear it. This
      holds conditional on timely delivery of honest commits to honest child proposers; outside that assumption,
      delayed commits can cause false clearing without any coalition, because accepted certificates need not contain
      every member. Operators watch the per-member presence gauge.
 
 ## Consequences
 
-- Leader-reported content can no longer change who votes, who leads, the quorum size or who is paid. What a leader
-  still chooses, which quorum of signatures it embeds and which timeout voters it reports, has no effect on
-  authority; the C-1 replay regression in `GlobalCertifiedLineageReplaySuite` pins this.
+- Leader-reported content can no longer change who votes, who leads, the quorum size or who is paid within a round.
+  Which timeout voters a leader reports has no effect on authority. Which quorum of commit signatures it embeds has
+  none either until clearing is active: from then on, embedded signers are clearing presence evidence, and the only
+  protection against selective omission is the conditional omission bound in item 8. The C-1 replay regression in
+  `GlobalCertifiedLineageReplaySuite` pins the pre-clearing statement.
 - Liveness now needs more than two thirds of the whole committee, community seats included. Community nodes
   can therefore halt the chain if more than a third go offline at once. This is accepted: halting is safe, and
   recovery uses the permissioned recovery-seed procedure.

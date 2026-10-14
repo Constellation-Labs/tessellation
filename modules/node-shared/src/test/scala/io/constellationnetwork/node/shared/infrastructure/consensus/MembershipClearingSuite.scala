@@ -139,6 +139,16 @@ object MembershipClearingSuite extends FunSuite {
     expect.same(2, resumed.members(d).lowStreak) && expect.same(Some(2L), resumed.members(d).lastCountedInterval)
   }
 
+  test("a partial interval with recovered presence ends the streak instead of carrying it") {
+    val lowTwice = run(ClearingState.empty, 0L, 8L, signers = dSilent)
+    // Interval 2 is only partly recorded (round 8 missing) but d signs every recorded round of it.
+    val recovered = run(lowTwice, 9L, 12L, signers = allSign)
+    val lowAgain = run(recovered, 12L, 16L, signers = dSilent)
+    expect.same(2, lowTwice.members(d).lowStreak) &&
+    expect.same(0, recovered.members(d).lowStreak) &&
+    expect.same(1, lowAgain.members(d).lowStreak)
+  }
+
   // Leader-side decision seam: the same pure functions the advancer uses for proposal construction and derivation.
   private val lowLedger = run(ClearingState.empty, 0L, 11L, signers = dSilent)
   private val always: Long => Boolean = _ => true
@@ -165,19 +175,28 @@ object MembershipClearingSuite extends FunSuite {
   }
 
   test("an unpaired clearing eviction is carried only at or above the floor") {
-    val aboveFloor = eviction(Some(d), committee, Set.empty, Set.empty, maxChanges = 1, floor = Some(3))
-    val atFloor = eviction(Some(d), committee, Set.empty, Set.empty, maxChanges = 1, floor = Some(4))
-    val inactive = eviction(Some(d), committee, Set.empty, Set.empty, maxChanges = 1, floor = None)
+    val aboveFloor = eviction(Some(d), committee, committee, Set.empty, Set.empty, maxChanges = 1, floor = Some(3))
+    val atFloor = eviction(Some(d), committee, committee, Set.empty, Set.empty, maxChanges = 1, floor = Some(4))
+    val inactive = eviction(Some(d), committee, committee, Set.empty, Set.empty, maxChanges = 1, floor = None)
     expect.same(Some(d), aboveFloor) && expect.same(None, atFloor) && expect.same(None, inactive)
+  }
+
+  test("an unpaired clearing eviction counts same-round deterministic exits against the floor") {
+    // c leaves through a deterministic exit this round: the structural successor {a, b, c} meets floor 3, the actual one {a, b} does not.
+    val scope = committee - c
+    val blocked = eviction(Some(d), committee, scope, Set.empty, Set.empty, maxChanges = 1, floor = Some(3))
+    val allowed = eviction(Some(d), committee, scope, Set.empty, Set.empty, maxChanges = 1, floor = Some(2))
+    val paired = eviction(Some(d), committee, scope, Set(peer('e')), Set.empty, maxChanges = 1, floor = Some(4))
+    expect.same(None, blocked) && expect.same(Some(d), allowed) && expect.same(Some(d), paired)
   }
 
   test("a clearing eviction blocked by the floor is carried when an admission pairs with it") {
     val replacement = peer('e')
-    expect.same(Some(d), eviction(Some(d), committee, Set(replacement), Set.empty, maxChanges = 1, floor = Some(4)))
+    expect.same(Some(d), eviction(Some(d), committee, committee, Set(replacement), Set.empty, maxChanges = 1, floor = Some(4)))
   }
 
   test("a certificate eviction occupying the single change slot excludes the clearing eviction") {
-    expect.same(None, eviction(Some(d), committee, Set(peer('e')), Set(c), maxChanges = 1, floor = Some(3)))
+    expect.same(None, eviction(Some(d), committee, committee, Set(peer('e')), Set(c), maxChanges = 1, floor = Some(3)))
   }
 
   private val pendingLedger = run(ClearingState.empty, 0L, 12L, signers = dSilent)
@@ -203,20 +222,50 @@ object MembershipClearingSuite extends FunSuite {
 
   test("above the floor a probation admission cannot accompany a clearing eviction; dropping it clears unpaired") {
     def ok(admitted: Set[PeerId]) =
-      admissionsAcceptable(Some(d), committee, Set(probationPeer), Set.empty, admitted, onCadence = true, maxChanges = 1, floor = Some(3))
+      admissionsAcceptable(
+        Some(d),
+        committee,
+        committee,
+        Set(probationPeer),
+        Set.empty,
+        admitted,
+        onCadence = true,
+        maxChanges = 1,
+        floor = Some(3)
+      )
     expect(!ok(Set(probationPeer))) && expect(ok(Set.empty))
   }
 
   test("an off-cadence open admission is valid only while the clearing pair is carried") {
     def ok(candidate: Option[PeerId]) =
-      admissionsAcceptable(candidate, committee, Set.empty, Set.empty, Set(openPeer), onCadence = false, maxChanges = 1, floor = Some(4))
+      admissionsAcceptable(
+        candidate,
+        committee,
+        committee,
+        Set.empty,
+        Set.empty,
+        Set(openPeer),
+        onCadence = false,
+        maxChanges = 1,
+        floor = Some(4)
+      )
     // T leaves via a deterministic exit, so it is outside the clearing scope and there is no candidate to pair with.
     expect(ok(Some(d))) && expect(!ok(None))
   }
 
   test("an on-cadence open admission paired with a floor-blocked clearing is a valid replacement") {
     expect(
-      admissionsAcceptable(Some(d), committee, Set.empty, Set.empty, Set(openPeer), onCadence = true, maxChanges = 1, floor = Some(4))
+      admissionsAcceptable(
+        Some(d),
+        committee,
+        committee,
+        Set.empty,
+        Set.empty,
+        Set(openPeer),
+        onCadence = true,
+        maxChanges = 1,
+        floor = Some(4)
+      )
     )
   }
 

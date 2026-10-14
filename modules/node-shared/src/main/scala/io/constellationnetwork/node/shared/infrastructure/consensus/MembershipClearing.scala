@@ -95,17 +95,26 @@ object MembershipClearing {
 
   /** The clearing eviction the round's transition carries: the candidate, when adding it to the certificate-driven change still yields a
     * valid transition (unpaired at or above the floor, or paired with an admission).
+    *
+    * `scope` is the committee minus this round's deterministic exits. An unpaired (Contraction) clearing must keep the actual successor,
+    * `(scope -- evicted) ++ admitted`, at or above the floor, so a member leaving through `D` in the same round is not counted toward it.
+    * Exits alone may still take the committee below the floor; clearing is never the step that does.
     */
   def eviction(
     candidate: Option[PeerId],
     committee: Set[PeerId],
+    scope: Set[PeerId],
     admittedPeers: Set[PeerId],
     certificateEvictions: Set[PeerId],
     maxChanges: Int,
     floor: Option[Int]
   ): Option[PeerId] =
     candidate.filter { target =>
-      CertifiedMembershipTransition.validate(committee, admittedPeers, certificateEvictions + target, maxChanges, floor).isRight
+      val evicted = certificateEvictions + target
+      CertifiedMembershipTransition.validate(committee, admittedPeers, evicted, maxChanges, floor).exists { validated =>
+        validated.kind != CertifiedMembershipTransition.Kind.Contraction ||
+        floor.forall(f => ((scope -- evicted) ++ admittedPeers).size >= f)
+      }
     }
 
   /** The pending clearing target, from the committed ledger, that cannot leave unpaired at round `nextKey` because the floor blocks it.
@@ -135,6 +144,7 @@ object MembershipClearing {
   def admissionsAcceptable(
     candidate: Option[PeerId],
     committee: Set[PeerId],
+    scope: Set[PeerId],
     probation: Set[PeerId],
     certificateEvictions: Set[PeerId],
     admitted: Set[PeerId],
@@ -142,7 +152,7 @@ object MembershipClearing {
     maxChanges: Int,
     floor: Option[Int]
   ): Boolean = {
-    val clearing = eviction(candidate, committee, admitted, certificateEvictions, maxChanges, floor)
+    val clearing = eviction(candidate, committee, scope, admitted, certificateEvictions, maxChanges, floor)
     val evicted = certificateEvictions ++ clearing
     CertifiedMembershipTransition.validate(committee, admitted, evicted, maxChanges, floor).isRight &&
     CertifiedMembershipTransition.validateReplacementAdmissionLane(admitted, evicted, probation).isRight &&
@@ -192,8 +202,12 @@ object MembershipClearing {
   private def closeInterval(record: ClearingRecord, params: Params): ClearingRecord = {
     val counted = record.seated.toLong == params.intervalLength
     val reset = record.copy(seated = 0, present = 0)
+    // A partial interval never extends the streak, but one that already shows presence of at least a tenth of a full interval is
+    // evidence the member is back, so it ends the streak instead of letting it carry across the gap.
+    val recoveredInGap = record.present.toLong * 10L >= params.intervalLength
 
-    if (!counted) reset
+    if (!counted && recoveredInGap) reset.copy(lowStreak = 0)
+    else if (!counted) reset
     else
       reset.copy(
         lastCountedInterval = Some(record.currentInterval),
