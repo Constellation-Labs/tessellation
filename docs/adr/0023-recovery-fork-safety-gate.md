@@ -58,6 +58,8 @@ operator's anchor selection. What a downloading node still rejects depends on th
 - **Recovery boundaries at or after activation:** the validator walks back to the latest reset boundary and trusts the
   committee that boundary's QC declares (`publicRecoveryRoot`: at least three members and the exact persisted parent
   hash). It does not compare that committee with the seedlist, the prior committee, or the env seed, by design, so that
-  later seedlist changes cannot invalidate canonical history. A cohort of three or more seedlisted keys that runs `run-rollback`
-  and certifies a reset among itself therefore produces a chain a downloading node accepts. The only safeguard is the
-  permissioned recovery procedure; L2c never covered this case in practice because it was never configured.
+  later seedlist changes cannot invalidate canonical history. Authority for a reset comes from the permissioned recovery
+  procedure: one lead node runs `run-rollback`, and the other source nodes run `run-validator`, all with the same
+  `CL_GL0_RECOVERY_SEED_COMMITTEE`. A downloading node accepts any boundary that procedure certifies; it cannot
+  independently tell an authorized reset from an unauthorized one. L2c never covered this case in practice because it
+  was never configured.
