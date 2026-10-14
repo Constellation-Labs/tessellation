@@ -14,6 +14,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.{FieldsAddedOrdinals, MetagraphsSyncConfig}
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.delegatedStake.{
@@ -180,7 +181,8 @@ object GlobalSnapshotAcceptanceManager {
     pricingUpdateValidator: PricingUpdateValidator[F],
     priceStateUpdater: PriceStateUpdater[F],
     collateral: Amount,
-    withdrawalTimeLimit: EpochProgress
+    withdrawalTimeLimit: EpochProgress,
+    rewardsEra: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
   ) = new GlobalSnapshotAcceptanceManager[F] {
     val logger = Slf4jLogger.getLoggerFromName[F](this.getClass.getName)
 
@@ -265,7 +267,7 @@ object GlobalSnapshotAcceptanceManager {
           delegatedStakeAcceptanceResult
         )
         acceptedUpdateNodeParameters <- updateNodeParametersAcceptanceManager
-          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext)
+          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext, ordinal)
           .map(acceptanceResult =>
             acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed))).toSortedMap
           )
@@ -330,10 +332,16 @@ object GlobalSnapshotAcceptanceManager {
             )
           }
 
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate,
-          withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards
-        )
+        rewardsToAccept <-
+          if (rewardsEra.isActive(ordinal))
+            RewardTransactionAggregation
+              .combine(withdrawalRewardTxs.toList ++ nodeOperatorRewards.toList ++ reservedAddressRewards.toList)
+              .liftTo[F]
+          else (withdrawalRewardTxs ++ nodeOperatorRewards ++ reservedAddressRewards).pure[F]
+        (updatedBalancesByRewards, acceptedRewardTxs) <-
+          if (rewardsEra.isActive(ordinal))
+            RewardTransactionAggregation.credit(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, rewardsToAccept).liftTo[F]
+          else acceptRewardTxs(updatedGlobalBalances ++ currencyAcceptanceBalanceUpdate, rewardsToAccept).pure[F]
 
         currencyBalances = currencySnapshots.toList.map {
           case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]

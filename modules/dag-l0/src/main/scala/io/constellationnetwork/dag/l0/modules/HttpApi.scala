@@ -17,6 +17,7 @@ import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig, SharedConfig}
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{MetricsMiddleware, PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -151,13 +152,15 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
   private val tokenLockRoutes = TokenLockBlockRoutes[F](queues.l1TokenLockOutput)
+  private val rewardsEra = DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
   private val nodeParametersRoutes = HasherSelector[F].withCurrent { implicit hasher =>
     NodeParametersRoutes[F](
       mkNodeParametersCell,
       storages.globalSnapshot,
       storages.node,
       services.cluster,
-      sharedValidators.updateNodeParametersValidator
+      sharedValidators.updateNodeParametersValidator,
+      rewardsEra
     )
   }
   private val delegatedStakesRoutes =
@@ -168,7 +171,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         storages.globalSnapshot,
         storages.node,
         delegatedStakingWithdrawalTimeLimit,
-        services.rewards.delegatedRewards
+        services.rewards.delegatedRewards,
+        rewardsEra
       )
     }
   private val nodeCollateralsRoutes = HasherSelector[F].withCurrent { implicit hasher =>

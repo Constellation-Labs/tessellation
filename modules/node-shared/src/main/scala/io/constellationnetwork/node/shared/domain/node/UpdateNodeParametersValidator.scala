@@ -8,8 +8,11 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.syntax.validated._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator.UpdateNodeParametersValidationErrorOr
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.node.{RewardFraction, UpdateNodeParameters, UpdateNodeParametersReference}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -27,6 +30,13 @@ trait UpdateNodeParametersValidator[F[_]] {
   def validate(
     signed: Signed[UpdateNodeParameters],
     lastSnapshotContext: GlobalSnapshotInfo
+  ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
+    validate(signed, lastSnapshotContext, SnapshotOrdinal.MinValue)
+
+  def validate(
+    signed: Signed[UpdateNodeParameters],
+    lastSnapshotContext: GlobalSnapshotInfo,
+    ordinal: SnapshotOrdinal
   ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]]
 
 }
@@ -38,12 +48,14 @@ object UpdateNodeParametersValidator {
     minRewardValue: RewardFraction,
     maxRewardValue: RewardFraction,
     maxMetadataFieldsChars: PosInt,
-    seedList: Option[Set[SeedlistEntry]]
+    seedList: Option[Set[SeedlistEntry]],
+    era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
   ): UpdateNodeParametersValidator[F] =
     new UpdateNodeParametersValidator[F] {
       override def validate(
         signed: Signed[UpdateNodeParameters],
-        lastSnapshotContext: GlobalSnapshotInfo
+        lastSnapshotContext: GlobalSnapshotInfo,
+        ordinal: SnapshotOrdinal
       ): F[UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]]] =
         for {
           signaturesV <- signedValidator
@@ -53,8 +65,10 @@ object UpdateNodeParametersValidator {
             .isSignedExclusivelyBy(signed, signed.source)
             .map(_.errorMap[UpdateNodeParametersValidationError](InvalidSigned))
           parentV <- validateParent(signed, lastSnapshotContext)
-          rewardFractionV = validateRewardFraction(signed)
-          nodeV = validateNode(signed)
+          rewardFractionV =
+            if (era.isActive(ordinal)) signed.validNec[UpdateNodeParametersValidationError]
+            else validateRewardFraction(signed)
+          nodeV = validateNode(signed, lastSnapshotContext, ordinal)
           nodeMetadataParamsV = validateNodeMetadataParams(signed, maxMetadataFieldsChars.value)
         } yield
           signaturesV
@@ -65,11 +79,20 @@ object UpdateNodeParametersValidator {
             .productR(nodeMetadataParamsV)
 
       private def validateNode(
-        signed: Signed[UpdateNodeParameters]
+        signed: Signed[UpdateNodeParameters],
+        lastSnapshotContext: GlobalSnapshotInfo,
+        ordinal: SnapshotOrdinal
       ): UpdateNodeParametersValidationErrorOr[Signed[UpdateNodeParameters]] = {
         val nodeIds = signed.proofs.map(_.id).map(PeerId.fromId).toList
 
         nodeIds match {
+          case _ :: Nil if era.isActive(ordinal) =>
+            val balance = lastSnapshotContext.balances.getOrElse(signed.source, Balance.empty)
+            if (balance.satisfiesCollateral(DelegatedRewardsEra.MinimumRegistrationBalance))
+              signed.validNec[UpdateNodeParametersValidationError]
+            else
+              InsufficientRegistrationBalance(signed.source, balance, DelegatedRewardsEra.MinimumRegistrationBalance)
+                .invalidNec[Signed[UpdateNodeParameters]]
           case nodeId :: Nil =>
             if (seedList.forall(_.exists(_.peerId === nodeId)))
               signed.validNec[UpdateNodeParametersValidationError]
@@ -151,6 +174,7 @@ object UpdateNodeParametersValidator {
   case class InvalidParent(parent: UpdateNodeParametersReference) extends UpdateNodeParametersValidationError
   case class InvalidProofsCount(proofCount: Int) extends UpdateNodeParametersValidationError
   case class NodeNotInSeedList(nodeId: PeerId) extends UpdateNodeParametersValidationError
+  case class InsufficientRegistrationBalance(source: Address, balance: Balance, minimum: Amount) extends UpdateNodeParametersValidationError
   case class TooLargeName(name: String, maxChars: Int) extends UpdateNodeParametersValidationError
   case class TooLargeDescription(description: String, maxChars: Int) extends UpdateNodeParametersValidationError
 

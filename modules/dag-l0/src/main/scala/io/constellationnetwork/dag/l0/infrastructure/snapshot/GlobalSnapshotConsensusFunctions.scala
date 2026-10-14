@@ -206,7 +206,7 @@ object GlobalSnapshotConsensusFunctions {
 
             case DelegateRewardsInput(udsar, psu, ep) =>
               if (shouldUseDelegatedRewards(lastArtifact.ordinal.next, ep)) {
-                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu)
+                delegatedRewards.distribute(snapshotContext, trigger, ep, faciltators, udsar, psu, lastArtifact.ordinal.next)
               } else {
                 classicRewardsFn(lastArtifact, snapshotContext.balances, SortedSet.empty, trigger, events, None)
               }

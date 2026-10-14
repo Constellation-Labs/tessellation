@@ -11,11 +11,12 @@ import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStak
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.kernel._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.config.types.{DelegatedRewardsConfig, EmissionConfigEntry}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.DelegatedRewardsDistributor
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrentDagSupply, DelegatedRewardsDistributor}
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
@@ -50,7 +51,8 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: EpochProgress,
-  delegatedRewardsDistributor: DelegatedRewardsDistributor[F]
+  delegatedRewardsDistributor: DelegatedRewardsDistributor[F],
+  era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -170,18 +172,22 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
     for {
       emissionConfig <- delegatedRewardsDistributor.getEmissionConfig(lastSnapshot.epochProgress)
 
-      (_, _, totalDelegateStake, currentTotalSupply) <- processDelegations(lastSnapshotInfo)
+      (_, _, totalDelegateStake, legacyTotalSupply) <- processDelegations(lastSnapshotInfo)
+      currentTotalSupply <-
+        if (era.isActive(lastSnapshot.ordinal)) CurrentDagSupply.calculate(lastSnapshotInfo).liftTo[F]
+        else legacyTotalSupply.pure[F]
+      epochsPerYear = if (era.isActive(lastSnapshot.ordinal)) era.epochsPerYear else emissionConfig.epochsPerYear
       latestDelegateRewardsNoCommission <- getLatestDelegateRewardTotal(lastSnapshot, lastSnapshotInfo)
 
       currentPrice <- toAmount(getCurrentDagPrice(lastSnapshotInfo))
       nextPrice <- getNextDagPrice(lastSnapshotInfo)
 
       avgRewardAmount <- calculateAverageReward(latestDelegateRewardsNoCommission, totalDelegateStake)
-      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, emissionConfig.epochsPerYear)
+      totalRewardsPerYear <- calculateAverageRewardOverAYear(avgRewardAmount, epochsPerYear)
 
     } yield
       RewardsInfo(
-        epochsPerYear = emissionConfig.epochsPerYear,
+        epochsPerYear = epochsPerYear,
         currentDagPrice = currentPrice,
         nextDagPrice = nextPrice,
         totalDelegatedAmount = totalDelegateStake,
@@ -240,10 +246,18 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
             .longValue
     }
 
-    delegateRewards
-      .foldLeft(0L)(calcFullReward)
-      .pure[F]
-      .flatMap(toAmount)
+    if (era.isActive(snapshot.ordinal)) {
+      val netRewards = delegateRewards.valuesIterator.flatMap(_.valuesIterator).map(a => BigInt(a.value.value)).sum
+      val estimatedGross = (netRewards * 10 + 4) / 9
+      Either
+        .cond(estimatedGross.isValidLong, estimatedGross.toLong, new IllegalArgumentException("Gross reward estimate exceeds amount range"))
+        .liftTo[F]
+        .flatMap(toAmount)
+    } else
+      delegateRewards
+        .foldLeft(0L)(calcFullReward)
+        .pure[F]
+        .flatMap(toAmount)
   }
 
   private def calculateAverageReward(latestRewards: Amount, totalStakedAmount: Amount): F[Amount] =

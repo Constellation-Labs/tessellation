@@ -24,8 +24,8 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types.SharedConfig
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -109,7 +109,8 @@ object GlobalSnapshotConsensus {
         validators.pricingUpdateValidator,
         sharedServices.priceStateUpdater,
         collateral,
-        sharedCfg.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedCfg.environment, EpochProgress.MinValue)
+        sharedCfg.delegatedStaking.withdrawalTimeLimit.getOrElse(sharedCfg.environment, EpochProgress.MinValue),
+        DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(sharedCfg.environment, DelegatedRewardsEra.Disabled)
       )
       consensusStorage <- ConsensusStorage
         .make[

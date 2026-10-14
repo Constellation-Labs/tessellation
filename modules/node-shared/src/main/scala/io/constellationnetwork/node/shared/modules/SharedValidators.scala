@@ -9,6 +9,7 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig, PriceOracleConfig}
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator
@@ -73,7 +74,8 @@ object SharedValidators {
       delegatedStaking.minRewardFraction,
       delegatedStaking.maxRewardFraction,
       delegatedStaking.maxMetadataFieldsChars,
-      l0Seedlist
+      l0Seedlist,
+      DefaultDelegatedRewardsConfigProvider.getConfig().eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
     )
     val updateDelegatedStakeValidator =
       UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)

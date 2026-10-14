@@ -1,6 +1,11 @@
 type: object
 properties:
   rewardFraction:
+    description: >-
+      Operator commission scaled by 100000000. After the delegated rewards era
+      activates, unsigned node listings show the effective fixed 10 percent
+      (10000000). Signed registrations retain the originally submitted value;
+      that value is ignored for new-era rewards but remains part of the signature.
     type: int32
     minimum: 0
     maximum: 100000000

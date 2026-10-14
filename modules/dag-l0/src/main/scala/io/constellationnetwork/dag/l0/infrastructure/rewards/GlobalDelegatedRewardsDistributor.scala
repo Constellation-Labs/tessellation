@@ -10,8 +10,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.math.BigDecimal.RoundingMode
 
 import io.constellationnetwork.env.AppEnvironment
-import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.config.{DefaultDelegatedRewardsConfigProvider, DelegatedRewardsEra}
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceResult
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -47,6 +47,43 @@ object GlobalDelegatedRewardsDistributor {
     // Define a high precision MathContext for consistent calculations
     private val mc: MathContext = new java.math.MathContext(24, java.math.RoundingMode.HALF_UP)
     private val priceOracleEpoch: EpochProgress = delegatedRewardsConfig.priceOracleEpoch.getOrElse(environment, EpochProgress.MaxValue)
+    private val era = delegatedRewardsConfig.eras.getOrElse(environment, DelegatedRewardsEra.Disabled)
+
+    override def distribute(
+      lastSnapshotContext: GlobalSnapshotInfo,
+      trigger: ConsensusTrigger,
+      epochProgress: EpochProgress,
+      facilitators: List[(Address, PeerId)],
+      delegatedStakeDiffs: UpdateDelegatedStakeAcceptanceResult,
+      partitionedRecords: PartitionedStakeUpdates,
+      ordinal: SnapshotOrdinal
+    ): F[DelegatedRewardsResult] =
+      if (era.isActive(ordinal)) {
+        for {
+          budget <- trigger match {
+            case EventTrigger => Amount.empty.pure[F]
+            case TimeTrigger =>
+              CurrentDagSupply.calculate(lastSnapshotContext).liftTo[F].map { supply =>
+                val perEpoch = BigInt(supply.value.value) * 2 / (BigInt(100) * era.epochsPerYear.value)
+                Amount(NonNegLong.unsafeFrom(perEpoch.toLong))
+              }
+          }
+          oneTimeRewards <- trigger match {
+            case EventTrigger => List.empty[OneTimeReward].pure[F]
+            case TimeTrigger  => getOneTimeRewardsConfig.map(_.filter(_.epoch === epochProgress))
+          }
+          result <- NewEraDelegatedRewards.distribute[F](
+            lastSnapshotContext,
+            ordinal,
+            era,
+            budget,
+            facilitators,
+            delegatedStakeDiffs,
+            partitionedRecords,
+            oneTimeRewards
+          )
+        } yield result
+      } else distribute(lastSnapshotContext, trigger, epochProgress, facilitators, delegatedStakeDiffs, partitionedRecords)
 
     /** Return emission configuration applied by this rewards distributor
       */

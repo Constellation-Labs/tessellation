@@ -6,8 +6,10 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.ext.http4s.PeerIdVar
 import io.constellationnetwork.kernel._
+import io.constellationnetwork.node.shared.config.DelegatedRewardsEra
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.node.{NodeStorage, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -39,7 +41,8 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   nodeStorage: NodeStorage[F],
   cluster: Cluster[F],
-  validator: UpdateNodeParametersValidator[F]
+  validator: UpdateNodeParametersValidator[F],
+  era: DelegatedRewardsEra = DelegatedRewardsEra.Disabled
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
@@ -79,7 +82,9 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
           NodeParametersInfo(
             peerId = peerId,
             node = peerIdToPeerInfo.get(peerId),
-            delegatedStakeRewardParameters = nodeParams.latest.delegatedStakeRewardParameters,
+            delegatedStakeRewardParameters =
+              if (era.isActive(snapshotWithInfo._1.ordinal)) DelegatedStakeRewardParameters(DelegatedRewardsEra.Commission)
+              else nodeParams.latest.delegatedStakeRewardParameters,
             nodeMetadataParameters = nodeParams.latest.nodeMetadataParameters,
             totalAmountDelegated = totalAmount,
             totalAddressesAssigned = totalAddresses
@@ -187,10 +192,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
     case req @ POST -> Root =>
       snapshotStorage.head.flatMap {
         case None => ServiceUnavailable()
-        case Some((_, info)) =>
+        case Some((snapshot, info)) =>
           for {
             signed <- req.as[Signed[UpdateNodeParameters]]
-            result <- validator.validate(signed, info)
+            result <- validator.validate(signed, info, snapshot.ordinal.next)
             response <- result match {
               case Valid(validSigned) =>
                 logger.info(s"Accepted node parameters from ${validSigned.proofs.map(_.id).map(PeerId.fromId)}") >>
