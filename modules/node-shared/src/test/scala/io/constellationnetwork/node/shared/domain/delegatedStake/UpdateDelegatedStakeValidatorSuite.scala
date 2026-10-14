@@ -25,10 +25,12 @@ import io.constellationnetwork.schema.node._
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock._
-import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.schema.mpt.{GlobalStateKey, MptStore}
+import io.constellationnetwork.schema.{GlobalSnapshotInfo, GlobalStateProofSelector, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.key.ops.PublicKeyOps
+import io.constellationnetwork.security.mpt.producer.InMemoryMerklePatriciaProducer
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.security.signature.SignedValidator.{InvalidSignatures, NotSignedExclusivelyByAddressOwner}
 import io.constellationnetwork.security.signature.signature.{Signature, SignatureProof}
@@ -617,6 +619,35 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       active <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, funded, legacyEpoch)
       // the node moved its 1M DAG out after registering: no new delegations
       drained <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
+    } yield
+      expect
+        .same(UnauthorizedNode(validCreate.nodeId).invalidNec, legacy)
+        .and(expect.same(Valid(signed), active))
+        .and(expect.same(NodeBelowRegistrationBalance(validCreate.nodeId, Balance.empty, minimum).invalidNec, drained))
+  }
+
+  test("after the metanomics gate the MPT-backed validator applies the same node balance rule") { res =>
+    implicit val (json, h, sp, keyPair, sourceAddress) = res
+    implicit val selector: GlobalStateProofSelector = GlobalStateProofSelector(SnapshotOrdinal.MaxValue)
+    val minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+
+    def mptValidator(context: GlobalSnapshotInfo, active: Boolean) =
+      for {
+        producer <- InMemoryMerklePatriciaProducer.make[IO]()
+        store <- MptStore.make[IO, GlobalStateKey](producer, GlobalStateKey.toHex[IO])
+        _ <- store.syncFromGlobalSnapshotInfo(context, SnapshotOrdinal.MinValue)
+      } yield
+        UpdateDelegatedStakeValidator
+          .make[IO](SignedValidator.make[IO], Some(Set.empty[SeedlistEntry]), store, (_: EpochProgress) => active)
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, keyPair)
+      validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      funded = lastContext.copy(balances = SortedMap(sourceAddress -> Balance(minimum.value)))
+      legacy <- mptValidator(funded, active = false).flatMap(_.validateCreateDelegatedStake(signed, funded, legacyEpoch))
+      active <- mptValidator(funded, active = true).flatMap(_.validateCreateDelegatedStake(signed, funded, legacyEpoch))
+      drained <- mptValidator(lastContext, active = true).flatMap(_.validateCreateDelegatedStake(signed, lastContext, legacyEpoch))
     } yield
       expect
         .same(UnauthorizedNode(validCreate.nodeId).invalidNec, legacy)
