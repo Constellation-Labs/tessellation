@@ -2,11 +2,11 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import java.security.KeyPair
 
-import cats.Parallel
 import cats.data.NonEmptySet
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
+import cats.{Monad, Parallel}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -80,6 +80,44 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
   *   ConsensusEventLoop for FSM and command processing
   */
 object GlobalSnapshotConsensus {
+
+  /** Peers whose admission certificates are rejected at `key`: a counting-down removal penalty or an absolute horizon not yet reached. */
+  private[snapshot] def activeAdmissionPenaltyPeersAt(outcome: GlobalConsensusOutcome, key: Long): Set[PeerId] =
+    outcome.removalPenalties.filter(_._2 > 0).keySet ++
+      outcome.penaltyUntil.getOrElse(SortedMap.empty[PeerId, SnapshotOrdinal]).filter { case (_, until) => until.value.value > key }.keySet
+
+  /** Operator view of the committed membership-clearing ledger: pending members, each member's presence in its last counted interval, and
+    * the last interval in which a clearing executed (-1 when none). A member that leaves the ledger (cleared, evicted, deterministic exit)
+    * has its presence series set to -1, because gauges cannot be removed; alert on `0 <= presence < 50`. `exported` holds the members whose
+    * presence series this node has written.
+    */
+  private[snapshot] def recordClearingMetrics[F[_]: Monad: Metrics](
+    outcome: GlobalConsensusOutcome,
+    exported: Ref[F, Set[PeerId]]
+  ): F[Unit] =
+    outcome.clearing.traverse_ { ledger =>
+      val peerId = Metrics.unsafeLabelName("peer_id")
+      val reported = ledger.members.collect { case (member, record) if record.lastCountedInterval.nonEmpty => member -> record }
+
+      Metrics[F].updateGauge(
+        "dag_consensus_clearing_pending_members",
+        ledger.members.count { case (_, record) => record.lowStreak >= MembershipClearing.RequiredLowIntervals }
+      ) >>
+        Metrics[F].updateGauge("dag_consensus_clearing_last_cleared_interval", ledger.clearedInterval.getOrElse(-1L)) >>
+        reported.toList.traverse_ {
+          case (member, record) =>
+            Metrics[F].updateGauge(
+              "dag_consensus_clearing_member_presence_percent",
+              if (record.lastCountedSeated > 0) record.lastCountedPresent * 100 / record.lastCountedSeated else 0,
+              Seq(peerId -> ConsensusLog.pid(member))
+            )
+        } >>
+        exported.getAndSet(reported.keySet).flatMap { previous =>
+          (previous -- reported.keySet).toList.traverse_ { departed =>
+            Metrics[F].updateGauge("dag_consensus_clearing_member_presence_percent", -1, Seq(peerId -> ConsensusLog.pid(departed)))
+          }
+        }
+    }
 
   /** Extract the established anchor committee without duplicating bootstrap semantics in the shared engine. */
   private[snapshot] def normalFirstRoundCommittee(
@@ -208,18 +246,14 @@ object GlobalSnapshotConsensus {
         GlobalConsensusKind
       ](effectiveConsensusConfig, certifiedVoteLockPersistence)
 
-      // Global L0 injects the command queue so the round-creation signing-participation audit can
-      // enqueue the existing certificate-assembly command before sending its first Facility.
+      // Global L0 injects the command queue so round creation can re-enqueue certificate assembly for
+      // retransmitted eviction votes and the certified preflight can schedule a soft-reset restart.
       // Currency L0 and generic callers continue to let ConsensusEventLoop allocate internally.
       consensusQueue <- Queue.unbounded[
         F,
         ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
       ]
-      // Node-local proof-miss streaks are intentionally not restored. A restart starts at zero,
-      // delaying certified signing-seat replacement until three new consecutive misses are locally observed.
-      finalityParticipationMissHistoryRef <- Ref.of[F, FinalityParticipationAuditor.MissHistory](
-        FinalityParticipationAuditor.MissHistory.empty
-      )
+      clearingPresenceExported <- Ref.of[F, Set[PeerId]](Set.empty)
 
       rawEvictionVoter = new GossipingEvictionVoter[
         F,
@@ -370,7 +404,6 @@ object GlobalSnapshotConsensus {
           eventMempool,
           rawEvictionVoter,
           consensusQueue,
-          finalityParticipationMissHistoryRef,
           HealthDerivedMembershipPolicy.RetainSigningLeases
         )
 
@@ -513,9 +546,11 @@ object GlobalSnapshotConsensus {
           rawEvictionVoter,
           admissionVoter,
           isGlobalBootstrap,
-          (o: GlobalConsensusOutcome) => ReadmissionMaintenance.probationPeers(o.readmissionCountdown),
+          // Probation peers still under an active penalty or clearing cooldown are not vote targets: followers reject their
+          // certificates until the horizon passes (OpenAdmissionPolicy.penaltyBlocksCertificate).
+          (o: GlobalConsensusOutcome) =>
+            ReadmissionMaintenance.probationPeers(o.readmissionCountdown) -- activeAdmissionPenaltyPeersAt(o, o.key.value.value + 1L),
           (o: GlobalConsensusOutcome) => o.finished.candidates.value,
-          (o: GlobalConsensusOutcome) => o.certifiedRoundCommittee.getOrElse(Set.empty[PeerId]),
           (key: GlobalSnapshotKey) =>
             AdmissionCadence.expansionAllowedAtOrdinal(
               key.value.value,
@@ -543,7 +578,8 @@ object GlobalSnapshotConsensus {
                 certifiedOutcomeSidecar.retain(certifiedOutcomeCutoff, outcome.key, Set.empty) >>
                 consensusStorage.deleteCertifiedVoteLock(outcome.key)
             ) >>
-              peerHistorySidecar.write(outcome.key, outcome.toOperationalState)
+              peerHistorySidecar.write(outcome.key, outcome.toOperationalState) >>
+              recordClearingMetrics[F](outcome, clearingPresenceExported)
           ),
           Some((outcome: GlobalConsensusOutcome) =>
             certifiedOutcomeSidecar.deleteAbove(outcome.key) >>
@@ -590,7 +626,20 @@ object GlobalSnapshotConsensus {
           },
           initiallyHoldFirstRound = initiallyHoldConsensusFirstRound,
           recoverySeedCommittee = Some(recoverySeedCommittee),
-          normalFirstRoundAlignment = normalFirstRoundAlignment.some
+          normalFirstRoundAlignment = normalFirstRoundAlignment.some,
+          clearingReplacementTargetsOf = (outcome: GlobalConsensusOutcome) => {
+            val nextKey = SnapshotOrdinal.unsafeApply(outcome.key.value.value + 1L)
+            MembershipClearing
+              .replacementTarget(
+                outcome.clearing,
+                outcome.facilitators.value.toSet,
+                nextKey,
+                effectiveConsensusConfig.activeAdmissionMaxExpansionPerRound,
+                effectiveConsensusConfig.unpairedEvictionFloorAt(nextKey.value.value),
+                MembershipClearing.Params(effectiveConsensusConfig.clearingIntervalOrdinals, MembershipClearing.RequiredLowIntervals)
+              )
+              .toSet
+          }
         )
 
       handler = GlobalConsensusHandler.make(loop.queue)

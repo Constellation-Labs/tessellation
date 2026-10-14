@@ -831,8 +831,11 @@ self-add would diverge `facilitatorsHash`); the genesis empty set falls back to
 
 There is no per-peer quality score, tier, or health input to committee membership. A
 member that goes offline keeps its seat until it leaves through `D`, a certified
-eviction, or a future membership-clearing change (not yet implemented; ADR-0036 notes it
-as a follow-up).
+eviction, or membership clearing: once it has been absent from the embedded commit QCs
+(below one tenth presence) in three counted, fully seated 2048-ordinal intervals with no
+intervening recovery evidence (a partial interval with at least a tenth presence resets the count), the
+certified successor removes it, bounded by `min-committee-size` and followed by a
+one-interval cooldown (`MembershipClearing`, ADR-0036 item 8, gate `gl0-clearing`).
 
 Delegated rewards use the frozen round-start committee, not `lastArtifact.proofs`:
 `GlobalSnapshotConsensusFunctions.delegatedRewardRecipients` is the sorted

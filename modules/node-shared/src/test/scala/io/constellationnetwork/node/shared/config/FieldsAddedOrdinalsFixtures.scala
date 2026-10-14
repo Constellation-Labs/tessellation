@@ -24,6 +24,7 @@ object FieldsAddedOrdinalsFixtures {
     preventingAllowSpendResurrection = active,
     fixingGlobalAllowSpendExpiration = active,
     removingProcessedDelegatedStakeWithdrawals = active,
-    tessellation41Migration = active
+    tessellation41Migration = active,
+    gl0Clearing = active
   )
 }

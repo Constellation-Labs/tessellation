@@ -110,4 +110,29 @@ object OperationalPeerHistorySuite extends MutableIOSuite {
         expect.same(recentCommitteeSizes, one.signedArtifactPeerHistory.recentCommitteeSizes) &&
         expect.same(Some(penaltyUntil), one.signedArtifactPeerHistory.penaltyUntil)
   }
+
+  test("the clearing ledger survives the sidecar round trip and reaches the signed peerHistory") { res =>
+    implicit val (js, h, sp) = res
+    val ledger = ClearingState(
+      SortedMap(a -> ClearingRecord(ord(1L), 0L, 7, 0, Some(0L), 2048, 0, 2)),
+      clearedInterval = Some(0L)
+    )
+    for {
+      finished <- mkFinished
+      outcome = mkOutcome(finished, SortedMap.empty, SortedMap.empty, SortedMap.empty).copy(clearing = Some(ledger))
+      decoded = decode[ConsensusOperationalState](outcome.toOperationalState.asJson.noSpaces)
+    } yield
+      expect.same(Some(ledger), decoded.toOption.flatMap(_.clearing)) &&
+        expect.same(Some(ledger), outcome.signedArtifactPeerHistory.clearing)
+  }
+
+  test("an active removal penalty or an unexpired horizon blocks admission until it passes") { res =>
+    implicit val (js, h, sp) = res
+    for {
+      finished <- mkFinished
+      outcome = mkOutcome(finished, SortedMap(b -> 1), SortedMap.empty, SortedMap.empty)
+    } yield
+      expect.same(Set(b, c), GlobalSnapshotConsensus.activeAdmissionPenaltyPeersAt(outcome, 15L)) &&
+        expect.same(Set(b), GlobalSnapshotConsensus.activeAdmissionPenaltyPeersAt(outcome, 120L))
+  }
 }

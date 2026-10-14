@@ -1,7 +1,6 @@
 package io.constellationnetwork.node.shared.config
 
 import cats.data.NonEmptySet
-import cats.syntax.either._
 import cats.syntax.option._
 
 import scala.collection.immutable.SortedMap
@@ -82,7 +81,11 @@ object types {
     // switches on here (see the named accessors below), and the legacy state-proof and staking boundaries are derived
     // from it (lastLegacyStateProofOrdinalFor / incrementalDelegatedStakingStartingOrdinalFor = C-1). Mainnet sets it to
     // R+1 at the cold-restart cutover, R being the final v3.5 snapshot; networks born on v4.1 use 0.
-    tessellation41Migration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
+    tessellation41Migration: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // Global L0 membership clearing (ADR-0036 follow-up): at/after this global ordinal the certified successor
+    // removes a member absent from embedded commit QCs for three consecutive counted intervals. A feature gate, not a
+    // cutover rule: every environment except dev stays disabled until it is scheduled.
+    gl0Clearing: Map[AppEnvironment, SnapshotOrdinal] = Map.empty
   ) {
 
     def tessellation3MigrationFor(environment: AppEnvironment): SnapshotOrdinal =
@@ -162,6 +165,9 @@ object types {
     def removingProcessedDelegatedStakeWithdrawalsFor(environment: AppEnvironment): SnapshotOrdinal =
       SnapshotOrdinalGate.resolveOrDisabled(removingProcessedDelegatedStakeWithdrawals, environment)
 
+    def gl0ClearingFor(environment: AppEnvironment): SnapshotOrdinal =
+      SnapshotOrdinalGate.resolveOrDisabled(gl0Clearing, environment)
+
     /** The same accessors used by snapshot consumers, in a stable order for the consensus configuration hash. */
     def resolvedThresholdsFor(environment: AppEnvironment): SortedMap[String, SnapshotOrdinal] =
       SortedMap(
@@ -180,7 +186,8 @@ object types {
         "preventingAllowSpendResurrection" -> preventingAllowSpendResurrectionFor(environment),
         "fixingGlobalAllowSpendExpiration" -> fixingGlobalAllowSpendExpirationFor(environment),
         "removingProcessedDelegatedStakeWithdrawals" -> removingProcessedDelegatedStakeWithdrawalsFor(environment),
-        "tessellation41Migration" -> tessellation41MigrationFor(environment)
+        "tessellation41Migration" -> tessellation41MigrationFor(environment),
+        "gl0Clearing" -> gl0ClearingFor(environment)
       )
   }
 
@@ -886,7 +893,18 @@ object types {
     currencySnapshotProtocolV1ActivationOrdinal: Long = Long.MaxValue,
     // Resolved shared activation thresholds and dust-sweep schedule. Populated from the same
     // SharedConfig used by snapshot consumers, before both joining and consensus construction.
-    ordinalConfigHash: Option[Hash] = None
+    ordinalConfigHash: Option[Hash] = None,
+    // GL0 membership-clearing activation (fields-added-ordinals.gl0-clearing), resolved by withSharedConfig. Covered by
+    // ordinalConfigHash. Long.MaxValue keeps clearing disabled.
+    gl0ClearingActivationOrdinal: Long = Long.MaxValue,
+    // Contraction floor for membership clearing only: a clearing removal that would leave the successor committee
+    // below this size waits unless it is paired with a replacement admission. It never blocks admission, and a
+    // committee still growing toward it (for example a recovery-seed root of 3) can only replace, not shrink.
+    // Env-resolved from SnapshotConfig.minCommitteeSize; validated >= 3; in deterministicConfigHash.
+    minCommitteeSize: Int = 3,
+    // Length (in ordinals) of a membership-clearing interval and of the post-clearing cooldown. Fixed at 2048 for every
+    // packaged network; configurable only so tests can exercise whole intervals. In deterministicConfigHash.
+    clearingIntervalOrdinals: Long = 2048L
   ) {
     def withSharedConfig(sharedConfig: SharedConfig): ConsensusConfig =
       withSharedConfig(sharedConfig, sharedConfig.environment)
@@ -899,11 +917,19 @@ object types {
           .currencySnapshotProtocolV1For(environment)
           .value
           .value,
-        ordinalConfigHash = Some(sharedConfig.ordinalConfigHashFor(environment))
+        ordinalConfigHash = Some(sharedConfig.ordinalConfigHashFor(environment)),
+        gl0ClearingActivationOrdinal = sharedConfig.fieldsAddedOrdinals.gl0ClearingFor(environment).value.value
       )
 
     def certifiedConsensusActiveAt(key: Long): Boolean =
       key >= certifiedConsensusActivationKey
+
+    def clearingActiveAt(key: Long): Boolean =
+      key >= gl0ClearingActivationOrdinal
+
+    /** The floor a single unpaired clearing eviction must respect at `key`; None while clearing is inactive. */
+    def unpairedEvictionFloorAt(key: Long): Option[Int] =
+      Option.when(clearingActiveAt(key))(minCommitteeSize)
 
     /** Deterministic hash of consensus-critical config values.
       *
@@ -978,6 +1004,8 @@ object types {
           s"lastGlobalSnapshotsInMemory=$lastGlobalSnapshotsInMemory," +
           s"currencySnapshotProtocolV1ActivationOrdinal=$currencySnapshotProtocolV1ActivationOrdinal," +
           s"ordinalConfigHash=${ordinalConfigHash.fold("unresolved")(_.value)}," +
+          s"minCommitteeSize=$minCommitteeSize," +
+          s"clearingIntervalOrdinals=$clearingIntervalOrdinals," +
           // v7 schema-version anchor; explicit fence against mixed-wire-version cluster joins.
           s"consensusSchemaVersion=$consensusSchemaVersion"
       Hash.fromBytes(configString.getBytes("UTF-8"))
@@ -1092,6 +1120,8 @@ object types {
     // in the Global snapshot-ordinal space. Currency L0 does not use certified outcomes.
     // Absent means disabled.
     certifiedConsensusActivationOrdinal: Map[AppEnvironment, SnapshotOrdinal] = Map.empty,
+    // GL0 clearing contraction floor per environment (min-committee-size). Absent resolves to the minimum, 3.
+    minCommitteeSize: Map[AppEnvironment, PosInt] = Map.empty,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,
@@ -1121,13 +1151,24 @@ object types {
         .value
         .value
 
-      snapshot.consensus
-        .copy(
-          facilitatorSelectionMax = snapshot.consensus.maxFacilitatorCount.map(_.value),
-          certifiedConsensusActivationKey = certifiedConsensusActivationKey
+      val minCommitteeSize = snapshot.minCommitteeSize.get(environment).fold(MinimumCommitteeSize)(_.value)
+
+      Either
+        .cond(
+          minCommitteeSize >= MinimumCommitteeSize,
+          snapshot.consensus.copy(
+            facilitatorSelectionMax = snapshot.consensus.maxFacilitatorCount.map(_.value),
+            certifiedConsensusActivationKey = certifiedConsensusActivationKey,
+            minCommitteeSize = minCommitteeSize
+          ),
+          new IllegalArgumentException(
+            s"min-committee-size for ${environment.entryName} is $minCommitteeSize; it must be at least $MinimumCommitteeSize"
+          )
         )
-        .asRight[IllegalArgumentException]
     }
+
+    /** No committee can tolerate a fault below three members, so clearing never contracts below this. */
+    val MinimumCommitteeSize: Int = 3
   }
 
   case class HttpClientConfig(

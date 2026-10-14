@@ -1011,6 +1011,7 @@ object Main
                   seedRecentRoundEndTimes =
                     seedOperational.recentRoundEndTimes.getOrElse(SortedMap.empty[SnapshotOrdinal, Long])
                   seedPenaltyUntil = seedOperational.penaltyUntil.filter(_.nonEmpty)
+                  seedClearing = seedOperational.clearing
                   legacyRollbackOutcome = GlobalConsensusOutcome(
                     snapshot.ordinal,
                     Facilitators(bootstrapFacilitators),
@@ -1023,7 +1024,8 @@ object Main
                     recentCommitteeSizes = seedRecentCommitteeSizes,
                     readmissionCountdown = seedReadmissionCountdown,
                     recentRoundEndTimes = seedRecentRoundEndTimes,
-                    penaltyUntil = seedPenaltyUntil
+                    penaltyUntil = seedPenaltyUntil,
+                    clearing = seedClearing
                   )
                   rollbackOutcome = recoverySeed.fold(certifiedRollbackOutcome.getOrElse(legacyRollbackOutcome))(seed =>
                     GlobalRecoverySeedOutcome.seed(snapshot, snapshotInfo, hashedSnapshot.hash, seed.committee)

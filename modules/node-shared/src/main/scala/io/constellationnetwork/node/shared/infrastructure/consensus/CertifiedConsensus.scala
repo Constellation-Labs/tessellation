@@ -247,7 +247,8 @@ object CertifiedConsensus {
     committedView: Long,
     trigger: ConsensusTrigger,
     proposal: declaration.Proposal,
-    consensusEndTime: Option[Long]
+    consensusEndTime: Option[Long],
+    derivedEvictions: Set[PeerId] = Set.empty
   ): F[ProposalValue] = {
     val timeoutVoters = proposal.timeoutCertificate
       .fold(SortedSet.empty[PeerId])(tc => SortedSet.from(tc.votes.toNonEmptyList.toList.map(_.proofs.head.id.toPeerId)))
@@ -272,7 +273,7 @@ object CertifiedConsensus {
         trigger = trigger,
         admissionNominee = proposal.admissionNominee,
         admittedPeers = SortedSet.from(proposal.admissionCertificates.map(_.targetPeer)),
-        evictedPeers = SortedSet.from(proposal.evictionCertificates.map(_.targetPeer)),
+        evictedPeers = SortedSet.from(proposal.evictionCertificates.map(_.targetPeer)) ++ derivedEvictions,
         timeoutVoters = timeoutVoters,
         consensusEndTime = consensusEndTime
       )
@@ -508,6 +509,32 @@ object CertifiedConsensus {
             .pure[F]
         }
     }
+  }
+
+  /** Extend an already-valid commit QC with every further valid commit for the same proposal QC. Each candidate is verified on its own
+    * (frozen-committee signer, exact commit statement, single matching proof, valid signature); invalid or duplicate candidates are
+    * ignored. The proposer of the child round embeds the result so commits that arrived after its own finalization still count as
+    * membership-clearing evidence.
+    */
+  def mergeCommitQc[F[_]: Async: Hasher: SecurityProvider](
+    proposalQc: CertifiedProposalQC,
+    existing: CommitQC,
+    commits: SortedMap[PeerId, Commit],
+    frozenCommittee: Set[PeerId]
+  ): F[CommitQC] = {
+    val expected = statement(CertificationPurpose.Commit, proposalQc.value, proposalQc.valueHash)
+    val alreadySigned = existing.signatures.toSortedSet.map(_.id.toPeerId)
+
+    commits.toList.filterNot { case (peerId, _) => alreadySigned.contains(peerId) }.traverse {
+      case (peerId, signed)
+          if frozenCommittee.contains(peerId) &&
+            signed.value === expected &&
+            signed.proofs.size === 1L &&
+            signed.proofs.head.id.toPeerId === peerId =>
+        signed.hasValidSignature[F].map(Option.when(_)(signed.proofs.head))
+      case _ => none[SignatureProof].pure[F]
+    }
+      .map(added => existing.copy(signatures = added.flatten.foldLeft(existing.signatures)(_.add(_))))
   }
 
   private def verifyProposalQcWithRequiredQuorum[F[_]: Async: Hasher: SecurityProvider](

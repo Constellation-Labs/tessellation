@@ -52,7 +52,8 @@ object CertifiedRoundCommitteeProjector {
         config.activeAdmissionMaxExpansionPerRound,
         seedlistPeerIds,
         isContextEligible,
-        facilitatorSelector
+        facilitatorSelector,
+        config.unpairedEvictionFloorAt(parentValue.key)
       )
       .map(_.map(nextRound => FromCertifiedParent(nextRound, project(key, nextRound.selectedCommittee, config))))
 

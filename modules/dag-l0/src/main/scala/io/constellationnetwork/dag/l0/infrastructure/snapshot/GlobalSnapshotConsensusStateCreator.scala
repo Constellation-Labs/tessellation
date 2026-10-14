@@ -129,7 +129,6 @@ object GlobalSnapshotConsensusStateCreator {
       F,
       ConsensusCommand[GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalConsensusOutcome]
     ],
-    finalityParticipationMissHistoryRef: Ref[F, FinalityParticipationAuditor.MissHistory],
     membershipPolicy: HealthDerivedMembershipPolicy
   ): GlobalSnapshotConsensusStateCreator[F] = new GlobalSnapshotConsensusStateCreator[F] {
     val config: ConsensusConfig = consensusConfig
@@ -138,200 +137,6 @@ object GlobalSnapshotConsensusStateCreator {
 
     private val dagAwaitingParentConfig = DagAwaitingParentConfig.default
     private val maxAwaitingParentReactivationPerRound = 128
-
-    /** Track every auditable parent-round signing-committee member from actual local snapshot proofs and audit one deterministic target.
-      * Reuse the existing B1 vote path only after the round-count and elapsed-time miss floors, on the existing membership-change cadence,
-      * and in the exact dead band where the current committee remains finalizable but one additional seat is unsupported.
-      *
-      * The local proof subset, monotonic time, and resulting headroom decision are evidence for local vote emission only. They never enter
-      * the outcome, artifact, committee hash, or state proof. The committee-quorum EvictionCertificate has no standalone removal authority
-      * on this path: it must be paired one-for-one with a committee-quorum open ReadyAtTip AdmissionCertificate in the certified
-      * ProposalValue.
-      */
-    private def auditSigningFinalityParticipation(
-      key: GlobalSnapshotKey,
-      lastOutcome: GlobalConsensusOutcome,
-      currentCore: Set[PeerId],
-      currentSigningCommittee: Set[PeerId],
-      resources: ConsensusResources[GlobalSnapshotArtifact, GlobalConsensusKind],
-      observedAt: FiniteDuration,
-      cadenceAllowed: Boolean
-    ): F[F[Unit]] = {
-      // Parent round committee from the certified parent QC, not from controller evidence.
-      val parentRoundCommittee = lastOutcome.certifiedRoundCommittee
-      val locallyObservedParentSigners =
-        lastOutcome.finished.signedMajorityArtifact.proofs.toList.map(_.id.toPeerId).toSet
-      val inBootstrap =
-        !BootstrapCommittee.reached(lastOutcome.recentCommitteeSizes.values)
-      val outcomeLabel = Metrics.unsafeLabelName("outcome")
-
-      parentRoundCommittee match {
-        case None =>
-          // The recovery-seed root has no certified parent round. Clear local streaks and skip rather than bridging an
-          // unknown round into a false consecutive-miss sequence.
-          (finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
-            Metrics[F]
-              .incrementCounter(
-                "dag_consensus_signing_finality_audit_total",
-                Seq(outcomeLabel -> "missing_parent_evidence")
-              )
-              .whenA(!inBootstrap && currentCore.contains(selfId))).as(Sync[F].unit)
-
-        case Some(parentCommittee) =>
-          val currentCommittee = currentSigningCommittee
-          val finalityHeadroom = FinalityHeadroom.evaluate(
-            currentCommittee,
-            locallyObservedParentSigners,
-            consensusConfig.quorumThresholdFraction
-          )
-          val requiredMissDuration = FinalityParticipationAuditor.minimumMissDuration(
-            consensusConfig.timeTriggerInterval,
-            FinalityParticipationAuditor.DefaultRequiredConsecutiveMisses
-          )
-          val recordHeadroom =
-            (Metrics[F].updateGauge(
-              "dag_consensus_signing_finality_audit_current_committee_size",
-              finalityHeadroom.currentCommitteeSize.toLong
-            ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_observed_current_committee_signers",
-                finalityHeadroom.observedCurrentCommitteeSigners.toLong
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_current_finality_floor",
-                finalityHeadroom.currentFinalityFloor.toLong
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_current_finality_margin",
-                finalityHeadroom.currentMargin.toLong
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_next_committee_size",
-                finalityHeadroom.nextCommitteeSize.toLong
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_next_finality_floor",
-                finalityHeadroom.nextFinalityFloor.toLong
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_finality_margin",
-                finalityHeadroom.margin.toLong
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_membership_hold",
-                if (finalityHeadroom.holdsMembership) 1L else 0L
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_cadence_allowed",
-                if (cadenceAllowed) 1L else 0L
-              ) >>
-              Metrics[F].updateGauge(
-                "dag_consensus_signing_finality_audit_atomic_replacement_allowed",
-                if (finalityHeadroom.allowsAtomicReplacement) 1L else 0L
-              )).whenA(currentCore.contains(selfId) && !inBootstrap)
-
-          recordHeadroom >> finalityParticipationMissHistoryRef.modify { previous =>
-            val observation = FinalityParticipationAuditor.observe(
-              selfId,
-              currentCore,
-              currentSigningCommittee,
-              parentCommittee,
-              locallyObservedParentSigners,
-              lastOutcome.key.value.value,
-              lastOutcome.finished.snapshotHash,
-              DeterministicRotation.opportunityIndex(key.value.value, config.activeAdmissionExpansionIntervalRounds),
-              observedAt,
-              requiredMissDuration,
-              inBootstrap,
-              previous
-            )
-            (observation.history, observation.decision)
-          }.flatMap {
-            case Some(audit) if FinalityParticipationAuditor.shouldEmitAtomicReplacementVote(audit, finalityHeadroom, cadenceAllowed) =>
-              val alreadyVoted = resources.evictionVotes.get(audit.target).exists(_.contains(selfId))
-              val roundStartEffect = GlobalSnapshotConsensusStateCreator.atomicReplacementRoundStartEffect(
-                alreadyVoted,
-                evictionVoter.emitEvictionVote(key, audit.target, EvictionReason.Silent),
-                consensusQueue.offer(ConsensusCommand.CheckEvictionAssembly(key, audit.target))
-              ) >>
-                ConsensusLog.info(
-                  logger,
-                  Facilitator,
-                  key.show,
-                  "n/a",
-                  Eviction,
-                  "stage" -> "signing_finality_audit",
-                  "target" -> ConsensusLog.pid(audit.target),
-                  "signatureObserved" -> "false",
-                  "consecutiveMisses" -> audit.consecutiveMisses.toString,
-                  "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString,
-                  "consecutiveMissDurationMs" -> audit.consecutiveMissDuration.toMillis.toString,
-                  "requiredMissDurationMs" -> audit.requiredMissDuration.toMillis.toString,
-                  "currentCommitteeSize" -> finalityHeadroom.currentCommitteeSize.toString,
-                  "observedCurrentCommitteeSigners" -> finalityHeadroom.observedCurrentCommitteeSigners.toString,
-                  "currentFinalityFloor" -> finalityHeadroom.currentFinalityFloor.toString,
-                  "currentFinalityMargin" -> finalityHeadroom.currentMargin.toString,
-                  "nextFinalityFloor" -> finalityHeadroom.nextFinalityFloor.toString,
-                  "nextSeatFinalityMargin" -> finalityHeadroom.nextSeatMargin.toString,
-                  "cadenceAllowed" -> cadenceAllowed.toString,
-                  "alreadyVoted" -> alreadyVoted.toString
-                ) >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_signing_finality_audit_total",
-                  Seq(outcomeLabel -> (if (alreadyVoted) "already_voted" else "vote_emitted"))
-                )
-
-              Sync[F].pure(roundStartEffect)
-
-            case Some(audit) if audit.signatureObserved =>
-              Metrics[F]
-                .incrementCounter(
-                  "dag_consensus_signing_finality_audit_total",
-                  Seq(outcomeLabel -> "signature_observed")
-                )
-                .as(Sync[F].unit)
-
-            case Some(audit) =>
-              val outcome =
-                if (!audit.roundHysteresisSatisfied) "round_hysteresis_wait"
-                else if (!audit.durationHysteresisSatisfied) "duration_hysteresis_wait"
-                else if (finalityHeadroom.allowsExpansion) "headroom_preserved"
-                else if (finalityHeadroom.allowsSilentEviction) "below_current_floor"
-                else if (!cadenceAllowed) "off_cadence"
-                else "vote_suppressed"
-
-              ConsensusLog.info(
-                logger,
-                Facilitator,
-                key.show,
-                "n/a",
-                Eviction,
-                "stage" -> "signing_finality_audit_suppressed",
-                "outcome" -> outcome,
-                "target" -> ConsensusLog.pid(audit.target),
-                "consecutiveMisses" -> audit.consecutiveMisses.toString,
-                "requiredConsecutiveMisses" -> audit.requiredConsecutiveMisses.toString,
-                "consecutiveMissDurationMs" -> audit.consecutiveMissDuration.toMillis.toString,
-                "requiredMissDurationMs" -> audit.requiredMissDuration.toMillis.toString,
-                "currentCommitteeSize" -> finalityHeadroom.currentCommitteeSize.toString,
-                "observedCurrentCommitteeSigners" -> finalityHeadroom.observedCurrentCommitteeSigners.toString,
-                "currentFinalityFloor" -> finalityHeadroom.currentFinalityFloor.toString,
-                "currentFinalityMargin" -> finalityHeadroom.currentMargin.toString,
-                "nextFinalityFloor" -> finalityHeadroom.nextFinalityFloor.toString,
-                "nextSeatFinalityMargin" -> finalityHeadroom.nextSeatMargin.toString,
-                "cadenceAllowed" -> cadenceAllowed.toString
-              ) >>
-                Metrics[F]
-                  .incrementCounter(
-                    "dag_consensus_signing_finality_audit_total",
-                    Seq(outcomeLabel -> outcome)
-                  )
-                  .as(Sync[F].unit)
-
-            case None => Sync[F].pure(Sync[F].unit)
-          }
-      }
-    }
 
     def tryFacilitateConsensus(
       key: GlobalSnapshotKey,
@@ -658,29 +463,6 @@ object GlobalSnapshotConsensusStateCreator {
               consensusQueue.offer(ConsensusCommand.CheckEvictionAssembly(key, retransmission.target)) >>
               Metrics[F].incrementCounter("dag_consensus_eviction_vote_retransmitted_total")
           }
-        roundStartMembershipEffect <-
-          if (membershipPolicy.allowsCertifiedAtomicReplacement)
-            auditSigningFinalityParticipation(
-              key,
-              lastOutcome,
-              signingFacilitators.toSet,
-              signingFacilitators.toSet,
-              resources,
-              time,
-              expansionAllowedThisRound
-            ).handleErrorWith { error =>
-              (logger.warn(error)(s"Signing finality-participation audit failed for key=$key; continuing round") >>
-                Metrics[F].incrementCounter(
-                  "dag_consensus_signing_finality_audit_total",
-                  Seq(Metrics.unsafeLabelName("outcome") -> "error")
-                )).as(Sync[F].unit)
-            }
-          else
-            (finalityParticipationMissHistoryRef.set(FinalityParticipationAuditor.MissHistory.empty) >>
-              Metrics[F].incrementCounter(
-                "dag_consensus_signing_finality_audit_total",
-                Seq(Metrics.unsafeLabelName("outcome") -> "disabled_by_membership_policy")
-              )).as(Sync[F].unit)
         _ <- HasherSelector[F].withCurrent { implicit hasher =>
           DagAwaitingParentQueue.maintain(
             eventMempool,
@@ -733,7 +515,7 @@ object GlobalSnapshotConsensusStateCreator {
           captured => consensusStorage.addFacility(selfId, key, captured).void,
           (captured, targets) => gossip.spreadDirect(captured, targets)
         )
-        effect = roundStartMembershipEffect >> facilityEffect
+        effect = facilityEffect
 
       } yield (state, effect)
   }

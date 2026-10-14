@@ -34,13 +34,25 @@ object ConsensusConfigHashSuite extends SimpleIOSuite {
   pureTest("schema v37 golden: the default deterministicConfigHash is pinned") {
     // Re-approve deliberately whenever a deterministicConfigHash input or consensusSchemaVersion changes.
     expect.same(37, baseConfig.consensusSchemaVersion) &&
-    expect.same("7aceffe3e851a67fa059f8ca410c52e21196c09f16ee2ef0d98994c15e6c0ff8", baseConfig.deterministicConfigHash.value)
+    expect.same("3ca9ee25fff9db5f3889b2713ade1d0cb965ee7892da0a42db3a318db6ffbab9", baseConfig.deterministicConfigHash.value)
   }
 
   pureTest("divergent quorum threshold between operators is detected before consensus") {
     val operatorA = baseConfig.copy(quorumThresholdFraction = 2.0 / 3.0)
     val operatorB = baseConfig.copy(quorumThresholdFraction = 0.75)
     expect(operatorA.deterministicConfigHash != operatorB.deterministicConfigHash)
+  }
+
+  pureTest("min-committee-size is a deterministic-config fence") {
+    expect(baseConfig.copy(minCommitteeSize = 3).deterministicConfigHash != baseConfig.copy(minCommitteeSize = 10).deterministicConfigHash)
+  }
+
+  pureTest("clearing is active from its activation ordinal onward and dormant when unconfigured") {
+    val gated = baseConfig.copy(gl0ClearingActivationOrdinal = 100L)
+    expect(!baseConfig.clearingActiveAt(0L)) &&
+    expect(!gated.clearingActiveAt(99L)) &&
+    expect(gated.clearingActiveAt(100L)) &&
+    expect(gated.clearingActiveAt(101L))
   }
 
   pureTest("v35 activation key is a deterministic-config fence and is active from the key onward") {

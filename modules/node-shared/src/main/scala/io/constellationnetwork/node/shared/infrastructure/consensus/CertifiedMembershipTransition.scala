@@ -4,9 +4,11 @@ import io.constellationnetwork.schema.peer.PeerId
 
 /** Structural policy for v35 Global L0 signing-lease changes.
   *
-  * A certified proposal may expand the committee using the existing admission lane, but it may never contract it. An eviction is valid only
-  * as one half of an equal-sized atomic replacement. The complete admitted/evicted sets are already covered by the v35 ProposalValue QC, so
-  * this helper deliberately introduces no new message field or hash domain.
+  * A certified proposal may expand the committee using the existing admission lane. An eviction is valid as one half of an equal-sized
+  * atomic replacement or, while membership clearing is active (`unpairedEvictionFloor` defined), as a single unpaired eviction that leaves
+  * the successor at or above that floor. Which peer may leave unpaired is not decided here: followers re-derive the clearing target and
+  * reject any ProposalValue whose evicted set differs. The complete admitted/evicted sets are already covered by the v35 ProposalValue QC,
+  * so this helper deliberately introduces no new message field or hash domain.
   */
 object CertifiedMembershipTransition {
 
@@ -15,6 +17,7 @@ object CertifiedMembershipTransition {
     case object Hold extends Kind
     case object Expansion extends Kind
     case object Replacement extends Kind
+    case object Contraction extends Kind
   }
 
   final case class Validated(kind: Kind, nextCommittee: Set[PeerId])
@@ -51,7 +54,8 @@ object CertifiedMembershipTransition {
     roundStartCommittee: Set[PeerId],
     admittedPeers: List[PeerId],
     evictedPeers: List[PeerId],
-    maxChanges: Int
+    maxChanges: Int,
+    unpairedEvictionFloor: Option[Int] = None
   ): Either[String, Validated] =
     for {
       _ <- Either.cond(
@@ -64,16 +68,20 @@ object CertifiedMembershipTransition {
         (),
         "certified_membership_duplicate_eviction_target"
       )
-      validated <- validate(roundStartCommittee, admittedPeers.toSet, evictedPeers.toSet, maxChanges)
+      validated <- validate(roundStartCommittee, admittedPeers.toSet, evictedPeers.toSet, maxChanges, unpairedEvictionFloor)
     } yield validated
 
   def validate(
     roundStartCommittee: Set[PeerId],
     admittedPeers: Set[PeerId],
     evictedPeers: Set[PeerId],
-    maxChanges: Int
+    maxChanges: Int,
+    unpairedEvictionFloor: Option[Int] = None
   ): Either[String, Validated] = {
     val limit = math.max(0, maxChanges)
+    val next = (roundStartCommittee -- evictedPeers) ++ admittedPeers
+    val contractionAllowed =
+      unpairedEvictionFloor.exists(floor => evictedPeers.size == admittedPeers.size + 1 && next.size >= floor)
     val overlap = admittedPeers.intersect(evictedPeers)
     val admittedAlreadySeated = admittedPeers.intersect(roundStartCommittee)
     val evictedNotSeated = evictedPeers -- roundStartCommittee
@@ -87,13 +95,13 @@ object CertifiedMembershipTransition {
       kind <-
         if (evictedPeers.isEmpty)
           Right(if (admittedPeers.isEmpty) Kind.Hold else Kind.Expansion)
+        else if (contractionAllowed) Right(Kind.Contraction)
         else
           Either.cond(
             admittedPeers.nonEmpty && admittedPeers.size == evictedPeers.size,
             Kind.Replacement: Kind,
             "certified_membership_eviction_requires_equal_admission"
           )
-      next = (roundStartCommittee -- evictedPeers) ++ admittedPeers
       _ <- Either.cond(
         kind != Kind.Replacement || next.size == roundStartCommittee.size,
         (),
@@ -109,9 +117,10 @@ object CertifiedMembershipTransition {
     roundStartCommittee: List[PeerId],
     admittedPeers: Set[PeerId],
     evictedPeers: Set[PeerId],
-    maxChanges: Int
+    maxChanges: Int,
+    unpairedEvictionFloor: Option[Int] = None
   ): Either[String, List[PeerId]] =
-    validate(roundStartCommittee.toSet, admittedPeers, evictedPeers, maxChanges).map { _ =>
+    validate(roundStartCommittee.toSet, admittedPeers, evictedPeers, maxChanges, unpairedEvictionFloor).map { _ =>
       val retained = roundStartCommittee.distinct.filterNot(evictedPeers.contains)
       val retainedSet = retained.toSet
       retained ++ admittedPeers.toList.sorted.filterNot(retainedSet.contains)
@@ -131,10 +140,12 @@ object CertifiedMembershipTransition {
     evictedPeers: Set[PeerId],
     quorumThresholdFraction: Double,
     maxChanges: Int,
-    allowSingletonBootstrapExpansion: Boolean = false
+    allowSingletonBootstrapExpansion: Boolean = false,
+    unpairedEvictionFloor: Option[Int] = None
   ): Boolean =
-    validate(roundStartCommittee, admittedPeers, evictedPeers, maxChanges).exists {
+    validate(roundStartCommittee, admittedPeers, evictedPeers, maxChanges, unpairedEvictionFloor).exists {
       case Validated(Kind.Replacement, _) => true
+      case Validated(Kind.Contraction, _) => true
       case Validated(Kind.Hold, _)        => true
       case Validated(Kind.Expansion, _) =>
         val singletonBootstrapExpansion =

@@ -54,7 +54,6 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
   admissionVoter: AdmissionVoter[F, Key],
   probationPeersOf: Outcome => Set[PeerId],
   admissionNomineesOf: Outcome => Set[PeerId],
-  parentRoundCommitteeOf: Outcome => Set[PeerId],
   openAdmissionCadenceOf: Key => Boolean,
   locallyObservedParentSignersOf: Outcome => Option[Set[PeerId]],
   expandedBeyondSingletonOf: Outcome => Boolean,
@@ -74,7 +73,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
   // Actual finalized parent proof subsets are node-local and therefore live outside Outcome.
   // This bounded history controls vote emission only; AdmissionCertificate validation and apply
   // remain independent of it.
-  admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History]
+  admissionProofHistoryRef: Ref[F, AdmissionProofHistory.History],
+  // Membership clearing: the committed pending target blocked by the contraction floor. While set, one open ReadyAtTip replacement may be
+  // voted off-cadence and without expansion headroom; the certified value must pair it with the derived clearing eviction.
+  clearingReplacementTargetsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId]
 ) {
 
   import ctx.{clusterStorage, config, logger, ops, peerQualityTracker, queue, selfId, storage}
@@ -1544,36 +1546,18 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       maxAdmissionSeats = admissionBatchSize,
       locallyObservedParentProofHistory = locallyObservedParentProofHistory
     )
-    // The atomic lane cannot wait for this node to assemble an ECS: certificates are proposal
-    // payloads, not separately gossiped resources, so asymmetric vote delivery could otherwise
-    // leave every committee voter holding its own audit vote while no voter holds a complete ECS.
-    // Instead, the exact hysteresis-qualified self vote emitted by the round-start auditor is
-    // causal authority to emit the matching open ACS vote. Proposal construction/validation still
-    // requires both quorum certificates, so this local gate cannot change membership by itself.
-    val selfEvictionVotes = resources.evictionVotes.iterator.flatMap {
-      case (target, voters) => voters.get(selfId).map(vote => target -> vote)
-    }.toMap
     val admissionRotationIndex =
       DeterministicRotation.opportunityIndex(ctx.roundIndexOf(state.key), config.activeAdmissionExpansionIntervalRounds)
-    val atomicReplacementIntentTargets = StallDetector.atomicReplacementIntentTargets(
-      selfId = selfId,
-      selfIsMember = selfIsMember,
-      atomicReplacementEnabled = requireCommitteeCertification,
-      cadenceAllowed = openAdmissionPolicy.cadenceAllowed,
-      currentCommittee = committee,
-      parentRoundCommittee = parentRoundCommitteeOf(state.lastOutcome),
-      selfEvictionVotes = selfEvictionVotes,
-      expectedFacilitatorsHash = roundStartFacilitatorsHash,
-      expectedParentHash = expectedTip,
-      rotationIndex = admissionRotationIndex,
-      maxTargets = configuredMaxAdmissions
-    )
-    val hasAtomicReplacementIntent = atomicReplacementIntentTargets.nonEmpty
+    val clearingReplacementTargets =
+      if (selfIsMember) clearingReplacementTargetsOf(state.lastOutcome).intersect(committee).toList.sorted.take(configuredMaxAdmissions)
+      else List.empty
+    val replacementTargets = clearingReplacementTargets
+    val hasAtomicReplacementIntent = replacementTargets.nonEmpty
     val atomicReplacementAdmissionAllowed =
       hasAtomicReplacementIntent
     val maxOpenAdmissions =
       if (openAdmissionPolicy.allowsOpenAdmission) configuredMaxAdmissions
-      else atomicReplacementIntentTargets.size
+      else replacementTargets.size
     val canonicalNominees = admissionNomineesOf(state.lastOutcome)
     // Open expansion has a fixed per-voter target set for the entire round. Selection happens
     // before the local at-tip check, so a missing observation is an abstention rather than a walk
@@ -1581,7 +1565,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val openAdmissionTargets = StallDetector.openAdmissionTargets(
       // A replacement target and admission candidate must be distinct. This remains true even
       // if a malformed/stale parent happened to carry the evicted peer as its nominee.
-      candidates = StallDetector.excludeAtomicReplacementTargets(canonicalNominees, atomicReplacementIntentTargets),
+      candidates = StallDetector.excludeAtomicReplacementTargets(canonicalNominees, replacementTargets),
       committee = committee,
       probation = probation,
       alreadyVotedBySelf = alreadyVotedBySelf,
@@ -2050,51 +2034,6 @@ object StallDetector {
     newPacemakerRequestEnqueued: Boolean
   ): Boolean =
     abandonRequested && !newPacemakerRequestEnqueued
-
-  /** Select the exact local atomic-replacement intents that may open the admission-vote lane.
-    *
-    * The signing-finality auditor emits at most one deterministic `Silent` vote per round. An assembled ECS is deliberately not required
-    * here because certificates are not independently gossiped: on asymmetric delivery every honest committee member can hold its own valid
-    * vote without any one of them holding the quorum set. The locally stored self vote is sufficient only to emit the paired ACS vote;
-    * proposal construction and validation still require quorum-certified ECS + ACS with equal cardinality.
-    *
-    * Every payload binding is checked rather than merely looking for `selfId` in the voter map. In particular, stale votes from another
-    * parent or committee cannot authorize the bypass, and a generic stall-path vote for a different peer cannot be mistaken for the
-    * rotation-selected auditor target.
-    */
-  private[consensus] def atomicReplacementIntentTargets(
-    selfId: PeerId,
-    selfIsMember: Boolean,
-    atomicReplacementEnabled: Boolean,
-    cadenceAllowed: Boolean,
-    currentCommittee: Set[PeerId],
-    parentRoundCommittee: Set[PeerId],
-    selfEvictionVotes: Map[PeerId, Signed[EvictionVote]],
-    expectedFacilitatorsHash: Hash,
-    expectedParentHash: Hash,
-    rotationIndex: Long,
-    maxTargets: Int
-  ): List[PeerId] =
-    if (!atomicReplacementEnabled || !selfIsMember || !cadenceAllowed || maxTargets <= 0) List.empty
-    else
-      FinalityParticipationAuditor
-        .selectTarget(currentCommittee, parentRoundCommittee, rotationIndex)
-        .filter { target =>
-          target =!= selfId &&
-          currentCommittee.contains(target) &&
-          selfEvictionVotes.get(target).exists { signed =>
-            val signerIds = signed.proofs.toSortedSet.iterator.map(_.id.toPeerId).toSet
-            val vote = signed.value
-
-            signerIds === Set(selfId) &&
-            vote.targetPeer === target &&
-            vote.reason === EvictionReason.Silent &&
-            vote.facilitatorsHash === expectedFacilitatorsHash &&
-            vote.lastSnapshotHash === expectedParentHash
-          }
-        }
-        .toList
-        .take(math.max(0, maxTargets))
 
   /** An atomic replacement cannot remove and re-admit the same identity. Keep the exclusion in one pure helper so proposal-nominee input
     * cannot accidentally bypass it during future lane refactors.

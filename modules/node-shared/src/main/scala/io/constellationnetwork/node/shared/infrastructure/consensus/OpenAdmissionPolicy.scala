@@ -97,14 +97,12 @@ object OpenAdmissionPolicy {
   def certificateAllowed(target: PeerId, probation: Set[PeerId], openCadenceAllowed: Boolean): Boolean =
     probation.contains(target) || openCadenceAllowed
 
-  /** An active penalty blocks a new/open admission, but not the certified recovery of a peer already in consensus-agreed probation.
-    *
-    * `penaltyUntil` is cleared only after an accepted AdmissionCertificate. Treating that carried horizon as a blocker for the same
-    * probation certificate creates a circular deadlock: the certificate cannot be accepted until the penalty clears, and the penalty cannot
-    * clear until the certificate is accepted.
+  /** An active penalty or clearing cooldown blocks every admission certificate, probation recovery included. Both horizons expire by
+    * ordinal comparison (`removalPenalties` count down, `penaltyUntil` is absolute), so a blocked peer becomes admissible again without
+    * needing a certificate to clear them.
     */
-  def penaltyBlocksCertificate(target: PeerId, probation: Set[PeerId], activePenaltyPeers: Set[PeerId]): Boolean =
-    activePenaltyPeers.contains(target) && !probation.contains(target)
+  def penaltyBlocksCertificate(target: PeerId, activePenaltyPeers: Set[PeerId]): Boolean =
+    activePenaltyPeers.contains(target)
 
   final case class Decision(
     cadenceAllowed: Boolean,

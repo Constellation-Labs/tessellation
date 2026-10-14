@@ -105,8 +105,8 @@ elapsed and `canFinalize` holds, the transition clears the stamp and builds the
 `signatureGracePeriod` is **consensus-critical**: it is folded into
 `ConsensusConfig.deterministicConfigHash` (as `signatureGracePeriodMs`). The
 window bounds which commit signatures land in the certified commit evidence, and
-the planned membership-clearing change (not yet implemented) will count that
-evidence, so per-node windows would bias it. Every node in a cluster must run the
+membership clearing counts that evidence (ADR-0036 item 8), so per-node windows
+would bias it. Every node in a cluster must run the
 same value, and the L0 join fence rejects a peer whose effective hash differs.
 Changing it is a coordinated cold-restart change.
 

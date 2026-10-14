@@ -286,9 +286,6 @@ object ConsensusEventLoop {
     isInBootstrap: Outcome => Boolean,
     probationPeersOf: Outcome => Set[PeerId],
     admissionNomineesOf: Outcome => Set[PeerId],
-    // Canonical parent-round committee used to reproduce the signing-participation
-    // auditor's deterministic target when authorizing a paired atomic admission vote.
-    parentRoundCommitteeOf: Outcome => Set[PeerId],
     openAdmissionCadenceOf: Key => Boolean,
     // Round index (snapshot ordinal) for the round-robin LeaderSchedule.
     roundIndexOf: Key => Long,
@@ -326,7 +323,8 @@ object ConsensusEventLoop {
     onOutcomeRollbackInitialized: Option[(Outcome, ConsensusCommand.RollbackStartPolicy) => F[Unit]] = None,
     initiallyHoldFirstRound: Boolean = false,
     recoverySeedCommittee: Option[F[Option[SortedSet[PeerId]]]] = None,
-    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None
+    normalFirstRoundAlignment: Option[NormalFirstRoundAlignment[Key, Outcome]] = None,
+    clearingReplacementTargetsOf: Outcome => Set[PeerId] = (_: Outcome) => Set.empty[PeerId]
   )(
     implicit _key: monocle.Lens[Outcome, Key],
     _context: monocle.Lens[Outcome, Ctx],
@@ -404,7 +402,6 @@ object ConsensusEventLoop {
         admissionVoter,
         probationPeersOf,
         admissionNomineesOf,
-        parentRoundCommitteeOf,
         openAdmissionCadenceOf,
         locallyObservedParentSignersOf,
         expandedBeyondSingletonOf,
@@ -413,7 +410,8 @@ object ConsensusEventLoop {
         admissionCandidateTipProbe,
         healthRef,
         b2AtTipStreakRef,
-        admissionProofHistoryRef
+        admissionProofHistoryRef,
+        clearingReplacementTargetsOf
       )
       roundFibersRef <- Ref.of[F, List[Fiber[F, Throwable, Unit]]](Nil)
       cancelSignalRef <- Ref.of[F, Option[Deferred[F, Unit]]](None)

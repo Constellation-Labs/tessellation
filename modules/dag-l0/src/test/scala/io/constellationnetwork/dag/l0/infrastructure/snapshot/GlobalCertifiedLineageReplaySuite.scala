@@ -97,7 +97,11 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     view: Long = 0L,
     triggerTime: Boolean = false,
     forceRoundStart: Option[List[Int]] = None,
-    proofRotation: Int = 0
+    proofRotation: Int = 0,
+    // Members kept out of this round's commit QC (membership-clearing evidence).
+    commitExclude: Set[Int] = Set.empty,
+    // Sign the artifact with every member instead of exactly a quorum (headroom for a later expansion).
+    fullArtifactProofs: Boolean = false
   )
 
   final case class Res(
@@ -132,7 +136,12 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     quorumThresholdFraction = 2.0 / 3.0,
     tighteningWindow = 3,
     activeAdmissionMaxExpansionPerRound = 1,
-    certifiedConsensusActivationKey = CertifiedConsensusGenesis.FirstIncrementalOrdinal.value.value
+    certifiedConsensusActivationKey = CertifiedConsensusGenesis.FirstIncrementalOrdinal.value.value,
+    // Membership clearing is active from genesis with short intervals so every replay mode also re-derives the
+    // clearing ledger; the dedicated clearing scenario below drives a member through a full clearing.
+    gl0ClearingActivationOrdinal = 0L,
+    clearingIntervalOrdinals = 4L,
+    minCommitteeSize = 3
   )
 
   private implicit val metrics: Metrics[IO] = NoOpMetrics.make
@@ -384,14 +393,15 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     value: ProposalValue,
     roundStart: List[PeerId],
     byId: Map[PeerId, KeyPair],
-    rotation: Int
+    rotation: Int,
+    commitExclude: Set[PeerId] = Set.empty
   )(
     implicit hasher: Hasher[IO],
     provider: SecurityProvider[IO]
   ): IO[CertifiedOutcome] = {
     val required = requiredQuorum(roundStart.size, config.quorumThresholdFraction)
     val preparePairs = selectRotated(roundStart.map(byId), required, rotation)
-    val commitPairs = selectRotated(roundStart.map(byId), required, rotation + 1)
+    val commitPairs = selectRotated(roundStart.filterNot(commitExclude.contains).map(byId), required, rotation + 1)
 
     for {
       prepareVotes <- preparePairs.traverse(signOutcomeVote[IO](value, _).map(_._2))
@@ -434,7 +444,9 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
     val trigger = if (script.triggerTime) TimeTrigger else EventTrigger
     val artifactValue = artifact(ordinal, prior.finished.snapshotHash, prior, roundStart)
     val artifactQuorum = requiredArtifactQuorum(roundStart.size, config.quorumThresholdFraction)
-    val artifactPairs = selectRotated(roundStart.map(byId), artifactQuorum, script.proofRotation)
+    val artifactPairs =
+      if (script.fullArtifactProofs) roundStart.map(byId)
+      else selectRotated(roundStart.map(byId), artifactQuorum, script.proofRotation)
     val nextRound = SortedSet.from((roundStartSet -- evicted) ++ admitted)
     val nextAuthority = NonEmptySet.fromSetUnsafe(nextRound)
 
@@ -464,7 +476,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         timeoutVoters = SortedSet.from(timeoutVoters),
         consensusEndTime = Some(1000000L + ordinal.value.value)
       )
-      provisionalOutcome <- certifyValue(provisionalValue, roundStart, byId, script.proofRotation)
+      provisionalOutcome <- certifyValue(provisionalValue, roundStart, byId, script.proofRotation, script.commitExclude.map(ids))
       triggerStatements <- roundStart
         .map(byId)
         .traverse(pair =>
@@ -506,7 +518,7 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
         nextRoundAuthority = finalAuthority,
         nextOperationalStateHash = operationalStateHash
       )
-      outcome <- certifyValue(value, roundStart, byId, script.proofRotation)
+      outcome <- certifyValue(value, roundStart, byId, script.proofRotation, script.commitExclude.map(ids))
     } yield PublicFrame(signedArtifact, context, outcome, triggerStatements, nonEmpty(roundStart))
   }
 
@@ -626,7 +638,8 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
           evicted,
           config.quorumThresholdFraction,
           config.activeAdmissionMaxExpansionPerRound,
-          singletonException
+          singletonException,
+          config.unpairedEvictionFloorAt(frame.artifact.ordinal.value.value)
         )
       )(new IllegalStateException("scripted membership transition was not prepare-vote admissible"))
       snapshotHash <- Hasher[IO].hash(frame.artifact.value)
@@ -854,6 +867,105 @@ object GlobalCertifiedLineageReplaySuite extends MutableIOSuite {
       expect(value(honestAfter).nextRoundAuthority === value(rotatedAfter).nextRoundAuthority) &&
       expect(value(honestAfter).nextRoundAuthority === value(timeoutAfter).nextRoundAuthority)
     }
+  }
+
+  test("membership clearing removes a member absent from three counted intervals, with cooldown, and replays identically") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    val growth = List(
+      Script(admitted = Some(1)),
+      Script(),
+      Script(admitted = Some(2)),
+      Script(fullArtifactProofs = true),
+      Script(admitted = Some(3)),
+      Script()
+    )
+    val absent = Script(commitExclude = Set(3))
+    val stateAdvancer = advancer(res.pairs.head)
+    val silent = peer(res.pairs(3))
+
+    def step(state: GlobalConsensusOutcome, script: Script): IO[GlobalConsensusOutcome] =
+      buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
+
+    def streak(outcome: GlobalConsensusOutcome): Int =
+      outcome.clearing.flatMap(_.members.get(silent)).fold(0)(_.lowStreak)
+
+    for {
+      root <- signedRoot(res.pairs)
+      grown <- growth.foldM(root)(step)
+      // Keep the member out of every commit QC until its streak reaches the threshold (bounded to 30 rounds).
+      pendingOutcome <- (grown, 0).tailRecM[IO, (GlobalConsensusOutcome, Int)] {
+        case (state, rounds) =>
+          if (streak(state) >= MembershipClearing.RequiredLowIntervals || rounds >= 30) IO.pure(Right((state, rounds)))
+          else step(state, absent).map(next => Left((next, rounds + 1)))
+      }
+      (pending, roundsAbsent) = pendingOutcome
+      clearingFrame <- buildFrame(pending, Script(evicted = Some(3), commitExclude = Set(3)), res.pairs)
+      cleared <- derive(pending, clearingFrame, stateAdvancer).map(_._1)
+      restarted <- derive(pending, clearingFrame, advancer(res.pairs.head)).map(_._1)
+      // A contraction that would leave fewer than min-committee-size members is refused.
+      belowFloor <- buildFrame(cleared, Script(evicted = Some(2)), res.pairs).attempt
+    } yield {
+      val clearingInterval = cleared.key.value.value / config.clearingIntervalOrdinals
+      expect.same(4, grown.facilitators.value.size) &&
+      expect(roundsAbsent < 30, s"the absent member never became pending in $roundsAbsent rounds") &&
+      expect.same(MembershipClearing.RequiredLowIntervals, streak(pending)) &&
+      expect(!cleared.facilitators.value.contains(silent), "the cleared member must leave the next committee") &&
+      expect.same(3, cleared.facilitators.value.size) &&
+      expect.same(
+        Some(SnapshotOrdinal.unsafeApply(cleared.key.value.value + config.clearingIntervalOrdinals)),
+        cleared.penaltyUntil.flatMap(_.get(silent))
+      ) &&
+      expect.same(Some(clearingInterval), cleared.clearing.flatMap(_.clearedInterval)) &&
+      expect(!cleared.clearing.exists(_.members.contains(silent)), "the cleared member's record must be dropped") &&
+      expect.same(cleared, restarted) &&
+      expect(belowFloor.isLeft, "a contraction below min-committee-size must be refused")
+    }
+  }
+
+  test("at the floor a pending member cannot leave unpaired but leaves when an admission replaces it") { res =>
+    implicit val serializer: JsonSerializer[IO] = res.serializer
+    implicit val hasher: Hasher[IO] = res.hasher
+    implicit val hasherSelector: HasherSelector[IO] = res.selector
+    implicit val provider: SecurityProvider[IO] = res.provider
+
+    // Committee of three equals min-committee-size, so clearing may only replace.
+    val growth = List(Script(admitted = Some(1)), Script(), Script(admitted = Some(2)), Script())
+    val stateAdvancer = advancer(res.pairs.head)
+    val silent = peer(res.pairs(2))
+    val replacement = peer(res.pairs(3))
+
+    def step(state: GlobalConsensusOutcome, script: Script): IO[GlobalConsensusOutcome] =
+      buildFrame(state, script, res.pairs).flatMap(derive(state, _, stateAdvancer).map(_._1))
+
+    def streak(outcome: GlobalConsensusOutcome): Int =
+      outcome.clearing.flatMap(_.members.get(silent)).fold(0)(_.lowStreak)
+
+    for {
+      root <- signedRoot(res.pairs)
+      grown <- growth.foldM(root)(step)
+      pendingOutcome <- (grown, 0).tailRecM[IO, (GlobalConsensusOutcome, Int)] {
+        case (state, rounds) =>
+          if (streak(state) >= MembershipClearing.RequiredLowIntervals || rounds >= 30) IO.pure(Right((state, rounds)))
+          else step(state, Script(commitExclude = Set(2))).map(next => Left((next, rounds + 1)))
+      }
+      (pending, _) = pendingOutcome
+      unpaired <- buildFrame(pending, Script(evicted = Some(2), commitExclude = Set(2)), res.pairs).attempt
+      replaced <- step(pending, Script(admitted = Some(3), evicted = Some(2), commitExclude = Set(2)))
+    } yield
+      expect.same(3, grown.facilitators.value.size) &&
+        expect.same(MembershipClearing.RequiredLowIntervals, streak(pending)) &&
+        expect(unpaired.isLeft, "an unpaired clearing at the floor must be refused") &&
+        expect.same(3, replaced.facilitators.value.size) &&
+        expect(!replaced.facilitators.value.contains(silent)) &&
+        expect(replaced.facilitators.value.contains(replacement)) &&
+        expect.same(
+          Some(SnapshotOrdinal.unsafeApply(replaced.key.value.value + config.clearingIntervalOrdinals)),
+          replaced.penaltyUntil.flatMap(_.get(silent))
+        )
   }
 
   test("production download validator reconstructs public root-to-tip DAG lineage and fails closed on a missing interior artifact") { res =>
