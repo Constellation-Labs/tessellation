@@ -73,7 +73,12 @@ Membership clearing of persistently absent members, its interval evidence from e
   can therefore halt the chain if more than a third go offline at once. This is accepted: halting is safe, and
   recovery uses the permissioned recovery-seed procedure.
 - An offline member keeps its seat and its leader turns until it exits through `D`, a certified eviction, or the
-  clearing follow-up. Its leader turns cost one view change each.
+  clearing follow-up. Its leader turns cost one view change each, and because the whole committee never signs, every
+  round waits the full `signatureGracePeriod` (3 s) after quorum before finalizing. The earlier 750 ms Tier-1 window
+  applied only once Core had signed.
+- `LeaderSchedule` indexes the PeerId-sorted committee, so an operator who can grind keys into adjacent sorted
+  positions gets consecutive leader slots, and consecutive views within one round. Admission is seedlist-gated, which
+  makes this mostly theoretical, and a run of `k` adjacent Byzantine leaders still costs at most `k` view changes.
 - Rewards follow the frozen committee, as already decided in ADR-0028 / #1627.
 - A large body of configuration and code is removed: `core-committee-size`, the active-admission score and penalty
   keys, leader-quality floors, chronic reinstatement, quality decay, the Tier-1 grace window and the bootstrap

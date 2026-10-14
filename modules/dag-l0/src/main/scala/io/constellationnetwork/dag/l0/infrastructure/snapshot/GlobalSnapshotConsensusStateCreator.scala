@@ -525,10 +525,7 @@ object GlobalSnapshotConsensusStateCreator {
           CertifiedRoundCommitteeProjector.project(
             key = key,
             selectedFacilitators = selectedFacilitators,
-            config = config,
-            // Buffered withdrawal rumors are not certified and can arrive before state creation on one node but after it on
-            // another. The frozen round-start/QC committee therefore ignores that local timing input.
-            withdrawnPeers = Set.empty
+            config = config
           )
         )(_._2)
         expansionAllowedThisRound = membershipProjection.expansionAllowed

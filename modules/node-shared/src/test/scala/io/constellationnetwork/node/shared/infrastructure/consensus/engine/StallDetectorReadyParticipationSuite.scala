@@ -55,7 +55,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       .same(2, status.memberCount)
       .and(expect.same(2, status.activeReady))
       .and(expect.same(2, status.memberQuorum))
-      .and(expect.same(0, status.notReadyCore))
+      .and(expect.same(0, status.notReadyMembers))
       .and(expect.same(0, status.behindNonReady))
       .and(expect(!status.infeasible, "self + 1 Ready peer should NOT be flagged infeasible in a 2-Core round"))
   }
@@ -79,7 +79,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       .same(3, status.memberCount)
       .and(expect.same(2, status.activeReady))
       .and(expect.same(2, status.memberQuorum))
-      .and(expect.same(1, status.notReadyCore))
+      .and(expect.same(1, status.notReadyMembers))
       .and(expect(!status.infeasible, "3-Core with 1 non-Ready peer (self + 1 Ready) hits quorum exactly, not infeasible"))
   }
 
@@ -98,7 +98,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       .same(3, status.memberCount)
       .and(expect.same(1, status.activeReady))
       .and(expect.same(2, status.memberQuorum))
-      .and(expect.same(2, status.notReadyCore))
+      .and(expect.same(2, status.notReadyMembers))
       .and(expect(status.infeasible, "3-Core with 2 non-Ready peers leaves only self active; below quorum=2"))
   }
 
@@ -115,7 +115,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       .same(2, status.memberCount)
       .and(expect.same(1, status.activeReady))
       .and(expect.same(2, status.memberQuorum))
-      .and(expect.same(1, status.notReadyCore))
+      .and(expect.same(1, status.notReadyMembers))
       .and(expect(status.infeasible, "2-Core with 1 non-Ready peer leaves only self active; below quorum=2"))
   }
 
@@ -136,7 +136,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(1, status.notReadyCore)
+      .same(1, status.notReadyMembers)
       .and(expect.same(0, status.behindNonReady))
       .and(expect.same(2, status.activeReady))
       .and(expect(!status.infeasible, "3-Core with 1 caught-up WFR peer still has 2 active (self + ready) >= quorum=2"))
@@ -152,7 +152,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(1, status.notReadyCore)
+      .same(1, status.notReadyMembers)
       .and(expect.same(1, status.behindNonReady))
   }
 
@@ -166,7 +166,7 @@ object StallDetectorReadyParticipationSuite extends FunSuite {
       quorumThresholdFraction = Supermajority
     )
     expect
-      .same(1, status.notReadyCore)
+      .same(1, status.notReadyMembers)
       .and(expect.same(1, status.behindNonReady))
   }
 

@@ -3,7 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import scala.concurrent.duration._
 
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
-import io.constellationnetwork.node.shared.infrastructure.consensus.state.QuorumPolicy
+import io.constellationnetwork.node.shared.infrastructure.consensus.state.FinalityQuorum
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hex.Hex
@@ -33,11 +33,9 @@ object C1ClosureSuite extends FunSuite {
     expect.same(committee.sorted, projection.votingCommittee).and(expect.same(projection.votingCommittee, shuffled.votingCommittee))
   }
 
-  test("the certificate quorum depends only on the committee size") {
-    expect.same(
-      QuorumPolicy.fromFraction(7, config.quorumThresholdFraction),
-      QuorumPolicy.fromFraction(projection.votingCommittee.size, config.quorumThresholdFraction)
-    )
+  test("the certificate quorum is the supermajority of every seated member") {
+    // Seven seats at two thirds need five signatures. A three-seat Core denominator would have needed only two.
+    expect.same(5, FinalityQuorum.of(projection.votingCommittee.size, 2.0 / 3.0))
   }
 
   test("every member receives a leader turn within one view cycle") {

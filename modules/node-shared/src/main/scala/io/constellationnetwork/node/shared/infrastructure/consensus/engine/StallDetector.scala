@@ -481,7 +481,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       quorumInfeasible = stallResult.quorumInfeasible
 
       // --- Alpha.98: ready-participation feasibility ---
-      // Detects rounds whose Core committee includes peers that are LOCALLY observed as
+      // Detects rounds whose frozen committee includes peers that are LOCALLY observed as
       // not-Ready. These peers cannot contribute (sign / lead) regardless of how long we
       // wait, so abandoning EARLY (before the stall-cycle / declaration-timeout window
       // expires) lets the next round-start re-attempt with the cluster's then-current
@@ -496,12 +496,12 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       // Condition (codex 2026-05-22 v2 review): peer is in `committeeMembers` AND not in
       // `readyPeerIdsWithSelf` (current cluster Ready set + selfId; `getResponsivePeers`
       // does not return self, so we MUST add selfId explicitly to avoid classifying self
-      // as not-Ready and false-abandoning healthy 2-Core rounds). Once-Ready check is the
+      // as not-Ready and false-abandoning healthy small-committee rounds). Once-Ready check is the
       // ONLY exclusion test -- a peer that is WFR-but-caught-up still cannot sign / lead,
       // so excluding them is correct (codex's WFR-promotion-starvation point). The
       // peer-tip-behind subset is computed only as a diagnostic dimension for the log.
       //
-      // After excluding non-Ready Core peers, if `activeReady < memberQuorum`, emit
+      // After excluding non-Ready members, if `activeReady < memberQuorum`, emit
       // `ReadyParticipationQuorumInfeasible`.
       lastOutcomeKey = ctx.lastOutcomeKeyOf(state.lastOutcome)
       readyParticipationStatus = StallDetector.computeReadyParticipationStatus(
@@ -540,7 +540,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       readyParticipationShouldAbandon =
         readyParticipationInfeasible && !readyParticipationDuringJoiningGrace && !certifiedViewApplyScheduled
       _ <- (
-        // DEBUG, not WARN: this re-fires every monitor tick while any Core peer is locally observed
+        // DEBUG, not WARN: this re-fires every monitor tick while any member is locally observed
         // not-Ready, so at WARN it floods app.log for the whole stall. The operator-relevant event is
         // recorded once by the abandon path (AbandonReason.ReadyParticipationQuorumInfeasible); the
         // metric increment below stays unthrottled for dashboards.
@@ -554,7 +554,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           "memberCount" -> readyParticipationStatus.memberCount.toString,
           "activeReady" -> readyParticipationStatus.activeReady.toString,
           "memberQuorum" -> readyParticipationStatus.memberQuorum.toString,
-          "notReadyCore" -> readyParticipationStatus.notReadyCore.toString,
+          "notReadyMembers" -> readyParticipationStatus.notReadyMembers.toString,
           "behindNonReady" -> readyParticipationStatus.behindNonReady.toString,
           "joiningGrace" -> readyParticipationDuringJoiningGrace.toString,
           "vccApplyScheduled" -> vccApplyScheduled.toString,
@@ -607,7 +607,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           AbandonReason.ReadyParticipationQuorumInfeasible(
             readyParticipationStatus.activeReady,
             readyParticipationStatus.memberQuorum,
-            readyParticipationStatus.notReadyCore
+            readyParticipationStatus.notReadyMembers
           )
         else if (quorumInfeasible)
           AbandonReason.QuorumInfeasible(stallResult.activeFacilitators, stallResult.quorumSize, stallResult.clusterSize)
@@ -859,13 +859,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     pacemakerRequestEnqueued: Boolean = false
   )
 
-  /** v4.1.0 cluster-majority floor -- terminal halt diagnostic. Observability ONLY: it never changes the abandon/eviction decision (those
-    * stay Core-gated, so silent Tier 1 peers cannot trigger an eviction split). When a round has genuinely stalled (`stallCount > 1`)
-    * outside bootstrap and the FROZEN ROUND COMMITTEE cannot reach the finality floor (`responding < finalityFloor`), emit ONE WARN naming
-    * the CAUSE (which committee members are silent) and the SYMPTOM (responders vs floor): the cluster is too degraded -- silent/flaky
-    * peers -- to finalize under the safety floor, and will halt here until peers recover or the committee reconfigures between rounds.
-    * `finalityFloor` is `quorumFinalityDecision`'s `baseQuorum`, which is committee-sized only when the floor is actually active, so this
-    * never fires for a healthy Core==committee round or during bootstrap.
+  /** Terminal halt diagnostic. Observability ONLY: it never changes the abandon/eviction decision. When a round has genuinely stalled
+    * (`stallCount > 1`) outside bootstrap and the FROZEN ROUND COMMITTEE cannot reach the finality floor (`responding < finalityFloor`),
+    * emit ONE WARN naming the CAUSE (which committee members are silent) and the SYMPTOM (responders vs floor): the cluster is too degraded
+    * -- silent/flaky peers -- to finalize under the safety floor, and will halt here until peers recover or the committee reconfigures
+    * between rounds. `finalityFloor` is the committee quorum over the frozen round committee. It never fires during bootstrap.
     */
   private def announceHaltIfDegraded(
     key: Key,
@@ -913,20 +911,12 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       val phaseLabel = Seq((Metrics.unsafeLabelName("phase"), statusName))
 
       if (missingPeers.nonEmpty) {
-        // Dual-set accounting (alpha.91): the full-facilitator set is retained for OBSERVABILITY
-        // (log lines, peer-quality records) while quorum-infeasibility gates on Core only --
-        // mirroring `ConsensusStateAdvancer.maybeGetAllDeclarations` (alpha.89) and
-        // `StateTransitions.checkViewChangeAssembly` (alpha.89). Pre-alpha.91 the gate used
-        // `state.facilitators.value.size`, which abandoned rounds with `clusterSize=8 required=6`
-        // even when Core (3/3) could close a 2-of-3 phase quorum -- task #123 in the user tracker,
-        // observed post-alpha.90 at ord 3127058 stuck for 30+ min.
-        //
-        // Eviction-target candidates are also Core-only to avoid penalising Tier 1 peers for
-        // missing a non-Core signing opportunity: the eviction signal exists to restore quorum,
-        // and only Core membership affects quorum.
+        // The current facilitator set is retained for OBSERVABILITY (log lines) while
+        // quorum-infeasibility is judged against the frozen round committee, the same
+        // denominator `ConsensusStateAdvancer.committeeQuorum` and every certificate use.
         val totalFacilitators = state.facilitators.value.size
         val remaining = totalFacilitators - missingPeers.size
-        // Feasibility is judged against the frozen round Core, the same denominator certificates use.
+        // Feasibility is judged against the frozen round committee, the same denominator certificates use.
         // `missingPeers` already counts a withdrawn member that has not declared (see `getResourcesInfo`),
         // so a local withdrawal never shrinks the denominator.
         val frozenMembers = state.roundStartFacilitators.value.toSet
@@ -939,10 +929,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
         val memberCount = committeeStatus.memberCount
         val membersRemaining = committeeStatus.membersRemaining
         val memberQuorum = committeeStatus.membersRequired
-        // Backwards-compatible alias for the surrounding code that still reports against
-        // `minQuorum` in logs / `StallResult.quorumSize`. The Core-only value is what gates
-        // the abandon decision; the field name is retained to keep AbandonReason call sites
-        // and downstream metrics labels stable.
+        // Alias for the code that reports `minQuorum` in logs / `StallResult.quorumSize`; the name is
+        // kept so AbandonReason call sites and downstream metrics labels stay stable.
         val minQuorum = memberQuorum
         val quorumInfeasible = committeeStatus.quorumInfeasible
         // Quorum floor uses the MINIMUM of cluster-wide and round-level quorum:
@@ -976,8 +964,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           val existingHandle: F[StallResult] =
             if (stallCount == 0) {
               // First timeout -- warn only, give peers one more cycle to respond.
-              // Surface both denominators so post-deploy log triage can tell whether the
-              // Core gate is the actual blocker or just Tier 1 peers are slow.
+              // Surface the committee numbers alongside the raw progress for log triage.
               ConsensusLog.warn(
                 logger,
                 Category.Stall,
@@ -990,10 +977,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                 "progress" -> s"$declaredCount/$activeCount",
                 "missing" -> missingPeers.size.toString,
                 "missingPeers" -> ConsensusLog.pids(missingPeers),
-                "coreActive" -> memberCount.toString,
+                "memberCount" -> memberCount.toString,
                 "membersRemaining" -> membersRemaining.toString,
                 "membersRequired" -> memberQuorum.toString,
-                "coreMissing" -> ConsensusLog.pids(missingMembers),
+                "missingMembers" -> ConsensusLog.pids(missingMembers),
                 "view" -> state.viewNumber.toString,
                 "action" -> "waiting one more cycle before eviction"
               ) >>
@@ -1037,11 +1024,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                   // Same category of bug; fix is the same: bounded patience window.
                   val inGracePeriod = stallCount < StallDetector.EvictionSkipMaxStalls
                   val gossipingTips: Set[PeerId] = chainTips.keySet
-                  // Restrict eviction-target candidates to missing CORE peers. Tier 1 peers
-                  // outside Core don't gate quorum, so evicting them cannot restore
-                  // feasibility and would only penalise them for missing a non-Core signing
-                  // opportunity. Per codex's alpha.91 dual-set guidance: keep the
-                  // full-facilitator `missingPeers` set for observability, but feed only
+                  // Restrict eviction-target candidates to missing frozen-committee members: keep the
+                  // facilitator-wide `missingPeers` set for observability, but feed only
                   // `missingMembers` into the eviction/VCV-targeting path.
                   val unresponsiveMissing = {
                     val clusterUnresponsive = missingMembers.filterNot(responsiveIds.contains)
@@ -1050,7 +1034,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                   }
                   val bootstrapAllowsSkip = inGracePeriod
                   if (unresponsiveMissing.isEmpty && bootstrapAllowsSkip) {
-                    // All missing Core peers are still Responsive -- their declarations haven't
+                    // All missing members are still Responsive -- their declarations haven't
                     // arrived at this node yet but they're alive. Wait another cycle rather
                     // than split.
                     ConsensusLog.info(
@@ -1064,11 +1048,11 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                       "progress" -> s"$declaredCount/$activeCount",
                       "missing" -> missingPeers.size.toString,
                       "missingPeers" -> ConsensusLog.pids(missingPeers),
-                      "coreMissing" -> ConsensusLog.pids(missingMembers),
+                      "missingMembers" -> ConsensusLog.pids(missingMembers),
                       "view" -> state.viewNumber.toString,
                       "stallCount" -> stallCount.toString,
                       "reason" -> "WAITING_MISSING_STILL_RESPONSIVE",
-                      "action" -> "skipping eviction -- all missing Core peers still gossiping"
+                      "action" -> "skipping eviction -- all missing members still gossiping"
                     ) >>
                       Metrics[F].incrementCounter("dag_consensus_eviction_skipped_still_responsive") >>
                       Metrics[F].incrementCounter("dag_consensus_stall_phase", phaseLabel) >>
@@ -1083,10 +1067,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                         "phase" -> statusName,
                         "elapsed" -> s"${statusDuration.toSeconds}s",
                         "progress" -> s"$declaredCount/$activeCount",
-                        "coreActive" -> memberCount.toString,
+                        "memberCount" -> memberCount.toString,
                         "membersRemaining" -> membersRemaining.toString,
                         "membersRequired" -> memberQuorum.toString,
-                        "coreMissing" -> ConsensusLog.pids(missingMembers),
+                        "missingMembers" -> ConsensusLog.pids(missingMembers),
                         "facilitatorActive" -> totalFacilitators.toString,
                         "facilitatorRemaining" -> remaining.toString,
                         "facilitatorMissing" -> ConsensusLog.pids(missingPeers),
@@ -1146,9 +1130,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                               unresponsiveMissing = candidates,
                               committee = committeeSet,
                               alreadyVotedBySelf = alreadyVotedBySelf,
-                              // Eviction cap from the UNSHRUNK supermajority, not the shrunk quorum: a
-                              // liveness shrink must not raise the cap and let the committee be evicted
-                              // below the supermajority budget. The abandon gate still uses the shrunk value.
+                              // Eviction cap from the committee supermajority, so evictions never take the
+                              // committee below the supermajority budget.
                               minQuorum = committeeStatus.baseRequired
                             )
                             newTargets.traverse_ { target =>
@@ -1161,7 +1144,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                           viewChangeManager
                             .performViewChange(key, observedPacemakerEpoch)
                             .map { enqueued =>
-                              // Propagate the Core-only numbers so the resulting
+                              // Propagate the committee numbers so the resulting
                               // `AbandonReason.QuorumInfeasible` satisfies its `active < required`
                               // invariant and `AbandonmentTracker`'s isolated/quorum-impossible
                               // classifier reads the correct active count.
@@ -1249,10 +1232,10 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
                 viewChangeManager
                   .performViewChange(key, observedPacemakerEpoch)
                   .map { enqueued =>
-                    // Same Core-only propagation as the quorumInfeasible eviction branch:
+                    // Same committee-number propagation as the quorumInfeasible eviction branch:
                     // when this path emits a forced view change AND `quorumInfeasible` is true,
                     // the outer monitor builds `AbandonReason.QuorumInfeasible` from these
-                    // fields; the invariant `active < required` must hold against Core numbers.
+                    // fields; the invariant `active < required` must hold against committee numbers.
                     StallResult(
                       didStall = true,
                       quorumInfeasible = quorumInfeasible,
@@ -1443,9 +1426,9 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
           .debug(logger, Category.Facilitator, key.toString, role, LogEvent.PeerQuality, "trackedPeers" -> "0")
     }
 
-  /** Admission emission trigger. Core peers emit a bounded open-expansion vote for the parent Proposal's canonical nominee only after a
-    * fresh direct metadata response names the exact parent and the nominee has sent a Facility bound to this current round. Probation
-    * recovery remains a separate lane because a peer deliberately held in probation cannot emit a Facility.
+  /** Admission emission trigger. Committee members emit a bounded open-expansion vote for the parent Proposal's canonical nominee only
+    * after a fresh direct metadata response names the exact parent and the nominee has sent a Facility bound to this current round.
+    * Probation recovery remains a separate lane because a peer deliberately held in probation cannot emit a Facility.
     *
     * '''Witness channel''': probation peers are excluded from `state.facilitators` by the state-creator filter, so they never send Facility
     * declarations for the active round. The committee cannot witness them via `resources.peerDeclarationsMap`. Instead, every peer —
@@ -1460,8 +1443,8 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     * evidence and causes abstention. The fixed probation target is probed at most once per local one-second maximum-poll interval, and a
     * throttled tick preserves its streak without authorizing a vote from stale evidence.
     *
-    * Determinism: every Core peer reads the same proposal-carried parent nominee. A local chain-tip observation controls abstention only.
-    * Committee mutation still requires a quorum-certified AdmissionCertificate in an accepted proposal.
+    * Determinism: every committee member reads the same proposal-carried parent nominee. A local chain-tip observation controls abstention
+    * only. Committee mutation still requires a quorum-certified AdmissionCertificate in an accepted proposal.
     */
   private def maybeEmitAdmissionVotes(
     key: Key,
@@ -1517,18 +1500,17 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
       case _                        => none[SnapshotOrdinal]
     }
     val committee = state.roundStartFacilitators.value.toSet
-    val core = state.roundStartFacilitators.value.toSet
-    val requireCoreCertification =
+    val requireCommitteeCertification =
       ctx.membershipPolicy.allowsCertifiedAtomicReplacement
-    val selfIsMember = core.contains(selfId)
+    val selfIsMember = committee.contains(selfId)
     val admissionVoteAuthority =
-      AdmissionVoterPool.allowsVoteEmission(selfId, core)
+      AdmissionVoterPool.allowsVoteEmission(selfId, committee)
     // Preserve the cached gossip-tip policy for callers without a direct probe. Global L0
     // open and probation lanes use fresh exact observations below.
     // Certified atomic replacement deliberately tightens the legacy cache predicate without
     // allowing a failed direct response to fall back to cached evidence.
     def isAdmissionReadyTip(tip: ChainTip): Boolean =
-      AdmissionTipReadiness.isCachedReady(tip, expectedTip, expectedOrdinal, requireCoreCertification)
+      AdmissionTipReadiness.isCachedReady(tip, expectedTip, expectedOrdinal, requireCommitteeCertification)
     val memberCount = math.max(1, state.roundStartFacilitators.value.size)
     val voteQuorum = math.max(1, QuorumPolicy.fromFraction(memberCount, config.quorumThresholdFraction))
     val bootstrapActive = ctx.isInBootstrap(state.lastOutcome)
@@ -1564,7 +1546,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     )
     // The atomic lane cannot wait for this node to assemble an ECS: certificates are proposal
     // payloads, not separately gossiped resources, so asymmetric vote delivery could otherwise
-    // leave every Core voter holding its own audit vote while no voter holds a complete ECS.
+    // leave every committee voter holding its own audit vote while no voter holds a complete ECS.
     // Instead, the exact hysteresis-qualified self vote emitted by the round-start auditor is
     // causal authority to emit the matching open ACS vote. Proposal construction/validation still
     // requires both quorum certificates, so this local gate cannot change membership by itself.
@@ -1576,7 +1558,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
     val atomicReplacementIntentTargets = StallDetector.atomicReplacementIntentTargets(
       selfId = selfId,
       selfIsMember = selfIsMember,
-      atomicReplacementEnabled = requireCoreCertification,
+      atomicReplacementEnabled = requireCommitteeCertification,
       cadenceAllowed = openAdmissionPolicy.cadenceAllowed,
       currentCommittee = committee,
       parentRoundCommittee = parentRoundCommitteeOf(state.lastOutcome),
@@ -2005,7 +1987,7 @@ class StallDetector[F[_]: Async: HasherSelector: Metrics, Event, Key: Order, Art
 
 object StallDetector {
 
-  /** True only when `target` has entered the same current round as this Core voter.
+  /** True only when `target` has entered the same current round as this committee voter.
     *
     * `ConsensusResources` is already scoped by consensus key, but Facility has no view field and storage is latest-write-wins across view
     * changes. Comparing the target's parent, facilitator binding, and deterministic-config fingerprint with the voter's own current
@@ -2072,9 +2054,9 @@ object StallDetector {
   /** Select the exact local atomic-replacement intents that may open the admission-vote lane.
     *
     * The signing-finality auditor emits at most one deterministic `Silent` vote per round. An assembled ECS is deliberately not required
-    * here because certificates are not independently gossiped: on asymmetric delivery every honest Core node can hold its own valid vote
-    * without any one of them holding the quorum set. The locally stored self vote is sufficient only to emit the paired ACS vote; proposal
-    * construction and validation still require quorum-certified ECS + ACS with equal cardinality.
+    * here because certificates are not independently gossiped: on asymmetric delivery every honest committee member can hold its own valid
+    * vote without any one of them holding the quorum set. The locally stored self vote is sufficient only to emit the paired ACS vote;
+    * proposal construction and validation still require quorum-certified ECS + ACS with equal cardinality.
     *
     * Every payload binding is checked rather than merely looking for `selfId` in the voter map. In particular, stale votes from another
     * parent or committee cannot authorize the bypass, and a generic stall-path vote for a different peer cannot be mistaken for the
@@ -2144,7 +2126,7 @@ object StallDetector {
     *
     * Certificate assembly alone is insufficient when the local vote is still below quorum: unlike an inbound vote, the local emission path
     * does not pass through `RumorHandler.triggerUpdateIfChanged`. Rechecking the state keeps the proposal in its bounded vote-aware grace
-    * while the remaining Core votes are in flight. Both commands are current-key scoped and become inert after round cleanup.
+    * while the remaining committee votes are in flight. Both commands are current-key scoped and become inert after round cleanup.
     */
   private[consensus] def admissionVoteFollowUpCommands[Key](
     key: Key,
@@ -2155,7 +2137,7 @@ object StallDetector {
       ConsensusCommand.CheckUpdate(key)
     )
 
-  /** Select the fixed open-expansion targets a Core voter may consider in one round.
+  /** Select the fixed open-expansion targets a committee voter may consider in one round.
     *
     * The configured budget is applied before already-voted targets are removed. This ordering is load-bearing: applying `take` after
     * removal turns each monitor tick into a cursor over the candidate list and lets a budget of one emit one vote per tick. The fixed
@@ -2235,7 +2217,7 @@ object StallDetector {
       FiniteDuration(math.min(rawMillis, capMillis), MILLISECONDS)
     }
 
-  /** Outcome of the Core-only quorum infeasibility check performed inside `handleStall`. Pure data so the gate can be exercised in unit
+  /** Outcome of the committee quorum infeasibility check performed inside `handleStall`. Pure data so the gate can be exercised in unit
     * tests without a live consensus context.
     */
   private[consensus] case class CommitteeQuorumStatus(
@@ -2288,25 +2270,25 @@ object StallDetector {
   }
 
   /** Outcome of the alpha.98 ready-participation feasibility check. Pure data so the gate can be exercised in unit tests without a live
-    * consensus context. `behindNonReady` is a diagnostic subset (count of `notReadyCore` peers whose observed tip is also behind our last
-    * outcome key); it does not affect the abandon decision -- that depends only on `notReadyCore`.
+    * consensus context. `behindNonReady` is a diagnostic subset (count of `notReadyMembers` peers whose observed tip is also behind our
+    * last outcome key); it does not affect the abandon decision -- that depends only on `notReadyMembers`.
     */
   private[consensus] case class ReadyParticipationStatus(
     memberCount: Int,
     activeReady: Int,
     memberQuorum: Int,
-    notReadyCore: Int,
+    notReadyMembers: Int,
     behindNonReady: Int,
     infeasible: Boolean
   )
 
-  /** Pure helper for the alpha.98 ready-participation feasibility check. From the Core committee, the cluster's currently-Ready peer ids,
-    * self's id, and per-peer observed tip keys, produce the (activeReady, memberQuorum, notReadyCore, behindNonReady, infeasible) tuple
+  /** Pure helper for the alpha.98 ready-participation feasibility check. From the frozen committee, the cluster's currently-Ready peer ids,
+    * self's id, and per-peer observed tip keys, produce the (activeReady, memberQuorum, notReadyMembers, behindNonReady, infeasible) tuple
     * that drives the new abandon path in `StallDetector`.
     *
     * Codex's v2 review notes the two subtle invariants this helper locks down:
     *   1. self MUST be counted as Ready/current. `getResponsivePeers` does not return self; checking `!readyPeerIds.contains(selfId)`
-    *      against the raw responsive-peers set would classify self as not-Ready and false-abandon healthy rounds (most damaging in 2-Core
+    *      against the raw responsive-peers set would classify self as not-Ready and false-abandon healthy rounds (most damaging in 2-member
     *      rounds where self + 1 peer == quorum). Caller adds `selfId` to `readyPeerIds` before invoking this helper. 2. The exclusion test
     *      is ONLY `not in Ready`. A peer that is WaitingForReady-but-caught-up still cannot sign or lead the round, so treating "caught up"
     *      as "Ready enough" misses the WFR-promotion-starvation wedge. The `behindNonReady` field is recorded only as a diagnostic
@@ -2326,17 +2308,17 @@ object StallDetector {
   ): ReadyParticipationStatus = {
     val memberCount = committeeMembers.size
     val readyPeerIdsWithSelf = readyPeerIds + selfId
-    val notReadyCore = committeeMembers.filterNot(readyPeerIdsWithSelf.contains)
-    val behindNonReady = notReadyCore.count { peerId =>
+    val notReadyMembers = committeeMembers.filterNot(readyPeerIdsWithSelf.contains)
+    val behindNonReady = notReadyMembers.count { peerId =>
       !peerCurrentKeysContains(peerId) || !peerCurrentKeyAtOrAfter(peerId)
     }
-    val activeReady = memberCount - notReadyCore.size
+    val activeReady = memberCount - notReadyMembers.size
     val memberQuorum = math.max(1, QuorumPolicy.fromFraction(memberCount, quorumThresholdFraction))
     ReadyParticipationStatus(
       memberCount = memberCount,
       activeReady = activeReady,
       memberQuorum = memberQuorum,
-      notReadyCore = notReadyCore.size,
+      notReadyMembers = notReadyMembers.size,
       behindNonReady = behindNonReady,
       infeasible = memberCount >= 2 && activeReady < memberQuorum
     )

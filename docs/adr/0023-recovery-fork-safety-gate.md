@@ -46,5 +46,18 @@ selects the anchor `(ordinal, hash)` and the recovery cohort directly on the con
 
 The `RecoveryCheckpoint` type, its loader, the `recovery.checkpoint-path` / `CL_RECOVERY_CHECKPOINT_PATH` setting, the download
 and observe enforcement sites, and the `recovery_checkpoint_fork` download outcome were deleted. L1 and the anti-cascade gate
-are unchanged. The Consequences above that describe a configured L2c no longer apply: a validly-signed minority fork remains
-acceptable to a node that recovers by download, and fork choice on recovery is the operator's anchor selection.
+are unchanged. The Consequences above that describe a configured L2c no longer apply, and fork choice on recovery is the
+operator's anchor selection. What a downloading node still rejects depends on the ordinal:
+
+- **Below certified activation** (pre-v35 history; on mainnet everything up to the cutover anchor `R`): only L1 applies
+  (valid, unique, seedlisted signers). A validly-signed minority fork there remains acceptable, as it was with L2c
+  unconfigured.
+- **Ordinary certified segments at or after activation:** `GlobalCertifiedDownloadValidator` checks each round's
+  committee against the previous QC's certified next-round authority, verifies each QC and the artifact proofs against
+  that inherited committee's supermajority, and binds the terminal outcome. A minority-signed fork fails here.
+- **Recovery boundaries at or after activation:** the validator walks back to the latest reset boundary and trusts the
+  committee that boundary's QC declares (`publicRecoveryRoot`: at least three members and the exact persisted parent
+  hash). It does not compare that committee with the seedlist, the prior committee, or the env seed, by design, so that
+  later seedlist changes cannot invalidate canonical history. A cohort of three or more seedlisted keys that runs `run-rollback`
+  and certifies a reset among itself therefore produces a chain a downloading node accepts. The only safeguard is the
+  permissioned recovery procedure; L2c never covered this case in practice because it was never configured.

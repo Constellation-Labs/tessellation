@@ -59,8 +59,7 @@ object CertifiedRoundCommitteeProjector {
   def project(
     key: SnapshotOrdinal,
     selectedFacilitators: List[PeerId],
-    config: ConsensusConfig,
-    withdrawnPeers: Set[PeerId] = Set.empty
+    config: ConsensusConfig
   ): Projection = {
     val expansionAllowed = AdmissionCadence.expansionAllowedAtOrdinal(
       key.value.value,
@@ -70,7 +69,7 @@ object CertifiedRoundCommitteeProjector {
     Projection(
       expansionAllowed = expansionAllowed,
       maxExpansionThisRound = if (expansionAllowed) config.activeAdmissionMaxExpansionPerRound else 0,
-      votingCommittee = selectedFacilitators.filterNot(withdrawnPeers.contains).distinct.sorted
+      votingCommittee = selectedFacilitators.distinct.sorted
     )
   }
 }
