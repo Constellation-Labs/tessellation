@@ -1,9 +1,13 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.node.shared.infrastructure.snapshot.managers.global.RewardAcceptanceManager
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.transaction.{RewardTransaction, TransactionAmount}
+
+import cats.syntax.all._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
@@ -54,5 +58,23 @@ object RewardTransactionAggregationSuite extends SimpleIOSuite {
       RewardTransactionAggregation.combine(List.fill(3)(reward(operator, Long.MaxValue))) ==
         Left(RewardTransactionAggregation.RewardOverflow(operator, BigInt(Long.MaxValue) * 3))
     )
+  }
+
+  pureTest("a withdrawal equal to an operator's combined payout is still credited in full at the payout boundary") {
+    // static 1000 + commission 350 already arrive as one 1350 operator transaction; a withdrawal to the same wallet
+    // of exactly 1350 would be lost in the SortedSet union the legacy payout path performs
+    val operatorPayout = SortedSet(reward(operator, 1350L))
+    val withdrawalPayout = SortedSet(reward(operator, 1350L))
+    val balances = SortedMap(operator -> Balance(0L))
+
+    val legacy = RewardAcceptanceManager.acceptRewardTxsChecked(balances, withdrawalPayout ++ operatorPayout)
+    val combined = RewardTransactionAggregation
+      .combine(withdrawalPayout.toList ++ operatorPayout.toList)
+      .leftWiden[Throwable]
+      .flatMap(RewardAcceptanceManager.acceptRewardTxsChecked(balances, _))
+
+    expect(legacy.map(_._1(operator)) == Right(Balance(1350L)))
+      .and(expect(combined.map(_._1(operator)) == Right(Balance(2700L))))
+      .and(expect(combined.map(_._2) == Right(SortedSet(reward(operator, 2700L)))))
   }
 }

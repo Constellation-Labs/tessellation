@@ -14,6 +14,7 @@ import io.constellationnetwork.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.DefaultDelegatedRewardsConfigProvider
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -609,9 +610,18 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       validCreate = testCreateDelegatedStake(keyPair, sourceAddress, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       emptySeedlist = Some(Set.empty[SeedlistEntry])
-      legacy <- mkValidator(emptySeedlist).validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
-      active <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
-    } yield expect.same(UnauthorizedNode(validCreate.nodeId).invalidNec, legacy).and(expect.same(Valid(signed), active))
+      minimum = DefaultDelegatedRewardsConfigProvider.minRegistrationBalance
+      // the node registered from keyPair, i.e. sourceAddress, so that is the wallet that must hold the 1M DAG
+      funded = lastContext.copy(balances = SortedMap(sourceAddress -> Balance(minimum.value)))
+      legacy <- mkValidator(emptySeedlist).validateCreateDelegatedStake(signed, funded, legacyEpoch)
+      active <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, funded, legacyEpoch)
+      // the node moved its 1M DAG out after registering: no new delegations
+      drained <- mkValidator(emptySeedlist, metanomicsV2Active = true).validateCreateDelegatedStake(signed, lastContext, legacyEpoch)
+    } yield
+      expect
+        .same(UnauthorizedNode(validCreate.nodeId).invalidNec, legacy)
+        .and(expect.same(Valid(signed), active))
+        .and(expect.same(NodeBelowRegistrationBalance(validCreate.nodeId, Balance.empty, minimum).invalidNec, drained))
   }
 
   private def mkValidator(seedlist: Option[Set[SeedlistEntry]] = None, metanomicsV2Active: Boolean = false)(
